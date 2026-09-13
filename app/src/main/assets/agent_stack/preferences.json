@@ -6,8 +6,5 @@
     "music": "YouTube"
   },
   "addresses": {},
-  "contacts": {},
-  "defaults": {
-    "confirm_destructive": true
-  }
+  "contacts": {}
 }

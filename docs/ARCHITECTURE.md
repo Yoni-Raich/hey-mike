@@ -175,9 +175,15 @@ catalog:
   `$HOME/.agents/skills` before the Codex app-server starts. It removes only
   app-managed legacy copies from the workspace `.agents/skills/`,
   `.codex/skills/`, and `$CODEX_HOME/skills`; unrelated skills are preserved.
-- **Layer 4: Durable Preferences**: `preferences.json` in the session workspace
-  retains user defaults (preferred messaging apps, addresses) to prevent
-  redundant questioning while respecting intent fidelity.
+  Three skills ship: `device-automation` (tool mechanics and recovery),
+  `app-cards` (the knowledge store, saved workflows and starter cards) and
+  `user-preferences`. Installing them deletes the retired `recovery-and-safety`.
+- **Layer 4: Durable Preferences**: one `$HOME/preferences.json` shared by every
+  chat retains user defaults (preferred apps, addresses, contacts). It used to
+  be copied into each session workspace, so a preference saved in one chat was
+  gone in the next. The skill carries its absolute path, substituted at install.
+  On first start the newest customized per-chat copy seeds it; untouched copies
+  are deleted from workspaces, customized ones are left in place.
 - **Catalog and composer**: For each session workspace, the pinned app-server
   is queried through `skills/list` with that workspace as the CWD. The catalog
   keeps each skill's interface block (display name, short description, brand
@@ -187,10 +193,8 @@ catalog:
   and is sent as `$skill-name` text plus Codex's native skill input item with
   the catalog-provided name and path. `skills/changed` refreshes the catalog.
   `WorkspaceSeeder` writes only `AGENTS.md` (from the bundled
-  `agent_stack/AGENTS.md`, on every seed) and `preferences.json` (once) into
-  the workspace. App cards and recovery live in the `app-cards` and
-  `recovery-and-safety` skills, and the seeder deletes the `RECOVERY.md` and
-  `cards/` files older releases planted.
+  `agent_stack/AGENTS.md`, on every seed) into the workspace, and deletes the
+  `RECOVERY.md` and `cards/` files older releases planted.
 - **Composer commands**: Codex has no call that lists its slash commands, so
   `/` offers the app's own set (`ComposerCommand`): New chat, Compact
   (`thread/compact/start`), Plan mode (`collaborationMode` with mode `plan` on

@@ -20,9 +20,16 @@
 - When neither the accessibility service nor ADB is on, Mike now says so and
   asks for the accessibility service. The always-available knowledge and
   workflow tools used to hide that.
-- A chat folder now holds just `AGENTS.md` and `preferences.json`. The app
-  cards and the recovery guide moved into the `app-cards` and
-  `recovery-and-safety` skills, and the old files are cleaned up.
+- Mike remembers your preferences across chats. Default apps, addresses and
+  contacts live in one file for the whole app instead of a copy per chat,
+  where a preference saved in one chat was gone in the next. A preference
+  you already taught an older version carries over.
+- Mike's guidance is simpler: a chat folder holds just `AGENTS.md`, and three
+  skills replace four. `device-automation` now includes recovery, and
+  `app-cards` points Mike at what earlier chats learned about an app before
+  the hand-written cards. Typing guidance matches how the accessibility
+  service types (it replaces a field rather than appending), and scrolling
+  no longer assumes one screen size.
 
 ## 0.10.1 — 2026-09-11
 

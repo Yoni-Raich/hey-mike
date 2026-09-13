@@ -20,6 +20,7 @@ import dev.androidagent.workspace.LocalSessionStore
 import dev.androidagent.workspace.WorkspaceSeeder
 import dev.androidagent.voice.AndroidRealtimeVoiceController
 import kotlinx.coroutines.*
+import java.io.File
 
 class AgentApplication : Application() {
     lateinit var graph: AgentGraph
@@ -101,6 +102,11 @@ class AgentGraph(private val app: Application) {
         queue = SessionRunQueue(scope, coordinator, sessions)
         runCatching {
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app)
+        }
+        // Separate from the skills so a failed skill install cannot leave the
+        // user without their preferences, or the reverse.
+        runCatching {
+            WorkspaceSeeder.ensureGlobalPreferences(runtime.homeDirectory, File(app.filesDir, "sessions"), app)
         }
     }
 }

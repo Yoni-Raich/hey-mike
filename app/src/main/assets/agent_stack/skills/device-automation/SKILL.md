@@ -1,17 +1,13 @@
 ---
 name: device-automation
-description: Master skill for precise Android device control through the accessibility service or ADB. Covers semantic UI hierarchy parsing, bounds calculation, gestures, Unicode text input, key events, intents, and verification.
+description: How every device tool works and how to recover when the phone does not respond as expected — read_ui queries and paging, node addressing, text input, scrolling, keys, deep links and approvals, plus fixes for taps with no effect, dialogs, keyboards, crashes and loops.
 ---
 
-# Android Device Automation Skill
+# Android Device Automation
 
-This skill defines the exact mechanisms for interacting with the Android OS and apps through the device tool gateway.
+The exact mechanics of each device tool, and what to do when an action does not land.
 
-Two backends serve the same tool names. An on-device accessibility service handles observation and touch without any ADB connection; wireless ADB handles shell, file transfer, installs and anything the accessibility API cannot reach, and covers for the accessibility service when it is switched off. The application routes each call — you never pick. The `source` field in an observation says which backend answered (`accessibility` or `uiautomator`), and `stable:false` means the screen had not settled when it was read.
-
-A failure with `errorType` `backend_unavailable`, `a11y_unavailable`, `key_unsupported` or `no_text_focus` means **nothing happened on the device**. Read the `remedy` field and act on it instead of repeating the call.
-
-Availability is **per operation**, never one global switch. The turn's runtime snapshot lists the tools you can call now and the tools with no live backend. Only the ADB-served operations — `shell`, `push_file`, `pull_file`, `install_apk` — need Wireless Debugging. `read_ui`, `screenshot`, `tap`, `tap_node`, `swipe`, `scroll_node`, `key`, `type_text`, `set_text`, `open_app`, `wait_for_change`, `resolve_intent` and `open_intent` are all served by the accessibility service with no ADB connection at all. A disconnected ADB is never a reason to refuse one of them, and an ordinary deep link is not an ADB operation.
+The accessibility service serves every tool below except `shell`, `push_file`, `pull_file` and `install_apk`, which need the optional Wireless ADB. The `source` field in an observation says which backend answered (`accessibility` or `uiautomator`), and `stable:false` means the screen had not settled when it was read.
 
 ---
 
@@ -125,45 +121,31 @@ itself, so they cannot miss because the screen scrolled a few pixels.
   Use it after an action that starts a transition instead of polling `read_ui`.
   `changed:false` means nothing moved, so the previous action did not land.
 
-## 2. Text Input & IME (`type_text`)
+## 2. Text Input (`type_text`, `set_text`)
 
-The app provides a dedicated Unicode Input Method Service (`AgentInputMethodService`).
-
-### Standard Input Sequence
-1. **Focus First**: Always `tap` the center of the `EditText` node before calling `type_text` to guarantee cursor focus.
-2. **Dispatch Text**: Call `type_text(text="...", submit=false)` (or `submit=true` if pressing Enter should execute the search/send).
-3. **Unicode Support**: The IME bridge handles full UTF-8, Hebrew, Arabic, CJK, special symbols, and emoji seamlessly without shell escaping errors.
-4. **Verification**: After typing, call `read_ui` to verify that the text appears in the input field.
+1. **Focus first.** `tap` (or `tap_node`) the text field so it holds input focus. Without focus `type_text` fails with `no_text_focus` and types nothing.
+2. **Send the whole final text in one call.** On the accessibility backend `type_text` **replaces the field's entire content**; it does not append. To add to existing text, include the existing text in your call. Never type a message in pieces.
+3. **Submit** with `submit=true` when Enter should run the search or send. Otherwise tap the on-screen Send or Search button.
+4. **Any language works** — Hebrew, Arabic, emoji — with no escaping.
+5. **Verify** with `read_ui` that the field holds exactly the intended text. `set_text` reports `verified`; when it is false, tap the field and use `type_text` instead.
 
 ---
 
-## 3. Scrolling & Gestures (`swipe`)
+## 3. Scrolling (`scroll_node`, `swipe`)
 
-Android coordinate system: $(0,0)$ is top-left, $(W, H)$ is bottom-right.
-
-### Scroll Directions
-- **Scroll Down (Reveal content below)**:
-  - Swipe finger from bottom towards top:
-  - `swipe(x1=540, y1=1600, x2=540, y2=600, durationMs=350)`
-- **Scroll Up (Reveal content above)**:
-  - Swipe finger from top towards bottom:
-  - `swipe(x1=540, y1=600, x2=540, y2=1600, durationMs=350)`
-- **Swipe Left / Right (Carousels & Tabs)**:
-  - Swipe Left (next tab/page): `swipe(x1=900, y1=1000, x2=180, y2=1000, durationMs=300)`
-  - Swipe Right (previous tab/page): `swipe(x1=180, y1=1000, x2=900, y2=1000, durationMs=300)`
-
-### Verification
-Always re-dump the UI (`read_ui`) after a swipe to verify that the viewport scrolled and target elements became visible.
+- **Inside a list, prefer `scroll_node`** on the scrollable node from `read_ui` (`scrollableOnly=true` finds it). It does not depend on screen size.
+- **Use `swipe` only when no node is scrollable** (maps, canvases, carousels). Compute coordinates from this screen, never from a fixed resolution: take width W and height H from the largest `bounds` in `read_ui`, or from a screenshot. To reveal content below, swipe from (W/2, 0.7·H) to (W/2, 0.3·H) with `durationMs` around 350; reverse it to go up. For horizontal pages use 0.8·W → 0.2·W at mid-height.
+- **Verify** with `read_ui` that new content appeared; `success:false` from `scroll_node` means the list is already at that end.
 
 ---
 
-## 4. System Keyevents (`key`)
+## 4. Keys (`key`)
 
-Use standard Android key events for reliable system navigation:
-- `key(keycode="BACK")`: Close keyboards, dismiss dropdowns/popups, or return to previous screen.
-- `key(keycode="HOME")`: Return to device launcher/homescreen.
-- `key(keycode="ENTER")`: Submit focused form or search.
-- `key(keycode="APP_SWITCH")`: Open Android overview/recent apps.
+- `key(keycode="BACK")`: close the keyboard, dismiss a popup, or go back a screen.
+- `key(keycode="HOME")`: return to the launcher.
+- `key(keycode="APP_SWITCH")`: open recent apps.
+- `NOTIFICATIONS`, `QUICK_SETTINGS`, `POWER` and `LOCK` also work without ADB.
+- To press **Enter**, use `type_text(..., submit=true)` or tap the on-screen button: the accessibility service cannot send `ENTER`, and other raw key codes need the optional Wireless ADB (`key_unsupported`).
 
 ---
 
@@ -203,3 +185,33 @@ Three different outcomes, and they mean different things:
 | `intent_not_approved` | The run stopped first. | Nothing was launched. |
 
 A successful launch only means the intent was dispatched. Confirm with `read_ui` that the expected screen actually opened.
+
+---
+
+## 7. Recovery
+
+### A tap had no effect
+`read_ui` shows the same screen, or `"unchanged":true`, after an action that should have changed it.
+1. **Non-clickable target.** Use the node's `clickableAncestor.bounds`, or `tap_node` on the clickable node.
+2. **Still animating or loading.** Call `wait_for_change` once rather than tapping again.
+3. **Covered or clipped.** A dialog, the keyboard or the screen edge is in the way. Dismiss it, or `scroll_node` the target into the middle first.
+4. Never repeat the identical tap more than twice.
+
+### The keyboard hides what you need
+`key(keycode="BACK")` closes it without leaving the screen. Then `read_ui` again.
+
+### An unexpected dialog
+Read its title and buttons with `read_ui`.
+- A **permission** the task genuinely needs ("allow contacts" to message someone): allow it, preferring "While using the app".
+- **"App isn't responding"**: tap "Wait" once; if it comes back, tell the user.
+- **Updates, promos, rating prompts**: "Not now", "Skip" or `BACK`.
+- Anything asking for a **password, PIN, payment or deletion**: stop and ask the user.
+
+### The app crashed or closed
+`read_ui` shows the launcher or another app. `open_app(package=...)` brings it back; check where it resumed before continuing.
+
+### Stuck in a loop
+If two different attempts leave the screen unchanged, stop. Take one `screenshot` to see what `read_ui` may be missing (a canvas, a web view, an overlay), then either try a clearly different approach or tell the user what is blocking and ask how to proceed.
+
+### Read failures
+`ui_timeout` and `ui_idle_failure` are bounded. Do not call `read_ui` in a loop: use `screenshot`, or one retry after something changed.

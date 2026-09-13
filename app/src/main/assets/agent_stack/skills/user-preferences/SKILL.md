@@ -1,15 +1,17 @@
 ---
 name: user-preferences
-description: Manage persistent user preferences, default applications, and frequent addresses to minimize redundant user questioning.
+description: The user's saved defaults — preferred apps, named addresses and contacts — shared by every chat. Read before asking which app, place or person the user means; update when the user states a lasting preference.
 ---
 
-# User Preferences System
+# User Preferences
 
-To provide a smooth, personalized experience without asking repetitive questions, the agent maintains a durable `preferences.json` file in the session workspace.
+The user's defaults live in one file shared by every chat:
 
----
+`{{PREFERENCES_PATH}}`
 
-## 1. Preferences Structure (`preferences.json`)
+Read and edit it with your own file tools. It is on the app's private storage, not the phone's shared storage, so it never needs the device `shell` tool or ADB.
+
+## Structure
 
 ```json
 {
@@ -20,27 +22,19 @@ To provide a smooth, personalized experience without asking repetitive questions
     "music": "YouTube"
   },
   "addresses": {
-    "home": "",
-    "work": ""
+    "home": "Herzl 1, Tel Aviv"
   },
   "contacts": {
-    "mom": "",
-    "partner": ""
-  },
-  "defaults": {
-    "confirm_destructive": true
+    "mom": "Dana Cohen"
   }
 }
 ```
 
----
+Add keys under these sections as needed; keep the file valid JSON.
 
-## 2. Operational Rules
+## Rules
 
-1. **Check First**:
-   - When the user asks to "send a message" or "navigate", check `preferences.json` to see if a preferred app or saved destination exists.
-   - If found, proceed using that preference without asking the user.
-2. **Ask & Save**:
-   - If the preference is missing and the user specifies it (e.g. "I always use Chrome"), update `preferences.json` in the workspace so subsequent tasks remember this choice.
-3. **Updating Preferences**:
-   - Edit `preferences.json` with your own workspace file editing. It lives in the session workspace, not on the phone's storage, so it never needs the device `shell` tool or ADB.
+1. **Check first.** When a task leaves the app, place or person open ("send mom a message", "navigate home", "play some music"), read the file and use what it says without asking.
+2. **Ask only when it is missing,** or when the saved value is ambiguous for this task.
+3. **Save lasting preferences.** When the user states one ("I always use Waze", "home is Herzl 1"), update the file right away and tell them it is saved. Do not save one-off choices.
+4. **Never store secrets** — passwords, codes, card or ID numbers — even if asked.

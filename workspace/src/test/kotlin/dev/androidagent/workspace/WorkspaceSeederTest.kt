@@ -14,31 +14,35 @@ class WorkspaceSeederTest {
     val tempFolder = TemporaryFolder()
 
     @Test
-    fun seedWritesTheBundledAgentsMdAndNothingElseOverIt() {
+    fun seedWritesOnlyTheBundledAgentsMd() {
         // An embedded ADB-era copy used to be written after the asset, so the
         // current AGENTS.md never reached a single chat.
         val ws = tempFolder.newFolder("workspace")
         WorkspaceSeeder.seedFrom(ws, bundled)
 
         assertEquals(BUNDLED_AGENTS, File(ws, "AGENTS.md").readText())
-        assertEquals(BUNDLED_PREFERENCES, File(ws, "preferences.json").readText())
-        assertFalse("workspace must not duplicate user skills", File(ws, ".agents/skills/device-automation").exists())
-        assertFalse("workspace must not use legacy .codex skills", File(ws, ".codex/skills/device-automation").exists())
-        assertEquals(setOf("AGENTS.md", "preferences.json"), ws.list()!!.toSet())
+        assertEquals(setOf("AGENTS.md"), ws.list()!!.toSet())
     }
 
     @Test
-    fun theShippedAgentsMdIsAccessibilityFirst() {
+    fun theShippedGuidanceIsAccessibilityFirstAndPointsAtEveryShippedSkill() {
         val shipped = File(assetRoot(), "AGENTS.md").readText()
         assertTrue(shipped.contains("Observe → Evaluate → Plan → Act → Verify"))
         assertTrue(shipped.contains("ADB being disconnected is normal"))
         // Identity lives in the system instructions only; a second copy is how they drifted apart.
         assertFalse(shipped.contains("Your name is"))
         assertFalse("the ADB-era framing must not come back", shipped.contains("over local Wireless ADB"))
-        for (skill in listOf("device-automation", "app-cards", "recovery-and-safety", "user-preferences")) {
-            assertTrue("AGENTS.md must point at $skill", shipped.contains(skill))
-            assertTrue("$skill must ship", File(assetRoot(), "skills/$skill/SKILL.md").isFile)
-        }
+
+        val shippedSkills = File(assetRoot(), "skills").list()!!.toSet()
+        assertEquals(setOf("device-automation", "app-cards", "user-preferences"), shippedSkills)
+        for (skill in shippedSkills) assertTrue("AGENTS.md must point at $skill", shipped.contains("`$skill`"))
+        assertFalse(shipped.contains("recovery-and-safety"))
+    }
+
+    @Test
+    fun theShippedPreferencesSkillCarriesThePathPlaceholder() {
+        val skill = File(assetRoot(), "skills/user-preferences/SKILL.md").readText()
+        assertTrue(skill.contains(WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER))
     }
 
     @Test
@@ -47,74 +51,94 @@ class WorkspaceSeederTest {
         File(ws, "RECOVERY.md").writeText("old")
         File(ws, "cards").mkdirs()
         File(ws, "cards/whatsapp.md").writeText("old")
-        val legacyOnly = tempFolder.newFolder("workspace_legacy_mixed")
-        File(legacyOnly, "cards").mkdirs()
-        File(legacyOnly, "cards/whatsapp.md").writeText("old")
-        File(legacyOnly, "cards/mine.md").writeText("keep me")
+        val mixed = tempFolder.newFolder("workspace_legacy_mixed")
+        File(mixed, "cards").mkdirs()
+        File(mixed, "cards/whatsapp.md").writeText("old")
+        File(mixed, "cards/mine.md").writeText("keep me")
 
         WorkspaceSeeder.seedFrom(ws, bundled)
-        WorkspaceSeeder.seedFrom(legacyOnly, bundled)
+        WorkspaceSeeder.seedFrom(mixed, bundled)
 
         assertFalse(File(ws, "RECOVERY.md").exists())
         assertFalse(File(ws, "cards").exists())
-        assertFalse(File(legacyOnly, "cards/whatsapp.md").exists())
-        assertEquals("keep me", File(legacyOnly, "cards/mine.md").readText())
+        assertFalse(File(mixed, "cards/whatsapp.md").exists())
+        assertEquals("keep me", File(mixed, "cards/mine.md").readText())
     }
 
     @Test
-    fun seedWithoutAssetsStillGuaranteesPreferences() {
-        val ws = tempFolder.newFolder("workspace_no_assets")
-        WorkspaceSeeder.seed(ws, null)
+    fun anUntouchedPerChatPreferencesCopyIsDeletedAndACustomizedOneKept() {
+        val untouched = tempFolder.newFolder("ws_untouched")
+        File(untouched, "preferences.json").writeText(LEGACY_DEFAULT)
+        val customized = tempFolder.newFolder("ws_customized")
+        File(customized, "preferences.json").writeText(SIGNAL)
 
-        val prefs = File(ws, "preferences.json")
-        assertTrue("preferences.json should exist", prefs.isFile)
-        assertTrue("preferences.json should have default structure", prefs.readText().contains("\"messaging\": \"WhatsApp\""))
-    }
+        WorkspaceSeeder.seed(untouched, null)
+        WorkspaceSeeder.seed(customized, null)
 
-    private val bundled: (String) -> ByteArray = { path ->
-        when (path) {
-            "AGENTS.md" -> BUNDLED_AGENTS.toByteArray()
-            "preferences.json" -> BUNDLED_PREFERENCES.toByteArray()
-            else -> error("unexpected asset $path")
-        }
-    }
-
-    /** The real bundled assets, so the shipped text is checked rather than a copy of it. */
-    private fun assetRoot(): File =
-        generateSequence(File("").absoluteFile) { it.parentFile }
-            .map { File(it, "app/src/main/assets/agent_stack") }
-            .first { it.isDirectory }
-
-    private companion object {
-        const val BUNDLED_AGENTS = "# Bundled harness\n"
-        const val BUNDLED_PREFERENCES = "{\"apps\":{}}"
+        assertFalse(File(untouched, "preferences.json").exists())
+        assertEquals(SIGNAL, File(customized, "preferences.json").readText())
     }
 
     @Test
-    fun installDefaultSkillsUsesStandardUserRootAndCleansLegacyCopies() {
+    fun globalPreferencesStartFromTheBundledDefaults() {
+        val home = tempFolder.newFolder("home_fresh")
+        WorkspaceSeeder.ensureGlobalPreferences(home, tempFolder.newFolder("sessions_empty"), bundled)
+        assertEquals(BUNDLED_PREFERENCES, WorkspaceSeeder.preferencesFile(home).readText())
+    }
+
+    @Test
+    fun globalPreferencesInheritTheNewestCustomizedChatCopy() {
+        // A user who taught an older release "I use Signal" must not lose it.
+        val sessions = tempFolder.newFolder("sessions")
+        chatPreferences(sessions, "a", SIGNAL, modified = 2_000)
+        chatPreferences(sessions, "b", WAZE, modified = 1_000)
+        chatPreferences(sessions, "c", LEGACY_DEFAULT, modified = 9_000)
+        val home = tempFolder.newFolder("home_migrate")
+
+        WorkspaceSeeder.ensureGlobalPreferences(home, sessions, bundled)
+
+        assertEquals(SIGNAL, WorkspaceSeeder.preferencesFile(home).readText())
+    }
+
+    @Test
+    fun globalPreferencesAreNeverOverwritten() {
+        val home = tempFolder.newFolder("home_existing")
+        WorkspaceSeeder.preferencesFile(home).writeText(WAZE)
+        val sessions = tempFolder.newFolder("sessions_other")
+        chatPreferences(sessions, "a", SIGNAL, modified = 5_000)
+
+        WorkspaceSeeder.ensureGlobalPreferences(home, sessions, bundled)
+
+        assertEquals(WAZE, WorkspaceSeeder.preferencesFile(home).readText())
+    }
+
+    @Test
+    fun installDefaultSkillsWritesThePreferencesPathAndRetiresOldSkills() {
         val home = tempFolder.newFolder("home")
         val legacy = File(home, ".codex/skills/device-automation/SKILL.md")
         legacy.parentFile!!.mkdirs()
         legacy.writeText("legacy")
-        val contents = mapOf(
-            "device-automation" to "device body",
-            "recovery-and-safety" to "recovery body",
-            "user-preferences" to "preferences body",
-            "app-cards" to "cards body",
-        )
+        val retired = File(home, ".agents/skills/recovery-and-safety/SKILL.md")
+        retired.parentFile!!.mkdirs()
+        retired.writeText("retired")
+        val userOwn = File(home, ".agents/skills/my-skill/SKILL.md")
+        userOwn.parentFile!!.mkdirs()
+        userOwn.writeText("mine")
 
         WorkspaceSeeder.installDefaultSkills(home) { relativePath ->
             val name = relativePath.substringBefore('/')
-            "---\nname: $name\ndescription: $name description\n---\n\n${contents.getValue(name)}\n".toByteArray()
+            "---\nname: $name\ndescription: d\n---\n\n$name at ${WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER}\n".toByteArray()
         }
 
-        for ((name, body) in contents) {
-            val installed = File(home, ".agents/skills/$name/SKILL.md")
-            assertTrue("$name should be installed in the standard user root", installed.isFile)
-            assertTrue(installed.readText().contains(body))
+        for (name in listOf("device-automation", "app-cards", "user-preferences")) {
+            assertTrue("$name should be installed", File(home, ".agents/skills/$name/SKILL.md").isFile)
         }
+        val preferencesSkill = File(home, ".agents/skills/user-preferences/SKILL.md").readText()
+        assertTrue(preferencesSkill.contains(WorkspaceSeeder.preferencesFile(home).absolutePath))
+        assertFalse(preferencesSkill.contains(WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER))
+        assertFalse("retired skill must be removed", retired.exists())
+        assertEquals("the user's own skills stay", "mine", userOwn.readText())
         assertFalse("legacy CODEX_HOME skill copy should be removed", legacy.exists())
-        assertFalse("deprecated CODEX_HOME skill root must not be populated", File(home, ".codex/skills/app-cards").exists())
     }
 
     @Test
@@ -134,15 +158,44 @@ class WorkspaceSeederTest {
         assertEquals("keep me", unrelated.readText())
     }
 
-    @Test
-    fun seedPreservesExistingUserPreferences() {
-        val ws = tempFolder.newFolder("workspace_prefs")
-        val customPrefs = """{"apps":{"messaging":"Signal"},"customKey":"preserved"}"""
-        val prefsFile = File(ws, "preferences.json")
-        prefsFile.writeText(customPrefs)
+    private fun chatPreferences(sessions: File, id: String, content: String, modified: Long) {
+        val file = File(sessions, "$id/workspace/preferences.json")
+        file.parentFile!!.mkdirs()
+        file.writeText(content)
+        file.setLastModified(modified)
+    }
 
-        WorkspaceSeeder.seed(ws, null)
+    private val bundled: (String) -> ByteArray = { path ->
+        when (path) {
+            "AGENTS.md" -> BUNDLED_AGENTS.toByteArray()
+            "preferences.json" -> BUNDLED_PREFERENCES.toByteArray()
+            else -> error("unexpected asset $path")
+        }
+    }
 
-        assertEquals("Existing preferences.json must not be overwritten", customPrefs, prefsFile.readText())
+    /** The real bundled assets, so the shipped text is checked rather than a copy of it. */
+    private fun assetRoot(): File =
+        generateSequence(File("").absoluteFile) { it.parentFile }
+            .map { File(it, "app/src/main/assets/agent_stack") }
+            .first { it.isDirectory }
+
+    private companion object {
+        const val BUNDLED_AGENTS = "# Bundled harness\n"
+        const val BUNDLED_PREFERENCES = "{\"apps\":{}}"
+        const val SIGNAL = """{"apps":{"messaging":"Signal"}}"""
+        const val WAZE = """{"apps":{"maps":"Waze"}}"""
+        const val LEGACY_DEFAULT = """{
+  "apps": {
+    "messaging": "WhatsApp",
+    "browser": "Chrome",
+    "maps": "Google Maps",
+    "music": "YouTube"
+  },
+  "addresses": {},
+  "contacts": {},
+  "defaults": {
+    "confirm_destructive": true
+  }
+}"""
     }
 }

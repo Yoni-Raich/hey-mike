@@ -1,11 +1,33 @@
 ---
 name: app-cards
-description: Package names, key selectors and proven flows for WhatsApp, Google Chrome, Google Maps, Android Settings and YouTube. Read before operating one of these apps instead of exploring blindly.
+description: How to operate a specific app without exploring blindly — what earlier chats learned about it (recall_capability, saved workflows), plus starter cards with packages, selectors and flows for WhatsApp, Chrome, Google Maps, Settings and YouTube. Read before working inside any app.
 ---
 
-# App Cards
+# App Knowledge
 
-Selectors are hints, not guarantees: apps change their layouts. Always confirm with `read_ui` and match on `text`, `contentDescription` or `resourceId`. When an app offers a deep link, `open_intent` usually beats a long tap sequence (see the `device-automation` skill).
+Three sources, checked in this order, tell you how an app works before you explore it.
+
+## 1. What earlier chats learned
+
+- **`list_workflows(package)`** — a saved step sequence that already worked. If one matches the task, run it with `run_workflow`. If a step fails, continue from that step; never restart it.
+- **`recall_capability(package)`** — selectors and deep links earlier chats confirmed for this app. A record marked `stale:true` is a hint to verify, not a fact.
+
+## 2. The starter cards below
+
+Hand-written for five common apps. They are hints, not guarantees: apps change their layouts. Confirm with `read_ui` and match on `text`, `contentDescription` or `resourceId`.
+
+## 3. Save what you learn
+
+This is how the next chat gets faster:
+
+- **`remember_capability`** — after you find a selector or deep link that works, especially one missing from or contradicting a card. Use a `resourceId` or `contentDescription`, never a coordinate pair.
+- **`save_workflow`** — after a multi-step sequence ran cleanly and is likely to be repeated ("send a WhatsApp message to X").
+
+When an app offers a deep link, `open_intent` usually beats a long tap sequence (see the `device-automation` skill).
+
+---
+
+# Starter Cards
 
 ---
 
@@ -49,7 +71,7 @@ Selectors are hints, not guarantees: apps change their layouts. Always confirm w
 | Start navigation | `contentDescription` or `text` "Start" |
 
 **Navigate to a place**
-1. Check `preferences.json` for a saved address first.
+1. Check the `user-preferences` skill for a saved address first.
 2. Prefer `open_intent(uri="google.navigation:q=<url-encoded destination>")` to start navigation directly.
 3. Otherwise: `open_app` → tap "Search here" → `type_text(text="<destination>", submit=true)` → tap the result → Directions → Start.
 

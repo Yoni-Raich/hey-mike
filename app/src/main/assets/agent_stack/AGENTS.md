@@ -47,12 +47,12 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 
 - Prefer a deep link (`open_intent`) over walking menus, and nodes (`tap_node`, `set_text`, `scroll_node`) over coordinates.
 - Use `act_and_observe` for one known action followed by a fresh observation.
+- For a sequence an earlier chat saved, `run_workflow` runs it without a model turn per step.
 - Reuse the current observation until an action or screen change invalidates it. Do not call `read_ui` again on an unchanged screen.
 - Keep plans short for simple tasks.
 
 ## 6. Skills — load on demand
 
-- **`device-automation`** — how every device tool works: `read_ui` queries and paging, node addressing, text input, gestures, keys, intents and approvals.
-- **`app-cards`** — packages, selectors and proven flows for WhatsApp, Chrome, Google Maps, Settings and YouTube. Read it before operating one of them.
-- **`recovery-and-safety`** — confirmation gates, and what to do when a tap has no effect, a dialog appears, an app crashes or you are looping.
-- **`user-preferences`** — the user's default apps, addresses and contacts in `preferences.json`. Check it before asking the user which app or place they mean.
+- **`device-automation`** — how every device tool works (`read_ui` queries and paging, node addressing, text input, scrolling, keys, intents and approvals), and how to recover when a tap has no effect, a dialog appears, an app crashes or you are looping.
+- **`app-cards`** — how to work inside a specific app: what earlier chats learned (`recall_capability`, saved workflows), starter cards for WhatsApp, Chrome, Google Maps, Settings and YouTube, and how to save what you learn. Read it before operating an app.
+- **`user-preferences`** — the user's default apps, addresses and contacts, in one file shared by every chat. Check it before asking which app, place or person the user means.
