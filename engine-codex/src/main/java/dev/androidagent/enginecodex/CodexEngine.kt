@@ -683,9 +683,10 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                             "accessibility service: ask the user to enable it in Settings > Accessibility. " +
                             "Wireless ADB is still connecting, but it is optional."
                     !capabilities.deviceBackendLive ->
-                        "No device backend is live, so you cannot operate the screen right now. Ask the " +
-                            "user to enable the Hey Mike accessibility service in Settings > Accessibility. " +
-                            "Wireless ADB is an optional advanced extra and is not needed."
+                        "No device backend is live, so you cannot read or operate the screen right now. " +
+                            "Anything in the first list still works — opening an app or a deep link needs no " +
+                            "backend. For screen control, ask the user to enable the Hey Mike accessibility " +
+                            "service in Settings > Accessibility. Wireless ADB is an optional advanced extra."
                     capabilities.blocked.isEmpty() ->
                         "Use the supplied device tools when the task needs device access."
                     status.phase != ConnectionPhase.CONNECTED ->

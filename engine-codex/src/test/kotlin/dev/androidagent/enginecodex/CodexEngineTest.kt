@@ -277,7 +277,7 @@ class CodexEngineTest {
 
         assertTrue(context.contains("No device backend is live"))
         assertTrue(context.contains("Settings > Accessibility"))
-        assertTrue(context.contains("optional advanced extra and is not needed"))
+        assertTrue(context.contains("opening an app or a deep link needs no backend"))
         assertFalse(context.contains("Call anything in the first list normally"))
     }
 

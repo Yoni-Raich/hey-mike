@@ -149,7 +149,15 @@ class A11yDeviceTools(
      * still live and must not be reported as unavailable.
      */
     override fun readyTools(): Set<String> =
-        if (A11yServiceHandle.connected) definitions.map { it.name }.toSet() else emptySet()
+        if (A11yServiceHandle.connected) definitions.map { it.name }.toSet()
+        else SERVICE_FREE_TOOLS intersect definitions.map { it.name }.toSet()
+
+    /**
+     * Only the screen needs the service. Launching an app or an intent is a
+     * plain startActivity from this app, and reporting those as blocked while
+     * the service was off made the agent refuse a deep link it could open.
+     */
+    override fun deviceBackendLive(): Boolean = A11yServiceHandle.connected
 
     override suspend fun cancel() {
         // Nothing to tear down: every wait here is bounded by withTimeoutOrNull
@@ -739,6 +747,9 @@ class A11yDeviceTools(
         private const val QUIESCENCE_POLL_MS = 50L
         private const val MAX_COORDINATE = 20_000
         private const val RETURN_TIMEOUT_MS = 4_000L
+
+        /** Tools that work with the accessibility service off. */
+        internal val SERVICE_FREE_TOOLS = setOf("open_app", "open_intent", "resolve_intent")
         private const val MAX_TEXT_CHARS = 4_000
 
         /** Same ceiling the ADB backend enforces, so the two agree. */
