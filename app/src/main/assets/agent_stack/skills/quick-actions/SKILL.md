@@ -29,7 +29,7 @@ It prints one JSON line:
 {"tool":"open_intent","arguments":{"uri":"https://wa.me/972501234567","package":"com.whatsapp","text":"אני בדרך"}}
 ```
 
-Call `open_intent` with **exactly** those `arguments`, then verify with `read_ui` that the chat opened with the text in the field. Opening sends nothing. To send, tell the user who it goes to and what it says, then press Send: that press asks the user unless they chose to always allow it (see `device-automation`, "Sending asks the user").
+Call `open_intent` with **exactly** those `arguments`, then verify with `read_ui` that the chat opened with the text in the field. Opening sends nothing. Then press Send in the same turn — do not stop to ask in the chat. The press itself asks the user in the app, unless they chose to always allow it (see `device-automation`, "Sending asks the user").
 
 Pass the user's words as they gave them: `contact="אבא"` matches a saved key, name or alias. `text` is the user's message, verbatim.
 

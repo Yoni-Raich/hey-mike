@@ -71,6 +71,8 @@ class A11yDeviceTools(
             success = false,
         )
     },
+    /** Move the approval screen out of the way so the app underneath is back in front. */
+    private val leaveApprovalScreen: () -> Unit = {},
 ) : DeviceToolGateway {
 
     private val lock = Any()
@@ -651,16 +653,22 @@ class A11yDeviceTools(
 
     private suspend fun returnTo(service: AgentAccessibilityService, pkg: String): Boolean {
         fun inFront() = service.rootInActiveWindow?.packageName?.toString() == pkg
-        if (inFront()) return true
-        val launch = context.packageManager.getLaunchIntentForPackage(pkg) ?: return false
-        // A launcher intent with NEW_TASK resumes the existing task where it
-        // was, which is the open chat with the draft still in it.
-        launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { context.startActivity(launch) }.getOrElse { return false }
-        val back = withTimeoutOrNull(RETURN_TIMEOUT_MS) {
+        suspend fun waitInFront(): Boolean = withTimeoutOrNull(RETURN_TIMEOUT_MS) {
             while (!inFront()) delay(QUIESCENCE_POLL_MS)
             true
         } ?: false
+        if (inFront()) return true
+        // Step the approval screen back first: that uncovers the chat exactly
+        // as it was. A launcher intent was tried first on a phone and landed
+        // WhatsApp on its chat list, where there is no Send button to press.
+        runCatching { leaveApprovalScreen() }
+        var back = waitInFront()
+        if (!back) {
+            val launch = context.packageManager.getLaunchIntentForPackage(pkg) ?: return false
+            launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(launch) }.getOrElse { return false }
+            back = waitInFront()
+        }
         if (back) awaitQuiescence(service)
         return back
     }

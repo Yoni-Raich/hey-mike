@@ -181,7 +181,7 @@ Opening a chat with the text typed in (`wa.me/…` with `text`, `smsto:`, `mailt
 - They may tap **Always allow for <contact>** or **Always allow sending in <app>**. Then later sends it covers go through without pausing.
 - After an Allow the app is brought back and Send is pressed for you. Confirm with `read_ui` that the message appears in the chat.
 
-So **before you press Send, say who it goes to and what it says, and that they can say "yes"**. In a voice conversation, say it out loud.
+So **never end your turn to ask for permission to send, and never ask in the chat.** Write one short line saying who it goes to and what it says, then press Send in the same turn: the app itself stops and asks, and the tool call returns once the user has answered. In a voice conversation, say that line out loud.
 
 A payment link (`amount`) still asks before it opens.
 
