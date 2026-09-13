@@ -28,10 +28,24 @@ object WorkspaceSeeder {
     /** Replaced with the absolute preferences path when a skill is installed. */
     internal const val PREFERENCES_PATH_PLACEHOLDER = "{{PREFERENCES_PATH}}"
 
+    /** Replaced with the directory holding saved contacts and intents. */
+    internal const val QUICK_ACTIONS_DIR_PLACEHOLDER = "{{QUICK_ACTIONS_DIR}}"
+
+    /** Replaced with the absolute skills root, so a skill can name its own scripts. */
+    internal const val SKILLS_DIR_PLACEHOLDER = "{{SKILLS_DIR}}"
+
+    private const val QUICK_ACTIONS_DIR = "quick-actions"
+
     private val DEFAULT_SKILL_NAMES = listOf(
         "device-automation",
         "user-preferences",
         "app-cards",
+        "quick-actions",
+    )
+
+    /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */
+    private val SKILL_FILES = mapOf(
+        "quick-actions" to listOf("scripts/act.sh", "scripts/intents.tsv"),
     )
 
     /** Skills older releases installed whose content now lives in another skill. */
@@ -101,17 +115,29 @@ object WorkspaceSeeder {
         }
     }
 
+    /** Where quick-actions keeps the contacts and intents the agent saved. Never touched by an install. */
+    fun quickActionsDir(homeDir: File): File = File(homeDir, QUICK_ACTIONS_DIR)
+
     internal fun installDefaultSkills(homeDir: File, readAsset: (String) -> ByteArray) {
         val skillsDir = File(homeDir, ".agents/skills").apply { mkdirs() }
-        val preferencesPath = preferencesFile(homeDir).absolutePath
+        val placeholders = mapOf(
+            PREFERENCES_PATH_PLACEHOLDER to preferencesFile(homeDir).absolutePath,
+            QUICK_ACTIONS_DIR_PLACEHOLDER to quickActionsDir(homeDir).absolutePath,
+            SKILLS_DIR_PLACEHOLDER to skillsDir.absolutePath,
+        )
         for (name in DEFAULT_SKILL_NAMES) {
             val bytes = readAsset("$name/SKILL.md")
             require(bytes.isNotEmpty()) { "Bundled skill $name is empty" }
-            val text = bytes.toString(Charsets.UTF_8).replace(PREFERENCES_PATH_PLACEHOLDER, preferencesPath)
             val staging = File(skillsDir, ".$name.installing")
             staging.deleteRecursively()
             staging.mkdirs()
-            File(staging, "SKILL.md").writeText(text, Charsets.UTF_8)
+            File(staging, "SKILL.md").writeText(fill(bytes, placeholders), Charsets.UTF_8)
+            for (relativePath in SKILL_FILES[name].orEmpty()) {
+                val file = File(staging, relativePath).apply { parentFile?.mkdirs() }
+                // /system/bin/sh reads a CR as part of the command, so scripts
+                // are normalised no matter how the asset was checked out.
+                file.writeText(fill(readAsset("$name/$relativePath"), placeholders).replace("\r\n", "\n"), Charsets.UTF_8)
+            }
 
             val target = File(skillsDir, name)
             target.deleteRecursively()
@@ -123,6 +149,9 @@ object WorkspaceSeeder {
         // unrelated user and repository skills untouched.
         removeManagedSkills(File(homeDir, ".codex/skills"))
     }
+
+    private fun fill(bytes: ByteArray, placeholders: Map<String, String>): String =
+        placeholders.entries.fold(bytes.toString(Charsets.UTF_8)) { text, (key, value) -> text.replace(key, value) }
 
     private fun assetReader(context: Context): (String) -> ByteArray = { relativePath ->
         context.assets.open("$ASSET_PREFIX/$relativePath").use { it.readBytes() }
@@ -137,6 +166,7 @@ object WorkspaceSeeder {
         val content = bytes.toString(Charsets.UTF_8).withoutWhitespace()
         return content == DEFAULT_PREFERENCES.withoutWhitespace() ||
             content == LEGACY_DEFAULT_PREFERENCES.withoutWhitespace() ||
+            content == LEGACY_DEFAULT_WITH_CONTACTS.withoutWhitespace() ||
             content == defaultPreferences(readAsset).toString(Charsets.UTF_8).withoutWhitespace()
     }
 
@@ -164,6 +194,17 @@ object WorkspaceSeeder {
     }
 
     const val DEFAULT_PREFERENCES = """{
+  "apps": {
+    "messaging": "WhatsApp",
+    "browser": "Chrome",
+    "maps": "Google Maps",
+    "music": "YouTube"
+  },
+  "addresses": {}
+}"""
+
+    /** The defaults before contacts moved to quick-actions, where a phone number can be used. */
+    private const val LEGACY_DEFAULT_WITH_CONTACTS = """{
   "apps": {
     "messaging": "WhatsApp",
     "browser": "Chrome",

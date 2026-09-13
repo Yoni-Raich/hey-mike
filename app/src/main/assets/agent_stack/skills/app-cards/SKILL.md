@@ -5,7 +5,7 @@ description: How to operate a specific app without exploring blindly — what ea
 
 # App Knowledge
 
-Three sources, checked in this order, tell you how an app works before you explore it.
+Three sources, checked in this order, tell you how an app works before you explore it. For messaging, calling or navigating to a person or place, `quick-actions` comes before all of them.
 
 ## 1. What earlier chats learned
 
@@ -20,8 +20,10 @@ Hand-written for five common apps. They are hints, not guarantees: apps change t
 
 This is how the next chat gets faster:
 
+- **`quick-actions save-intent`** — after a deep link reached a destination a later request could reuse. This is what makes the next request one step.
+- **`quick-actions save-contact`** — after you found a person's phone number.
 - **`remember_capability`** — after you find a selector or deep link that works, especially one missing from or contradicting a card. Use a `resourceId` or `contentDescription`, never a coordinate pair.
-- **`save_workflow`** — after a multi-step sequence ran cleanly and is likely to be repeated ("send a WhatsApp message to X").
+- **`save_workflow`** — after a multi-step UI sequence with no deep link ran cleanly and is likely to be repeated.
 
 When an app offers a deep link, `open_intent` usually beats a long tap sequence (see the `device-automation` skill).
 
@@ -43,8 +45,8 @@ When an app offers a deep link, `open_intent` usually beats a long tap sequence 
 | Back | `com.whatsapp:id/back`, `contentDescription` "Navigate up" |
 
 **Send a message**
-1. With a known phone number, prefer `open_intent(uri="https://wa.me/<number>", text="<message>", package="com.whatsapp")`. It needs the user's approval in the app.
-2. Otherwise: `open_app(package="com.whatsapp")` → tap Search → `type_text(text="<name>")` → `read_ui(text="<name>")` → tap the matching row.
+1. Run `quick-actions` first: `act.sh run whatsapp.send contact=<name> text=<message>`. It needs the user's approval in the app.
+2. If the contact is not saved and the number cannot be found, open the chat by name, then save the number when you see it: `open_app(package="com.whatsapp")` → tap Search → `type_text(text="<name>")` → `read_ui(text="<name>")` → tap the matching row.
 3. Tap the message field, `type_text(text="<message>")`, then `read_ui` to confirm the text is there. The voice-note icon turns into **Send**.
 4. Tap Send, then `read_ui` to confirm the bubble appears in the conversation.
 

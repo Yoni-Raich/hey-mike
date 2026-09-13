@@ -34,7 +34,7 @@ class WorkspaceSeederTest {
         assertFalse("the ADB-era framing must not come back", shipped.contains("over local Wireless ADB"))
 
         val shippedSkills = File(assetRoot(), "skills").list()!!.toSet()
-        assertEquals(setOf("device-automation", "app-cards", "user-preferences"), shippedSkills)
+        assertEquals(setOf("device-automation", "app-cards", "user-preferences", "quick-actions"), shippedSkills)
         for (skill in shippedSkills) assertTrue("AGENTS.md must point at $skill", shipped.contains("`$skill`"))
         assertFalse(shipped.contains("recovery-and-safety"))
     }
@@ -127,12 +127,25 @@ class WorkspaceSeederTest {
 
         WorkspaceSeeder.installDefaultSkills(home) { relativePath ->
             val name = relativePath.substringBefore('/')
-            "---\nname: $name\ndescription: d\n---\n\n$name at ${WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER}\n".toByteArray()
+            when {
+                relativePath.endsWith(".sh") -> "#!/system/bin/sh\r\nDATA=\"${WorkspaceSeeder.QUICK_ACTIONS_DIR_PLACEHOLDER}\"\r\n"
+                relativePath.endsWith(".tsv") -> "a\tb\r\n"
+                else -> "---\nname: $name\ndescription: d\n---\n\n$name at ${WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER} " +
+                    "${WorkspaceSeeder.SKILLS_DIR_PLACEHOLDER}\n"
+            }.toByteArray()
         }
 
-        for (name in listOf("device-automation", "app-cards", "user-preferences")) {
+        for (name in listOf("device-automation", "app-cards", "user-preferences", "quick-actions")) {
             assertTrue("$name should be installed", File(home, ".agents/skills/$name/SKILL.md").isFile)
         }
+        val script = File(home, ".agents/skills/quick-actions/scripts/act.sh").readText()
+        assertFalse("scripts must reach the phone with LF endings", script.contains('\r'))
+        assertTrue(script.contains(WorkspaceSeeder.quickActionsDir(home).absolutePath))
+        assertTrue(File(home, ".agents/skills/quick-actions/scripts/intents.tsv").isFile)
+        assertTrue(
+            File(home, ".agents/skills/quick-actions/SKILL.md").readText()
+                .contains(File(home, ".agents/skills").absolutePath),
+        )
         val preferencesSkill = File(home, ".agents/skills/user-preferences/SKILL.md").readText()
         assertTrue(preferencesSkill.contains(WorkspaceSeeder.preferencesFile(home).absolutePath))
         assertFalse(preferencesSkill.contains(WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER))

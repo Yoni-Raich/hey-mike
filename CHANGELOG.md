@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Quick actions: "message dad", "call mom" or "navigate home" is one step.
+  Mike saves each contact's number and each deep link that worked, and a
+  script on the phone turns the request into the ready intent, with no contact
+  search and no walking through the app. It ships with WhatsApp, SMS, dialer,
+  Google Maps, Waze, web and YouTube intents, and Mike adds its own as it
+  learns them. Messages still wait for your approval in the app.
+
 - Mike no longer says a task needs ADB when it doesn't. Screen control runs
   on the accessibility service, and Wireless ADB is an optional extra, but
   several things still told the agent otherwise:

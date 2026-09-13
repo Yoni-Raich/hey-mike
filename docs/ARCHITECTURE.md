@@ -175,9 +175,22 @@ catalog:
   `$HOME/.agents/skills` before the Codex app-server starts. It removes only
   app-managed legacy copies from the workspace `.agents/skills/`,
   `.codex/skills/`, and `$CODEX_HOME/skills`; unrelated skills are preserved.
-  Three skills ship: `device-automation` (tool mechanics and recovery),
-  `app-cards` (the knowledge store, saved workflows and starter cards) and
-  `user-preferences`. Installing them deletes the retired `recovery-and-safety`.
+  Four skills ship: `device-automation` (tool mechanics and recovery),
+  `app-cards` (the knowledge store, saved workflows and starter cards),
+  `user-preferences` and `quick-actions`. Installing them deletes the retired
+  `recovery-and-safety`. A skill's extra files (`SKILL_FILES`) are copied with
+  it; `{{PREFERENCES_PATH}}`, `{{QUICK_ACTIONS_DIR}}` and `{{SKILLS_DIR}}` are
+  replaced with absolute paths, and CRs are stripped because the phone's
+  `/system/bin/sh` reads them as part of a command.
+- **Quick actions**: `quick-actions/scripts/act.sh` (POSIX sh, awk and od only,
+  which is all a phone has) resolves a contact alias and an intent template
+  into one `open_intent` JSON call; the model makes that call through the
+  gateway, so intent policy and approvals still apply and the script never
+  touches the device. Built-in templates ship beside the script and are
+  replaced on every install; contacts and saved templates live in
+  `$HOME/quick-actions/*.tsv`, which installs never touch. This is a skill with
+  a script rather than a new tool, so what the agent learns stays in files it
+  owns.
 - **Layer 4: Durable Preferences**: one `$HOME/preferences.json` shared by every
   chat retains user defaults (preferred apps, addresses, contacts). It used to
   be copied into each session workspace, so a preference saved in one chat was

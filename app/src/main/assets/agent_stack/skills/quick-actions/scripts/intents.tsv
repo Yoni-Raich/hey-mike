@@ -1,0 +1,8 @@
+whatsapp.send	contact,text	-	https://wa.me/{phone}	com.whatsapp	{text}	Open the WhatsApp chat with a contact, message typed in and ready to send
+whatsapp.chat	contact	-	https://wa.me/{phone}	com.whatsapp	-	Open the WhatsApp chat with a contact
+phone.dial	contact	android.intent.action.DIAL	tel:+{phone}	-	-	Open the dialer with a contact's number; the user presses call
+sms.send	contact,text	android.intent.action.SENDTO	smsto:+{phone}?body={text}	-	-	Open an SMS to a contact with the message typed in
+maps.navigate	place	-	google.navigation:q={place}	com.google.android.apps.maps	-	Start Google Maps navigation to a place or address
+waze.navigate	place	-	https://waze.com/ul?q={place}&navigate=yes	com.waze	-	Start Waze navigation to a place or address
+web.search	query	-	https://www.google.com/search?q={query}	-	-	Search the web
+youtube.search	query	-	https://www.youtube.com/results?search_query={query}	com.google.android.youtube	-	Search YouTube
