@@ -7,6 +7,25 @@ not production-ready.
 
 ### Verified
 
+- The public v0.11.0 dev APK was built from merged `main` (with #59) on
+  2026-09-13. `./gradlew.bat test assembleDevRelease
+  assembleDevDebugAndroidTest :voice:lintDebug :overlay:lintDebug
+  :app:lintDevDebug --no-daemon` passed (832 actionable tasks; app lint
+  0 errors, 19 warnings), `python -m unittest tools.test_prepare_runtime`
+  passed (5 tests) and `git diff --check` is clean. `aapt2` reports
+  versionCode 25 versionName 0.11.0, label "Hey Mike Dev", not debuggable,
+  with `libcodex_codemode.so` for ARM64 and x86_64 and the `quick-actions`
+  skill assets; zip alignment and APK Signature Scheme v3 verification passed
+  with the local debug key. SHA-256
+  `72A8A4CCF4613A89DD723E26DEB7B296B8573150133BAED706E36D8E8EC26ED6`. The
+  exact asset was installed on the Redmi Note 11 Pro (Android 13) over the
+  #59 dev debug build with the sign-in kept: `libcodex_codemode.so` was in the
+  native library folder, the accessibility service bound as "Hey Mike Dev",
+  and "Open Settings and tell me the Android version" answered Android 13.
+  The #59 behaviour (no false "needs ADB", global preferences, quick actions
+  via `phone.dial`) was verified on the same phone with the debug build before
+  merge. Not verified on hardware: `whatsapp.send` and `sms.send` end to end,
+  to avoid messaging a real person.
 - The public v0.10.1 dev APK was built from merged `main` (with #58) on
   2026-09-11. `./gradlew.bat test assembleDevRelease
   assembleDevDebugAndroidTest :voice:lintDebug :overlay:lintDebug

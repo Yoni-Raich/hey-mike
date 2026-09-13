@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.11.0 — 2026-09-13
+
 - Quick actions: "message dad", "call mom" or "navigate home" is one step.
   Mike saves each contact's number and each deep link that worked, and a
   script on the phone turns the request into the ready intent, with no contact
