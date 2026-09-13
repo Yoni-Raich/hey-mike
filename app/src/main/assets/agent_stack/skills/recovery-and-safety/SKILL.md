@@ -48,7 +48,15 @@ You MUST stop and explicitly ask the user for confirmation before executing any 
 3. For ANRs ("App isn't responding"), tap "Wait" once. If it repeats, notify the user.
 4. For unexpected Google Play or update prompts, tap "Not now" or `key(keycode="BACK")` to return to the task.
 
-### D. Stuck Loop Detection
+### D. App Crashed or Closed
+**Symptom**: `read_ui` shows the launcher or a different app than the one you were working in.
+**Recovery**: Call `open_app(package="<package>")` to bring it back, then `read_ui` to see where it resumed.
+
+### E. A Tool Reports a Missing Backend
+**Symptom**: A call fails with `backend_unavailable` or `a11y_unavailable`.
+**Recovery**: Nothing happened on the device. Read the `remedy` field. Screen control needs only the Hey Mike accessibility service; Wireless ADB is an optional extra needed only by `shell`, `push_file`, `pull_file` and `install_apk`. Never tell the user a task needs ADB because of a failure in any other tool.
+
+### F. Stuck Loop Detection
 - Track the last 3 screens and actions.
 - If the screen hierarchy has not changed after 2 consecutive retry actions, do NOT repeat the same tap.
 - Pause, take a `screenshot` to verify visual state, or ask the user for steering.

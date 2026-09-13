@@ -70,19 +70,70 @@ class CompositeDeviceToolGatewayTest {
     }
 
     @Test fun anExhaustedChainExplainsEachBackendsReason() = runBlocking {
-        val a11y = FakeGateway("a11y", tools = listOf("read_ui"), absent = mutableSetOf("read_ui"))
-        val adb = FakeGateway("adb", tools = listOf("read_ui"), absent = mutableSetOf("read_ui"))
+        val a11y = FakeGateway("a11y", tools = listOf("read_ui"), absent = mutableSetOf("read_ui"), absentAs = "a11y_unavailable")
+        val adb = FakeGateway("adb", tools = listOf("read_ui"), absent = mutableSetOf("read_ui"), absentAs = "adb_not_connected")
         val composite = CompositeDeviceToolGateway(listOf(a11y, adb))
 
         val result = composite.invoke("read_ui", empty())
         assertFalse(result.success)
         val json = Json.parseToJsonElement(result.text).jsonObject
         assertEquals("backend_unavailable", json["errorType"]!!.jsonPrimitive.content)
-        assertTrue(json.containsKey("remedy"))
+        val remedy = json["remedy"]!!.jsonPrimitive.content
+        assertTrue(remedy.contains("accessibility service"))
+        assertTrue(remedy.contains("Wireless ADB is optional"))
         val reasons = json["reasons"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(2, reasons.size)
-        assertTrue(reasons.any { it.contains("a11y_absent") })
-        assertTrue(reasons.any { it.contains("adb_absent") })
+        assertTrue(reasons.any { it.contains("a11y_unavailable") })
+        assertTrue(reasons.any { it.contains("adb_not_connected") })
+    }
+
+    @Test fun aLiveBackendsOwnRefusalLeadsInsteadOfAMissingAdb() = runBlocking {
+        // type_text with no focused field used to fall through to a
+        // disconnected ADB and come back as "ADB is not connected".
+        val a11y = FakeGateway("a11y", tools = listOf("type_text"), absent = mutableSetOf("type_text"), absentAs = "no_text_focus")
+        val adb = FakeGateway("adb", tools = listOf("type_text"), absent = mutableSetOf("type_text"), absentAs = "adb_not_connected")
+        val composite = CompositeDeviceToolGateway(listOf(a11y, adb))
+
+        val json = Json.parseToJsonElement(composite.invoke("type_text", empty()).text).jsonObject
+        assertEquals("no_text_focus", json["errorType"]!!.jsonPrimitive.content)
+        assertEquals("a11y cannot serve type_text", json["message"]!!.jsonPrimitive.content)
+        assertTrue(json["remedy"]!!.jsonPrimitive.content.contains("Wireless ADB being off is normal"))
+    }
+
+    @Test fun anAdbOnlyToolSaysThatOneToolNeedsAdb() = runBlocking {
+        val a11y = FakeGateway("a11y", tools = listOf("tap"))
+        val adb = FakeGateway("adb", tools = listOf("shell"), absent = mutableSetOf("shell"), absentAs = "adb_not_connected")
+        val composite = CompositeDeviceToolGateway(listOf(a11y, adb))
+
+        val json = Json.parseToJsonElement(composite.invoke("shell", empty()).text).jsonObject
+        assertEquals("backend_unavailable", json["errorType"]!!.jsonPrimitive.content)
+        val remedy = json["remedy"]!!.jsonPrimitive.content
+        assertTrue(remedy.contains("\"shell\" is one of the few tools that need Wireless ADB"))
+        assertTrue(remedy.contains("screen control works without it"))
+    }
+
+    @Test fun deviceStatusIsAlwaysReadyAndDescribesEveryBackend() {
+        val a11y = FakeGateway("a11y", tools = listOf("tap"), ready = emptySet())
+        val adb = FakeGateway("adb", tools = listOf("device_status", "shell"), ready = emptySet())
+        val composite = CompositeDeviceToolGateway(listOf(a11y, adb))
+
+        assertEquals(setOf("device_status"), composite.readyTools())
+        val description = composite.definitions.first { it.name == "device_status" }.description
+        assertTrue(description.contains("accessibility service"))
+        assertTrue(description.contains("optional Wireless ADB"))
+    }
+
+    @Test fun alwaysReadyLocalToolsDoNotCountAsALiveDeviceBackend() {
+        val local = object : DeviceToolGateway by FakeGateway("knowledge", tools = listOf("recall_capability")) {
+            override fun deviceBackendLive() = false
+        }
+        val a11y = FakeGateway("a11y", tools = listOf("read_ui"), ready = emptySet())
+        val adb = FakeGateway("adb", tools = listOf("shell"), ready = emptySet())
+
+        val capabilities = DeviceCapabilities.of(CompositeDeviceToolGateway(listOf(local, a11y, adb)), AdbStatus())
+
+        assertTrue(capabilities.anyReady)
+        assertFalse(capabilities.deviceBackendLive)
     }
 
     @Test fun anUnknownToolIsReportedRatherThanRouted() = runBlocking {
@@ -183,6 +234,7 @@ class CompositeDeviceToolGatewayTest {
         )
 
         assertTrue(capabilities.anyReady)
+        assertTrue(capabilities.deviceBackendLive)
         assertEquals(setOf("read_ui", "tap", "open_intent"), capabilities.ready)
         // ADB-only names, and only those.
         assertEquals(setOf("shell", "install_apk"), capabilities.blocked)
@@ -197,6 +249,7 @@ class CompositeDeviceToolGatewayTest {
         val capabilities = DeviceCapabilities.of(composite, AdbStatus())
 
         assertFalse(capabilities.anyReady)
+        assertFalse(capabilities.deviceBackendLive)
         assertEquals(setOf("read_ui", "tap", "shell"), capabilities.blocked)
         // The advertised list never shrinks; only the snapshot changes.
         assertEquals(listOf("read_ui", "tap", "shell"), composite.definitions.map { it.name })
@@ -227,6 +280,8 @@ class CompositeDeviceToolGatewayTest {
         /** Null means "ready for everything it declares", the interface default. */
         private val ready: Set<String>? = null,
         val absent: MutableSet<String> = mutableSetOf(),
+        /** errorType an absent call refuses with; null means `<id>_absent`. */
+        private val absentAs: String? = null,
         private val broken: MutableSet<String> = mutableSetOf(),
         private val control: Set<String> = emptySet(),
         private val capture: Set<String> = emptySet(),
@@ -260,7 +315,7 @@ class CompositeDeviceToolGatewayTest {
         override fun statusLine() = "$id status"
 
         override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
-            if (name in absent) throw ToolNotServiceable("${id}_absent", "$id cannot serve $name")
+            if (name in absent) throw ToolNotServiceable(absentAs ?: "${id}_absent", "$id cannot serve $name")
             if (name in broken) error("$id failed while running $name")
             invoked += name
             return ToolResult("$id:$name")

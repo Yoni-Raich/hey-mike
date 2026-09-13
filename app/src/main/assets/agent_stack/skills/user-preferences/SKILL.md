@@ -28,7 +28,7 @@ To provide a smooth, personalized experience without asking repetitive questions
     "partner": ""
   },
   "defaults": {
-    "confirm_before_send": true
+    "confirm_destructive": true
   }
 }
 ```
@@ -43,4 +43,4 @@ To provide a smooth, personalized experience without asking repetitive questions
 2. **Ask & Save**:
    - If the preference is missing and the user specifies it (e.g. "I always use Chrome"), update `preferences.json` in the workspace so subsequent tasks remember this choice.
 3. **Updating Preferences**:
-   - Use standard shell/file tools in the session workspace to maintain and update the JSON structure.
+   - Edit `preferences.json` with your own workspace file editing. It lives in the session workspace, not on the phone's storage, so it never needs the device `shell` tool or ADB.

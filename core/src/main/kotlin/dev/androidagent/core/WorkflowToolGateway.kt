@@ -53,6 +53,9 @@ class WorkflowToolGateway(
      */
     override fun needsControl(name: String): Boolean = name == "run_workflow"
 
+    /** Steps dispatch through the device backends; this gateway alone operates nothing. */
+    override fun deviceBackendLive(): Boolean = false
+
     override fun statusLine(): String {
         val count = store.all().size
         return "Workflows: " + if (count == 0) "none saved" else "$count saved"

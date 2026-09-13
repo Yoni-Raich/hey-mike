@@ -42,6 +42,9 @@ class KnowledgeToolGateway(
     /** Neither tool touches the screen, so neither needs the control banner. */
     override fun needsControl(name: String): Boolean = false
 
+    /** A local store: always ready, but it cannot operate the phone. */
+    override fun deviceBackendLive(): Boolean = false
+
     override fun statusLine(): String {
         val packages = store.packages()
         return "Knowledge: " + if (packages.isEmpty()) {

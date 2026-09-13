@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Mike no longer says a task needs ADB when it doesn't. Screen control runs
+  on the accessibility service, and Wireless ADB is an optional extra, but
+  several things still told the agent otherwise:
+  - Every chat got an old copy of its instructions, written from the days when
+    everything went through ADB. It replaced the current one each time a chat
+    opened.
+  - The system prompt called the per-turn snapshot "ADB availability", and
+    the snapshot opened with the ADB phase.
+  - A call the accessibility service turned down for a reason of its own,
+    like typing with no field focused or pressing Enter, fell through to a
+    disconnected ADB and came back as "ADB is not connected".
+  - `act_and_observe` worked only over ADB.
+- When neither the accessibility service nor ADB is on, Mike now says so and
+  asks for the accessibility service. The always-available knowledge and
+  workflow tools used to hide that.
+- A chat folder now holds just `AGENTS.md` and `preferences.json`. The app
+  cards and the recovery guide moved into the `app-cards` and
+  `recovery-and-safety` skills, and the old files are cleaned up.
+
 ## 0.10.1 — 2026-09-11
 
 - Voice mode speaks as Mike: the caption labels the agent "MIKE" instead of

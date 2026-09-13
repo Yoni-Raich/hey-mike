@@ -111,6 +111,32 @@ const val READ_UI_DESCRIPTION: String =
         "revision, or pass force=true to resend them. Timeout or idle failures are typed and " +
         "do not trigger a second dump."
 
+/** The actions `act_and_observe` may wrap. */
+val ACT_AND_OBSERVE_ACTIONS: Set<String> = setOf("tap", "swipe", "key", "open_app", "type_text")
+
+/**
+ * The one `act_and_observe` definition, so every backend advertises the same
+ * tool. The accessibility backend serving it is what keeps the tool the
+ * system prompt recommends working with Wireless ADB off.
+ */
+val ACT_AND_OBSERVE_DEFINITION: ToolDefinition = ToolDefinition(
+    "act_and_observe",
+    "Perform ONE known action and return a fresh UI observation in one call. Saves a model round trip. " +
+        "Never batch speculative actions. If actionCompleted=true but observation failed, do not repeat the action.",
+    buildJsonObject {
+        put("type", "object")
+        put("properties", buildJsonObject {
+            put("action", buildJsonObject {
+                put("type", "string")
+                put("enum", buildJsonArray { ACT_AND_OBSERVE_ACTIONS.forEach { add(it) } })
+            })
+            put("arguments", buildJsonObject { put("type", "object"); put("additionalProperties", true) })
+        })
+        put("required", buildJsonArray { add("action"); add("arguments") })
+        put("additionalProperties", false)
+    },
+)
+
 /**
  * A focused request for part of one observation.
  *

@@ -5,7 +5,10 @@ import dev.androidagent.core.AdbTransport
 import dev.androidagent.core.CommandResult
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.DeviceToolGateway
+import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
+import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
 import dev.androidagent.core.READ_UI_DESCRIPTION
+import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ObservationFingerprint
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.ToolDefinition
@@ -98,9 +101,10 @@ class AndroidDeviceTools(
         name == "read_ui" || name == "screenshot"
 
     override fun statusLine(): String? {
+        // Worded as an optional extra: the model reads this line every turn,
+        // and a bare "ADB: DISCONNECTED" reads as "the phone is unreachable".
         val s = adb.status.value
-        val port = s.port?.toString() ?: "-"
-        return "ADB: phase=${s.phase} port=$port ${s.message}"
+        return "Wireless ADB (optional): ${s.phase.name.lowercase()} - ${s.message}"
     }
 
     /**
@@ -121,6 +125,15 @@ class AndroidDeviceTools(
             throw IllegalStateException("Run stopped. No device action was performed.")
         }
         checkActive()
+        if (name != "device_status" && adb.status.value.phase != ConnectionPhase.CONNECTED) {
+            // Typed, and before any device call, so the composite reports the
+            // accessibility backend's own reason instead of a bare transport
+            // error that reads as "this task needs ADB".
+            throw ToolNotServiceable(
+                "adb_not_connected",
+                "Wireless ADB is an optional advanced backend and is not connected.",
+            )
+        }
         val result = when (name) {
             "device_status" -> deviceStatus()
             "read_ui" -> readUi(arguments)
@@ -149,7 +162,7 @@ class AndroidDeviceTools(
 
     private suspend fun actAndObserve(arguments: JsonObject): ToolResult {
         val action = arguments["action"]?.jsonPrimitive?.contentOrNull
-        require(action in setOf("tap", "swipe", "key", "open_app", "type_text")) { "Choose one supported action." }
+        require(action in ACT_AND_OBSERVE_ACTIONS) { "Choose one supported action." }
         val args = arguments["arguments"] as? JsonObject ?: error("Action arguments are required.")
         val result = invoke(action!!, args)
         if (!result.success) return result // Never retry a side effect or observe after a failed commit.
@@ -1028,16 +1041,8 @@ class AndroidDeviceTools(
                 bytes[6] == 0x1A.toByte() && bytes[7] == 0x0A.toByte()
 
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
-            ToolDefinition("act_and_observe", "Perform ONE known action and return a fresh UI observation in one call. Saves a model round trip. Never batch speculative actions. If actionCompleted=true but observation failed, do not repeat the action.", buildJsonObject {
-                put("type", "object")
-                put("properties", buildJsonObject {
-                    put("action", buildJsonObject { put("type", "string"); put("enum", JsonArray(listOf("tap", "swipe", "key", "open_app", "type_text").map(::JsonPrimitive))) })
-                    put("arguments", buildJsonObject { put("type", "object"); put("additionalProperties", true) })
-                })
-                put("required", JsonArray(listOf("action", "arguments").map(::JsonPrimitive)))
-                put("additionalProperties", false)
-            }),
-            tool("device_status", "Read ADB connection state. Read-only.", emptyMap(), emptyList()),
+            ACT_AND_OBSERVE_DEFINITION,
+            tool("device_status", "Report which device backends are live: the accessibility service, and the optional Wireless ADB. Read-only.", emptyMap(), emptyList()),
             tool(
                 "read_ui",
                 READ_UI_DESCRIPTION,

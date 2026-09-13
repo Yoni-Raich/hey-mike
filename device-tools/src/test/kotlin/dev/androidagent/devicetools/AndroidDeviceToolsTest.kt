@@ -251,6 +251,31 @@ class AndroidDeviceToolsTest {
         assertTrue(tools.definitions.isNotEmpty())
     }
 
+    @Test fun aDisconnectedTransportRefusesTypedBeforeTouchingTheDevice() {
+        // A bare "ADB is not connected" IOException escaped the composite and
+        // told the model the task needed ADB. The typed refusal lets the
+        // accessibility backend's own reason lead instead.
+        val adb = FakeAdb(ConnectionPhase.DISCONNECTED)
+        val tools = AndroidDeviceTools(adb)
+        val ws = Files.createTempDirectory("ws").toFile()
+        try {
+            tools.beginRun("r1", ws)
+            val refusal = runCatching {
+                runBlocking { tools.invoke("type_text", buildJsonObject { put("text", "hi") }) }
+            }.exceptionOrNull()
+            assertTrue(refusal is dev.androidagent.core.ToolNotServiceable)
+            assertEquals("adb_not_connected", (refusal as dev.androidagent.core.ToolNotServiceable).errorType)
+            assertEquals(0, adb.calls)
+            // device_status still answers, since it only reads the status flow.
+            assertTrue(runBlocking { tools.invoke("device_status", buildJsonObject {}) }.success)
+        } finally { ws.deleteRecursively() }
+    }
+
+    @Test fun theStatusLineCallsAdbOptional() {
+        val line = AndroidDeviceTools(FakeAdb(ConnectionPhase.DISCONNECTED)).statusLine()!!
+        assertTrue(line.startsWith("Wireless ADB (optional): disconnected"))
+    }
+
     @Test fun everyAdvertisedToolIsReadyOnceAdbIsConnected() {
         val tools = AndroidDeviceTools(FakeAdb())
         assertEquals(tools.definitions.map { it.name }.toSet(), tools.readyTools())

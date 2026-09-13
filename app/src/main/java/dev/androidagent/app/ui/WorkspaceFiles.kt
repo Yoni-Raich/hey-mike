@@ -62,7 +62,7 @@ internal data class FileEntry(val item: WorkspaceFileItem, val name: String, val
 internal data class WorkspaceListing(val yours: List<FileEntry>, val agent: List<FileEntry>)
 
 // What WorkspaceSeeder writes into every chat folder.
-private val AGENT_ROOTS = setOf("AGENTS.md", "RECOVERY.md", "preferences.json", "cards")
+private val AGENT_ROOTS = setOf("AGENTS.md", "preferences.json")
 
 // Attachments are stored as "<uuid>-name" so two files with one name can coexist.
 private val STORED_PREFIX = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}-")

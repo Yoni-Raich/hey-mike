@@ -33,9 +33,15 @@ class CompositeDeviceToolGateway(
             .flatMap { member -> member.definitions.map { it.name to member } }
             .groupBy({ it.first }, { it.second })
 
-    /** First declaration of a name wins; a later duplicate only joins its fallback chain. */
+    /**
+     * First declaration of a name wins; a later duplicate only joins its fallback chain.
+     * `device_status` is answered here, so it carries a description of every backend
+     * rather than whichever member happened to declare it.
+     */
     override val definitions: List<ToolDefinition> =
-        members.flatMap { it.definitions }.distinctBy { it.name }
+        members.flatMap { it.definitions }.distinctBy { it.name }.map { definition ->
+            if (definition.name == DEVICE_STATUS) definition.copy(description = DEVICE_STATUS_DESCRIPTION) else definition
+        }
 
     override fun beginRun(runId: String, workspace: File) {
         val failures = mutableListOf<Throwable>()
@@ -80,27 +86,31 @@ class CompositeDeviceToolGateway(
      */
     override fun readyTools(): Set<String> {
         val live = members.flatMap { member -> runCatching { member.readyTools() }.getOrDefault(emptySet()) }
-        return definitions.map { it.name }.toSet() intersect live.toSet()
+        // device_status is answered here, with no backend, so it is always ready.
+        return definitions.map { it.name }.toSet() intersect (live.toSet() + DEVICE_STATUS)
     }
 
+    override fun deviceBackendLive(): Boolean =
+        members.any { member -> runCatching { member.deviceBackendLive() }.getOrDefault(false) }
+
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
-        if (name == "device_status") {
+        if (name == DEVICE_STATUS) {
             // Only the composite knows every backend, so it answers this itself.
             return ToolResult(statusLine() ?: "No device backend is configured.")
         }
         val chain = routes[name] ?: return ToolResult("Unknown tool: $name", success = false)
-        val reasons = mutableListOf<String>()
+        val refusals = mutableListOf<ToolNotServiceable>()
         for (member in chain) {
             try {
                 return member.invoke(name, arguments)
             } catch (absent: ToolNotServiceable) {
                 // Contract: nothing was dispatched, so another backend may try.
-                reasons += "${absent.errorType}: ${absent.message}"
+                refusals += absent
             }
             // Any other exception propagates: the action may already have been
             // committed, and repeating it on another backend could double it.
         }
-        return unavailable(name, reasons)
+        return unavailable(name, refusals)
     }
 
     override suspend fun cancel() {
@@ -111,22 +121,54 @@ class CompositeDeviceToolGateway(
         }
     }
 
-    private fun unavailable(name: String, reasons: List<String>): ToolResult = ToolResult(
-        UiObservationSerializer.failureJson(
-            observationId = "-",
-            revision = 0,
-            elapsedMs = 0,
-            errorType = "backend_unavailable",
-            message = "No device backend can currently serve \"$name\".",
-            remedy = "Ask the user to enable the Hey Mike accessibility service in " +
-                "Settings > Accessibility, or to connect Wireless Debugging.",
-            alternatives = definitions.map { it.name }.filter { it != name && it in READ_ONLY_ALTERNATIVES },
-            reasons = reasons,
-        ),
-        success = false,
-    )
+    /**
+     * Explains an exhausted chain by its most useful refusal.
+     *
+     * A backend that is simply switched off says nothing about the call. When a
+     * live backend refused for a reason of its own — no focused field, a key it
+     * cannot send — that reason leads. Reporting "no backend" instead is what
+     * made the model tell users a task needed ADB when it only needed a tap.
+     */
+    private fun unavailable(name: String, refusals: List<ToolNotServiceable>): ToolResult {
+        val specific = refusals.firstOrNull { it.errorType !in BACKEND_OFF }
+        val onlyAdbCanServe = refusals.isNotEmpty() && refusals.all { it.errorType == ADB_NOT_CONNECTED }
+        return ToolResult(
+            UiObservationSerializer.failureJson(
+                observationId = "-",
+                revision = 0,
+                elapsedMs = 0,
+                errorType = specific?.errorType ?: "backend_unavailable",
+                message = specific?.message ?: "No device backend can currently serve \"$name\".",
+                remedy = when {
+                    specific != null ->
+                        "Nothing happened on the device. Act on the message. Wireless ADB being off is " +
+                            "normal and is not the cause unless the message says so."
+                    onlyAdbCanServe ->
+                        "\"$name\" is one of the few tools that need Wireless ADB, an optional advanced " +
+                            "feature. Tell the user this one tool needs Wireless Debugging paired in Hey Mike " +
+                            "settings; screen control works without it."
+                    else ->
+                        "Ask the user to enable the Hey Mike accessibility service in " +
+                            "Settings > Accessibility. Wireless ADB is optional and not needed for this."
+                },
+                alternatives = definitions.map { it.name }.filter { it != name && it in READ_ONLY_ALTERNATIVES },
+                reasons = refusals.map { "${it.errorType}: ${it.message}" },
+            ),
+            success = false,
+        )
+    }
 
     private companion object {
+        const val DEVICE_STATUS = "device_status"
+        const val DEVICE_STATUS_DESCRIPTION =
+            "Report which device backends are live: the accessibility service, which serves screen control, " +
+                "and the optional Wireless ADB. Read-only."
+
+        const val ADB_NOT_CONNECTED = "adb_not_connected"
+
+        /** Refusals that only mean "this backend is off", never why the call itself failed. */
+        val BACKEND_OFF = setOf("a11y_unavailable", ADB_NOT_CONNECTED)
+
         /** Tools worth suggesting when the requested one has no live backend. */
         val READ_ONLY_ALTERNATIVES = setOf("read_ui", "screenshot", "device_status")
     }

@@ -14,42 +14,79 @@ class WorkspaceSeederTest {
     val tempFolder = TemporaryFolder()
 
     @Test
-    fun seedPopulatesWorkspaceHarnessWithoutSkillDuplicates() {
+    fun seedWritesTheBundledAgentsMdAndNothingElseOverIt() {
+        // An embedded ADB-era copy used to be written after the asset, so the
+        // current AGENTS.md never reached a single chat.
         val ws = tempFolder.newFolder("workspace")
-        WorkspaceSeeder.seed(ws, null)
+        WorkspaceSeeder.seedFrom(ws, bundled)
 
-        val agentsMd = File(ws, "AGENTS.md")
-        assertTrue("AGENTS.md should exist", agentsMd.isFile)
-        val agentsContent = agentsMd.readText()
-        assertTrue("Must describe 5-step loop", agentsContent.contains("Observe → Evaluate → Plan → Act → Verify"))
-        assertTrue("Must describe bounds formula", agentsContent.contains("x = (x1 + x2) / 2"))
-        assertTrue("Must state Golden Rules", agentsContent.contains("Golden Rules"))
-
-        val recoveryMd = File(ws, "RECOVERY.md")
-        assertTrue("RECOVERY.md should exist", recoveryMd.isFile)
-
+        assertEquals(BUNDLED_AGENTS, File(ws, "AGENTS.md").readText())
+        assertEquals(BUNDLED_PREFERENCES, File(ws, "preferences.json").readText())
         assertFalse("workspace must not duplicate user skills", File(ws, ".agents/skills/device-automation").exists())
         assertFalse("workspace must not use legacy .codex skills", File(ws, ".codex/skills/device-automation").exists())
+        assertEquals(setOf("AGENTS.md", "preferences.json"), ws.list()!!.toSet())
+    }
 
-        val whatsappCard = File(ws, "cards/whatsapp.md")
-        assertTrue("whatsapp.md card should exist", whatsappCard.isFile)
-        assertTrue(whatsappCard.readText().contains("com.whatsapp"))
+    @Test
+    fun theShippedAgentsMdIsAccessibilityFirst() {
+        val shipped = File(assetRoot(), "AGENTS.md").readText()
+        assertTrue(shipped.contains("Observe → Evaluate → Plan → Act → Verify"))
+        assertTrue(shipped.contains("Golden rules"))
+        assertTrue(shipped.contains("ADB being disconnected is normal"))
+        assertFalse("the ADB-era framing must not come back", shipped.contains("over local Wireless ADB"))
+        for (skill in listOf("device-automation", "app-cards", "recovery-and-safety", "user-preferences")) {
+            assertTrue("AGENTS.md must point at $skill", shipped.contains(skill))
+            assertTrue("$skill must ship", File(assetRoot(), "skills/$skill/SKILL.md").isFile)
+        }
+    }
 
-        val chromeCard = File(ws, "cards/chrome.md")
-        assertTrue("chrome.md card should exist", chromeCard.isFile)
+    @Test
+    fun seedRemovesTheFilesOlderReleasesPlantedButKeepsTheUsersOwn() {
+        val ws = tempFolder.newFolder("workspace_legacy")
+        File(ws, "RECOVERY.md").writeText("old")
+        File(ws, "cards").mkdirs()
+        File(ws, "cards/whatsapp.md").writeText("old")
+        val legacyOnly = tempFolder.newFolder("workspace_legacy_mixed")
+        File(legacyOnly, "cards").mkdirs()
+        File(legacyOnly, "cards/whatsapp.md").writeText("old")
+        File(legacyOnly, "cards/mine.md").writeText("keep me")
 
-        val mapsCard = File(ws, "cards/maps.md")
-        assertTrue("maps.md card should exist", mapsCard.isFile)
+        WorkspaceSeeder.seedFrom(ws, bundled)
+        WorkspaceSeeder.seedFrom(legacyOnly, bundled)
 
-        val settingsCard = File(ws, "cards/settings.md")
-        assertTrue("settings.md card should exist", settingsCard.isFile)
+        assertFalse(File(ws, "RECOVERY.md").exists())
+        assertFalse(File(ws, "cards").exists())
+        assertFalse(File(legacyOnly, "cards/whatsapp.md").exists())
+        assertEquals("keep me", File(legacyOnly, "cards/mine.md").readText())
+    }
 
-        val youtubeCard = File(ws, "cards/youtube.md")
-        assertTrue("youtube.md card should exist", youtubeCard.isFile)
+    @Test
+    fun seedWithoutAssetsStillGuaranteesPreferences() {
+        val ws = tempFolder.newFolder("workspace_no_assets")
+        WorkspaceSeeder.seed(ws, null)
 
         val prefs = File(ws, "preferences.json")
         assertTrue("preferences.json should exist", prefs.isFile)
         assertTrue("preferences.json should have default structure", prefs.readText().contains("\"messaging\": \"WhatsApp\""))
+    }
+
+    private val bundled: (String) -> ByteArray = { path ->
+        when (path) {
+            "AGENTS.md" -> BUNDLED_AGENTS.toByteArray()
+            "preferences.json" -> BUNDLED_PREFERENCES.toByteArray()
+            else -> error("unexpected asset $path")
+        }
+    }
+
+    /** The real bundled assets, so the shipped text is checked rather than a copy of it. */
+    private fun assetRoot(): File =
+        generateSequence(File("").absoluteFile) { it.parentFile }
+            .map { File(it, "app/src/main/assets/agent_stack") }
+            .first { it.isDirectory }
+
+    private companion object {
+        const val BUNDLED_AGENTS = "# Bundled harness\n"
+        const val BUNDLED_PREFERENCES = "{\"apps\":{}}"
     }
 
     @Test

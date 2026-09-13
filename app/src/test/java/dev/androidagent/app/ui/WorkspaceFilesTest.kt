@@ -9,7 +9,7 @@ class WorkspaceFilesTest {
     private val items = listOf(
         WorkspaceFileItem("AGENTS.md", 900, modifiedAt = 500),
         WorkspaceFileItem("attachments/3f2b1c4d-1234-4abc-8def-0123456789ab-receipt.jpg", 204_800, modifiedAt = 200),
-        WorkspaceFileItem("cards/whatsapp.md", 400, modifiedAt = 500),
+        WorkspaceFileItem(".agents/skills/app-cards/SKILL.md", 400, modifiedAt = 500),
         WorkspaceFileItem("notes/summary.md", 1_200, modifiedAt = 300),
         WorkspaceFileItem("preferences.json", 300, modifiedAt = 500),
         WorkspaceFileItem("attachments", isDirectory = true),
@@ -23,14 +23,15 @@ class WorkspaceFilesTest {
 
     @Test fun whatTheAppPlantsIsKeptApartInPathOrder() {
         val listing = workspaceListing(items)
-        assertEquals(listOf("AGENTS.md", "cards/whatsapp.md", "preferences.json"), listing.agent.map { it.item.path })
-        assertEquals("", listing.agent.first().folder)
+        assertEquals(listOf(".agents/skills/app-cards/SKILL.md", "AGENTS.md", "preferences.json"), listing.agent.map { it.item.path })
     }
 
     @Test fun hiddenFoldersAndSeededRootsAreAgentFiles() {
         assertTrue(isAgentFile(".agents/skills/x/SKILL.md"))
-        assertTrue(isAgentFile("cards/maps.md"))
-        assertTrue(isAgentFile("RECOVERY.md"))
+        assertTrue(isAgentFile("AGENTS.md"))
+        assertTrue(isAgentFile("preferences.json"))
+        // No longer seeded, so a folder by that name is the user's own.
+        assertFalse(isAgentFile("cards/maps.md"))
         assertFalse(isAgentFile("attachments/photo.png"))
         assertFalse(isAgentFile("report.md"))
     }

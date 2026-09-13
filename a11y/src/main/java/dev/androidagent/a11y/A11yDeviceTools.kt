@@ -6,6 +6,8 @@ import android.content.Context
 import android.graphics.Path
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
+import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
+import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.READ_UI_DESCRIPTION
 import dev.androidagent.core.ObservationState
@@ -21,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -148,6 +151,7 @@ class A11yDeviceTools(
         }
         checkActive()
         val result = when (name) {
+            "act_and_observe" -> actAndObserve(arguments)
             "read_ui" -> readUi(arguments)
             "screenshot" -> screenshot()
             "tap" -> tap(arguments)
@@ -168,6 +172,37 @@ class A11yDeviceTools(
         }
         checkActive()
         return result
+    }
+
+    /**
+     * One action, then a fresh observation.
+     *
+     * Only ADB used to serve this, so the tool the system prompt recommends
+     * failed as soon as Wireless Debugging was off. A [ToolNotServiceable] from
+     * the action still propagates, since nothing has happened yet and ADB may
+     * take the whole call; once the action has landed, nothing may.
+     */
+    private suspend fun actAndObserve(arguments: JsonObject): ToolResult {
+        val action = arguments["action"]?.jsonPrimitive?.contentOrNull
+        require(action in ACT_AND_OBSERVE_ACTIONS) { "Choose one supported action." }
+        val args = arguments["arguments"] as? JsonObject
+            ?: throw IllegalArgumentException("Action arguments are required.")
+        val result = invoke(action!!, args)
+        if (!result.success) return result // Never observe after a failed commit.
+        checkActive()
+        val observation = try {
+            readUi(buildJsonObject {})
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            ToolResult("Observation failed: ${failure.message}. Do not repeat the completed action.", success = false)
+        }
+        return ToolResult(buildJsonObject {
+            put("actionCompleted", true)
+            put("actionResult", result.text)
+            put("observationSucceeded", observation.success)
+            put("observation", runCatching { Json.parseToJsonElement(observation.text) }.getOrElse { JsonPrimitive(observation.text) })
+        }.toString(), success = observation.success)
     }
 
     // ---- observation ----
@@ -350,7 +385,8 @@ class A11yDeviceTools(
             ?: throw ToolNotServiceable(
                 "key_unsupported",
                 "Accessibility can only send ${GLOBAL_ACTIONS.keys.sorted().joinToString(", ")}. " +
-                    "\"$raw\" needs the ADB backend.",
+                    "To submit a field use type_text with submit=true, or tap the on-screen button; " +
+                    "only other raw key codes need the optional Wireless ADB.",
             )
         val service = requireService()
         val sent = service.performGlobalAction(action)
@@ -601,6 +637,7 @@ class A11yDeviceTools(
         )
 
         private val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
+            ACT_AND_OBSERVE_DEFINITION,
             tool(
                 "read_ui",
                 READ_UI_DESCRIPTION,
