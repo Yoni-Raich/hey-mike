@@ -13,6 +13,7 @@
   for <contact>" or "Always allow sending in <app>" to stop being asked, and
   review or remove those in Settings > Sending approvals. The list is signed
   with a key in the Android Keystore, so the agent cannot add to it.
+
 ## 0.11.0 — 2026-09-13
 
 - Quick actions: "message dad", "call mom" or "navigate home" is one step.
