@@ -31,9 +31,21 @@ class SetupChecklistTest {
 
     @Test fun anEmptyPhoneListsEveryRequiredStep() {
         val rows = SetupChecklist.rows(SetupSignals())
-        assertEquals(5, SetupChecklist.outstanding(rows))
+        assertEquals(4, SetupChecklist.outstanding(rows))
         assertFalse(SetupChecklist.readyForRuns(rows))
-        assertEquals("5 things to finish", SetupChecklist.headline(rows))
+        assertEquals("4 things to finish", SetupChecklist.headline(rows))
+    }
+
+    @Test fun anUnpairedWirelessAdbNeverBlocksARun() {
+        // Screen control runs on the accessibility service; ADB only adds
+        // shell, files and installs, so an unpaired phone is ready.
+        val signals = ready.copy(adbPhase = ConnectionPhase.DISCONNECTED, adbPort = null)
+        val rows = SetupChecklist.rows(signals)
+        assertTrue(SetupChecklist.readyForRuns(rows))
+        assertEquals("Ready", SetupChecklist.headline(rows))
+        val adb = row(signals, SetupItem.WIRELESS_ADB)
+        assertEquals(SetupImportance.OPTIONAL, adb.importance)
+        assertEquals(SetupState.PENDING, adb.state)
     }
 
     @Test fun optionalPermissionsNeverBlockARun() {

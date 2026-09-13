@@ -14,6 +14,9 @@
     like typing with no field focused or pressing Enter, fell through to a
     disconnected ADB and came back as "ADB is not connected".
   - `act_and_observe` worked only over ADB.
+- Wireless ADB is no longer a setup step. The chat stops showing "1 thing to
+  finish before the agent can run" on a phone without it, and Settings lists
+  it under "Nice to have".
 - When neither the accessibility service nor ADB is on, Mike now says so and
   asks for the accessibility service. The always-available knowledge and
   workflow tools used to hide that.
