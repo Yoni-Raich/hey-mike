@@ -1,0 +1,43 @@
+package dev.androidagent.app.ui
+
+import dev.androidagent.core.EngineEvent
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ApprovalSummaryTest {
+
+    private fun approval(uri: String, pkg: String? = null, reason: String = "Open a prefilled message.") =
+        EngineEvent.Approval(
+            requestId = "r",
+            method = "open_intent",
+            details = buildJsonObject {
+                put("reason", reason)
+                put("action", "android.intent.action.VIEW")
+                put("uri", uri)
+                pkg?.let { put("package", it) }
+            },
+        )
+
+    @Test fun aWhatsAppMessageNamesTheRecipientAndTheDecodedText() {
+        // The card that failed on the phone showed this exact request as raw JSON.
+        val summary = approval("https://wa.me/972587160002?text=%D7%94%D7%99%D7%99", "com.whatsapp").summary()
+        assertEquals("Send a WhatsApp message?", summary.headline)
+        assertEquals(listOf("To" to "+972587160002", "Message" to "היי"), summary.lines)
+    }
+
+    @Test fun anSmsShowsTheNumberAndBody() {
+        val summary = approval("smsto:+972500000000?body=on%20my%20way%20%26%20close").summary()
+        assertEquals("Send an SMS?", summary.headline)
+        assertEquals(listOf("To" to "+972500000000", "Message" to "on my way & close"), summary.lines)
+    }
+
+    @Test fun anythingElseFallsBackToTheReasonAndLink() {
+        val summary = approval("https://pay.example/?amount=10", reason = "Start a payment.").summary()
+        assertEquals("Open this?", summary.headline)
+        assertTrue(summary.lines.contains("What" to "Start a payment."))
+        assertTrue(summary.lines.contains("Link" to "https://pay.example/?amount=10"))
+    }
+}

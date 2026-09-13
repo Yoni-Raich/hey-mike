@@ -271,8 +271,37 @@ class AgentCoordinator(
         }
     }
 
+    /**
+     * Answer the waiting approval with the user's own words, spoken or typed.
+     *
+     * Returns true when [reply] was a plain yes or no and an approval was
+     * waiting, so the caller does not also send it to the agent. Anything else
+     * returns false and is left for the agent: "yes, but at 7pm" is an
+     * instruction. Callers must pass only text the user produced.
+     *
+     * @param record add the reply to the chat. A voice transcript is recorded
+     *   by the voice path already, so it passes false.
+     */
+    fun answerApprovalByReply(reply: String, record: Boolean = true): Boolean {
+        val allow = ApprovalReply.parse(reply) ?: return false
+        val (approval, sessionId) = synchronized(lifecycleLock) {
+            val approval = state.value.approval?.takeIf { state.value.phase != RunPhase.STOPPING }
+            approval to state.value.sessionId
+        }
+        if (approval == null) return false
+        if (record && sessionId != null) {
+            scope.launch { runCatching { sessions.append(message(sessionId, "user", reply.trim())) } }
+        }
+        approve(approval.requestId, allow)
+        return true
+    }
+
     fun steer(prompt: String) {
         if (prompt.isBlank()) return
+        // Typing "yes" while an approval waits answers it. Steering it to the
+        // agent instead would leave the tool call blocked on a card the user
+        // may not be looking at.
+        if (answerApprovalByReply(prompt)) return
         val request = synchronized(lifecycleLock) {
             val current = state.value
             val currentThread = thread
@@ -495,8 +524,8 @@ class AgentCoordinator(
                 decision == null -> localIntentRejected(
                     "approval_timeout",
                     "Nobody answered the approval within ${LOCAL_APPROVAL_TIMEOUT_MS / 1_000} seconds. " +
-                        "It is shown in the Hey Mike app, not on the floating card. Tell the user " +
-                        "it is waiting there, then call open_intent again once they have answered.",
+                        "It was shown in the Hey Mike app above the message box. Ask the user again: " +
+                        "they can tap Allow or just say \"yes\". Call open_intent again once they agree.",
                 )
                 decision == false -> localIntentRejected(
                     "intent_denied",

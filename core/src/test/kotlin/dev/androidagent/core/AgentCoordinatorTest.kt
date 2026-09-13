@@ -326,6 +326,46 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun sayingYesOrNoAnswersTheWaitingApprovalInsteadOfSteering() = runTest {
+        // The card can be out of sight (voice mode, another app in front), so
+        // the user's own "כן" / "no" has to answer it.
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        var dispatches = 0
+        val approved = async {
+            rig.coordinator.authorizeLocalIntent(
+                LocalIntentRequest("android.intent.action.VIEW", "https://wa.me/972500000000?text=hi", "com.whatsapp", "Send a message."),
+            ) { dispatches++; ToolResult("launched") }
+        }
+        runCurrent()
+        rig.coordinator.steer("כן")
+        runCurrent()
+        assertTrue(approved.await().success)
+        assertEquals(1, dispatches)
+        assertTrue("an answer is not an instruction to the agent", rig.engine.steers.isEmpty())
+
+        val denied = async {
+            rig.coordinator.authorizeLocalIntent(
+                LocalIntentRequest("android.intent.action.VIEW", "https://wa.me/972500000000?text=hi", "com.whatsapp", "Send a message."),
+            ) { dispatches++; ToolResult("launched") }
+        }
+        runCurrent()
+        assertTrue(rig.coordinator.answerApprovalByReply("No", record = false))
+        runCurrent()
+        assertFalse(denied.await().success)
+        assertEquals(1, dispatches)
+        rig.close()
+    }
+
+    @Test fun withNoApprovalWaitingAYesIsAnOrdinaryInstruction() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Open the message")
+        runCurrent()
+        assertFalse(rig.coordinator.answerApprovalByReply("yes"))
+        rig.close()
+    }
+
     @Test fun denyingOrStoppingALocalIntentNeverDispatchesIt() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Open the message")
@@ -517,7 +557,8 @@ class AgentCoordinatorTest {
             this.planModel = planModel
             return startTurn(threadId, prompt, images, reasoningEffort, skill, capabilities)
         }
-        override suspend fun steer(threadId: String, turnId: String, prompt: String) = Unit
+        val steers = mutableListOf<String>()
+        override suspend fun steer(threadId: String, turnId: String, prompt: String) { steers += prompt }
         override suspend fun interrupt(threadId: String, turnId: String) { waitForInterrupt?.await() }
         override suspend fun answerTool(requestId: String, result: ToolResult) { answers.add(result) }
         override suspend fun answerApproval(requestId: String, allow: Boolean) {

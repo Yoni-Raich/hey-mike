@@ -172,9 +172,11 @@ The body is percent-encoded and attached for you. `text` needs a uri to attach t
 
 ### Approvals block the call
 
-Anything that acts on the user's behalf — a prefilled message, a payment, any `sms:`/`mailto:`/`SENDTO` destination — pauses on an approval **the user must answer inside the Hey Mike app**. The app is raised to the front when this happens, and the floating card reads "Approve in Hey Mike".
+Anything that acts on the user's behalf — a prefilled message, a payment, any `sms:`/`mailto:`/`SENDTO` destination — pauses on an approval the user must answer. The app is raised to the front and shows the request (who, what message) above the message box, or on the voice screen during a voice conversation.
 
-`open_intent` does not return until they answer, so **say that you are waiting before you call it**. Adding `text` to a link that opened instantly without it is exactly what turns it into an approval, so expect the pause.
+The user answers by tapping **Allow** or **Deny**, or simply by **saying or typing "yes" / "כן" or "no" / "לא"**. You cannot answer it for them.
+
+`open_intent` does not return until they answer, so **before you call it, say who it goes to and what it says, and that they can say "yes" or tap Allow**. In a voice conversation, say it out loud. Adding `text` to a link that opened instantly without it is exactly what turns it into an approval, so expect the pause.
 
 Three different outcomes, and they mean different things:
 

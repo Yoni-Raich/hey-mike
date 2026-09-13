@@ -111,6 +111,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (graph.voice.state.value.active) {
             if (id != voiceLocalSessionId) { error("End voice before sending in another chat."); return }
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
+            if (graph.coordinator.answerApprovalByReply(text)) return
             task {
                 synchronized(pendingVoiceTexts) { pendingVoiceTexts.addLast(text) }
                 try {
@@ -551,6 +552,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 } else false
                 if (text.isNotBlank() && !skipTypedUserEcho) {
                     val role = if (event.role.equals("assistant", ignoreCase = true)) "assistant" else "user"
+                    // Saying "yes" / "כן" answers a waiting approval: in voice
+                    // mode the card is under the voice screen. Only the user's
+                    // own transcript can do this, never the agent's speech.
+                    if (role == "user") graph.coordinator.answerApprovalByReply(text, record = false)
                     graph.sessions.append(
                         ChatMessage(UUID.randomUUID().toString(), localSessionId, role, text, System.currentTimeMillis())
                     )

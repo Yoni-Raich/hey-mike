@@ -207,6 +207,16 @@ internal fun VoiceModeLayer(
                     .fillMaxWidth()
                     .onGloballyPositioned { stage = it.boundsInRoot() },
             )
+            // The chat's approval card is under this screen, so a request made
+            // during a voice conversation is answered here: by tapping, or by
+            // saying "yes" or "no".
+            state.runState.approval?.let { approval ->
+                ApprovalCard(
+                    approval = approval,
+                    onApproval = actions.onApproval,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
             VoiceStatus(voice, state.voiceMuted, Modifier.voiceStage(motion.status, lift = 10.dp))
             VoiceCaption(
                 transcript = state.voiceTranscript,
