@@ -31,8 +31,9 @@ class WorkspaceSeederTest {
     fun theShippedAgentsMdIsAccessibilityFirst() {
         val shipped = File(assetRoot(), "AGENTS.md").readText()
         assertTrue(shipped.contains("Observe → Evaluate → Plan → Act → Verify"))
-        assertTrue(shipped.contains("Golden rules"))
         assertTrue(shipped.contains("ADB being disconnected is normal"))
+        // Identity lives in the system instructions only; a second copy is how they drifted apart.
+        assertFalse(shipped.contains("Your name is"))
         assertFalse("the ADB-era framing must not come back", shipped.contains("over local Wireless ADB"))
         for (skill in listOf("device-automation", "app-cards", "recovery-and-safety", "user-preferences")) {
             assertTrue("AGENTS.md must point at $skill", shipped.contains(skill))

@@ -453,6 +453,21 @@ class CodexEngineTest {
         assertEquals(1, startParams["dynamicTools"]?.jsonArray?.size)
     }
 
+    @Test fun developerInstructionsHoldIdentityAndRulesAndLeaveOperationToAgentsMd() {
+        val work = File("workspace")
+        val instructions = CodexEngine.startSessionParams(work, null, emptyList())["developerInstructions"]!!.jsonPrimitive.content
+        assertEquals(instructions, CodexEngine.resumeSessionParams(work, "t", null)["developerInstructions"]!!.jsonPrimitive.content)
+
+        assertTrue(instructions.contains("Your name is Mike"))
+        assertTrue(instructions.contains("AGENTS.md in the current workspace is your operating manual"))
+        assertTrue(instructions.contains("[Trusted Android Agent runtime context]"))
+        // Operating guidance has one home, the workspace AGENTS.md. A second
+        // copy here is how a stale one kept saying device control needed ADB.
+        assertFalse(instructions.contains("Observe"))
+        assertFalse(instructions.contains("Addressing"))
+        assertFalse(instructions.contains("ADB availability"))
+    }
+
     @Test fun openSessionFallsBackToThreadStartOnResumeFailure() = runBlocking {
         val serverIn = java.io.PipedInputStream()
         val clientOut = java.io.PipedOutputStream(serverIn)
