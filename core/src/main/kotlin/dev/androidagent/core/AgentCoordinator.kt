@@ -19,6 +19,8 @@ class AgentCoordinator(
     private val sessions: SessionStore,
     private val tools: DeviceToolGateway,
     private val overlay: ControlOverlay,
+    /** Standing "always allow" answers to send approvals. */
+    private val sendGrants: SendGrantStore = InMemorySendGrantStore(),
     /**
      * Bring the app's own window to the front.
      *
@@ -410,7 +412,12 @@ class AgentCoordinator(
         }
     }
 
-    fun approve(requestId: String, allow: Boolean) {
+    /**
+     * @param scope for an allowed send, whether to remember the answer. Only a
+     *   user action can pass anything but [ApprovalScope.ONCE]; a spoken "yes"
+     *   never grants a standing permission.
+     */
+    fun approve(requestId: String, allow: Boolean, scope: ApprovalScope = ApprovalScope.ONCE) {
         val handledLocally = synchronized(lifecycleLock) {
             val pending = pendingLocalApproval
             if (
@@ -418,6 +425,17 @@ class AgentCoordinator(
                 state.value.approval?.requestId == requestId &&
                 isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)
             ) {
+                val send = pending.send
+                if (allow && send != null) {
+                    val grant = when (scope) {
+                        ApprovalScope.ONCE -> null
+                        // No recipient on screen means nothing to pin the grant
+                        // to; never widen it to the whole app on the user's behalf.
+                        ApprovalScope.CONTACT -> send.recipient?.let { SendGrant(send.packageName, send.appLabel, it) }
+                        ApprovalScope.APP -> SendGrant(send.packageName, send.appLabel, null)
+                    }
+                    grant?.let { runCatching { sendGrants.add(it) } }
+                }
                 pending.decision.complete(allow)
                 true
             } else {
@@ -459,6 +477,81 @@ class AgentCoordinator(
         request: LocalIntentRequest,
         dispatch: () -> ToolResult,
     ): ToolResult {
+        val pending = openLocalApproval(
+            prefix = "local-intent",
+            method = "open_intent",
+            details = buildJsonObject {
+                put("reason", request.reason)
+                put("action", request.action)
+                request.uri?.let { put("uri", it) }
+                request.packageName?.let { put("package", it) }
+            },
+            send = null,
+        )
+        return when (awaitLocalApproval(pending)) {
+            LocalOutcome.STOPPED -> localIntentRejected("intent_not_approved", "Run stopped before the intent was approved.")
+            LocalOutcome.TIMED_OUT -> localIntentRejected(
+                "approval_timeout",
+                "Nobody answered the approval within ${LOCAL_APPROVAL_TIMEOUT_MS / 1_000} seconds. " +
+                    "It was shown in the Hey Mike app above the message box. Ask the user again: " +
+                    "they can tap Allow or just say \"yes\". Call open_intent again once they agree.",
+            )
+            LocalOutcome.DENIED -> localIntentRejected(
+                "intent_denied",
+                "The user denied this intent. Do not retry it; ask what they want instead.",
+            )
+            LocalOutcome.ALLOWED -> dispatch()
+        }
+    }
+
+    /**
+     * Gate the tap that sends a message from another app.
+     *
+     * A standing grant the user gave ("always for this contact" or "always in
+     * this app") dispatches at once. Otherwise the user sees who gets what and
+     * answers; [dispatch] runs only after an Allow, and is responsible for
+     * getting back to the app it sends from, because asking raised this one.
+     */
+    suspend fun authorizeSend(
+        request: SendRequest,
+        dispatch: suspend () -> ToolResult,
+    ): ToolResult {
+        if (runCatching { sendGrants.covers(request) }.getOrDefault(false)) return dispatch()
+        val pending = openLocalApproval(
+            prefix = "send",
+            method = "send_message",
+            details = buildJsonObject {
+                put("kind", "send")
+                put("app", request.appLabel)
+                put("package", request.packageName)
+                request.recipient?.let { put("recipient", it) }
+                request.message?.let { put("message", it) }
+            },
+            send = request,
+        )
+        return when (awaitLocalApproval(pending)) {
+            LocalOutcome.STOPPED -> localIntentRejected("send_not_approved", "Run stopped before the send was approved. Nothing was sent.")
+            LocalOutcome.TIMED_OUT -> localIntentRejected(
+                "approval_timeout",
+                "Nobody answered the send approval within ${LOCAL_APPROVAL_TIMEOUT_MS / 1_000} seconds, so " +
+                    "nothing was sent. Ask the user again: they can tap Allow or just say \"yes\".",
+            )
+            LocalOutcome.DENIED -> localIntentRejected(
+                "send_denied",
+                "The user did not approve sending this. Nothing was sent. Do not retry; ask what they want instead.",
+            )
+            LocalOutcome.ALLOWED -> dispatch()
+        }
+    }
+
+    private enum class LocalOutcome { ALLOWED, DENIED, TIMED_OUT, STOPPED }
+
+    private fun openLocalApproval(
+        prefix: String,
+        method: String,
+        details: kotlinx.serialization.json.JsonObject,
+        send: SendRequest?,
+    ): PendingLocalApproval {
         val pending = synchronized(lifecycleLock) {
             val token = epoch.get()
             val currentThread = thread ?: throw CancellationException("Run stopped")
@@ -469,16 +562,11 @@ class AgentCoordinator(
             check(state.value.approval == null && pendingLocalApproval == null) {
                 "Another approval is already waiting for the user."
             }
-            val id = "local-intent-${UUID.randomUUID()}"
+            val id = "$prefix-${UUID.randomUUID()}"
             val approval = EngineEvent.Approval(
                 requestId = id,
-                method = "open_intent",
-                details = buildJsonObject {
-                    put("reason", request.reason)
-                    put("action", request.action)
-                    request.uri?.let { put("uri", it) }
-                    request.packageName?.let { put("package", it) }
-                },
+                method = method,
+                details = details,
                 threadId = currentThread,
                 turnId = currentTurn,
             )
@@ -488,6 +576,7 @@ class AgentCoordinator(
                 threadId = currentThread,
                 turnId = currentTurn,
                 decision = CompletableDeferred(),
+                send = send,
             ).also {
                 pendingLocalApproval = it
                 mutableState.value = state.value.copy(
@@ -502,7 +591,10 @@ class AgentCoordinator(
         }
         // Outside the lock: this hands control to the host's UI thread.
         runCatching { bringToForeground() }
+        return pending
+    }
 
+    private suspend fun awaitLocalApproval(pending: PendingLocalApproval): LocalOutcome {
         // null means nobody answered; false means the user said no. They are
         // different outcomes and the model has to be able to tell them apart.
         val decision = try {
@@ -511,27 +603,15 @@ class AgentCoordinator(
             clearLocalApproval(pending)
             throw cancelled
         }
-
         return synchronized(lifecycleLock) {
             val stillCurrent = pendingLocalApproval === pending &&
                 isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)
             clearLocalApprovalLocked(pending)
             when {
-                !stillCurrent -> localIntentRejected(
-                    "intent_not_approved",
-                    "Run stopped before the intent was approved.",
-                )
-                decision == null -> localIntentRejected(
-                    "approval_timeout",
-                    "Nobody answered the approval within ${LOCAL_APPROVAL_TIMEOUT_MS / 1_000} seconds. " +
-                        "It was shown in the Hey Mike app above the message box. Ask the user again: " +
-                        "they can tap Allow or just say \"yes\". Call open_intent again once they agree.",
-                )
-                decision == false -> localIntentRejected(
-                    "intent_denied",
-                    "The user denied this intent. Do not retry it; ask what they want instead.",
-                )
-                else -> dispatch()
+                !stillCurrent -> LocalOutcome.STOPPED
+                decision == null -> LocalOutcome.TIMED_OUT
+                decision == false -> LocalOutcome.DENIED
+                else -> LocalOutcome.ALLOWED
             }
         }
     }
@@ -1037,6 +1117,8 @@ class AgentCoordinator(
         val threadId: String,
         val turnId: String,
         val decision: CompletableDeferred<Boolean>,
+        /** Set for a send approval, so an "always" answer knows what to remember. */
+        val send: SendRequest? = null,
     )
     private data class AssistantTextSnapshot(val revision: Long, val text: String)
     private data class AssistantFinal(val id: String?, val text: String, val outcome: String, val flush: Job?)

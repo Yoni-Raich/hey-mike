@@ -17,10 +17,26 @@ internal data class ApprovalSummary(
     val headline: String,
     /** Label and value pairs, in display order. */
     val lines: List<Pair<String, String>>,
+    /** Set for a send in another app: the "always allow" choices name it. */
+    val sendApp: String? = null,
+    val sendRecipient: String? = null,
 )
 
 internal fun EngineEvent.Approval.summary(): ApprovalSummary {
     fun detail(key: String) = (details[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    if (detail("kind") == "send") {
+        val app = detail("app") ?: detail("package") ?: "this app"
+        val recipient = detail("recipient")
+        return ApprovalSummary(
+            headline = "Send this $app message?",
+            lines = buildList {
+                add("To" to (recipient ?: "the open chat"))
+                detail("message")?.let { add("Message" to it) }
+            },
+            sendApp = app,
+            sendRecipient = recipient,
+        )
+    }
     val uri = detail("uri")
     val parsed = uri?.let { runCatching { URI(it) }.getOrNull() }
     // An opaque uri such as smsto:+972…?body=… has no rawQuery of its own.

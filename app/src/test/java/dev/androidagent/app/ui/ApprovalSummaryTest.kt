@@ -34,6 +34,24 @@ class ApprovalSummaryTest {
         assertEquals(listOf("To" to "+972500000000", "Message" to "on my way & close"), summary.lines)
     }
 
+    @Test fun aSendNamesTheChatAndOffersBothAlwaysChoices() {
+        val summary = EngineEvent.Approval(
+            requestId = "s",
+            method = "send_message",
+            details = buildJsonObject {
+                put("kind", "send")
+                put("app", "WhatsApp")
+                put("package", "com.whatsapp")
+                put("recipient", "My Wife")
+                put("message", "hi")
+            },
+        ).summary()
+        assertEquals("Send this WhatsApp message?", summary.headline)
+        assertEquals(listOf("To" to "My Wife", "Message" to "hi"), summary.lines)
+        assertEquals("WhatsApp", summary.sendApp)
+        assertEquals("My Wife", summary.sendRecipient)
+    }
+
     @Test fun anythingElseFallsBackToTheReasonAndLink() {
         val summary = approval("https://pay.example/?amount=10", reason = "Start a payment.").summary()
         assertEquals("Open this?", summary.headline)

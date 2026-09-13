@@ -254,6 +254,7 @@ fun AndroidAgentScreen(
                             ApprovalCard(
                                 approval = approval,
                                 onApproval = actions.onApproval,
+                                onApproveAlways = actions.onApproveAlways,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
@@ -772,6 +773,7 @@ private fun MessageBubble(message: ChatMessage) {
 internal fun ApprovalCard(
     approval: EngineEvent.Approval,
     onApproval: (String, Boolean) -> Unit,
+    onApproveAlways: (String, dev.androidagent.core.ApprovalScope) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val summary = remember(approval) { approval.summary() }
@@ -815,6 +817,18 @@ internal fun ApprovalCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onApproval(approval.requestId, false) }) { Text("Deny") }
                 Button(onClick = { onApproval(approval.requestId, true) }) { Text("Allow") }
+            }
+            // Standing permissions only for a send, and only by a tap: a spoken
+            // "yes" always answers this one message.
+            summary.sendApp?.let { app ->
+                summary.sendRecipient?.let { recipient ->
+                    TextButton(onClick = { onApproveAlways(approval.requestId, dev.androidagent.core.ApprovalScope.CONTACT) }) {
+                        Text("Always allow for $recipient")
+                    }
+                }
+                TextButton(onClick = { onApproveAlways(approval.requestId, dev.androidagent.core.ApprovalScope.APP) }) {
+                    Text("Always allow sending in $app")
+                }
             }
         }
     }

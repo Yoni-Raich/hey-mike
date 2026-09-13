@@ -66,22 +66,15 @@ object IntentPolicy {
         "android.intent.action.MAIN",
     )
 
-    /** Schemes whose whole purpose is to send something to another person. */
+    /** Schemes that open a message draft to someone. Opening one sends nothing. */
     private val messagingSchemes: Set<String> = setOf("sms", "smsto", "mms", "mmsto", "mailto")
 
     /**
-     * Query keys that carry a payload rather than a destination.
-     *
-     * A `tel:` or a map link names a place to go. A `?text=` or `?body=` names
-     * something to send, and that is the line between navigating and acting.
+     * Query keys that carry a payload rather than a destination. Two payloads
+     * in one uri are ambiguous, so [withText] refuses to add a second.
      */
     private val payloadKeys: Set<String> = setOf(
         "body", "text", "subject", "message", "amount", "cc", "bcc",
-    )
-
-    /** Hosts that carry a prefilled outbound message in an ordinary https URL. */
-    private val messagingHosts: Set<String> = setOf(
-        "wa.me", "api.whatsapp.com", "t.me", "telegram.me", "m.me",
     )
 
     private const val MAX_URI_CHARS = 2_000
@@ -120,9 +113,9 @@ object IntentPolicy {
      * A model that hand-builds `?text=` gets the encoding wrong: an unencoded
      * space or `&` either truncates the message at the first separator or
      * fails [URI] parsing outright, which is why the caller hands over plain
-     * text and this composes it. The result always carries a payload, so
-     * [evaluate] will classify it as [Decision.NeedsConfirmation] — attaching
-     * text can never quietly downgrade an intent to [Decision.Allow].
+     * text and this composes it. The composed uri still goes through
+     * [evaluate]; the text only fills a draft, and the send is gated where the
+     * send button is pressed.
      */
     fun withText(uri: String?, text: String?): Decision {
         val body = text?.takeIf { it.isNotBlank() } ?: return Decision.Allow(uri, "")
@@ -244,39 +237,25 @@ object IntentPolicy {
     /**
      * One sentence naming the side effect, or null when the intent only
      * navigates.
+     *
+     * Opening a message draft is not a side effect. `wa.me/…?text=`, `smsto:`
+     * and `mailto:` land on a composer with the text typed in, and nothing
+     * leaves the phone until Send is pressed. Asking here made the user approve
+     * a screen that sends nothing, while the tap that does send went unasked;
+     * the send itself is gated where it happens, by the device backend.
      */
     private fun describeSideEffect(uri: URI, scheme: String, action: String): String? {
         val query = queryOf(uri)
-        val payload = if (query.containsKey("amount")) {
-            "amount"
-        } else {
-            payloadKeys.firstOrNull { key -> query.containsKey(key) }
-        }
-        if (scheme in messagingSchemes) {
-            val target = (uri.schemeSpecificPart ?: "").substringBefore('?').ifBlank { "a recipient" }
-            return "Open a prefilled $scheme message to $target" +
-                (payload?.let { ", carrying a $it" } ?: "") + "."
-        }
-        if (action == "android.intent.action.SENDTO") {
-            return "Send to a recipient through another app."
-        }
-        val host = uri.host?.lowercase(Locale.ROOT)
-        if (host != null && host in messagingHosts && payload != null) {
-            return "Open $host with a prefilled message ($payload)."
-        }
-        if (payload == "amount") {
+        if (query.containsKey("amount")) {
             return "Start a payment."
         }
-        if (payload != null && (scheme == "http" || scheme == "https")) {
-            // A search URL also carries ?text=, so this is not on its own a
-            // side effect; only the messaging hosts above are treated as one.
+        if (scheme in messagingSchemes) {
             return null
         }
-        if (payload != null) {
-            // Private app schemes are intentionally supported, but a payload
-            // such as whatsapp://send?text=... is still an outbound action.
-            // Ask rather than treating every unknown scheme as navigation.
-            return "Open $scheme with a prefilled $payload."
+        if (action == "android.intent.action.SENDTO") {
+            // SENDTO to anything but a known draft scheme may hand the data
+            // straight to an app that acts on it.
+            return "Send to a recipient through another app."
         }
         return null
     }

@@ -79,6 +79,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { graph.voice.state.collect { state -> mutable.update { it.copy(voiceState = state) } } }
         viewModelScope.launch { graph.voice.muted.collect { muted -> mutable.update { it.copy(voiceMuted = muted) } } }
+        viewModelScope.launch { graph.sendGrants.grants.collect { grants -> mutable.update { it.copy(sendGrants = grants) } } }
         viewModelScope.launch { graph.engine.voiceEvents.collect(::handleVoiceEvent) }
         viewModelScope.launch { graph.engine.events.collect { event ->
             when (event) {

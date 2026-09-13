@@ -214,6 +214,7 @@ internal fun VoiceModeLayer(
                 ApprovalCard(
                     approval = approval,
                     onApproval = actions.onApproval,
+                    onApproveAlways = actions.onApproveAlways,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }

@@ -358,6 +358,53 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aSendWaitsForTheUserAndAnAlwaysAnswerCoversOnlyWhatItNames() = runTest {
+        val grants = InMemorySendGrantStore()
+        val rig = Rig(this, grants)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        val toWife = SendRequest("com.whatsapp", "WhatsApp", "My Wife", "hi")
+        var sends = 0
+
+        val first = async { rig.coordinator.authorizeSend(toWife) { sends++; ToolResult("sent") } }
+        runCurrent()
+        val approval = checkNotNull(rig.coordinator.state.value.approval)
+        assertEquals("send_message", approval.method)
+        assertEquals(0, sends)
+        rig.coordinator.approve(approval.requestId, true, ApprovalScope.CONTACT)
+        runCurrent()
+        assertTrue(first.await().success)
+        assertEquals(listOf(SendGrant("com.whatsapp", "WhatsApp", "My Wife")), grants.grants.value)
+
+        // Remembered: the same contact goes straight through.
+        assertTrue(rig.coordinator.authorizeSend(toWife.copy(message = "later")) { sends++; ToolResult("sent") }.success)
+        assertEquals(2, sends)
+        assertNull(rig.coordinator.state.value.approval)
+
+        // Anyone else still asks, and a denial sends nothing.
+        val other = async { rig.coordinator.authorizeSend(toWife.copy(recipient = "Boss")) { sends++; ToolResult("sent") } }
+        runCurrent()
+        rig.coordinator.approve(rig.coordinator.state.value.approval!!.requestId, false)
+        runCurrent()
+        assertFalse(other.await().success)
+        assertEquals(2, sends)
+        rig.close()
+    }
+
+    @Test fun aSpokenYesNeverGrantsAStandingPermission() = runTest {
+        val grants = InMemorySendGrantStore()
+        val rig = Rig(this, grants)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        val sent = async { rig.coordinator.authorizeSend(SendRequest("com.whatsapp", "WhatsApp", "My Wife", "hi")) { ToolResult("sent") } }
+        runCurrent()
+        assertTrue(rig.coordinator.answerApprovalByReply("כן", record = false))
+        runCurrent()
+        assertTrue(sent.await().success)
+        assertTrue(grants.grants.value.isEmpty())
+        rig.close()
+    }
+
     @Test fun withNoApprovalWaitingAYesIsAnOrdinaryInstruction() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Open the message")
@@ -485,7 +532,7 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope) {
+    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore()) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
         val store = FakeStore()
@@ -495,6 +542,7 @@ class AgentCoordinatorTest {
         var foregroundRequests = 0
         val coordinator = AgentCoordinator(
             scope, engine, store, tools, overlay,
+            sendGrants = grants,
             bringToForeground = { foregroundRequests++ },
         ) { adbStatus.value }
         fun close() { scope.cancel() }

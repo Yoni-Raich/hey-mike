@@ -105,6 +105,8 @@ data class AgentUiState(
     val voiceTranscript: String = "",
     val voiceTranscriptRole: String? = null,
     val voiceMuted: Boolean = false,
+    /** Sends the user chose to always allow, for review in Settings. */
+    val sendGrants: List<dev.androidagent.core.SendGrant> = emptyList(),
     val isDrawerOpen: Boolean = false,
     val isSettingsOpen: Boolean = false,
     /** The chat folder's file sheet is showing. */
@@ -173,6 +175,9 @@ data class AgentUiActions(
     val onShareWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onCloseWorkspaceFiles: () -> Unit = {},
     val onApproval: (requestId: String, allow: Boolean) -> Unit = { _, _ -> },
+    /** Allow a send and remember it for this contact or this whole app. */
+    val onApproveAlways: (requestId: String, scope: dev.androidagent.core.ApprovalScope) -> Unit = { _, _ -> },
+    val onRemoveSendGrant: (dev.androidagent.core.SendGrant) -> Unit = {},
     val onCheckForUpdates: () -> Unit = {},
     val onDownloadUpdate: () -> Unit = {},
     val onInstallUpdate: () -> Unit = {},

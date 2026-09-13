@@ -10,6 +10,7 @@ import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
 import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.READ_UI_DESCRIPTION
+import dev.androidagent.core.SendRequest
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolNotServiceable
@@ -57,6 +58,16 @@ class A11yDeviceTools(
     private val authorizeIntent: suspend (LocalIntentRequest, () -> ToolResult) -> ToolResult = { _, _ ->
         ToolResult(
             "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"This intent needs approval in the app.\"}",
+            success = false,
+        )
+    },
+    /**
+     * Gates a press of Send in another app. The default refuses, so a host
+     * that wires no approval can never send a message on its own.
+     */
+    private val authorizeSend: suspend (SendRequest, suspend () -> ToolResult) -> ToolResult = { _, _ ->
+        ToolResult(
+            "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"Sending needs approval in the app. Nothing was sent.\"}",
             success = false,
         )
     },
@@ -322,6 +333,11 @@ class A11yDeviceTools(
         val y = arguments.requireCoordinate("y")
         requireNotOurOwnUi(x, y)
         val service = requireService()
+        val root = service.rootInActiveWindow?.let(::RealNodeView)
+        val hit = root?.let { SendGuard.nodeAt(it, x, y) }
+        if (root != null && hit != null && SendGuard.isSendTap(hit.first, hit.second)) {
+            return gatedSend(service, root) { pressSend(it) }
+        }
         val landed = service.dispatchTap(x, y)
         return ToolResult("Tapped $x,$y", success = landed)
     }
@@ -356,6 +372,13 @@ class A11yDeviceTools(
         val committed = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments1)
         if (!committed) {
             return ToolResult("Text was rejected by the field; nothing was typed.", success = false)
+        }
+        val pkg = target.packageName?.toString()
+        if (submit && SendGuard.isMessagingApp(pkg)) {
+            // In a chat, submit is Send. The text stays typed in; only the
+            // press waits for the user.
+            val root = service.rootInActiveWindow?.let(::RealNodeView) ?: RealNodeView(target)
+            return gatedSend(service, root) { submitDraft(it) }
         }
         // ACTION_SET_TEXT replaces the whole field, and some Compose and chat
         // composers do not propagate it. Report what the field actually holds
@@ -425,6 +448,13 @@ class A11yDeviceTools(
 
     private suspend fun tapNode(arguments: JsonObject): ToolResult {
         val (node, view) = resolveNode(arguments)
+        val ancestors = generateSequence(runCatching { view.node.parent }.getOrNull()) { runCatching { it.parent }.getOrNull() }
+            .take(3).map(::RealNodeView).toList()
+        if (SendGuard.isSendTap(view, ancestors)) {
+            val service = requireService()
+            val root = service.rootInActiveWindow?.let(::RealNodeView) ?: view
+            return gatedSend(service, root) { pressSend(it) }
+        }
         if (view.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             return ToolResult("Tapped $node")
         }
@@ -455,6 +485,11 @@ class A11yDeviceTools(
         }
         if (!view.node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, extras)) {
             return ToolResult("Node $node rejected the text; nothing was typed.", success = false)
+        }
+        if (submit && SendGuard.isMessagingApp(view.packageName)) {
+            val service = requireService()
+            val root = service.rootInActiveWindow?.let(::RealNodeView) ?: view
+            return gatedSend(service, root) { submitDraft(it) }
         }
         // ACTION_SET_TEXT replaces the whole field and some composers drop it,
         // so report what the field holds instead of assuming the write took.
@@ -559,6 +594,103 @@ class A11yDeviceTools(
                     "enable it in Settings > Accessibility > Hey Mike.",
             )
 
+    // ---- sending ----
+
+    /**
+     * Ask before a message leaves the phone, then press Send.
+     *
+     * Asking raises Hey Mike over the app being driven, so [press] only runs
+     * after the app is back in front, and finds the control again rather than
+     * trusting a coordinate from before the switch.
+     */
+    private suspend fun gatedSend(
+        service: AgentAccessibilityService,
+        root: RealNodeView,
+        press: suspend (AgentAccessibilityService) -> ToolResult,
+    ): ToolResult {
+        val pkg = root.packageName ?: service.rootInActiveWindow?.packageName?.toString()
+            ?: return ToolResult(sendFailure("send_app_unknown", "Could not tell which app this send is in. Nothing was sent."), success = false)
+        val request = SendRequest(
+            packageName = pkg,
+            appLabel = appLabel(pkg),
+            recipient = SendGuard.recipient(root),
+            message = SendGuard.draft(root),
+        )
+        return authorizeSend(request) {
+            checkActive()
+            val live = requireService()
+            if (!returnTo(live, pkg)) {
+                ToolResult(sendFailure("send_app_gone", "${request.appLabel} could not be brought back. Nothing was sent."), success = false)
+            } else {
+                press(live)
+            }
+        }
+    }
+
+    private suspend fun returnTo(service: AgentAccessibilityService, pkg: String): Boolean {
+        fun inFront() = service.rootInActiveWindow?.packageName?.toString() == pkg
+        if (inFront()) return true
+        val launch = context.packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        // A launcher intent with NEW_TASK resumes the existing task where it
+        // was, which is the open chat with the draft still in it.
+        launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(launch) }.getOrElse { return false }
+        val back = withTimeoutOrNull(RETURN_TIMEOUT_MS) {
+            while (!inFront()) delay(QUIESCENCE_POLL_MS)
+            true
+        } ?: false
+        if (back) awaitQuiescence(service)
+        return back
+    }
+
+    private suspend fun pressSend(service: AgentAccessibilityService): ToolResult {
+        val root = service.rootInActiveWindow?.let(::RealNodeView)
+        val send = root?.let { SendGuard.findSend(it) } as? RealNodeView
+            ?: return ToolResult(
+                sendFailure("send_control_gone", "The Send button is not on screen any more. Nothing was sent; call read_ui."),
+                success = false,
+            )
+        var target: android.view.accessibility.AccessibilityNodeInfo? = send.node
+        repeat(3) {
+            if (target?.isClickable == true && target!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return ToolResult("{\"ok\":true,\"sent\":true,\"note\":\"Pressed Send. Confirm with read_ui that the message appears in the chat.\"}")
+            }
+            target = runCatching { target?.parent }.getOrNull()
+        }
+        val bounds = send.boundsInScreen
+        val x = (bounds[0] + bounds[2]) / 2
+        val y = (bounds[1] + bounds[3]) / 2
+        requireNotOurOwnUi(x, y)
+        val landed = service.dispatchTap(x, y)
+        return ToolResult(
+            "{\"ok\":$landed,\"sent\":$landed,\"note\":\"Tapped Send. Confirm with read_ui that the message appears in the chat.\"}",
+            success = landed,
+        )
+    }
+
+    private suspend fun submitDraft(service: AgentAccessibilityService): ToolResult {
+        val field = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+        if (field != null && field.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) {
+            return ToolResult("{\"ok\":true,\"submitted\":true,\"note\":\"Submitted. Confirm with read_ui that the message was sent.\"}")
+        }
+        // Coming back from the approval can drop input focus; the Send button
+        // does the same thing.
+        return pressSend(service)
+    }
+
+    private fun appLabel(pkg: String): String =
+        SendGuard.MESSAGING_PACKAGES[pkg] ?: runCatching {
+            val pm = context.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault(pkg)
+
+    private fun sendFailure(errorType: String, message: String): String =
+        buildJsonObject {
+            put("ok", false)
+            put("errorType", errorType)
+            put("message", message)
+        }.toString()
+
     /**
      * A coordinate gesture hits whatever is topmost, so filtering our windows
      * out of the tree does nothing for it. Move the card, then refuse if the
@@ -606,6 +738,7 @@ class A11yDeviceTools(
         private const val QUIESCENCE_TIMEOUT_MS = 3_000L
         private const val QUIESCENCE_POLL_MS = 50L
         private const val MAX_COORDINATE = 20_000
+        private const val RETURN_TIMEOUT_MS = 4_000L
         private const val MAX_TEXT_CHARS = 4_000
 
         /** Same ceiling the ADB backend enforces, so the two agree. */

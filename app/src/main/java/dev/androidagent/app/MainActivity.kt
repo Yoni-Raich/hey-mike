@@ -118,6 +118,8 @@ class MainActivity : ComponentActivity() {
         onShareWorkspaceFile = { item -> shareFile(item) },
         onCloseWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = false) } },
         onApproval = { requestId, allow -> model.graph.coordinator.approve(requestId, allow) },
+        onApproveAlways = { requestId, scope -> model.graph.coordinator.approve(requestId, true, scope) },
+        onRemoveSendGrant = { grant -> model.graph.sendGrants.remove(grant) },
         onCheckForUpdates = { model.checkForUpdates(manual = true) },
         onDownloadUpdate = { model.downloadUpdate() },
         onInstallUpdate = { model.installUpdate() },
