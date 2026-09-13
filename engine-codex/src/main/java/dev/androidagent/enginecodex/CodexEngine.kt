@@ -652,12 +652,22 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
          * that led with the ADB phase kept the model saying "ADB is not
          * connected, so I can't" for tasks it could do.
          */
-        internal fun deviceRuntimeContext(capabilities: DeviceCapabilities): String = buildString {
+        internal fun deviceRuntimeContext(
+            capabilities: DeviceCapabilities,
+            now: java.time.ZonedDateTime = java.time.ZonedDateTime.now(),
+        ): String = buildString {
             val status = capabilities.adbStatus
             appendLine("[Trusted Android Agent runtime context]")
             appendLine(
                 "This snapshot replaces every older snapshot, and any earlier statement in this chat " +
                     "that device tools were unavailable.",
+            )
+            // The model has no clock. Without this it read "today" off whatever
+            // date a calendar happened to show, and got it wrong.
+            appendLine(
+                "Phone local time: " +
+                    now.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", java.util.Locale.ENGLISH)) +
+                    " (${now.zone.id}). A task that names a date means that date, not today.",
             )
             appendLine(
                 capabilities.backendStatus?.let { "Backends: $it" }

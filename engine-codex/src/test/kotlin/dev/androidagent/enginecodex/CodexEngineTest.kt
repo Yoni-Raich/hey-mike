@@ -257,9 +257,16 @@ class CodexEngineTest {
         assertFalse(context.contains("Local ADB port"))
     }
 
+    @Test fun theSnapshotNamesThePhonesDateSoTodayIsNeverGuessedFromTheScreen() {
+        val now = java.time.ZonedDateTime.of(2026, 9, 14, 2, 30, 0, 0, java.time.ZoneId.of("Asia/Jerusalem"))
+        val context = CodexEngine.deviceRuntimeContext(DeviceCapabilities(ready = setOf("tap")), now)
+        assertTrue(context, context.contains("Phone local time: Monday, 14 September 2026, 02:30 (Asia/Jerusalem)"))
+    }
+
     @Test fun theSnapshotOverridesEarlierClaimsThatToolsWereUnavailable() {
         // Chats from before the fix still hold ADB-era snapshots and refusals.
         val context = CodexEngine.deviceRuntimeContext(DeviceCapabilities(ready = setOf("tap")))
+        assertTrue(context.contains("Phone local time: "))
         assertTrue(context.contains("any earlier statement in this chat that device tools were unavailable"))
     }
 

@@ -444,7 +444,21 @@ class A11yDeviceTools(
         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(intent)
-            ToolResult("Opened $pkg")
+            // startActivity returns before the app is drawn. Reporting at once
+            // made act_and_observe read the previous app, and the agent decided
+            // the app had not opened and went looking for another way in.
+            val service = A11yServiceHandle.service.value
+                ?: return ToolResult("Opened $pkg")
+            val inFront = withTimeoutOrNull(APP_OPEN_TIMEOUT_MS) {
+                while (service.rootInActiveWindow?.packageName?.toString() != pkg) delay(QUIESCENCE_POLL_MS)
+                true
+            } ?: false
+            if (inFront) {
+                awaitQuiescence(service)
+                ToolResult("Opened $pkg; it is in front")
+            } else {
+                ToolResult("Launched $pkg, but it was not in front after ${APP_OPEN_TIMEOUT_MS / 1_000}s. Call read_ui to see what is showing.")
+            }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -747,6 +761,7 @@ class A11yDeviceTools(
         private const val QUIESCENCE_POLL_MS = 50L
         private const val MAX_COORDINATE = 20_000
         private const val RETURN_TIMEOUT_MS = 4_000L
+        private const val APP_OPEN_TIMEOUT_MS = 5_000L
 
         /** Tools that work with the accessibility service off. */
         internal val SERVICE_FREE_TOOLS = setOf("open_app", "open_intent", "resolve_intent")
