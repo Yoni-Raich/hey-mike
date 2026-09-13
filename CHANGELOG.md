@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- Quick actions: "message dad", "call mom" or "navigate home" is one step.
+  Mike saves each contact's number and each deep link that worked, and a
+  script on the phone turns the request into the ready intent, with no contact
+  search and no walking through the app. It ships with WhatsApp, SMS, dialer,
+  Google Maps, Waze, web and YouTube intents, and Mike adds its own as it
+  learns them. Messages still wait for your approval in the app.
+
+- Mike no longer says a task needs ADB when it doesn't. Screen control runs
+  on the accessibility service, and Wireless ADB is an optional extra, but
+  several things still told the agent otherwise:
+  - Every chat got an old copy of its instructions, written from the days when
+    everything went through ADB. It replaced the current one each time a chat
+    opened.
+  - The system prompt called the per-turn snapshot "ADB availability", and
+    the snapshot opened with the ADB phase.
+  - A call the accessibility service turned down for a reason of its own,
+    like typing with no field focused or pressing Enter, fell through to a
+    disconnected ADB and came back as "ADB is not connected".
+  - `act_and_observe` worked only over ADB.
+- Wireless ADB is no longer a setup step. The chat stops showing "1 thing to
+  finish before the agent can run" on a phone without it, and Settings lists
+  it under "Nice to have".
+- When neither the accessibility service nor ADB is on, Mike now says so and
+  asks for the accessibility service. The always-available knowledge and
+  workflow tools used to hide that.
+- Mike remembers your preferences across chats. Default apps, addresses and
+  contacts live in one file for the whole app instead of a copy per chat,
+  where a preference saved in one chat was gone in the next. A preference
+  you already taught an older version carries over.
+- Mike's guidance is simpler: a chat folder holds just `AGENTS.md`, and three
+  skills replace four. `device-automation` now includes recovery, and
+  `app-cards` points Mike at what earlier chats learned about an app before
+  the hand-written cards. Typing guidance matches how the accessibility
+  service types (it replaces a field rather than appending), and scrolling
+  no longer assumes one screen size.
+
 ## 0.10.1 — 2026-09-11
 
 - Voice mode speaks as Mike: the caption labels the agent "MIKE" instead of

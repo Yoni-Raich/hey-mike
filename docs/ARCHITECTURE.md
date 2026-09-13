@@ -27,15 +27,17 @@ reported as Wireless Debugging off/on-waiting when Android exposes that state;
 the loop stays idle until the app has a stored pairing identity, and pairing
 codes are never requested by reconnect.
 
-Immediately before each typed Codex turn, `AgentCoordinator` snapshots the
-app-owned `AdbStatus`. The engine adds a small application-owned runtime-context
-text item before the user's text with the phase, tool availability, and local
-port when known. The newest snapshot replaces older snapshots in the thread.
+Immediately before each typed Codex turn, `AgentCoordinator` snapshots what
+device control can do (see "Per-operation device capability" below). The engine
+adds a small application-owned runtime-context text item before the user's text
+with each backend's status and the tools that can run now. The newest snapshot
+replaces older snapshots in the thread.
 The pinned app-server's `turn/start` contract has no per-turn developer-
 instructions field, so this context uses a supported input item while the
 thread-level developer instructions define its trust and precedence rules.
-Disconnected/error snapshots tell the model not to call device tools and to
-guide the user to Wireless Debugging. The gateway remains the enforcement
+Wireless ADB is an optional backend: a disconnected transport blocks only the
+tools that need it, and only a snapshot with no live device backend sends the
+user to the accessibility service. The gateway remains the enforcement
 boundary if connection state changes after the snapshot.
 
 Codex app-server is preferred over parsing terminal UI output. The model remains a cloud service; the agent process and workspace live on the phone. The APK packages the official ARM64 and x86_64 Linux-musl app-server variants, and Android selects the matching native library directory. The x86_64 emulator now avoids ARM translation, but its app-process launch currently exits with `SIGSYS` (exit code 159), so emulator runtime support remains unproven.
@@ -173,9 +175,28 @@ catalog:
   `$HOME/.agents/skills` before the Codex app-server starts. It removes only
   app-managed legacy copies from the workspace `.agents/skills/`,
   `.codex/skills/`, and `$CODEX_HOME/skills`; unrelated skills are preserved.
-- **Layer 4: Durable Preferences**: `preferences.json` in the session workspace
-  retains user defaults (preferred messaging apps, addresses) to prevent
-  redundant questioning while respecting intent fidelity.
+  Four skills ship: `device-automation` (tool mechanics and recovery),
+  `app-cards` (the knowledge store, saved workflows and starter cards),
+  `user-preferences` and `quick-actions`. Installing them deletes the retired
+  `recovery-and-safety`. A skill's extra files (`SKILL_FILES`) are copied with
+  it; `{{PREFERENCES_PATH}}`, `{{QUICK_ACTIONS_DIR}}` and `{{SKILLS_DIR}}` are
+  replaced with absolute paths, and CRs are stripped because the phone's
+  `/system/bin/sh` reads them as part of a command.
+- **Quick actions**: `quick-actions/scripts/act.sh` (POSIX sh, awk and od only,
+  which is all a phone has) resolves a contact alias and an intent template
+  into one `open_intent` JSON call; the model makes that call through the
+  gateway, so intent policy and approvals still apply and the script never
+  touches the device. Built-in templates ship beside the script and are
+  replaced on every install; contacts and saved templates live in
+  `$HOME/quick-actions/*.tsv`, which installs never touch. This is a skill with
+  a script rather than a new tool, so what the agent learns stays in files it
+  owns.
+- **Layer 4: Durable Preferences**: one `$HOME/preferences.json` shared by every
+  chat retains user defaults (preferred apps, addresses, contacts). It used to
+  be copied into each session workspace, so a preference saved in one chat was
+  gone in the next. The skill carries its absolute path, substituted at install.
+  On first start the newest customized per-chat copy seeds it; untouched copies
+  are deleted from workspaces, customized ones are left in place.
 - **Catalog and composer**: For each session workspace, the pinned app-server
   is queried through `skills/list` with that workspace as the CWD. The catalog
   keeps each skill's interface block (display name, short description, brand
@@ -184,8 +205,9 @@ catalog:
   field, and a leading `$` opens skills only. A picked skill rides as a chip
   and is sent as `$skill-name` text plus Codex's native skill input item with
   the catalog-provided name and path. `skills/changed` refreshes the catalog.
-  `WorkspaceSeeder` still populates `AGENTS.md`, app cards, `RECOVERY.md`, and
-  `preferences.json` offline without duplicating skills.
+  `WorkspaceSeeder` writes only `AGENTS.md` (from the bundled
+  `agent_stack/AGENTS.md`, on every seed) into the workspace, and deletes the
+  `RECOVERY.md` and `cards/` files older releases planted.
 - **Composer commands**: Codex has no call that lists its slash commands, so
   `/` offers the app's own set (`ComposerCommand`): New chat, Compact
   (`thread/compact/start`), Plan mode (`collaborationMode` with mode `plan` on
@@ -313,7 +335,15 @@ local gateway (workflows, knowledge) answers everything it declares.
 first choice is dead but whose fallback is live is still ready — which is what
 the fallback chain is for. `DeviceCapabilities.of` splits the advertised surface
 into `ready` and `blocked` and never throws: a snapshot is not worth failing a
-turn over.
+turn over. `deviceBackendLive()` is kept apart from `readyTools()`: local
+gateways are always ready yet cannot operate the screen, so they answer false
+and cannot mask "no device backend is live".
+
+A chain that runs out of backends is explained by its most useful refusal. The
+ADB gateway refuses with `adb_not_connected` before any device call when the
+transport is down, and that and `a11y_unavailable` only mean "switched off";
+any other refusal (`no_text_focus`, `key_unsupported`, …) leads the failure.
+`act_and_observe` is served by the accessibility gateway as well as ADB.
 
 `AgentCoordinator` builds that snapshot per turn and `CodexEngine` renders it as
 the trusted runtime context, listing both sets by name.

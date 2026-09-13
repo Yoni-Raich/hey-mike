@@ -5,9 +5,5 @@
     "maps": "Google Maps",
     "music": "YouTube"
   },
-  "addresses": {},
-  "contacts": {},
-  "defaults": {
-    "confirm_destructive": true
-  }
+  "addresses": {}
 }

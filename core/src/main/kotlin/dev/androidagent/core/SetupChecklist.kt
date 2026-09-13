@@ -152,14 +152,17 @@ object SetupChecklist {
             ConnectionPhase.ERROR -> SetupState.BLOCKED
             ConnectionPhase.DISCONNECTED -> SetupState.PENDING
         },
-        importance = SetupImportance.REQUIRED,
+        // Optional: the accessibility service serves screen control, and ADB
+        // adds only shell, file transfer and installs. Counting it as required
+        // told every user without Wireless Debugging the agent could not run.
+        importance = SetupImportance.OPTIONAL,
         summary = when (signals.adbPhase) {
             ConnectionPhase.CONNECTED -> signals.adbPort?.let { "Connected · port $it" } ?: "Connected"
             ConnectionPhase.DISCOVERING -> "Looking for this phone…"
             ConnectionPhase.PAIRING -> "Pairing…"
             ConnectionPhase.CONNECTING -> "Connecting…"
             ConnectionPhase.ERROR -> "Connection failed"
-            ConnectionPhase.DISCONNECTED -> "Not paired"
+            ConnectionPhase.DISCONNECTED -> "Not paired · only for shell, files and installs"
         },
     )
 

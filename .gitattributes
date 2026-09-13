@@ -1,0 +1,5 @@
+# Skill scripts run under the phone's /system/bin/sh, which reads a CR as part
+# of the command. core.autocrlf on Windows would otherwise check them out, and
+# package them, with CRLF.
+*.sh text eol=lf
+app/src/main/assets/agent_stack/**/*.tsv text eol=lf

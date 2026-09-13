@@ -299,6 +299,15 @@ interface DeviceToolGateway {
      * says all of them, which is the right answer for a purely local backend.
      */
     fun readyTools(): Set<String> = definitions.map { it.name }.toSet()
+
+    /**
+     * True when this gateway can operate the phone right now.
+     *
+     * Kept apart from [readyTools] because local gateways (knowledge,
+     * workflows) are always ready yet cannot touch the screen; counting them
+     * would hide "no device backend is live" behind a non-empty list.
+     */
+    fun deviceBackendLive(): Boolean = readyTools().isNotEmpty()
 }
 
 /**
@@ -316,8 +325,13 @@ data class DeviceCapabilities(
     val ready: Set<String> = emptySet(),
     /** Advertised names with no live backend right now. */
     val blocked: Set<String> = emptySet(),
-    /** Human backend lines, e.g. `Accessibility: connected | ADB: phase=...`. */
+    /** Human backend lines, e.g. `Accessibility: connected | Wireless ADB (optional): ...`. */
     val backendStatus: String? = null,
+    /**
+     * At least one backend that can operate the phone is live. The default
+     * serves callers that only know the ADB phase; [of] reads the real answer.
+     */
+    val deviceBackendLive: Boolean = ready.isNotEmpty() || adbStatus.phase == ConnectionPhase.CONNECTED,
 ) {
     /** True when at least one operation can be dispatched. */
     val anyReady: Boolean get() = ready.isNotEmpty()
@@ -333,6 +347,7 @@ data class DeviceCapabilities(
                 ready = advertised intersect ready,
                 blocked = advertised - ready,
                 backendStatus = runCatching { tools.statusLine() }.getOrNull(),
+                deviceBackendLive = runCatching { tools.deviceBackendLive() }.getOrDefault(false),
             )
         }
     }
