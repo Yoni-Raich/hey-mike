@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Mike can start a timer or set an alarm in one step, without opening the
+  clock, and can reach any screen or action an app offers by intent — a
+  settings page, a share, an app's own action — not only links. Anything that
+  would place a call directly is still refused, and a payment still asks first.
+
 ## 0.12.0 — 2026-09-14
 
 - Mike can be the phone's digital assistant. Pick Hey Mike under Default apps >
