@@ -164,6 +164,27 @@ itself, so they cannot miss because the screen scrolled a few pixels.
 
 A deep link that lands on the target beats `open_app` plus a sequence of taps. Use `resolve_intent` first when you are not sure the link is supported.
 
+### Any action, with extras
+
+`action` can be any activity action Android or an app defines — `android.settings.WIFI_SETTINGS`, `android.intent.action.SET_TIMER`, `android.intent.action.SEND` — not only VIEW. Only `VIEW` needs a `uri`. Actions that act with no screen to back out of (`CALL`, install, uninstall, delete, factory reset) are refused; use `DIAL` to open the dialer.
+
+Pass the action's Intent extras in `extras`, by their full names:
+
+```text
+open_intent(action="android.intent.action.SET_TIMER",
+            extras={"android.intent.extra.alarm.LENGTH": 300, "android.intent.extra.alarm.SKIP_UI": true})
+```
+
+- A string, boolean, number or list of strings. A whole number that fits is sent as an int.
+- The receiver reads each extra as one type, and Android does not convert: a time in milliseconds sent as an int reads as 0. State the type when it matters: `{"type": "long", "value": 1757000000000}` (`int`, `long`, `double`, `boolean`, `string`, `string_array`).
+- No Uri, Parcelable or Bundle, and a string naming `content:`, `file:` or `intent:` is refused.
+- An `amount` extra asks the user first, like a payment link.
+- An intent with extras opens the receiving app fresh, closing the screens it
+  had open, because many apps read extras only when they start. Expect it on
+  its first screen afterwards, not where it was.
+
+quick-actions cannot store extras. When an intent with extras worked and will be asked for again ("a timer for 10 minutes"), save it as a workflow with one `open_intent` step and its values as parameters (see the `workflows` skill).
+
 ### Prefilled message bodies
 
 Pass the body as `text`. **Do not build `?text=` into the uri yourself** — an unencoded space or `&` either truncates the message at the first separator or fails uri parsing outright:
