@@ -476,8 +476,15 @@ class WorkflowRunner(
             val node: ScreenNode,
             val score: Int,
         ) : Resolution {
+            /**
+             * The handle to click. A label that is not itself clickable hands
+             * over its clickable row: on a phone, clicking the "Wireless
+             * debugging" title in Settings search fell back to a gesture that
+             * landed while the result list was being rebuilt and did nothing,
+             * while an accessibility click on the row opened it.
+             */
             fun handleArguments(): JsonObject = buildJsonObject {
-                put("nodeId", nodeId)
+                put("nodeId", if (!node.clickable && node.ancestorNodeId != null) node.ancestorNodeId else nodeId)
                 put("observationId", observationId)
             }
 
@@ -800,6 +807,7 @@ class WorkflowRunner(
         val checkable: Boolean,
         val checked: Boolean,
         val ancestorBounds: List<Int>?,
+        val ancestorNodeId: String? = null,
     )
 
     private suspend fun readScreen(query: JsonObject = JsonObject(emptyMap())): Screen {
@@ -857,6 +865,7 @@ class WorkflowRunner(
                 checkable = node.bool("checkable") ?: false,
                 checked = node.bool("checked") ?: false,
                 ancestorBounds = (node["clickableAncestor"] as? JsonObject)?.bounds("bounds"),
+                ancestorNodeId = (node["clickableAncestor"] as? JsonObject)?.str("nodeId"),
             )
         }
         // What a gesture has to aim inside, taken from the screen rather than

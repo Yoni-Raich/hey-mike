@@ -230,7 +230,15 @@ class WorkflowToolGateway(
                         ),
                     )
                 }
-                if (definitions.isEmpty()) {
+                if (definitions.isEmpty() && !packageName.isNullOrBlank() && library.all().isNotEmpty()) {
+                    // A phone reported "none installed" for a package filter
+                    // while four definitions existed, and the model believed it.
+                    put(
+                        "hint",
+                        "No workflow is defined for $packageName. Other workflows are installed; call " +
+                            "workflow_runner(mode=\"list\") without package to see them.",
+                    )
+                } else if (definitions.isEmpty()) {
                     put(
                         "hint",
                         "No workflow definitions are installed. Work the sequence out with the device " +

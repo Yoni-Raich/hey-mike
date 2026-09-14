@@ -362,7 +362,9 @@ class WorkflowRunnerTest {
             """{"id":"open_result","action":"tap","target":{"resourceId":"android:id/title","text":"Wireless debugging","exact":true,"clickable":true}}""",
         )
         assertTrue(runBlocking { runner().run(workflow, WorkflowRunner.Options()) }.success)
-        assertEquals("n2", calls.first { it.first == "tap_node" }.second["nodeId"]!!.jsonPrimitive.content)
+        // The result title matched, and the click goes to the row that holds
+        // it: on a phone the title itself refused the click.
+        assertEquals("n2-row", calls.first { it.first == "tap_node" }.second["nodeId"]!!.jsonPrimitive.content)
     }
 
     @Test fun aWidgetIdIsFoundWhicheverWayTheLayoutSpellsIt() {

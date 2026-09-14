@@ -129,6 +129,17 @@ class WorkflowToolGatewayTest {
         }
     }
 
+    @Test fun anEmptyPackageListingDoesNotClaimNothingIsInstalled() {
+        val result = runBlocking {
+            gateway(timerLibrary()).invoke(
+                "workflow_runner",
+                buildJsonObject { put("mode", "list"); put("package", "com.google.android.apps.tasks") },
+            )
+        }
+        val hint = parse(result)["hint"]!!.jsonPrimitive.content
+        assertTrue(hint, hint.contains("Other workflows are installed"))
+    }
+
     @Test fun theListingSaysWhatValuesAWorkflowTakes() {
         val result = runBlocking {
             gateway(timerLibrary()).invoke("workflow_runner", buildJsonObject { put("mode", "list") })
