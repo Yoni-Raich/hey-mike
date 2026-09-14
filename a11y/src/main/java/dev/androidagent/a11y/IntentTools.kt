@@ -138,6 +138,14 @@ internal class IntentTools(
             )
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (extras.isNotEmpty()) {
+            // Many apps read extras only when the activity is created. On a
+            // Xiaomi phone SET_TIMER with LENGTH started a timer from a cold
+            // clock and did nothing when the clock's task already existed: the
+            // task was brought to the front and the extras were dropped. A new
+            // task instance is what makes the extras arrive.
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
         return try {
             context.startActivity(intent)
             ToolResult(

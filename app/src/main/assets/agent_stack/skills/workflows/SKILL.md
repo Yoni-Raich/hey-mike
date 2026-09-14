@@ -177,7 +177,7 @@ caller passes `params`:
 {
   "id": "timer",
   "version": 1,
-  "package": "com.google.android.deskclock",
+  "package": "com.android.deskclock",
   "description": "Start a timer for any number of seconds.",
   "parameters": {
     "seconds": {"type": "integer", "min": 1, "max": 86400, "description": "Timer length in seconds"},
@@ -202,6 +202,12 @@ workflow_runner(workflow="timer", params={"seconds": 600})   -> a 10-minute time
 - A value that is **exactly** `"{{name}}"` keeps its type — the timer above
   gets the integer 600, which is what the clock reads. Inside longer text,
   `"{{label}} ({{seconds}}s)"`, it is spliced in as text.
+- The clock app differs by phone (`com.google.android.deskclock`,
+  `com.android.deskclock`, …). Run `resolve_intent` with the step's action
+  first and put the package it reports in the definition's `package`. Leave
+  `package` out of the step's `arguments` so any handler can take it.
+- A step that opens no screen (`SKIP_UI`) has nothing to `verify` on screen;
+  do not verify the app's package there.
 - There is no arithmetic. Name the parameter in the unit the step needs
   (`seconds`), and convert what the user said ("10 minutes") yourself.
 - A missing, out-of-range or unknown value is refused before anything runs, with
