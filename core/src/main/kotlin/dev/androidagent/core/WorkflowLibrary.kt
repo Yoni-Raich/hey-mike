@@ -14,9 +14,11 @@ import java.util.Locale
  * definition is a document a person can read, diff and hand to someone else,
  * and burying several of them in one package file makes all three awkward.
  *
- * The bundled library is installed into the same directory at startup, so the
- * runner has exactly one place to look and a user-written file and a shipped
- * one are found the same way.
+ * Nothing is shipped here. A definition names the ids and labels of one
+ * phone's screens — Settings search on a Nothing phone and on a Xiaomi share
+ * no field id — so the agent learns each sequence on the phone it runs on and
+ * writes it here, and every definition in this directory is one that phone
+ * produced.
  */
 class WorkflowLibrary(private val root: File) {
 
@@ -82,42 +84,6 @@ class WorkflowLibrary(private val root: File) {
 
     fun delete(id: String): Boolean = File(root, id.lowercase(Locale.ROOT) + SUFFIX).delete()
 
-    /**
-     * Install bundled definitions, without touching one the user has edited.
-     *
-     * A shipped file is refreshed only while it is still byte-identical to the
-     * copy an earlier release installed, recorded beside it. Anything else is
-     * the user's, and an app update is not a reason to overwrite it.
-     */
-    fun installBundled(bundled: Map<String, ByteArray>) {
-        root.mkdirs()
-        val stampDir = File(root, STAMP_DIR).apply { mkdirs() }
-        for ((id, bytes) in bundled) {
-            if (!WorkflowDefinition.ID_RE.matches(id)) continue
-            // Refuse to install something the runner could not read anyway.
-            val parses = runCatching {
-                WorkflowDefinition.parse(Json.parseToJsonElement(bytes.toString(Charsets.UTF_8)).jsonObject)
-            }.isSuccess
-            if (!parses) continue
-            val file = File(root, id + SUFFIX)
-            val stamp = File(stampDir, id + SUFFIX)
-            // A stamp with no file is a shipped workflow somebody deleted.
-            // Putting it back on every start would make deleting it impossible.
-            if (!file.exists() && stamp.isFile) continue
-            if (file.isFile) {
-                val installed = runCatching { stamp.readBytes() }.getOrNull()
-                val current = runCatching { file.readBytes() }.getOrNull()
-                // No stamp means a file this release did not put there.
-                if (installed == null || current == null || !installed.contentEquals(current)) continue
-                if (current.contentEquals(bytes)) continue
-            }
-            runCatching {
-                file.writeBytes(bytes)
-                stamp.writeBytes(bytes)
-            }
-        }
-    }
-
     private fun files(): List<File> =
         root.listFiles()
             ?.filter { it.isFile && it.name.endsWith(SUFFIX) && !it.name.startsWith(".") }
@@ -145,9 +111,6 @@ class WorkflowLibrary(private val root: File) {
     companion object {
         const val DIRECTORY = "definitions"
         private const val SUFFIX = ".json"
-
-        /** Copies of what this release installed, so a user edit is never overwritten. */
-        private const val STAMP_DIR = ".bundled"
         private const val MAX_FILE_BYTES = 256L * 1024L
 
         /** Under the existing workflows directory, so saved sequences and definitions age out together. */

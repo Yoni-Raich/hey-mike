@@ -141,11 +141,5 @@ class AgentGraph(private val app: Application) {
         runCatching {
             WorkspaceSeeder.ensureGlobalPreferences(runtime.homeDirectory, File(app.filesDir, "sessions"), app)
         }
-        // Shipped workflow definitions. A file the user edited is left alone:
-        // an app update refreshes only a copy still identical to the one an
-        // earlier release installed.
-        runCatching {
-            workflowLibrary.installBundled(WorkspaceSeeder.bundledWorkflows(app))
-        }
     }
 }

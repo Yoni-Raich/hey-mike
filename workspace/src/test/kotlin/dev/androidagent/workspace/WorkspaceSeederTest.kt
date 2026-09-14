@@ -197,24 +197,12 @@ class WorkspaceSeederTest {
         }
     }
 
-    /** The real bundled assets, so the shipped text is checked rather than a copy of it. */
     @Test
-    fun everyBundledWorkflowIsShippedReadableAndNamesItsOwnFile() {
-        // A definition that failed to ship looks to the model exactly like one
-        // that does not exist, so the list and the assets have to agree.
-        val shipped = WorkspaceSeeder.bundledWorkflows { relativePath ->
-            File(assetRoot(), relativePath).readBytes()
-        }
-        assertTrue("nothing is bundled", shipped.isNotEmpty())
-        assertTrue(shipped.containsKey("wireless-debugging"))
-        for ((id, bytes) in shipped) {
-            val text = bytes.toString(Charsets.UTF_8)
-            assertTrue("$id must declare its own id", text.contains("\"id\": \"$id\""))
-            // The runner refuses a definition that stores a coordinate or a
-            // handle, so a shipped one must not try.
-            assertFalse("$id stores a node handle", text.contains("nodeId"))
-            assertFalse("$id stores an observation id", text.contains("observationId"))
-        }
+    fun noWorkflowDefinitionShipsWithTheApp() {
+        // A definition names one phone's screen ids; Settings search on a
+        // Nothing phone and on a Xiaomi share none. The agent learns each
+        // sequence on the phone it runs on instead.
+        assertFalse(File(assetRoot(), "workflows").exists())
     }
 
     private fun assetRoot(): File =

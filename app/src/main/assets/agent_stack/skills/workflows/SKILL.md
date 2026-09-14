@@ -12,6 +12,11 @@ per step.
 Use it when the task is a sequence someone has already worked out. Use the
 ordinary device tools when you are exploring, deciding, or doing something once.
 
+**No workflow ships with the app.** Every one in the list was learned on this
+phone, because screens differ between phones: Settings search has one field id
+on a Nothing phone and another on a Xiaomi. An empty list is normal — work the
+task out with the device tools, then save it (section 5).
+
 ---
 
 ## 1. Find the workflow
@@ -27,7 +32,7 @@ and whether any step stops to ask the user.
 To see the steps before committing to them:
 
 ```text
-workflow_runner(workflow="wireless-debugging", mode="describe")
+workflow_runner(workflow="wifi-toggle", mode="describe")
 ```
 
 `describe` runs nothing. It prints the step list so you can tell the user what is
@@ -36,7 +41,7 @@ about to happen, or check that the workflow really matches the request.
 ## 2. Run it
 
 ```text
-workflow_runner(workflow="wireless-debugging", mode="run")
+workflow_runner(workflow="wifi-toggle", mode="run")
 workflow_runner(workflow="timer", mode="run", params={"seconds": 600})
 ```
 
@@ -58,7 +63,7 @@ when it ends.
 A clean run comes back as:
 
 ```json
-{"ok":true,"workflow":"wireless-debugging","ranSteps":5,"skippedSteps":0,
+{"ok":true,"workflow":"wifi-toggle","ranSteps":5,"skippedSteps":0,
  "steps":[{"id":"open_settings","action":"open_app","status":"done","verified":true}, ...]}
 ```
 
@@ -68,11 +73,11 @@ The reply names exactly where it stopped:
 
 ```json
 {"ok":false,"failedStep":"open_result","failedStepIndex":3,
- "errorType":"target_not_found","failedStepDoes":"tap text=\"Wireless debugging\"",
+ "errorType":"target_not_found","failedStepDoes":"tap text=\"Wi-Fi\"",
  "stepMayAlreadyHaveRun":false,
  "steps":[... the steps that did run ...],
- "screen":{"activePackage":"com.android.settings","visible":[{"text":"Developer options"}, ...]},
- "resume":{"tool":"workflow_runner","arguments":{"workflow":"wireless-debugging","mode":"resume","startAt":"open_result"}}}
+ "screen":{"activePackage":"com.android.settings","visible":[{"text":"Network & internet"}, ...]},
+ "resume":{"tool":"workflow_runner","arguments":{"workflow":"wifi-toggle","mode":"resume","startAt":"open_result"}}}
 ```
 
 **Never start the workflow again from the top.** The steps listed as `done`
@@ -88,7 +93,7 @@ off. Deal with whatever is in the way, then call `workflow_runner` with the
 | `errorType` | What happened | What to do |
 |---|---|---|
 | `target_not_found` | The element the step describes is not on this screen. | Look at `screen.visible`. The app may have changed, or an unexpected dialog is on top. Clear it, then resume. |
-| `verification_failed` | The step ran, but the state it expected did not appear. | The action landed somewhere else, or the screen is still loading. Read the screen and continue by hand from that step. |
+| `verification_failed` | The step ran, but the state it expected did not appear. | The action landed somewhere else, the screen is still loading, or this screen is not the one the definition was written for. Read the screen, finish by hand, and fix the definition's selectors from what `read_ui` shows. |
 | `confirmation_denied` | The user said no. | Nothing ran. Do not retry; ask what they want instead. |
 | `confirmation_timeout` | Nobody answered the approval. | Tell the user it is waiting, then resume from that step once they agree. |
 | `confirmation_unavailable` | Nothing could ask the user. | Do that one step yourself, with the user's agreement, then resume from the next step. |
@@ -114,12 +119,13 @@ Work the sequence out once with the ordinary device tools. When it runs cleanly,
 write it as `<id>.json` in `{{WORKFLOW_DEFINITIONS_DIR}}` so the next chat costs
 one call instead of ten turns. `save_workflow` does **not** write there.
 
-Build the selectors from what `read_ui` actually returned on the run that
-worked, not from what the screen looks like:
+Build the selectors from what `read_ui` actually returned **on this phone**, on
+the run that worked — not from what the screen looks like, from another phone,
+or from these examples:
 
-- A search field is often not an `EditText` by class name
-  (`android.widget.AutoCompleteTextView`); name it by `resourceId`
-  (`android:id/search_src_text`).
+- A search field is often not an `EditText` by class name, and its id differs
+  by maker (`android:id/search_src_text` on a Nothing phone, `android:id/input`
+  on a Xiaomi). Name it by the `resourceId` you read.
 - After typing, the search field's own text equals the result's title. Target
   the result with its `resourceId` (`android:id/title`) and `"exact": true`.
 - A switch usually carries its row's label as `contentDescription`. Target it

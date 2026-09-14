@@ -7,27 +7,27 @@ not production-ready.
 
 ### Verified
 
-- `workflow_runner` (the declarative workflow engine) — **unit-tested only, no
-  phone run.** On this branch: `:core:test` passes (244 existing tests plus 49
-  new ones across `WorkflowRunnerTest`, `WorkflowDefinitionTest`,
-  `WorkflowLibraryTest`, `WorkflowToolGatewayTest` and `BundledWorkflowTest`),
-  `:a11y:testDebugUnitTest` passes (35), `:workspace:testDebugUnitTest` passes
-  except `QuickActionsScriptTest.uriParametersArePercentEncoded`, which fails
-  identically on an unmodified checkout in this container because the JVM
-  default charset follows the POSIX locale and mangles the Hebrew fixture; it
-  is not related to this change. `:app:assembleDevDebug` and
-  `:app:compileDevDebugKotlin` build.
-  The runner is exercised against a fake screen that moves when an action lands
-  on a node, which proves the sequencing, the live selector resolution, the
-  verification, the confirmation gate and the resume path — but a fake screen
-  is not a phone. Not run once on hardware: no real workflow has been executed
-  against real Settings, so the shipped `wireless-debugging` and
-  `airplane-mode` selectors are untested guesses at what those screens
-  actually expose, timing under real transitions is unmeasured, and the
-  90-second default budget has never been checked against a real five-step run.
-  Whoever runs this first should expect the shipped selectors to need
-  correcting; the tool reports a missing target with what was on screen
-  instead, which is the information needed to fix them.
+- `workflow_runner`, intents with extras, workflow parameters and "Suggest
+  workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
+  (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`
+  (18) pass, and `:app:assembleDevDebug` builds. On a Nothing Phone (A059,
+  Android 16) and a Xiaomi (2201116TG, Android 13), dev builds of this branch:
+  - A learned `timer-seconds` workflow with an `open_intent` SET_TIMER step and
+    a `seconds` parameter started a real timer on both phones; the Xiaomi rang
+    after the 60 seconds it was given.
+  - `open_intent` with `android.settings.WIFI_SETTINGS` and no uri opened the
+    Wi-Fi screen (Nothing).
+  - A learned `google-tasks-add-task` workflow ran clean, and the "Suggest
+    workflows" chip appeared after a multi-step run and was answered (Nothing).
+  - A Settings-search workflow found the search bar, typed, and — after an
+    approval — flipped the Wireless debugging switch in Developer options
+    (Nothing, resumed from the switch step). Its `open_result` tap failed twice
+    before the row-click fix; that fix is unit-tested and seen working on the
+    Xiaomi search bar, but the result tap has not been re-run on the Nothing.
+  - The Xiaomi clock ignores SET_TIMER extras when its task already exists;
+    `CLEAR_TASK` for an intent with extras was confirmed from adb there.
+  No workflow ships with the app: Settings search has different field ids on
+  the two phones, so each phone learns its own.
 - Recording a workflow is **authoring, not capture.** The spec asked for a
   Record mode that watches the user's own taps.
   `AgentAccessibilityService.onAccessibilityEvent` deliberately does not read

@@ -5,8 +5,15 @@
 - Mike can run a whole saved sequence in one go. `workflow_runner` takes the
   name of a workflow and does every step itself — open the app, find the
   search box, type, open the result, flip the switch — with no thinking turn
-  in between. Two workflows ship with the app: turning on Wireless debugging
-  and turning on Airplane mode.
+  in between. No workflow ships with the app: Mike learns each one on your
+  phone, because every phone's screens are different.
+- A workflow can take values each time it runs — one "timer" workflow for any
+  number of minutes — and can open an app screen or start a feature directly
+  by intent, tapping only where no intent reaches.
+- Mike can now reach any Android feature an intent reaches, such as a timer or
+  a settings screen, without an app update for each one.
+- After Mike does something on your phone in several steps, a "Suggest
+  workflows" button offers to save it as a workflow.
 - A workflow is written down as what each step *means*, not where it was on
   the screen the day it was recorded. Mike finds each element live, by its id
   or by the label you can read, so a row that moved, a phone with a different

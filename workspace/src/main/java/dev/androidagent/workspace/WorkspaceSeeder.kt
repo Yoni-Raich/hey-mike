@@ -39,26 +39,12 @@ object WorkspaceSeeder {
 
     private const val QUICK_ACTIONS_DIR = "quick-actions"
 
-    private const val WORKFLOWS_ASSET_DIR = "workflows"
-
     private val DEFAULT_SKILL_NAMES = listOf(
         "device-automation",
         "user-preferences",
         "app-cards",
         "quick-actions",
         "workflows",
-    )
-
-    /**
-     * Workflow definitions shipped with the app, by id.
-     *
-     * Named for the same reason [SKILL_FILES] is: the asset manager cannot be
-     * walked cheaply, and a definition that silently failed to install would
-     * look to the model exactly like one that does not exist.
-     */
-    private val BUNDLED_WORKFLOW_IDS = listOf(
-        "wireless-debugging",
-        "airplane-mode",
     )
 
     /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */
@@ -135,23 +121,6 @@ object WorkspaceSeeder {
 
     /** Where quick-actions keeps the contacts and intents the agent saved. Never touched by an install. */
     fun quickActionsDir(homeDir: File): File = File(homeDir, QUICK_ACTIONS_DIR)
-
-    /**
-     * The workflow definitions this release ships, as id to file bytes.
-     *
-     * Returned rather than written, because only `:core` knows what a valid
-     * definition is and where the library keeps them. A missing or unreadable
-     * asset is skipped: a broken shipped file must not stop the app starting.
-     */
-    fun bundledWorkflows(context: Context): Map<String, ByteArray> = bundledWorkflows(assetReader(context))
-
-    internal fun bundledWorkflows(readAsset: (String) -> ByteArray): Map<String, ByteArray> =
-        BUNDLED_WORKFLOW_IDS.mapNotNull { id ->
-            runCatching { readAsset("$WORKFLOWS_ASSET_DIR/$id.json") }
-                .getOrNull()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { id to it }
-        }.toMap()
 
     internal fun installDefaultSkills(homeDir: File, readAsset: (String) -> ByteArray) {
         val skillsDir = File(homeDir, ".agents/skills").apply { mkdirs() }
