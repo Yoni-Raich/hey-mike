@@ -50,7 +50,10 @@ class ChatRowsTest {
         assertEquals("read_ui", toolNameOf(message("t", "tool", "read_ui: {\"nodes\":[]}")))
         assertEquals("Read the screen", toolStepLabel("read_ui"))
         assertEquals("Opened a link", toolStepLabel("open_intent"))
-        assertEquals("Run workflow", toolStepLabel("run_workflow"))
+        assertEquals("Ran a workflow", toolStepLabel("run_workflow"))
+        assertEquals("Ran a workflow", toolStepLabel("workflow_runner"))
+        // A tool the map does not know still reads as words, not as its id.
+        assertEquals("Remember capability", toolStepLabel("remember_capability"))
         assertEquals("Reading the screen", runStatusLabel("read ui"))
         assertEquals("Waiting for approval", runStatusLabel("Waiting for approval"))
     }

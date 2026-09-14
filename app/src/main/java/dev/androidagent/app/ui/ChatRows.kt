@@ -75,6 +75,8 @@ private val TOOL_ACTIONS = mapOf(
     "pull_file" to ("Copied a file" to "Copying a file"),
     "install_apk" to ("Installed an app" to "Installing an app"),
     "device_status" to ("Checked the phone" to "Checking the phone"),
+    "run_workflow" to ("Ran a workflow" to "Running a workflow"),
+    "workflow_runner" to ("Ran a workflow" to "Running a workflow"),
 )
 
 /** "read_ui" as a finished step: "Read the screen". Unknown tools read as their name. */

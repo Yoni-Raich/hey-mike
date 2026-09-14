@@ -1,9 +1,12 @@
 package dev.androidagent.core
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.io.File
 
@@ -26,6 +29,15 @@ class WorkflowToolGateway(
     private val store: WorkflowStore,
     /** The composite. Resolved per call, never captured. */
     private val router: () -> DeviceToolGateway,
+    /** Where declarative workflow definitions live. Null leaves `workflow_runner` unadvertised. */
+    private val library: WorkflowLibrary? = null,
+    /**
+     * Asks the user before a step marked `requiresConfirmation` runs. The
+     * default refuses, so a host that wired no approval path never has a
+     * sensitive step run unattended.
+     */
+    private val confirm: suspend (WorkflowConfirmation) -> WorkflowConfirmationOutcome =
+        { WorkflowConfirmationOutcome.UNAVAILABLE },
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -36,7 +48,14 @@ class WorkflowToolGateway(
         isRevoked = { revoked },
     )
 
-    override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
+    private val runner = WorkflowRunner(
+        invokeTool = { name, args -> router().invoke(name, args) },
+        isRevoked = { revoked },
+        confirm = confirm,
+    )
+
+    override val definitions: List<ToolDefinition> =
+        if (library == null) TOOL_DEFINITIONS else TOOL_DEFINITIONS + RUNNER_DEFINITION
 
     override fun beginRun(runId: String, workspace: File) {
         require(runId.isNotBlank()) { "runId cannot be blank" }
@@ -51,20 +70,26 @@ class WorkflowToolGateway(
      * A running workflow drives the screen, so it shows the control banner.
      * Saving and listing touch nothing.
      */
-    override fun needsControl(name: String): Boolean = name == "run_workflow"
+    override fun needsControl(name: String): Boolean = name == "run_workflow" || name == "workflow_runner"
 
     /** Steps dispatch through the device backends; this gateway alone operates nothing. */
     override fun deviceBackendLive(): Boolean = false
 
     override fun statusLine(): String {
-        val count = store.all().size
-        return "Workflows: " + if (count == 0) "none saved" else "$count saved"
+        val saved = store.all().size
+        val defined = library?.all()?.size ?: 0
+        val parts = buildList {
+            if (defined > 0) add("$defined runnable")
+            if (saved > 0) add("$saved saved")
+        }
+        return "Workflows: " + if (parts.isEmpty()) "none saved" else parts.joinToString(", ")
     }
 
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
         if (revoked) throw IllegalStateException("Run stopped. No device action was performed.")
         return when (name) {
             "run_workflow" -> engine.run(arguments)
+            "workflow_runner" -> runWorkflowRunner(arguments)
             "save_workflow" -> engine.save(arguments)
             "list_workflows" -> engine.list(arguments)
             else -> throw ToolNotServiceable(
@@ -79,7 +104,173 @@ class WorkflowToolGateway(
         // cancelled coroutine; `revoked` stops the loop between steps.
     }
 
+    /**
+     * Load the named definition and run it, or say precisely why not.
+     *
+     * Every failure here happens before the phone is touched, so each one is a
+     * plain refusal with the list of workflows that do exist: a model that
+     * guessed a name gets the real ones back rather than a dead end.
+     */
+    private suspend fun runWorkflowRunner(arguments: JsonObject): ToolResult {
+        val library = library ?: throw ToolNotServiceable(
+            "workflow_library_unavailable",
+            "No workflow library is configured, so there are no definitions to run.",
+        )
+        val mode = arguments.str("mode")?.lowercase() ?: "run"
+        if (mode !in MODES) {
+            return refusal(
+                "unknown_mode",
+                "\"$mode\" is not a mode. Use " + MODES.joinToString(", ") + ".",
+            )
+        }
+        val requested = arguments.str("workflow") ?: arguments.str("id") ?: arguments.str("name")
+        val packageName = arguments.str("package")
+        if (mode == "list" || requested == null) {
+            if (mode == "list") return listDefinitions(library, packageName)
+            return refusal(
+                "workflow_required",
+                "\"workflow\" is required: name the workflow to run. " + known(library, packageName),
+            )
+        }
+        val definition = when (val lookup = library.find(requested, packageName)) {
+            is WorkflowLibrary.Lookup.Found -> lookup.definition
+            is WorkflowLibrary.Lookup.Ambiguous -> return refusal(
+                "workflow_ambiguous",
+                "\"$requested\" matches ${lookup.candidates.joinToString(", ")}. Name one of them exactly.",
+            )
+            is WorkflowLibrary.Lookup.NotFound -> return refusal(
+                "workflow_not_found",
+                "There is no workflow called \"$requested\". " + known(library, packageName),
+            )
+        }
+        if (mode == "describe") return describe(definition)
+
+        val budget = arguments.millis("totalBudgetMs", WorkflowRunner.MIN_TOTAL_MS, WorkflowRunner.MAX_TOTAL_MS)
+            ?: WorkflowRunner.DEFAULT_TOTAL_MS
+        return runner.run(
+            definition,
+            WorkflowRunner.Options(
+                mode = mode,
+                startAt = arguments.str("startAt") ?: arguments.str("fromStep"),
+                totalBudgetMs = budget,
+                screenshotOnFailure = arguments.bool("screenshotOnFailure") ?: false,
+            ),
+        )
+    }
+
+    private fun describe(definition: WorkflowDefinition): ToolResult = ToolResult(
+        buildJsonObject {
+            put("ok", true)
+            put("workflow", definition.id)
+            put("package", definition.packageName)
+            put("version", definition.version)
+            if (definition.description.isNotEmpty()) put("description", definition.description)
+            put("steps", definition.outline())
+            put(
+                "note",
+                "Nothing ran. Call workflow_runner again with mode=\"run\" to execute these steps.",
+            )
+        }.toString(),
+    )
+
+    private fun listDefinitions(library: WorkflowLibrary, packageName: String?): ToolResult {
+        val definitions = if (packageName.isNullOrBlank()) library.all() else library.forPackage(packageName)
+        val broken = library.broken()
+        return ToolResult(
+            buildJsonObject {
+                put("ok", true)
+                put("count", definitions.size)
+                put(
+                    "workflows",
+                    JsonArray(
+                        definitions.map { definition ->
+                            buildJsonObject {
+                                put("workflow", definition.id)
+                                put("package", definition.packageName)
+                                if (definition.description.isNotEmpty()) put("description", definition.description)
+                                put("steps", definition.steps.size)
+                                if (definition.steps.any { it.requiresConfirmation }) {
+                                    put("asksBeforeSensitiveSteps", true)
+                                }
+                            }
+                        },
+                    ),
+                )
+                if (broken.isNotEmpty()) {
+                    // Named rather than hidden: a workflow the user wrote and
+                    // cannot see in the list looks like it was ignored.
+                    put(
+                        "unreadable",
+                        JsonArray(
+                            broken.map { entry ->
+                                buildJsonObject { put("file", entry.file); put("reason", entry.reason) }
+                            },
+                        ),
+                    )
+                }
+                if (definitions.isEmpty()) {
+                    put(
+                        "hint",
+                        "No workflow definitions are installed. Work the sequence out with the device " +
+                            "tools, then save it with save_workflow so the next chat does not rebuild it.",
+                    )
+                }
+            }.toString(),
+        )
+    }
+
+    private fun known(library: WorkflowLibrary, packageName: String?): String {
+        val ids = (if (packageName.isNullOrBlank()) library.all() else library.forPackage(packageName)).map { it.id }
+        return if (ids.isEmpty()) {
+            "No workflow definitions are installed."
+        } else {
+            "Installed workflows: " + ids.joinToString(", ") + "."
+        }
+    }
+
+    /** Nothing was dispatched, so the reply says so before anything else. */
+    private fun refusal(errorType: String, message: String): ToolResult = ToolResult(
+        buildJsonObject {
+            put("ok", false)
+            put("errorType", errorType)
+            put("message", message)
+            put("nothingRan", true)
+        }.toString(),
+        success = false,
+    )
+
     private companion object {
+        val MODES = listOf("run", "resume", "describe", "list")
+
+        /**
+         * The one tool the model needs for a whole sequence.
+         *
+         * Deliberately small: a workflow id and a mode. Everything else — which
+         * element each step means, what has to be true afterwards, which steps
+         * stop and ask — is in the definition file, where it can be read,
+         * reviewed and fixed without the model re-deriving it every time.
+         */
+        val RUNNER_DEFINITION: ToolDefinition = tool(
+            "workflow_runner",
+            "Run a saved workflow end to end in ONE call, with no model turn per step. Name the " +
+                "workflow and it reads the screen, finds each element by id or label, acts, waits and " +
+                "checks the result before moving on, so it keeps working when a row moves or an app " +
+                "updates. mode=\"list\" names the installed workflows, mode=\"describe\" prints the " +
+                "steps without running anything, mode=\"run\" executes them. A step marked " +
+                "requiresConfirmation stops and asks the user. On failure the reply names the exact step, " +
+                "whether it may already have run, what is on screen and the arguments to resume from that " +
+                "step - resume with those, never start again.",
+            mapOf(
+                "workflow" to "string",
+                "package" to "string",
+                "mode" to "string",
+                "startAt" to "string",
+                "totalBudgetMs" to "integer",
+                "screenshotOnFailure" to "boolean",
+            ),
+            emptyList(),
+        )
+
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             tool(
                 "run_workflow",

@@ -117,6 +117,10 @@ itself, so they cannot miss because the screen scrolled a few pixels.
 - `scroll_node(nodeId, observationId, direction)` — `forward`, `backward`, `up`,
   `down`, `left`, `right`. More reliable inside a list than a swipe gesture.
   `success:false` usually means the list is already at that end.
+- A `Switch`, checkbox or radio reports `"checkable":true` with `"checked":true|false`.
+  A node with no `checkable` field is not a toggle at all, which is a different
+  answer from a toggle that is off. Read it before tapping a switch and again
+  after, rather than assuming the tap flipped it.
 - `wait_for_change(timeoutMs?)` — blocks until the screen changes and settles.
   Use it after an action that starts a transition instead of polling `read_ui`.
   `changed:false` means nothing moved, so the previous action did not land.

@@ -19,6 +19,8 @@ class PairingScanTest {
         override val isVisibleToUser: Boolean = true,
         override val isPassword: Boolean = false,
         override val isEditable: Boolean = false,
+        override val isCheckable: Boolean = false,
+        override val isChecked: Boolean = false,
         val children: List<A11yNodeView> = emptyList(),
     ) : A11yNodeView {
         override val childCount: Int get() = children.size

@@ -134,6 +134,8 @@ private fun toolMotion(tool: String?): ToolMotion? =
         "type_text", "key" -> ToolMotion.TYPE
         "read_ui", "screenshot", "device_status" -> ToolMotion.LOOK
         "open_app", "open_intent", "resolve_intent" -> ToolMotion.LAUNCH
+        // A workflow drives the screen through taps; it reads as tapping.
+        "run_workflow", "workflow_runner" -> ToolMotion.TAP
         "push_file", "install_apk" -> ToolMotion.PUSH
         "pull_file" -> ToolMotion.PULL
         "shell" -> ToolMotion.SHELL

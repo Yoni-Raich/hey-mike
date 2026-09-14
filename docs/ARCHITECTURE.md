@@ -704,6 +704,82 @@ call rather than captured, both because the composite contains this gateway -
 which would otherwise be a construction cycle - and so a step reaches whichever
 backend currently serves that tool.
 
+## Why `run_workflow` was not enough, and what `workflow_runner` does instead
+
+`run_workflow` replays a literal list of tool calls. That is exactly why it only
+ever worked on the screen it was recorded on: a saved `tap(x=504,y=200)` misses
+as soon as a row moves, there is no way to say "the Search field" rather than a
+coordinate, no way to use what `read_ui` just returned in the next step, and no
+way to tell a step that landed from one that did not. `nodeId` and
+`observationId` cannot be stored either - they are minted per observation and
+the backend refuses a stale one - so the one addressing scheme that does survive
+a layout change was unreachable from a saved sequence.
+
+`workflow_runner` executes a **declarative definition** instead. A definition
+says what each step means; the runner works out how, against the screen in front
+of it:
+
+1. read the screen,
+2. find the node the step describes,
+3. act on it - by node handle where a backend serves one, at its current centre
+   where none does,
+4. wait for the screen to settle,
+5. check the step's own condition before calling the step done.
+
+`WorkflowDefinition` is the file format, `WorkflowLibrary` is where definitions
+live (`<homeDirectory>/workflows/definitions/<id>.json`, beside `WorkflowStore`'s
+per-package step lists), and `WorkflowRunner` is the execution engine.
+
+Five decisions carry the design.
+
+**Selector criteria are scored, not ANDed.** A target naming both
+`resourceId` and the visible label still resolves after the app renames the id,
+because the label alone identifies the node. ANDing them would make every extra
+detail in a definition another way for it to break - the opposite of what
+writing them down is for. An exact match scores above a substring, a local id
+(`switchWidget`) matches a fully qualified one, and `exact:true` opts back in to
+strict matching where a partial hit would be wrong.
+
+**Nothing positional is storable.** There is no coordinate field and no handle
+field in the format, so a definition cannot carry the thing that made the old
+mechanism brittle. Coordinates exist only as a fallback computed from the
+observation taken moments earlier, for a backend with no node addressing.
+
+**Verification is part of a step, not an afterthought.** A step with no `verify`
+is reported `verified:false`. Without it the runner would be a macro player,
+reporting success for a tap that landed on a disabled control and then running
+every later step against the wrong screen. `checked` is what made adding
+`checkable`/`checked` to `UiNode` worth doing across both backends: "the switch
+is off" and "this is not a switch" are different answers, and a toggle workflow
+cannot be verified without telling them apart.
+
+**Resuming is first-class, and `skipIfVerified` is what makes it safe.** A
+failure names the step, the completed prefix, whether that step may already have
+run, what was on screen instead, and the exact arguments to resume from. Because
+resuming re-runs the failing step, a toggle step marked `skipIfVerified` checks
+its condition *before* acting: re-running "turn it on" on something already on
+turns it off. Running out of the time budget is therefore a recoverable outcome
+rather than a lost run, which is why the ceiling can stay short.
+
+**A sensitive step stops and asks, and refuses when nothing can ask.**
+`requiresConfirmation` routes through `AgentCoordinator.authorizeWorkflowStep`,
+the same card and the same spoken "yes" as a send, and the same reason: the
+runner drives a whole sequence inside one tool call, so nothing else gets a
+chance to stop it. Unlike a send there is no standing grant - a step is approved
+for the run in front of the user, never for every later run. Asking raises Hey
+Mike over the app being driven, so the question comes *before* anything is
+resolved (a handle read first would be stale by the time the user answered) and
+the app is brought back to the front afterwards. A host that wired no approval
+path gets `confirmation_unavailable` and the step does not run: a gate that
+disappears when unwired is not a gate.
+
+Recording is authoring, not capture. `AgentAccessibilityService` deliberately
+does not read the events it receives - the text a user types is not ours to look
+at - and a passive recorder of the user's own taps would reverse that decision
+to build a feature. A workflow is written instead: worked out once with the
+device tools, then saved as a definition, which is also the only form that can
+carry verification conditions and confirmation flags at all.
+
 ## Connected Apps: the surface exists, the answer does not
 
 `.codex-work/runtime/probe_apps.py` probes a running on-phone app-server for
