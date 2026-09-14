@@ -9,6 +9,7 @@ import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
 import dev.androidagent.core.ObservationState
+import dev.androidagent.core.WorkflowLibrary
 import dev.androidagent.core.WorkflowStore
 import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
@@ -80,9 +81,18 @@ class AgentGraph(private val app: Application) {
     // knowledge gateway shares no tool name with either device backend, so its
     // position in the chain only decides where its names appear in the list.
     val workflows = WorkflowStore(WorkflowStore.directoryIn(runtime.homeDirectory))
+    /** Declarative definitions `workflow_runner` executes, beside the literal step lists. */
+    val workflowLibrary = WorkflowLibrary(WorkflowLibrary.directoryIn(runtime.homeDirectory))
     // The engine dispatches steps back at the composite, which also contains
     // this gateway, so the router is resolved per call rather than captured.
-    val workflowTools = WorkflowToolGateway(workflows) { tools }
+    val workflowTools = WorkflowToolGateway(
+        workflows,
+        { tools },
+        library = workflowLibrary,
+        // A sensitive step asks with the same card, and the same spoken "yes",
+        // as a send. Without this the runner refuses such a step outright.
+        confirm = { request -> runCoordinator.authorizeWorkflowStep(request) },
+    )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
@@ -119,6 +129,12 @@ class AgentGraph(private val app: Application) {
         // user without their preferences, or the reverse.
         runCatching {
             WorkspaceSeeder.ensureGlobalPreferences(runtime.homeDirectory, File(app.filesDir, "sessions"), app)
+        }
+        // Shipped workflow definitions. A file the user edited is left alone:
+        // an app update refreshes only a copy still identical to the one an
+        // earlier release installed.
+        runCatching {
+            workflowLibrary.installBundled(WorkspaceSeeder.bundledWorkflows(app))
         }
     }
 }

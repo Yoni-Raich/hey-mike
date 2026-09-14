@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Mike can run a whole saved sequence in one go. `workflow_runner` takes the
+  name of a workflow and does every step itself — open the app, find the
+  search box, type, open the result, flip the switch — with no thinking turn
+  in between. Two workflows ship with the app: turning on Wireless debugging
+  and turning on Airplane mode.
+- A workflow is written down as what each step *means*, not where it was on
+  the screen the day it was recorded. Mike finds each element live, by its id
+  or by the label you can read, so a row that moved, a phone with a different
+  screen, or an app update does not break it. There is no way to save a
+  coordinate into one.
+- Every step says how to tell it worked, and Mike checks before moving on. A
+  tap that landed on nothing is now a reported failure instead of a run that
+  quietly continues against the wrong screen.
+- A step that turns something on, sends, pays, deletes or changes a permission
+  stops and asks you first — the same card as a send, and the same spoken
+  "yes" or "כן". A step that flips a switch is skipped when the switch is
+  already the way it should be.
+- When a step does fail, the reply names that exact step, what had already
+  run, whether that step may have half-happened, what was on screen instead,
+  and how to carry on from there. Mike continues from where it stopped instead
+  of starting the whole sequence again.
+- Reading the screen now reports whether a switch or checkbox is on. Mike used
+  to have to guess from the label whether a toggle had taken effect.
+
 ## 0.12.0 — 2026-09-14
 
 - Mike can be the phone's digital assistant. Pick Hey Mike under Default apps >

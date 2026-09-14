@@ -26,6 +26,8 @@ class NodeTraversalTest {
         override val isVisibleToUser: Boolean = true,
         override val isPassword: Boolean = false,
         override val isEditable: Boolean = false,
+        override val isCheckable: Boolean = false,
+        override val isChecked: Boolean = false,
         val children: List<A11yNodeView> = emptyList(),
     ) : A11yNodeView {
         override val childCount: Int get() = children.size
@@ -264,6 +266,30 @@ class NodeTraversalTest {
         val node = traverse(listOf(window(tree)), OWN).observation.nodes.single()
         assertTrue(node.password)
         assertFalse(node.toJson().containsKey("text"))
+    }
+
+    @Test fun aSwitchCarriesItsOnOffStateAndAPlainLabelCarriesNone() {
+        // "the switch is off" and "this is not a switch" are different answers
+        // to "did the toggle take effect", so only a checkable node reports one.
+        val tree = FakeNode(
+            children = listOf(
+                FakeNode(text = "Wireless debugging", isCheckable = true, isChecked = true, isClickable = true),
+                FakeNode(text = "About phone", isClickable = true),
+            ),
+        )
+        val nodes = traverse(listOf(window(tree)), OWN).observation.nodes
+        val switch = nodes.single { it.text == "Wireless debugging" }
+        assertTrue(switch.checkable)
+        assertTrue(switch.checked)
+        assertTrue(switch.toJson()["checked"].toString().toBoolean())
+        assertFalse(nodes.single { it.text == "About phone" }.toJson().containsKey("checked"))
+    }
+
+    @Test fun anUnlabelledSwitchIsStillEmittedBecauseItsStateIsTheAnswer() {
+        val tree = FakeNode(children = listOf(FakeNode(isCheckable = true, isChecked = false)))
+        val node = traverse(listOf(window(tree)), OWN).observation.nodes.single()
+        assertTrue(node.checkable)
+        assertFalse(node.checked)
     }
 
     @Test fun aRunawayTreeIsBoundedRatherThanExhaustingTheHeap() {

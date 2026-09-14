@@ -24,6 +24,8 @@ class SendGuardTest {
         override val isScrollable = false
         override val isVisibleToUser = true
         override val isPassword = false
+        override val isCheckable = false
+        override val isChecked = false
         override val childCount get() = children.size
         override fun child(index: Int) = children.getOrNull(index)
     }

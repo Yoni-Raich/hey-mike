@@ -77,6 +77,8 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
                 focused = view.isFocused,
                 packageName = UiObservationSerializer.compactField(view.packageName),
                 password = view.isPassword,
+                checkable = view.isCheckable,
+                checked = view.isChecked,
                 clickableAncestor = clickableAncestor,
                 parentId = parentId,
             )

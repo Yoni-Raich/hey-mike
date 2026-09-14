@@ -7,6 +7,37 @@ not production-ready.
 
 ### Verified
 
+- `workflow_runner` (the declarative workflow engine) — **unit-tested only, no
+  phone run.** On this branch: `:core:test` passes (244 existing tests plus 49
+  new ones across `WorkflowRunnerTest`, `WorkflowDefinitionTest`,
+  `WorkflowLibraryTest`, `WorkflowToolGatewayTest` and `BundledWorkflowTest`),
+  `:a11y:testDebugUnitTest` passes (35), `:workspace:testDebugUnitTest` passes
+  except `QuickActionsScriptTest.uriParametersArePercentEncoded`, which fails
+  identically on an unmodified checkout in this container because the JVM
+  default charset follows the POSIX locale and mangles the Hebrew fixture; it
+  is not related to this change. `:app:assembleDevDebug` and
+  `:app:compileDevDebugKotlin` build.
+  The runner is exercised against a fake screen that moves when an action lands
+  on a node, which proves the sequencing, the live selector resolution, the
+  verification, the confirmation gate and the resume path — but a fake screen
+  is not a phone. Not run once on hardware: no real workflow has been executed
+  against real Settings, so the shipped `wireless-debugging` and
+  `airplane-mode` selectors are untested guesses at what those screens
+  actually expose, timing under real transitions is unmeasured, and the
+  90-second default budget has never been checked against a real five-step run.
+  Whoever runs this first should expect the shipped selectors to need
+  correcting; the tool reports a missing target with what was on screen
+  instead, which is the information needed to fix them.
+- Recording a workflow is **authoring, not capture.** The spec asked for a
+  Record mode that watches the user's own taps.
+  `AgentAccessibilityService.onAccessibilityEvent` deliberately does not read
+  the events it receives — the text a user types is not the app's to look at —
+  and a passive recorder would reverse that decision, so it was not built.
+  A workflow is worked out once with the device tools and written as a
+  definition instead, which is also the only form that can carry verification
+  conditions and confirmation flags. Turning that into a guided
+  "save what just happened" flow is open work.
+
 - The public v0.12.0 dev APK was built from merged `main` (with #61 and #62)
   on 2026-09-14. A first 0.12.0 candidate was built from a local `main` that
   had not pulled #62, so it had no digital assistant; it was installed on the

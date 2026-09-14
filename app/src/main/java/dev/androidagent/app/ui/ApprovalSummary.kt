@@ -37,6 +37,18 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
             sendRecipient = recipient,
         )
     }
+    if (detail("kind") == "workflow_step") {
+        // A workflow step is approved for the run in front of the user, so the
+        // card names the step rather than offering an "always allow".
+        return ApprovalSummary(
+            headline = "Allow this step?",
+            lines = buildList {
+                detail("what")?.let { add("Step" to it) }
+                detail("package")?.let { add("In" to (detail("app") ?: it)) }
+                detail("workflow")?.let { add("Workflow" to it) }
+            },
+        )
+    }
     val uri = detail("uri")
     val parsed = uri?.let { runCatching { URI(it) }.getOrNull() }
     // An opaque uri such as smsto:+972…?body=… has no rawQuery of its own.

@@ -34,7 +34,10 @@ class WorkspaceSeederTest {
         assertFalse("the ADB-era framing must not come back", shipped.contains("over local Wireless ADB"))
 
         val shippedSkills = File(assetRoot(), "skills").list()!!.toSet()
-        assertEquals(setOf("device-automation", "app-cards", "user-preferences", "quick-actions"), shippedSkills)
+        assertEquals(
+            setOf("device-automation", "app-cards", "user-preferences", "quick-actions", "workflows"),
+            shippedSkills,
+        )
         for (skill in shippedSkills) assertTrue("AGENTS.md must point at $skill", shipped.contains("`$skill`"))
         assertFalse(shipped.contains("recovery-and-safety"))
     }
@@ -187,6 +190,25 @@ class WorkspaceSeederTest {
     }
 
     /** The real bundled assets, so the shipped text is checked rather than a copy of it. */
+    @Test
+    fun everyBundledWorkflowIsShippedReadableAndNamesItsOwnFile() {
+        // A definition that failed to ship looks to the model exactly like one
+        // that does not exist, so the list and the assets have to agree.
+        val shipped = WorkspaceSeeder.bundledWorkflows { relativePath ->
+            File(assetRoot(), relativePath).readBytes()
+        }
+        assertTrue("nothing is bundled", shipped.isNotEmpty())
+        assertTrue(shipped.containsKey("wireless-debugging"))
+        for ((id, bytes) in shipped) {
+            val text = bytes.toString(Charsets.UTF_8)
+            assertTrue("$id must declare its own id", text.contains("\"id\": \"$id\""))
+            // The runner refuses a definition that stores a coordinate or a
+            // handle, so a shipped one must not try.
+            assertFalse("$id stores a node handle", text.contains("nodeId"))
+            assertFalse("$id stores an observation id", text.contains("observationId"))
+        }
+    }
+
     private fun assetRoot(): File =
         generateSequence(File("").absoluteFile) { it.parentFile }
             .map { File(it, "app/src/main/assets/agent_stack") }

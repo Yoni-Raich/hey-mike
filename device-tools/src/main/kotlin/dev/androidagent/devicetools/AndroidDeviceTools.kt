@@ -372,6 +372,8 @@ class AndroidDeviceTools(
                             focused = parser.attribute("focused")?.toBooleanStrictOrNull() ?: false,
                             packageName = parser.attribute("package").compactUiText(),
                             password = parser.attribute("password")?.toBooleanStrictOrNull() ?: false,
+                            checkable = parser.attribute("checkable")?.toBooleanStrictOrNull() ?: false,
+                            checked = parser.attribute("checked")?.toBooleanStrictOrNull() ?: false,
                             clickableAncestor = ancestors.lastOrNull { it.clickable }?.asClickTarget(),
                             // The nearest ancestor that will itself be emitted:
                             // a subtree query has to resolve from the flat list.
