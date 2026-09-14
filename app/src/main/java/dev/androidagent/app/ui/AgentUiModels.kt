@@ -9,6 +9,7 @@ import dev.androidagent.core.AdbEndpoint
 import dev.androidagent.a11y.A11yStatus
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ChatMessage
+import dev.androidagent.core.ChatModeState
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.RunState
@@ -104,6 +105,7 @@ data class AgentUiState(
     /** Turns sent from the composer run in Codex plan mode. */
     val planMode: Boolean = false,
     val voiceState: VoiceState = VoiceState(),
+    val chatModeState: ChatModeState = ChatModeState(),
     val voiceTranscript: String = "",
     val voiceTranscriptRole: String? = null,
     val voiceMuted: Boolean = false,
@@ -150,6 +152,7 @@ data class AgentUiActions(
     val onResumeQueue: () -> Unit = {},
     val onVoiceToggle: () -> Unit = {},
     val onVoiceMuteToggle: () -> Unit = {},
+    val onExitChatMode: () -> Unit = {},
     val onOpenSettings: () -> Unit = {},
     val onCloseSettings: () -> Unit = {},
     val onPrepareRuntime: () -> Unit = {},

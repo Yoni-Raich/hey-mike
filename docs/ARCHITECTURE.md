@@ -126,6 +126,39 @@ tool calls, then interrupts an active delegated turn, stops microphone capture,
 and asks app-server to stop the realtime conversation. Completed side effects
 cannot be undone.
 
+### Active Chat Mode (experimental)
+
+Chat Mode is a voice-only, explicit, temporary watch of one visible WhatsApp
+conversation. A successful agent send may create an offer using only the app
+package and visible recipient name. Message text is not read for this feature
+until the user gives an unambiguous yes. The accessibility observer then keeps
+one in-memory baseline of visible message text, bound to the WhatsApp package,
+chat title and accessibility window. Content-change events carry no text; they
+only trigger a debounced fresh snapshot. Repeated snapshots are deduplicated,
+outgoing bubbles advance the baseline without interrupting, and unknown bubble
+direction or unstable history fails closed. There is no screenshot or
+notification-listener fallback in V1, and no raw chat snapshot is persisted.
+
+An incoming suffix becomes a high-priority app event. Local old playback is
+muted or flushed first, an already-started primitive device action is allowed
+to reach its safe boundary, and the delegated Codex turn is interrupted. The
+new text is appended as escaped, explicitly untrusted developer context and is
+read to the user with a literal app-owned speech request. WhatsApp text is never
+a user turn and cannot answer an approval.
+
+Every Chat Mode reply uses a fresh send approval even when a standing grant
+exists. WhatsApp stays in front: recipient and message details with Allow and
+Deny are shown in the non-focusable floating card instead of opening
+MainActivity. The chat is re-read after approval and before Send; a changed
+context invalidates the approval. While watching, ADB fallback for screen writes
+and direct shell, push, and install tools are blocked, and saved workflows check
+the same context barrier between committing steps.
+
+The voice screen and floating card show the mode and expose local Exit and Stop.
+The watch ends on app, chat, or window change, lost accessibility text, screen
+off, voice or run stop, an explicit exit command, or five minutes without user
+or incoming-message activity.
+
 ## Unicode input
 
 Device tools temporarily select the bundled IME and probe its actual editor

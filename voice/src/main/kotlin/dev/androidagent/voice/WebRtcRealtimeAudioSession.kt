@@ -30,6 +30,8 @@ interface RealtimeMediaSession {
     fun stopAudio()
     /** Silence the microphone without tearing the call down. Applies before and after [startAudio]. */
     fun setMicrophoneMuted(muted: Boolean)
+    /** Temporarily silence remote playback without closing the realtime call. */
+    fun setSpeakerMuted(muted: Boolean) {}
     /** Microphone and playback loudness while audio runs; `null` stops reporting. */
     fun setLevelListener(listener: VoiceLevelListener?)
     fun close()
@@ -50,6 +52,7 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
 
     @Volatile private var levelListener: VoiceLevelListener? = null
     @Volatile private var microphoneMuted = false
+    @Volatile private var speakerMuted = false
     @Volatile private var audioStarted = false
 
     private val audioDeviceModule: AudioDeviceModule
@@ -164,7 +167,7 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
         checkOpen()
         audioStarted = true
         audioDeviceModule.setMicrophoneMute(microphoneMuted)
-        audioDeviceModule.setSpeakerMute(false)
+        audioDeviceModule.setSpeakerMute(speakerMuted)
         localAudioTrack.setEnabled(!microphoneMuted)
     }
 
@@ -181,6 +184,12 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
         if (closed.get() || !audioStarted) return
         audioDeviceModule.setMicrophoneMute(muted)
         localAudioTrack.setEnabled(!muted)
+    }
+
+    override fun setSpeakerMuted(muted: Boolean) {
+        speakerMuted = muted
+        if (closed.get() || !audioStarted) return
+        audioDeviceModule.setSpeakerMute(muted)
     }
 
     override fun setLevelListener(listener: VoiceLevelListener?) {

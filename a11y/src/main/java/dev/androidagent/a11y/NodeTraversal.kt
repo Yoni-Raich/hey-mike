@@ -10,7 +10,13 @@ import dev.androidagent.core.UiObservationSerializer
  * @param active the window the user is interacting with, used for
  *   `activePackage`. More reliable than counting package occurrences.
  */
-data class A11yWindow(val root: A11yNodeView?, val active: Boolean)
+data class A11yWindow(
+    val root: A11yNodeView?,
+    val active: Boolean,
+    val id: Int? = null,
+    val title: String? = null,
+    val type: Int? = null,
+)
 
 /** The traversal result plus the node handles the gateway needs to act on. */
 class TraversalResult(

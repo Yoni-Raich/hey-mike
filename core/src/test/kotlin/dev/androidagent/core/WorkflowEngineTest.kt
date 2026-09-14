@@ -114,6 +114,26 @@ class WorkflowEngineTest {
         assertEquals("stopped", parse(result)["errorType"]!!.jsonPrimitive.content)
     }
 
+    @Test fun aNewChatMessageStopsBeforeTheNextCommittingStep() {
+        var allowed = true
+        val guarded = WorkflowEngine(
+            invokeTool = { name, _ ->
+                calls += name
+                allowed = false
+                ToolResult("$name ok")
+            },
+            store = WorkflowStore(temp.root),
+            isRevoked = { false },
+            canDispatchAction = { allowed },
+        )
+
+        val result = runBlocking { guarded.run(steps("read_ui", "tap", "type_text")) }
+
+        assertFalse(result.success)
+        assertEquals(listOf("read_ui"), calls)
+        assertEquals("chat_context_changed", parse(result)["errorType"]!!.jsonPrimitive.content)
+    }
+
     @Test fun aToolOutsideTheAllowedSetIsRefusedBeforeItRuns() {
         // A workflow that could run any tool would be a second agent loop with
         // none of the coordinator's guarantees.

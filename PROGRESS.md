@@ -1,12 +1,31 @@
 # Progress
 
-## Status — 2026-09-11
+## Status — 2026-09-14
 
 Android Agent is a Developer Preview. It is useful for local testing, but it is
 not production-ready.
 
 ### Verified
 
+- Issue #60 Active Chat Mode is implemented on branch
+  `feat/active-chat-mode` as a voice-only WhatsApp V1. The message baseline is
+  captured only after explicit consent; incoming visible text is kept in
+  memory, classified as untrusted data, and never saved as a raw chat snapshot.
+  Core tests cover opt-in, incoming and outgoing deduplication, stale-context
+  send rejection, fresh approval despite standing grants, workflow barriers,
+  timeout, exit, and fail-closed behavior. Accessibility parser tests cover
+  personal and group bubble direction and ambiguous trees. Voice tests cover
+  escaping untrusted message delimiters. The floating card keeps WhatsApp in
+  front and provides fresh Allow and Deny plus Exit, while screen-off and all
+  voice stop paths end the watch. PASS:
+  `./gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+  :voice:lintDebug :overlay:lintDebug :app:lintDevDebug --no-daemon`
+  (832 actionable tasks; 0 lint errors across those reports),
+  `python -m unittest tools.test_prepare_runtime` (5 tests), and
+  `git diff --check`. Not tested on a physical phone: current WhatsApp resource
+  IDs and bubble geometry, a live incoming reply, realtime speech interruption
+  timing, or the overlay approval controls. No WhatsApp message was sent during
+  this implementation.
 - The public v0.12.0 dev APK was built from merged `main` (with #61 and #62)
   on 2026-09-14. A first 0.12.0 candidate was built from a local `main` that
   had not pulled #62, so it had no digital assistant; it was installed on the

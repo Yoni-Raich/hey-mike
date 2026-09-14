@@ -405,6 +405,53 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun chatModeForcesFreshApprovalAndRejectsAStaleContext() = runTest {
+        val grants = InMemorySendGrantStore().apply {
+            add(SendGrant("com.whatsapp", "WhatsApp", "My Wife"))
+        }
+        val rig = Rig(this, grants)
+        rig.coordinator.send("one", "Continue the WhatsApp conversation")
+        runCurrent()
+        var current = true
+        var sends = 0
+        val result = async {
+            rig.coordinator.authorizeSend(
+                SendRequest("com.whatsapp", "WhatsApp", "My Wife", "old draft"),
+                dispatch = { sends++; ToolResult("sent") },
+                forceFresh = true,
+                isContextCurrent = { current },
+            )
+        }
+        runCurrent()
+        assertNotNull(rig.coordinator.state.value.approval)
+        current = false
+        rig.coordinator.invalidatePendingSendApproval()
+        runCurrent()
+        assertFalse(result.await().success)
+        assertEquals(0, sends)
+        rig.close()
+    }
+
+    @Test fun chatModeSendApprovalKeepsTheSourceAppInFront() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Reply in WhatsApp")
+        runCurrent()
+        val result = async {
+            rig.coordinator.authorizeSend(
+                SendRequest("com.whatsapp", "WhatsApp", "Dana", "hello"),
+                forceFresh = true,
+                keepSourceForeground = true,
+            ) { ToolResult("sent") }
+        }
+        runCurrent()
+
+        assertEquals(0, rig.foregroundRequests)
+        rig.coordinator.approve(rig.coordinator.state.value.approval!!.requestId, true)
+        runCurrent()
+        assertTrue(result.await().success)
+        rig.close()
+    }
+
     @Test fun withNoApprovalWaitingAYesIsAnOrdinaryInstruction() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Open the message")

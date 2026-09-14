@@ -26,6 +26,7 @@ class WorkflowToolGateway(
     private val store: WorkflowStore,
     /** The composite. Resolved per call, never captured. */
     private val router: () -> DeviceToolGateway,
+    private val canDispatchAction: () -> Boolean = { true },
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -34,6 +35,7 @@ class WorkflowToolGateway(
         invokeTool = { name, args -> router().invoke(name, args) },
         store = store,
         isRevoked = { revoked },
+        canDispatchAction = canDispatchAction,
     )
 
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS

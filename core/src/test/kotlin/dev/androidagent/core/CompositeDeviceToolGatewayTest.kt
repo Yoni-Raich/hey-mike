@@ -57,6 +57,18 @@ class CompositeDeviceToolGatewayTest {
         assertEquals(listOf("key"), adb.invoked)
     }
 
+    @Test fun aPolicyCanStopAnUnsafeFallbackBeforeItRuns() = runBlocking {
+        val a11y = FakeGateway("a11y", tools = listOf("type_text"), absent = mutableSetOf("type_text"), absentAs = "no_text_focus")
+        val adb = FakeGateway("adb", tools = listOf("type_text"))
+        val composite = CompositeDeviceToolGateway(listOf(a11y, adb), allowFallback = { false })
+
+        val result = composite.invoke("type_text", empty())
+
+        assertFalse(result.success)
+        assertTrue(adb.invoked.isEmpty())
+        assertEquals("no_text_focus", Json.parseToJsonElement(result.text).jsonObject["errorType"]!!.jsonPrimitive.content)
+    }
+
     @Test fun aRealFailureNeverRetriesOnAnotherBackend() = runBlocking {
         // The action may already have been dispatched, so repeating it
         // elsewhere could commit the same side effect twice.

@@ -21,6 +21,8 @@ class AgentCoordinator(
     private val overlay: ControlOverlay,
     /** Standing "always allow" answers to send approvals. */
     private val sendGrants: SendGrantStore = InMemorySendGrantStore(),
+    /** Optional external-chat barrier. A pending update blocks stale tool calls. */
+    private val chatMode: ChatModeController? = null,
     /**
      * Bring the app's own window to the front.
      *
@@ -500,6 +502,10 @@ class AgentCoordinator(
                 "intent_denied",
                 "The user denied this intent. Do not retry it; ask what they want instead.",
             )
+            LocalOutcome.STALE -> localIntentRejected(
+                "intent_not_approved",
+                "The approval is no longer current. Nothing was launched.",
+            )
             LocalOutcome.ALLOWED -> dispatch()
         }
     }
@@ -514,9 +520,12 @@ class AgentCoordinator(
      */
     suspend fun authorizeSend(
         request: SendRequest,
+        forceFresh: Boolean = false,
+        isContextCurrent: suspend () -> Boolean = { true },
+        keepSourceForeground: Boolean = false,
         dispatch: suspend () -> ToolResult,
     ): ToolResult {
-        if (runCatching { sendGrants.covers(request) }.getOrDefault(false)) return dispatch()
+        if (!forceFresh && runCatching { sendGrants.covers(request) }.getOrDefault(false)) return dispatch()
         val pending = openLocalApproval(
             prefix = "send",
             method = "send_message",
@@ -528,6 +537,7 @@ class AgentCoordinator(
                 request.message?.let { put("message", it) }
             },
             send = request,
+            showApp = !keepSourceForeground,
         )
         return when (awaitLocalApproval(pending)) {
             LocalOutcome.STOPPED -> localIntentRejected("send_not_approved", "Run stopped before the send was approved. Nothing was sent.")
@@ -540,17 +550,50 @@ class AgentCoordinator(
                 "send_denied",
                 "The user did not approve sending this. Nothing was sent. Do not retry; ask what they want instead.",
             )
-            LocalOutcome.ALLOWED -> dispatch()
+            LocalOutcome.STALE -> localIntentRejected(
+                "send_context_changed",
+                "A new message arrived before this send completed. Nothing was sent. Read the new message and ask again.",
+            )
+            LocalOutcome.ALLOWED -> if (isContextCurrent()) dispatch() else localIntentRejected(
+                "send_context_changed",
+                "The chat changed after approval. Nothing was sent. Read the latest chat and ask again.",
+            )
         }
     }
 
-    private enum class LocalOutcome { ALLOWED, DENIED, TIMED_OUT, STOPPED }
+    /** Cancel only the app-owned send approval when external chat context changed. */
+    fun invalidatePendingSendApproval() {
+        synchronized(lifecycleLock) {
+            val pending = pendingLocalApproval ?: return
+            if (pending.send == null) return
+            pending.invalidated = true
+            pending.decision.complete(false)
+        }
+    }
+
+    /**
+     * Wait for the current primitive device action, then interrupt only the
+     * delegated voice turn. The realtime conversation itself stays open.
+     */
+    suspend fun prepareForExternalChatUpdate() {
+        invalidatePendingSendApproval()
+        val caller = currentCoroutineContext()[Job]
+        val inFlight = synchronized(lifecycleLock) { toolJobs.filterNot { it === caller } }
+        inFlight.forEach { job -> runCatching { withTimeout(30_000) { job.join() } } }
+        val activeTurn = synchronized(lifecycleLock) {
+            if (!voiceMode || turn.isNullOrBlank() || thread.isNullOrBlank()) null else thread!! to turn!!
+        } ?: return
+        runCatching { withTimeout(5_000) { engine.interrupt(activeTurn.first, activeTurn.second) } }
+    }
+
+    private enum class LocalOutcome { ALLOWED, DENIED, TIMED_OUT, STOPPED, STALE }
 
     private fun openLocalApproval(
         prefix: String,
         method: String,
         details: kotlinx.serialization.json.JsonObject,
         send: SendRequest?,
+        showApp: Boolean = true,
     ): PendingLocalApproval {
         val pending = synchronized(lifecycleLock) {
             val token = epoch.get()
@@ -590,7 +633,7 @@ class AgentCoordinator(
             }
         }
         // Outside the lock: this hands control to the host's UI thread.
-        runCatching { bringToForeground() }
+        if (showApp) runCatching { bringToForeground() }
         return pending
     }
 
@@ -610,6 +653,7 @@ class AgentCoordinator(
             when {
                 !stillCurrent -> LocalOutcome.STOPPED
                 decision == null -> LocalOutcome.TIMED_OUT
+                pending.invalidated -> LocalOutcome.STALE
                 decision == false -> LocalOutcome.DENIED
                 else -> LocalOutcome.ALLOWED
             }
@@ -787,6 +831,15 @@ class AgentCoordinator(
                     runCatching { engine.answerTool(event.requestId, ToolResult("Run stopped. No device action was performed.", success = false)) }
                     return
                 }
+                if (chatMode?.canDispatchTool(event.name) == false) {
+                    runCatching {
+                        engine.answerTool(
+                            event.requestId,
+                            chatModeToolFailure(event.name),
+                        )
+                    }
+                    return
+                }
                 val token = synchronized(lifecycleLock) { epoch.get() }
                 val sessionId = synchronized(lifecycleLock) { state.value.sessionId } ?: return
                 flushAssistantSegment()
@@ -836,7 +889,13 @@ class AgentCoordinator(
                             }
                             val toolStart = System.nanoTime()
                             toolCalls++
-                            try { result = tools.invoke(event.name, event.arguments) }
+                            try {
+                                result = if (chatMode?.canDispatchTool(event.name) == false) {
+                                    chatModeToolFailure(event.name)
+                                } else {
+                                    tools.invoke(event.name, event.arguments)
+                                }
+                            }
                             finally { toolMs += (System.nanoTime() - toolStart) / 1_000_000 }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
@@ -1080,6 +1139,18 @@ class AgentCoordinator(
         return job
     }
 
+    private fun chatModeToolFailure(name: String): ToolResult {
+        val pending = chatMode?.state?.value?.phase == ChatModePhase.UPDATE_PENDING
+        return ToolResult(
+            if (pending) {
+                "A new WhatsApp message arrived. This older action was not started; handle the new message first."
+            } else {
+                "Chat Mode is active. The \"$name\" tool is blocked because it can bypass the normal messaging approval. Use visible screen controls instead."
+            },
+            success = false,
+        )
+    }
+
     private fun threadIdOf(event: EngineEvent): String? = when (event) {
         is EngineEvent.TurnStarted -> event.threadId
         is EngineEvent.TextDelta -> event.threadId
@@ -1119,6 +1190,7 @@ class AgentCoordinator(
         val decision: CompletableDeferred<Boolean>,
         /** Set for a send approval, so an "always" answer knows what to remember. */
         val send: SendRequest? = null,
+        var invalidated: Boolean = false,
     )
     private data class AssistantTextSnapshot(val revision: Long, val text: String)
     private data class AssistantFinal(val id: String?, val text: String, val outcome: String, val flush: Job?)

@@ -36,6 +36,8 @@ class WorkflowEngine(
     private val store: WorkflowStore,
     /** True once the run has been revoked; checked between every step. */
     private val isRevoked: () -> Boolean,
+    /** False while new external chat context must be handled before another action. */
+    private val canDispatchAction: () -> Boolean = { true },
 ) {
 
     /**
@@ -94,6 +96,12 @@ class WorkflowEngine(
             }
             val step = element.jsonObject
             val tool = step["tool"]!!.jsonPrimitive.content
+            if (tool in committing && !canDispatchAction()) {
+                return outcome(
+                    false, completed, index, "chat_context_changed",
+                    "A new chat message arrived before step $index. Nothing at or after this step ran.",
+                )
+            }
             val args = step["arguments"] as? JsonObject ?: buildJsonObject { }
             val elapsed = (System.nanoTime() - startedAt) / 1_000_000L
             if (elapsed >= totalBudget) {

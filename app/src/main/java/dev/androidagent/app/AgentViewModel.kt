@@ -78,6 +78,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { graph.voice.state.collect { state -> mutable.update { it.copy(voiceState = state) } } }
+        viewModelScope.launch { graph.chatModeController.state.collect { state -> mutable.update { it.copy(chatModeState = state) } } }
         viewModelScope.launch { graph.voice.muted.collect { muted -> mutable.update { it.copy(voiceMuted = muted) } } }
         viewModelScope.launch { graph.sendGrants.grants.collect { grants -> mutable.update { it.copy(sendGrants = grants) } } }
         viewModelScope.launch { graph.engine.voiceEvents.collect(::handleVoiceEvent) }
@@ -113,6 +114,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             if (id != voiceLocalSessionId) { error("End voice before sending in another chat."); return }
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
             if (graph.coordinator.answerApprovalByReply(text)) return
+            graph.chatMode.userActivity()
+            if (graph.chatMode.answerOfferByUser(text)) return
             task {
                 synchronized(pendingVoiceTexts) { pendingVoiceTexts.addLast(text) }
                 try {
@@ -189,6 +192,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (graph.voice.state.value.active) stopVoice() else startVoice()
     }
     fun toggleVoiceMute() = graph.voice.setMuted(!graph.voice.muted.value)
+    fun exitChatMode() = graph.chatMode.stop(ChatModeStopReason.USER_EXIT)
     private var assistantVoiceJob: Job? = null
 
     /**
@@ -258,6 +262,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private fun stopVoice() = task {
         // Revoke before the remote stop so no new device action can begin while
         // the voice session is ending. Completed side effects are not undone.
+        graph.chatMode.stop(ChatModeStopReason.VOICE_ENDED, announce = false)
         graph.coordinator.endVoice()
         graph.voice.stop()
         voiceLocalSessionId = null
@@ -595,6 +600,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 } else false
                 if (text.isNotBlank() && !skipTypedUserEcho) {
                     val role = if (event.role.equals("assistant", ignoreCase = true)) "assistant" else "user"
+                    if (role == "user") {
+                        graph.chatMode.userActivity()
+                        if (graph.chatMode.answerOfferByUser(text)) {
+                            mutable.update { state ->
+                                if (state.voiceTranscriptRole == event.role) state.copy(voiceTranscript = "", voiceTranscriptRole = null)
+                                else state
+                            }
+                            return
+                        }
+                    }
                     // Saying "yes" / "כן" answers a waiting approval: in voice
                     // mode the card is under the voice screen. Only the user's
                     // own transcript can do this, never the agent's speech.
@@ -611,6 +626,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             is VoiceEvent.Failure -> {
+                graph.chatMode.stop(ChatModeStopReason.VOICE_ENDED, announce = false)
                 graph.coordinator.endVoice()
                 voiceLocalSessionId = null
                 synchronized(pendingVoiceTexts) { pendingVoiceTexts.clear() }
@@ -618,6 +634,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 error(event.message)
             }
             is VoiceEvent.Closed -> {
+                graph.chatMode.stop(ChatModeStopReason.VOICE_ENDED, announce = false)
                 graph.coordinator.endVoice()
                 voiceLocalSessionId = null
                 synchronized(pendingVoiceTexts) { pendingVoiceTexts.clear() }

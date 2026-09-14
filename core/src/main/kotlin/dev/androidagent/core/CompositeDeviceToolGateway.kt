@@ -21,6 +21,8 @@ import java.io.File
  */
 class CompositeDeviceToolGateway(
     private val members: List<DeviceToolGateway>,
+    /** False prevents a missing preferred backend from falling through to a less safe one. */
+    private val allowFallback: (String) -> Boolean = { true },
 ) : DeviceToolGateway {
 
     init {
@@ -100,12 +102,13 @@ class CompositeDeviceToolGateway(
         }
         val chain = routes[name] ?: return ToolResult("Unknown tool: $name", success = false)
         val refusals = mutableListOf<ToolNotServiceable>()
-        for (member in chain) {
+        for ((index, member) in chain.withIndex()) {
             try {
                 return member.invoke(name, arguments)
             } catch (absent: ToolNotServiceable) {
                 // Contract: nothing was dispatched, so another backend may try.
                 refusals += absent
+                if (index == 0 && chain.size > 1 && !allowFallback(name)) return unavailable(name, refusals)
             }
             // Any other exception propagates: the action may already have been
             // committed, and repeating it on another backend could double it.

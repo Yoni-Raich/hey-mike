@@ -71,6 +71,8 @@ class A11yDeviceTools(
             success = false,
         )
     },
+    /** Called only after this gateway reports that the Send action landed. */
+    private val onMessageSent: suspend (SendRequest) -> Unit = {},
     /** Move the approval screen out of the way so the app underneath is back in front. */
     private val leaveApprovalScreen: () -> Unit = {},
 ) : DeviceToolGateway {
@@ -640,7 +642,7 @@ class A11yDeviceTools(
             recipient = SendGuard.recipient(root),
             message = SendGuard.draft(root),
         )
-        return authorizeSend(request) {
+        val result = authorizeSend(request) {
             checkActive()
             val live = requireService()
             if (!returnTo(live, pkg)) {
@@ -649,6 +651,10 @@ class A11yDeviceTools(
                 press(live)
             }
         }
+        if (result.success && (result.text.contains("\"sent\":true") || result.text.contains("\"submitted\":true"))) {
+            runCatching { onMessageSent(request) }
+        }
+        return result
     }
 
     private suspend fun returnTo(service: AgentAccessibilityService, pkg: String): Boolean {
@@ -892,6 +898,9 @@ internal fun AgentAccessibilityService.visibleWindows(): List<A11yWindow> =
             A11yWindow(
                 root = runCatching { window.root }.getOrNull()?.let(::RealNodeView),
                 active = window.isActive,
+                id = window.id,
+                title = window.title?.toString(),
+                type = window.type,
             )
         }
     }.getOrElse {
