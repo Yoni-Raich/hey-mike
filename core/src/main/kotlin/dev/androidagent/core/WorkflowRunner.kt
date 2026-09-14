@@ -81,6 +81,8 @@ class WorkflowRunner(
         val totalBudgetMs: Long = DEFAULT_TOTAL_MS,
         /** Attach a screenshot of where it stopped. Off by default: an image is expensive. */
         val screenshotOnFailure: Boolean = false,
+        /** The values the definition was bound with, handed back in `resume` so a resumed run gets the same ones. */
+        val params: JsonObject = JsonObject(emptyMap()),
     )
 
     suspend fun run(definition: WorkflowDefinition, options: Options): ToolResult {
@@ -334,6 +336,10 @@ class WorkflowRunner(
                 step.arguments.str("activity")?.let { put("activity", it) }
             },
         )
+
+        // Through the tool, not around it: IntentPolicy and its approval card
+        // judge a workflow's intent exactly as they judge the model's.
+        WorkflowAction.OPEN_INTENT -> invokeTool("open_intent", step.arguments)
 
         WorkflowAction.TAP -> {
             val node = requireNotNull(resolved) { "tap needs a target" }
@@ -900,6 +906,14 @@ class WorkflowRunner(
     /** One line naming what a step does, for an approval card and for a failure. */
     private fun describe(step: WorkflowStep): String = when (step.action) {
         WorkflowAction.OPEN_APP -> "open ${step.arguments.str("package") ?: "the app"}"
+        WorkflowAction.OPEN_INTENT -> buildList {
+            add("open ${step.arguments.str("action") ?: step.arguments.str("uri") ?: "an intent"}")
+            step.arguments.str("uri")?.takeIf { step.arguments.str("action") != null }?.let { add(it.take(MAX_SUMMARY_TEXT)) }
+            (step.arguments["extras"] as? JsonObject)?.let { extras ->
+                (IntentExtras.parse(extras) as? IntentExtras.Parsed.Ok)?.extras?.takeIf { it.isNotEmpty() }
+                    ?.let { add("with ${IntentExtras.describe(it)}") }
+            }
+        }.joinToString(" ")
         WorkflowAction.TAP -> "tap ${step.target?.describe() ?: "the target"}"
         WorkflowAction.TYPE_TEXT -> "type \"${step.text?.take(MAX_SUMMARY_TEXT).orEmpty()}\"" +
             if (step.submit) " and submit it" else ""
@@ -984,6 +998,7 @@ class WorkflowRunner(
                                     put("workflow", definition.id)
                                     put("mode", "resume")
                                     put("startAt", it.id)
+                                    if (options.params.isNotEmpty()) put("params", options.params)
                                 },
                             )
                         },

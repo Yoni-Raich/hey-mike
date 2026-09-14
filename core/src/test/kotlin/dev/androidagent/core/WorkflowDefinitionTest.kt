@@ -19,6 +19,35 @@ class WorkflowDefinitionTest {
             error!!.message!!
         }
 
+    @Test fun aPlaceholderNothingDeclaresIsRefusedWhereItIsWritten() {
+        // It would otherwise reach the phone as the literal text "{{minutes}}".
+        val message = failure(
+            """{"id":"t","package":"com.example.app","steps":[{"id":"s","action":"type_text","text":"{{minutes}}"}]}""",
+        )
+        assertTrue(message, message.contains("{{minutes}}"))
+    }
+
+    @Test fun anIntentStepNeedsSomethingToLaunch() {
+        val message = failure(
+            """{"id":"t","package":"com.example.app","steps":[{"id":"s","action":"open_intent","arguments":{"package":"com.example.app"}}]}""",
+        )
+        assertTrue(message, message.contains("arguments.action or arguments.uri"))
+    }
+
+    @Test fun aBoundDefinitionIsParsedAgainSoAValueCannotBreakTheFormat() {
+        val definition = parse(
+            """{"id":"t","package":"com.example.app","parameters":{"what":{"type":"string"}},
+                "steps":[{"id":"s","action":"type_text","text":"{{what}}"}]}""",
+        )
+        val bound = definition.bind(Json.parseToJsonElement("""{"what":"hello"}""").jsonObject)
+        assertEquals("hello", bound.steps.single().text)
+        assertEquals(definition.parameters, bound.parameters)
+        val tooLong = runCatching {
+            definition.bind(Json.parseToJsonElement("""{"what":"${"x".repeat(WorkflowStep.MAX_TEXT_CHARS + 1)}"}""").jsonObject)
+        }.exceptionOrNull()
+        assertTrue("$tooLong", tooLong is WorkflowFormatException)
+    }
+
     @Test fun theSpecExampleParsesAsWritten() {
         // The definition from the feature request, unchanged.
         val definition = parse(

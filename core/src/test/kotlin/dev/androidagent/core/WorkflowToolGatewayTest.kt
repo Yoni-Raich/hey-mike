@@ -23,6 +23,7 @@ class WorkflowToolGatewayTest {
     @get:Rule val temp = TemporaryFolder()
 
     private val calls = mutableListOf<String>()
+    private val arguments = mutableListOf<Pair<String, JsonObject>>()
 
     private val router = object : DeviceToolGateway {
         override val definitions: List<ToolDefinition> = emptyList()
@@ -32,6 +33,7 @@ class WorkflowToolGatewayTest {
         override suspend fun cancel() = Unit
         override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
             calls += name
+            this@WorkflowToolGatewayTest.arguments += name to arguments
             return if (name == "read_ui") {
                 ToolResult(
                     buildJsonObject {
@@ -64,6 +66,76 @@ class WorkflowToolGatewayTest {
         }
 
     private fun parse(result: ToolResult): JsonObject = Json.parseToJsonElement(result.text).jsonObject
+
+    // ---- parameters ----
+
+    private fun timerLibrary(): WorkflowLibrary {
+        val dir = File(temp.root, "timers").apply { mkdirs() }
+        File(dir, "timer.json").writeText(
+            """{"id":"timer","package":"com.google.android.deskclock","description":"Start a timer.",
+               "parameters":{"seconds":{"type":"integer","min":1,"max":86400},
+                             "label":{"type":"string","default":"Hey Mike"}},
+               "steps":[{"id":"start","action":"open_intent","waitForChange":false,
+                         "arguments":{"action":"android.intent.action.SET_TIMER",
+                           "extras":{"android.intent.extra.alarm.LENGTH":"{{seconds}}",
+                                     "android.intent.extra.alarm.MESSAGE":"{{label}} ({{seconds}}s)",
+                                     "android.intent.extra.alarm.SKIP_UI":true}}}]}""",
+        )
+        return WorkflowLibrary(dir)
+    }
+
+    private fun runTimer(params: String?): ToolResult = runBlocking {
+        gateway(timerLibrary()).invoke(
+            "workflow_runner",
+            Json.parseToJsonElement(
+                """{"workflow":"timer","mode":"run"${params?.let { ",\"params\":$it" } ?: ""}}""",
+            ).jsonObject,
+        )
+    }
+
+    @Test fun oneWorkflowRunsWithWhateverValueTheCallerGivesIt() {
+        // A 10-minute timer and a 5-minute timer are one definition, not two.
+        val result = runTimer("""{"seconds":600}""")
+        assertTrue(result.text, result.success)
+        val intent = arguments.single { it.first == "open_intent" }.second
+        val extras = intent["extras"]!!.jsonObject
+        // A whole placeholder keeps the value's type, so the clock reads an int.
+        assertEquals("600", extras["android.intent.extra.alarm.LENGTH"]!!.jsonPrimitive.content)
+        assertFalse(extras["android.intent.extra.alarm.LENGTH"]!!.jsonPrimitive.isString)
+        // Inside longer text it is spliced in, and a default fills what was not given.
+        assertEquals("Hey Mike (600s)", extras["android.intent.extra.alarm.MESSAGE"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aNumberTheModelQuotedIsStillANumber() {
+        assertTrue(runTimer("""{"seconds":"300"}""").success)
+        val extras = arguments.single { it.first == "open_intent" }.second["extras"]!!.jsonObject
+        assertFalse(extras["android.intent.extra.alarm.LENGTH"]!!.jsonPrimitive.isString)
+    }
+
+    @Test fun aMissingWrongOrUnknownValueIsRefusedBeforeThePhoneIsTouched() {
+        for ((params, why) in listOf(
+            null to "is required",
+            """{"seconds":0}""" to "at least 1",
+            """{"seconds":"ten"}""" to "whole number",
+            """{"seconds":60,"volume":3}""" to "no parameter \"volume\"",
+        )) {
+            calls.clear()
+            val result = runTimer(params)
+            assertFalse(result.text, result.success)
+            val json = parse(result)
+            assertEquals("workflow_params_invalid", json["errorType"]!!.jsonPrimitive.content)
+            assertTrue(result.text, json["message"]!!.jsonPrimitive.content.contains(why))
+            assertTrue("nothing may run for $params", calls.isEmpty())
+        }
+    }
+
+    @Test fun theListingSaysWhatValuesAWorkflowTakes() {
+        val result = runBlocking {
+            gateway(timerLibrary()).invoke("workflow_runner", buildJsonObject { put("mode", "list") })
+        }
+        val entry = parse(result)["workflows"]!!.jsonArray.single().jsonObject
+        assertEquals("integer", entry["parameters"]!!.jsonObject["seconds"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+    }
 
     @Test fun theRunnerIsAdvertisedAsOneCallWithARunnableWorkflow() {
         val definition = gateway().definitions.single { it.name == "workflow_runner" }

@@ -605,10 +605,21 @@ Three rules carry most of the weight:
   `data`, `jar`). The scheme is read off the raw text before parsing, because
   `android_resource` is not a valid URI and would otherwise be reported as
   merely malformed.
-- **`ACTION_CALL` is not an available action.** It places a call with no
-  confirmation. `ACTION_DIAL` reaches the same screen and leaves the
-  irreversible press to the user, so the capability is kept and the
-  irreversible half is not.
+- **Actions are blocked by a short list, not allowlisted.** The action
+  allowlist failed the way the scheme allowlist did: a timer, a calendar insert
+  or a settings screen each needed a code change before the agent could reach
+  it. Any well-formed action is allowed except the few that commit with no
+  screen to back out of — `CALL` and its variants (`DIAL` reaches the same
+  screen and leaves the press to the user), install/uninstall/delete, and
+  factory reset. `VIEW` still needs a uri; any other action may stand alone.
+- **Extras are plain values.** `open_intent` takes `extras` as strings,
+  integers (an int when it fits, since `getIntExtra` ignores a long), longs,
+  doubles, booleans and string lists, with an explicit `{"type","value"}` for
+  the rest. There is no Uri, Parcelable or Bundle, so no model-built intent can
+  hand another app a grant; a string extra naming a blocked scheme is refused
+  too, since many apps parse one as a uri. An `amount` extra asks first, like
+  an `amount` query key. Nothing here names a feature: which extras a timer
+  takes is knowledge in a skill or a workflow definition.
 - **Sending and payment ask first.** A messaging scheme, `SENDTO`, payment
   amount, or prefilled payload pauses the exact tool call on an app-owned
   approval. The card is bound to the current run, turn, action, URI and optional

@@ -37,9 +37,11 @@ about to happen, or check that the workflow really matches the request.
 
 ```text
 workflow_runner(workflow="wireless-debugging", mode="run")
+workflow_runner(workflow="timer", mode="run", params={"seconds": 600})
 ```
 
-That is the whole call. The runner then, for every step:
+That is the whole call. A workflow whose listing shows `parameters` takes their
+values in `params`; convert the user's words to the unit it names. The runner then, for every step:
 
 1. reads the screen,
 2. finds the element the step describes — by `resourceId`, by visible text, by
@@ -153,12 +155,57 @@ worked, not from what the screen looks like:
 | `action` | Needs | Does |
 |---|---|---|
 | `open_app` | `arguments.package` (defaults to the workflow's package) | Brings the app to the front and waits for it. |
+| `open_intent` | `arguments`: `action` and/or `uri`, optional `package`, `text`, `extras` | Exactly the `open_intent` tool, with its policy and approval. Lands on a screen, or does the whole job (a timer), with no taps. |
 | `tap` | `target` | Clicks the node, by handle where the backend has one, otherwise at its current centre. |
 | `type_text` | `text`, optional `target`, optional `submit` | Replaces a field's contents. With no `target`, types into whatever holds focus. |
 | `scroll` | optional `target`, `arguments.direction` | Scrolls a list. Default direction `forward`. |
 | `key` | `arguments.keycode` | `BACK`, `HOME`, `APP_SWITCH` and the rest. `"action":"back"` is shorthand. |
 | `wait` | optional `timeoutMs` | Waits for the screen to change and settle. |
 | `observe` | — | Reads the screen. A checkpoint step whose whole job is its `verify`. |
+
+**Start with an intent when one reaches the screen.** A deep link or a settings
+action lands exactly where the taps would have, faster and with nothing to
+break on the way. Keep taps for the part no intent reaches.
+
+### Parameters
+
+Anything that changes between runs — minutes, a name, a message — is a
+parameter, not a second workflow. Declare it, use it as `{{name}}`, and the
+caller passes `params`:
+
+```json
+{
+  "id": "timer",
+  "version": 1,
+  "package": "com.google.android.deskclock",
+  "description": "Start a timer for any number of seconds.",
+  "parameters": {
+    "seconds": {"type": "integer", "min": 1, "max": 86400, "description": "Timer length in seconds"},
+    "label": {"type": "string", "default": "Timer"}
+  },
+  "steps": [
+    { "id": "start", "action": "open_intent", "waitForChange": false,
+      "arguments": {"action": "android.intent.action.SET_TIMER",
+        "extras": {"android.intent.extra.alarm.LENGTH": "{{seconds}}",
+                   "android.intent.extra.alarm.MESSAGE": "{{label}}",
+                   "android.intent.extra.alarm.SKIP_UI": true}} }
+  ]
+}
+```
+
+```text
+workflow_runner(workflow="timer", params={"seconds": 600})   -> a 10-minute timer
+```
+
+- Types: `string`, `integer`, `number`, `boolean`. `min`/`max` bound numbers,
+  `maxLength` bounds text, `default` makes a parameter optional.
+- A value that is **exactly** `"{{name}}"` keeps its type — the timer above
+  gets the integer 600, which is what the clock reads. Inside longer text,
+  `"{{label}} ({{seconds}}s)"`, it is spliced in as text.
+- There is no arithmetic. Name the parameter in the unit the step needs
+  (`seconds`), and convert what the user said ("10 minutes") yourself.
+- A missing, out-of-range or unknown value is refused before anything runs, with
+  the parameter list. `mode="list"` and `mode="describe"` show the parameters.
 
 ### Targets
 
@@ -215,3 +262,18 @@ For a sequence you do not want to write a definition for, `save_workflow` still
 stores a literal list of tool calls that `run_workflow` replays. It is the older,
 weaker mechanism: it resolves nothing at run time and breaks when the screen
 moves. Prefer a definition.
+
+## 6. Suggesting workflows from a chat
+
+When the user asks for workflow suggestions (the app's **Suggest workflows**
+button sends that request), look back over what you did on the phone in this
+chat and propose **at most three**:
+
+- only sequences likely to be repeated — not a one-off lookup,
+- each with a name, one line on what it does, and which values become
+  parameters ("the contact", "the minutes"),
+- an intent for every step one reaches, taps only for the rest.
+
+Check `workflow_runner(mode="list")` first and do not propose what is already
+installed. Write a definition only after the user picks one, run it once with
+real values, and tell them it is saved and how to ask for it next time.

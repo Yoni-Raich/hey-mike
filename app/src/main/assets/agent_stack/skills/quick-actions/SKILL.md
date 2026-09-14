@@ -90,7 +90,13 @@ Arguments, in order (`-` for empty):
 6. **text** — the prefilled message template, e.g. `{text}`, or `-`.
 7. **description** — what it does, for `list`.
 
-A saved intent with a built-in's name replaces it. Also record the underlying selector or link with `remember_capability`, and a multi-step UI sequence that has no deep link with `save_workflow` (see `app-cards`).
+A saved intent with a built-in's name replaces it.
+
+An intent that needs **extras** — a timer (`android.intent.action.SET_TIMER`
+with `android.intent.extra.alarm.LENGTH`), a calendar event, a share — cannot be
+stored here. Save it as a workflow definition with one `open_intent` step and
+its values as parameters (see the `workflows` skill), so "a timer for 10
+minutes" is one `workflow_runner` call. Also record the underlying selector or link with `remember_capability`, and a multi-step UI sequence that has no deep link with `save_workflow` (see `app-cards`).
 
 Tell the user briefly what you saved.
 

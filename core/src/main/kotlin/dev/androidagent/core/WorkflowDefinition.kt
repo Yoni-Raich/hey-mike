@@ -1,9 +1,12 @@
 package dev.androidagent.core
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -39,6 +42,8 @@ data class WorkflowDefinition(
     val steps: List<WorkflowStep>,
     /** Set when the definition was read from a file, for the failure report. */
     val source: String? = null,
+    /** Values the caller supplies per run, used in steps as `{{name}}`. */
+    val parameters: List<WorkflowParameter> = emptyList(),
 ) {
     fun stepIndex(stepId: String): Int? = steps.indexOfFirst { it.id == stepId }.takeIf { it >= 0 }
 
@@ -47,8 +52,40 @@ data class WorkflowDefinition(
         put("version", version)
         put("package", packageName)
         if (description.isNotEmpty()) put("description", description)
+        if (parameters.isNotEmpty()) {
+            put("parameters", buildJsonObject { parameters.forEach { put(it.name, it.toJson()) } })
+        }
         put("steps", JsonArray(steps.map { it.toJson() }))
     }
+
+    /**
+     * This definition with every `{{name}}` in its steps replaced by the
+     * caller's value, or a [WorkflowFormatException] saying which value is wrong.
+     *
+     * A step string that is exactly one placeholder takes the value with its
+     * type, so `"extras":{"LENGTH":"{{seconds}}"}` sends an integer; a
+     * placeholder inside longer text is spliced in as text. The bound steps are
+     * parsed again, so a value can never produce a step the format would refuse.
+     */
+    fun bind(values: JsonObject): WorkflowDefinition {
+        val known = parameters.associateBy { it.name }
+        values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw WorkflowFormatException(
+                "workflow_params_invalid",
+                "\"$id\" has no parameter \"$unknown\"." + parameterHint(),
+            )
+        }
+        val bound = parameters.associate { parameter -> parameter.name to parameter.accept(values[parameter.name], id) }
+        if (parameters.isEmpty()) return this
+        val steps = JsonArray(steps.map { substitute(it.toJson(), bound) })
+        return parse(JsonObject(toJson() + ("steps" to steps)), source)
+    }
+
+    private fun parameterHint(): String =
+        if (parameters.isEmpty()) " It takes none." else " It takes " + parameters.joinToString(", ") { it.name } + "."
+
+    /** What the caller has to supply, for `mode:"list"` and `mode:"describe"`. */
+    fun parametersOutline(): JsonObject = buildJsonObject { parameters.forEach { put(it.name, it.toJson()) } }
 
     /** The step list as a person reads it, for `mode:"describe"` and for the skill. */
     fun outline(): JsonArray = JsonArray(
@@ -58,6 +95,7 @@ data class WorkflowDefinition(
                 put("action", step.action.wire)
                 step.target?.describe()?.let { put("target", it) }
                 step.text?.let { put("text", it) }
+                if (step.action == WorkflowAction.OPEN_INTENT) put("intent", step.arguments)
                 if (step.requiresConfirmation) put("requiresConfirmation", true)
                 if (step.optional) put("optional", true)
                 if (step.skipIfVerified) put("skipIfVerified", true)
@@ -125,6 +163,18 @@ data class WorkflowDefinition(
                     "Workflow \"$id\" uses the step id \"$duplicate\" more than once.",
                 )
             }
+            val parameters = WorkflowParameter.parseAll(json["parameters"], id)
+            // A placeholder nothing declares would reach the phone as the
+            // literal text "{{minutes}}", so it is refused where it is written.
+            val declared = parameters.map { it.name }.toSet()
+            for (step in rawSteps) {
+                PLACEHOLDER_RE.findAll(step.toString()).map { it.groupValues[1] }.firstOrNull { it !in declared }?.let {
+                    throw WorkflowFormatException(
+                        "workflow_invalid",
+                        "Workflow \"$id\" uses {{$it}} but declares no parameter \"$it\".",
+                    )
+                }
+            }
             return WorkflowDefinition(
                 id = id,
                 version = json["version"]?.jsonPrimitive?.intOrNull ?: 1,
@@ -132,7 +182,114 @@ data class WorkflowDefinition(
                 description = json.str("description")?.take(MAX_DESCRIPTION_CHARS).orEmpty(),
                 steps = steps,
                 source = source,
+                parameters = parameters,
             )
+        }
+
+        internal val PLACEHOLDER_RE = Regex("\\{\\{\\s*([A-Za-z][A-Za-z0-9_]{0,31})\\s*\\}\\}")
+
+        private fun substitute(element: JsonElement, values: Map<String, JsonPrimitive>): JsonElement = when (element) {
+            is JsonObject -> JsonObject(element.mapValues { (_, value) -> substitute(value, values) })
+            is JsonArray -> JsonArray(element.map { substitute(it, values) })
+            is JsonPrimitive -> if (!element.isString) element else {
+                val text = element.content
+                val whole = PLACEHOLDER_RE.matchEntire(text.trim())
+                if (whole != null) {
+                    values.getValue(whole.groupValues[1])
+                } else {
+                    JsonPrimitive(PLACEHOLDER_RE.replace(text) { match -> values.getValue(match.groupValues[1]).content })
+                }
+            }
+            else -> element
+        }
+    }
+}
+
+/**
+ * One value a workflow takes per run: the 10 in "a 10-minute timer".
+ *
+ * Typed and bounded in the definition, so the model supplies a number and the
+ * runner, not the model, decides whether it is acceptable before the phone is
+ * touched.
+ */
+data class WorkflowParameter(
+    val name: String,
+    val type: String,
+    val description: String = "",
+    val required: Boolean = true,
+    val default: JsonPrimitive? = null,
+    val min: Double? = null,
+    val max: Double? = null,
+    val maxLength: Int = MAX_TEXT_CHARS,
+) {
+    fun toJson(): JsonObject = buildJsonObject {
+        put("type", type)
+        if (description.isNotEmpty()) put("description", description)
+        if (!required) put("required", false)
+        default?.let { put("default", it) }
+        min?.let { put("min", if (type == "integer") it.toLong() else it) }
+        max?.let { put("max", if (type == "integer") it.toLong() else it) }
+        if (type == "string" && maxLength != MAX_TEXT_CHARS) put("maxLength", maxLength)
+    }
+
+    /** The value to substitute, or a [WorkflowFormatException] naming what is wrong with it. */
+    internal fun accept(raw: JsonElement?, workflowId: String): JsonPrimitive {
+        fun bad(why: String): Nothing =
+            throw WorkflowFormatException("workflow_params_invalid", "Parameter \"$name\" of \"$workflowId\" $why.")
+        val absent = raw == null || raw is JsonNull
+        val value = (if (absent) default else raw as? JsonPrimitive)
+            ?: if (absent) bad("is required") else bad("must be a single $type")
+        return when (type) {
+            "string" -> {
+                val text = value.content
+                if (text.length > maxLength) bad("is longer than $maxLength characters")
+                JsonPrimitive(text)
+            }
+            "integer" -> {
+                // "10" from a model is still ten.
+                val number = value.content.trim().toLongOrNull() ?: bad("must be a whole number")
+                if (min != null && number < min) bad("must be at least ${min.toLong()}")
+                if (max != null && number > max) bad("must be at most ${max.toLong()}")
+                JsonPrimitive(number)
+            }
+            "number" -> {
+                val number = value.content.trim().toDoubleOrNull() ?: bad("must be a number")
+                if (min != null && number < min) bad("must be at least $min")
+                if (max != null && number > max) bad("must be at most $max")
+                JsonPrimitive(number)
+            }
+            "boolean" -> JsonPrimitive(value.content.trim().toBooleanStrictOrNull() ?: bad("must be true or false"))
+            else -> bad("has an unsupported type")
+        }
+    }
+
+    companion object {
+        const val MAX_PARAMETERS = 10
+        const val MAX_TEXT_CHARS = WorkflowStep.MAX_TEXT_CHARS
+        private val NAME_RE = Regex("[A-Za-z][A-Za-z0-9_]{0,31}")
+        private val TYPES = setOf("string", "integer", "number", "boolean")
+
+        fun parseAll(element: JsonElement?, workflowId: String): List<WorkflowParameter> {
+            fun bad(why: String): Nothing = throw WorkflowFormatException("workflow_invalid", "Workflow \"$workflowId\": $why")
+            if (element == null || element is JsonNull) return emptyList()
+            val json = element as? JsonObject ?: bad("\"parameters\" must be an object of name to definition.")
+            if (json.size > MAX_PARAMETERS) bad("it declares ${json.size} parameters; the limit is $MAX_PARAMETERS.")
+            return json.map { (name, raw) ->
+                if (!NAME_RE.matches(name)) bad("\"$name\" is not a usable parameter name.")
+                val spec = raw as? JsonObject ?: bad("parameter \"$name\" must be an object with a \"type\".")
+                val type = spec.str("type")?.lowercase() ?: "string"
+                if (type !in TYPES) bad("parameter \"$name\" has type \"$type\"; use ${TYPES.joinToString(", ")}.")
+                WorkflowParameter(
+                    name = name,
+                    type = type,
+                    description = spec.str("description")?.take(200).orEmpty(),
+                    required = spec.bool("required") ?: (spec["default"] == null),
+                    default = spec["default"] as? JsonPrimitive,
+                    min = (spec["min"] as? JsonPrimitive)?.doubleOrNull,
+                    max = (spec["max"] as? JsonPrimitive)?.doubleOrNull,
+                    maxLength = (spec["maxLength"] as? JsonPrimitive)?.intOrNull?.coerceIn(1, MAX_TEXT_CHARS) ?: MAX_TEXT_CHARS,
+                )
+            }
         }
     }
 }
@@ -156,6 +313,13 @@ class WorkflowFormatException(val errorType: String, override val message: Strin
 enum class WorkflowAction(val wire: String, val commits: Boolean, val needsTarget: Boolean) {
     /** Bring an app to the front and wait for it to be there. */
     OPEN_APP("open_app", commits = true, needsTarget = false),
+
+    /**
+     * Launch an intent through `open_intent`: a deep link, a settings screen,
+     * a timer. The same policy and the same approval card apply as when the
+     * model calls the tool itself, so a workflow is no way around either.
+     */
+    OPEN_INTENT("open_intent", commits = true, needsTarget = false),
 
     /** Click the node the target names, by node handle where the backend has one. */
     TAP("tap", commits = true, needsTarget = true),
@@ -276,6 +440,16 @@ data class WorkflowStep(
                 JsonObject(arguments + ("keycode" to JsonPrimitive("BACK")))
             } else {
                 arguments
+            }
+            if (action == WorkflowAction.OPEN_INTENT &&
+                stepArguments.str("action") == null && stepArguments.str("uri") == null
+            ) {
+                bad("\"open_intent\" needs arguments.action or arguments.uri.")
+            }
+            if (action == WorkflowAction.OPEN_INTENT && stepArguments["extras"] != null &&
+                stepArguments["extras"] !is JsonObject
+            ) {
+                bad("arguments.extras must be an object of extra name to value.")
             }
             if (action == WorkflowAction.KEY && stepArguments.str("keycode") == null) {
                 bad("\"key\" needs arguments.keycode, for example {\"keycode\":\"BACK\"}.")

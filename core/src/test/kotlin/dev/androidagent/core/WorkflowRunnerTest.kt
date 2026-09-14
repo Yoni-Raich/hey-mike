@@ -449,6 +449,38 @@ class WorkflowRunnerTest {
         assertEquals("n1", calls.first { it.first == "tap_node" }.second["nodeId"]!!.jsonPrimitive.content)
     }
 
+    @Test fun anIntentAndTapsRunInOneWorkflow() {
+        // Land on the screen by intent, finish the part no intent reaches by UI.
+        val list = Page("com.example.notes", listOf(Node("n1", text = "New note")))
+        val editor = Page("com.example.notes", listOf(Node("n2", text = "Saved")))
+        phone = FakeScreen(Page("com.android.launcher", emptyList()), mapOf("n1" to editor))
+        serviceable += "open_intent"
+        val runner = WorkflowRunner(
+            invokeTool = { name, args ->
+                if (name == "open_intent") { calls += name to args; phone.page = list; ToolResult("{\"ok\":true}") }
+                else invoke(name, args)
+            },
+            isRevoked = { revoked },
+        )
+        val workflow = definition(
+            """{"id":"open","action":"open_intent","arguments":{"uri":"notes://list"},"verify":{"present":{"text":"New note"}}}""",
+            """{"id":"new","action":"tap","target":{"text":"New note"},"verify":{"present":{"text":"Saved"}}}""",
+        )
+        val result = runBlocking { runner.run(workflow, WorkflowRunner.Options()) }
+        assertTrue(result.text, result.success)
+        assertEquals(listOf("open" to "done", "new" to "done"), statuses(result))
+        assertEquals("notes://list", calls.first { it.first == "open_intent" }.second["uri"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aResumeCarriesTheValuesTheRunWasGiven() {
+        phone = FakeScreen(Page("com.example", emptyList()))
+        val workflow = definition("""{"id":"go","action":"tap","target":{"text":"Missing"}}""")
+        val params = Json.parseToJsonElement("""{"seconds":600}""").jsonObject
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options(params = params)) }
+        val resume = parse(result)["resume"]!!.jsonObject["arguments"]!!.jsonObject
+        assertEquals(params, resume["params"])
+    }
+
     @Test fun anExactSelectorRefusesANodeThatOnlyPartlyMatches() {
         phone = FakeScreen(Page("com.example", listOf(Node("n1", text = "Delete everything"))))
         val workflow = definition("""{"id":"tap","action":"tap","target":{"text":"Delete","exact":true}}""")

@@ -2,6 +2,7 @@ package dev.androidagent.core
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -145,15 +146,32 @@ class WorkflowToolGateway(
         }
         if (mode == "describe") return describe(definition)
 
+        val params = when (val raw = arguments["params"]) {
+            null, is JsonNull -> JsonObject(emptyMap())
+            is JsonObject -> raw
+            else -> return refusal("workflow_params_invalid", "params must be an object of parameter name to value.")
+        }
+        // Bound before anything runs: a missing or out-of-range value is a
+        // refusal with nothing done, not a failure halfway through.
+        val bound = try {
+            definition.bind(params)
+        } catch (invalid: WorkflowFormatException) {
+            return refusal(
+                invalid.errorType,
+                invalid.message + if (definition.parameters.isEmpty()) "" else
+                    " Parameters: " + definition.parametersOutline().toString(),
+            )
+        }
         val budget = arguments.millis("totalBudgetMs", WorkflowRunner.MIN_TOTAL_MS, WorkflowRunner.MAX_TOTAL_MS)
             ?: WorkflowRunner.DEFAULT_TOTAL_MS
         return runner.run(
-            definition,
+            bound,
             WorkflowRunner.Options(
                 mode = mode,
                 startAt = arguments.str("startAt") ?: arguments.str("fromStep"),
                 totalBudgetMs = budget,
                 screenshotOnFailure = arguments.bool("screenshotOnFailure") ?: false,
+                params = params,
             ),
         )
     }
@@ -165,6 +183,7 @@ class WorkflowToolGateway(
             put("package", definition.packageName)
             put("version", definition.version)
             if (definition.description.isNotEmpty()) put("description", definition.description)
+            if (definition.parameters.isNotEmpty()) put("parameters", definition.parametersOutline())
             put("steps", definition.outline())
             put(
                 "note",
@@ -189,6 +208,9 @@ class WorkflowToolGateway(
                                 put("package", definition.packageName)
                                 if (definition.description.isNotEmpty()) put("description", definition.description)
                                 put("steps", definition.steps.size)
+                                if (definition.parameters.isNotEmpty()) {
+                                    put("parameters", definition.parametersOutline())
+                                }
                                 if (definition.steps.any { it.requiresConfirmation }) {
                                     put("asksBeforeSensitiveSteps", true)
                                 }
@@ -258,7 +280,8 @@ class WorkflowToolGateway(
                 "workflow and it reads the screen, finds each element by id or label, acts, waits and " +
                 "checks the result before moving on, so it keeps working when a row moves or an app " +
                 "updates. mode=\"list\" names the installed workflows, mode=\"describe\" prints the " +
-                "steps without running anything, mode=\"run\" executes them. A step marked " +
+                "steps without running anything, mode=\"run\" executes them. A workflow that lists " +
+                "parameters takes their values in params, e.g. params={\"minutes\":10}. A step marked " +
                 "requiresConfirmation stops and asks the user. On failure the reply names the exact step, " +
                 "whether it may already have run, what is on screen and the arguments to resume from that " +
                 "step - resume with those, never start again.",
@@ -266,6 +289,7 @@ class WorkflowToolGateway(
                 "workflow" to "string",
                 "package" to "string",
                 "mode" to "string",
+                "params" to "object",
                 "startAt" to "string",
                 "totalBudgetMs" to "integer",
                 "screenshotOnFailure" to "boolean",
@@ -312,7 +336,13 @@ class WorkflowToolGateway(
             required: List<String>,
         ): ToolDefinition {
             val props = buildJsonObject {
-                for ((key, type) in properties) put(key, buildJsonObject { put("type", type) })
+                for ((key, type) in properties) {
+                    put(key, buildJsonObject {
+                        put("type", type)
+                        // A free-form map, such as workflow_runner's params.
+                        if (type == "object") put("additionalProperties", true)
+                    })
+                }
             }
             val schema = buildJsonObject {
                 put("type", "object")

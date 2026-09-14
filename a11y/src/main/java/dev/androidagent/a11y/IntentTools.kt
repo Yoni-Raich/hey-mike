@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.net.Uri
+import dev.androidagent.core.IntentExtra
+import dev.androidagent.core.IntentExtras
 import dev.androidagent.core.IntentPolicy
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.ToolNotServiceable
@@ -58,6 +60,10 @@ internal class IntentTools(
         val action = arguments.string("action")
         val pkg = arguments.string("package")
         if (pkg != null) require(PACKAGE_RE.matches(pkg)) { "package is not a valid Android package name" }
+        val extras = when (val parsed = IntentExtras.parse(arguments["extras"])) {
+            is IntentExtras.Parsed.Invalid -> return denied(IntentPolicy.Decision.Deny(parsed.reason, parsed.message))
+            is IntentExtras.Parsed.Ok -> parsed.extras
+        }
         // A prefilled body is composed into the uri before the policy runs, so
         // it is checked as the payload it is rather than slipping past as an
         // argument the policy never sees.
@@ -66,12 +72,18 @@ internal class IntentTools(
             is IntentPolicy.Decision.Allow -> composed.uri
             is IntentPolicy.Decision.NeedsConfirmation -> composed.uri
         }
-        return when (val decision = IntentPolicy.evaluate(action, uri)) {
+        return when (val decision = IntentPolicy.evaluate(action, uri, extras)) {
             is IntentPolicy.Decision.Deny -> denied(decision)
             is IntentPolicy.Decision.NeedsConfirmation -> authorizeIntent(
-                LocalIntentRequest(decision.action, decision.uri, pkg, decision.what),
-            ) { launch(IntentPolicy.Decision.Allow(decision.uri, decision.action), pkg) }
-            is IntentPolicy.Decision.Allow -> launch(decision, pkg)
+                LocalIntentRequest(
+                    decision.action,
+                    decision.uri,
+                    pkg,
+                    // What the extras say is part of what is being approved.
+                    if (extras.isEmpty()) decision.what else "${decision.what} (${IntentExtras.describe(extras)})",
+                ),
+            ) { launch(IntentPolicy.Decision.Allow(decision.uri, decision.action), pkg, extras) }
+            is IntentPolicy.Decision.Allow -> launch(decision, pkg, extras)
         }
     }
 
@@ -96,8 +108,22 @@ internal class IntentTools(
         )
     }
 
-    private fun launch(decision: IntentPolicy.Decision.Allow, pkg: String?): ToolResult {
+    private fun launch(
+        decision: IntentPolicy.Decision.Allow,
+        pkg: String?,
+        extras: Map<String, IntentExtra>,
+    ): ToolResult {
         val intent = build(decision.action, decision.uri)
+        for ((key, value) in extras) {
+            when (value) {
+                is IntentExtra.Text -> intent.putExtra(key, value.value)
+                is IntentExtra.Int32 -> intent.putExtra(key, value.value)
+                is IntentExtra.Int64 -> intent.putExtra(key, value.value)
+                is IntentExtra.Real -> intent.putExtra(key, value.value)
+                is IntentExtra.Flag -> intent.putExtra(key, value.value)
+                is IntentExtra.TextList -> intent.putExtra(key, value.values.toTypedArray())
+            }
+        }
         if (pkg != null) {
             // A package hint narrows an ambiguous link to one app. It is not a
             // component: the app still picks its own entry point.
@@ -201,9 +227,14 @@ internal class IntentTools(
             ),
             IntentToolSpec(
                 name = "open_intent",
-                description = "Open a destination directly by intent or deep link instead of navigating " +
-                    "there through the UI — a maps route, a specific chat, a settings screen. Prefer this " +
-                    "over open_app plus taps when a link reaches the target. Pass a prefilled message body " +
+                description = "Open a destination or run an Android action directly by intent instead of " +
+                    "navigating there through the UI — a maps route, a specific chat, a settings screen " +
+                    "(action android.settings.WIRELESS_SETTINGS, no uri), a timer (action " +
+                    "android.intent.action.SET_TIMER with extras). Prefer this over open_app plus taps " +
+                    "when an intent reaches the target. extras is an object of extra name to value: a " +
+                    "string, boolean, integer (sent as int when it fits), decimal, list of strings, or " +
+                    "{\"type\":\"long\",\"value\":...} when the receiver reads another type. Only plain " +
+                    "values: no uri grants, no component. Pass a prefilled message body " +
                     "as text rather than building \"?text=\" into the uri yourself; it is encoded for you, " +
                     "and an unencoded space or & in a hand-built uri truncates the message or fails to " +
                     "parse. Anything that sends on the user's behalf — a prefilled message, a payment — " +
@@ -215,6 +246,7 @@ internal class IntentTools(
                     "uri" to "string",
                     "package" to "string",
                     "text" to "string",
+                    "extras" to "object",
                 ),
                 required = emptyList(),
             ),
