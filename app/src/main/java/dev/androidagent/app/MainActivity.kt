@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.androidagent.app.assist.AssistLaunch
 import dev.androidagent.app.ui.*
 import dev.androidagent.core.KeepAwakePolicy
 
@@ -27,9 +28,13 @@ class MainActivity : ComponentActivity() {
     private var askedForNotifications = false
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::addAttachment) }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPermissions() }
+    // Set while the permission dialog is up for an assistant press, so the
+    // grant starts voice the assistant way rather than toggling it.
+    private var voiceForAssistant = false
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         model.refreshPermissions()
-        if (granted) { ensureService(); model.toggleVoice() }
+        val forAssistant = voiceForAssistant.also { voiceForAssistant = false }
+        if (granted) { ensureService(); if (forAssistant) model.startAssistantVoice() else model.toggleVoice() }
         else model.error("Microphone permission is required for voice.")
     }
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,10 +62,38 @@ class MainActivity : ComponentActivity() {
         }
         ensureService()
         model.prepare()
-        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        // Not on recreation: a rotation must not reopen a conversation the
+        // user already ended.
+        val fromAssistant = savedInstanceState == null && handleAssistantPress(intent)
+        if (!fromAssistant && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askedForNotifications = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleAssistantPress(intent)
+    }
+
+    /**
+     * The power button was held with Mike as the digital assistant: close
+     * whatever sheet is open and go straight into a live voice conversation.
+     * Returns whether the intent was an assistant press.
+     */
+    private fun handleAssistantPress(intent: Intent?): Boolean {
+        if (intent?.getBooleanExtra(AssistLaunch.EXTRA_START_VOICE, false) != true) return false
+        // Reopening from Recents replays the press that created the task.
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return false
+        intent.removeExtra(AssistLaunch.EXTRA_START_VOICE)
+        model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false) }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            ensureService()
+            model.startAssistantVoice()
+        } else {
+            voiceForAssistant = true
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+        return true
     }
     override fun onStart() {
         super.onStart()
@@ -77,7 +110,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
-        model.refreshAccount(); model.refreshPermissions()
+        model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole()
     }
     override fun onPause() {
         if (model.graph.foregroundActivity?.get() === this) model.graph.foregroundActivity = null
@@ -105,6 +138,11 @@ class MainActivity : ComponentActivity() {
         onRefreshAccount = { model.refreshAccount() },
         onOpenWirelessSettings = ::openWirelessDebugging,
         onOpenAccessibilitySettings = { openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+        onOpenAssistantSettings = {
+            if (AssistLaunch.settingsIntents().none { openSettings(it, report = false) }) {
+                model.error("This phone has no assistant settings screen to open. Look under Default apps.")
+            }
+        },
         onOpenAppInfo = { openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
         onOpenOverlayPermission = { openSettings(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) },
         onDisconnect = { model.disconnect() },

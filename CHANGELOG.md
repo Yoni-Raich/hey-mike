@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Mike can be the phone's digital assistant. Pick Hey Mike under Default apps >
+  Digital assistant app, and holding the power button opens a live voice
+  conversation with Mike instead of Gemini. A press starts a new chat unless
+  the open one is empty, and never opens over the lock screen. Settings >
+  Digital assistant shows whether it is on and opens the picker. "Hey Google"
+  stays with Google. The voice screen comes up the moment the button is held,
+  with the sphere flying in from the power button edge while Mike starts.
 - Approvals you can see, answer by voice, and remember:
   - The approval card is pinned above the message box, and shown on the voice
     screen. It used to sit at the top of the chat, out of sight in any long
