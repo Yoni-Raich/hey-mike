@@ -485,6 +485,9 @@ class AgentCoordinator(
                 put("action", request.action)
                 request.uri?.let { put("uri", it) }
                 request.packageName?.let { put("package", it) }
+                if (request.extras.isNotEmpty()) {
+                    put("extras", buildJsonObject { request.extras.forEach { (key, value) -> put(key, value.display()) } })
+                }
             },
             send = null,
         )

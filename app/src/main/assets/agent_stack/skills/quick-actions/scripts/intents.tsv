@@ -6,3 +6,5 @@ maps.navigate	place	-	google.navigation:q={place}	com.google.android.apps.maps	-
 waze.navigate	place	-	https://waze.com/ul?q={place}&navigate=yes	com.waze	-	Start Waze navigation to a place or address
 web.search	query	-	https://www.google.com/search?q={query}	-	-	Search the web
 youtube.search	query	-	https://www.youtube.com/results?search_query={query}	com.google.android.youtube	-	Search YouTube
+clock.timer	seconds	android.intent.action.SET_TIMER	-	-	-	Start a countdown timer for a number of seconds, without opening the clock	android.intent.extra.alarm.LENGTH=int:{seconds};android.intent.extra.alarm.SKIP_UI=bool:true
+clock.alarm	hour,minutes	android.intent.action.SET_ALARM	-	-	-	Set an alarm for an hour (0-23) and minutes, without opening the clock	android.intent.extra.alarm.HOUR=int:{hour};android.intent.extra.alarm.MINUTES=int:{minutes};android.intent.extra.alarm.SKIP_UI=bool:true

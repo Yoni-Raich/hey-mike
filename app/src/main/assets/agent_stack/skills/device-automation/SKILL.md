@@ -160,6 +160,24 @@ itself, so they cannot miss because the screen scrolled a few pixels.
 
 A deep link that lands on the target beats `open_app` plus a sequence of taps. Use `resolve_intent` first when you are not sure the link is supported.
 
+### Any action, with extras
+
+`action` can be any activity action Android or an app defines — `android.settings.WIFI_SETTINGS`, `android.intent.action.SET_TIMER`, `android.intent.action.SEND` — not only VIEW. Only actions that act with no screen to confirm on, such as `CALL`, are refused; use `DIAL`. Only `VIEW` needs a `uri`.
+
+Pass the action's Intent extras in `extras`, by their full names:
+
+```text
+open_intent(action="android.intent.action.SET_TIMER",
+            extras={"android.intent.extra.alarm.LENGTH": 300, "android.intent.extra.alarm.SKIP_UI": true})
+```
+
+- A string, boolean, number or array of strings. A whole number is sent as an int.
+- A receiver that reads a long (a time in milliseconds, usually) needs `{"type": "long", "value": 1700000000000}`; an int in its place reads as 0. `int`, `double`, `boolean`, `string` and `string_array` work the same way.
+- No Uri, Parcelable or Bundle, and a string naming `content:`, `file:` or `intent:` is refused.
+- An extra whose name contains `amount` asks the user first, like a payment link.
+
+When one works, save it with `quick-actions save-intent` (its eighth argument is the extras) so the next request is one step.
+
 ### Prefilled message bodies
 
 Pass the body as `text`. **Do not build `?text=` into the uri yourself** — an unencoded space or `&` either truncates the message at the first separator or fails uri parsing outright:

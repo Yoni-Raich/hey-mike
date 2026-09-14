@@ -1,6 +1,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.EngineEvent
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.net.URI
@@ -77,6 +78,12 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
         if (recipient == null && message == null) {
             detail("reason")?.let { add("What" to it) }
             uri?.let { add("Link" to decode(it)) }
+            if (uri == null) detail("action")?.let { add("Action" to it.substringAfterLast('.')) }
+        }
+        // `android.intent.extra.alarm.LENGTH` reads as LENGTH: the prefix is
+        // the same on every extra and says nothing a person can check.
+        (details["extras"] as? JsonObject)?.forEach { (key, value) ->
+            (value as? JsonPrimitive)?.contentOrNull?.let { add(key.substringAfterLast('.') to it) }
         }
         if (app == null) detail("package")?.let { add("App" to it) }
     }
