@@ -179,6 +179,9 @@ open_intent(action="android.intent.action.SET_TIMER",
 - The receiver reads each extra as one type, and Android does not convert: a time in milliseconds sent as an int reads as 0. State the type when it matters: `{"type": "long", "value": 1757000000000}` (`int`, `long`, `double`, `boolean`, `string`, `string_array`).
 - No Uri, Parcelable or Bundle, and a string naming `content:`, `file:` or `intent:` is refused.
 - An `amount` extra asks the user first, like a payment link.
+- An intent with extras opens the receiving app fresh, closing the screens it
+  had open, because many apps read extras only when they start. Expect it on
+  its first screen afterwards, not where it was.
 
 quick-actions cannot store extras. When an intent with extras worked and will be asked for again ("a timer for 10 minutes"), save it as a workflow with one `open_intent` step and its values as parameters (see the `workflows` skill).
 
