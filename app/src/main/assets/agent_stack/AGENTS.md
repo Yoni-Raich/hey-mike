@@ -46,7 +46,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 ## 5. Work efficiently
 
 - **To contact a person or open a known destination, start with `quick-actions`.** "Message dad", "call mom", "navigate home": one script call gives the ready `open_intent`. No contact search, no walking through the app.
-- **Save what you learn, every time.** A phone number you found goes to `quick-actions` as a contact; a deep link that worked goes there as an intent; a UI sequence with no deep link goes to `save_workflow`. The next request should take one step.
+- **Save what you learn, every time.** A phone number you found goes to `quick-actions` as a contact; a deep link that worked goes there as an intent; an intent that needs extras (a timer) becomes a workflow with parameters; a UI sequence with no deep link goes to `save_workflow`. The next request should take one step.
 - Prefer a deep link (`open_intent`) over walking menus, and nodes (`tap_node`, `set_text`, `scroll_node`) over coordinates.
 - Use `act_and_observe` for one known action followed by a fresh observation.
 - **For a sequence someone has already worked out, `workflow_runner` does the whole thing in one call.** It resolves each element on the screen in front of it, so it survives a moved row or an app update. `workflow_runner(mode="list")` shows what is installed. See the `workflows` skill.

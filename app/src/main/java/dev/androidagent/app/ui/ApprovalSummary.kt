@@ -89,6 +89,9 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
         if (recipient == null && message == null) {
             detail("reason")?.let { add("What" to it) }
             uri?.let { add("Link" to decode(it)) }
+            // An intent with no uri — a payment app's own action carrying an
+            // amount in extras — would otherwise name nothing but its reason.
+            if (uri == null) detail("action")?.let { add("Action" to it.substringAfterLast('.')) }
         }
         if (app == null) detail("package")?.let { add("App" to it) }
     }

@@ -28,6 +28,23 @@ class ApprovalSummaryTest {
         assertEquals(listOf("To" to "+972587160002", "Message" to "היי"), summary.lines)
     }
 
+    @Test fun anIntentWithNoUriNamesItsAction() {
+        val summary = EngineEvent.Approval(
+            requestId = "p",
+            method = "open_intent",
+            details = buildJsonObject {
+                put("reason", "Start a payment. (AMOUNT=10)")
+                put("action", "com.example.pay.CHECKOUT")
+                put("package", "com.example.pay")
+            },
+        ).summary()
+        assertEquals("Open this?", summary.headline)
+        assertEquals(
+            listOf("What" to "Start a payment. (AMOUNT=10)", "Action" to "CHECKOUT", "App" to "com.example.pay"),
+            summary.lines,
+        )
+    }
+
     @Test fun anSmsShowsTheNumberAndBody() {
         val summary = approval("smsto:+972500000000?body=on%20my%20way%20%26%20close").summary()
         assertEquals("Send an SMS?", summary.headline)
