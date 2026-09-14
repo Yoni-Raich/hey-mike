@@ -61,6 +61,8 @@ class FloatingControlOverlay(
     private val onStop: () -> Unit,
     private val onSend: (String) -> Unit,
     private val onOpenApp: () -> Unit,
+    private val onExitChatMode: () -> Unit = {},
+    private val onApproval: (Boolean) -> Unit = {},
 ) : ControlOverlay {
 
     private val appContext = context.applicationContext
@@ -76,6 +78,8 @@ class FloatingControlOverlay(
     private var commentaryView: TextView? = null
     private var steerRow: View? = null
     private var approveButton: View? = null
+    private var chatExitButton: View? = null
+    private var chatApprovalActions: View? = null
     private var orbView: OverlayOrbView? = null
     private var inputView: EditText? = null
     private var controlParams: WindowManager.LayoutParams? = null
@@ -89,6 +93,8 @@ class FloatingControlOverlay(
     private var appForeground = false
     private var collapsed = true
     private var runActive = false
+    private var chatModeStatus: String? = null
+    private var chatApproval: String? = null
     private var currentStatus = "Ready"
     private var content: OverlayContent? = null
 
@@ -134,7 +140,7 @@ class FloatingControlOverlay(
     override fun update(status: String) {
         runOnMain {
             currentStatus = status.ifBlank { "Ready" }
-            applyStatus(currentStatus)
+            applyStatus(visibleStatus())
         }
     }
 
@@ -145,9 +151,16 @@ class FloatingControlOverlay(
             currentStatus = state.label
             val hadControl = runActive
             runActive = false
-            if (!hadControl) { removeViews(); return@runOnMain }
+            if (!hadControl) {
+                if (chatModeStatus == null) removeViews() else applyStatus(visibleStatus())
+                return@runOnMain
+            }
             if (appForeground) {
                 removeViews()
+                return@runOnMain
+            }
+            if (chatModeStatus != null) {
+                applyStatus(visibleStatus())
                 return@runOnMain
             }
             applyStatus(currentStatus)
@@ -169,7 +182,39 @@ class FloatingControlOverlay(
     override fun hide() {
         runOnMain {
             runActive = false
+            chatModeStatus = null
+            chatApproval = null
             removeViews()
+        }
+    }
+
+    /** Show or clear the temporary foreground-chat watch without changing the run state. */
+    fun setChatMode(status: String?) {
+        runOnMain {
+            chatModeStatus = status?.takeIf { it.isNotBlank() }
+            if (chatModeStatus == null) chatApproval = null
+            if (chatModeStatus == null && !runActive) {
+                removeViews()
+                return@runOnMain
+            }
+            if (appForeground) {
+                removeViews()
+                return@runOnMain
+            }
+            runCatching {
+                requireOverlayPermission()
+                addViewsIfNeeded()
+                applyStatus(visibleStatus())
+            }.onFailure { removeViews() }
+        }
+    }
+
+    /** Show send details and answer controls while WhatsApp stays in front. */
+    fun setChatApproval(summary: String?) {
+        runOnMain {
+            chatApproval = summary?.takeIf { it.isNotBlank() }
+            applyStatus(visibleStatus())
+            if (chatApproval != null && collapsed) setCollapsed(false)
         }
     }
 
@@ -186,7 +231,7 @@ class FloatingControlOverlay(
                 // Removing the window makes the foreground app completely
                 // unobstructed and also removes it from capture surfaces.
                 removeViews()
-            } else if (runActive) {
+            } else if (runActive || chatModeStatus != null) {
                 // A run may have started from the app while this flag was
                 // true. Restore the latest status as soon as another app is
                 // visible. Lifecycle callbacks must not crash the process if
@@ -263,7 +308,7 @@ class FloatingControlOverlay(
 
     private fun addViewsIfNeeded() {
         if (showing && controlRoot != null) {
-            applyStatus(currentStatus)
+            applyStatus(visibleStatus())
             return
         }
         if (controlRoot != null || controlParams != null) removeViews()
@@ -274,7 +319,7 @@ class FloatingControlOverlay(
             windowManager.addView(control, controlLayout)
             showing = true
             registerConfigurationCallbacks()
-            applyStatus(currentStatus)
+            applyStatus(visibleStatus())
         } catch (error: Throwable) {
             removeViews()
             throw error
@@ -440,12 +485,58 @@ class FloatingControlOverlay(
         }
         approveButton = approve
 
+        val exitChat = TextView(appContext).apply {
+            text = "Exit Chat Mode"
+            setTextColor(INK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = rounded(fill = FIELD, stroke = OUTLINE, radiusDp = 22f)
+            foreground = ripple(INK, rounded(Color.WHITE, Color.TRANSPARENT, 22f))
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            setOnClickListener { onExitChatMode() }
+        }
+        chatExitButton = exitChat
+
+        fun approvalButton(label: String, allow: Boolean, fill: Int, ink: Int) = TextView(appContext).apply {
+            text = label
+            setTextColor(ink)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = rounded(fill = fill, stroke = if (allow) Color.TRANSPARENT else OUTLINE, radiusDp = 20f)
+            foreground = ripple(ink, rounded(Color.WHITE, Color.TRANSPARENT, 20f))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onApproval(allow) }
+        }
+        val approvalActions = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            addView(approvalButton("Deny", false, FIELD, INK), LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                marginEnd = dp(6)
+            })
+            addView(approvalButton("Allow", true, APPROVE, APPROVE_INK), LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                marginStart = dp(6)
+            })
+        }
+        chatApprovalActions = approvalActions
+
         val bodyColumn = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             addView(commentary, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(steer, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(approve, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).apply {
                 setMargins(dp(12), dp(12), dp(12), dp(12))
+            })
+            addView(approvalActions, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)).apply {
+                setMargins(dp(12), dp(6), dp(12), dp(6))
+            })
+            addView(exitChat, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).apply {
+                setMargins(dp(12), dp(4), dp(12), dp(12))
             })
             visibility = if (collapsed) View.GONE else View.VISIBLE
         }
@@ -795,6 +886,8 @@ class FloatingControlOverlay(
         commentaryView = null
         steerRow = null
         approveButton = null
+        chatExitButton = null
+        chatApprovalActions = null
         orbView = null
         inputView = null
         controlParams = null
@@ -905,17 +998,24 @@ class FloatingControlOverlay(
         content = next
         headlineView?.text = next.headline
         commentaryView?.apply {
-            text = next.commentary.orEmpty()
-            visibility = if (next.commentary.isNullOrBlank()) View.GONE else View.VISIBLE
+            val detail = chatApproval ?: next.commentary
+            text = detail.orEmpty()
+            visibility = if (detail.isNullOrBlank()) View.GONE else View.VISIBLE
         }
-        steerRow?.visibility = if (next.needsApproval) View.GONE else View.VISIBLE
-        approveButton?.visibility = if (next.needsApproval) View.VISIBLE else View.GONE
+        // V1 Chat Mode is voice-only. Keeping the text field hidden also keeps
+        // this overlay non-focusable, so WhatsApp remains the active window.
+        steerRow?.visibility = if (next.needsApproval || chatModeStatus != null) View.GONE else View.VISIBLE
+        approveButton?.visibility = if (next.needsApproval && chatApproval == null) View.VISIBLE else View.GONE
+        chatApprovalActions?.visibility = if (next.needsApproval && chatApproval != null) View.VISIBLE else View.GONE
+        chatExitButton?.visibility = if (chatModeStatus != null) View.VISIBLE else View.GONE
         orbView?.let { orb ->
             orb.setTone(toneColor(next.tone), toneActivity(next.tone))
             if (headlineChanged && next.tone == OverlayTone.CONTROLLING) orb.pulse()
         }
         updateHeaderDescription()
     }
+
+    private fun visibleStatus(): String = if (runActive) currentStatus else chatModeStatus ?: currentStatus
 
     private fun toneColor(tone: OverlayTone): Int = when (tone) {
         OverlayTone.ACTIVE -> TONE_WORKING

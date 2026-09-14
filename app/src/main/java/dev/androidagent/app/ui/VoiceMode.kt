@@ -71,6 +71,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.core.VoicePhase
 import dev.androidagent.core.VoiceState
+import dev.androidagent.core.ChatModePhase
+import dev.androidagent.core.ChatModeState
 
 // Voice mode takes over the whole screen instead of living in the composer.
 // One transition drives every moving part, each with its own delay: the chat
@@ -242,6 +244,7 @@ internal fun VoiceModeLayer(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
+            ChatModeStatus(state.chatModeState, actions.onExitChatMode)
             VoiceStatus(voice, state.voiceMuted, Modifier.voiceStage(motion.status, lift = 10.dp))
             VoiceCaption(
                 transcript = state.voiceTranscript,
@@ -268,6 +271,41 @@ internal fun VoiceModeLayer(
                     onClick = actions.onStop,
                     modifier = Modifier.voiceStage(motion.end, lift = 28.dp, scaleFrom = 0.9f),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatModeStatus(state: ChatModeState, onExit: () -> Unit) {
+    if (state.phase == ChatModePhase.OFF) return
+    val text = when (state.phase) {
+        ChatModePhase.OFFERED -> "Chat Mode available — say yes or no"
+        ChatModePhase.WATCHING -> "Watching ${state.chatTitle ?: "this WhatsApp chat"}"
+        ChatModePhase.UPDATE_PENDING -> "New WhatsApp message"
+        ChatModePhase.UNSUPPORTED -> "Chat Mode is unavailable for this chat"
+        ChatModePhase.OFF -> return
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (state.active) VoiceTeal else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (state.engaged) {
+            Surface(
+                onClick = onExit,
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ) {
+                Text("Exit", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp)
             }
         }
     }

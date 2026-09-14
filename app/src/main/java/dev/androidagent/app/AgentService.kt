@@ -1,7 +1,10 @@
 package dev.androidagent.app
 
 import android.app.*
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -15,6 +18,14 @@ class AgentService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val graph get() = (application as AgentApplication).graph
     private lateinit var keepAwake: ConversationKeepAwakeController
+    private var screenReceiverRegistered = false
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                graph.chatMode.stop(dev.androidagent.core.ChatModeStopReason.SCREEN_LOCKED, announce = false)
+            }
+        }
+    }
     override fun onCreate() {
         super.onCreate()
         keepAwake = ConversationKeepAwakeController(AndroidScreenWakeLock(this))
@@ -25,6 +36,13 @@ class AgentService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
         )
         graph.adb.startAutoReconnect(scope)
+        val screenFilter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, screenFilter, Context.RECEIVER_NOT_EXPORTED)
+        else {
+            @Suppress("DEPRECATION")
+            registerReceiver(screenReceiver, screenFilter)
+        }
+        screenReceiverRegistered = true
         scope.launch {
             combine(graph.coordinator.state, graph.voice.state) { run, voice -> run to voice }
                 .collect { (run, voice) ->
@@ -41,6 +59,8 @@ class AgentService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) { stopAll(); stopSelf() }
     override fun onDestroy() {
         stopAll()
+        if (screenReceiverRegistered) runCatching { unregisterReceiver(screenReceiver) }
+        screenReceiverRegistered = false
         graph.adb.stopAutoReconnect()
         graph.scope.launch {
             runCatching { graph.voice.stop() }
@@ -53,6 +73,7 @@ class AgentService : Service() {
         super.onDestroy()
     }
     private fun stopAll() {
+        graph.chatMode.stop(dev.androidagent.core.ChatModeStopReason.STOPPED, announce = false)
         graph.queue.pause()
         graph.coordinator.endVoice()
         graph.coordinator.stop()

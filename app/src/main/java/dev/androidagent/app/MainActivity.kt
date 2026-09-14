@@ -130,6 +130,7 @@ class MainActivity : ComponentActivity() {
         onResumeQueue = { model.resumeQueue() },
         onVoiceToggle = ::toggleVoice,
         onVoiceMuteToggle = model::toggleVoiceMute,
+        onExitChatMode = model::exitChatMode,
         onOpenSettings = { model.editUi { it.copy(isSettingsOpen = true) } },
         onCloseSettings = { model.editUi { it.copy(isSettingsOpen = false) } },
         onPrepareRuntime = { ensureService(); model.prepare() },
