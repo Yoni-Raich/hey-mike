@@ -58,6 +58,8 @@ data class LocalIntentRequest(
     val uri: String?,
     val packageName: String?,
     val reason: String,
+    /** Shown on the card too: an amount in an extra is as much the request as one in the uri. */
+    val extras: Map<String, IntentExtra> = emptyMap(),
 )
 data class AccountStatus(val signedIn: Boolean, val label: String, val loginUrl: String? = null, val userCode: String? = null)
 

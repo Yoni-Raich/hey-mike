@@ -6,13 +6,17 @@
 #   sh act.sh list                            saved intents and contacts
 #   sh act.sh contact <name>                  who a name resolves to
 #   sh act.sh save-contact <key> <name> <phone> [alias,alias]
-#   sh act.sh save-intent <name> <params> <action> <uri> <package> <text> <description>
+#   sh act.sh save-intent <name> <params> <action> <uri> <package> <text> <description> [extras]
 #   sh act.sh forget-contact <key>
 #   sh act.sh forget-intent <name>
 #
 # Files (tab-separated, "-" means empty):
 #   contacts.tsv  key  name  phone  aliases
-#   intents.tsv   name  params  action  uri  package  text  description
+#   intents.tsv   name  params  action  uri  package  text  description  [extras]
+#
+# extras is "name=type:template;name=type:template", type one of string, int,
+# long, bool. A template is filled like the uri but not percent-encoded, e.g.
+#   android.intent.extra.alarm.LENGTH=int:{seconds};android.intent.extra.alarm.SKIP_UI=bool:true
 # Built-in intents ship next to this script; saved ones override them by name.
 
 set -u
@@ -85,7 +89,7 @@ cmd_run() {
   name=$1; shift
   row=$(find_intent "$name") || die 3 "error: no intent named \"$name\". Run: sh $0 list"
   params=$(field "$row" 2); action=$(field "$row" 3); uri=$(field "$row" 4)
-  package=$(field "$row" 5); text=$(field "$row" 6)
+  package=$(field "$row" 5); text=$(field "$row" 6); extras=$(field "$row" 8)
 
   set -f
   for arg in "$@"; do
@@ -113,7 +117,7 @@ cmd_run() {
     [ -n "$have" ] || die 2 "error: intent \"$name\" needs $p=... (needs: $params)."
   done
 
-  QA_URI="$uri" QA_TEXT="$text" QA_PACKAGE="$package" QA_ACTION="$action" awk '
+  QA_URI="$uri" QA_TEXT="$text" QA_PACKAGE="$package" QA_ACTION="$action" QA_EXTRAS="$extras" awk '
     function fill(template, encoded,    out, key, value, start, end) {
       out = ""
       while ((start = index(template, "{")) > 0) {
@@ -132,15 +136,43 @@ cmd_run() {
       gsub(/\n/, "\\n", s); gsub(/\r/, "\\r", s); gsub(/\t/, "\\t", s)
       return "\"" s "\""
     }
+    # One typed extra as JSON, or "" after printing why it is not one.
+    function extra(spec,    eq, colon, key, type, value) {
+      eq = index(spec, "="); colon = index(spec, ":")
+      if (eq < 2 || colon < eq + 2) { bad = "error: extra \"" spec "\" is not name=type:template."; return "" }
+      key = substr(spec, 1, eq - 1)
+      type = substr(spec, eq + 1, colon - eq - 1)
+      value = fill(substr(spec, colon + 1), 0)
+      if (type == "string") return json(key) ":" json(value)
+      if (type == "bool") {
+        if (value != "true" && value != "false") { bad = "error: " key " must be true or false, not \"" value "\"."; return "" }
+        return json(key) ":" value
+      }
+      if (type == "int" || type == "long") {
+        if (value !~ /^-?[0-9]+$/) { bad = "error: " key " must be a whole number, not \"" value "\"."; return "" }
+        return json(key) ":" (type == "long" ? "{\"type\":\"long\",\"value\":" value "}" : value)
+      }
+      bad = "error: extra " key " has type \"" type "\"; use string, int, long or bool."
+      return ""
+    }
     BEGIN {
       uri = fill(ENVIRON["QA_URI"], 1)
       text = fill(ENVIRON["QA_TEXT"], 0)
+      extras = ""
+      n = split(ENVIRON["QA_EXTRAS"], specs, ";")
+      for (i = 1; i <= n; i++) {
+        if (specs[i] == "") continue
+        one = extra(specs[i])
+        if (bad != "") { print bad; exit 2 }
+        extras = extras (extras == "" ? "" : ",") one
+      }
       if (missing != "") { print "error: the template uses" missing " but no value was given."; exit 2 }
       args = ""
-      if (ENVIRON["QA_ACTION"] != "") args = args "\"action\":" json(ENVIRON["QA_ACTION"]) ","
-      args = args "\"uri\":" json(uri)
+      if (ENVIRON["QA_ACTION"] != "") args = args "\"action\":" json(ENVIRON["QA_ACTION"])
+      if (uri != "") args = args (args == "" ? "" : ",") "\"uri\":" json(uri)
       if (ENVIRON["QA_PACKAGE"] != "") args = args ",\"package\":" json(ENVIRON["QA_PACKAGE"])
       if (text != "") args = args ",\"text\":" json(text)
+      if (extras != "") args = args ",\"extras\":{" extras "}"
       print "{\"tool\":\"open_intent\",\"arguments\":{" args "}}"
     }'
 }
@@ -180,12 +212,17 @@ cmd_save_contact() {
 }
 
 cmd_save_intent() {
-  [ $# -eq 7 ] || die 2 "usage: act.sh save-intent <name> <params> <action> <uri> <package> <text> <description>  (use - for empty)"
+  [ $# -eq 7 ] || [ $# -eq 8 ] || die 2 "usage: act.sh save-intent <name> <params> <action> <uri> <package> <text> <description> [extras]  (use - for empty)"
   for v in "$@"; do clean "$v"; done
   case "$1" in *[!a-z0-9._-]*|'') die 2 "error: intent names are lowercase, like whatsapp.send." ;; esac
-  [ "$4" != "-" ] || die 2 "error: an intent needs a uri."
+  # A timer has no uri: an action that carries its request in extras is enough.
+  [ "$4" != "-" ] || [ "$3" != "-" ] || die 2 "error: an intent needs a uri, or an action with its extras."
   drop_row "$INTENTS" "$1"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$INTENTS"
+  if [ $# -eq 8 ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$INTENTS"
+  else
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$INTENTS"
+  fi
   echo "saved intent $1"
 }
 

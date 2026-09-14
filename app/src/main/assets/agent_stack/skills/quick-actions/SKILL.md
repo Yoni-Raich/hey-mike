@@ -45,6 +45,8 @@ Pass the user's words as they gave them: `contact="אבא"` matches a saved key,
 | `waze.navigate` | place | Waze navigation |
 | `web.search` | query | web search |
 | `youtube.search` | query | YouTube search |
+| `clock.timer` | seconds | a countdown timer, started without opening the clock |
+| `clock.alarm` | hour, minutes | an alarm (hour 0-23), set without opening the clock |
 
 `sh .../act.sh list` shows these plus everything saved. For `place`, use a saved address from `user-preferences` when the user says "home" or "work". Pick the navigation app from the user's preferences.
 
@@ -74,7 +76,7 @@ When the user uses a new nickname for someone already saved, save that contact a
 
 ## 5. Save every intent that worked — required
 
-Whenever you reach a destination in an app through a deep link that a later request could reuse — a chat, a search, a route, a screen — save it as a template once it works:
+Whenever you reach a destination or start an action through an intent that a later request could reuse — a chat, a search, a route, a screen, a timer — save it as a template once it works:
 
 ```sh
 sh {{SKILLS_DIR}}/quick-actions/scripts/act.sh save-intent spotify.search query - "spotify:search:{query}" com.spotify.music - "Search Spotify"
@@ -85,10 +87,15 @@ Arguments, in order (`-` for empty):
 1. **name** — `app.verb`, lowercase.
 2. **params** — comma-separated, e.g. `contact,text`.
 3. **action** — e.g. `android.intent.action.DIAL`, or `-` for VIEW.
-4. **uri** — the template. `{param}` is filled and percent-encoded; with a `contact` parameter, `{phone}` (digits, no `+`) and `{name}` are available too.
+4. **uri** — the template. `{param}` is filled and percent-encoded; with a `contact` parameter, `{phone}` (digits, no `+`) and `{name}` are available too. `-` when the action carries everything in extras.
 5. **package**
 6. **text** — the prefilled message template, e.g. `{text}`, or `-`.
 7. **description** — what it does, for `list`.
+8. **extras** (optional) — `name=type:template` pairs joined by `;`, type `string`, `int`, `long` or `bool`. Templates are filled but not percent-encoded; a value cannot contain `;`.
+
+```sh
+sh {{SKILLS_DIR}}/quick-actions/scripts/act.sh save-intent clock.timer seconds android.intent.action.SET_TIMER - - - "Start a timer" "android.intent.extra.alarm.LENGTH=int:{seconds};android.intent.extra.alarm.SKIP_UI=bool:true"
+```
 
 A saved intent with a built-in's name replaces it. Also record the underlying selector or link with `remember_capability`, and a multi-step UI sequence that has no deep link with `save_workflow` (see `app-cards`).
 

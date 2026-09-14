@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.net.Uri
+import dev.androidagent.core.IntentExtra
 import dev.androidagent.core.IntentPolicy
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.ToolNotServiceable
@@ -43,7 +44,11 @@ internal class IntentTools(
     fun resolve(arguments: JsonObject): ToolResult {
         val action = arguments.string("action")
         val uri = arguments.string("uri")
-        return when (val decision = IntentPolicy.evaluate(action, uri)) {
+        val extras = when (val parsed = IntentPolicy.parseExtras(arguments["extras"])) {
+            is IntentPolicy.ExtrasParse.Invalid -> return denied(parsed.deny)
+            is IntentPolicy.ExtrasParse.Parsed -> parsed.extras
+        }
+        return when (val decision = IntentPolicy.evaluate(action, uri, extras)) {
             is IntentPolicy.Decision.Deny -> denied(decision)
             is IntentPolicy.Decision.NeedsConfirmation -> resolveAllowed(decision.action, decision.uri)
             is IntentPolicy.Decision.Allow -> resolveAllowed(decision.action, decision.uri)
@@ -66,11 +71,15 @@ internal class IntentTools(
             is IntentPolicy.Decision.Allow -> composed.uri
             is IntentPolicy.Decision.NeedsConfirmation -> composed.uri
         }
-        return when (val decision = IntentPolicy.evaluate(action, uri)) {
+        val extras = when (val parsed = IntentPolicy.parseExtras(arguments["extras"])) {
+            is IntentPolicy.ExtrasParse.Invalid -> return denied(parsed.deny)
+            is IntentPolicy.ExtrasParse.Parsed -> parsed.extras
+        }
+        return when (val decision = IntentPolicy.evaluate(action, uri, extras)) {
             is IntentPolicy.Decision.Deny -> denied(decision)
             is IntentPolicy.Decision.NeedsConfirmation -> authorizeIntent(
-                LocalIntentRequest(decision.action, decision.uri, pkg, decision.what),
-            ) { launch(IntentPolicy.Decision.Allow(decision.uri, decision.action), pkg) }
+                LocalIntentRequest(decision.action, decision.uri, pkg, decision.what, decision.extras),
+            ) { launch(IntentPolicy.Decision.Allow(decision.uri, decision.action, decision.extras), pkg) }
             is IntentPolicy.Decision.Allow -> launch(decision, pkg)
         }
     }
@@ -98,6 +107,7 @@ internal class IntentTools(
 
     private fun launch(decision: IntentPolicy.Decision.Allow, pkg: String?): ToolResult {
         val intent = build(decision.action, decision.uri)
+        putExtras(intent, decision.extras)
         if (pkg != null) {
             // A package hint narrows an ambiguous link to one app. It is not a
             // component: the app still picks its own entry point.
@@ -159,6 +169,20 @@ internal class IntentTools(
     private fun build(action: String, uri: String?): Intent =
         if (uri == null) Intent(action) else Intent(action, Uri.parse(uri))
 
+    /** Only the closed [IntentExtra] types reach the intent, so nothing here can be a grant. */
+    private fun putExtras(intent: Intent, extras: Map<String, IntentExtra>) {
+        for ((key, extra) in extras) {
+            when (extra) {
+                is IntentExtra.Text -> intent.putExtra(key, extra.value)
+                is IntentExtra.Flag -> intent.putExtra(key, extra.value)
+                is IntentExtra.IntValue -> intent.putExtra(key, extra.value)
+                is IntentExtra.LongValue -> intent.putExtra(key, extra.value)
+                is IntentExtra.DoubleValue -> intent.putExtra(key, extra.value)
+                is IntentExtra.TextList -> intent.putExtra(key, extra.values.toTypedArray())
+            }
+        }
+    }
+
     private fun query(intent: Intent): List<ResolveInfo> =
         runCatching {
             context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
@@ -196,14 +220,18 @@ internal class IntentTools(
                 description = "Check which installed apps would handle an action and/or uri, without " +
                     "launching anything. Read-only. Use it before open_intent when you are not sure " +
                     "the deep link is supported, instead of launching and hoping.",
-                properties = mapOf("action" to "string", "uri" to "string"),
+                properties = mapOf("action" to "string", "uri" to "string", "extras" to "object"),
                 required = emptyList(),
             ),
             IntentToolSpec(
                 name = "open_intent",
-                description = "Open a destination directly by intent or deep link instead of navigating " +
-                    "there through the UI — a maps route, a specific chat, a settings screen. Prefer this " +
-                    "over open_app plus taps when a link reaches the target. Pass a prefilled message body " +
+                description = "Open a destination or start an action directly by intent instead of " +
+                    "navigating there through the UI — a maps route, a specific chat, a settings screen " +
+                    "(android.settings.*), a timer. Any activity action is allowed except ones that act with " +
+                    "no screen to confirm on, such as CALL. extras is an object of name to value for the " +
+                    "action's Intent extras: a string, boolean, number or array of strings, or " +
+                    "{\"type\":\"long\",\"value\":1700000000000} when the receiver reads a long. Prefer this " +
+                    "over open_app plus taps when an intent reaches the target. Pass a prefilled message body " +
                     "as text rather than building \"?text=\" into the uri yourself; it is encoded for you, " +
                     "and an unencoded space or & in a hand-built uri truncates the message or fails to " +
                     "parse. Anything that sends on the user's behalf — a prefilled message, a payment — " +
@@ -215,6 +243,7 @@ internal class IntentTools(
                     "uri" to "string",
                     "package" to "string",
                     "text" to "string",
+                    "extras" to "object",
                 ),
                 required = emptyList(),
             ),

@@ -81,6 +81,33 @@ class QuickActionsScriptTest {
         assertTrue(act("run", "whatsapp.chat", "contact=dad").second.contains("https://wa.me/972501234567?x=1"))
     }
 
+    @Test fun aTimerIsAnActionWithTypedExtrasAndNoUri() {
+        val (code, out) = act("run", "clock.timer", "seconds=300")
+        assertEquals(out, 0, code)
+        assertEquals(
+            """{"tool":"open_intent","arguments":{"action":"android.intent.action.SET_TIMER","extras":{"android.intent.extra.alarm.LENGTH":300,"android.intent.extra.alarm.SKIP_UI":true}}}""",
+            out.trim(),
+        )
+        val (badCode, badOut) = act("run", "clock.timer", "seconds=five")
+        assertEquals(2, badCode)
+        assertTrue(badOut, badOut.contains("whole number"))
+    }
+
+    @Test fun aSavedIntentCarriesStringAndLongExtras() {
+        assertEquals(
+            0,
+            act(
+                "save-intent", "calendar.draft", "title", "android.intent.action.INSERT", "-", "-", "-", "Draft event",
+                "title=string:{title};beginTime=long:1700000000000;allDay=bool:false",
+            ).first,
+        )
+        assertEquals(
+            """{"tool":"open_intent","arguments":{"action":"android.intent.action.INSERT","extras":{"title":"Dinner \"at\" 8","beginTime":{"type":"long","value":1700000000000},"allDay":false}}}""",
+            act("run", "calendar.draft", "title=Dinner \"at\" 8").second.trim(),
+        )
+        assertEquals(2, act("save-intent", "nothing.here", "-", "-", "-", "-", "-", "x").first)
+    }
+
     @Test fun aMissingParameterIsNamed() {
         act("save-contact", "dad", "Yossi", "972501234567")
         val (code, out) = act("run", "whatsapp.send", "contact=dad")
