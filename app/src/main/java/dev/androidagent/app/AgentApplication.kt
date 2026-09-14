@@ -9,6 +9,7 @@ import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
 import dev.androidagent.core.ObservationState
+import dev.androidagent.core.WorkflowConfirmationOutcome
 import dev.androidagent.core.WorkflowLibrary
 import dev.androidagent.core.WorkflowStore
 import dev.androidagent.core.WorkflowToolGateway
@@ -61,13 +62,17 @@ class AgentGraph(private val app: Application) {
         observationVisibility = { hidden -> overlay.setCaptureHidden(hidden) },
         authorizeIntent = { request, dispatch -> runCoordinator.authorizeLocalIntent(request, dispatch) },
         authorizeSend = { request, dispatch -> runCoordinator.authorizeSend(request, dispatch) },
-        // Asking raised this app over the chat. Stepping back uncovers that
-        // chat exactly as it was, draft included; relaunching the other app
-        // lands on its home screen instead.
-        leaveApprovalScreen = {
-            foregroundActivity?.get()?.let { activity -> activity.runOnUiThread { activity.moveTaskToBack(true) } }
-        },
+        leaveApprovalScreen = { leaveApprovalScreen() },
     )
+
+    /**
+     * Asking raised this app over the one being driven. Stepping back uncovers
+     * that app exactly as it was, draft or open sub-screen included;
+     * relaunching it lands on its home screen instead.
+     */
+    private fun leaveApprovalScreen() {
+        foregroundActivity?.get()?.let { activity -> activity.runOnUiThread { activity.moveTaskToBack(true) } }
+    }
     /** The resumed activity, if any, so an approval can step out of the way. */
     @Volatile var foregroundActivity: java.lang.ref.WeakReference<android.app.Activity>? = null
     /** "Always allow" answers to send approvals, signed so the agent cannot add its own. */
@@ -91,7 +96,13 @@ class AgentGraph(private val app: Application) {
         library = workflowLibrary,
         // A sensitive step asks with the same card, and the same spoken "yes",
         // as a send. Without this the runner refuses such a step outright.
-        confirm = { request -> runCoordinator.authorizeWorkflowStep(request) },
+        // Stepping back after a yes is what keeps the sub-screen the workflow
+        // reached: relaunching Settings reset it to its home page on a phone.
+        confirm = { request ->
+            runCoordinator.authorizeWorkflowStep(request).also { outcome ->
+                if (outcome == WorkflowConfirmationOutcome.ALLOWED) leaveApprovalScreen()
+            }
+        },
     )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.

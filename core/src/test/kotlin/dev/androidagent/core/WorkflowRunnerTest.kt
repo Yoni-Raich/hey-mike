@@ -422,6 +422,33 @@ class WorkflowRunnerTest {
         assertTrue(result.text, result.success)
     }
 
+    @Test fun afterAYesTheAppIsWaitedForRatherThanRelaunchedOntoItsHomePage() {
+        // On a phone, open_app after the approval reset Settings from Developer
+        // options to its home page, and the switch was never found.
+        val developerOptions = Page(
+            "com.android.settings",
+            listOf(Node("n1", contentDescription = "Wireless debugging", className = "android.widget.Switch", checkable = true)),
+        )
+        val approval = Page("dev.androidagent.app", emptyList())
+        phone = FakeScreen(developerOptions, mapOf("open:com.android.settings" to Page("com.android.settings", listOf(Node("h", text = "Network and internet")))))
+        var readsUntilBack = 0
+        val runner = WorkflowRunner(
+            invokeTool = { name, args ->
+                if (name == "read_ui" && phone.page === approval && --readsUntilBack <= 0) phone.page = developerOptions
+                invoke(name, args)
+            },
+            isRevoked = { revoked },
+            confirm = { phone.page = approval; readsUntilBack = 2; WorkflowConfirmationOutcome.ALLOWED },
+        )
+        val workflow = definition(
+            """{"id":"enable","action":"tap","target":{"text":"Wireless debugging","className":"Switch"},"requiresConfirmation":true}""",
+        )
+        val result = runBlocking { runner.run(workflow, WorkflowRunner.Options()) }
+        assertTrue(result.text, result.success)
+        assertTrue("Settings must not be relaunched", calls.none { it.first == "open_app" })
+        assertEquals("n1", calls.first { it.first == "tap_node" }.second["nodeId"]!!.jsonPrimitive.content)
+    }
+
     @Test fun anExactSelectorRefusesANodeThatOnlyPartlyMatches() {
         phone = FakeScreen(Page("com.example", listOf(Node("n1", text = "Delete everything"))))
         val workflow = definition("""{"id":"tap","action":"tap","target":{"text":"Delete","exact":true}}""")

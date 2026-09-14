@@ -440,8 +440,18 @@ class WorkflowRunner(
     /** After an approval the app being driven is behind Hey Mike. Put it back in front. */
     private suspend fun returnToApp(definition: WorkflowDefinition, step: WorkflowStep) {
         val expected = step.arguments.str("package") ?: definition.packageName
-        val screen = readScreen()
-        if (screen.ok && screen.activePackage?.contains(expected, ignoreCase = true) == true) return
+        // The host steps the approval screen back, which uncovers the app on
+        // the sub-screen the workflow reached. Give that transition time before
+        // relaunching: a launcher intent resets a single-task app like Settings
+        // to its home page, and the step then looks for its target on the
+        // wrong screen.
+        val deadline = nowMs() + RETURN_WAIT_MS
+        while (true) {
+            val screen = readScreen()
+            if (screen.ok && screen.activePackage?.contains(expected, ignoreCase = true) == true) return
+            if (nowMs() >= deadline) break
+            delay(VERIFY_POLL_MS)
+        }
         runCatching { invokeTool("open_app", buildJsonObject { put("package", expected) }) }
         settle(step)
     }
@@ -1043,6 +1053,7 @@ class WorkflowRunner(
         private const val SETTLE_MS = 3_000L
         private const val SETTLE_FALLBACK_MS = 600L
         private const val VERIFY_POLL_MS = 400L
+        private const val RETURN_WAIT_MS = 3_000L
         private const val SWIPE_MS = 350
         private const val MAX_SCROLL_HUNT = 6
         private const val MAX_STEP_TEXT = 400
