@@ -7,6 +7,28 @@ not production-ready.
 
 ### Verified
 
+- The public v0.12.0 dev APK was built from merged `main` (with #61 and #62)
+  on 2026-09-14. A first 0.12.0 candidate was built from a local `main` that
+  had not pulled #62, so it had no digital assistant; it was installed on the
+  Nothing A059 only, never published, and was replaced by this build.
+  `./gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+  :voice:lintDebug :overlay:lintDebug :app:lintDevDebug --no-daemon` passed
+  (832 actionable tasks; app lint 0 errors, 19 warnings),
+  `python -m unittest tools.test_prepare_runtime` passed (5 tests) and
+  `git diff --check` is clean. `aapt2` reports versionCode 26 versionName
+  0.12.0, label "Hey Mike Dev", not debuggable, with `libcodex_codemode.so`
+  for ARM64 and x86_64, and `AgentVoiceInteractionService` plus the
+  `ACTION_ASSIST` entry in the manifest; zip alignment and APK Signature
+  Scheme v3 verification passed with the local debug key. SHA-256
+  `FAF22D892F7EE0C244D92DC09E0AA1011C76AF1192FE4E4809EEB7E2324E0E89`. The
+  exact asset was installed on the Nothing A059 (Android 16) over the first
+  candidate with the sign-in kept: every staged `lib*.so` was in the native
+  library folder, the accessibility service bound as "Hey Mike Dev", and
+  `pm query-services` listed Mike's voice interaction service beside Gemini.
+  Not run on this asset before publishing: a short agent task that uses a
+  device tool (the phone was in use at the time), and a real power-button
+  press with Mike picked as the assistant. The assistant flow itself was
+  verified with #62's debug builds on the Redmi Note 11 Pro and this phone.
 - The public v0.11.0 dev APK was built from merged `main` (with #59) on
   2026-09-13. `./gradlew.bat test assembleDevRelease
   assembleDevDebugAndroidTest :voice:lintDebug :overlay:lintDebug

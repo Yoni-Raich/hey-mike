@@ -5,17 +5,17 @@ and complete phone E2E are established.
 
 ## Current public artifact
 
-The latest public artifact is v0.11.0:
+The latest public artifact is v0.12.0:
 
 - package: `dev.androidagent.app.dev`;
-- versionCode: `25`;
-- APK: `hey-mike-0.11.0.apk`;
-- SHA-256: `72A8A4CCF4613A89DD723E26DEB7B296B8573150133BAED706E36D8E8EC26ED6`;
+- versionCode: `26`;
+- APK: `hey-mike-0.12.0.apk`;
+- SHA-256: `FAF22D892F7EE0C244D92DC09E0AA1011C76AF1192FE4E4809EEB7E2324E0E89`;
 - signing: APK Signature Scheme v3 with the local Android debug key.
 
 This is test-only signing. It is installable for local testing, not a production
 release. The public release page is
-[v0.11.0 on GitHub](https://github.com/Yoni-Raich/hey-mike/releases/tag/v0.11.0).
+[v0.12.0 on GitHub](https://github.com/Yoni-Raich/hey-mike/releases/tag/v0.12.0).
 v0.10.0 was the first release named Hey Mike.
 
 Assets are named `hey-mike-X.Y.Z.apk` from v0.10.0; earlier releases used

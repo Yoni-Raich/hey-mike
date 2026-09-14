@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 — 2026-09-14
 
 - Mike can be the phone's digital assistant. Pick Hey Mike under Default apps >
   Digital assistant app, and holding the power button opens a live voice
@@ -20,6 +20,17 @@
   for <contact>" or "Always allow sending in <app>" to stop being asked, and
   review or remove those in Settings > Sending approvals. The list is signed
   with a key in the Android Keystore, so the agent cannot add to it.
+- After you allow a send, Mike returns to the open chat with its draft and
+  presses Send in the same turn. It used to land on the app's chat list, lose
+  the Send button and ask a second time.
+- Mike knows the phone's date, time and time zone. Asked about "today", it
+  used to guess the day from the calendar on screen.
+- Opening an app waits until the app is in front, so Mike no longer decides
+  that Calendar did not open and falls back to the web.
+- Opening an app or a link works with the accessibility service off. Mike
+  used to refuse a deep link it could open.
+- Known gap: with Wireless ADB on, shell and key events can still send without
+  asking.
 
 ## 0.11.0 — 2026-09-13
 
