@@ -11,12 +11,6 @@ per step.
 
 Use it when the task is a sequence someone has already worked out. Use the
 ordinary device tools when you are exploring, deciding, or doing something once.
-
-**No workflow ships with the app.** Every one in the list was learned on this
-phone, because screens differ between phones: Settings search has one field id
-on a Nothing phone and another on a Xiaomi. An empty list is normal — work the
-task out with the device tools, then save it (section 5).
-
 ---
 
 ## 1. Find the workflow
