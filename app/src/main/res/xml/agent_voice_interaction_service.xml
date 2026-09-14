@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Declares Hey Mike as a digital assistant. `recognitionService` is required by
+    the parser even though the app does no local speech-to-text; see
+    AgentRecognitionService. Keyguard launch stays off: Mike controls the phone
+    and must not be reachable from a locked screen.
+-->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="dev.androidagent.app.assist.AgentVoiceInteractionSessionService"
+    android:recognitionService="dev.androidagent.app.assist.AgentRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false" />

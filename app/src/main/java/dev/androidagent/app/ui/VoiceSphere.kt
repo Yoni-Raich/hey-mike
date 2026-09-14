@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -153,6 +154,8 @@ internal fun VoiceSphere(
     level: () -> Float,
     dock: () -> Offset,
     stage: () -> Rect,
+    /** The flight starts at the power button's edge rather than the voice button. */
+    fromEdge: Boolean = false,
 ) {
     val motion = remember { SphereMotion() }
     val buffers = remember { SphereBuffers() }
@@ -179,7 +182,7 @@ internal fun VoiceSphere(
 
     Canvas(modifier) {
         frame.longValue
-        drawVoiceScene(motion, buffers, flight.value, dock(), stage())
+        drawVoiceScene(motion, buffers, flight.value, dock(), stage(), fromEdge)
     }
 }
 
@@ -189,6 +192,7 @@ private fun DrawScope.drawVoiceScene(
     flight: Float,
     dock: Offset,
     stage: Rect,
+    fromEdge: Boolean,
 ) {
     val progress = flight.coerceIn(0f, 1f)
     if (progress <= 0.001f && motion.wave >= 1f) return
@@ -218,14 +222,33 @@ private fun DrawScope.drawVoiceScene(
         ),
     )
 
-    // Two rings leave the voice button as it launches.
+    // From the power button: the edge it sits on lights up first, as if the
+    // press came through the glass.
+    if (fromEdge && motion.wave < 1f) {
+        val glow = (1f - motion.wave).pow(1.4f) * min(1f, motion.wave * 8f + 0.35f)
+        val reach = 150.dp.toPx()
+        scale(scaleX = 0.4f, scaleY = 1f, pivot = dockAt) {
+            drawCircle(
+                Brush.radialGradient(
+                    0f to VoiceBlue.copy(alpha = 0.95f * glow),
+                    0.45f to VoiceButtonBlue.copy(alpha = 0.45f * glow),
+                    1f to Color.Transparent,
+                    center = dockAt,
+                    radius = reach,
+                ),
+                radius = reach,
+                center = dockAt,
+            )
+        }
+    }
+    // Two rings leave the voice button (or the power button) as it launches.
     if (motion.wave < 1f) {
         for (ring in 0 until 2) {
             val spread = motion.wave * 1.15f - ring * 0.15f
             if (spread <= 0f || spread >= 1f) continue
             drawCircle(
                 color = VoiceButtonBlue.copy(alpha = 0.55f * (1f - spread) * (1f - spread)),
-                radius = 21.dp.toPx() + easeOutQuart(spread) * 260.dp.toPx(),
+                radius = 21.dp.toPx() + easeOutQuart(spread) * (if (fromEdge) 520.dp else 260.dp).toPx(),
                 center = dockAt,
                 style = Stroke(width = 1.5.dp.toPx()),
             )

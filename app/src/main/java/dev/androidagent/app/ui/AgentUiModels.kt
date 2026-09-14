@@ -87,6 +87,8 @@ data class AgentUiState(
     val adbStatus: AdbStatus = AdbStatus(),
     val a11yStatus: A11yStatus = A11yStatus(declaredEnabled = false, connected = false),
     val permissions: DevicePermissions = DevicePermissions(),
+    /** Holding the power button opens Mike. Changed in system Settings, so re-read on resume. */
+    val isDefaultAssistant: Boolean = false,
     val runtimeStatus: RuntimeStatus = RuntimeStatus(),
     /**
      * Why the tunnel to OpenAI last failed, in one sentence, or null when it
@@ -105,6 +107,8 @@ data class AgentUiState(
     val voiceTranscript: String = "",
     val voiceTranscriptRole: String? = null,
     val voiceMuted: Boolean = false,
+    /** Status line while a power-button press is setting up voice, before the call exists. */
+    val voiceSummon: String? = null,
     /** Sends the user chose to always allow, for review in Settings. */
     val sendGrants: List<dev.androidagent.core.SendGrant> = emptyList(),
     val isDrawerOpen: Boolean = false,
@@ -157,6 +161,7 @@ data class AgentUiActions(
     val onDiscover: () -> Unit = {},
     val onOpenWirelessSettings: () -> Unit = {},
     val onOpenAccessibilitySettings: () -> Unit = {},
+    val onOpenAssistantSettings: () -> Unit = {},
     val onOpenAppInfo: () -> Unit = {},
     val onOpenOverlayPermission: () -> Unit = {},
     val onDisconnect: () -> Unit = {},

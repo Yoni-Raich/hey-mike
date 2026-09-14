@@ -178,13 +178,55 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stop() {
         graph.queue.pause()
+        // End voice while an assistant press is still setting up cancels it.
+        if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {
+            assistantVoiceJob?.cancel()
+            return
+        }
         if (graph.voice.state.value.active) stopVoice() else graph.coordinator.stop()
     }
     fun toggleVoice() {
         if (graph.voice.state.value.active) stopVoice() else startVoice()
     }
     fun toggleVoiceMute() = graph.voice.setMuted(!graph.voice.muted.value)
-    private fun startVoice() = task {
+    private var assistantVoiceJob: Job? = null
+
+    /**
+     * Holding the power button with Mike as the digital assistant. Unlike the
+     * mic button this never ends a conversation, and it waits for what a cold
+     * start has not loaded yet: the runtime and the saved chat. A chat that
+     * already has messages is left alone and voice opens in a new one, the way
+     * a fresh assistant press starts over.
+     */
+    fun startAssistantVoice() {
+        if (graph.voice.state.value.active || assistantVoiceJob?.isActive == true) return
+        // The voice screen comes up now, not when the call starts: on a cold
+        // start the runtime and the chat take seconds, and a press that shows
+        // nothing for that long reads as a press that did nothing.
+        mutable.update { it.copy(voiceSummon = "Waking Mike", errorMessage = null) }
+        assistantVoiceJob = task {
+            try {
+                setupJob?.join()
+                val id = current.filterNotNull().first()
+                if (graph.voice.state.value.active) return@task
+                if (!graph.coordinator.state.value.active && graph.sessions.messages(id).first().isNotEmpty()) {
+                    current.value = graph.sessions.createSession().id
+                }
+                mutable.update { it.copy(voiceSummon = "Opening your conversation") }
+                beginVoice()
+            } finally {
+                // Voice is already active by here when it started, so the
+                // screen stays up; on a failure or a cancel it goes away.
+                mutable.update { it.copy(voiceSummon = null) }
+            }
+        }
+    }
+    fun refreshAssistantRole() {
+        val isDefault = dev.androidagent.app.assist.AssistLaunch.isDefaultAssistant(getApplication())
+        mutable.update { it.copy(isDefaultAssistant = isDefault) }
+    }
+    private fun startVoice() = task { beginVoice() }
+    private suspend fun beginVoice() {
         graph.queue.pause()
         check(!graph.coordinator.state.value.active) { "Stop the current agent run before starting voice." }
         val sessionId = current.value ?: kotlin.error("Choose a chat first.")

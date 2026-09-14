@@ -198,7 +198,7 @@ fun AndroidAgentScreen(
                 .collectLatest { actions.onDrawerChanged(it == DrawerValue.Open) }
         }
 
-        val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.voiceState))
+        val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()))
 
         ModalNavigationDrawer(
             drawerState = drawerState,

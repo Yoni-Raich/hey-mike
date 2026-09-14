@@ -31,6 +31,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Assistant
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DataUsage
@@ -104,7 +105,7 @@ import dev.androidagent.core.UsageSummary
 private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
-    MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS,
+    MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -132,6 +133,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.USAGE -> "Usage"
     SettingsRoute.UPDATES -> "App updates"
     SettingsRoute.SEND_APPROVALS -> "Sending approvals"
+    SettingsRoute.ASSISTANT -> "Digital assistant"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -148,6 +150,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.USAGE -> Icons.Outlined.DataUsage
     SettingsRoute.UPDATES -> Icons.Outlined.Update
     SettingsRoute.SEND_APPROVALS -> Icons.Outlined.Key
+    SettingsRoute.ASSISTANT -> Icons.Outlined.Assistant
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -270,6 +273,12 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     // green would teach the eye to skip the markers that do mean something.
     HubGroup("Configure") {
         SettingsHubRow(
+            icon = SettingsRoute.ASSISTANT.icon(),
+            title = SettingsRoute.ASSISTANT.title(),
+            summary = if (state.isDefaultAssistant) "Hold the power button to talk to Mike" else "Gemini still answers the power button",
+            onClick = { onOpen(SettingsRoute.ASSISTANT) },
+        )
+        SettingsHubRow(
             icon = SettingsRoute.MODEL.icon(),
             title = SettingsRoute.MODEL.title(),
             summary = state.selectedModel ?: "Not chosen yet",
@@ -321,6 +330,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.USAGE -> UsageSettings(state, actions)
             SettingsRoute.UPDATES -> UpdateSettings(state, actions)
             SettingsRoute.SEND_APPROVALS -> SendApprovalSettings(state, actions)
+            SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
         }
     }
 }
@@ -486,6 +496,35 @@ private fun ColumnScope.ScreenControlSettings(state: AgentUiState, actions: Agen
             loading = false,
             icon = Icons.Outlined.Visibility,
             label = "Open accessibility settings",
+            spinnerColor = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+}
+
+@Composable
+private fun ColumnScope.AssistantSettings(state: AgentUiState, actions: AgentUiActions) {
+    StatusLine(
+        title = if (state.isDefaultAssistant) "On" else "Off",
+        detail = if (state.isDefaultAssistant) "Mike is this phone's digital assistant" else "Another app is the digital assistant",
+        color = if (state.isDefaultAssistant) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Explanation(
+        "Make Mike the digital assistant and holding the power button opens a live voice " +
+            "conversation with Mike instead of Gemini. It never opens over the lock screen.",
+    )
+    if (!state.isDefaultAssistant) {
+        // No API lets an app take this role for itself, so say where to tap.
+        Explanation(
+            "Android only lets you choose this yourself: pick Hey Mike under Default apps > " +
+                "Digital assistant app. If holding the power button shows the power menu, turn on " +
+                "\"Press and hold for assistant\" in the power button settings. \"Hey Google\" stays with Google.",
+        )
+    }
+    Button(onClick = actions.onOpenAssistantSettings, modifier = Modifier.fillMaxWidth()) {
+        LoadingButtonContent(
+            loading = false,
+            icon = Icons.Outlined.Assistant,
+            label = "Open assistant settings",
             spinnerColor = MaterialTheme.colorScheme.onPrimary,
         )
     }

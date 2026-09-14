@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Transition
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
@@ -52,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -64,6 +66,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.core.VoicePhase
@@ -105,9 +108,21 @@ internal class VoiceModeMotion(
 /** Voice mode is on screen from the first connect until the user ends it. */
 internal fun voiceModeShown(voice: VoiceState): Boolean = voice.active && voice.phase != VoicePhase.STOPPING
 
+/**
+ * Voice as the voice screen draws it. A power-button press puts the screen up
+ * while the runtime and the chat are still being prepared, before the call
+ * exists, so that wait reads as a connecting call.
+ */
+internal fun AgentUiState.shownVoice(): VoiceState =
+    voiceSummon?.takeIf { !voiceState.active }?.let { VoiceState(VoicePhase.STARTING, it) } ?: voiceState
+
 @Composable
 internal fun rememberVoiceModeMotion(shown: Boolean): VoiceModeMotion {
-    val transition = updateTransition(targetState = shown, label = "voice-mode")
+    // Starts hidden even when the first frame is already in voice mode: a press
+    // that cold-starts the app must still play the way in.
+    val visibility = remember { MutableTransitionState(false) }
+    visibility.targetState = shown
+    val transition = updateTransition(visibility, label = "voice-mode")
     val dock = remember { mutableStateOf(Offset.Unspecified) }
     return VoiceModeMotion(
         shown = shown,
@@ -175,13 +190,18 @@ internal fun VoiceModeLayer(
     if (!motion.shown && !onScreen) return
     var origin by remember { mutableStateOf(Offset.Zero) }
     var stage by remember { mutableStateOf(Rect.Zero) }
-    val voice = state.voiceState
+    var layer by remember { mutableStateOf(IntSize.Zero) }
+    val voice = state.shownVoice()
     val live = voiceModeShown(voice)
+    // Decided once per entry: a power-button press flies in from the button's
+    // edge, and every exit still lands in the composer's voice button.
+    val fromPowerButton = remember(motion.shown) { motion.shown && state.voiceSummon != null }
 
     Box(
         Modifier
             .fillMaxSize()
             .onGloballyPositioned { origin = it.positionInRoot() }
+            .onSizeChanged { layer = it }
             // The chat underneath is not reachable while voice mode is up.
             .pointerInput(Unit) {
                 awaitPointerEventScope {
@@ -196,7 +216,11 @@ internal fun VoiceModeLayer(
             phase = voice.phase,
             muted = state.voiceMuted,
             level = voiceLevel,
-            dock = { motion.dock.value.let { if (it.isSpecified) it - origin else it } },
+            dock = {
+                if (fromPowerButton) powerButtonDock(layer)
+                else motion.dock.value.let { if (it.isSpecified) it - origin else it }
+            },
+            fromEdge = fromPowerButton,
             stage = { stage.translate(-origin) },
         )
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -234,7 +258,8 @@ internal fun VoiceModeLayer(
             ) {
                 VoiceMuteButton(
                     muted = state.voiceMuted,
-                    enabled = live,
+                    // Nothing to mute until the call exists.
+                    enabled = live && state.voiceState.active,
                     onClick = actions.onVoiceMuteToggle,
                     modifier = Modifier.voiceStage(motion.mute, lift = 28.dp, scaleFrom = 0.9f),
                 )
@@ -247,6 +272,12 @@ internal fun VoiceModeLayer(
         }
     }
 }
+
+/**
+ * Where the power button sits: the right edge, about a third of the way down.
+ * No API reports it, and most phones put it there.
+ */
+private fun powerButtonDock(size: IntSize): Offset = Offset(size.width.toFloat(), size.height * 0.3f)
 
 // Lines up with the chat top bar's title so the title seems to stay put while
 // the connection pill below it gives way to "Voice conversation".

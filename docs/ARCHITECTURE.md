@@ -750,3 +750,33 @@ the requested background screen guarantee has no equivalent activity flag.
 Physical verification on the approved Nothing A059 is still required to check
 screen behavior, rotation, power-button interaction, terminal release, and
 battery/OS policy behavior.
+
+## Digital assistant
+
+`:app/assist` registers a `VoiceInteractionService`, so the user can pick Hey
+Mike as the digital assistant and reach voice mode by holding the power button.
+No app can take `ROLE_ASSISTANT` for itself, so Settings only reads the holder
+and opens the system picker.
+
+- The session draws nothing. It starts `MainActivity` with
+  `AssistLaunch.EXTRA_START_VOICE` and `CLEAR_TOP | SINGLE_TOP`, so a press lands
+  on the one chat screen (via `onNewIntent` when it is open). It uses a plain
+  `startActivity` first: `startAssistantActivity` creates a second copy in an
+  assistant task, whose view model does not own the voice conversation.
+- `AgentViewModel.startAssistantVoice` never ends a conversation, waits for the
+  runtime and the saved chat on a cold start, and opens a new chat unless the
+  current one is empty.
+- `AssistEntryActivity` handles `ACTION_ASSIST` for OEM paths. It has an empty
+  `taskAffinity`: in the app's task, the press that cold-started the app became
+  the task root, and later presses only brought the task forward.
+- `AgentRecognitionService` exists because the `<voice-interaction-service>`
+  parser rejects a registration without one. It fails every request. No hotword
+  detector is opened: that needs a privileged app.
+- Keyguard launch is off, because Mike controls the phone.
+- Role status reads the `voice_interaction_service` secure setting before
+  `RoleManager`, since the two have disagreed on hardware.
+- A press shows the voice screen at once. `voiceSummon` carries the setup
+  status ("Waking Mike", "Opening your conversation") and `shownVoice()`
+  draws it as a connecting call until the real call is active. The sphere then
+  flies in from the right edge, where the power button usually is, behind a glow
+  and two rings. End voice during setup cancels the press.
