@@ -40,6 +40,10 @@ class WorkflowRunnerTest {
         val scrollable: Boolean = false,
         val checkable: Boolean = false,
         val checked: Boolean = false,
+        /** Bounds of the clickable row a non-clickable label sits in. */
+        val ancestorBounds: List<Int>? = null,
+        /** Null for the app in front; set for a window above it, like the status bar. */
+        val packageName: String? = null,
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             put("nodeId", id)
@@ -47,6 +51,7 @@ class WorkflowRunnerTest {
             contentDescription?.let { put("contentDescription", it) }
             resourceId?.let { put("resourceId", it) }
             className?.let { put("class", it) }
+            packageName?.let { put("package", it) }
             put("bounds", buildJsonArray { bounds.forEach { value -> add(value) } })
             put("enabled", true)
             put("clickable", clickable)
@@ -55,6 +60,12 @@ class WorkflowRunnerTest {
             if (checkable) {
                 put("checkable", true)
                 put("checked", checked)
+            }
+            ancestorBounds?.let { box ->
+                put("clickableAncestor", buildJsonObject {
+                    put("nodeId", "$id-row")
+                    put("bounds", buildJsonArray { box.forEach { value -> add(value) } })
+                })
             }
         }
     }
@@ -82,6 +93,36 @@ class WorkflowRunnerTest {
     private var confirmations = mutableListOf<WorkflowConfirmation>()
     private var confirmAnswer = WorkflowConfirmationOutcome.ALLOWED
 
+    /** When set, an unfiltered read_ui returns only this many nodes, the way a paged reply does. */
+    private var pageSize: Int? = null
+
+    /** The nodes one read_ui call returns, honouring the filters a backend does. */
+    private fun readNodes(args: JsonObject): Pair<List<Node>, Boolean> {
+        val all = phone.page.nodes
+        fun field(key: String) = args[key]?.jsonPrimitive?.contentOrNull
+        val pkg = field("package")
+        val text = field("text")
+        val resourceId = field("resourceId")
+        val className = field("class")
+        if (pkg == null && text == null && resourceId == null && className == null) {
+            val size = pageSize ?: return all to false
+            return all.take(size) to (all.size > size)
+        }
+        val matching = all.filter { node ->
+            (pkg == null || (node.packageName ?: phone.page.activePackage) == pkg) &&
+                (text == null || listOfNotNull(node.text, node.contentDescription).any { it.contains(text, ignoreCase = true) }) &&
+                (resourceId == null || node.resourceId?.contains(resourceId, ignoreCase = true) == true) &&
+                (className == null || node.className?.contains(className, ignoreCase = true) == true)
+        }
+        // Scoping to a package still pages; only a query naming the element
+        // is narrow enough to arrive whole.
+        val size = pageSize
+        if (text == null && resourceId == null && className == null && size != null) {
+            return matching.take(size) to (matching.size > size)
+        }
+        return matching to false
+    }
+
     private fun runner() = WorkflowRunner(
         invokeTool = { name, args -> invoke(name, args) },
         isRevoked = { revoked },
@@ -101,15 +142,18 @@ class WorkflowRunnerTest {
             )
         }
         return when (name) {
-            "read_ui" -> ToolResult(
-                buildJsonObject {
-                    put("ok", true)
-                    put("observationId", "ui-${++observation}")
-                    put("activePackage", phone.page.activePackage)
-                    put("truncated", false)
-                    put("nodes", buildJsonArray { phone.page.nodes.forEach { add(it.toJson()) } })
-                }.toString(),
-            )
+            "read_ui" -> {
+                val (nodes, truncated) = readNodes(args)
+                ToolResult(
+                    buildJsonObject {
+                        put("ok", true)
+                        put("observationId", "ui-${++observation}")
+                        put("activePackage", phone.page.activePackage)
+                        put("truncated", truncated)
+                        put("nodes", buildJsonArray { nodes.forEach { add(it.toJson()) } })
+                    }.toString(),
+                )
+            }
             "tap_node" -> {
                 val nodeId = args["nodeId"]!!.jsonPrimitive.content
                 phone.transitions[nodeId]?.let { phone.page = it }
@@ -257,6 +301,125 @@ class WorkflowRunnerTest {
             """{"id":"open","action":"tap","target":{"resourceId":"com.android.settings:id/search_action_bar","text":"Search settings"}}""",
         )
         assertTrue(runBlocking { runner().run(workflow, WorkflowRunner.Options()) }.success)
+    }
+
+    // ---- what a real Settings screen did to the shipped workflows ----
+
+    @Test fun aSwitchThatAnswersOnlyTheClassIsSomeOtherSwitch() {
+        // Developer options on a real phone: the switch the step means is not
+        // on screen, and a different one is. Tapping it would flip a setting
+        // nobody asked about.
+        phone = FakeScreen(
+            Page(
+                "com.android.settings",
+                listOf(
+                    Node("n1", text = "Use developer options", className = "android.widget.TextView", clickable = false),
+                    Node("n2", resourceId = "com.android.settings:id/switchWidget", className = "android.widget.Switch", checkable = true, checked = true),
+                ),
+            ),
+        )
+        val workflow = definition(
+            """{"id":"enable","action":"tap","target":{"text":"Wireless debugging","className":"Switch"}}""",
+        )
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options()) }
+        assertFalse(result.text, result.success)
+        assertEquals("target_not_found", parse(result)["errorType"]!!.jsonPrimitive.content)
+        assertTrue(calls.none { it.first == "tap_node" || it.first == "tap" })
+    }
+
+    @Test fun theSwitchOutranksTheRowTitleThatCarriesTheSameLabel() {
+        // As a real Developer options row reports it: the title is a TextView,
+        // the switch carries the label as its contentDescription.
+        phone = FakeScreen(
+            Page(
+                "com.android.settings",
+                listOf(
+                    Node("n1", text = "Wireless debugging", resourceId = "android:id/title", className = "android.widget.TextView", clickable = false, ancestorBounds = listOf(0, 2115, 1080, 2329)),
+                    Node("n2", contentDescription = "Wireless debugging", resourceId = "com.android.settings:id/switchWidget", className = "android.widget.Switch", checkable = true),
+                ),
+            ),
+        )
+        val workflow = definition(
+            """{"id":"enable","action":"tap","target":{"text":"Wireless debugging","className":"Switch"}}""",
+        )
+        assertTrue(runBlocking { runner().run(workflow, WorkflowRunner.Options()) }.success)
+        assertEquals("n2", calls.first { it.first == "tap_node" }.second["nodeId"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun theSearchFieldHoldingTheQueryDoesNotStealTheTapFromTheResult() {
+        // After typing, the search field's own text equals the result's title,
+        // and the field is clickable while the title is not.
+        phone = FakeScreen(
+            Page(
+                "com.android.settings.intelligence",
+                listOf(
+                    Node("n1", text = "Wireless debugging", resourceId = "android:id/search_src_text", className = "android.widget.AutoCompleteTextView"),
+                    Node("n2", text = "Wireless debugging", resourceId = "android:id/title", className = "android.widget.TextView", clickable = false, ancestorBounds = listOf(0, 294, 1080, 558)),
+                ),
+            ),
+        )
+        val workflow = definition(
+            """{"id":"open_result","action":"tap","target":{"resourceId":"android:id/title","text":"Wireless debugging","exact":true,"clickable":true}}""",
+        )
+        assertTrue(runBlocking { runner().run(workflow, WorkflowRunner.Options()) }.success)
+        assertEquals("n2", calls.first { it.first == "tap_node" }.second["nodeId"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aWidgetIdIsFoundWhicheverWayTheLayoutSpellsIt() {
+        phone = FakeScreen(
+            Page("com.android.settings", listOf(Node("n1", resourceId = "com.android.settings:id/switchWidget", className = "android.widget.Switch"))),
+        )
+        val workflow = definition("""{"id":"tap","action":"tap","target":{"resourceId":"switch_widget"}}""")
+        assertTrue(runBlocking { runner().run(workflow, WorkflowRunner.Options()) }.success)
+    }
+
+    @Test fun aShortWordInsideTheWantedTextDoesNotSatisfyACondition() {
+        // "Off" is inside "Turn off now"; it does not mean the button is there.
+        phone = FakeScreen(Page("com.example", listOf(Node("n1", text = "Go"), Node("n2", text = "Off"))))
+        val workflow = definition(
+            """{"id":"go","action":"tap","target":{"text":"Go"},"verify":{"present":{"text":"Turn off now"},"timeoutMs":500}}""",
+        )
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options()) }
+        assertFalse(result.text, result.success)
+        assertEquals("verification_failed", parse(result)["errorType"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aPageFilledByTheStatusBarIsReadAgainForTheAppInFront() {
+        // On a real phone the first page of Settings search was all systemui.
+        pageSize = 2
+        phone = FakeScreen(
+            Page(
+                "com.android.settings.intelligence",
+                listOf(
+                    Node("s1", resourceId = "com.android.systemui:id/status_bar", clickable = false, packageName = "com.android.systemui"),
+                    Node("s2", text = "13:01", resourceId = "com.android.systemui:id/clock", clickable = false, packageName = "com.android.systemui"),
+                    Node("n1", text = "Search…", resourceId = "android:id/search_src_text", className = "android.widget.AutoCompleteTextView"),
+                ),
+            ),
+        )
+        val workflow = definition(
+            """{"id":"check","action":"observe","verify":{"present":{"resourceId":"android:id/search_src_text"},"timeoutMs":500}}""",
+            """{"id":"type","action":"type_text","text":"Wireless debugging","target":{"resourceId":"android:id/search_src_text","className":"EditText"}}""",
+        )
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options()) }
+        assertTrue(result.text, result.success)
+        assertEquals("n1", calls.first { it.first == "set_text" }.second["nodeId"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aConditionAboutAnElementOnPageTwoStillHolds() {
+        // A scoped read can itself be paged; the condition looks past it.
+        pageSize = 1
+        phone = FakeScreen(
+            Page(
+                "com.android.settings",
+                listOf(Node("n0", text = "Header", clickable = false), Node("n1", text = "Arrived", clickable = false)),
+            ),
+        )
+        val workflow = definition(
+            """{"id":"check","action":"observe","verify":{"present":{"text":"Arrived"},"timeoutMs":500}}""",
+        )
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options()) }
+        assertTrue(result.text, result.success)
     }
 
     @Test fun anExactSelectorRefusesANodeThatOnlyPartlyMatches() {

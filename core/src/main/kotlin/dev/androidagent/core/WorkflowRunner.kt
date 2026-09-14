@@ -123,7 +123,7 @@ class WorkflowRunner(
             // nobody is asked to allow something that has already happened.
             if (step.skipIfVerified && step.verify != null) {
                 val screen = readScreen()
-                if (screen.ok && verified(screen, step.verify, step.target) == null) {
+                if (screen.ok && verifiedOnScreen(screen, step.verify, step.target) == null) {
                     records += StepRecord(
                         step, "skipped", "already true before the step ran", nowMs() - stepStarted,
                     )
@@ -301,7 +301,7 @@ class WorkflowRunner(
             val screen = readScreen()
             lastScreen = screen
             if (screen.ok) {
-                complaint = verified(screen, verification, step.target)
+                complaint = verifiedOnScreen(screen, verification, step.target)
                 if (complaint == null) return StepOutcome.Done(null, verified = true)
             }
             if (nowMs() >= deadline) break
@@ -484,15 +484,14 @@ class WorkflowRunner(
         if (!screen.ok) return Resolution.Missing(screen)
 
         // The node may simply not be listed yet: a screen bigger than one reply
-        // is paged, and a filtered read looks past the page boundary.
+        // is paged, and a filtered read looks past the page boundary. The
+        // filtered reply is used only to pick from: it lists the matches and
+        // not the list around them, so the scroll hunt below keeps the full read.
         if (screen.truncated) {
             for (query in narrowQueries(selector)) {
                 currentCoroutineContext().ensureActive()
                 val narrowed = readScreen(query)
-                if (narrowed.ok) {
-                    pick(narrowed, selector)?.let { return it }
-                    screen = narrowed
-                }
+                if (narrowed.ok) pick(narrowed, selector)?.let { return it }
             }
         }
 
@@ -551,9 +550,14 @@ class WorkflowRunner(
         var score = 0
         var matched = 0
         var named = 0
+        // Of the fields that identify one element — id, label, description —
+        // how many the selector names and how many this node answers.
+        var identifyingNamed = 0
+        var identifyingMatched = 0
 
         selector.resourceId?.let { wanted ->
             named++
+            identifyingNamed++
             val actual = node.resourceId
             val points = when {
                 actual == null -> 0
@@ -561,22 +565,27 @@ class WorkflowRunner(
                 // `switchWidget` for `com.android.settings:id/switchWidget`:
                 // the local half of an id is what a definition usually names.
                 actual.substringAfterLast('/').equals(wanted.substringAfterLast('/'), ignoreCase = true) -> 90
+                // AOSP spells the same widget `switch_widget` in one layout and
+                // `switchWidget` in another.
+                localIdKey(actual) == localIdKey(wanted) -> 85
                 !selector.exact && actual.contains(wanted, ignoreCase = true) -> 60
                 else -> 0
             }
-            if (points > 0) matched++
+            if (points > 0) { matched++; identifyingMatched++ }
             score += points
         }
         selector.text?.let { wanted ->
             named++
+            identifyingNamed++
             val points = maxOf(textScore(node.text, wanted, selector.exact), textScore(node.contentDescription, wanted, selector.exact))
-            if (points > 0) matched++
+            if (points > 0) { matched++; identifyingMatched++ }
             score += points
         }
         selector.contentDescription?.let { wanted ->
             named++
+            identifyingNamed++
             val points = textScore(node.contentDescription, wanted, selector.exact)
-            if (points > 0) matched++
+            if (points > 0) { matched++; identifyingMatched++ }
             score += points
         }
         selector.className?.let { wanted ->
@@ -584,8 +593,10 @@ class WorkflowRunner(
             val actual = node.className
             val points = when {
                 actual == null -> 0
-                actual.equals(wanted, ignoreCase = true) -> 30
-                !selector.exact && actual.contains(wanted, ignoreCase = true) -> 15
+                // Worth enough to put the Switch ahead of the row title that
+                // carries the same label; it can no longer match on its own.
+                actual.equals(wanted, ignoreCase = true) -> 50
+                !selector.exact && actual.contains(wanted, ignoreCase = true) -> 40
                 else -> 0
             }
             if (points > 0) matched++
@@ -595,6 +606,12 @@ class WorkflowRunner(
         // node's own value, so one miss disqualifies it.
         if (selector.exact && matched < named) return null
         if (named > 0 && matched == 0) return null
+        // A class alone describes a kind of element, not one element. When the
+        // selector says which one it means, a node that answers only the class
+        // is some other element of that kind: every Switch on a Developer
+        // options screen is a `Switch`, and tapping the first one flips a
+        // setting nobody asked about.
+        if (identifyingNamed > 0 && identifyingMatched == 0) return null
         if (named == 0 && !selector.scrollable) return null
 
         if (node.clickable) score += 5
@@ -602,14 +619,20 @@ class WorkflowRunner(
         return score
     }
 
+    private fun localIdKey(id: String): String =
+        id.substringAfterLast('/').replace("_", "").lowercase()
+
     private fun textScore(actual: String?, wanted: String, exact: Boolean): Int = when {
         actual == null -> 0
         actual.equals(wanted, ignoreCase = true) -> 80
         exact -> 0
         actual.contains(wanted, ignoreCase = true) -> 45
-        // A label the app shortened or decorated ("Wireless debugging ") still
-        // names the same row when the definition's text contains it.
-        wanted.contains(actual, ignoreCase = true) && actual.length >= MIN_REVERSE_MATCH_CHARS -> 25
+        // A label the app shortened ("Wireless debug") still names the same
+        // row when the definition's text contains it — but only when it keeps
+        // most of that text. "Off" is inside "Turn off now" and names nothing.
+        wanted.contains(actual, ignoreCase = true) &&
+            actual.length >= MIN_REVERSE_MATCH_CHARS &&
+            actual.length * 2 >= wanted.length -> 25
         else -> 0
     }
 
@@ -654,6 +677,36 @@ class WorkflowRunner(
     }
 
     // ---- verification ----
+
+    /**
+     * [verified], looking past the page boundary when the screen was paged.
+     *
+     * A condition about one element must not fail because that element was on
+     * page two: each selector the condition names gets its own filtered read,
+     * and the condition is judged against everything those reads found.
+     */
+    private suspend fun verifiedOnScreen(
+        screen: Screen,
+        verification: WorkflowVerification,
+        target: WorkflowSelector?,
+    ): String? {
+        val complaint = verified(screen, verification, target) ?: return null
+        if (!screen.truncated) return complaint
+        val selectors = listOfNotNull(
+            verification.present,
+            verification.absent,
+            (verification.checkedOf ?: target).takeIf { verification.checked != null },
+        )
+        if (selectors.isEmpty()) return complaint
+        val extra = mutableListOf<ScreenNode>()
+        for (query in selectors.flatMap(::narrowQueries)) {
+            currentCoroutineContext().ensureActive()
+            val narrowed = readScreenOnce(query)
+            if (narrowed.ok) extra += narrowed.nodes
+        }
+        if (extra.isEmpty()) return complaint
+        return verified(screen.copy(nodes = screen.nodes + extra), verification, target)
+    }
 
     /** Null when the condition holds, otherwise the reason it does not. */
     private fun verified(
@@ -729,6 +782,19 @@ class WorkflowRunner(
     )
 
     private suspend fun readScreen(query: JsonObject = JsonObject(emptyMap())): Screen {
+        val screen = readScreenOnce(query)
+        // An unfiltered page is filled in window order, and the status bar
+        // comes first: on a real phone the first page of Settings search was
+        // 81 systemui nodes and not one node of the app in front. Read again
+        // scoped to that app, so a step is resolved and checked against the
+        // screen it is about.
+        val active = screen.activePackage
+        if (!screen.ok || !screen.truncated || query.isNotEmpty() || active == null) return screen
+        val scoped = readScreenOnce(buildJsonObject { put("package", active) })
+        return if (scoped.ok) scoped else screen
+    }
+
+    private suspend fun readScreenOnce(query: JsonObject): Screen {
         val arguments = buildJsonObject {
             for ((key, value) in query) put(key, value)
             // Always a full reply: unchanged-suppression saves the model

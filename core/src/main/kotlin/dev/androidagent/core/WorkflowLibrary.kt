@@ -101,6 +101,9 @@ class WorkflowLibrary(private val root: File) {
             if (!parses) continue
             val file = File(root, id + SUFFIX)
             val stamp = File(stampDir, id + SUFFIX)
+            // A stamp with no file is a shipped workflow somebody deleted.
+            // Putting it back on every start would make deleting it impossible.
+            if (!file.exists() && stamp.isFile) continue
             if (file.isFile) {
                 val installed = runCatching { stamp.readBytes() }.getOrNull()
                 val current = runCatching { file.readBytes() }.getOrNull()

@@ -1,6 +1,6 @@
 {
   "id": "wireless-debugging",
-  "version": 1,
+  "version": 2,
   "package": "com.android.settings",
   "description": "Turn on Wireless debugging from Settings search. Asks before flipping the switch.",
   "steps": [
@@ -17,25 +17,30 @@
         "resourceId": "com.android.settings:id/search_action_bar",
         "text": "Search settings"
       },
-      "verify": { "present": { "className": "EditText" } }
+      "verify": { "present": { "resourceId": "android:id/search_src_text" } }
     },
     {
       "id": "search",
       "action": "type_text",
       "text": "Wireless debugging",
-      "target": { "className": "EditText" },
-      "verify": { "present": { "text": "Wireless debugging" } }
+      "target": { "resourceId": "android:id/search_src_text", "className": "EditText" },
+      "verify": {
+        "present": { "resourceId": "android:id/title", "text": "Wireless debugging", "exact": true }
+      }
     },
     {
       "id": "open_result",
       "action": "tap",
-      "target": { "text": "Wireless debugging", "clickable": true },
-      "verify": { "present": { "className": "Switch" } }
+      "target": { "resourceId": "android:id/title", "text": "Wireless debugging", "exact": true, "clickable": true },
+      "verify": {
+        "absent": { "resourceId": "android:id/search_src_text" },
+        "present": { "text": "Wireless debugging" }
+      }
     },
     {
       "id": "enable",
       "action": "tap",
-      "target": { "resourceId": "switch_widget", "className": "Switch" },
+      "target": { "text": "Wireless debugging", "className": "Switch", "scrollIntoView": true },
       "requiresConfirmation": true,
       "skipIfVerified": true,
       "verify": { "checked": true, "timeoutMs": 8000 }

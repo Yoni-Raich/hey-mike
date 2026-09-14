@@ -212,7 +212,9 @@ class WorkflowToolGateway(
                     put(
                         "hint",
                         "No workflow definitions are installed. Work the sequence out with the device " +
-                            "tools, then save it with save_workflow so the next chat does not rebuild it.",
+                            "tools, then write it as a definition file (see the workflows skill) so the " +
+                            "next chat does not rebuild it. save_workflow stores a different, older format " +
+                            "that workflow_runner does not load.",
                     )
                 }
             }.toString(),

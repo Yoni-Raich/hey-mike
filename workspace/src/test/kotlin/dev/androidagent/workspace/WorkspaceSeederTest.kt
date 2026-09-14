@@ -49,6 +49,14 @@ class WorkspaceSeederTest {
     }
 
     @Test
+    fun theShippedWorkflowsSkillNamesTheDirectoryDefinitionsAreLoadedFrom() {
+        // Without the real path, a definition the model writes lands somewhere
+        // workflow_runner never looks.
+        val skill = File(assetRoot(), "skills/workflows/SKILL.md").readText()
+        assertTrue(skill.contains(WorkspaceSeeder.WORKFLOW_DEFINITIONS_DIR_PLACEHOLDER))
+    }
+
+    @Test
     fun seedRemovesTheFilesOlderReleasesPlantedButKeepsTheUsersOwn() {
         val ws = tempFolder.newFolder("workspace_legacy")
         File(ws, "RECOVERY.md").writeText("old")

@@ -34,6 +34,9 @@ object WorkspaceSeeder {
     /** Replaced with the absolute skills root, so a skill can name its own scripts. */
     internal const val SKILLS_DIR_PLACEHOLDER = "{{SKILLS_DIR}}"
 
+    /** Replaced with the directory `workflow_runner` loads definitions from. */
+    internal const val WORKFLOW_DEFINITIONS_DIR_PLACEHOLDER = "{{WORKFLOW_DEFINITIONS_DIR}}"
+
     private const val QUICK_ACTIONS_DIR = "quick-actions"
 
     private const val WORKFLOWS_ASSET_DIR = "workflows"
@@ -156,6 +159,7 @@ object WorkspaceSeeder {
             PREFERENCES_PATH_PLACEHOLDER to preferencesFile(homeDir).absolutePath,
             QUICK_ACTIONS_DIR_PLACEHOLDER to quickActionsDir(homeDir).absolutePath,
             SKILLS_DIR_PLACEHOLDER to skillsDir.absolutePath,
+            WORKFLOW_DEFINITIONS_DIR_PLACEHOLDER to dev.androidagent.core.WorkflowLibrary.directoryIn(homeDir).absolutePath,
         )
         for (name in DEFAULT_SKILL_NAMES) {
             val bytes = readAsset("$name/SKILL.md")

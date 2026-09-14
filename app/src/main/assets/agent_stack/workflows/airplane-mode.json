@@ -1,6 +1,6 @@
 {
   "id": "airplane-mode",
-  "version": 1,
+  "version": 2,
   "package": "com.android.settings",
   "description": "Turn on Airplane mode from Settings search. Asks before it cuts the connection.",
   "steps": [
@@ -17,25 +17,30 @@
         "resourceId": "com.android.settings:id/search_action_bar",
         "text": "Search settings"
       },
-      "verify": { "present": { "className": "EditText" } }
+      "verify": { "present": { "resourceId": "android:id/search_src_text" } }
     },
     {
       "id": "search",
       "action": "type_text",
       "text": "Airplane mode",
-      "target": { "className": "EditText" },
-      "verify": { "present": { "text": "Airplane mode" } }
+      "target": { "resourceId": "android:id/search_src_text", "className": "EditText" },
+      "verify": {
+        "present": { "resourceId": "android:id/title", "text": "Airplane mode", "exact": true }
+      }
     },
     {
       "id": "open_result",
       "action": "tap",
-      "target": { "text": "Airplane mode", "clickable": true },
-      "verify": { "present": { "className": "Switch" } }
+      "target": { "resourceId": "android:id/title", "text": "Airplane mode", "exact": true, "clickable": true },
+      "verify": {
+        "absent": { "resourceId": "android:id/search_src_text" },
+        "present": { "text": "Airplane mode" }
+      }
     },
     {
       "id": "enable",
       "action": "tap",
-      "target": { "resourceId": "switch_widget", "className": "Switch" },
+      "target": { "text": "Airplane mode", "className": "Switch", "scrollIntoView": true },
       "requiresConfirmation": true,
       "skipIfVerified": true,
       "verify": { "checked": true, "timeoutMs": 8000 }

@@ -109,8 +109,20 @@ about to happen, then make the call.
 ## 5. Writing a new workflow
 
 Work the sequence out once with the ordinary device tools. When it runs cleanly,
-write it as a definition file in the workflows directory so the next chat costs
-one call instead of ten turns.
+write it as `<id>.json` in `{{WORKFLOW_DEFINITIONS_DIR}}` so the next chat costs
+one call instead of ten turns. `save_workflow` does **not** write there.
+
+Build the selectors from what `read_ui` actually returned on the run that
+worked, not from what the screen looks like:
+
+- A search field is often not an `EditText` by class name
+  (`android.widget.AutoCompleteTextView`); name it by `resourceId`
+  (`android:id/search_src_text`).
+- After typing, the search field's own text equals the result's title. Target
+  the result with its `resourceId` (`android:id/title`) and `"exact": true`.
+- A switch usually carries its row's label as `contentDescription`. Target it
+  with that label **and** `"className": "Switch"`; the class alone matches every
+  switch on the screen and is never enough.
 
 ```json
 {
@@ -122,10 +134,13 @@ one call instead of ten turns.
     { "id": "open", "action": "open_app", "arguments": {"package": "com.android.settings"},
       "verify": {"package": "com.android.settings"} },
     { "id": "search", "action": "tap", "target": {"text": "Search settings", "clickable": true},
-      "verify": {"present": {"className": "EditText"}} },
+      "verify": {"present": {"resourceId": "android:id/search_src_text"}} },
     { "id": "query", "action": "type_text", "text": "Do Not Disturb",
-      "target": {"className": "EditText"} },
-    { "id": "open_result", "action": "tap", "target": {"text": "Do Not Disturb", "clickable": true} },
+      "target": {"resourceId": "android:id/search_src_text", "className": "EditText"},
+      "verify": {"present": {"resourceId": "android:id/title", "text": "Do Not Disturb", "exact": true}} },
+    { "id": "open_result", "action": "tap",
+      "target": {"resourceId": "android:id/title", "text": "Do Not Disturb", "exact": true, "clickable": true},
+      "verify": {"absent": {"resourceId": "android:id/search_src_text"}} },
     { "id": "turn_on", "action": "tap", "target": {"text": "Turn on now", "clickable": true},
       "requiresConfirmation": true, "skipIfVerified": true,
       "verify": {"present": {"text": "Turn off now"}} }
@@ -192,8 +207,7 @@ landed on nothing.
 
 ### Where definitions live
 
-One file per workflow, named `<id>.json`, in the definitions directory beside
-the app's other saved knowledge. `workflow_runner(mode="list")` reports any file
+One file per workflow, named `<id>.json`, in `{{WORKFLOW_DEFINITIONS_DIR}}`. `workflow_runner(mode="list")` reports any file
 that is present but does not parse, with the reason — so a definition you wrote
 that does not show up in the list is a file to fix, not a file to write again.
 

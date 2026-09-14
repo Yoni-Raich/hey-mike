@@ -110,6 +110,14 @@ class WorkflowLibraryTest {
         assertEquals("mine", library.all().single().description)
     }
 
+    @Test fun aShippedWorkflowTheUserDeletedStaysDeleted() {
+        val library = library()
+        library.installBundled(mapOf("shipped" to definition("shipped")))
+        assertTrue(File(temp.root, "definitions/shipped.json").delete())
+        library.installBundled(mapOf("shipped" to definition("shipped")))
+        assertTrue(library.all().isEmpty())
+    }
+
     @Test fun aBundledFileThatDoesNotParseIsNotInstalledAtAll() {
         val library = library()
         library.installBundled(mapOf("bad" to """{"id":"bad"}""".toByteArray()))
