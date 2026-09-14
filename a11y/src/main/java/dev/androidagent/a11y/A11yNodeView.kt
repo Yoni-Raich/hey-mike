@@ -27,6 +27,10 @@ interface A11yNodeView {
     val isPassword: Boolean
     val isEditable: Boolean
 
+    /** True for a switch, checkbox or radio. [isChecked] means nothing without it. */
+    val isCheckable: Boolean
+    val isChecked: Boolean
+
     val childCount: Int
 
     /** Null for a child the platform failed to materialise. */
@@ -55,6 +59,8 @@ class RealNodeView(val node: AccessibilityNodeInfo) : A11yNodeView {
     override val isVisibleToUser: Boolean get() = node.isVisibleToUser
     override val isPassword: Boolean get() = node.isPassword
     override val isEditable: Boolean get() = node.isEditable
+    override val isCheckable: Boolean get() = node.isCheckable
+    override val isChecked: Boolean get() = node.isChecked
 
     override val childCount: Int get() = node.childCount
 

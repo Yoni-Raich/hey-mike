@@ -544,6 +544,49 @@ class AgentCoordinator(
         }
     }
 
+    /**
+     * Gate one sensitive step of a workflow.
+     *
+     * The runner performs a whole sequence inside a single tool call, so
+     * nothing else gets a chance to stop it. Turning on wireless debugging,
+     * sending, paying, deleting or changing a permission is therefore marked in
+     * the definition and asked about here, with the same card and the same
+     * spoken "yes" as a send.
+     *
+     * Unlike a send there is no standing grant: a workflow step is approved for
+     * the run in front of the user, never for every later run of that workflow.
+     */
+    suspend fun authorizeWorkflowStep(request: WorkflowConfirmation): WorkflowConfirmationOutcome {
+        val pending = try {
+            openLocalApproval(
+                prefix = "workflow",
+                method = "workflow_step",
+                details = buildJsonObject {
+                    put("kind", "workflow_step")
+                    put("workflow", request.workflowId)
+                    put("step", request.stepId)
+                    put("action", request.action)
+                    put("what", request.summary)
+                    put("package", request.packageName)
+                    request.appLabel?.let { put("app", it) }
+                },
+                send = null,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (unavailable: IllegalStateException) {
+            // Another approval already holds the card. Refusing is the safe
+            // answer: the step is skipped, not run unattended.
+            return WorkflowConfirmationOutcome.UNAVAILABLE
+        }
+        return when (awaitLocalApproval(pending)) {
+            LocalOutcome.ALLOWED -> WorkflowConfirmationOutcome.ALLOWED
+            LocalOutcome.DENIED -> WorkflowConfirmationOutcome.DENIED
+            LocalOutcome.TIMED_OUT -> WorkflowConfirmationOutcome.TIMED_OUT
+            LocalOutcome.STOPPED -> WorkflowConfirmationOutcome.DENIED
+        }
+    }
+
     private enum class LocalOutcome { ALLOWED, DENIED, TIMED_OUT, STOPPED }
 
     private fun openLocalApproval(

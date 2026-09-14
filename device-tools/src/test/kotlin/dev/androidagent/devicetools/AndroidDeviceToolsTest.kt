@@ -550,6 +550,21 @@ class AndroidDeviceToolsTest {
         assertTrue(raw.text.startsWith("<hierarchy"))
     }
 
+    @Test fun aSwitchInTheXmlDumpCarriesItsOnOffState() = runBlocking {
+        // Both backends have to answer "is the toggle on" the same way, or a
+        // workflow's verification means something different on each of them.
+        val xml = """<hierarchy rotation="0"><node index="0" text="Wireless debugging" resource-id="com.android.settings:id/switch_widget" class="android.widget.Switch" package="com.android.settings" content-desc="" checkable="true" checked="true" clickable="true" enabled="true" scrollable="false" focused="false" bounds="[0,100][1080,200]"/></hierarchy>"""
+        val adb = ScriptedUiAdb(mutableListOf(CommandResult(xml, 0)))
+        val tools = AndroidDeviceTools(adb)
+        tools.beginRun("ui", Files.createTempDirectory("ws").toFile())
+
+        val result = tools.invoke("read_ui", buildJsonObject {})
+
+        assertTrue(result.success)
+        assertTrue(result.text, result.text.contains("\"checkable\":true"))
+        assertTrue(result.text, result.text.contains("\"checked\":true"))
+    }
+
     @Test fun readUiRawModePreservesXmlCompatibility() = runBlocking {
         val adb = ScriptedUiAdb(mutableListOf(CommandResult(SAMPLE_UI_XML, 0)))
         val tools = AndroidDeviceTools(adb)

@@ -34,7 +34,10 @@ class WorkspaceSeederTest {
         assertFalse("the ADB-era framing must not come back", shipped.contains("over local Wireless ADB"))
 
         val shippedSkills = File(assetRoot(), "skills").list()!!.toSet()
-        assertEquals(setOf("device-automation", "app-cards", "user-preferences", "quick-actions"), shippedSkills)
+        assertEquals(
+            setOf("device-automation", "app-cards", "user-preferences", "quick-actions", "workflows"),
+            shippedSkills,
+        )
         for (skill in shippedSkills) assertTrue("AGENTS.md must point at $skill", shipped.contains("`$skill`"))
         assertFalse(shipped.contains("recovery-and-safety"))
     }
@@ -43,6 +46,14 @@ class WorkspaceSeederTest {
     fun theShippedPreferencesSkillCarriesThePathPlaceholder() {
         val skill = File(assetRoot(), "skills/user-preferences/SKILL.md").readText()
         assertTrue(skill.contains(WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER))
+    }
+
+    @Test
+    fun theShippedWorkflowsSkillNamesTheDirectoryDefinitionsAreLoadedFrom() {
+        // Without the real path, a definition the model writes lands somewhere
+        // workflow_runner never looks.
+        val skill = File(assetRoot(), "skills/workflows/SKILL.md").readText()
+        assertTrue(skill.contains(WorkspaceSeeder.WORKFLOW_DEFINITIONS_DIR_PLACEHOLDER))
     }
 
     @Test
@@ -186,7 +197,14 @@ class WorkspaceSeederTest {
         }
     }
 
-    /** The real bundled assets, so the shipped text is checked rather than a copy of it. */
+    @Test
+    fun noWorkflowDefinitionShipsWithTheApp() {
+        // A definition names one phone's screen ids; Settings search on a
+        // Nothing phone and on a Xiaomi share none. The agent learns each
+        // sequence on the phone it runs on instead.
+        assertFalse(File(assetRoot(), "workflows").exists())
+    }
+
     private fun assetRoot(): File =
         generateSequence(File("").absoluteFile) { it.parentFile }
             .map { File(it, "app/src/main/assets/agent_stack") }

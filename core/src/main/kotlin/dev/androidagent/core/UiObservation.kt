@@ -32,6 +32,15 @@ data class UiNode(
     val packageName: String?,
     /** True for password fields. Their text is never emitted, whatever the backend reported. */
     val password: Boolean = false,
+    /**
+     * True for a switch, checkbox or radio — anything with an on/off state.
+     *
+     * [checked] is meaningless without it: a plain button reports `checked`
+     * false, and "the switch is off" and "this is not a switch" are different
+     * answers to "did the toggle take effect".
+     */
+    val checkable: Boolean = false,
+    val checked: Boolean = false,
     val clickableAncestor: UiNode? = null,
     /**
      * Nearest ancestor that was itself emitted, or null for a root.
@@ -44,7 +53,7 @@ data class UiNode(
 ) {
     fun isMeaningful(): Boolean =
         text != null || contentDescription != null || resourceId != null ||
-            clickable || scrollable || focused || !enabled
+            clickable || scrollable || focused || !enabled || checkable
 
     fun toJson(): JsonObject = buildJsonObject {
         put("nodeId", nodeId)
@@ -65,6 +74,12 @@ data class UiNode(
         put("clickable", clickable)
         put("scrollable", scrollable)
         put("focused", focused)
+        // Only for a node that has a state to report. Emitting "checked":false
+        // on every label would cost the character budget for no information.
+        if (checkable) {
+            put("checkable", true)
+            put("checked", checked)
+        }
         clickableAncestor?.let { ancestor ->
             put("clickableAncestor", buildJsonObject {
                 put("nodeId", ancestor.nodeId)
@@ -83,6 +98,8 @@ data class UiNode(
         resourceId = null,
         packageName = null,
         password = false,
+        checkable = false,
+        checked = false,
         clickableAncestor = null,
         parentId = null,
     )

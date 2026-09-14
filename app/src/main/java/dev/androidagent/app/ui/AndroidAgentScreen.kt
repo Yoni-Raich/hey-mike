@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -603,6 +604,15 @@ private fun AgentChatContent(
                 when (row) {
                     is MessageRow -> MessageBubble(row.message)
                     is ActionsRow -> DeviceActionsRow(row)
+                }
+            }
+            if (offersWorkflowSuggestion(state.messages, running)) {
+                item(key = "suggest-workflows-${state.messages.last().id}") {
+                    AssistChip(
+                        onClick = { actions.onSend(SUGGEST_WORKFLOWS_PROMPT, emptyList()) },
+                        label = { Text("Suggest workflows") },
+                        leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
+                    )
                 }
             }
         }

@@ -872,7 +872,13 @@ class A11yDeviceTools(
             required: List<String>,
         ): ToolDefinition {
             val props = buildJsonObject {
-                for ((key, type) in properties) put(key, buildJsonObject { put("type", type) })
+                for ((key, type) in properties) {
+                    put(key, buildJsonObject {
+                        put("type", type)
+                        // A free-form map, such as open_intent's extras.
+                        if (type == "object") put("additionalProperties", true)
+                    })
+                }
             }
             val schema = buildJsonObject {
                 put("type", "object")

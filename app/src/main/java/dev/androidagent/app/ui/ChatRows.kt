@@ -45,6 +45,40 @@ internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatR
     return rows
 }
 
+/** What the "Suggest workflows" chip sends. Visible as the user's message, so the model's answer reads in context. */
+internal const val SUGGEST_WORKFLOWS_PROMPT =
+    "Suggest workflows from this chat: read the workflows skill, look at what you just did on the " +
+        "phone, and propose up to 3 workflows worth saving — a name, what it does, and which values " +
+        "should be parameters. Write and test one only after I pick it."
+
+/** Tools that operate the screen. Reading it or looking things up is not a sequence worth saving. */
+private val SEQUENCE_TOOLS = setOf(
+    "tap", "tap_node", "swipe", "scroll_node", "type_text", "set_text", "key",
+    "open_app", "open_intent", "act_and_observe",
+)
+
+private const val MIN_ACTIONS_FOR_SUGGESTION = 4
+
+/**
+ * Whether to offer "Suggest workflows" under the last reply.
+ *
+ * Decided without the model, because asking it costs a turn: only after a
+ * finished reply whose run operated the phone several times, the case where a
+ * saved workflow would have saved turns. A question answered in words, or a
+ * run that was itself one workflow call, offers nothing.
+ */
+internal fun offersWorkflowSuggestion(messages: List<ChatMessage>, running: Boolean): Boolean {
+    if (running) return false
+    val last = messages.lastOrNull() ?: return false
+    if (!last.role.equals("assistant", ignoreCase = true) || !last.state.equals("complete", ignoreCase = true)) return false
+    val lastUser = messages.indexOfLast { it.role.equals("user", ignoreCase = true) }
+    if (lastUser >= 0 && messages[lastUser].text.trim() == SUGGEST_WORKFLOWS_PROMPT) return false
+    val actions = messages.drop(lastUser + 1).count { message ->
+        message.role.equals("tool", ignoreCase = true) && toolKey(toolNameOf(message)) in SEQUENCE_TOOLS
+    }
+    return actions >= MIN_ACTIONS_FOR_SUGGESTION
+}
+
 internal fun actionsLabel(count: Int, live: Boolean): String = when {
     live -> if (count > 0) "Working on your phone · $count" else "Working on your phone"
     count == 1 -> "1 action on your phone"
@@ -75,6 +109,8 @@ private val TOOL_ACTIONS = mapOf(
     "pull_file" to ("Copied a file" to "Copying a file"),
     "install_apk" to ("Installed an app" to "Installing an app"),
     "device_status" to ("Checked the phone" to "Checking the phone"),
+    "run_workflow" to ("Ran a workflow" to "Running a workflow"),
+    "workflow_runner" to ("Ran a workflow" to "Running a workflow"),
 )
 
 /** "read_ui" as a finished step: "Read the screen". Unknown tools read as their name. */

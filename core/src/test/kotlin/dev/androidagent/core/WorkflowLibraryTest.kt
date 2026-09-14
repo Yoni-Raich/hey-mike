@@ -1,0 +1,104 @@
+package dev.androidagent.core
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+
+class WorkflowLibraryTest {
+
+    @get:Rule val temp = TemporaryFolder()
+
+    private fun library() = WorkflowLibrary(File(temp.root, "definitions"))
+
+    private fun definition(id: String, pkg: String = "com.android.settings", step: String = "open") = """
+        {"id":"$id","package":"$pkg","steps":[{"id":"$step","action":"open_app"}]}
+    """.trimIndent().toByteArray()
+
+    private fun write(id: String, bytes: ByteArray = definition(id)) {
+        val dir = File(temp.root, "definitions").apply { mkdirs() }
+        File(dir, "$id.json").writeBytes(bytes)
+    }
+
+    @Test fun aWorkflowIsFoundByItsExactId() {
+        write("wireless-debugging")
+        val found = library().find("wireless-debugging")
+        assertTrue(found is WorkflowLibrary.Lookup.Found)
+        assertEquals("wireless-debugging", (found as WorkflowLibrary.Lookup.Found).definition.id)
+    }
+
+    @Test fun theNameTheModelSaysOutLoudStillResolves() {
+        // The model names a workflow from a skill or a listing, and "wireless
+        // debugging" for `wireless-debugging` is the ordinary near miss.
+        write("wireless-debugging")
+        for (name in listOf("Wireless Debugging", "wireless debugging", "wirelessdebugging", "wireless_debugging")) {
+            assertTrue(name, library().find(name) is WorkflowLibrary.Lookup.Found)
+        }
+    }
+
+    @Test fun anAmbiguousNameIsRefusedRatherThanGuessed() {
+        // Running the wrong workflow drives the phone through someone else's
+        // steps, so a near miss that fits two files is an error.
+        write("wifi-on")
+        write("wifi-off")
+        val found = library().find("wifi")
+        assertTrue(found.toString(), found is WorkflowLibrary.Lookup.Ambiguous)
+        assertEquals(setOf("wifi-on", "wifi-off"), (found as WorkflowLibrary.Lookup.Ambiguous).candidates.toSet())
+    }
+
+    @Test fun anUnknownNameComesBackWithTheOnesThatDoExist() {
+        write("wireless-debugging")
+        val found = library().find("bluetooth")
+        assertTrue(found is WorkflowLibrary.Lookup.NotFound)
+        assertEquals(listOf("wireless-debugging"), (found as WorkflowLibrary.Lookup.NotFound).known)
+    }
+
+    @Test fun thePackageNarrowsAnAmbiguousNameWithoutHidingTheRest() {
+        write("settings-toggle")
+        write("chrome-toggle", definition("chrome-toggle", pkg = "com.android.chrome"))
+        assertTrue(library().find("toggle", "com.android.chrome") is WorkflowLibrary.Lookup.Found)
+        assertTrue(library().find("toggle") is WorkflowLibrary.Lookup.Ambiguous)
+        assertEquals(1, library().forPackage("com.android.chrome").size)
+    }
+
+    @Test fun aFileThatDoesNotParseIsNamedRatherThanHidden() {
+        // A definition the user wrote that simply never appears looks ignored.
+        write("good")
+        write("broken", """{"id":"broken","steps":[]}""".toByteArray())
+        assertEquals(listOf("good"), library().all().map { it.id })
+        assertEquals(listOf("broken.json"), library().broken().map { it.file })
+        assertTrue(library().broken().single().reason.isNotEmpty())
+    }
+
+    @Test fun savingReplacesTheSameWorkflowRatherThanAccumulatingCopies() {
+        val library = library()
+        val first = WorkflowDefinition.parse(
+            Json.parseToJsonElement(String(definition("flow", step = "one"))).jsonObject,
+        )
+        library.save(first)
+        library.save(first.copy(description = "second time"))
+        assertEquals(1, library.all().size)
+        assertEquals("second time", library.all().single().description)
+    }
+
+    @Test fun theDefinitionsDirectorySitsUnderTheWorkflowsDirectory() {
+        // Saved step lists and definitions age out together when an app is
+        // redesigned, which is the reason they live in one place.
+        val home = temp.newFolder("home")
+        assertEquals(
+            File(WorkflowStore.directoryIn(home), "definitions"),
+            WorkflowLibrary.directoryIn(home),
+        )
+    }
+
+    @Test fun anEmptyLibraryIsAnEmptyListRatherThanAFailure() {
+        assertTrue(library().all().isEmpty())
+        assertTrue(library().broken().isEmpty())
+        assertTrue(library().find("anything") is WorkflowLibrary.Lookup.NotFound)
+    }
+}
