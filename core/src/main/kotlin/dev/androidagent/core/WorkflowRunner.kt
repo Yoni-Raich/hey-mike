@@ -309,8 +309,13 @@ class WorkflowRunner(
         }
         return StepOutcome.Failed(
             errorType = "verification_failed",
+            // What the action itself reported is the first thing anyone fixing
+            // the definition needs: "Tapped n213" and "did not accept a click"
+            // are different failures with the same symptom.
             message = "Step \"${step.id}\" (${describe(step)}) ran, but ${verification.describe()} " +
-                "did not become true within ${verification.timeoutMs}ms: $complaint.",
+                "did not become true within ${verification.timeoutMs}ms: $complaint. " +
+                "The action reported: ${action.text.take(MAX_STEP_TEXT)}" +
+                (resolved?.let { " (target ${it.nodeId} in ${it.observationId})" } ?: ""),
             committed = step.action.commits,
             screen = lastScreen,
         )
