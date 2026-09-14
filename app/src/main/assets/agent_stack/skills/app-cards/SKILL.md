@@ -45,10 +45,10 @@ When an app offers a deep link, `open_intent` usually beats a long tap sequence 
 | Back | `com.whatsapp:id/back`, `contentDescription` "Navigate up" |
 
 **Send a message**
-1. Run `quick-actions` first: `act.sh run whatsapp.send contact=<name> text=<message>`. It needs the user's approval in the app.
+1. Run `quick-actions` first: `act.sh run whatsapp.send contact=<name> text=<message>`. The chat opens with the text typed in; pressing Send then asks the user.
 2. If the contact is not saved and the number cannot be found, open the chat by name, then save the number when you see it: `open_app(package="com.whatsapp")` → tap Search → `type_text(text="<name>")` → `read_ui(text="<name>")` → tap the matching row.
 3. Tap the message field, `type_text(text="<message>")`, then `read_ui` to confirm the text is there. The voice-note icon turns into **Send**.
-4. Tap Send, then `read_ui` to confirm the bubble appears in the conversation.
+4. Tap Send without stopping to ask — the app asks the user itself — then `read_ui` to confirm the bubble appears in the conversation.
 
 ## Google Chrome — `com.android.chrome`
 

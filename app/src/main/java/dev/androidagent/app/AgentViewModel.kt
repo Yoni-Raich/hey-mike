@@ -79,6 +79,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { graph.voice.state.collect { state -> mutable.update { it.copy(voiceState = state) } } }
         viewModelScope.launch { graph.voice.muted.collect { muted -> mutable.update { it.copy(voiceMuted = muted) } } }
+        viewModelScope.launch { graph.sendGrants.grants.collect { grants -> mutable.update { it.copy(sendGrants = grants) } } }
         viewModelScope.launch { graph.engine.voiceEvents.collect(::handleVoiceEvent) }
         viewModelScope.launch { graph.engine.events.collect { event ->
             when (event) {
@@ -111,6 +112,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (graph.voice.state.value.active) {
             if (id != voiceLocalSessionId) { error("End voice before sending in another chat."); return }
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
+            if (graph.coordinator.answerApprovalByReply(text)) return
             task {
                 synchronized(pendingVoiceTexts) { pendingVoiceTexts.addLast(text) }
                 try {
@@ -551,6 +553,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 } else false
                 if (text.isNotBlank() && !skipTypedUserEcho) {
                     val role = if (event.role.equals("assistant", ignoreCase = true)) "assistant" else "user"
+                    // Saying "yes" / "כן" answers a waiting approval: in voice
+                    // mode the card is under the voice screen. Only the user's
+                    // own transcript can do this, never the agent's speech.
+                    if (role == "user") graph.coordinator.answerApprovalByReply(text, record = false)
                     graph.sessions.append(
                         ChatMessage(UUID.randomUUID().toString(), localSessionId, role, text, System.currentTimeMillis())
                     )

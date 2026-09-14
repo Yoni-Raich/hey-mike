@@ -170,21 +170,27 @@ open_intent(uri="https://wa.me/972500000000", text="on my way & almost there", p
 
 The body is percent-encoded and attached for you. `text` needs a uri to attach to, is capped at 400 characters, and is refused if the uri already carries a payload (`text`, `body`, `subject`, `message`, `amount`, `cc`, `bcc`) — two payloads is ambiguous, so pass one or the other, never both.
 
-### Approvals block the call
+A successful launch only means the intent was dispatched. Confirm with `read_ui` that the expected screen actually opened.
 
-Anything that acts on the user's behalf — a prefilled message, a payment, any `sms:`/`mailto:`/`SENDTO` destination — pauses on an approval **the user must answer inside the Hey Mike app**. The app is raised to the front when this happens, and the floating card reads "Approve in Hey Mike".
+### Sending asks the user — opening a draft does not
 
-`open_intent` does not return until they answer, so **say that you are waiting before you call it**. Adding `text` to a link that opened instantly without it is exactly what turns it into an approval, so expect the pause.
+Opening a chat with the text typed in (`wa.me/…` with `text`, `smsto:`, `mailto:`) sends nothing and opens at once. **The approval is on the Send itself**: when you tap a Send button (`tap`, `tap_node`, `act_and_observe`), or submit typed text in a messaging app (`type_text`/`set_text` with `submit=true`), the call pauses until the user answers.
 
-Three different outcomes, and they mean different things:
+- The app is raised and shows who gets which message, above the message box or on the voice screen.
+- The user taps **Allow** or **Deny**, or just says or types **"yes" / "כן"** or **"no" / "לא"**. You cannot answer for them.
+- They may tap **Always allow for <contact>** or **Always allow sending in <app>**. Then later sends it covers go through without pausing.
+- After an Allow the app is brought back and Send is pressed for you. Confirm with `read_ui` that the message appears in the chat.
+
+So **never end your turn to ask for permission to send, and never ask in the chat.** Write one short line saying who it goes to and what it says, then press Send in the same turn: the app itself stops and asks, and the tool call returns once the user has answered. In a voice conversation, say that line out loud.
+
+A payment link (`amount`) still asks before it opens.
 
 | `errorType` | Meaning | What to do |
 |---|---|---|
-| `intent_denied` | The user said no. | Do not retry. Ask what they want instead. |
-| `approval_timeout` | Nobody answered in time. | Tell the user it is waiting in the app, then call again once they have answered. |
-| `intent_not_approved` | The run stopped first. | Nothing was launched. |
-
-A successful launch only means the intent was dispatched. Confirm with `read_ui` that the expected screen actually opened.
+| `send_denied`, `intent_denied` | The user said no. Nothing was sent. | Do not retry. Ask what they want instead. |
+| `approval_timeout` | Nobody answered in time. Nothing was sent. | Tell the user it is waiting, then try again once they agree. |
+| `send_not_approved`, `intent_not_approved` | The run stopped first. | Nothing was sent or launched. |
+| `send_control_gone`, `send_app_gone` | Allowed, but the chat or Send button was gone on return. | `read_ui`, get back to the chat, press Send again. |
 
 ---
 

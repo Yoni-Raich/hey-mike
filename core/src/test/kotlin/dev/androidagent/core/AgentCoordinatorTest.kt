@@ -326,6 +326,93 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun sayingYesOrNoAnswersTheWaitingApprovalInsteadOfSteering() = runTest {
+        // The card can be out of sight (voice mode, another app in front), so
+        // the user's own "כן" / "no" has to answer it.
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        var dispatches = 0
+        val approved = async {
+            rig.coordinator.authorizeLocalIntent(
+                LocalIntentRequest("android.intent.action.VIEW", "https://wa.me/972500000000?text=hi", "com.whatsapp", "Send a message."),
+            ) { dispatches++; ToolResult("launched") }
+        }
+        runCurrent()
+        rig.coordinator.steer("כן")
+        runCurrent()
+        assertTrue(approved.await().success)
+        assertEquals(1, dispatches)
+        assertTrue("an answer is not an instruction to the agent", rig.engine.steers.isEmpty())
+
+        val denied = async {
+            rig.coordinator.authorizeLocalIntent(
+                LocalIntentRequest("android.intent.action.VIEW", "https://wa.me/972500000000?text=hi", "com.whatsapp", "Send a message."),
+            ) { dispatches++; ToolResult("launched") }
+        }
+        runCurrent()
+        assertTrue(rig.coordinator.answerApprovalByReply("No", record = false))
+        runCurrent()
+        assertFalse(denied.await().success)
+        assertEquals(1, dispatches)
+        rig.close()
+    }
+
+    @Test fun aSendWaitsForTheUserAndAnAlwaysAnswerCoversOnlyWhatItNames() = runTest {
+        val grants = InMemorySendGrantStore()
+        val rig = Rig(this, grants)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        val toWife = SendRequest("com.whatsapp", "WhatsApp", "My Wife", "hi")
+        var sends = 0
+
+        val first = async { rig.coordinator.authorizeSend(toWife) { sends++; ToolResult("sent") } }
+        runCurrent()
+        val approval = checkNotNull(rig.coordinator.state.value.approval)
+        assertEquals("send_message", approval.method)
+        assertEquals(0, sends)
+        rig.coordinator.approve(approval.requestId, true, ApprovalScope.CONTACT)
+        runCurrent()
+        assertTrue(first.await().success)
+        assertEquals(listOf(SendGrant("com.whatsapp", "WhatsApp", "My Wife")), grants.grants.value)
+
+        // Remembered: the same contact goes straight through.
+        assertTrue(rig.coordinator.authorizeSend(toWife.copy(message = "later")) { sends++; ToolResult("sent") }.success)
+        assertEquals(2, sends)
+        assertNull(rig.coordinator.state.value.approval)
+
+        // Anyone else still asks, and a denial sends nothing.
+        val other = async { rig.coordinator.authorizeSend(toWife.copy(recipient = "Boss")) { sends++; ToolResult("sent") } }
+        runCurrent()
+        rig.coordinator.approve(rig.coordinator.state.value.approval!!.requestId, false)
+        runCurrent()
+        assertFalse(other.await().success)
+        assertEquals(2, sends)
+        rig.close()
+    }
+
+    @Test fun aSpokenYesNeverGrantsAStandingPermission() = runTest {
+        val grants = InMemorySendGrantStore()
+        val rig = Rig(this, grants)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        val sent = async { rig.coordinator.authorizeSend(SendRequest("com.whatsapp", "WhatsApp", "My Wife", "hi")) { ToolResult("sent") } }
+        runCurrent()
+        assertTrue(rig.coordinator.answerApprovalByReply("כן", record = false))
+        runCurrent()
+        assertTrue(sent.await().success)
+        assertTrue(grants.grants.value.isEmpty())
+        rig.close()
+    }
+
+    @Test fun withNoApprovalWaitingAYesIsAnOrdinaryInstruction() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Open the message")
+        runCurrent()
+        assertFalse(rig.coordinator.answerApprovalByReply("yes"))
+        rig.close()
+    }
+
     @Test fun denyingOrStoppingALocalIntentNeverDispatchesIt() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Open the message")
@@ -445,7 +532,7 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope) {
+    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore()) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
         val store = FakeStore()
@@ -455,6 +542,7 @@ class AgentCoordinatorTest {
         var foregroundRequests = 0
         val coordinator = AgentCoordinator(
             scope, engine, store, tools, overlay,
+            sendGrants = grants,
             bringToForeground = { foregroundRequests++ },
         ) { adbStatus.value }
         fun close() { scope.cancel() }
@@ -517,7 +605,8 @@ class AgentCoordinatorTest {
             this.planModel = planModel
             return startTurn(threadId, prompt, images, reasoningEffort, skill, capabilities)
         }
-        override suspend fun steer(threadId: String, turnId: String, prompt: String) = Unit
+        val steers = mutableListOf<String>()
+        override suspend fun steer(threadId: String, turnId: String, prompt: String) { steers += prompt }
         override suspend fun interrupt(threadId: String, turnId: String) { waitForInterrupt?.await() }
         override suspend fun answerTool(requestId: String, result: ToolResult) { answers.add(result) }
         override suspend fun answerApproval(requestId: String, allow: Boolean) {

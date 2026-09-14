@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Approvals you can see, answer by voice, and remember:
+  - The approval card is pinned above the message box, and shown on the voice
+    screen. It used to sit at the top of the chat, out of sight in any long
+    chat, and under the voice screen entirely.
+  - It says who gets which message instead of an encoded link.
+  - Say or type "yes" / "כן" or "no" / "לא" to answer it.
+- Mike asks at the right moment: opening a chat with the text typed in no
+  longer asks, since it sends nothing; pressing Send does. Tap "Always allow
+  for <contact>" or "Always allow sending in <app>" to stop being asked, and
+  review or remove those in Settings > Sending approvals. The list is signed
+  with a key in the Android Keystore, so the agent cannot add to it.
+
 ## 0.11.0 — 2026-09-13
 
 - Quick actions: "message dad", "call mom" or "navigate home" is one step.

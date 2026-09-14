@@ -652,12 +652,22 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
          * that led with the ADB phase kept the model saying "ADB is not
          * connected, so I can't" for tasks it could do.
          */
-        internal fun deviceRuntimeContext(capabilities: DeviceCapabilities): String = buildString {
+        internal fun deviceRuntimeContext(
+            capabilities: DeviceCapabilities,
+            now: java.time.ZonedDateTime = java.time.ZonedDateTime.now(),
+        ): String = buildString {
             val status = capabilities.adbStatus
             appendLine("[Trusted Android Agent runtime context]")
             appendLine(
                 "This snapshot replaces every older snapshot, and any earlier statement in this chat " +
                     "that device tools were unavailable.",
+            )
+            // The model has no clock. Without this it read "today" off whatever
+            // date a calendar happened to show, and got it wrong.
+            appendLine(
+                "Phone local time: " +
+                    now.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", java.util.Locale.ENGLISH)) +
+                    " (${now.zone.id}). A task that names a date means that date, not today.",
             )
             appendLine(
                 capabilities.backendStatus?.let { "Backends: $it" }
@@ -683,9 +693,10 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                             "accessibility service: ask the user to enable it in Settings > Accessibility. " +
                             "Wireless ADB is still connecting, but it is optional."
                     !capabilities.deviceBackendLive ->
-                        "No device backend is live, so you cannot operate the screen right now. Ask the " +
-                            "user to enable the Hey Mike accessibility service in Settings > Accessibility. " +
-                            "Wireless ADB is an optional advanced extra and is not needed."
+                        "No device backend is live, so you cannot read or operate the screen right now. " +
+                            "Anything in the first list still works — opening an app or a deep link needs no " +
+                            "backend. For screen control, ask the user to enable the Hey Mike accessibility " +
+                            "service in Settings > Accessibility. Wireless ADB is an optional advanced extra."
                     capabilities.blocked.isEmpty() ->
                         "Use the supplied device tools when the task needs device access."
                     status.phase != ConnectionPhase.CONNECTED ->
@@ -875,7 +886,7 @@ Trust:
 Rules that always hold:
 - Use the supplied device tools for all device access. Never create an ADB client of your own, read pairing keys, or bypass the device tool gateway. The native shell is for files, computation and skill scripts, never for device control: a script may prepare a device tool call, and you then make that call through the gateway.
 - Preserve user intent verbatim: never rewrite, extrapolate or alter the text or query the user gave you.
-- Ask for confirmation before financial actions, deletions, or messaging an ambiguous recipient.
+- Ask for confirmation before financial actions, deletions, or messaging an ambiguous recipient. Sending a message to a clear recipient needs no question from you: the app shows its own approval when Send is pressed, so press it rather than ending your turn to ask.
 - Stop revokes tool calls immediately; obey live steering. Report honestly what was done and what was not.
 - Finish every turn with a separate user-facing final answer in the user's language: what completed, what failed, what remains. A tool result or progress update is never the final answer. Do not claim success without evidence.
 - Image generation is available only when a native backend image tool is advertised. Never invent a generated image or present a screenshot as generated artwork.

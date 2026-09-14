@@ -91,12 +91,19 @@ class IntentPolicyTest {
         )
     }
 
-    @Test fun sendingAMessageAsksFirst() {
-        for (uri in listOf("mailto:a@b.com?subject=hi", "sms:+972500000000?body=hi", "smsto:+972500000000")) {
-            val decision = IntentPolicy.evaluate(view, uri)
-            assertTrue("$uri should need confirmation", decision is IntentPolicy.Decision.NeedsConfirmation)
-            assertTrue((decision as IntentPolicy.Decision.NeedsConfirmation).what.isNotBlank())
+    @Test fun openingAMessageDraftDoesNotAsk() {
+        // A draft sends nothing. The approval belongs to the Send tap, which
+        // the device backend gates; asking here approved a screen, not a send.
+        for (uri in listOf(
+            "mailto:a@b.com?subject=hi", "sms:+972500000000?body=hi", "smsto:+972500000000",
+            "https://wa.me/972500000000?text=hi", "whatsapp://send?text=hello", "myapp://search?text=hello",
+        )) {
+            assertTrue("$uri should open without asking", IntentPolicy.evaluate(view, uri) is IntentPolicy.Decision.Allow)
         }
+        assertTrue(
+            IntentPolicy.evaluate("android.intent.action.SENDTO", "smsto:+972500000000")
+                is IntentPolicy.Decision.Allow,
+        )
     }
 
     @Test fun plainNavigationDoesNotAskFirst() {
@@ -105,40 +112,12 @@ class IntentPolicyTest {
         }
     }
 
-    @Test fun aPrefilledMessageOnAMessagingHostAsksFirst() {
-        assertTrue(
-            IntentPolicy.evaluate(view, "https://wa.me/972500000000?text=hi")
-                is IntentPolicy.Decision.NeedsConfirmation,
-        )
-        // The same host without a payload only opens a chat, which is navigation.
-        assertTrue(
-            IntentPolicy.evaluate(view, "https://wa.me/972500000000")
-                is IntentPolicy.Decision.Allow,
-        )
-    }
-
     @Test fun aPaymentAmountAsksFirstEvenOnHttps() {
         assertTrue(
             IntentPolicy.evaluate(view, "https://pay.example/checkout?amount=10")
                 is IntentPolicy.Decision.NeedsConfirmation,
         )
-    }
-
-    @Test fun aPrivateSchemeWithAPrefilledPayloadAsksFirst() {
-        assertTrue(
-            IntentPolicy.evaluate(view, "whatsapp://send?text=hello")
-                is IntentPolicy.Decision.NeedsConfirmation,
-        )
-        assertTrue(
-            IntentPolicy.evaluate(view, "myapp://search?text=hello")
-                is IntentPolicy.Decision.NeedsConfirmation,
-        )
-        assertTrue(IntentPolicy.evaluate(view, "myapp://screen/42") is IntentPolicy.Decision.Allow)
-    }
-
-    @Test fun sensitiveIntentAlwaysNeedsAppOwnedConfirmation() {
-        val decision = IntentPolicy.evaluate(view, "mailto:a@b.com?subject=hi")
-        assertTrue(decision is IntentPolicy.Decision.NeedsConfirmation)
+        assertTrue(IntentPolicy.evaluate(view, "myapp://pay?amount=10") is IntentPolicy.Decision.NeedsConfirmation)
     }
 
     @Test fun forbiddenInputsRemainDenied() {
@@ -174,30 +153,17 @@ class IntentPolicyTest {
             uri,
         )
         // And it survives the parse that a raw one would have failed.
-        assertTrue(
-            IntentPolicy.evaluate("android.intent.action.VIEW", uri)
-                is IntentPolicy.Decision.NeedsConfirmation,
-        )
+        assertTrue(IntentPolicy.evaluate("android.intent.action.VIEW", uri) is IntentPolicy.Decision.Allow)
         assertTrue(
             IntentPolicy.evaluate("android.intent.action.VIEW", "https://wa.me/972500000000?text=on my way")
                 is IntentPolicy.Decision.Deny,
         )
     }
 
-    @Test fun composedTextAlwaysStillNeedsConfirmation() {
-        // Attaching a body must never turn a send into plain navigation.
-        for (base in listOf(
-            "https://wa.me/972500000000",
-            "whatsapp://send?phone=972500000000",
-            "smsto:+972500000000",
-        )) {
-            val uri = (IntentPolicy.withText(base, "hello") as IntentPolicy.Decision.Allow).uri
-            assertTrue(
-                "$base should still need confirmation",
-                IntentPolicy.evaluate("android.intent.action.VIEW", uri)
-                    is IntentPolicy.Decision.NeedsConfirmation,
-            )
-        }
+    @Test fun composedTextCannotHideAPayment() {
+        // A body fills a draft; it must never make a payment link look like one.
+        val uri = (IntentPolicy.withText("https://pay.example/checkout?amount=10", null) as IntentPolicy.Decision.Allow).uri
+        assertTrue(IntentPolicy.evaluate("android.intent.action.VIEW", uri) is IntentPolicy.Decision.NeedsConfirmation)
     }
 
     @Test fun textJoinsAnExistingQueryWithAnAmpersandNotASecondQuestionMark() {

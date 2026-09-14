@@ -59,7 +59,18 @@ class AgentGraph(private val app: Application) {
         // Used only where Android cannot leave our window out of a screenshot.
         observationVisibility = { hidden -> overlay.setCaptureHidden(hidden) },
         authorizeIntent = { request, dispatch -> runCoordinator.authorizeLocalIntent(request, dispatch) },
+        authorizeSend = { request, dispatch -> runCoordinator.authorizeSend(request, dispatch) },
+        // Asking raised this app over the chat. Stepping back uncovers that
+        // chat exactly as it was, draft included; relaunching the other app
+        // lands on its home screen instead.
+        leaveApprovalScreen = {
+            foregroundActivity?.get()?.let { activity -> activity.runOnUiThread { activity.moveTaskToBack(true) } }
+        },
     )
+    /** The resumed activity, if any, so an approval can step out of the way. */
+    @Volatile var foregroundActivity: java.lang.ref.WeakReference<android.app.Activity>? = null
+    /** "Always allow" answers to send approvals, signed so the agent cannot add its own. */
+    val sendGrants = KeystoreSendGrantStore(app)
     // Under homeDirectory, which is global across chats and is the one place
     // WorkspaceSeeder does not rewrite on every access.
     val knowledge = KnowledgeStore(KnowledgeStore.directoryIn(runtime.homeDirectory))
@@ -84,6 +95,7 @@ class AgentGraph(private val app: Application) {
     init {
         runCoordinator = AgentCoordinator(
             scope, engine, sessions, tools, overlay,
+            sendGrants = sendGrants,
             adbStatus = { adb.status.value },
             // An approval card lives only in the app, and device control means
             // the app is not in front. Raising it is what makes the approval

@@ -104,7 +104,7 @@ import dev.androidagent.core.UsageSummary
 private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
-    MODEL, WORKSPACE, USAGE, UPDATES,
+    MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -131,6 +131,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.WORKSPACE -> "Workspace"
     SettingsRoute.USAGE -> "Usage"
     SettingsRoute.UPDATES -> "App updates"
+    SettingsRoute.SEND_APPROVALS -> "Sending approvals"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -146,6 +147,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.WORKSPACE -> Icons.Outlined.Folder
     SettingsRoute.USAGE -> Icons.Outlined.DataUsage
     SettingsRoute.UPDATES -> Icons.Outlined.Update
+    SettingsRoute.SEND_APPROVALS -> Icons.Outlined.Key
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -288,6 +290,12 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
             onClick = { onOpen(SettingsRoute.USAGE) },
         )
         SettingsHubRow(
+            icon = SettingsRoute.SEND_APPROVALS.icon(),
+            title = SettingsRoute.SEND_APPROVALS.title(),
+            summary = if (state.sendGrants.isEmpty()) "Every message asks first" else "${state.sendGrants.size} always allowed",
+            onClick = { onOpen(SettingsRoute.SEND_APPROVALS) },
+        )
+        SettingsHubRow(
             icon = SettingsRoute.UPDATES.icon(),
             title = SettingsRoute.UPDATES.title(),
             summary = "Version ${dev.androidagent.app.BuildConfig.VERSION_NAME}",
@@ -312,6 +320,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.WORKSPACE -> WorkspaceSettings(state, actions)
             SettingsRoute.USAGE -> UsageSettings(state, actions)
             SettingsRoute.UPDATES -> UpdateSettings(state, actions)
+            SettingsRoute.SEND_APPROVALS -> SendApprovalSettings(state, actions)
         }
     }
 }
@@ -907,4 +916,27 @@ internal fun readableConnectionPhase(phase: ConnectionPhase): String = when (pha
     ConnectionPhase.CONNECTING -> "Connecting ADB"
     ConnectionPhase.CONNECTED -> "ADB connected"
     ConnectionPhase.ERROR -> "ADB error"
+}
+
+@Composable
+private fun SendApprovalSettings(state: AgentUiState, actions: AgentUiActions) {
+    Text(
+        "Mike asks before pressing Send in another app. Messages you chose to always allow go without asking. " +
+            "Remove one to be asked again.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (state.sendGrants.isEmpty()) {
+        Text("Nothing is always allowed.", style = MaterialTheme.typography.bodyMedium)
+        return
+    }
+    state.sendGrants.forEach { grant ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(grant.recipient ?: "Anyone", style = MaterialTheme.typography.bodyLarge)
+                Text("in ${grant.appLabel}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { actions.onRemoveSendGrant(grant) }) { Text("Remove") }
+        }
+    }
 }

@@ -246,12 +246,25 @@ fun AndroidAgentScreen(
                     }
                 },
                 bottomBar = {
-                    Box(Modifier.voiceStage(voiceMode.composer, lift = 56.dp)) {
-                        AgentComposer(
-                            state = state,
-                            actions = actions,
-                            onVoiceButtonPlaced = { voiceMode.dock.value = it },
-                        )
+                    Column {
+                        // Pinned above the composer, never in the chat list: the
+                        // list follows the newest message, and a card placed in it
+                        // sat above everything, out of sight in any long chat.
+                        state.runState.approval?.let { approval ->
+                            ApprovalCard(
+                                approval = approval,
+                                onApproval = actions.onApproval,
+                                onApproveAlways = actions.onApproveAlways,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
+                        Box(Modifier.voiceStage(voiceMode.composer, lift = 56.dp)) {
+                            AgentComposer(
+                                state = state,
+                                actions = actions,
+                                onVoiceButtonPlaced = { voiceMode.dock.value = it },
+                            )
+                        }
                     }
                 },
             ) { padding ->
@@ -574,11 +587,6 @@ private fun AgentChatContent(
         if (state.toolCards.isNotEmpty()) {
             items(state.toolCards, key = { "tool-${it.id}" }) { card -> ToolCard(card) }
         }
-        state.runState.approval?.let { approval ->
-            item(key = "approval-${approval.requestId}") {
-                ApprovalCard(approval = approval, onApproval = actions.onApproval)
-            }
-        }
 
         if (state.isLoadingMessages) {
             item(key = "loading-messages") {
@@ -762,49 +770,65 @@ private fun MessageBubble(message: ChatMessage) {
 }
 
 @Composable
-private fun ApprovalCard(
+internal fun ApprovalCard(
     approval: EngineEvent.Approval,
     onApproval: (String, Boolean) -> Unit,
+    onApproveAlways: (String, dev.androidagent.core.ApprovalScope) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val summary = remember(approval) { approval.summary() }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // Nothing else in the app is assertive: this one blocks the run
             // until the user answers, so it has to interrupt a screen reader.
             Text(
-                "Approval needed",
+                summary.headline,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
             )
-            Text(approval.method, style = MaterialTheme.typography.bodyMedium)
-            if (approval.details.isNotEmpty()) {
-                var showAll by rememberSaveable(approval.requestId) { mutableStateOf(false) }
-                val details = approval.detailsText()
-                val long = details.length > APPROVAL_DETAIL_LIMIT
+            var showAll by rememberSaveable(approval.requestId) { mutableStateOf(false) }
+            summary.lines.forEach { (label, value) ->
+                val long = value.length > APPROVAL_DETAIL_LIMIT
                 SelectionContainer {
                     Text(
-                        if (long && !showAll) details.take(APPROVAL_DETAIL_LIMIT) + "…" else details,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
+                        "$label: " + if (long && !showAll) value.take(APPROVAL_DETAIL_LIMIT) + "…" else value,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
                 }
                 if (long) {
-                    TextButton(onClick = { showAll = !showAll }) {
-                        Text(if (showAll) "Show less" else "Show all")
-                    }
+                    TextButton(onClick = { showAll = !showAll }) { Text(if (showAll) "Show less" else "Show all") }
                 }
             }
+            Text(
+                "Or say “yes” or “no”",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onApproval(approval.requestId, false) }) { Text("Deny") }
                 Button(onClick = { onApproval(approval.requestId, true) }) { Text("Allow") }
+            }
+            // Standing permissions only for a send, and only by a tap: a spoken
+            // "yes" always answers this one message.
+            summary.sendApp?.let { app ->
+                summary.sendRecipient?.let { recipient ->
+                    TextButton(onClick = { onApproveAlways(approval.requestId, dev.androidagent.core.ApprovalScope.CONTACT) }) {
+                        Text("Always allow for $recipient")
+                    }
+                }
+                TextButton(onClick = { onApproveAlways(approval.requestId, dev.androidagent.core.ApprovalScope.APP) }) {
+                    Text("Always allow sending in $app")
+                }
             }
         }
     }

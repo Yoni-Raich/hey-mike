@@ -74,7 +74,15 @@ class MainActivity : ComponentActivity() {
     }
     // Every grant the checklist tracks is flipped in a system Settings screen,
     // so the app is always stopped and resumed around the change.
-    override fun onResume() { super.onResume(); model.refreshAccount(); model.refreshPermissions() }
+    override fun onResume() {
+        super.onResume()
+        model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
+        model.refreshAccount(); model.refreshPermissions()
+    }
+    override fun onPause() {
+        if (model.graph.foregroundActivity?.get() === this) model.graph.foregroundActivity = null
+        super.onPause()
+    }
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
         onDrawerChanged = { open -> model.editUi { it.copy(isDrawerOpen = open) } },
@@ -118,6 +126,15 @@ class MainActivity : ComponentActivity() {
         onShareWorkspaceFile = { item -> shareFile(item) },
         onCloseWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = false) } },
         onApproval = { requestId, allow -> model.graph.coordinator.approve(requestId, allow) },
+        onApproveAlways = { requestId, scope ->
+            val before = model.graph.sendGrants.grants.value.size
+            model.graph.coordinator.approve(requestId, true, scope)
+            // Say so either way: a standing permission that silently did not
+            // take is how the demo run kept asking.
+            val saved = model.graph.sendGrants.grants.value.size > before
+            model.editUi { it.copy(infoMessage = if (saved) "Saved. Mike won't ask again for these sends." else "Sent once. Nothing was saved to always allow.") }
+        },
+        onRemoveSendGrant = { grant -> model.graph.sendGrants.remove(grant) },
         onCheckForUpdates = { model.checkForUpdates(manual = true) },
         onDownloadUpdate = { model.downloadUpdate() },
         onInstallUpdate = { model.installUpdate() },
