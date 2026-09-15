@@ -406,6 +406,20 @@ under a size cap. Image generation is enabled through the app-server
 `features.image_generation` config, and the agent is instructed never to
 present a screenshot as generated artwork.
 
+## What the agent says on the floating card
+
+The agent's own words reach the card, not only the chat. `ControlOverlay.say`
+is a channel of its own, separate from the status label: `AgentCoordinator`
+mirrors each assistant segment to it as that segment is written to the session,
+while it streams and again when it completes, so the card shows the same text
+the chat shows. Keeping it off the label matters — a label is parsed for a tool
+name, and a short sentence from the agent reads like one. The card holds the
+last line until the agent says something new, so a tool call changes the
+headline and leaves the words in place. Engine activity lines ("Working",
+"Working in session files", "Updating session files") say which kind of work
+started, not what the agent thinks, so they stay headlines and never overwrite
+what the agent said.
+
 ## Overlay bubble and manual exit
 
 The floating card collapses to a 56dp bubble that keeps the status colour, can

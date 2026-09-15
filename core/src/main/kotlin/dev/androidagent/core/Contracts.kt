@@ -373,6 +373,13 @@ interface ControlOverlay {
     fun updateState(state: OverlayState) { update(state.label) }
     /** Display the terminal state, then release the overlay. */
     fun finish(state: OverlayState) { updateState(state); hide() }
+
+    /**
+     * The agent's own latest words, as the chat shows them. Kept apart from
+     * the status label so a tool call can change what the card says the agent
+     * is doing without erasing what it last said.
+     */
+    fun say(text: String) {}
     /** Move the compact control card away from a planned device coordinate. */
     fun avoidTouch(x: Int, y: Int) {}
     /** Temporarily removes the overlay from screenshots/UI hierarchy capture. */
