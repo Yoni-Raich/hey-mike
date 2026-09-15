@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-09-15
 
 - Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
   **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for

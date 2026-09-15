@@ -1,11 +1,26 @@
 # Progress
 
-## Status — 2026-09-11
+## Status — 2026-09-15
 
 Android Agent is a Developer Preview. It is useful for local testing, but it is
 not production-ready.
 
 ### Verified
+
+- The v0.13.0 dev release candidate was built from `origin/main` on 2026-09-15.
+  `./gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+  :voice:lintDebug :overlay:lintDebug :app:lintDevDebug --no-daemon` passed
+  (832 actionable tasks), `python -m unittest tools.test_prepare_runtime`
+  passed (5 tests), and `git diff --check` is clean. `aapt2` reports package
+  `dev.androidagent.app.dev`, versionCode 27, versionName 0.13.0, label
+  "Hey Mike Dev" and not debuggable. The exact APK was zip-aligned and passed
+  APK Signature Scheme v3 verification with the local debug key. SHA-256:
+  `B965F9EC93A16873DB2E95B433006DD05BF9A9A7264C09ADB027A91D7C5BBDD7`.
+  It was installed with `adb -s Q8G64TD6ZTB6H6ZL install -r` on the Xiaomi
+  2201116TG (Android 13); all staged `lib*.so` files were present in the
+  arm64 native library directory. A task typed into the exact APK opened
+  Settings and reached About phone showing Android 13. Not tested: WhatsApp,
+  voice, Accessibility control, or a production-signed build.
 
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
