@@ -116,6 +116,13 @@ data class WorkflowDefinition(
                 step.target?.describe()?.let { put("target", it) }
                 step.text?.let { put("text", it) }
                 if (step.action == WorkflowAction.OPEN_INTENT) put("intent", step.arguments)
+                if (step.action == WorkflowAction.CALL) {
+                    step.callTool?.let { put("tool", it) }
+                    // The arguments are what the call will do: a review of the
+                    // outline must show them, not just the tool name.
+                    if (step.arguments.isNotEmpty()) put("arguments", step.arguments)
+                    step.output?.let { put("output", it) }
+                }
                 if (step.requiresConfirmation) put("requiresConfirmation", true)
                 if (step.optional) put("optional", true)
                 if (step.skipIfVerified) put("skipIfVerified", true)
@@ -357,7 +364,14 @@ enum class WorkflowAction(val wire: String, val commits: Boolean, val needsTarge
     WAIT("wait", commits = false, needsTarget = false),
 
     /** Read the screen. A checkpoint step whose whole job is its `verify`. */
-    OBSERVE("observe", commits = false, needsTarget = false);
+    OBSERVE("observe", commits = false, needsTarget = false),
+
+    /**
+     * Invoke one registered device tool with rich JSON args. The tool name must
+     * be in the host's [WorkflowCallRegistry]; anything else fails before it is
+     * dispatched, so this is a generic call, not open dispatch.
+     */
+    CALL("call", commits = true, needsTarget = false);
 
     companion object {
         fun from(wire: String): WorkflowAction? =
@@ -396,6 +410,13 @@ data class WorkflowStep(
     val submit: Boolean = false,
     /** Extra arguments handed straight to the device tool, e.g. `keycode`, `direction`. */
     val arguments: JsonObject = JsonObject(emptyMap()),
+    /** For `call`: the registered device tool to invoke. */
+    val callTool: String? = null,
+    /**
+     * For `call`: capture the result under this name so later steps can use
+     * it as `{{outputs.<name>}}`.
+     */
+    val output: String? = null,
     val verify: WorkflowVerification? = null,
     val requiresConfirmation: Boolean = false,
     val optional: Boolean = false,
@@ -411,16 +432,25 @@ data class WorkflowStep(
         text?.let { put("text", it) }
         if (submit) put("submit", true)
         if (arguments.isNotEmpty()) put("arguments", arguments)
+        callTool?.let { put("tool", it) }
+        output?.let { put("output", it) }
         verify?.let { put("verify", it.toJson()) }
         if (requiresConfirmation) put("requiresConfirmation", true)
         if (optional) put("optional", true)
         if (skipIfVerified) put("skipIfVerified", true)
         timeoutMs?.let { put("timeoutMs", it) }
-        if (!waitForChange) put("waitForChange", false)
+        // Written only when it differs from the action's default, so a
+        // re-parse reads back the same value for every action.
+        val defaultWait = action != WorkflowAction.CALL && action.commits
+        if (waitForChange != defaultWait) put("waitForChange", waitForChange)
     }
 
     companion object {
         const val MAX_TEXT_CHARS = 4_000
+
+        /** Tool names stay boring for the same reason workflow ids do. */
+        private val CALL_TOOL_RE = Regex("[a-z][a-z0-9_]{0,63}")
+        internal val OUTPUT_NAME_RE = Regex("[A-Za-z][A-Za-z0-9_]{0,31}")
 
         fun parse(json: JsonObject, index: Int, workflowId: String): WorkflowStep {
             fun bad(reason: String): Nothing =
@@ -439,6 +469,23 @@ data class WorkflowStep(
                 null -> JsonObject(emptyMap())
                 is JsonObject -> raw
                 else -> bad("\"arguments\" must be an object.")
+            }
+            val callTool = json.str("tool")
+            val output = json.str("output")
+            if (action == WorkflowAction.CALL) {
+                val name = callTool ?: bad("\"call\" needs \"tool\" naming the device tool to invoke.")
+                if (!CALL_TOOL_RE.matches(name)) bad("\"$name\" is not a usable tool name.")
+                if (name in WorkflowCallRegistry.BLOCKED_CALL_TOOLS) {
+                    bad("\"$name\" cannot run inside a workflow.")
+                }
+                if (json["target"] != null) bad("\"call\" takes \"tool\" and \"arguments\", not a \"target\".")
+                if (json.str("text") != null) bad("\"call\" carries its values in \"arguments\", not \"text\".")
+                if (output != null && !OUTPUT_NAME_RE.matches(output)) {
+                    bad("\"$output\" is not a usable output name: use letters, digits and \"_\".")
+                }
+            } else {
+                if (callTool != null) bad("\"tool\" belongs on a \"call\" step.")
+                if (output != null) bad("\"output\" belongs on a \"call\" step.")
             }
             val target = when (val raw = json["target"]) {
                 null -> null
@@ -481,12 +528,18 @@ data class WorkflowStep(
                 text = text,
                 submit = json.bool("submit") ?: arguments.bool("submit") ?: false,
                 arguments = stepArguments,
+                callTool = callTool.takeIf { action == WorkflowAction.CALL },
+                output = output.takeIf { action == WorkflowAction.CALL },
                 verify = parseVerify(json, ::bad),
                 requiresConfirmation = json.bool("requiresConfirmation") ?: false,
                 optional = json.bool("optional") ?: false,
                 skipIfVerified = json.bool("skipIfVerified") ?: false,
                 timeoutMs = json.millis("timeoutMs", MIN_STEP_MS, MAX_STEP_MS),
-                waitForChange = json.bool("waitForChange") ?: action.commits,
+                // A call is usually an API-only operation with nothing new on
+                // screen, so it settles only when the definition says so. Every
+                // other action keeps its own default.
+                waitForChange = json.bool("waitForChange")
+                    ?: (action != WorkflowAction.CALL && action.commits),
             )
         }
 

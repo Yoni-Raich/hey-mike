@@ -48,6 +48,10 @@ class MainActivity : ComponentActivity() {
     private var askedForNotifications = false
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::addAttachment) }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPermissions() }
+    private val capabilityPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        model.graph.runtimePermissions.complete(result)
+        model.refreshPermissions()
+    }
     // Set while the permission dialog is up for an assistant press, so the
     // grant starts voice the assistant way rather than toggling it.
     private var voiceForAssistant = false
@@ -59,6 +63,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        model.graph.runtimePermissions.attach(this, capabilityPermissions)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK))
         setContent {
@@ -85,7 +90,9 @@ class MainActivity : ComponentActivity() {
         // Not on recreation: a rotation must not reopen a conversation the
         // user already ended.
         val fromAssistant = savedInstanceState == null && handleAssistantPress(intent)
-        if (!fromAssistant && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        val fromCapabilityRequest = intent.getBooleanExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST, false)
+        intent.removeExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST)
+        if (!fromAssistant && !fromCapabilityRequest && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askedForNotifications = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -129,12 +136,18 @@ class MainActivity : ComponentActivity() {
     // so the app is always stopped and resumed around the change.
     override fun onResume() {
         super.onResume()
+        model.graph.runtimePermissions.resumed(this)
         model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
         model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole()
     }
     override fun onPause() {
+        model.graph.runtimePermissions.paused(this)
         if (model.graph.foregroundActivity?.get() === this) model.graph.foregroundActivity = null
         super.onPause()
+    }
+    override fun onDestroy() {
+        model.graph.runtimePermissions.detach(this)
+        super.onDestroy()
     }
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(

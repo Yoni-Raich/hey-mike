@@ -1,12 +1,29 @@
 # Progress
 
-## Status — 2026-09-11
+## Status — 2026-09-15
 
 Android Agent is a Developer Preview. It is useful for local testing, but it is
 not production-ready.
 
 ### Verified
 
+- Native capability APIs and API-capable workflows — on 2026-09-15,
+  `:core:test :device-tools:test :workspace:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` passed
+  together (405 actionable tasks). A forced `:device-tools:test` rerun passed
+  200 test executions across debug and release variants with zero failures;
+  the current `:core:test` results contain 301 passing tests. The five native
+  tools cover contacts, calendar, MediaStore and run-workspace files,
+  communication drafts/dialer, and apps/settings. Declarative workflows can
+  call those tools with JSON, capture typed output, use it in later steps and
+  carry it through resume without re-running completed calls. The callable set
+  is explicit; shell, install and workflow recursion are blocked. Runtime
+  grants use one Android permission request for only the missing allowlisted
+  permissions, with no second Hey Mike approval. `python -m unittest
+  tools.test_prepare_runtime` passed (5 tests) and `git diff --check` is clean.
+  Not verified on a physical phone: provider rows, selected-photo behavior,
+  OEM editor/settings intent handling, the runtime permission dialog, or a
+  complete workflow that carries one real API result into another call.
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
   (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`

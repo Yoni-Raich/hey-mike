@@ -55,7 +55,7 @@ class WorkspaceSeederTest {
 
         val shippedSkills = File(assetRoot(), "skills").list()!!.toSet()
         assertEquals(
-            setOf("device-automation", "app-cards", "user-preferences", "quick-actions", "workflows"),
+            setOf("device-capabilities", "device-automation", "app-cards", "user-preferences", "quick-actions", "workflows"),
             shippedSkills,
         )
         for (skill in shippedSkills) assertTrue("AGENTS.md must point at $skill", shipped.contains("`$skill`"))
@@ -166,7 +166,7 @@ class WorkspaceSeederTest {
             }.toByteArray()
         }
 
-        for (name in listOf("device-automation", "app-cards", "user-preferences", "quick-actions")) {
+        for (name in listOf("device-capabilities", "device-automation", "app-cards", "user-preferences", "quick-actions", "workflows")) {
             assertTrue("$name should be installed", File(home, ".agents/skills/$name/SKILL.md").isFile)
         }
         val script = File(home, ".agents/skills/quick-actions/scripts/act.sh").readText()
