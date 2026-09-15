@@ -17,6 +17,6 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: ''
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - run: chmod +x gradlew
       - run: ./gradlew :core:test :app:assembleDevDebug :app:lintDevDebug
