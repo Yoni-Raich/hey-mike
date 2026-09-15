@@ -14,7 +14,7 @@ jobs:
       # anything else runs. An empty list skips that: the runner image already
       # ships platform-tools, and AGP fetches the platform and build-tools the
       # build asks for.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: ''
       - uses: gradle/actions/setup-gradle@v4
