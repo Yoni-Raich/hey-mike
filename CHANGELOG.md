@@ -22,6 +22,21 @@
   it, so "nothing happened at 19:00" has an answer. A dry run changes nothing.
 - A rule cannot run away: it has a cooldown and a daily limit, and an alarm
   that fires at the wrong minute does not fire the rule.
+- Rules now actually run. Mike keeps one alarm pointed at whichever rule is due
+  next and re-arms it after every firing and after a restart, watches for
+  charging, unplugging and the screen, and — once you grant it in Settings —
+  watches notifications from the apps your rules name.
+- A rule that drives the phone takes it the same way a task does: the same
+  control card, the same Stop. If you are already using the phone the rule says
+  so instead of fighting you for the screen.
+- A rule that needs a thinking turn writes into its own chat, one per rule, so
+  something firing at 3am does not appear in the middle of your conversation and
+  there is a record of what each rule has been doing.
+- A rule that wants a yes/no puts a notification up with two buttons. No answer
+  in five minutes is a no — a question you never saw never becomes a yes.
+- A rule Mike cannot serve on this phone is saved and reported as dormant with
+  the reason, instead of looking live and doing nothing. Place rules are dormant
+  on every phone for now: nothing tracks location yet.
 
 - Mike can run a whole saved sequence in one go. `workflow_runner` takes the
   name of a workflow and does every step itself — open the app, find the

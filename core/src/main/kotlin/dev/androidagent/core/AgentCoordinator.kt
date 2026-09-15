@@ -146,6 +146,51 @@ class AgentCoordinator(
         }
     }
 
+    /**
+     * Take the phone for a standing rule's own actions, run [block], release it.
+     *
+     * A rule that drives the screen needs the same exclusive ownership a turn
+     * has — one phone screen cannot be shared, and an automation firing
+     * underneath a person's run would fight them for it. It claims that
+     * ownership the way [beginVoice] does, and refuses rather than queues:
+     * `null` means the device was busy, and a rule whose moment has passed is
+     * better reported than run half an hour later behind someone else's work.
+     *
+     * No model is involved. This arms the gateways and shows the control card;
+     * what runs inside is a workflow or an intent the rule named, decided
+     * before anything was claimed.
+     *
+     * Stop still works throughout: [stop] sees an active state, revokes the
+     * tools — which is what aborts a workflow between steps — and owns the
+     * teardown from there, so the epoch is re-checked here before releasing
+     * anything a stop has already released.
+     */
+    suspend fun <T> runAutomation(label: String, workspace: File, block: suspend () -> T): T? {
+        val token = synchronized(lifecycleLock) {
+            if (!availableState.value || state.value.active) return null
+            availableState.value = false
+            val claimed = epoch.incrementAndGet()
+            tools.beginRun(claimed.toString(), workspace)
+            mutableState.value = RunState(RunPhase.CONTROLLING, null, label, controlling = true)
+            claimed
+        }
+        runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
+        return try {
+            block()
+        } finally {
+            val stillOurs = synchronized(lifecycleLock) {
+                val ours = epoch.get() == token
+                if (ours) {
+                    tools.revoke()
+                    mutableState.value = RunState(status = "Ready")
+                    availableState.value = true
+                }
+                ours
+            }
+            if (stillOurs) runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, label)) }
+        }
+    }
+
     /** Revoke local voice-delegated work without closing the shared app-server. */
     fun endVoice() {
         val context = synchronized(lifecycleLock) {

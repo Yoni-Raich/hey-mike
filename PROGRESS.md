@@ -7,10 +7,12 @@ not production-ready.
 
 ### Verified
 
-- Standing rules (`automation_rule`), the `:core` half only — on 2026-09-15:
-  `:core:test` passes with 81 new tests across `AutomationRuleTest` (20),
-  `AutomationEvaluatorTest` (21), `AutomationLibraryTest` (14),
-  `AutomationToolGatewayTest` (19) and `AutomationJournalTest` (7). What the
+- Standing rules (`automation_rule`) — on 2026-09-15 the full CI gate passes:
+  `gradlew test :app:assembleDevDebug :app:lintDevDebug`, with 0 lint errors and
+  no lint warning naming an automations file. `:core` carries 378 tests, 104 of
+  them new, across `AutomationRuleTest`, `AutomationEvaluatorTest`, `AutomationLibraryTest`,
+  `AutomationToolGatewayTest`, `AutomationJournalTest`, `AutomationRunnerTest`,
+  `AutomationWakeupsTest` and `SessionRunQueueExpiryTest`. What the
   tests actually establish: the when/if/then format round-trips through its own
   parser; a placeholder the trigger cannot provide is refused where it is
   written rather than reaching the model as literal braces; only the fields an
@@ -19,7 +21,17 @@ not production-ready.
   window; an alarm at the wrong minute does not fire a scheduled rule; the
   cooldown, the daily limit and the attention gate each hold and each say which
   one held; and evaluating records nothing, so a dry run cannot consume the
-  quota it reports on.
+  quota it reports on. On the run side: actions run in order, the fire is
+  recorded *before* the first action so a crash cannot replay a side effect, a
+  failure never claims the earlier actions were undone, a host that cannot ask
+  refuses an approval-gated action rather than running it, and a queued turn
+  past its deadline is dropped by `SessionRunQueue` without holding up the turn
+  behind it.
+- Note (run against this container's toolchain, not a phone): the one
+  `:workspace` test failure seen here — `uriParametersArePercentEncoded` — is
+  the container's `LC_CTYPE=POSIX` mangling Hebrew in `act.sh`, not a
+  regression. It passes under `LANG=C.UTF-8`, and nothing in this change
+  touches `quick-actions`.
 
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
@@ -304,16 +316,33 @@ not production-ready.
 
 ### Not proven yet
 
-- Everything about standing rules outside `:core`. Nothing fires a rule yet:
-  there is no alarm, no geofence and no notification listener, and
-  `AutomationToolGateway` is **not wired into the composite**, so the model
-  cannot reach `automation_rule` on a phone. That is deliberate — an agent that
-  could write rules nothing executes would tell the user their rule is set up
-  when it is not — but it means no rule has ever fired on hardware, and the
-  unit tests prove decisions, not wake-ups. The Android half (exact alarms,
-  `ACCESS_BACKGROUND_LOCATION` geofences, `NotificationListenerService`, the
-  runner that turns an `Outcome.Fired` into a workflow run or a queued turn,
-  and the settings screen that lists rules and revokes them) is open work.
+- **No rule has ever fired on hardware.** The `:automations` module compiles,
+  its components merge into the app manifest, and `automation_rule` is in the
+  composite — but an alarm landing at 19:00, a notification listener the user
+  granted, `AutomationHost.runAutomation` taking the screen from a real run, and
+  Stop interrupting a firing rule have all only been reasoned about. Everything
+  decided in `:core` is unit-tested; nothing about the wake-ups is. This is the
+  single largest gap in the feature.
+- `:automations` has no unit tests of its own. It is alarms, broadcasts and a
+  notification listener, which need Robolectric or an instrumented run, and
+  neither was added. That is why the module was kept thin, but it is still
+  untested code.
+- OEM behaviour. Doze, and the aggressive background killing on HyperOS and
+  similar builds, decide whether a 19:00 alarm actually lands on a sideloaded
+  app. The existing foreground service helps; nothing here proves it is enough,
+  on any phone.
+- `place` triggers are served by nothing and are reported dormant. Adding them
+  means either a Google Play Services dependency in a project that ships outside
+  Play, or `LocationManager.addProximityAlert`, which is unreliable enough that
+  shipping it quietly would be worse than the gap. That is a decision for the
+  owner, not a task.
+- The settings screen. There is no UI that lists rules, shows when each last
+  fired or why it did not, sends the user to the notification-listener and
+  exact-alarm permission screens, or turns one off. Today a rule can only be
+  read or revoked through the agent, which is not good enough for a feature that
+  runs unattended.
+- `notify` taps open the app, not the rule's own chat: deep-linking to one chat
+  needs a selection path `MainActivity` does not expose.
 
 - A complete signed-in Codex chat and device-control flow on a supported phone.
 - Reliable same-phone Wireless ADB pairing, reconnect, and app-UID self-ADB.

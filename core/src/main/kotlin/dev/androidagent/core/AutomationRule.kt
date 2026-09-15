@@ -401,12 +401,25 @@ data class AutomationAction(
 data class AutomationGuard(
     val cooldownMs: Long = DEFAULT_COOLDOWN_MS,
     val maxPerDay: Int = DEFAULT_MAX_PER_DAY,
+    /**
+     * How long after firing the action is still the right action.
+     *
+     * A rule's moment can pass while it waits for the device: the phone was in
+     * another run, the queue was paused by a Stop, the user was on a call.
+     * "Post this at 19:00" that finally reaches the front at 23:40 is not a
+     * late success, it is the wrong action — so a queued turn carries a
+     * deadline and is dropped rather than run long after its moment.
+     */
+    val validForMs: Long = DEFAULT_VALID_FOR_MS,
 ) {
     fun toJson(): JsonObject? {
-        if (cooldownMs == DEFAULT_COOLDOWN_MS && maxPerDay == DEFAULT_MAX_PER_DAY) return null
+        if (cooldownMs == DEFAULT_COOLDOWN_MS && maxPerDay == DEFAULT_MAX_PER_DAY && validForMs == DEFAULT_VALID_FOR_MS) {
+            return null
+        }
         return buildJsonObject {
             put("cooldownMinutes", cooldownMs / 60_000L)
             put("maxPerDay", maxPerDay)
+            put("validForMinutes", validForMs / 60_000L)
         }
     }
 
@@ -415,6 +428,8 @@ data class AutomationGuard(
         const val MAX_COOLDOWN_MS = 24L * 60 * 60 * 1_000
         const val DEFAULT_MAX_PER_DAY = 20
         const val MAX_PER_DAY_CEILING = 200
+        const val DEFAULT_VALID_FOR_MS = 30L * 60 * 1_000
+        const val MAX_VALID_FOR_MS = 24L * 60 * 60 * 1_000
 
         fun parse(element: JsonElement?, ruleId: String): AutomationGuard {
             if (element == null || element is JsonNull) return AutomationGuard()
@@ -424,11 +439,14 @@ data class AutomationGuard(
             )
             val minutes = (json["cooldownMinutes"] as? JsonPrimitive)?.longOrNull
             val millis = (json["cooldownMs"] as? JsonPrimitive)?.longOrNull
+            val validFor = (json["validForMinutes"] as? JsonPrimitive)?.longOrNull
             return AutomationGuard(
                 cooldownMs = (minutes?.times(60_000L) ?: millis ?: DEFAULT_COOLDOWN_MS)
                     .coerceIn(0L, MAX_COOLDOWN_MS),
                 maxPerDay = ((json["maxPerDay"] as? JsonPrimitive)?.intOrNull ?: DEFAULT_MAX_PER_DAY)
                     .coerceIn(1, MAX_PER_DAY_CEILING),
+                validForMs = (validFor?.times(60_000L) ?: DEFAULT_VALID_FOR_MS)
+                    .coerceIn(60_000L, MAX_VALID_FOR_MS),
             )
         }
     }

@@ -934,22 +934,90 @@ own, an hour does not.
 `AutomationEvaluator` touches no file and records no fire, which is what makes
 `mode:"test"` a real dry run that can be called as often as the model likes
 without consuming a rule's daily quota — and what makes the live path and the
-dry run give the same answer. The host executes an `Outcome.Fired` and only
-then calls `AutomationHistory.record`, so an action it could not serve does not
-leave the journal believing it ran. `AutomationGuard` (a cooldown and a daily
-ceiling, both clamped on parse) exists because the triggers that matter most
-are the noisy ones: one busy group chat is otherwise a hundred unattended
-turns.
+dry run give the same answer. `AutomationRunner` owns the doing, and it records
+the fire **before the first action, not after**: the same rule `SessionRunQueue`
+already follows when it dequeues a turn before starting it. A crash between
+acting and recording would let the rule post the same thing again on the next
+trigger, and for a standing rule a double post is worse than a missed one. The
+cooldown exists to stop runaway repeats, so it is armed by the attempt rather
+than by its success. `AutomationGuard` (a cooldown, a daily ceiling and a
+deadline, all clamped on parse) exists because the triggers that matter most are
+the noisy ones: one busy group chat is otherwise a hundred unattended turns.
 
 **What a rule may do is a closed set**, for the same reason `WorkflowEngine`'s
 step set is closed: no shell, no arbitrary tool, no inline steps, at most four
 actions. A rule that could run anything would be a second agent loop with none
 of the coordinator's approval routing or revoke semantics.
 
-Nothing in `:core` fires a rule. The clock, the geofence and the notification
-listener are Android, and `AutomationToolGateway` is not wired into the
-composite yet — an agent that could write rules nothing executes would tell the
-user their rule is set up when it is not. The gateway carries
-`supportedTriggers` for the same reason: once wired, a rule whose trigger this
-phone cannot serve is saved and reported **dormant**, so the point of failure
-is when it is written rather than the first night it quietly does not fire.
+Nothing in `:core` fires a rule; the `:automations` module below does.
+
+## Firing a rule: the `:automations` module
+
+The Android half is deliberately thin, because everything worth getting right
+is on the other side of `AutomationEvaluator` and `AutomationRunner`, where it
+can be tested. `AutomationHost` builds the context, hands events to `:core` and
+serialises the runs; the rest is `AutomationAlarms`,
+`AutomationNotificationListener` and a runtime-registered receiver for device
+state. System-created components reach the host through `AutomationHostOwner`,
+implemented by `AgentApplication` — the same shape as `A11yServiceHandle`, and
+for the same reason: the system constructs them, so there is nowhere to inject.
+
+**One alarm, not one per rule.** `AutomationWakeups.nextRunAt` returns the
+earliest moment any enabled scheduled rule is due, and that is the only alarm
+held. Android caps how many exact alarms an app may keep and charges a wake-up
+for each; the landing alarm re-checks every rule anyway. It is a wake-up, not a
+decision, which is why an alarm the OS coalesced, delivered early, or held over
+from a deleted rule fires nothing. It is re-armed after every firing and at
+`BOOT_COMPLETED`, because an alarm does not survive a restart and a feature
+that silently stops at the first reboot is one nobody trusts again.
+
+Exactness is asked for, never assumed: `canScheduleExactAlarms` is false until
+the user grants it on Android 12+, and the fallback is an inexact alarm Doze can
+land an hour late. `AutomationHost.canFireOnTime()` reports which, because
+"19:00" arriving at 20:10 is a different action rather than a slow one.
+
+**The notification listener enforces the privacy contract in the order its
+checks are written.** Our own notifications are dropped first, so a rule's
+`notify` can never trigger the rule that posted it; ongoing and group-summary
+notifications are dropped as status rather than events; then **the package is
+checked before the title or body is touched**, against
+`AutomationWakeups.watchedPackages` — the union over enabled notification
+rules. An app no rule names is never read, and with no notification rule at all
+the service reads nothing. Only then are title and text extracted, and they go
+no further than the evaluator unless the rule's own actions interpolate them.
+Nothing is stored: there is no notification log and no tool that can ask for one.
+
+**A rule takes the device the way a turn does.** `run_workflow` and
+`open_intent` go through `AgentCoordinator.runAutomation`, which claims the same
+exclusive ownership a person's run claims, shows the same control card and
+answers the same Stop — Stop sees an active state, revokes the tools (which is
+what aborts a workflow between steps) and owns the teardown, so `runAutomation`
+re-checks the epoch before releasing anything. It **refuses rather than queues**
+when the phone is busy: by the time the device is free the rule's moment has
+usually passed. The intent goes out through the same composite gateway the model
+calls, so a rule is not a way around the intent policy or the approval card.
+
+**A queued turn expires.** `agent_turn` lands in the rule's own chat — not the
+one in front of you, so a rule firing at 3am does not appear in the middle of
+your conversation, and a chat per rule is the readable record of what it has
+been doing — carrying `validUntil` from `AutomationGuard.validForMs`.
+`SessionRunQueue` drops a stale turn before choosing the next one, so an expired
+turn at the head does not hold up the one behind it, and the drop is written
+into that chat rather than being silent.
+
+**Asking is a notification with two buttons, and no answer is a no.** A rule
+fires when the app is not in front, so `ask` puts a high-priority notification
+up and waits five minutes. A question nobody saw must not become a yes by
+default. `canAsk()` is false when notifications are blocked, and the runner then
+refuses the action outright — the same rule `WorkflowRunner` applies with
+`confirmation_unavailable`: a gate that disappears when unwired is not a gate.
+
+`AutomationToolGateway` carries `supportedTriggers`, which this host answers
+with what it can actually serve: `schedule`, `device_state` and `manual`
+always, `notification` once the user has granted the listener by hand. **`place`
+is served by nothing yet**, so a geofence rule is saved and reported **dormant**
+rather than accepted as live. That is a dependency decision, not an oversight:
+`GeofencingClient` means adding Google Play Services to a project that
+deliberately ships outside Play, and the AOSP alternative
+(`LocationManager.addProximityAlert`) is unreliable enough that shipping it
+quietly would be worse than reporting the gap.

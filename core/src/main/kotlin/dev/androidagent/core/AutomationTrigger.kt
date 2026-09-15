@@ -254,3 +254,37 @@ data class AutomationSchedule(
         }
     }
 }
+
+/**
+ * When the host should next wake for the clock.
+ *
+ * One alarm serves every scheduled rule: the earliest next run across all of
+ * them. Android caps how many exact alarms an app may hold and charges for
+ * each wake-up, and a phone with twelve daily rules does not want twelve
+ * alarms when one plus a re-check does the same job — the re-check being
+ * [AutomationSchedule.isDue], which runs against every rule when the alarm
+ * lands and is the reason an early or coalesced wake fires nothing.
+ */
+object AutomationWakeups {
+
+    /** The earliest moment any enabled scheduled rule is next due, or null if none is. */
+    fun nextRunAt(rules: List<AutomationRule>, after: ZonedDateTime): ZonedDateTime? =
+        rules.asSequence()
+            .filter { it.enabled && it.trigger.kind == AutomationTriggerKind.SCHEDULE }
+            .mapNotNull { it.trigger.schedule?.nextRunAt(after) }
+            .minOrNull()
+
+    /**
+     * Packages the notification listener may look at: the union over enabled
+     * notification rules.
+     *
+     * The listener checks this before it reads a title or a body, so a
+     * notification from an app no rule names is dropped without being looked
+     * at. An empty set means the listener has nothing to do at all.
+     */
+    fun watchedPackages(rules: List<AutomationRule>): Set<String> =
+        rules.asSequence()
+            .filter { it.enabled && it.trigger.kind == AutomationTriggerKind.NOTIFICATION }
+            .mapNotNull { it.trigger.packageName?.lowercase() }
+            .toSet()
+}
