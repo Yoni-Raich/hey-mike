@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Update
@@ -105,7 +106,7 @@ import dev.androidagent.core.UsageSummary
 private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
-    MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT,
+    MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -134,6 +135,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.UPDATES -> "App updates"
     SettingsRoute.SEND_APPROVALS -> "Sending approvals"
     SettingsRoute.ASSISTANT -> "Digital assistant"
+    SettingsRoute.AUTOMATIONS -> "Standing rules"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -151,6 +153,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.UPDATES -> Icons.Outlined.Update
     SettingsRoute.SEND_APPROVALS -> Icons.Outlined.Key
     SettingsRoute.ASSISTANT -> Icons.Outlined.Assistant
+    SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -273,6 +276,12 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     // green would teach the eye to skip the markers that do mean something.
     HubGroup("Configure") {
         SettingsHubRow(
+            icon = SettingsRoute.AUTOMATIONS.icon(),
+            title = SettingsRoute.AUTOMATIONS.title(),
+            summary = state.automations.summary,
+            onClick = { onOpen(SettingsRoute.AUTOMATIONS) },
+        )
+        SettingsHubRow(
             icon = SettingsRoute.ASSISTANT.icon(),
             title = SettingsRoute.ASSISTANT.title(),
             summary = if (state.isDefaultAssistant) "Hold the power button to talk to Mike" else "Gemini still answers the power button",
@@ -331,6 +340,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.UPDATES -> UpdateSettings(state, actions)
             SettingsRoute.SEND_APPROVALS -> SendApprovalSettings(state, actions)
             SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
+            SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
         }
     }
 }
@@ -498,6 +508,84 @@ private fun ColumnScope.ScreenControlSettings(state: AgentUiState, actions: Agen
             label = "Open accessibility settings",
             spinnerColor = MaterialTheme.colorScheme.onPrimary,
         )
+    }
+}
+
+@Composable
+private fun ColumnScope.AutomationSettings(state: AgentUiState, actions: AgentUiActions) {
+    val automations = state.automations
+    StatusLine(
+        title = if (automations.total == 0) "None yet" else automations.summary,
+        detail = automations.nextRunAt?.let { "Next run $it" }
+            ?: if (automations.total == 0) "Ask Mike to set one up" else "Nothing is scheduled",
+        color = when {
+            automations.dormant > 0 -> MaterialTheme.colorScheme.error
+            automations.on > 0 -> MaterialTheme.colorScheme.secondary
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
+    Explanation(
+        "A standing rule does something when something happens: every day at 19:00, when you get " +
+            "a message from someone, when the phone starts charging. Ask Mike to make one, and " +
+            "ask it to list or turn off the ones you have.",
+    )
+
+    // The two permissions are the whole reason this screen exists. A rule that
+    // looks on and cannot run is the failure the user would otherwise only
+    // notice by the thing not happening.
+    if (automations.dormant > 0) {
+        Explanation(
+            "${automations.dormant} rule(s) are turned on but cannot run on this phone, because a " +
+                "permission below is missing. They will start working the moment it is granted.",
+        )
+    }
+
+    StatusLine(
+        title = if (automations.notificationAccess) "Notification access: on" else "Notification access: off",
+        detail = if (automations.notificationAccess) {
+            "Rules can watch the apps they name"
+        } else {
+            "Rules that react to messages cannot run"
+        },
+        color = if (automations.notificationAccess) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Explanation(
+        "Mike only ever looks at notifications from the apps your rules name, matches them on the " +
+            "phone, and sends on only the parts a rule actually uses. Nothing is stored. Android " +
+            "only lets you grant this yourself, from the list of apps on the next screen.",
+    )
+    Button(onClick = actions.onOpenNotificationAccess, modifier = Modifier.fillMaxWidth()) {
+        LoadingButtonContent(
+            loading = false,
+            icon = Icons.Outlined.NotificationsNone,
+            label = if (automations.notificationAccess) "Review notification access" else "Allow notification access",
+            spinnerColor = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+
+    StatusLine(
+        title = if (automations.exactAlarms) "Alarms: exact" else "Alarms: approximate",
+        detail = if (automations.exactAlarms) {
+            "A rule set for 19:00 runs at 19:00"
+        } else {
+            "A rule set for 19:00 may run up to an hour late"
+        },
+        color = if (automations.exactAlarms) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (!automations.exactAlarms) {
+        Explanation(
+            "Without this Android batches the wake-up to save battery, so a rule fires whenever the " +
+                "phone next wakes rather than at the time you asked for. Turn on \"Alarms & " +
+                "reminders\" for Hey Mike.",
+        )
+        Button(onClick = actions.onOpenExactAlarmSettings, modifier = Modifier.fillMaxWidth()) {
+            LoadingButtonContent(
+                loading = false,
+                icon = Icons.Outlined.Schedule,
+                label = "Allow exact alarms",
+                spinnerColor = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
     }
 }
 

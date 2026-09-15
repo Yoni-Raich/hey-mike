@@ -321,6 +321,39 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(permissions = permissions, a11yStatus = a11y ?: state.a11yStatus)
         }
     }
+    /**
+     * Re-read the rules and the two permissions they depend on.
+     *
+     * Both permissions are changed in system Settings and neither is
+     * observable, so this runs on every resume beside [refreshPermissions] —
+     * a rule that quietly stopped working because notification access was
+     * revoked is exactly the state this screen exists to show.
+     */
+    fun refreshAutomations() {
+        val host = graph.automationHost
+        val rules = runCatching { graph.automations.all() }.getOrDefault(emptyList())
+        val supported = runCatching { host.supportedTriggers() }.getOrDefault(emptySet())
+        val enabled = rules.filter { it.enabled }
+        val next = runCatching {
+            dev.androidagent.core.AutomationWakeups.nextRunAt(rules, java.time.ZonedDateTime.now())
+                ?.format(java.time.format.DateTimeFormatter.ofPattern("EEE HH:mm"))
+        }.getOrNull()
+        mutable.update { state ->
+            state.copy(
+                automations = dev.androidagent.app.ui.AutomationsStatus(
+                    on = enabled.size,
+                    off = rules.size - enabled.size,
+                    dormant = enabled.count { it.trigger.kind !in supported },
+                    notificationAccess = runCatching {
+                        dev.androidagent.automations.AutomationNotificationListener.isEnabled(getApplication())
+                    }.getOrDefault(false),
+                    exactAlarms = runCatching { host.canFireOnTime() }.getOrDefault(true),
+                    nextRunAt = next,
+                ),
+            )
+        }
+    }
+
     private suspend fun loadModels() {
         mutable.update { it.copy(isLoadingModels = true) }
         try {

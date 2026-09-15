@@ -26,14 +26,18 @@ class AutomationToolGatewayTest {
 
     private fun library() = AutomationLibrary(File(temp.root, "automations"))
 
+    private val fired = mutableListOf<String>()
+
     private fun gateway(
         supported: Set<AutomationTriggerKind> = AutomationTriggerKind.entries.toSet(),
+        canFire: Boolean = true,
     ) = AutomationToolGateway(
         library = library(),
         history = history,
         zone = { zone },
         now = { now },
         supportedTriggers = { supported },
+        fireNow = if (canFire) ({ id -> fired += id }) else null,
     ).also { it.beginRun("run", temp.root) }
 
     private fun call(gateway: AutomationToolGateway, json: String): JsonObject = runBlocking {
@@ -208,8 +212,44 @@ class AutomationToolGatewayTest {
         assertTrue(reply["message"]!!.jsonPrimitive.content.contains("notification"))
     }
 
+    @Test fun runFiresTheRuleAndSaysWhatItWillDo() {
+        val gateway = gateway()
+        create(gateway)
+        val reply = call(gateway, """{"mode":"run","rule":"dad-after-seven"}""")
+        assertTrue(reply["started"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(listOf("dad-after-seven"), fired)
+        assertEquals("model", reply["attention"]!!.jsonPrimitive.content)
+        assertTrue(reply["willDo"]!!.jsonArray.single().jsonPrimitive.content.contains("agent_turn"))
+    }
+
+    @Test fun runRefusesADisabledRuleRatherThanFiringIt() {
+        val gateway = gateway()
+        create(gateway)
+        call(gateway, """{"mode":"disable","rule":"dad-after-seven"}""")
+        val reply = call(gateway, """{"mode":"run","rule":"dad-after-seven"}""")
+        assertEquals("rule_disabled", reply["errorType"]!!.jsonPrimitive.content)
+        assertTrue(fired.isEmpty())
+    }
+
+    @Test fun runOnAHostWithNoFiringPathSaysSoRatherThanDoingNothing() {
+        val gateway = gateway(canFire = false)
+        create(gateway)
+        val reply = call(gateway, """{"mode":"run","rule":"dad-after-seven"}""")
+        assertEquals("run_unavailable", reply["errorType"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun runOnAnUnknownRuleFiresNothing() {
+        val gateway = gateway()
+        create(gateway)
+        assertEquals(
+            "rule_not_found",
+            call(gateway, """{"mode":"run","rule":"ghost"}""")["errorType"]!!.jsonPrimitive.content,
+        )
+        assertTrue(fired.isEmpty())
+    }
+
     @Test fun anUnknownModeNamesTheRealOnes() {
-        val reply = call(gateway(), """{"mode":"run"}""")
+        val reply = call(gateway(), """{"mode":"fire"}""")
         assertEquals("unknown_mode", reply["errorType"]!!.jsonPrimitive.content)
         assertTrue(reply["message"]!!.jsonPrimitive.content.contains("create"))
     }

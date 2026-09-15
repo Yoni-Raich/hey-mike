@@ -80,12 +80,19 @@ class AutomationEvaluator(private val history: AutomationHistory) {
 
         if (!rule.enabled) return skip(Skip.DISABLED, "The rule is turned off.")
 
-        // A manual run names its rule: another rule's Manual event must not
-        // fire this one just because both have manual triggers.
-        if (event is AutomationEvent.Manual && !event.ruleId.equals(rule.id, ignoreCase = true)) {
+        // A manual run names its rule, and naming it *is* the trigger: the
+        // person or the agent supplied what the clock or the listener would
+        // have. Without this a scheduled rule could only ever be proved by
+        // waiting until 19:00, which is not a feedback loop anyone checks a
+        // standing rule with. Another rule's manual run still fires nothing,
+        // and everything after this — the conditions, the cooldown, the daily
+        // limit, the attention gate — applies exactly as it would have.
+        val manualForThisRule = event is AutomationEvent.Manual &&
+            event.ruleId.equals(rule.id, ignoreCase = true)
+        if (event is AutomationEvent.Manual && !manualForThisRule) {
             return skip(Skip.TRIGGER, "This run was for \"${event.ruleId}\".")
         }
-        if (!rule.trigger.matches(event)) {
+        if (!manualForThisRule && !rule.trigger.matches(event)) {
             return skip(
                 Skip.TRIGGER,
                 "A \"${event.kind.wire}\" event does not match ${rule.trigger.describe().content}.",

@@ -14,6 +14,7 @@ automation_rule(mode="list")                       -> every rule, on and off
 automation_rule(mode="describe", rule="evening-post")
 automation_rule(mode="create", rule={...})
 automation_rule(mode="test", rule="evening-post", event={...}, now="...")
+automation_rule(mode="run", rule="evening-post")   -> fire it now, for real
 automation_rule(mode="enable"|"disable"|"delete", rule="evening-post")
 ```
 
@@ -89,12 +90,24 @@ clause that stopped it — `condition_failed`, `cooling_down`, `needs_you`. Test
 the case that should fire **and** one that should not, then tell the user in one
 sentence what will happen and when.
 
+`mode:"run"` is the other half: it fires the rule **for real**, now. Naming the
+rule supplies its trigger, so a rule set for 19:00 can be proved at 11am without
+waiting — but its conditions, cooldown and daily limit still apply, and the run
+counts against its quota. Use it to show the user their new rule working instead
+of asking them to wait until tonight. The reply says it *started*; check
+`mode:"describe"` to see whether the count actually went up.
+
+One thing to expect: a rule that drives the screen, fired from inside your own
+turn, waits for that turn to finish before it takes the phone. That is normal —
+say so rather than reporting it as stuck.
+
 ## Things that will bite
 
 - **Dormant.** If `create` comes back `dormant:true`, the rule is saved but this
-  phone cannot serve its trigger yet — the permission is missing. Say so; do not
-  report it as live. `place` is dormant on every phone today: no geofence source
-  is built.
+  phone cannot serve its trigger yet — the permission is missing. Say so, and
+  send the user to **Settings > Standing rules**, which has the buttons for
+  notification access and exact alarms. Do not report it as live. `place` is
+  dormant on every phone today: no geofence source is built.
 - **A rule cannot run away.** Each has a cooldown (default 1 minute) and a daily
   limit (default 20). For a busy app set them deliberately.
 - **A rule's moment can pass.** A queued turn expires after `validForMinutes`

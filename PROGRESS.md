@@ -9,8 +9,8 @@ not production-ready.
 
 - Standing rules (`automation_rule`) — on 2026-09-15 the full CI gate passes:
   `gradlew test :app:assembleDevDebug :app:lintDevDebug`, with 0 lint errors and
-  no lint warning naming an automations file. `:core` carries 378 tests, 104 of
-  them new, across `AutomationRuleTest`, `AutomationEvaluatorTest`, `AutomationLibraryTest`,
+  no lint warning naming an automations file. `:core` carries 390 tests, 116 of
+  them new, across `CoordinatorAutomationTest`, `AutomationRuleTest`, `AutomationEvaluatorTest`, `AutomationLibraryTest`,
   `AutomationToolGatewayTest`, `AutomationJournalTest`, `AutomationRunnerTest`,
   `AutomationWakeupsTest` and `SessionRunQueueExpiryTest`. What the
   tests actually establish: the when/if/then format round-trips through its own
@@ -26,7 +26,10 @@ not production-ready.
   failure never claims the earlier actions were undone, a host that cannot ask
   refuses an approval-gated action rather than running it, and a queued turn
   past its deadline is dropped by `SessionRunQueue` without holding up the turn
-  behind it.
+  behind it. On device ownership: a rule claims the phone exclusively, releases
+  it even when the action throws, waits for a turn that already holds it rather
+  than reporting busy, gives up rather than surfacing long after its moment, and
+  a Stop mid-rule revokes the gateways and keeps the teardown.
 - Note (run against this container's toolchain, not a phone): the one
   `:workspace` test failure seen here — `uriParametersArePercentEncoded` — is
   the container's `LC_CTYPE=POSIX` mangling Hebrew in `act.sh`, not a
@@ -319,10 +322,12 @@ not production-ready.
 - **No rule has ever fired on hardware.** The `:automations` module compiles,
   its components merge into the app manifest, and `automation_rule` is in the
   composite — but an alarm landing at 19:00, a notification listener the user
-  granted, `AutomationHost.runAutomation` taking the screen from a real run, and
-  Stop interrupting a firing rule have all only been reasoned about. Everything
-  decided in `:core` is unit-tested; nothing about the wake-ups is. This is the
-  single largest gap in the feature.
+  granted, a rule taking the screen from a real run, and Stop interrupting a
+  firing rule have all only been reasoned about. Everything decided in `:core`
+  is unit-tested; nothing about the wake-ups is. This is the single largest gap
+  in the feature, and **the checklist for closing it is now written**: see
+  "Verifying standing rules on a phone" in `docs/TESTING.md`. It has not been
+  run.
 - `:automations` has no unit tests of its own. It is alarms, broadcasts and a
   notification listener, which need Robolectric or an instrumented run, and
   neither was added. That is why the module was kept thin, but it is still
@@ -336,11 +341,13 @@ not production-ready.
   Play, or `LocationManager.addProximityAlert`, which is unreliable enough that
   shipping it quietly would be worse than the gap. That is a decision for the
   owner, not a task.
-- The settings screen. There is no UI that lists rules, shows when each last
-  fired or why it did not, sends the user to the notification-listener and
-  exact-alarm permission screens, or turns one off. Today a rule can only be
-  read or revoked through the agent, which is not good enough for a feature that
-  runs unattended.
+- The settings screen is partial. Settings > Standing rules now counts the rules,
+  names the dormant ones, shows the next run and grants both permissions — but
+  it does not **list** the rules, show when each last fired or why it did not,
+  or turn one off. That still goes through the agent, which is not good enough
+  for a feature that runs unattended. It was left until the checklist above has
+  been run, so the screen is built over behaviour that is known rather than
+  assumed.
 - `notify` taps open the app, not the rule's own chat: deep-linking to one chat
   needs a selection path `MainActivity` does not expose.
 

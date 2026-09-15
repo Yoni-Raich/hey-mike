@@ -152,9 +152,17 @@ class AgentCoordinator(
      * A rule that drives the screen needs the same exclusive ownership a turn
      * has — one phone screen cannot be shared, and an automation firing
      * underneath a person's run would fight them for it. It claims that
-     * ownership the way [beginVoice] does, and refuses rather than queues:
-     * `null` means the device was busy, and a rule whose moment has passed is
-     * better reported than run half an hour later behind someone else's work.
+     * ownership the way [beginVoice] does, and waits at most [waitMs] for it:
+     * `null` means the device stayed busy, and a rule whose moment has passed
+     * is better reported than run half an hour later behind someone else's
+     * work.
+     *
+     * The wait exists because the common case is not a collision at all — it is
+     * the agent firing a rule from inside a turn, which by definition already
+     * owns the device. Refusing there would make "run my evening rule now"
+     * always answer "the phone is busy", with the busy run being the one that
+     * asked. A short wait covers that and the ordinary case of a trigger
+     * landing mid-task; anything longer is the staleness `validUntil` is for.
      *
      * No model is involved. This arms the gateways and shows the control card;
      * what runs inside is a workflow or an intent the rule named, decided
@@ -165,7 +173,17 @@ class AgentCoordinator(
      * teardown from there, so the epoch is re-checked here before releasing
      * anything a stop has already released.
      */
-    suspend fun <T> runAutomation(label: String, workspace: File, block: suspend () -> T): T? {
+    suspend fun <T> runAutomation(
+        label: String,
+        workspace: File,
+        waitMs: Long = DEFAULT_AUTOMATION_WAIT_MS,
+        block: suspend () -> T,
+    ): T? {
+        if (waitMs > 0 && !availableState.value) {
+            // Losing the race after the wait is fine: the claim below is what
+            // decides, and it refuses rather than double-claiming.
+            withTimeoutOrNull(waitMs) { availableState.first { it } }
+        }
         val token = synchronized(lifecycleLock) {
             if (!availableState.value || state.value.active) return null
             availableState.value = false
@@ -1235,5 +1253,14 @@ class AgentCoordinator(
     /** Internal rather than private so tests can advance to the real deadline. */
     internal companion object {
         const val LOCAL_APPROVAL_TIMEOUT_MS = 120_000L
+
+        /**
+         * How long a firing rule waits for the phone before giving up.
+         *
+         * Long enough to outlast the turn that fired it and a short task in
+         * front of it, short enough that a rule never surfaces long after its
+         * moment — which is what `validUntil` covers properly.
+         */
+        const val DEFAULT_AUTOMATION_WAIT_MS = 90_000L
     }
 }

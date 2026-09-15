@@ -89,6 +89,8 @@ data class AgentUiState(
     val permissions: DevicePermissions = DevicePermissions(),
     /** Holding the power button opens Mike. Changed in system Settings, so re-read on resume. */
     val isDefaultAssistant: Boolean = false,
+    /** Standing rules and the two permissions they need. Re-read on resume, like the rest. */
+    val automations: AutomationsStatus = AutomationsStatus(),
     val runtimeStatus: RuntimeStatus = RuntimeStatus(),
     /**
      * Why the tunnel to OpenAI last failed, in one sentence, or null when it
@@ -162,6 +164,10 @@ data class AgentUiActions(
     val onOpenWirelessSettings: () -> Unit = {},
     val onOpenAccessibilitySettings: () -> Unit = {},
     val onOpenAssistantSettings: () -> Unit = {},
+    /** Notification access: the one permission no app can grant itself, and rules need it. */
+    val onOpenNotificationAccess: () -> Unit = {},
+    /** Alarms & reminders, so a rule that says 19:00 lands at 19:00 rather than whenever. */
+    val onOpenExactAlarmSettings: () -> Unit = {},
     val onOpenAppInfo: () -> Unit = {},
     val onOpenOverlayPermission: () -> Unit = {},
     val onDisconnect: () -> Unit = {},
@@ -212,3 +218,34 @@ internal fun AgentUiState.setupRows(): List<SetupRow> = SetupChecklist.rows(
 )
 
 internal fun EngineEvent.Approval.detailsText(): String = details.toString().removeSurrounding("{", "}")
+
+/**
+ * What the standing rules look like from Settings.
+ *
+ * Counted rather than listed: the point of this screen is "is the feature
+ * actually working on this phone", which is a permission question, not a list.
+ * A rule that is on but whose trigger nothing can serve is [dormant], and that
+ * is the number worth showing — it is the difference between a rule the user
+ * thinks is running and one that is.
+ */
+data class AutomationsStatus(
+    val on: Int = 0,
+    val off: Int = 0,
+    val dormant: Int = 0,
+    /** Granted by hand in Settings; no app can grant it itself. */
+    val notificationAccess: Boolean = false,
+    /** False means a rule that says 19:00 may land an hour later under Doze. */
+    val exactAlarms: Boolean = true,
+    /** When the next scheduled rule is due, already formatted, or null if none is. */
+    val nextRunAt: String? = null,
+) {
+    val total: Int get() = on + off
+
+    val summary: String
+        get() = when {
+            total == 0 -> "No rules yet"
+            dormant > 0 -> "$on on · $dormant cannot run on this phone"
+            off > 0 -> "$on on · $off off"
+            else -> "$on on"
+        }
+}

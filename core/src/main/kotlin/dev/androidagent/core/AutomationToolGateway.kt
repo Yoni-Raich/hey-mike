@@ -42,6 +42,15 @@ class AutomationToolGateway(
      * first night it does not fire.
      */
     private val supportedTriggers: () -> Set<AutomationTriggerKind> = { AutomationTriggerKind.entries.toSet() },
+    /**
+     * Fire one rule now, by id. Null leaves `mode:"run"` refusing rather than
+     * silently doing nothing — a host with no firing path should say so.
+     *
+     * Deliberately fire-and-forget: the run takes the device, may stop to ask
+     * the user, and can outlast the tool call that started it. Waiting for it
+     * here would hold the coordinator's tool lock for the whole rule.
+     */
+    private val fireNow: ((String) -> Unit)? = null,
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -95,6 +104,7 @@ class AutomationToolGateway(
                 "disable" -> setEnabled(arguments, false)
                 "delete" -> delete(arguments)
                 "test" -> test(arguments)
+                "run" -> run(arguments)
                 else -> refusal("unknown_mode", "\"$mode\" is not a mode.")
             }
         } catch (invalid: AutomationFormatException) {
@@ -280,6 +290,49 @@ class AutomationToolGateway(
         )
     }
 
+    /**
+     * Fire a rule now, for real.
+     *
+     * Naming the rule is its trigger — the caller supplies what the clock or
+     * the listener would have — but nothing else is waived: the conditions, the
+     * cooldown, the daily limit and the attention gate all apply, and the run
+     * counts against the rule's quota like any other. That is the difference
+     * from `mode:"test"`, which decides the same way and does nothing.
+     *
+     * The reply says it started, not that it worked: the run takes the device
+     * and may stop to ask the user, so its outcome arrives later.
+     */
+    private fun run(arguments: JsonObject): ToolResult {
+        val fire = fireNow ?: return refusal(
+            "run_unavailable",
+            "This host cannot fire a rule on demand. Rules still run from their own triggers.",
+        )
+        val rule = lookup(arguments) ?: return notFound(arguments)
+        if (!rule.enabled) {
+            return refusal(
+                "rule_disabled",
+                "\"${rule.id}\" is turned off. Enable it first with mode:\"enable\".",
+            )
+        }
+        fire(rule.id)
+        return ToolResult(
+            buildJsonObject {
+                put("ok", true)
+                put("rule", rule.id)
+                put("started", true)
+                put("attention", rule.attention.wire)
+                put("willDo", JsonArray(rule.actions.map { JsonPrimitive(it.describe()) }))
+                put(
+                    "note",
+                    "Started. Naming the rule supplied its trigger; its conditions, cooldown and " +
+                        "daily limit still applied, so it may have decided not to run — check " +
+                        "mode:\"describe\" for whether the count went up. This run counts against " +
+                        "its quota.",
+                )
+            }.toString(),
+        )
+    }
+
     private fun lookup(arguments: JsonObject): AutomationRule? {
         val name = arguments.str("rule") ?: arguments.str("id") ?: arguments.str("name") ?: return null
         return (library.find(name) as? AutomationLibrary.Lookup.Found)?.definition
@@ -314,7 +367,7 @@ class AutomationToolGateway(
     )
 
     private companion object {
-        val MODES = listOf("create", "list", "describe", "enable", "disable", "delete", "test")
+        val MODES = listOf("create", "list", "describe", "enable", "disable", "delete", "test", "run")
 
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ToolDefinition(
@@ -331,7 +384,11 @@ class AutomationToolGateway(
                                 buildJsonObject {
                                     put("type", "string")
                                     put("enum", JsonArray(MODES.map { JsonPrimitive(it) }))
-                                    put("description", "create, list, describe, enable, disable, delete or test. Defaults to list.")
+                                    put(
+                                        "description",
+                                        "create, list, describe, enable, disable, delete, test (decide without doing) " +
+                                            "or run (fire it now for real). Defaults to list.",
+                                    )
                                 },
                             )
                             put(
@@ -405,6 +462,8 @@ class AutomationToolGateway(
                 "present and are held when they are not. Prefer the cheapest kind that does the " +
                 "job — a fixed sequence belongs in a workflow the rule names, not in an " +
                 "agent_turn that re-derives it every night. Always dry-run a new rule with " +
-                "mode:\"test\" before telling the user it works."
+                "mode:\"test\" before telling the user it works, and use mode:\"run\" to fire one " +
+                "now for real — naming a rule supplies its trigger, so a scheduled rule can be " +
+                "proved without waiting for its hour, while its conditions and limits still apply."
     }
 }

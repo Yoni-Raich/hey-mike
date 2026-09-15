@@ -992,10 +992,14 @@ Nothing is stored: there is no notification log and no tool that can ask for one
 exclusive ownership a person's run claims, shows the same control card and
 answers the same Stop — Stop sees an active state, revokes the tools (which is
 what aborts a workflow between steps) and owns the teardown, so `runAutomation`
-re-checks the epoch before releasing anything. It **refuses rather than queues**
-when the phone is busy: by the time the device is free the rule's moment has
-usually passed. The intent goes out through the same composite gateway the model
-calls, so a rule is not a way around the intent policy or the approval card.
+re-checks the epoch before releasing anything. It waits a bounded 90 seconds for
+a busy phone and then gives up, because the common collision is not a collision
+at all: it is the agent firing a rule from inside a turn that already owns the
+device, where refusing would make "run my evening rule now" always answer "the
+phone is busy" with the busy run being the one that asked. Anything longer is
+the staleness `validUntil` covers. The intent goes out through the same
+composite gateway the model calls, so a rule is not a way around the intent
+policy or the approval card.
 
 **A queued turn expires.** `agent_turn` lands in the rule's own chat — not the
 one in front of you, so a rule firing at 3am does not appear in the middle of
@@ -1012,6 +1016,18 @@ default. `canAsk()` is false when notifications are blocked, and the runner then
 refuses the action outright — the same rule `WorkflowRunner` applies with
 `confirmation_unavailable`: a gate that disappears when unwired is not a gate.
 
+**Naming a rule is its trigger.** `mode:"run"` fires one now, through the same
+`Manual` event the `manual` trigger kind uses, and the evaluator treats a manual
+run that names *this* rule as satisfying its trigger whatever that trigger is.
+Without it a scheduled rule could only ever be proved by waiting until 19:00,
+which is not a feedback loop anyone checks a standing rule with — and the
+`manual` trigger kind itself was unreachable, since nothing called
+`AutomationHost.runNow`. Nothing else is waived: the conditions, the cooldown,
+the daily limit and the attention gate all apply, and the run counts against the
+quota. That is the whole difference from `mode:"test"`, which decides the same
+way and does nothing. A host that wired no firing path leaves `mode:"run"`
+refusing rather than silently doing nothing.
+
 `AutomationToolGateway` carries `supportedTriggers`, which this host answers
 with what it can actually serve: `schedule`, `device_state` and `manual`
 always, `notification` once the user has granted the listener by hand. **`place`
@@ -1021,3 +1037,11 @@ rather than accepted as live. That is a dependency decision, not an oversight:
 deliberately ships outside Play, and the AOSP alternative
 (`LocationManager.addProximityAlert`) is unreliable enough that shipping it
 quietly would be worse than reporting the gap.
+
+Settings > Standing rules is where the feature says whether it actually works:
+how many rules are on, how many are **dormant**, when the next one is due, and
+the two permissions — notification access and exact alarms — with a button to
+each. Both are granted in system Settings and neither is observable, so the
+status is re-read on every resume beside the other permissions. A rule that
+looks on and cannot run is the failure the user would otherwise only notice by
+the thing not happening, so it is counted on the hub row rather than buried.

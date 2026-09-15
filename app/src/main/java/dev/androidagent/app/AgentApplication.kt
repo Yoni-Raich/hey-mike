@@ -142,6 +142,9 @@ class AgentGraph(private val app: Application) {
         library = automations,
         history = automationJournal,
         supportedTriggers = { if (::automationHost.isInitialized) automationHost.supportedTriggers() else emptySet() },
+        // Naming a rule supplies its trigger, so a scheduled rule can be proved
+        // without waiting for its hour. Everything else about it still applies.
+        fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
     )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.

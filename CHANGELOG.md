@@ -37,6 +37,15 @@
 - A rule Mike cannot serve on this phone is saved and reported as dormant with
   the reason, instead of looking live and doing nothing. Place rules are dormant
   on every phone for now: nothing tracks location yet.
+- You can ask Mike to run a rule now, so a new rule can be shown working
+  straight away instead of waiting until tonight. Naming it stands in for its
+  trigger; everything else about it — the hours it is allowed, its cooldown, its
+  daily limit — still applies.
+- A rule you ask Mike to run while it is already busy now waits for it to finish
+  instead of answering "the phone is busy".
+- Settings > Standing rules shows how many rules are on, how many cannot run on
+  this phone and why, when the next one is due, and has the buttons for the two
+  permissions rules need: notification access and exact alarms.
 
 - Mike can run a whole saved sequence in one go. `workflow_runner` takes the
   name of a workflow and does every step itself — open the app, find the

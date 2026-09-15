@@ -142,6 +142,35 @@ class AutomationEvaluatorTest {
         assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(evaluate(post, AutomationEvent.Clock(early), context(early))))
     }
 
+    @Test fun namingARuleInAManualRunIsItsTrigger() {
+        // Otherwise a scheduled rule could only ever be proved by waiting until
+        // 19:00 — not a loop anyone actually checks a standing rule with.
+        val post = rule(
+            """
+            {"id":"evening-post","when":{"type":"schedule","at":"19:00"},
+             "then":[{"type":"run_workflow","workflow":"post-to-facebook"}]}
+            """,
+        )
+        val now = at("2026-09-15T11:00:00")
+        assertTrue(evaluate(post, AutomationEvent.Manual("evening-post", now), context(now)) is AutomationEvaluator.Outcome.Fired)
+    }
+
+    @Test fun aManualRunStillObeysTheConditionsAndTheGuards() {
+        // Supplying the trigger is not the same as overriding the rule: "run it
+        // now" must not post out of hours or past the daily limit.
+        val now = at("2026-09-15T12:00:00")
+        assertEquals(
+            AutomationEvaluator.Skip.CONDITION,
+            skip(evaluate(dadAfterSeven, AutomationEvent.Manual("dad-after-seven", now), context(now))),
+        )
+        val evening = at("2026-09-15T21:40:00")
+        history.record(dadAfterSeven.id, evening.minusSeconds(10))
+        assertEquals(
+            AutomationEvaluator.Skip.COOLDOWN,
+            skip(evaluate(dadAfterSeven, AutomationEvent.Manual("dad-after-seven", evening), context(evening))),
+        )
+    }
+
     @Test fun aManualRunOnlyRunsTheRuleItNames() {
         val a = rule("""{"id":"a","when":{"type":"manual"},"then":[{"type":"notify","text":"a"}]}""")
         val b = rule("""{"id":"b","when":{"type":"manual"},"then":[{"type":"notify","text":"b"}]}""")
