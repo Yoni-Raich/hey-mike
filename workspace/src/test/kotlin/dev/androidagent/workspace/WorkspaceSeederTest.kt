@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.workspace
 
 import org.junit.Assert.assertEquals
@@ -34,7 +54,10 @@ class WorkspaceSeederTest {
         assertFalse("the ADB-era framing must not come back", shipped.contains("over local Wireless ADB"))
 
         val shippedSkills = File(assetRoot(), "skills").list()!!.toSet()
-        assertEquals(setOf("device-automation", "app-cards", "user-preferences", "quick-actions"), shippedSkills)
+        assertEquals(
+            setOf("device-automation", "app-cards", "user-preferences", "quick-actions", "workflows"),
+            shippedSkills,
+        )
         for (skill in shippedSkills) assertTrue("AGENTS.md must point at $skill", shipped.contains("`$skill`"))
         assertFalse(shipped.contains("recovery-and-safety"))
     }
@@ -43,6 +66,14 @@ class WorkspaceSeederTest {
     fun theShippedPreferencesSkillCarriesThePathPlaceholder() {
         val skill = File(assetRoot(), "skills/user-preferences/SKILL.md").readText()
         assertTrue(skill.contains(WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER))
+    }
+
+    @Test
+    fun theShippedWorkflowsSkillNamesTheDirectoryDefinitionsAreLoadedFrom() {
+        // Without the real path, a definition the model writes lands somewhere
+        // workflow_runner never looks.
+        val skill = File(assetRoot(), "skills/workflows/SKILL.md").readText()
+        assertTrue(skill.contains(WorkspaceSeeder.WORKFLOW_DEFINITIONS_DIR_PLACEHOLDER))
     }
 
     @Test
@@ -186,7 +217,14 @@ class WorkspaceSeederTest {
         }
     }
 
-    /** The real bundled assets, so the shipped text is checked rather than a copy of it. */
+    @Test
+    fun noWorkflowDefinitionShipsWithTheApp() {
+        // A definition names one phone's screen ids; Settings search on a
+        // Nothing phone and on a Xiaomi share none. The agent learns each
+        // sequence on the phone it runs on instead.
+        assertFalse(File(assetRoot(), "workflows").exists())
+    }
+
     private fun assetRoot(): File =
         generateSequence(File("").absoluteFile) { it.parentFile }
             .map { File(it, "app/src/main/assets/agent_stack") }

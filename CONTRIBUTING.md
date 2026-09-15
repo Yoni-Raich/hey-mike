@@ -18,6 +18,20 @@ read [repo-structure-guard](.agents/skills/repo-structure-guard/SKILL.md).
 It is a development-repository skill and is not shipped in the APK. On-device
 skills belong under `app/src/main/assets/agent_stack/skills/`.
 
+## Licensing of your contribution
+
+Hey Mike is dual-licensed: [AGPL-3.0](LICENSE) for everyone, plus a
+[commercial license](LICENSE-COMMERCIAL.md) for closed-source use. To keep that
+possible, every contribution is accepted under the
+[Contributor License Agreement](CLA.md). You keep your copyright; you grant the
+project the right to license your work under both.
+
+Sign it once, in your first pull request description:
+
+```
+I have read the CLA and I hereby sign it: <your full name> <your email>
+```
+
 ## Pull requests
 
 - Use a focused branch and a conventional commit message.

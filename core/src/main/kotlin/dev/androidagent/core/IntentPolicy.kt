@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import java.io.UnsupportedEncodingException
@@ -50,21 +70,36 @@ object IntentPolicy {
     )
 
     /**
-     * Actions the agent may name.
+     * Actions the agent may not name. Everything else is allowed.
      *
-     * `ACTION_CALL` is deliberately absent: it places a call with no dialer
-     * confirmation. `ACTION_DIAL` reaches the same screen and leaves the last
-     * press to the user, so the capability is kept and the irreversible half
-     * is not.
+     * An allowlist was the first design, and it fails the same way a scheme
+     * allowlist did: every Android feature reached by intent — a timer, a
+     * calendar event, a settings screen — needed a code change before the agent
+     * could use it. The limits that matter are structural instead: activities
+     * only, no component, no URI grant, plain extras. What is left to refuse is
+     * the short list of actions that commit something with no screen for the
+     * user to back out of.
+     *
+     * - `CALL` and its variants place a call with no dialer confirmation.
+     *   `DIAL` reaches the same screen and leaves the last press to the user.
+     * - `DELETE`, `UNINSTALL_PACKAGE`, `INSTALL_PACKAGE`: installing and
+     *   removing apps goes through the ADB tools, where it is visible as that.
+     * - `MASTER_CLEAR`, `FACTORY_RESET`: erase the phone.
      */
-    val allowedActions: Set<String> = setOf(
-        "android.intent.action.VIEW",
-        "android.intent.action.DIAL",
-        "android.intent.action.SENDTO",
-        "android.intent.action.SEARCH",
-        "android.intent.action.WEB_SEARCH",
-        "android.intent.action.MAIN",
+    val blockedActions: Set<String> = setOf(
+        "android.intent.action.CALL",
+        "android.intent.action.CALL_PRIVILEGED",
+        "android.intent.action.CALL_EMERGENCY",
+        "android.intent.action.DELETE",
+        "android.intent.action.UNINSTALL_PACKAGE",
+        "android.intent.action.INSTALL_PACKAGE",
+        "android.intent.action.MASTER_CLEAR",
+        "android.intent.action.FACTORY_RESET",
     )
+
+    private val ACTION_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
+
+    private const val VIEW = "android.intent.action.VIEW"
 
     /** Schemes that open a message draft to someone. Opening one sends nothing. */
     private val messagingSchemes: Set<String> = setOf("sms", "smsto", "mms", "mmsto", "mailto")
@@ -154,24 +189,32 @@ object IntentPolicy {
         return Decision.Allow("$destination${separator}text=$encoded", "")
     }
 
-    fun evaluate(action: String?, uri: String?): Decision {
-        val resolvedAction = action?.trim().takeUnless { it.isNullOrEmpty() }
-            ?: "android.intent.action.VIEW"
-        if (resolvedAction !in allowedActions) {
+    fun evaluate(
+        action: String?,
+        uri: String?,
+        extras: Map<String, IntentExtra> = emptyMap(),
+    ): Decision {
+        val resolvedAction = action?.trim().takeUnless { it.isNullOrEmpty() } ?: VIEW
+        if (!ACTION_RE.matches(resolvedAction)) {
+            return Decision.Deny("action_malformed", "\"${resolvedAction.take(80)}\" is not an intent action name.")
+        }
+        if (resolvedAction in blockedActions) {
             return Decision.Deny(
                 "action_not_allowed",
-                "\"$resolvedAction\" is not an action this agent may send. Allowed: " +
-                    allowedActions.sorted().joinToString(", ") + ".",
+                "\"$resolvedAction\" commits something with no screen to back out of, so this agent may " +
+                    "not send it." + if (resolvedAction.contains(".CALL")) " Use android.intent.action.DIAL." else "",
             )
         }
+        val paymentExtra = extras.keys.any { it.substringAfterLast('.').equals("amount", ignoreCase = true) }
         if (uri == null || uri.isBlank()) {
-            return if (resolvedAction == "android.intent.action.MAIN") {
-                Decision.Allow(null, resolvedAction)
+            // VIEW is nothing without a destination. Any other action — a
+            // timer, a settings screen, a share sheet — is complete as an
+            // action and its extras.
+            if (resolvedAction == VIEW) return Decision.Deny("uri_required", "\"$VIEW\" needs a uri.")
+            return if (paymentExtra) {
+                Decision.NeedsConfirmation(null, resolvedAction, "Start a payment.")
             } else {
-                Decision.Deny(
-                    "uri_required",
-                    "\"$resolvedAction\" needs a uri.",
-                )
+                Decision.Allow(null, resolvedAction)
             }
         }
         val trimmed = uri.trim()
@@ -212,6 +255,7 @@ object IntentPolicy {
                 "The uri has no scheme. A relative uri cannot be resolved to an app.",
             )
         val sideEffect = describeSideEffect(parsed, scheme, resolvedAction)
+            ?: "Start a payment.".takeIf { paymentExtra }
         return if (sideEffect == null) {
             Decision.Allow(trimmed, resolvedAction)
         } else {

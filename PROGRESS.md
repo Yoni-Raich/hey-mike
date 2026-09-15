@@ -7,6 +7,37 @@ not production-ready.
 
 ### Verified
 
+- `workflow_runner`, intents with extras, workflow parameters and "Suggest
+  workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
+  (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`
+  (18) pass, and `:app:assembleDevDebug` builds. On a Nothing Phone (A059,
+  Android 16) and a Xiaomi (2201116TG, Android 13), dev builds of this branch:
+  - A learned `timer-seconds` workflow with an `open_intent` SET_TIMER step and
+    a `seconds` parameter started a real timer on both phones; the Xiaomi rang
+    after the 60 seconds it was given.
+  - `open_intent` with `android.settings.WIFI_SETTINGS` and no uri opened the
+    Wi-Fi screen (Nothing).
+  - A learned `google-tasks-add-task` workflow ran clean, and the "Suggest
+    workflows" chip appeared after a multi-step run and was answered (Nothing).
+  - A Settings-search workflow found the search bar, typed, and — after an
+    approval — flipped the Wireless debugging switch in Developer options
+    (Nothing, resumed from the switch step). Its `open_result` tap failed twice
+    before the row-click fix; that fix is unit-tested and seen working on the
+    Xiaomi search bar, but the result tap has not been re-run on the Nothing.
+  - The Xiaomi clock ignores SET_TIMER extras when its task already exists;
+    `CLEAR_TASK` for an intent with extras was confirmed from adb there.
+  No workflow ships with the app: Settings search has different field ids on
+  the two phones, so each phone learns its own.
+- Recording a workflow is **authoring, not capture.** The spec asked for a
+  Record mode that watches the user's own taps.
+  `AgentAccessibilityService.onAccessibilityEvent` deliberately does not read
+  the events it receives — the text a user types is not the app's to look at —
+  and a passive recorder would reverse that decision, so it was not built.
+  A workflow is worked out once with the device tools and written as a
+  definition instead, which is also the only form that can carry verification
+  conditions and confirmation flags. Turning that into a guided
+  "save what just happened" flow is open work.
+
 - The public v0.12.0 dev APK was built from merged `main` (with #61 and #62)
   on 2026-09-14. A first 0.12.0 candidate was built from a local `main` that
   had not pulled #62, so it had no digital assistant; it was installed on the

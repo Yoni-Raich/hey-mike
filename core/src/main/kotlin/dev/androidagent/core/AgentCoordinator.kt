@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import kotlinx.coroutines.*
@@ -541,6 +561,49 @@ class AgentCoordinator(
                 "The user did not approve sending this. Nothing was sent. Do not retry; ask what they want instead.",
             )
             LocalOutcome.ALLOWED -> dispatch()
+        }
+    }
+
+    /**
+     * Gate one sensitive step of a workflow.
+     *
+     * The runner performs a whole sequence inside a single tool call, so
+     * nothing else gets a chance to stop it. Turning on wireless debugging,
+     * sending, paying, deleting or changing a permission is therefore marked in
+     * the definition and asked about here, with the same card and the same
+     * spoken "yes" as a send.
+     *
+     * Unlike a send there is no standing grant: a workflow step is approved for
+     * the run in front of the user, never for every later run of that workflow.
+     */
+    suspend fun authorizeWorkflowStep(request: WorkflowConfirmation): WorkflowConfirmationOutcome {
+        val pending = try {
+            openLocalApproval(
+                prefix = "workflow",
+                method = "workflow_step",
+                details = buildJsonObject {
+                    put("kind", "workflow_step")
+                    put("workflow", request.workflowId)
+                    put("step", request.stepId)
+                    put("action", request.action)
+                    put("what", request.summary)
+                    put("package", request.packageName)
+                    request.appLabel?.let { put("app", it) }
+                },
+                send = null,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (unavailable: IllegalStateException) {
+            // Another approval already holds the card. Refusing is the safe
+            // answer: the step is skipped, not run unattended.
+            return WorkflowConfirmationOutcome.UNAVAILABLE
+        }
+        return when (awaitLocalApproval(pending)) {
+            LocalOutcome.ALLOWED -> WorkflowConfirmationOutcome.ALLOWED
+            LocalOutcome.DENIED -> WorkflowConfirmationOutcome.DENIED
+            LocalOutcome.TIMED_OUT -> WorkflowConfirmationOutcome.TIMED_OUT
+            LocalOutcome.STOPPED -> WorkflowConfirmationOutcome.DENIED
         }
     }
 

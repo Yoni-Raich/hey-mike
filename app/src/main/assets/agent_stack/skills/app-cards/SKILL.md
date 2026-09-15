@@ -9,7 +9,8 @@ Three sources, checked in this order, tell you how an app works before you explo
 
 ## 1. What earlier chats learned
 
-- **`list_workflows(package)`** — a saved step sequence that already worked. If one matches the task, run it with `run_workflow`. If a step fails, continue from that step; never restart it.
+- **`workflow_runner(mode="list", package=...)`** — a workflow that runs the whole sequence in one call and finds each element live. If one matches the task, run it. If a step fails, resume from that step with the arguments the reply hands you; never restart. See the `workflows` skill.
+- **`list_workflows(package)`** — the older mechanism: a literal list of tool calls `run_workflow` replays. It resolves nothing at run time, so verify it still works.
 - **`recall_capability(package)`** — selectors and deep links earlier chats confirmed for this app. A record marked `stale:true` is a hint to verify, not a fact.
 
 ## 2. The starter cards below
@@ -23,7 +24,7 @@ This is how the next chat gets faster:
 - **`quick-actions save-intent`** — after a deep link reached a destination a later request could reuse. This is what makes the next request one step.
 - **`quick-actions save-contact`** — after you found a person's phone number.
 - **`remember_capability`** — after you find a selector or deep link that works, especially one missing from or contradicting a card. Use a `resourceId` or `contentDescription`, never a coordinate pair.
-- **`save_workflow`** — after a multi-step UI sequence with no deep link ran cleanly and is likely to be repeated.
+- **`save_workflow`** — after a multi-step UI sequence with no deep link ran cleanly and is likely to be repeated. Better still, write it as a workflow definition (see the `workflows` skill): a definition finds its elements live, so it keeps working after the app changes.
 
 When an app offers a deep link, `open_intent` usually beats a long tap sequence (see the `device-automation` skill).
 

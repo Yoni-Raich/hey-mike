@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.EngineEvent
@@ -35,6 +55,18 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
             },
             sendApp = app,
             sendRecipient = recipient,
+        )
+    }
+    if (detail("kind") == "workflow_step") {
+        // A workflow step is approved for the run in front of the user, so the
+        // card names the step rather than offering an "always allow".
+        return ApprovalSummary(
+            headline = "Allow this step?",
+            lines = buildList {
+                detail("what")?.let { add("Step" to it) }
+                detail("package")?.let { add("In" to (detail("app") ?: it)) }
+                detail("workflow")?.let { add("Workflow" to it) }
+            },
         )
     }
     val uri = detail("uri")
@@ -77,6 +109,9 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
         if (recipient == null && message == null) {
             detail("reason")?.let { add("What" to it) }
             uri?.let { add("Link" to decode(it)) }
+            // An intent with no uri — a payment app's own action carrying an
+            // amount in extras — would otherwise name nothing but its reason.
+            if (uri == null) detail("action")?.let { add("Action" to it.substringAfterLast('.')) }
         }
         if (app == null) detail("package")?.let { add("App" to it) }
     }

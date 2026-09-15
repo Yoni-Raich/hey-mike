@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatMessage
@@ -50,9 +70,33 @@ class ChatRowsTest {
         assertEquals("read_ui", toolNameOf(message("t", "tool", "read_ui: {\"nodes\":[]}")))
         assertEquals("Read the screen", toolStepLabel("read_ui"))
         assertEquals("Opened a link", toolStepLabel("open_intent"))
-        assertEquals("Run workflow", toolStepLabel("run_workflow"))
+        assertEquals("Ran a workflow", toolStepLabel("run_workflow"))
+        assertEquals("Ran a workflow", toolStepLabel("workflow_runner"))
+        // A tool the map does not know still reads as words, not as its id.
+        assertEquals("Remember capability", toolStepLabel("remember_capability"))
         assertEquals("Reading the screen", runStatusLabel("read ui"))
         assertEquals("Waiting for approval", runStatusLabel("Waiting for approval"))
+    }
+
+    @Test
+    fun workflowSuggestionsAreOfferedOnlyAfterARunThatOperatedThePhone() {
+        fun tool(id: String, name: String) = message(id, "tool", "$name: ok")
+        fun reply(state: String = "complete") = ChatMessage("r", "s", "assistant", "Done", 0L, state)
+        val ask = message("u", "user", "turn on wireless debugging")
+        val operated = listOf(ask, tool("1", "open_app"), tool("2", "tap_node"), tool("3", "read_ui"),
+            tool("4", "set_text"), tool("5", "tap"), reply())
+        assertTrue(offersWorkflowSuggestion(operated, running = false))
+        // Not while the run is going, and not before the reply is finished.
+        assertFalse(offersWorkflowSuggestion(operated, running = true))
+        assertFalse(offersWorkflowSuggestion(operated.dropLast(1) + reply("streaming"), running = false))
+        // Reading the screen is not a sequence worth saving.
+        val onlyLooked = listOf(ask, tool("1", "read_ui"), tool("2", "read_ui"), tool("3", "screenshot"),
+            tool("4", "read_ui"), reply())
+        assertFalse(offersWorkflowSuggestion(onlyLooked, running = false))
+        // The answer to the suggestion itself does not offer another one.
+        val suggested = operated + message("u2", "user", SUGGEST_WORKFLOWS_PROMPT) +
+            (1..5).map { tool("s$it", "tap") } + reply()
+        assertFalse(offersWorkflowSuggestion(suggested, running = false))
     }
 
     @Test fun anyHebrewLetterMakesItsLineRightToLeft() {

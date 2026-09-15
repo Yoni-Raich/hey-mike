@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app
 
 import android.app.Application
@@ -9,6 +29,8 @@ import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
 import dev.androidagent.core.ObservationState
+import dev.androidagent.core.WorkflowConfirmationOutcome
+import dev.androidagent.core.WorkflowLibrary
 import dev.androidagent.core.WorkflowStore
 import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
@@ -60,13 +82,17 @@ class AgentGraph(private val app: Application) {
         observationVisibility = { hidden -> overlay.setCaptureHidden(hidden) },
         authorizeIntent = { request, dispatch -> runCoordinator.authorizeLocalIntent(request, dispatch) },
         authorizeSend = { request, dispatch -> runCoordinator.authorizeSend(request, dispatch) },
-        // Asking raised this app over the chat. Stepping back uncovers that
-        // chat exactly as it was, draft included; relaunching the other app
-        // lands on its home screen instead.
-        leaveApprovalScreen = {
-            foregroundActivity?.get()?.let { activity -> activity.runOnUiThread { activity.moveTaskToBack(true) } }
-        },
+        leaveApprovalScreen = { leaveApprovalScreen() },
     )
+
+    /**
+     * Asking raised this app over the one being driven. Stepping back uncovers
+     * that app exactly as it was, draft or open sub-screen included;
+     * relaunching it lands on its home screen instead.
+     */
+    private fun leaveApprovalScreen() {
+        foregroundActivity?.get()?.let { activity -> activity.runOnUiThread { activity.moveTaskToBack(true) } }
+    }
     /** The resumed activity, if any, so an approval can step out of the way. */
     @Volatile var foregroundActivity: java.lang.ref.WeakReference<android.app.Activity>? = null
     /** "Always allow" answers to send approvals, signed so the agent cannot add its own. */
@@ -80,9 +106,24 @@ class AgentGraph(private val app: Application) {
     // knowledge gateway shares no tool name with either device backend, so its
     // position in the chain only decides where its names appear in the list.
     val workflows = WorkflowStore(WorkflowStore.directoryIn(runtime.homeDirectory))
+    /** Declarative definitions `workflow_runner` executes, beside the literal step lists. */
+    val workflowLibrary = WorkflowLibrary(WorkflowLibrary.directoryIn(runtime.homeDirectory))
     // The engine dispatches steps back at the composite, which also contains
     // this gateway, so the router is resolved per call rather than captured.
-    val workflowTools = WorkflowToolGateway(workflows) { tools }
+    val workflowTools = WorkflowToolGateway(
+        workflows,
+        { tools },
+        library = workflowLibrary,
+        // A sensitive step asks with the same card, and the same spoken "yes",
+        // as a send. Without this the runner refuses such a step outright.
+        // Stepping back after a yes is what keeps the sub-screen the workflow
+        // reached: relaunching Settings reset it to its home page on a phone.
+        confirm = { request ->
+            runCoordinator.authorizeWorkflowStep(request).also { outcome ->
+                if (outcome == WorkflowConfirmationOutcome.ALLOWED) leaveApprovalScreen()
+            }
+        },
+    )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(

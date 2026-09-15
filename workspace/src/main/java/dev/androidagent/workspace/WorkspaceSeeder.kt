@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.workspace
 
 import android.content.Context
@@ -34,6 +54,9 @@ object WorkspaceSeeder {
     /** Replaced with the absolute skills root, so a skill can name its own scripts. */
     internal const val SKILLS_DIR_PLACEHOLDER = "{{SKILLS_DIR}}"
 
+    /** Replaced with the directory `workflow_runner` loads definitions from. */
+    internal const val WORKFLOW_DEFINITIONS_DIR_PLACEHOLDER = "{{WORKFLOW_DEFINITIONS_DIR}}"
+
     private const val QUICK_ACTIONS_DIR = "quick-actions"
 
     private val DEFAULT_SKILL_NAMES = listOf(
@@ -41,6 +64,7 @@ object WorkspaceSeeder {
         "user-preferences",
         "app-cards",
         "quick-actions",
+        "workflows",
     )
 
     /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */
@@ -124,6 +148,7 @@ object WorkspaceSeeder {
             PREFERENCES_PATH_PLACEHOLDER to preferencesFile(homeDir).absolutePath,
             QUICK_ACTIONS_DIR_PLACEHOLDER to quickActionsDir(homeDir).absolutePath,
             SKILLS_DIR_PLACEHOLDER to skillsDir.absolutePath,
+            WORKFLOW_DEFINITIONS_DIR_PLACEHOLDER to dev.androidagent.core.WorkflowLibrary.directoryIn(homeDir).absolutePath,
         )
         for (name in DEFAULT_SKILL_NAMES) {
             val bytes = readAsset("$name/SKILL.md")

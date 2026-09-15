@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.EngineEvent
@@ -26,6 +46,23 @@ class ApprovalSummaryTest {
         val summary = approval("https://wa.me/972587160002?text=%D7%94%D7%99%D7%99", "com.whatsapp").summary()
         assertEquals("Send a WhatsApp message?", summary.headline)
         assertEquals(listOf("To" to "+972587160002", "Message" to "היי"), summary.lines)
+    }
+
+    @Test fun anIntentWithNoUriNamesItsAction() {
+        val summary = EngineEvent.Approval(
+            requestId = "p",
+            method = "open_intent",
+            details = buildJsonObject {
+                put("reason", "Start a payment. (AMOUNT=10)")
+                put("action", "com.example.pay.CHECKOUT")
+                put("package", "com.example.pay")
+            },
+        ).summary()
+        assertEquals("Open this?", summary.headline)
+        assertEquals(
+            listOf("What" to "Start a payment. (AMOUNT=10)", "Action" to "CHECKOUT", "App" to "com.example.pay"),
+            summary.lines,
+        )
     }
 
     @Test fun anSmsShowsTheNumberAndBody() {

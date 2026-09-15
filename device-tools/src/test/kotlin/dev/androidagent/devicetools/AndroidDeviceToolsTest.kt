@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.devicetools
 
 import dev.androidagent.core.AdbEndpoint
@@ -548,6 +568,21 @@ class AndroidDeviceToolsTest {
         val raw = tools.invoke("read_ui", buildJsonObject { put("raw", true) })
 
         assertTrue(raw.text.startsWith("<hierarchy"))
+    }
+
+    @Test fun aSwitchInTheXmlDumpCarriesItsOnOffState() = runBlocking {
+        // Both backends have to answer "is the toggle on" the same way, or a
+        // workflow's verification means something different on each of them.
+        val xml = """<hierarchy rotation="0"><node index="0" text="Wireless debugging" resource-id="com.android.settings:id/switch_widget" class="android.widget.Switch" package="com.android.settings" content-desc="" checkable="true" checked="true" clickable="true" enabled="true" scrollable="false" focused="false" bounds="[0,100][1080,200]"/></hierarchy>"""
+        val adb = ScriptedUiAdb(mutableListOf(CommandResult(xml, 0)))
+        val tools = AndroidDeviceTools(adb)
+        tools.beginRun("ui", Files.createTempDirectory("ws").toFile())
+
+        val result = tools.invoke("read_ui", buildJsonObject {})
+
+        assertTrue(result.success)
+        assertTrue(result.text, result.text.contains("\"checkable\":true"))
+        assertTrue(result.text, result.text.contains("\"checked\":true"))
     }
 
     @Test fun readUiRawModePreservesXmlCompatibility() = runBlocking {

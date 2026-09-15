@@ -12,6 +12,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Normal permission, granted at install. The clock app guards SET_TIMER
+         and SET_ALARM intents with it, so open_intent cannot reach them without. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!--
         queryIntentActivities returns nothing on API 30+ for packages the app
         has not declared, so resolve_intent/open_intent would report "nothing

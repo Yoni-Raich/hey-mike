@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import org.junit.Assert.*
@@ -52,8 +72,10 @@ class IntentPolicyTest {
             as IntentPolicy.Decision.Allow).action)
     }
 
-    @Test fun mainNeedsNoUriAndEverythingElseDoes() {
+    @Test fun viewNeedsAUriAndAnActionThatIsCompleteOnItsOwnDoesNot() {
         assertTrue(IntentPolicy.evaluate("android.intent.action.MAIN", null)
+            is IntentPolicy.Decision.Allow)
+        assertTrue(IntentPolicy.evaluate("android.intent.action.SET_TIMER", null)
             is IntentPolicy.Decision.Allow)
         assertEquals(
             "uri_required",
@@ -63,6 +85,49 @@ class IntentPolicyTest {
             "uri_required",
             (IntentPolicy.evaluate(view, "   ") as IntentPolicy.Decision.Deny).reason,
         )
+    }
+
+    // ---- any action, structurally bounded ----
+
+    @Test fun anAndroidFeatureReachedByIntentNeedsNoCodeChange() {
+        // The reason there is no action allowlist: a timer, a settings screen
+        // and a calendar insert are all just actions the phone already handles.
+        for (action in listOf(
+            "android.intent.action.SET_TIMER",
+            "android.intent.action.SET_ALARM",
+            "android.settings.WIRELESS_SETTINGS",
+            "android.intent.action.INSERT",
+            "android.intent.action.SEND",
+        )) {
+            assertTrue("$action should be allowed", IntentPolicy.evaluate(action, null) !is IntentPolicy.Decision.Deny)
+        }
+    }
+
+    @Test fun everyBlockedActionIsRefused() {
+        for (action in IntentPolicy.blockedActions) {
+            val decision = IntentPolicy.evaluate(action, "tel:+972500000000")
+            assertEquals(action, "action_not_allowed", (decision as IntentPolicy.Decision.Deny).reason)
+            assertTrue(IntentPolicy.evaluate(action, null) is IntentPolicy.Decision.Deny)
+        }
+    }
+
+    @Test fun anActionThatIsNotAnActionNameIsRefused() {
+        for (action in listOf("SET TIMER", "intent:#Intent;end", "android.intent.action.VIEW;component=x")) {
+            assertEquals(action, "action_malformed", (IntentPolicy.evaluate(action, null) as IntentPolicy.Decision.Deny).reason)
+        }
+    }
+
+    @Test fun anAmountExtraAsksFirstLikeAnAmountInTheUri() {
+        val extras = mapOf("com.example.extra.AMOUNT" to IntentExtra.Int32(10))
+        assertTrue(IntentPolicy.evaluate("com.example.PAY", null, extras) is IntentPolicy.Decision.NeedsConfirmation)
+        assertTrue(IntentPolicy.evaluate(view, "myapp://checkout", extras) is IntentPolicy.Decision.NeedsConfirmation)
+    }
+
+    @Test fun aShareSheetWithTextIsADraftAndDoesNotAsk() {
+        // It opens a chooser or a composer; nothing leaves the phone until the
+        // user sends it, which the device backend gates.
+        val extras = mapOf("android.intent.extra.TEXT" to IntentExtra.Text("on my way"))
+        assertTrue(IntentPolicy.evaluate("android.intent.action.SEND", null, extras) is IntentPolicy.Decision.Allow)
     }
 
     @Test fun aUriWithNoSchemeCannotBeResolved() {

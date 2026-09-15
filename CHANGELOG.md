@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+- Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
+  **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
+  anyone who wants to ship it inside a closed-source product. Personal use,
+  study, research and contributions stay free; a proprietary fork now needs an
+  agreement. Releases made before this change keep the license they shipped
+  under. See `LICENSE`, `LICENSE-COMMERCIAL.md` and `NOTICE`.
+- Contributions are now accepted under a Contributor License Agreement
+  (`CLA.md`), signed once in your first pull request.
+- Mike can run a whole saved sequence in one go. `workflow_runner` takes the
+  name of a workflow and does every step itself — open the app, find the
+  search box, type, open the result, flip the switch — with no thinking turn
+  in between. No workflow ships with the app: Mike learns each one on your
+  phone, because every phone's screens are different.
+- A workflow can take values each time it runs — one "timer" workflow for any
+  number of minutes — and can open an app screen or start a feature directly
+  by intent, tapping only where no intent reaches.
+- Mike can now reach any Android feature an intent reaches, such as a timer or
+  a settings screen, without an app update for each one.
+- After Mike does something on your phone in several steps, a "Suggest
+  workflows" button offers to save it as a workflow.
+- A workflow is written down as what each step *means*, not where it was on
+  the screen the day it was recorded. Mike finds each element live, by its id
+  or by the label you can read, so a row that moved, a phone with a different
+  screen, or an app update does not break it. There is no way to save a
+  coordinate into one.
+- Every step says how to tell it worked, and Mike checks before moving on. A
+  tap that landed on nothing is now a reported failure instead of a run that
+  quietly continues against the wrong screen.
+- A step that turns something on, sends, pays, deletes or changes a permission
+  stops and asks you first — the same card as a send, and the same spoken
+  "yes" or "כן". A step that flips a switch is skipped when the switch is
+  already the way it should be.
+- When a step does fail, the reply names that exact step, what had already
+  run, whether that step may have half-happened, what was on screen instead,
+  and how to carry on from there. Mike continues from where it stopped instead
+  of starting the whole sequence again.
+- Reading the screen now reports whether a switch or checkbox is on. Mike used
+  to have to guess from the label whether a toggle had taken effect.
+
 ## 0.12.0 — 2026-09-14
 
 - Mike can be the phone's digital assistant. Pick Hey Mike under Default apps >
