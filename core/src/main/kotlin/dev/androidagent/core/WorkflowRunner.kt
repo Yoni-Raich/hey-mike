@@ -27,6 +27,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -88,6 +89,11 @@ class WorkflowRunner(
     private val confirm: suspend (WorkflowConfirmation) -> WorkflowConfirmationOutcome =
         { WorkflowConfirmationOutcome.UNAVAILABLE },
     private val nowMs: () -> Long = System::currentTimeMillis,
+    /**
+     * The allowlist for `call` steps. Unknown names fail before dispatch;
+     * blocked names can never run even when registered by mistake.
+     */
+    private val callRegistry: WorkflowCallRegistry = WorkflowCallRegistry.EMPTY,
 ) {
 
     /** The largest box seen on the screen, so a gesture is never aimed at an assumed resolution. */
@@ -103,6 +109,12 @@ class WorkflowRunner(
         val screenshotOnFailure: Boolean = false,
         /** The values the definition was bound with, handed back in `resume` so a resumed run gets the same ones. */
         val params: JsonObject = JsonObject(emptyMap()),
+        /**
+         * Outputs earlier `call` steps captured, handed back in `resume` so a
+         * resumed run reuses them instead of re-running the committed prefix
+         * that produced them.
+         */
+        val outputs: JsonObject = JsonObject(emptyMap()),
     )
 
     suspend fun run(definition: WorkflowDefinition, options: Options): ToolResult {
@@ -112,9 +124,14 @@ class WorkflowRunner(
                 "unknown_step",
                 "\"${options.startAt}\" is not a step of \"${definition.id}\". Its steps are " +
                     definition.steps.joinToString(", ") { it.id } + ".",
+                outputs = options.outputs.toMap(),
             )
         val startedAt = nowMs()
         var confirmationMs = 0L
+        // Steps before startAt never re-run: their captured outputs arrive in
+        // options.outputs instead, which is what makes resuming a committed
+        // `call` prefix safe.
+        val captured: MutableMap<String, JsonElement> = options.outputs.toMutableMap()
         val records = mutableListOf<StepRecord>()
         for (index in 0 until startIndex) {
             records += StepRecord(definition.steps[index], "skipped", "before startAt", 0L)
@@ -127,6 +144,7 @@ class WorkflowRunner(
                 return failure(
                     definition, options, records, step, index, "stopped",
                     "Run stopped before step \"${step.id}\". Nothing at or after it ran.",
+                    outputs = captured,
                 )
             }
             val elapsed = nowMs() - startedAt - confirmationMs
@@ -135,6 +153,7 @@ class WorkflowRunner(
                     definition, options, records, step, index, "budget_exhausted",
                     "The ${options.totalBudgetMs}ms budget ran out before step \"${step.id}\", which did not run. " +
                         "Resume from it rather than starting again.",
+                    outputs = captured,
                 )
             }
             val stepStarted = nowMs()
@@ -155,7 +174,9 @@ class WorkflowRunner(
 
             // Asking raises this app over the one being driven, so it happens
             // before anything is resolved: a node handle read beforehand would
-            // be stale by the time the user answered.
+            // be stale by the time the user answered. A call never asks on its
+            // own: the called tool owns its approval, so there is one card and
+            // one foregrounding path whether it is called directly or here.
             if (step.requiresConfirmation) {
                 val askedAt = nowMs()
                 val outcome = try {
@@ -186,6 +207,7 @@ class WorkflowRunner(
                                     "nothing here can ask for it. It did not run. Do this step yourself, " +
                                     "with the user's agreement, then resume from the next one."
                         },
+                        outputs = captured,
                     )
                 }
                 // The approval screen was in front. Put the app being driven
@@ -194,14 +216,14 @@ class WorkflowRunner(
             }
 
             val outcome = try {
-                runStep(definition, step, options)
+                runStep(definition, step, options, captured)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 StepOutcome.Failed(
                     errorType = "step_failed",
                     message = "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
-                    committed = step.action.commits,
+                    committed = committedOf(step),
                 )
             }
             val stepMs = nowMs() - stepStarted
@@ -213,11 +235,20 @@ class WorkflowRunner(
                     outcome.errorType, outcome.message,
                     committed = outcome.committed,
                     screen = outcome.screen,
+                    outputs = captured,
                 )
             }
         }
-        return success(definition, options, records, nowMs() - startedAt)
+        return success(definition, options, records, nowMs() - startedAt, outputs = captured)
     }
+
+    /** Whether a failure after this step counts as possibly committed. A call follows its registry entry. */
+    private fun committedOf(step: WorkflowStep): Boolean =
+        if (step.action == WorkflowAction.CALL && step.callTool != null) {
+            callRegistry.commits(step.callTool)
+        } else {
+            step.action.commits
+        }
 
     // ---- one step ----
 
@@ -236,7 +267,9 @@ class WorkflowRunner(
         definition: WorkflowDefinition,
         step: WorkflowStep,
         options: Options,
+        captured: MutableMap<String, JsonElement>,
     ): StepOutcome {
+        if (step.action == WorkflowAction.CALL) return runCall(step, captured)
         // A scroll that names nothing means "the list on this screen", so the
         // scrollable node is resolved like any other target rather than
         // guessed at with a swipe across assumed coordinates.
@@ -275,17 +308,135 @@ class WorkflowRunner(
         }
 
         val action = try {
-            act(definition, step, resolved)
+            act(definition, step, resolved, captured)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (missing: WorkflowOutputException) {
+            // An unresolvable reference fails before dispatch: nothing ran.
+            return StepOutcome.Failed(
+                missing.errorType,
+                "Step \"${step.id}\": ${missing.message}",
+                committed = false,
+            )
+        } catch (error: Exception) {
+            return StepOutcome.Failed(
+                "step_failed",
+                "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
+                committed = committedOf(step),
+            )
+        }
+        return afterAction(step, action, resolved)
+    }
+
+    /**
+     * Invoke one registered device tool and optionally capture its result for
+     * later steps.
+     *
+     * The registry is consulted before substitution and dispatch, so an
+     * unknown name fails with nothing done. Commit reporting follows the
+     * resolved arguments, so a read-only operation of a mixed tool is not
+     * reported as possibly committed. A result larger than the capture
+     * cap fails instead of being stored: silently truncating JSON would hand
+     * later steps data that parses into something else.
+     */
+    private suspend fun runCall(
+        step: WorkflowStep,
+        captured: MutableMap<String, JsonElement>,
+    ): StepOutcome {
+        val name = step.callTool ?: return StepOutcome.Failed(
+            "step_failed",
+            "Step \"${step.id}\" names no tool to call.",
+            committed = false,
+        )
+        if (name in WorkflowCallRegistry.BLOCKED_CALL_TOOLS) {
+            return StepOutcome.Failed(
+                "tool_not_allowed",
+                "Step \"${step.id}\": \"$name\" cannot run inside a workflow.",
+                committed = false,
+            )
+        }
+        val metadata = callRegistry.resolve(name) ?: return StepOutcome.Failed(
+            "unknown_tool",
+            "Step \"${step.id}\": \"$name\" is not a workflow-callable tool. " +
+                if (callRegistry.names.isEmpty()) "No tool is registered for workflow calls."
+                else "Registered tools: " + callRegistry.names.sorted().joinToString(", ") + ".",
+            committed = false,
+        )
+        val args = try {
+            WorkflowOutputRefs.resolve(step.arguments, captured) as? JsonObject ?: step.arguments
+        } catch (missing: WorkflowOutputException) {
+            return StepOutcome.Failed(
+                missing.errorType,
+                "Step \"${step.id}\": ${missing.message}",
+                committed = false,
+            )
+        }
+        // Classified from the exact resolved arguments: a read-only operation
+        // of a mixed tool reports nothing committed, while a missing or
+        // unknown operation stays conservative.
+        val mayCommit = metadata.mayCommit(args)
+        if (isRevoked()) {
+            return StepOutcome.Failed(
+                "stopped",
+                "Run stopped before step \"${step.id}\". It did not run.",
+                committed = false,
+            )
+        }
+        val result = try {
+            invokeTool(name, args)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             return StepOutcome.Failed(
                 "step_failed",
                 "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
-                committed = step.action.commits,
+                committed = mayCommit,
             )
         }
-        return afterAction(step, action, resolved)
+        if (!result.success) {
+            return afterAction(step, result, resolved = null, committed = mayCommit)
+        }
+        var note: String? = null
+        step.output?.let { binding ->
+            if (binding !in captured && captured.size >= WorkflowCallRegistry.MAX_OUTPUT_BINDINGS) {
+                return StepOutcome.Failed(
+                    "too_many_outputs",
+                    "Step \"${step.id}\": the run already holds ${captured.size} captured outputs; " +
+                        "the limit is ${WorkflowCallRegistry.MAX_OUTPUT_BINDINGS}.",
+                    committed = mayCommit,
+                )
+            }
+            // Parsed before any size check, so the total below measures the
+            // value as it would be stored and re-serialized, not the raw text.
+            val value = runCatching { Json.parseToJsonElement(result.text) }
+                .getOrDefault(JsonPrimitive(result.text))
+            if (value.toString().length > WorkflowCallRegistry.MAX_CAPTURED_OUTPUT_CHARS) {
+                return StepOutcome.Failed(
+                    "output_too_large",
+                    "Step \"${step.id}\": the result is ${value.toString().length} characters, over the " +
+                        "${WorkflowCallRegistry.MAX_CAPTURED_OUTPUT_CHARS} limit, so it was not captured. " +
+                        "Narrow the call instead.",
+                    committed = mayCommit,
+                )
+            }
+            if (JsonObject(captured + (binding to value)).toString().length >
+                WorkflowCallRegistry.MAX_TOTAL_OUTPUT_CHARS
+            ) {
+                return StepOutcome.Failed(
+                    "output_too_large",
+                    "Step \"${step.id}\": the outputs together pass the " +
+                        "${WorkflowCallRegistry.MAX_TOTAL_OUTPUT_CHARS} character limit, so " +
+                        "\"$binding\" was not captured. Resume from the next step without it, " +
+                        "or narrow the calls.",
+                    committed = mayCommit,
+                )
+            }
+            captured[binding] = value
+            note = "captured output \"$binding\""
+        }
+        val checked = afterAction(step, result, resolved = null, committed = mayCommit)
+        if (checked is StepOutcome.Done && note != null && checked.note == null) return checked.copy(note = note)
+        return checked
     }
 
     /** Settle, then hold the step to its own condition. Shared by every action path. */
@@ -293,6 +444,7 @@ class WorkflowRunner(
         step: WorkflowStep,
         action: ToolResult,
         resolved: Resolution.Found?,
+        committed: Boolean = step.action.commits,
     ): StepOutcome {
         if (!action.success) {
             return StepOutcome.Failed(
@@ -301,7 +453,7 @@ class WorkflowRunner(
                 // Dispatched and refused. The tools report refusal without
                 // acting, but a tap that landed somewhere useless reports the
                 // same way, so a committing step is still flagged.
-                committed = step.action.commits,
+                committed = committed,
             )
         }
 
@@ -317,7 +469,7 @@ class WorkflowRunner(
                 return StepOutcome.Failed(
                     "stopped",
                     "Run stopped while checking step \"${step.id}\". The step itself had already run.",
-                    committed = step.action.commits,
+                    committed = committed,
                 )
             }
             val screen = readScreen()
@@ -338,7 +490,7 @@ class WorkflowRunner(
                 "did not become true within ${verification.timeoutMs}ms: $complaint. " +
                 "The action reported: ${action.text.take(MAX_STEP_TEXT)}" +
                 (resolved?.let { " (target ${it.nodeId} in ${it.observationId})" } ?: ""),
-            committed = step.action.commits,
+            committed = committed,
             screen = lastScreen,
         )
     }
@@ -348,6 +500,7 @@ class WorkflowRunner(
         definition: WorkflowDefinition,
         step: WorkflowStep,
         resolved: Resolution.Found?,
+        captured: Map<String, JsonElement>,
     ): ToolResult = when (step.action) {
         WorkflowAction.OPEN_APP -> invokeTool(
             "open_app",
@@ -359,7 +512,12 @@ class WorkflowRunner(
 
         // Through the tool, not around it: IntentPolicy and its approval card
         // judge a workflow's intent exactly as they judge the model's.
-        WorkflowAction.OPEN_INTENT -> invokeTool("open_intent", step.arguments)
+        // Captured outputs resolve here too, so a call's result can address
+        // the intent that follows it.
+        WorkflowAction.OPEN_INTENT -> invokeTool(
+            "open_intent",
+            WorkflowOutputRefs.resolve(step.arguments, captured) as? JsonObject ?: step.arguments,
+        )
 
         WorkflowAction.TAP -> {
             val node = requireNotNull(resolved) { "tap needs a target" }
@@ -368,7 +526,10 @@ class WorkflowRunner(
         }
 
         WorkflowAction.TYPE_TEXT -> {
-            val text = requireNotNull(step.text) { "type_text needs text" }
+            val template = requireNotNull(step.text) { "type_text needs text" }
+            // A captured output may supply what is typed, e.g. a code an
+            // earlier call read. A missing reference throws before dispatch.
+            val text = WorkflowOutputRefs.resolveText(template, captured)
             if (resolved == null) {
                 invokeTool("type_text", buildJsonObject { put("text", text); if (step.submit) put("submit", true) })
             } else {
@@ -427,6 +588,10 @@ class WorkflowRunner(
                 success = screen.ok,
             )
         }
+
+        // Calls run through runCall, never through act: the registry check,
+        // the output capture and the per-tool committed flag live there.
+        WorkflowAction.CALL -> error("call steps run through runCall")
     }
 
     /**
@@ -950,6 +1115,13 @@ class WorkflowRunner(
         WorkflowAction.KEY -> "press ${step.arguments.str("keycode") ?: "a key"}"
         WorkflowAction.WAIT -> "wait for the screen to settle"
         WorkflowAction.OBSERVE -> "read the screen"
+        WorkflowAction.CALL -> buildString {
+            append("call ${step.callTool ?: "a tool"}")
+            // The arguments are what the call will do: an approval card or a
+            // failure must show them, not just the tool name.
+            if (step.arguments.isNotEmpty()) append(" ${step.arguments.toString().take(MAX_SUMMARY_TEXT)}")
+            step.output?.let { append(" as $it") }
+        }
     }
 
     private fun resolveStart(definition: WorkflowDefinition, startAt: String?): Int? {
@@ -964,6 +1136,7 @@ class WorkflowRunner(
         options: Options,
         records: List<StepRecord>,
         elapsedMs: Long,
+        outputs: Map<String, JsonElement> = emptyMap(),
     ): ToolResult = ToolResult(
         buildJsonObject {
             put("ok", true)
@@ -974,6 +1147,7 @@ class WorkflowRunner(
             put("ranSteps", records.count { it.status == "done" })
             put("skippedSteps", records.count { it.status == "skipped" })
             put("elapsedMs", elapsedMs)
+            if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
             put(
                 "note",
                 "Every step ran and every condition that was declared held. Nothing here needs to be repeated.",
@@ -991,6 +1165,7 @@ class WorkflowRunner(
         message: String,
         committed: Boolean = false,
         screen: Screen? = null,
+        outputs: Map<String, JsonElement> = emptyMap(),
     ): ToolResult {
         val shot = if (options.screenshotOnFailure) {
             runCatching { invokeTool("screenshot", JsonObject(emptyMap())) }.getOrNull()?.takeIf { it.success }
@@ -1016,6 +1191,9 @@ class WorkflowRunner(
                 // rather than left to be inferred from the error type.
                 put("stepMayAlreadyHaveRun", committed)
                 screen?.let { put("screen", it.summary()) }
+                // What earlier calls captured. A resumed run receives these
+                // instead of re-running the committed prefix that made them.
+                if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
                 step?.let {
                     put(
                         "resume",
@@ -1028,6 +1206,7 @@ class WorkflowRunner(
                                     put("mode", "resume")
                                     put("startAt", it.id)
                                     if (options.params.isNotEmpty()) put("params", options.params)
+                                    if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
                                 },
                             )
                         },
