@@ -7,6 +7,20 @@ not production-ready.
 
 ### Verified
 
+- Standing rules (`automation_rule`), the `:core` half only — on 2026-09-15:
+  `:core:test` passes with 81 new tests across `AutomationRuleTest` (20),
+  `AutomationEvaluatorTest` (21), `AutomationLibraryTest` (14),
+  `AutomationToolGatewayTest` (19) and `AutomationJournalTest` (7). What the
+  tests actually establish: the when/if/then format round-trips through its own
+  parser; a placeholder the trigger cannot provide is refused where it is
+  written rather than reaching the model as literal braces; only the fields an
+  action interpolates are exported, so matching on a message body does not send
+  that body; a `time_between` window that crosses midnight is not an empty
+  window; an alarm at the wrong minute does not fire a scheduled rule; the
+  cooldown, the daily limit and the attention gate each hold and each say which
+  one held; and evaluating records nothing, so a dry run cannot consume the
+  quota it reports on.
+
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
   (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`
@@ -289,6 +303,17 @@ not production-ready.
   was re-verified on the phone.
 
 ### Not proven yet
+
+- Everything about standing rules outside `:core`. Nothing fires a rule yet:
+  there is no alarm, no geofence and no notification listener, and
+  `AutomationToolGateway` is **not wired into the composite**, so the model
+  cannot reach `automation_rule` on a phone. That is deliberate — an agent that
+  could write rules nothing executes would tell the user their rule is set up
+  when it is not — but it means no rule has ever fired on hardware, and the
+  unit tests prove decisions, not wake-ups. The Android half (exact alarms,
+  `ACCESS_BACKGROUND_LOCATION` geofences, `NotificationListenerService`, the
+  runner that turns an `Outcome.Fired` into a workflow run or a queued turn,
+  and the settings screen that lists rules and revokes them) is open work.
 
 - A complete signed-in Codex chat and device-control flow on a supported phone.
 - Reliable same-phone Wireless ADB pairing, reconnect, and app-UID self-ADB.

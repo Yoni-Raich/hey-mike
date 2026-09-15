@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Mike can hold standing rules: when something happens, and the conditions are
+  true, do this. A rule is woken by the clock ("every day at 19:00", "weekdays
+  at 07:30"), by arriving at or leaving a place, by a notification from one
+  named app, by a device signal such as charging, or by name. It can then run a
+  saved workflow, open an app screen, tell you something, work out what to do
+  in a thinking turn, ask you a yes/no question, or start a voice conversation.
+- Every rule says who has to be awake for it, and Mike works that out from what
+  the rule does rather than taking its word for it. A rule that only runs a
+  workflow runs at a locked phone; one that wants to talk to you waits until
+  you can answer instead of talking to a pocket.
+- A rule sends on only the parts of an event it actually writes into what it
+  does. A rule that reads a message to decide, but whose reply only uses the
+  sender's name, never sends the message itself anywhere — and Mike says which
+  fields those are when it saves the rule. A notification rule has to name the
+  app it listens to; there is no "every notification".
+- A new rule can be dry-run against any moment — "pretend Dad messaged at
+  21:40" — and a rule that would not fire says which of its own clauses stopped
+  it, so "nothing happened at 19:00" has an answer. A dry run changes nothing.
+- A rule cannot run away: it has a cooldown and a daily limit, and an alarm
+  that fires at the wrong minute does not fire the rule.
+
 - Mike can run a whole saved sequence in one go. `workflow_runner` takes the
   name of a workflow and does every step itself — open the app, find the
   search box, type, open the result, flip the switch — with no thinking turn

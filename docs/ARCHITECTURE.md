@@ -867,3 +867,89 @@ and opens the system picker.
   draws it as a connecting call until the real call is active. The sphere then
   flies in from the right edge, where the power button usually is, behind a glow
   and two rings. End voice during setup cancels the press.
+
+## Standing rules: when this happens, and that is true, do this
+
+A workflow answers "how do I do this on this phone". A rule answers "when
+should it happen, and who has to be awake for it". They are separate files
+because a rule that inlined its steps would be a workflow with a clock bolted
+on, and every later improvement to `WorkflowRunner` would stop at the
+automation boundary. A rule *names* a workflow; it never contains one.
+
+The format is `when` / `if` / `then`, one JSON file per rule under
+`<homeDirectory>/automations/<id>.json`, beside the workflow definitions and
+surviving `WorkspaceSeeder` for the same reason `KnowledgeStore` does.
+
+```json
+{"id": "dad-after-seven",
+ "when": {"type": "notification", "package": "com.whatsapp", "from": "Dad"},
+ "if":   [{"type": "time_between", "after": "19:00", "before": "07:00"}],
+ "then": [{"type": "agent_turn", "prompt": "Tell {{notification.title}} I can't talk."}]}
+```
+
+`AutomationRule` is the format, `AutomationLibrary` is where rules live,
+`AutomationEvaluator` decides, `AutomationJournal` remembers what already fired
+and `AutomationToolGateway` exposes all of it to the model as one tool,
+`automation_rule`, with modes create/list/describe/enable/disable/delete/test.
+
+Six decisions carry the design.
+
+**A rule says who has to be awake, and does not get to lie about it.**
+`AutomationAttention` is `none`, `model` or `user`, and it is *derived* from
+the actions rather than declared: `run_workflow`, `open_intent` and `notify`
+need nobody, `agent_turn` spends a thinking turn, and `voice_call` and `ask`
+need the person. The host reads this before it fires anything, so "post at
+19:00" never wakes a voice call, and a rule that wants to talk is held while
+the phone is locked instead of talking to a pocket. Held, not dropped — the
+trigger really did happen, and `Skip.retryable` separates "not now" from
+"not this".
+
+**What a rule may read is what it says it reads.** `AgentAccessibilityService`
+deliberately reads none of the events it receives, and a notification trigger
+cannot keep that promise whole — so it is narrowed instead of abandoned. The
+whole event is matched *here, on the phone*. What leaves is only the fields the
+rule's own actions interpolate (`AutomationRule.exportedFields`). A rule that
+matches on the body of a message and writes only `{{notification.title}}` never
+sends that body anywhere, and the `create` reply lists the exported fields back
+so the model can tell the user exactly what will be transmitted. A
+`notification` trigger must also name its package: no package would mean every
+notification on the phone, which is never what was meant and is the widest
+possible read of a person.
+
+**The clock is verified, not trusted.** Android coalesces, delays and batches
+alarms. `AutomationSchedule.isDue` is re-checked against the event's own
+timestamp, so a process woken early for something else cannot post to Facebook
+at 18:52. `nextRunAt` is what the host sets the alarm for, seconds dropped so a
+rule rescheduled from its own firing does not drift.
+
+**Every rule is reported, fired or not.** A rule that silently does nothing is
+this feature's characteristic failure — the person wrote it, it looks right,
+and nothing happens at 19:00. So `evaluate` returns an outcome per rule, and a
+skip names the clause: `condition_failed` with "the rule needs the time to be
+between 19:00 and 07:00", not a debug log. The guard is checked *after* the
+conditions so the explanation names the real reason: a cooldown passes on its
+own, an hour does not.
+
+**Deciding and doing are separate, and deciding writes nothing.**
+`AutomationEvaluator` touches no file and records no fire, which is what makes
+`mode:"test"` a real dry run that can be called as often as the model likes
+without consuming a rule's daily quota — and what makes the live path and the
+dry run give the same answer. The host executes an `Outcome.Fired` and only
+then calls `AutomationHistory.record`, so an action it could not serve does not
+leave the journal believing it ran. `AutomationGuard` (a cooldown and a daily
+ceiling, both clamped on parse) exists because the triggers that matter most
+are the noisy ones: one busy group chat is otherwise a hundred unattended
+turns.
+
+**What a rule may do is a closed set**, for the same reason `WorkflowEngine`'s
+step set is closed: no shell, no arbitrary tool, no inline steps, at most four
+actions. A rule that could run anything would be a second agent loop with none
+of the coordinator's approval routing or revoke semantics.
+
+Nothing in `:core` fires a rule. The clock, the geofence and the notification
+listener are Android, and `AutomationToolGateway` is not wired into the
+composite yet — an agent that could write rules nothing executes would tell the
+user their rule is set up when it is not. The gateway carries
+`supportedTriggers` for the same reason: once wired, a rule whose trigger this
+phone cannot serve is saved and reported **dormant**, so the point of failure
+is when it is written rather than the first night it quietly does not fire.
