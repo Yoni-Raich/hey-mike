@@ -24,7 +24,13 @@ import android.app.Application
 import android.content.Intent
 import dev.androidagent.a11y.A11yDeviceTools
 import dev.androidagent.adb.AndroidAdbTransport
+import dev.androidagent.automations.AndroidAutomationActions
+import dev.androidagent.automations.AutomationHost
+import dev.androidagent.automations.AutomationHostOwner
 import dev.androidagent.core.AgentCoordinator
+import dev.androidagent.core.AutomationJournal
+import dev.androidagent.core.AutomationLibrary
+import dev.androidagent.core.AutomationToolGateway
 import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
@@ -44,9 +50,17 @@ import dev.androidagent.voice.AndroidRealtimeVoiceController
 import kotlinx.coroutines.*
 import java.io.File
 
-class AgentApplication : Application() {
+class AgentApplication : Application(), AutomationHostOwner {
     lateinit var graph: AgentGraph
         private set
+
+    /**
+     * How an alarm receiver and the notification listener reach the host: the
+     * system constructs those classes, so there is nowhere to inject one.
+     */
+    override val automationHost: AutomationHost?
+        get() = if (::graph.isInitialized) graph.automationHost else null
+
     override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
 }
 
@@ -124,10 +138,39 @@ class AgentGraph(private val app: Application) {
             }
         },
     )
+    /** Standing rules, beside the workflows they name. */
+    val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
+    /** Read by the panel to say when each rule last ran; written only by the host. */
+    val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
+    private val automationActions = AndroidAutomationActions(
+        context = app,
+        coordinator = { runCoordinator },
+        tools = { tools },
+        queue = { queue },
+        sessions = sessions,
+        openAppIntent = {
+            Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        },
+        voiceIntent = { dev.androidagent.app.assist.AssistLaunch.voiceIntent(app) },
+    )
+    lateinit var automationHost: AutomationHost
+        private set
+    // Saved and reported dormant when this phone cannot serve a rule's trigger,
+    // so the point of failure is when it is written rather than the first night
+    // it quietly does not fire.
+    val automationTools = AutomationToolGateway(
+        library = automations,
+        history = automationJournal,
+        supportedTriggers = { if (::automationHost.isInitialized) automationHost.supportedTriggers() else emptySet() },
+        // Naming a rule supplies its trigger, so a scheduled rule can be proved
+        // without waiting for its hour. Everything else about it still applies.
+        fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
+    )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator
@@ -152,7 +195,39 @@ class AgentGraph(private val app: Application) {
                 }
             },
         )
-        queue = SessionRunQueue(scope, coordinator, sessions)
+        queue = SessionRunQueue(
+            scope,
+            coordinator,
+            sessions,
+            // A turn a rule queued has a moment; a turn a person sent does not
+            // expire. Dropping a stale one is reported, never silent.
+            onExpired = { turn ->
+                scope.launch {
+                    runCatching {
+                        sessions.append(
+                            dev.androidagent.core.ChatMessage(
+                                id = java.util.UUID.randomUUID().toString(),
+                                sessionId = turn.sessionId,
+                                role = "assistant",
+                                text = "This did not run: the phone was busy until after the moment it was for.",
+                                createdAt = System.currentTimeMillis(),
+                            ),
+                        )
+                    }
+                }
+            },
+        )
+        automationHost = AutomationHost(
+            context = app,
+            library = automations,
+            history = automationJournal,
+            actions = automationActions,
+            scope = scope,
+            agentAvailable = { runCoordinator.available.value },
+        )
+        // Alarms do not survive a restart, and the rules were only read just
+        // now, so the first arming happens here rather than at the first event.
+        runCatching { automationHost.start() }
         runCatching {
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app)
         }

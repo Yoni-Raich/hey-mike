@@ -304,6 +304,9 @@ fun AndroidAgentScreen(
         if (state.isSettingsOpen) {
             AgentSettingsSheet(state = state, actions = actions)
         }
+        if (state.isAutomationsOpen) {
+            AutomationsSheet(state = state, actions = actions)
+        }
         if (state.isWorkspaceOpen) {
             WorkspaceFilesSheet(state = state, actions = actions)
         }
@@ -350,8 +353,24 @@ private fun AgentDrawer(
             Text("New chat")
         }
 
+        // Above the chats, because the question this panel is opened with is
+        // often "is the standing stuff still working", and that has to be
+        // answered before anyone reads a list.
+        Spacer(Modifier.height(20.dp))
+        AutomationStrip(
+            overview = state.automations.overview,
+            onOpen = {
+                close()
+                actions.onOpenAutomations()
+            },
+            onOpenRule = {
+                close()
+                actions.onOpenAutomations()
+            },
+        )
+
         Spacer(Modifier.height(22.dp))
-        Text("Sessions", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Chats", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
 
         when {

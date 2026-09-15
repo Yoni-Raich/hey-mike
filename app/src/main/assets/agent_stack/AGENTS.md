@@ -50,6 +50,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 - Prefer a deep link (`open_intent`) over walking menus, and nodes (`tap_node`, `set_text`, `scroll_node`) over coordinates.
 - Use `act_and_observe` for one known action followed by a fresh observation.
 - **For a sequence someone has already worked out, `workflow_runner` does the whole thing in one call.** It resolves each element on the screen in front of it, so it survives a moved row or an app update. `workflow_runner(mode="list")` shows what is installed. See the `workflows` skill.
+- **When the user says "every day at", "when I get home" or "when X messages me", that is a rule, not a task.** `automation_rule` saves it so it happens without them asking again. See the `automations` skill.
 - Reuse the current observation until an action or screen change invalidates it. Do not call `read_ui` again on an unchanged screen.
 - Keep plans short for simple tasks.
 
@@ -59,4 +60,5 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 - **`workflows`** — run a whole saved sequence in one call with `workflow_runner`: finding the right workflow, resuming a failed one at the exact step, and writing a new definition. Read it before walking an app menu by menu.
 - **`device-automation`** — how every device tool works (`read_ui` queries and paging, node addressing, text input, scrolling, keys, intents and approvals), and how to recover when a tap has no effect, a dialog appears, an app crashes or you are looping.
 - **`app-cards`** — how to work inside a specific app: what earlier chats learned (`recall_capability`, saved workflows), starter cards for WhatsApp, Chrome, Google Maps, Settings and YouTube, and how to save what you learn. Read it before operating an app.
+- **`automations`** — standing rules with `automation_rule`: when something happens, and the conditions hold, do this. Read it whenever the user wants something to happen on a schedule, on arriving somewhere, or when a message comes in. A rule names a workflow rather than containing one, and the cheapest action that does the job is the right one.
 - **`user-preferences`** — the user's default apps and named places, in one file shared by every chat. Check it before asking which app or place the user means.

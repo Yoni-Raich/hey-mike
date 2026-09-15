@@ -23,6 +23,7 @@ package dev.androidagent.app.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -166,7 +167,13 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
                     .clickable(onClick = onOpenDrawer)
                     .heightIn(min = 48.dp)
                     .padding(start = 4.dp, end = 8.dp)
-                    .semantics { contentDescription = "Switch chat. Current chat: $title" },
+                    .semantics {
+                        contentDescription = if (state.automations.overview.needsAttention) {
+                            "Switch chat. Current chat: $title. A standing rule cannot run."
+                        } else {
+                            "Switch chat. Current chat: $title"
+                        }
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -177,7 +184,34 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.size(20.dp), tint = StatusMuted)
+                // The chat name is the only way into the panel, so it carries
+                // the panel's one urgent fact: a rule that is switched on and
+                // cannot run is otherwise invisible until the day someone
+                // notices it never did anything. No dot when nothing is wrong —
+                // a badge that is always lit stops being read.
+                val ruleAlert = state.automations.overview.needsAttention
+                Box {
+                    Icon(
+                        Icons.Outlined.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = if (ruleAlert) BlockedAmber else StatusMuted,
+                    )
+                    if (ruleAlert) {
+                        // A ring in the bar's own background, so the dot never
+                        // merges into the glyph at this size.
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 2.dp, y = (-1).dp)
+                                .size(9.dp)
+                                .background(MaterialTheme.colorScheme.background, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(Modifier.size(6.dp).background(BlockedAmber, CircleShape))
+                        }
+                    }
+                }
             }
         },
         actions = {

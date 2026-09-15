@@ -867,3 +867,234 @@ and opens the system picker.
   draws it as a connecting call until the real call is active. The sphere then
   flies in from the right edge, where the power button usually is, behind a glow
   and two rings. End voice during setup cancels the press.
+
+## Standing rules: when this happens, and that is true, do this
+
+A workflow answers "how do I do this on this phone". A rule answers "when
+should it happen, and who has to be awake for it". They are separate files
+because a rule that inlined its steps would be a workflow with a clock bolted
+on, and every later improvement to `WorkflowRunner` would stop at the
+automation boundary. A rule *names* a workflow; it never contains one.
+
+The format is `when` / `if` / `then`, one JSON file per rule under
+`<homeDirectory>/automations/<id>.json`, beside the workflow definitions and
+surviving `WorkspaceSeeder` for the same reason `KnowledgeStore` does.
+
+```json
+{"id": "dad-after-seven",
+ "when": {"type": "notification", "package": "com.whatsapp", "from": "Dad"},
+ "if":   [{"type": "time_between", "after": "19:00", "before": "07:00"}],
+ "then": [{"type": "agent_turn", "prompt": "Tell {{notification.title}} I can't talk."}]}
+```
+
+`AutomationRule` is the format, `AutomationLibrary` is where rules live,
+`AutomationEvaluator` decides, `AutomationJournal` remembers what already fired
+and `AutomationToolGateway` exposes all of it to the model as one tool,
+`automation_rule`, with modes create/list/describe/enable/disable/delete/test.
+
+Six decisions carry the design.
+
+**A rule says who has to be awake, and does not get to lie about it.**
+`AutomationAttention` is `none`, `model` or `user`, and it is *derived* from
+the actions rather than declared: `run_workflow`, `open_intent` and `notify`
+need nobody, `agent_turn` spends a thinking turn, and `voice_call` and `ask`
+need the person. The host reads this before it fires anything, so "post at
+19:00" never wakes a voice call, and a rule that wants to talk is held while
+the phone is locked instead of talking to a pocket. Held, not dropped — the
+trigger really did happen, and `Skip.retryable` separates "not now" from
+"not this".
+
+**What a rule may read is what it says it reads.** `AgentAccessibilityService`
+deliberately reads none of the events it receives, and a notification trigger
+cannot keep that promise whole — so it is narrowed instead of abandoned. The
+whole event is matched *here, on the phone*. What leaves is only the fields the
+rule's own actions interpolate (`AutomationRule.exportedFields`). A rule that
+matches on the body of a message and writes only `{{notification.title}}` never
+sends that body anywhere, and the `create` reply lists the exported fields back
+so the model can tell the user exactly what will be transmitted. A
+`notification` trigger must also name its package: no package would mean every
+notification on the phone, which is never what was meant and is the widest
+possible read of a person.
+
+**The clock is verified, not trusted.** Android coalesces, delays and batches
+alarms. `AutomationSchedule.isDue` is re-checked against the event's own
+timestamp, so a process woken early for something else cannot post to Facebook
+at 18:52. `nextRunAt` is what the host sets the alarm for, seconds dropped so a
+rule rescheduled from its own firing does not drift.
+
+**Every rule is reported, fired or not.** A rule that silently does nothing is
+this feature's characteristic failure — the person wrote it, it looks right,
+and nothing happens at 19:00. So `evaluate` returns an outcome per rule, and a
+skip names the clause: `condition_failed` with "the rule needs the time to be
+between 19:00 and 07:00", not a debug log. The guard is checked *after* the
+conditions so the explanation names the real reason: a cooldown passes on its
+own, an hour does not.
+
+**Deciding and doing are separate, and deciding writes nothing.**
+`AutomationEvaluator` touches no file and records no fire, which is what makes
+`mode:"test"` a real dry run that can be called as often as the model likes
+without consuming a rule's daily quota — and what makes the live path and the
+dry run give the same answer. `AutomationRunner` owns the doing, and it records
+the fire **before the first action, not after**: the same rule `SessionRunQueue`
+already follows when it dequeues a turn before starting it. A crash between
+acting and recording would let the rule post the same thing again on the next
+trigger, and for a standing rule a double post is worse than a missed one. The
+cooldown exists to stop runaway repeats, so it is armed by the attempt rather
+than by its success. `AutomationGuard` (a cooldown, a daily ceiling and a
+deadline, all clamped on parse) exists because the triggers that matter most are
+the noisy ones: one busy group chat is otherwise a hundred unattended turns.
+
+**What a rule may do is a closed set**, for the same reason `WorkflowEngine`'s
+step set is closed: no shell, no arbitrary tool, no inline steps, at most four
+actions. A rule that could run anything would be a second agent loop with none
+of the coordinator's approval routing or revoke semantics.
+
+Nothing in `:core` fires a rule; the `:automations` module below does.
+
+## Firing a rule: the `:automations` module
+
+The Android half is deliberately thin, because everything worth getting right
+is on the other side of `AutomationEvaluator` and `AutomationRunner`, where it
+can be tested. `AutomationHost` builds the context, hands events to `:core` and
+serialises the runs; the rest is `AutomationAlarms`,
+`AutomationNotificationListener` and a runtime-registered receiver for device
+state. System-created components reach the host through `AutomationHostOwner`,
+implemented by `AgentApplication` — the same shape as `A11yServiceHandle`, and
+for the same reason: the system constructs them, so there is nowhere to inject.
+
+**One alarm, not one per rule.** `AutomationWakeups.nextRunAt` returns the
+earliest moment any enabled scheduled rule is due, and that is the only alarm
+held. Android caps how many exact alarms an app may keep and charges a wake-up
+for each; the landing alarm re-checks every rule anyway. It is a wake-up, not a
+decision, which is why an alarm the OS coalesced, delivered early, or held over
+from a deleted rule fires nothing. It is re-armed after every firing and at
+`BOOT_COMPLETED`, because an alarm does not survive a restart and a feature
+that silently stops at the first reboot is one nobody trusts again.
+
+Exactness is asked for, never assumed: `canScheduleExactAlarms` is false until
+the user grants it on Android 12+, and the fallback is an inexact alarm Doze can
+land an hour late. `AutomationHost.canFireOnTime()` reports which, because
+"19:00" arriving at 20:10 is a different action rather than a slow one.
+
+**The notification listener enforces the privacy contract in the order its
+checks are written.** Our own notifications are dropped first, so a rule's
+`notify` can never trigger the rule that posted it; ongoing and group-summary
+notifications are dropped as status rather than events; then **the package is
+checked before the title or body is touched**, against
+`AutomationWakeups.watchedPackages` — the union over enabled notification
+rules. An app no rule names is never read, and with no notification rule at all
+the service reads nothing. Only then are title and text extracted, and they go
+no further than the evaluator unless the rule's own actions interpolate them.
+Nothing is stored: there is no notification log and no tool that can ask for one.
+
+**A rule takes the device the way a turn does.** `run_workflow` and
+`open_intent` go through `AgentCoordinator.runAutomation`, which claims the same
+exclusive ownership a person's run claims, shows the same control card and
+answers the same Stop — Stop sees an active state, revokes the tools (which is
+what aborts a workflow between steps) and owns the teardown, so `runAutomation`
+re-checks the epoch before releasing anything. It waits a bounded 90 seconds for
+a busy phone and then gives up, because the common collision is not a collision
+at all: it is the agent firing a rule from inside a turn that already owns the
+device, where refusing would make "run my evening rule now" always answer "the
+phone is busy" with the busy run being the one that asked. Anything longer is
+the staleness `validUntil` covers. The intent goes out through the same
+composite gateway the model calls, so a rule is not a way around the intent
+policy or the approval card.
+
+**A queued turn expires.** `agent_turn` lands in the rule's own chat — not the
+one in front of you, so a rule firing at 3am does not appear in the middle of
+your conversation, and a chat per rule is the readable record of what it has
+been doing — carrying `validUntil` from `AutomationGuard.validForMs`.
+`SessionRunQueue` drops a stale turn before choosing the next one, so an expired
+turn at the head does not hold up the one behind it, and the drop is written
+into that chat rather than being silent.
+
+**Asking is a notification with two buttons, and no answer is a no.** A rule
+fires when the app is not in front, so `ask` puts a high-priority notification
+up and waits five minutes. A question nobody saw must not become a yes by
+default. `canAsk()` is false when notifications are blocked, and the runner then
+refuses the action outright — the same rule `WorkflowRunner` applies with
+`confirmation_unavailable`: a gate that disappears when unwired is not a gate.
+
+**Naming a rule is its trigger.** `mode:"run"` fires one now, through the same
+`Manual` event the `manual` trigger kind uses, and the evaluator treats a manual
+run that names *this* rule as satisfying its trigger whatever that trigger is.
+Without it a scheduled rule could only ever be proved by waiting until 19:00,
+which is not a feedback loop anyone checks a standing rule with — and the
+`manual` trigger kind itself was unreachable, since nothing called
+`AutomationHost.runNow`. Nothing else is waived: the conditions, the cooldown,
+the daily limit and the attention gate all apply, and the run counts against the
+quota. That is the whole difference from `mode:"test"`, which decides the same
+way and does nothing. A host that wired no firing path leaves `mode:"run"`
+refusing rather than silently doing nothing.
+
+`AutomationToolGateway` carries `supportedTriggers`, which this host answers
+with what it can actually serve: `schedule`, `device_state` and `manual`
+always, `notification` once the user has granted the listener by hand. **`place`
+is served by nothing yet**, so a geofence rule is saved and reported **dormant**
+rather than accepted as live. That is a dependency decision, not an oversight:
+`GeofencingClient` means adding Google Play Services to a project that
+deliberately ships outside Play, and the AOSP alternative
+(`LocationManager.addProximityAlert`) is unreliable enough that shipping it
+quietly would be worse than reporting the gap.
+
+Settings > Standing rules is where the feature says whether it actually works:
+how many rules are on, how many are **dormant**, when the next one is due, and
+the two permissions — notification access and exact alarms — with a button to
+each. Both are granted in system Settings and neither is observable, so the
+status is re-read on every resume beside the other permissions. A rule that
+looks on and cannot run is the failure the user would otherwise only notice by
+the thing not happening, so it is counted on the hub row rather than buried.
+
+## The side panel: two kinds of thing Mike holds
+
+A chat is something you did. A rule is something that keeps happening. The
+panel shows both, but not as equals: the rules sit **above** the chats as a
+strip, and the chats keep the rest of the panel.
+
+That ordering is the design. The question people open this panel with is often
+not "which chat was that" but "is the standing stuff still working", and a
+strip answers it before anyone reads a list. The cost is that a strip has room
+for almost nothing, which is what the two constraints below are for.
+
+**The strip may not grow.** At most `AutomationOverview.MAX_CHIPS` chips and
+exactly one sentence, however many rules exist. What overflows goes behind it,
+and the chips are sorted so that what needs you is what you see: blocked first,
+then running, then off.
+
+**The sentence is chosen, not listed.** `AutomationOverview` picks the most
+useful true thing in priority order — a rule that cannot run, then the next run
+that is due, then the honest nothing — and marks it as a warning or not. A
+strip that listed everything would fit nothing and help less.
+
+Both decisions live in `:core` (`AutomationOverview`, `AutomationSummaries`)
+rather than in a Composable, because they are the design and a Composable is
+not somewhere a test can reach. The same layer turns the rule format into
+sentences: the format is written for the model — ids, packages, 24-hour clocks,
+a closed vocabulary — and none of that belongs on a panel. `AutomationStrip`,
+`AutomationsSheet` and the top bar render strings and choose nothing.
+
+**Three states, not two.** `AutomationSummary.Status` is ON, OFF or **BLOCKED**
+— on, and this phone cannot serve its trigger. Blocked looks identical to
+working until the day nobody notices anything happened, so it gets its own
+colour (the amber the status orb already uses for a blocked backend), its own
+group in the list, and the reason spelled out in words.
+
+**The chat name carries the dot.** The panel is the only place a rule's state
+lives, so the way in has to carry the one urgent fact: `ChatTopBar` tints the
+chevron amber and adds a 6dp dot when any rule is blocked, and shows nothing
+when nothing is wrong. The dot is deliberately not folded into the status orb
+on the right: the orb answers "can Mike act right now" (backends, run phase,
+quota), the chat name answers "what is inside the panel". Different questions,
+different sides, different shapes.
+
+**What leaves the phone is stated, not implied.** A rule's own screen names the
+exported fields in the user's terms — "Only the sender's name", with the note
+that the message itself was read on the phone to decide and never sent. The
+format already knows this exactly (`AutomationRule.exportedFields`), so there
+is no reason to make anyone take it on trust.
+
+The list and one rule are two levels of one `ModalBottomSheet`, the way Settings
+already works, so back walks the rule and then the sheet rather than
+introducing a second navigation idea. Turning a rule off re-arms the alarm set,
+because the earliest due rule may have changed.
