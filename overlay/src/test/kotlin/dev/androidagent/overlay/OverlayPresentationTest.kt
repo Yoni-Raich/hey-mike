@@ -38,6 +38,14 @@ class OverlayPresentationTest {
         assertEquals("I'll message Dana that you're late.", tapping.commentary)
     }
 
+    @Test fun engineActivityLinesStayOnTheHeadlineAndKeepWhatTheAgentSaid() {
+        val said = "I'll message Dana that you're late."
+        assertEquals("Working in session files", overlayContent("Working · Working in session files", said).headline)
+        assertEquals(said, overlayContent("Working · Working in session files", said).commentary)
+        assertEquals(said, overlayContent("Working · Working", said).commentary)
+        assertEquals(said, overlayContent("Working · Updating session files", said).commentary)
+    }
+
     @Test fun aNewRunStartsWithNoCommentary() {
         assertNull(overlayContent("Starting", "Left over from the last run").commentary)
     }

@@ -7,6 +7,20 @@ not production-ready.
 
 ### Verified
 
+- The agent's own messages now reach the floating card, not only the chat.
+  `ControlOverlay.say` is a separate channel from the status label;
+  `AgentCoordinator` mirrors every assistant segment to it as it is stored,
+  and the card keeps the last line through the tool calls that follow. On
+  2026-09-15 on Linux/JDK 21: `:core:test`, `:overlay:test`,
+  `:app:assembleDevDebug`, `:app:lintDevDebug` (0 errors, 18 warnings) and
+  `:app:assembleDevDebugAndroidTest` all pass. That proves the mapping, the
+  coordinator wiring and that everything compiles — nothing more. Not tested:
+  any phone. The card itself, the new
+  `FloatingControlOverlayTest.theAgentsOwnWordsStayOnTheCardAcrossToolCalls`,
+  and how a long message reads in the four lines it now gets have not been run
+  on hardware; no device was available in this environment. The full gate
+  (`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug`)
+  was not run.
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
   (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`
