@@ -780,3 +780,56 @@ and opens the system picker.
   draws it as a connecting call until the real call is active. The sphere then
   flies in from the right edge, where the power button usually is, behind a glow
   and two rings. End voice during setup cancels the press.
+
+## Idle in a live voice conversation
+
+A conversation the user keeps open while driving is mostly waiting, and waiting
+is not free. Muting does not change that: the WebSocket path deliberately sends
+silence to preserve stream timing (`AndroidRealtimeVoiceController.capture`),
+and the WebRTC path keeps the peer connection up, so the only two things that
+change what is spent are detaching the microphone from the outgoing track and
+closing the session. `VoiceAlertness` names those as three rungs — `ACTIVE`,
+`PARKED` (session live, microphone detached; immediate to wake, cheaper but not
+free, so a short bridge rather than a resting place) and `DOZING` (realtime
+session closed, thread and conversation preserved).
+
+`IdlePolicy` decides the rung, and is pure JVM for the same reason as
+`KeepAwakePolicy` and `IntentPolicy`: the rules that decide when the agent
+stops listening are worth covering with fast unit tests rather than burying in
+the audio lifecycle. It takes the voice and run state, time since the last
+speech in either direction, mute, whether Mike is waiting on an answer, and
+audio focus, and it owns no clock — the caller supplies elapsed quiet, so every
+transition is reachable from a unit test.
+
+The decisions worth stating, because each one has a cost:
+
+- **A long run is not a reason to stay awake.** The five-minute timer and the
+  running workflow are exactly the case this exists for: the agent has nothing
+  to hear until they finish, and finishing is what wakes it. The price is that
+  steering a run by voice only reaches a conversation that is still `ACTIVE`,
+  so a run nobody has spoken to in minutes cannot be steered until the user
+  wakes Mike first.
+- **What does hold a conversation open is someone waiting on the user**: a
+  pending approval, which the user answers by saying yes, and a question Mike
+  has just asked.
+- **A muted microphone outranks those holds.** The user cannot answer an
+  approval through a microphone they silenced, so the session is kept and the
+  outgoing half is not.
+- **Losing audio focus dozes immediately**, ahead of every hold: during a phone
+  call the app does not have the microphone it would be paying for.
+- **Mike is never cut off mid-sentence.** `SPEAKING` floors at `PARKED`, which
+  only detaches the microphone, and a session still negotiating is never parked.
+
+`IdleThresholds` defaults (park at 45s, doze at 180s) are provisional. The two
+numbers that should set them — what a quiet minute of realtime costs, and what
+re-attaching to an existing thread costs in latency and in replayed thread
+history as input tokens — have not been measured on a phone. Until they are,
+whether `PARKED` earns its place at all is an assumption, and repeated
+doze/wake cycles across one drive could plausibly cost more than never dozing.
+`thread/tokenUsage/updated` is the measurement seam.
+
+Nothing consumes the policy yet: `KeepAwakePolicy` still reads `voice.active`,
+so a parked or dozing conversation currently still holds the screen awake and
+the microphone foreground-service type. Wiring those, `park()`/`unpark()` on the
+voice controller, event-driven wake, and an on-device wake word are separate
+steps.

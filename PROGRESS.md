@@ -259,6 +259,14 @@ not production-ready.
 
 ### Not proven yet
 
+- The cost figures the voice idle ladder is meant to be tuned against: what a
+  quiet minute of an open realtime session spends, and what re-attaching to an
+  existing thread costs in latency and in replayed thread history as input
+  tokens. `IdlePolicy` exists and is unit-tested (`./gradlew :core:test`, 16
+  tests in `IdlePolicyTest`, full `:core:test` green on 2026-09-15), but its
+  `IdleThresholds` defaults are guesses until both are measured on a phone
+  through `thread/tokenUsage/updated`. Nothing consumes the policy yet, so no
+  behaviour on a device has changed and none has been observed.
 - A complete signed-in Codex chat and device-control flow on a supported phone.
 - Reliable same-phone Wireless ADB pairing, reconnect, and app-UID self-ADB.
 - Reading the pairing code off the system dialog end to end. The parser has
