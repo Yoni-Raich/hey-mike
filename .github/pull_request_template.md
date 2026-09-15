@@ -12,3 +12,9 @@ or emulator run was done.
 ## Remaining gaps
 
 State any untested behavior or compatibility limits.
+
+## License
+
+- [ ] I have read the [CLA](../CLA.md) and I hereby sign it: <full name> <email>
+
+(First-time contributors only. Skip if you have already signed.)
