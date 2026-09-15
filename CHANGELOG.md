@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
+  **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
+  anyone who wants to ship it inside a closed-source product. Personal use,
+  study, research and contributions stay free; a proprietary fork now needs an
+  agreement. Releases made before this change keep the license they shipped
+  under. See `LICENSE`, `LICENSE-COMMERCIAL.md` and `NOTICE`.
+- Contributions are now accepted under a Contributor License Agreement
+  (`CLA.md`), signed once in your first pull request.
 - Mike can hold standing rules: when something happens, and the conditions are
   true, do this. A rule is woken by the clock ("every day at 19:00", "weekdays
   at 07:30"), by arriving at or leaving a place, by a notification from one
