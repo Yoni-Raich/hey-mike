@@ -132,6 +132,15 @@ class MainActivity : ComponentActivity() {
         onVoiceMuteToggle = model::toggleVoiceMute,
         onOpenSettings = { model.editUi { it.copy(isSettingsOpen = true) } },
         onCloseSettings = { model.editUi { it.copy(isSettingsOpen = false) } },
+        onOpenAutomations = {
+            // The strip is a snapshot from the last resume; re-read before
+            // showing the list, so a rule turned on elsewhere is already there.
+            model.refreshAutomations()
+            model.editUi { it.copy(isAutomationsOpen = true) }
+        },
+        onCloseAutomations = { model.editUi { it.copy(isAutomationsOpen = false) } },
+        onToggleRule = { id, enabled -> model.setRuleEnabled(id, enabled) },
+        onRunRule = { id -> ensureService(); model.runRule(id) },
         onPrepareRuntime = { ensureService(); model.prepare() },
         onLogin = { ensureService(); model.login() },
         onLogout = { model.logout() },

@@ -333,24 +333,57 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val host = graph.automationHost
         val rules = runCatching { graph.automations.all() }.getOrDefault(emptyList())
         val supported = runCatching { host.supportedTriggers() }.getOrDefault(emptySet())
-        val enabled = rules.filter { it.enabled }
-        val next = runCatching {
-            dev.androidagent.core.AutomationWakeups.nextRunAt(rules, java.time.ZonedDateTime.now())
-                ?.format(java.time.format.DateTimeFormatter.ofPattern("EEE HH:mm"))
-        }.getOrNull()
+        val overview = runCatching {
+            dev.androidagent.core.AutomationOverview.of(
+                rules = rules,
+                history = graph.automationJournal,
+                supported = supported,
+                now = java.time.ZonedDateTime.now(),
+                appLabel = ::appLabel,
+            )
+        }.getOrDefault(dev.androidagent.core.AutomationOverview.EMPTY)
         mutable.update { state ->
             state.copy(
                 automations = dev.androidagent.app.ui.AutomationsStatus(
-                    on = enabled.size,
-                    off = rules.size - enabled.size,
-                    dormant = enabled.count { it.trigger.kind !in supported },
+                    overview = overview,
                     notificationAccess = runCatching {
                         dev.androidagent.automations.AutomationNotificationListener.isEnabled(getApplication())
                     }.getOrDefault(false),
                     exactAlarms = runCatching { host.canFireOnTime() }.getOrDefault(true),
-                    nextRunAt = next,
                 ),
             )
+        }
+    }
+
+    /**
+     * "com.whatsapp" as the user knows it. Null when the app is not installed,
+     * which is worth showing as the bare package rather than hiding: a rule
+     * watching an app that is gone is a rule that will never fire.
+     */
+    private fun appLabel(packageName: String): String? = runCatching {
+        val packages = getApplication<Application>().packageManager
+        packages.getApplicationLabel(packages.getApplicationInfo(packageName, 0)).toString()
+    }.getOrNull()
+
+    /** Turn a rule on or off, then re-arm: the alarm set may have changed. */
+    fun setRuleEnabled(id: String, enabled: Boolean) {
+        runCatching { graph.automations.setEnabled(id, enabled) }
+        runCatching { graph.automationHost.rearm() }
+        refreshAutomations()
+    }
+
+    /**
+     * Fire a rule now. Naming it supplies its trigger; its conditions, cooldown
+     * and daily limit still apply, so this may decide not to run — which is why
+     * the list is re-read rather than assumed.
+     */
+    fun runRule(id: String) {
+        runCatching { graph.automationHost.runNow(id) }
+        val name = dev.androidagent.core.AutomationSummaries.chipName(id)
+        mutable.update { it.copy(infoMessage = "Running \"" + name + "\"") }
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1_500)
+            refreshAutomations()
         }
     }
 

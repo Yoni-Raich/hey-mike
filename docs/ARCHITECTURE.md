@@ -1045,3 +1045,56 @@ each. Both are granted in system Settings and neither is observable, so the
 status is re-read on every resume beside the other permissions. A rule that
 looks on and cannot run is the failure the user would otherwise only notice by
 the thing not happening, so it is counted on the hub row rather than buried.
+
+## The side panel: two kinds of thing Mike holds
+
+A chat is something you did. A rule is something that keeps happening. The
+panel shows both, but not as equals: the rules sit **above** the chats as a
+strip, and the chats keep the rest of the panel.
+
+That ordering is the design. The question people open this panel with is often
+not "which chat was that" but "is the standing stuff still working", and a
+strip answers it before anyone reads a list. The cost is that a strip has room
+for almost nothing, which is what the two constraints below are for.
+
+**The strip may not grow.** At most `AutomationOverview.MAX_CHIPS` chips and
+exactly one sentence, however many rules exist. What overflows goes behind it,
+and the chips are sorted so that what needs you is what you see: blocked first,
+then running, then off.
+
+**The sentence is chosen, not listed.** `AutomationOverview` picks the most
+useful true thing in priority order — a rule that cannot run, then the next run
+that is due, then the honest nothing — and marks it as a warning or not. A
+strip that listed everything would fit nothing and help less.
+
+Both decisions live in `:core` (`AutomationOverview`, `AutomationSummaries`)
+rather than in a Composable, because they are the design and a Composable is
+not somewhere a test can reach. The same layer turns the rule format into
+sentences: the format is written for the model — ids, packages, 24-hour clocks,
+a closed vocabulary — and none of that belongs on a panel. `AutomationStrip`,
+`AutomationsSheet` and the top bar render strings and choose nothing.
+
+**Three states, not two.** `AutomationSummary.Status` is ON, OFF or **BLOCKED**
+— on, and this phone cannot serve its trigger. Blocked looks identical to
+working until the day nobody notices anything happened, so it gets its own
+colour (the amber the status orb already uses for a blocked backend), its own
+group in the list, and the reason spelled out in words.
+
+**The chat name carries the dot.** The panel is the only place a rule's state
+lives, so the way in has to carry the one urgent fact: `ChatTopBar` tints the
+chevron amber and adds a 6dp dot when any rule is blocked, and shows nothing
+when nothing is wrong. The dot is deliberately not folded into the status orb
+on the right: the orb answers "can Mike act right now" (backends, run phase,
+quota), the chat name answers "what is inside the panel". Different questions,
+different sides, different shapes.
+
+**What leaves the phone is stated, not implied.** A rule's own screen names the
+exported fields in the user's terms — "Only the sender's name", with the note
+that the message itself was read on the phone to decide and never sent. The
+format already knows this exactly (`AutomationRule.exportedFields`), so there
+is no reason to make anyone take it on trust.
+
+The list and one rule are two levels of one `ModalBottomSheet`, the way Settings
+already works, so back walks the rule and then the sheet rather than
+introducing a second navigation idea. Turning a rule off re-arms the alarm set,
+because the earliest due rule may have changed.

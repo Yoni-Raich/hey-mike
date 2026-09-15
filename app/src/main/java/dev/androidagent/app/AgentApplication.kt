@@ -120,7 +120,8 @@ class AgentGraph(private val app: Application) {
     )
     /** Standing rules, beside the workflows they name. */
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
-    private val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
+    /** Read by the panel to say when each rule last ran; written only by the host. */
+    val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
     private val automationActions = AndroidAutomationActions(
         context = app,
         coordinator = { runCoordinator },

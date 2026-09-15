@@ -10,7 +10,13 @@ not production-ready.
 - Standing rules (`automation_rule`) — on 2026-09-15 the full CI gate passes:
   `gradlew test :app:assembleDevDebug :app:lintDevDebug`, with 0 lint errors and
   no lint warning naming an automations file. `:core` carries 390 tests, 116 of
-  them new, across `CoordinatorAutomationTest`, `AutomationRuleTest`, `AutomationEvaluatorTest`, `AutomationLibraryTest`,
+  them new. `AutomationOverview`/`AutomationSummaries` — the layer that turns a
+  rule into the sentences the panel shows and decides which three chips and
+  which one sentence the strip carries — is covered by 28 of those: trigger and
+  conditions as one line, named days, intervals in hours, the three states, what
+  sorts first, the strip never growing past three chips, the sentence choosing a
+  blocked rule over a schedule, and the exported fields named field by field.
+  Across `CoordinatorAutomationTest`, `AutomationRuleTest`, `AutomationEvaluatorTest`, `AutomationLibraryTest`,
   `AutomationToolGatewayTest`, `AutomationJournalTest`, `AutomationRunnerTest`,
   `AutomationWakeupsTest` and `SessionRunQueueExpiryTest`. What the
   tests actually establish: the when/if/then format round-trips through its own
@@ -341,6 +347,12 @@ not production-ready.
   Play, or `LocationManager.addProximityAlert`, which is unreliable enough that
   shipping it quietly would be worse than the gap. That is a decision for the
   owner, not a task.
+- **The whole side panel is unseen.** The strip, the rules sheet, the chain on a
+  rule's screen and the amber dot on the chat name compile and are driven by
+  unit-tested logic, but no one has looked at them on a phone or in an emulator,
+  and no screenshot exists. Spacing, truncation at a long rule name, the sheet's
+  height on a short screen, and whether the dot reads at 20dp are all unproven.
+  `AGENTS.md` asks for UI evidence on visual changes; there is none for this.
 - The settings screen is partial. Settings > Standing rules now counts the rules,
   names the dormant ones, shows the next run and grants both permissions — but
   it does not **list** the rules, show when each last fired or why it did not,

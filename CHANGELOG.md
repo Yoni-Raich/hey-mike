@@ -46,6 +46,20 @@
 - Settings > Standing rules shows how many rules are on, how many cannot run on
   this phone and why, when the next one is due, and has the buttons for the two
   permissions rules need: notification access and exact alarms.
+- The side panel now opens on your rules, not just your chats. A strip above the
+  chat list says what is running, what needs you, and the one thing worth
+  knowing right now — "Home lights can't run, Mike can't track location yet", or
+  "Next: Evening post, in 6 hours".
+- Tap the strip for every rule, grouped by what needs you: the ones that cannot
+  run, the ones that are running, and the ones you turned off. Tap a rule to see
+  what it does as a chain — when, and, then — what it costs, and exactly which
+  parts of an event leave your phone. Turn it off there, or run it now.
+- The chat name at the top turns amber with a small dot when a rule is switched
+  on and cannot run. That was invisible before: you would find out by the thing
+  never happening. No dot when everything is fine.
+- Rules now describe themselves in words rather than in their own format:
+  "WhatsApp from Dad, after 19:00 and before 07:00", "Mon, Tue, Wed, Thu and Fri
+  at 07:00", "Ran yesterday at 21:40 - twice today".
 
 - Mike can run a whole saved sequence in one go. `workflow_runner` takes the
   name of a workflow and does every step itself — open the app, find the

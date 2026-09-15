@@ -371,8 +371,9 @@ private fun ReadinessLine(state: AgentUiState, item: SetupItem) {
     StatusLine(readinessWord(row.state), row.summary, readinessColor(row.state))
 }
 
+/** Shared with the rules sheet, which explains itself the same way. */
 @Composable
-private fun Explanation(text: String) {
+internal fun Explanation(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
@@ -514,13 +515,15 @@ private fun ColumnScope.ScreenControlSettings(state: AgentUiState, actions: Agen
 @Composable
 private fun ColumnScope.AutomationSettings(state: AgentUiState, actions: AgentUiActions) {
     val automations = state.automations
+    val overview = automations.overview
     StatusLine(
         title = if (automations.total == 0) "None yet" else automations.summary,
-        detail = automations.nextRunAt?.let { "Next run $it" }
-            ?: if (automations.total == 0) "Ask Mike to set one up" else "Nothing is scheduled",
+        // The same live sentence the panel's strip shows, so the two surfaces
+        // never disagree about what is wrong.
+        detail = overview.line,
         color = when {
-            automations.dormant > 0 -> MaterialTheme.colorScheme.error
-            automations.on > 0 -> MaterialTheme.colorScheme.secondary
+            overview.blocked > 0 -> MaterialTheme.colorScheme.error
+            overview.enabled > 0 -> MaterialTheme.colorScheme.secondary
             else -> MaterialTheme.colorScheme.onSurfaceVariant
         },
     )
@@ -533,9 +536,9 @@ private fun ColumnScope.AutomationSettings(state: AgentUiState, actions: AgentUi
     // The two permissions are the whole reason this screen exists. A rule that
     // looks on and cannot run is the failure the user would otherwise only
     // notice by the thing not happening.
-    if (automations.dormant > 0) {
+    if (overview.blocked > 0) {
         Explanation(
-            "${automations.dormant} rule(s) are turned on but cannot run on this phone, because a " +
+            "${overview.blocked} rule(s) are turned on but cannot run on this phone, because a " +
                 "permission below is missing. They will start working the moment it is granted.",
         )
     }
