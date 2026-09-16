@@ -55,7 +55,10 @@ class WorkspaceSeederTest {
 
         val shippedSkills = File(assetRoot(), "skills").list()!!.toSet()
         assertEquals(
-            setOf("device-capabilities", "device-automation", "app-cards", "user-preferences", "quick-actions", "workflows"),
+            setOf(
+                "device-capabilities", "device-automation", "app-cards",
+                "user-preferences", "quick-actions", "workflows", "automations",
+            ),
             shippedSkills,
         )
         for (skill in shippedSkills) assertTrue("AGENTS.md must point at $skill", shipped.contains("`$skill`"))

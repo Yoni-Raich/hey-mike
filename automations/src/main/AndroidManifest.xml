@@ -1,0 +1,46 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        Exact alarms. A rule that says 19:00 means 19:00; an inexact alarm can
+        land an hour later under Doze, which for "post this now" is the wrong
+        action rather than a late one. USE_EXACT_ALARM is granted at install
+        for an alarm-clock-like app and SCHEDULE_EXACT_ALARM is the revocable
+        form; the host asks AlarmManager which it actually has and falls back
+        to an inexact alarm, reporting that the rule may fire late.
+    -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Re-arm the next alarm after a restart: the alarm itself does not survive one. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application>
+        <receiver
+            android:name=".AutomationAlarmReceiver"
+            android:exported="false" />
+        <!-- Yes/No on the question a rule put up while the app was not in front. -->
+        <receiver
+            android:name=".AutomationAnswerReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".AutomationBootReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <!--
+            Reading notifications is the one trigger that sees content, so it
+            is bound by the system only after the user grants it by hand in
+            Settings, and it is inert until a rule names a package: see
+            AutomationNotificationListener.
+        -->
+        <service
+            android:name=".AutomationNotificationListener"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
