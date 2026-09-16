@@ -7,6 +7,24 @@ not production-ready.
 
 ### Verified
 
+- Run summaries and the tool-schema sweep — on 2026-09-16, `:core:test` passed
+  (483 tests). Every run that touched the phone now ends with one system line in
+  the chat naming total, thinking, phone time across N calls, and time waiting
+  for the user; `AgentCoordinator` takes an injected `nowNanos` so the split is
+  asserted against a virtual clock rather than machine speed, and
+  `RunSummaryTest` plus three `AgentCoordinatorTest` cases cover the line, its
+  absence on a run that called no tool, and a 20-second send approval landing in
+  the approval bucket rather than in tool time. The schema sweep fixed
+  `remember_capability.fallbacks`, `automation_rule.places`, `.deviceState` and
+  `.rule`, and `ToolSchemaAudit` now runs over every tool this module advertises.
+  **Not verified on a phone:** no summary line has been seen in the app's chat UI
+  (a `system` message renders as text, but that was not run), and the buckets
+  have not been checked against a real slow run. **Not swept:** the `:a11y` and
+  `:device-tools` gateways keep their definitions in private companions that no
+  test in this environment can reach; they were read by hand (no `array`
+  parameters, `object` parameters either absent or explicitly open) and are not
+  covered by the audit. Extending it needs one test per module, which needs the
+  Android SDK.
 - `act_plan`, one call for a sequence already on screen — on 2026-09-16,
   `:core:test` passed (471 tests once dev was merged in, 23 of them the new
   `ActPlanTest`), covering:

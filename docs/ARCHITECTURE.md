@@ -887,13 +887,47 @@ name, so `Options.adHocTool` makes the resume block name `act_plan` and a
 Everything else is the workflow contract unchanged - the failing step, what
 already ran, whether it may have half-happened.
 
+## Where a run's time went
+
+`RunMetrics` existed and only an instrumented test ever read it. A run that felt
+slow is the one someone asks about, so at the end of every run that touched the
+phone the coordinator writes one system line into the chat: total, thinking, time
+on the phone across how many calls, and time waiting for a person.
+
+Two decisions make the numbers honest.
+
+**Waiting for a person is its own bucket.** A send approval is raised *inside*
+the tool call that asks for it, so counting it as tool time reported twenty
+seconds of "the phone" for twenty seconds of somebody deciding whether to send a
+message. `awaitLocalApproval` accumulates that wait, and the tool dispatch
+subtracts the part of it that happened inside its own call - so tool time is
+device time, approval time is human time, and thinking is what is left (model
+turns and engine overhead). Three buckets, three different fixes: fewer turns, a
+faster path on screen, or nothing at all.
+
+**The clock is injected.** `AgentCoordinator` takes `nowNanos`, for the same
+reason `WorkflowRunner` does: a summary claiming to say where time went is worth
+what it can be tested against, and a test driving a virtual clock cannot verify a
+real one. The tests advance virtual time and assert the split exactly.
+
+A run that called no tool gets no line. One bucket is not a breakdown, and a
+line under every short answer teaches the user to skip it.
+
 **A tool schema that says `array` says nothing.** The first device run failed
 before touching the phone: `steps` was advertised as a bare
 `{"type":"array"}`, a client with no `items` renders that as an array of
 strings, and the agent reasonably sent each step as quoted JSON - which the
 validator refused. `steps.items` now spells the step object out, including the
 `action` enum and the target fields a `read_ui` reply carries, and the same is
-done for `run_workflow` and `save_workflow`. Two things back that up: a quoted
+done for `run_workflow` and `save_workflow`. The sweep that followed found the
+same defect in three more places: `remember_capability`'s `fallbacks`, and
+`automation_rule`'s `places`, `deviceState` and `rule` - the last of which
+described a whole rule with no `type` and no fields at all. `ToolSchemaAudit`
+is now the shared definition of that defect and every gateway's tests run it
+over everything they advertise, so the next tool cannot reintroduce it: an
+array with no `items`, an object that neither names its keys nor declares them
+open, a property with no type and nothing else that says what it takes, or a
+`required` name that is not a property. Two things back that up: a quoted
 step is parsed rather than refused, the way a quoted number is already accepted
 as a number, and the example in the refusal, the tool description and the test
 is one shared constant that the test executes - an example that drifts from the

@@ -9,6 +9,11 @@
   keyboard opening or a list shifting between steps does not throw it off, and
   a step that does not land stops the sequence and reports what already
   happened. Sending still asks you first, wherever it sits in the sequence.
+- After Mike does something on your phone, the chat now ends with one line
+  saying where the time went: how long in total, how much of it was Mike
+  thinking, how much was the phone, and how much was waiting for you to answer.
+  Waiting for you is counted separately, so approving a message is never
+  reported as the phone being slow.
 - Fixed a tool definition that described its own input wrongly, which made Mike
   send a sequence in a form it then refused, costing a wasted round trip before
   anything ran.

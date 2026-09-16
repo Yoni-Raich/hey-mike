@@ -307,7 +307,8 @@ class KnowledgeStore(
         const val MAX_RECORDS_PER_PACKAGE = 60
         const val DEFAULT_SUMMARY_LIMIT = 12
         private const val MAX_FIELD_CHARS = 400
-        private const val MAX_FALLBACKS = 8
+        /** Also the schema's `maxItems`, so the tool advertises the limit it enforces. */
+        internal const val MAX_FALLBACKS = 8
         private const val MAX_FILE_CHARS = 512 * 1024
 
         private val PACKAGE_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")

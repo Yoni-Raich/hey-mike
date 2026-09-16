@@ -389,6 +389,93 @@ class AutomationToolGateway(
     private companion object {
         val MODES = listOf("create", "list", "describe", "enable", "disable", "delete", "test", "run")
 
+        private fun enumOf(values: List<String>): JsonArray = JsonArray(values.map { JsonPrimitive(it) })
+
+        /**
+         * The rule `create` takes, or the id every other mode takes.
+         *
+         * Deliberately typeless: one argument carries either a whole rule or a
+         * string naming one, and `properties` constrains only the object case,
+         * so both still validate. What it buys is that the shape of a rule -
+         * when/if/then, and which kinds exist - reaches the caller from the tool
+         * itself rather than only from prose it may not have read. The nested
+         * bodies stay open because each kind carries different fields.
+         */
+        private val RULE_SCHEMA: JsonObject = buildJsonObject {
+            put(
+                "description",
+                "For create: the whole rule, {id, when, if?, then, description?, guard?}. " +
+                    "For list, describe, enable, disable, delete, test and run: the rule's id as a string.",
+            )
+            put(
+                "properties",
+                buildJsonObject {
+                    put("id", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Lowercase letters, digits, \"-\" and \"_\".")
+                    })
+                    put("description", buildJsonObject {
+                        put("type", "string")
+                        put("description", "One line a person can read back.")
+                    })
+                    put("enabled", buildJsonObject { put("type", "boolean") })
+                    put("when", buildJsonObject {
+                        put("type", "object")
+                        put("description", "The one thing that starts it. Its other fields depend on \"type\".")
+                        put("properties", buildJsonObject {
+                            put("type", buildJsonObject {
+                                put("type", "string")
+                                put("enum", enumOf(AutomationTriggerKind.WIRE_NAMES))
+                            })
+                        })
+                        put("required", enumOf(listOf("type")))
+                        put("additionalProperties", true)
+                    })
+                    put("if", buildJsonObject {
+                        put("type", "array")
+                        put("description", "Tests that must all hold. At most ${AutomationRule.MAX_CONDITIONS}.")
+                        put("maxItems", AutomationRule.MAX_CONDITIONS)
+                        put("items", buildJsonObject {
+                            put("type", "object")
+                            put("properties", buildJsonObject {
+                                put("type", buildJsonObject {
+                                    put("type", "string")
+                                    put("enum", enumOf(AutomationCondition.Kind.WIRE_NAMES))
+                                })
+                            })
+                            put("required", enumOf(listOf("type")))
+                            put("additionalProperties", true)
+                        })
+                    })
+                    put("then", buildJsonObject {
+                        put("type", "array")
+                        put(
+                            "description",
+                            "What it does, at most ${AutomationRule.MAX_ACTIONS} actions. A longer " +
+                                "sequence belongs in a workflow the rule names.",
+                        )
+                        put("maxItems", AutomationRule.MAX_ACTIONS)
+                        put("items", buildJsonObject {
+                            put("type", "object")
+                            put("properties", buildJsonObject {
+                                put("type", buildJsonObject {
+                                    put("type", "string")
+                                    put("enum", enumOf(AutomationActionKind.WIRE_NAMES))
+                                })
+                            })
+                            put("required", enumOf(listOf("type")))
+                            put("additionalProperties", true)
+                        })
+                    })
+                    put("guard", buildJsonObject {
+                        put("type", "object")
+                        put("description", "How often it may fire: cooldownMs, maxPerDay, validForMs.")
+                        put("additionalProperties", true)
+                    })
+                },
+            )
+        }
+
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ToolDefinition(
                 name = "automation_rule",
@@ -411,17 +498,15 @@ class AutomationToolGateway(
                                     )
                                 },
                             )
-                            put(
-                                "rule",
-                                buildJsonObject {
-                                    put("description", "For create: the rule object. For every other mode: its id.")
-                                },
-                            )
+                            put("rule", RULE_SCHEMA)
                             put(
                                 "event",
                                 buildJsonObject {
                                     put("type", "object")
                                     put("description", "test only: what to pretend happened, written like a trigger.")
+                                    // The fields differ per trigger kind, so
+                                    // the keys stay open rather than wrong.
+                                    put("additionalProperties", true)
                                 },
                             )
                             put(
@@ -436,6 +521,7 @@ class AutomationToolGateway(
                                 buildJsonObject {
                                     put("type", "array")
                                     put("description", "test only: places the phone is inside at that moment.")
+                                    put("items", buildJsonObject { put("type", "string") })
                                 },
                             )
                             put(
@@ -443,6 +529,7 @@ class AutomationToolGateway(
                                 buildJsonObject {
                                     put("type", "object")
                                     put("description", "test only: device signals by name, e.g. {\"charging\":\"true\"}.")
+                                    put("additionalProperties", buildJsonObject { put("type", "string") })
                                 },
                             )
                             put(

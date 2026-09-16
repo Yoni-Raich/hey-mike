@@ -159,17 +159,39 @@ class KnowledgeToolGateway(
                     "fallbacks" to "array",
                 ),
                 listOf("package", "selector"),
+                structured = mapOf(
+                    "fallbacks" to buildJsonObject {
+                        put("type", "array")
+                        put(
+                            "description",
+                            "Other selectors that reach the same thing, best first. At most " +
+                                "${KnowledgeStore.MAX_FALLBACKS}.",
+                        )
+                        put("maxItems", KnowledgeStore.MAX_FALLBACKS)
+                        put("items", buildJsonObject { put("type", "string") })
+                    },
+                ),
             ),
         )
 
+        /**
+         * A tool definition, with any spelled-out schemas in [structured].
+         *
+         * A bare `{"type":"array"}` says nothing: a client with no `items`
+         * renders it as an array of strings, and a caller that guesses wrong is
+         * refused for the schema's mistake rather than its own.
+         */
         fun tool(
             name: String,
             description: String,
             properties: Map<String, String>,
             required: List<String>,
+            structured: Map<String, JsonObject> = emptyMap(),
         ): ToolDefinition {
             val props = buildJsonObject {
-                for ((key, type) in properties) put(key, buildJsonObject { put("type", type) })
+                for ((key, type) in properties) {
+                    put(key, structured[key] ?: buildJsonObject { put("type", type) })
+                }
             }
             val schema = buildJsonObject {
                 put("type", "object")
