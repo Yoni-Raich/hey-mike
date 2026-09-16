@@ -168,6 +168,9 @@ class WorkflowCallTest {
         assertTrue(message("""{"id":"s","action":"call"}""").contains("needs \"tool\""))
         assertTrue(message("""{"id":"s","action":"call","tool":"shell"}""").contains("cannot run inside a workflow"))
         assertTrue(message("""{"id":"s","action":"call","tool":"run_workflow"}""").contains("cannot run inside"))
+        // A plan runs on this same runner: a call step reaching it would nest
+        // one run inside another and lose the budget and the ledger.
+        assertTrue(message("""{"id":"s","action":"call","tool":"act_plan"}""").contains("cannot run inside"))
         assertTrue(message("""{"id":"s","action":"call","tool":"recall_capability","output":"9lives"}""").contains("usable output name"))
         assertTrue(message("""{"id":"s","action":"call","tool":"recall_capability","target":{"text":"x"}}""").contains("not a \"target\""))
         assertTrue(message("""{"id":"s","action":"tap","target":{"text":"x"},"tool":"recall_capability"}""").contains("belongs on a \"call\""))

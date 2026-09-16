@@ -7,6 +7,26 @@ not production-ready.
 
 ### Verified
 
+- `act_plan`, one call for a sequence already on screen — on 2026-09-16,
+  `:core:test` passed (319 tests, 18 of them the new `ActPlanTest`), covering:
+  a three-step focus/type/send plan dispatching `tap_node`, `set_text`,
+  `tap_node` in order for one call; the trailing forced observation and
+  `observe=false`; refusal of a target named by `nodeId` and of an
+  `observationId` on the call, with nothing dispatched; the 8-step ceiling
+  pointing at `workflow_runner`; a malformed plan refused before the phone is
+  touched; a failing step reporting the prefix that ran, and a `resume` block
+  naming `act_plan` with `startAt`; a resume skipping the committed steps; and
+  the app in front being read rather than asked for; Stop mid-plan reporting the
+  step that had run and going back to the phone for nothing; and a closing read
+  that fails not unreporting the step that did run.
+  **Not run in this environment:** no Android SDK, so `:device-tools:test`,
+  `:a11y:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
+  `:app:assembleDevDebug` and `:app:lintDevDebug` were not executed here — CI
+  runs `:core:test :app:assembleDevDebug :app:lintDevDebug`. **Not verified on
+  a phone at all:** no plan has run against a real app, so the step budget, the
+  settle timing between steps and a send approval landing mid-plan are unproven
+  on hardware. The UI label and pulse mappings for `act_plan` were not compiled
+  or seen on a screen.
 - Native capability APIs and API-capable workflows — on 2026-09-15,
   `:core:test :device-tools:test :workspace:testDebugUnitTest
   :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` passed

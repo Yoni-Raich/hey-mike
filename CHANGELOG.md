@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Mike no longer spends a thinking turn per tap when it can already see what to
+  do. Reading the screen once shows it the message box *and* the Send button, so
+  "tap the box, type this, send it" is now a single `act_plan` call instead of
+  three turns. Each step is still found on the screen in front of it, so the
+  keyboard opening or a list shifting between steps does not throw it off, and
+  a step that does not land stops the sequence and reports what already
+  happened. Sending still asks you first, wherever it sits in the sequence.
 - Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
   **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
   anyone who wants to ship it inside a closed-source product. Personal use,

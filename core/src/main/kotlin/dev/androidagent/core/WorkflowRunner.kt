@@ -115,6 +115,16 @@ class WorkflowRunner(
          * that produced them.
          */
         val outputs: JsonObject = JsonObject(emptyMap()),
+        /**
+         * The tool this run came from when it is not a saved workflow: the
+         * inline plan `act_plan` builds for one screen.
+         *
+         * A failure has to hand back arguments the model can actually call
+         * again, and an inline plan has no name in the library to resume by.
+         * With this set the resume block names that tool and its own steps
+         * instead of a workflow id that does not exist.
+         */
+        val adHocTool: String? = null,
     )
 
     suspend fun run(definition: WorkflowDefinition, options: Options): ToolResult {
@@ -1195,20 +1205,33 @@ class WorkflowRunner(
                 // instead of re-running the committed prefix that made them.
                 if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
                 step?.let {
+                    val adHoc = options.adHocTool
                     put(
                         "resume",
                         buildJsonObject {
-                            put("tool", "workflow_runner")
+                            put("tool", adHoc ?: "workflow_runner")
                             put(
                                 "arguments",
                                 buildJsonObject {
-                                    put("workflow", definition.id)
-                                    put("mode", "resume")
+                                    // An inline plan is not in the library, so
+                                    // there is nothing to name it by: the
+                                    // caller resends its own steps.
+                                    if (adHoc == null) {
+                                        put("workflow", definition.id)
+                                        put("mode", "resume")
+                                    }
                                     put("startAt", it.id)
                                     if (options.params.isNotEmpty()) put("params", options.params)
                                     if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
                                 },
                             )
+                            if (adHoc != null) {
+                                put(
+                                    "note",
+                                    "Send the same steps again with this startAt. The steps listed as done " +
+                                        "are skipped, never re-run. Re-plan instead if the screen has moved on.",
+                                )
+                            }
                         },
                     )
                 }

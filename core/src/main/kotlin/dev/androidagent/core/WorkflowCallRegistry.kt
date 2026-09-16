@@ -105,6 +105,10 @@ class WorkflowCallRegistry(tools: Map<String, WorkflowCallMetadata> = emptyMap()
             "install_apk",
             "run_workflow",
             "workflow_runner",
+            // A plan runs on the same runner, so a call step reaching it would
+            // nest one run inside another and lose the budget and the ledger
+            // that make either resumable.
+            "act_plan",
             "save_workflow",
             "list_workflows",
         )

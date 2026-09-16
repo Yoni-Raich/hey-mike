@@ -215,6 +215,33 @@ data class WorkflowDefinition(
 
         internal val PLACEHOLDER_RE = Regex("\\{\\{\\s*([A-Za-z][A-Za-z0-9_]{0,31})\\s*\\}\\}")
 
+        /**
+         * One inline plan, for `act_plan`, validated exactly like a file.
+         *
+         * A saved definition is written once and run for months, so it may
+         * carry nothing positional. A plan is different: the model has just
+         * read the screen, can already see the whole sequence, and the plan
+         * lives for one call. It is still parsed through [parse] rather than
+         * constructed, so an inline plan cannot express a step a definition
+         * file could not - the runner behind both is the same, and so are its
+         * limits and its refusals.
+         *
+         * Nothing is stored. [AD_HOC_ID] is a fixed name so the ledger reads the
+         * same for every plan, and the failure report resumes by the caller's
+         * own steps instead of by that name.
+         */
+        fun adHoc(packageName: String, steps: JsonArray): WorkflowDefinition =
+            parse(
+                buildJsonObject {
+                    put("id", AD_HOC_ID)
+                    put("package", packageName)
+                    put("steps", steps)
+                },
+            )
+
+        /** The ledger name every inline plan runs under. */
+        const val AD_HOC_ID = "plan"
+
         private fun substitute(element: JsonElement, values: Map<String, JsonPrimitive>): JsonElement = when (element) {
             is JsonObject -> JsonObject(element.mapValues { (_, value) -> substitute(value, values) })
             is JsonArray -> JsonArray(element.map { substitute(it, values) })

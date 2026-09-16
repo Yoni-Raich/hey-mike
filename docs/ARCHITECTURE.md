@@ -843,6 +843,57 @@ to build a feature. A workflow is written instead: worked out once with the
 device tools, then saved as a definition, which is also the only form that can
 carry verification conditions and confirmation flags at all.
 
+## `act_plan`: one observation, one call
+
+`read_ui` answers more than the question that was asked. A chat screen returns
+the message field, the Send button and the row that names the recipient in the
+same reply - everything a send needs. The loop then spent a model turn per
+action anyway: focus, turn, type, turn, press. Three turns, all of them
+re-deriving what the first observation already said.
+
+`act_plan` takes that sequence as one call. It is `run_workflow`'s ergonomics -
+inline steps, nothing to save first - with `workflow_runner`'s execution: the
+same `WorkflowRunner`, so each step is resolved against the screen in front of
+*that* step, settled, and checked against its own `verify` before the next one
+runs. `WorkflowDefinition.adHoc` parses the inline steps through the same
+`parse` a definition file goes through, so a plan cannot express a step a file
+could not, and inherits its limits and refusals.
+
+Four decisions make it safe to plan ahead at all.
+
+**A plan carries labels, never ids.** A `nodeId` belongs to one observation and
+the runner re-reads the screen before every step, so ids would be stale by the
+second one - the reason a definition file cannot store them either. A plan that
+names a target by `nodeId`, `observationId` or `bounds` is refused with the
+fields to use instead (`plan_positional`), rather than having them dropped
+quietly: a silently ignored id leaves the model believing it named the target.
+Resolving by label is also what makes planning ahead sound - the keyboard
+opening between step one and step two moves every coordinate and changes no
+label.
+
+**Eight steps.** Enough for focus-type-send, a dialog, a search and its result;
+short of a sequence whose later steps are about screens the model has not read.
+Past that the refusal points at a workflow definition, which can be read, fixed
+and reused instead of re-derived in each chat.
+
+**The reply ends on the screen it landed on.** The runner's own reads never
+reach the model, so a plan that saved three round trips would cost one back to
+find out where it ended up. That final read is forced: unchanged-suppression
+answers "the same as revision N", and N is a node list the model never saw.
+
+**A failure resumes by the caller's own steps.** There is no library entry to
+name, so `Options.adHocTool` makes the resume block name `act_plan` and a
+`startAt`: the model resends the same steps and the committed prefix is skipped.
+Everything else is the workflow contract unchanged - the failing step, what
+already ran, whether it may have half-happened.
+
+Nothing about approvals changes. A tap that lands on Send inside a plan reaches
+`tap_node` on the accessibility backend and hits `SendGuard` there, so it asks
+with the same card and the same spoken "yes" as a send the model dispatched on
+its own. A plan is not a way around a gate, because the plan never replaces the
+tool that owns it.
+
+
 ## Connected Apps: the surface exists, the answer does not
 
 `.codex-work/runtime/probe_apps.py` probes a running on-phone app-server for
