@@ -17,14 +17,24 @@ not production-ready.
   the approval bucket rather than in tool time. The schema sweep fixed
   `remember_capability.fallbacks`, `automation_rule.places`, `.deviceState` and
   `.rule`, and `ToolSchemaAudit` now runs over every tool this module advertises.
+  The audit also runs in `:a11y` (`A11yToolSchemaTest`) and `:device-tools`
+  (`DeviceToolSchemaTest`), over the accessibility backend, the ADB backend and
+  the native capability tools, and `thread/resume` re-binds the tool list so a
+  chat opened before an app update can call what the update added.
   **Not verified on a phone:** no summary line has been seen in the app's chat UI
   (a `system` message renders as text, but that was not run), and the buckets
-  have not been checked against a real slow run. **Not swept:** the `:a11y` and
-  `:device-tools` gateways keep their definitions in private companions that no
-  test in this environment can reach; they were read by hand (no `array`
-  parameters, `object` parameters either absent or explicitly open) and are not
-  covered by the audit. Extending it needs one test per module, which needs the
-  Android SDK.
+  have not been checked against a real slow run.
+  **Compiled and run nowhere here:** this environment has no Android SDK, so
+  `A11yToolSchemaTest`, `DeviceToolSchemaTest`, the `CodexEngine` resume change
+  and its test were written without being compiled once, and CI does not build
+  those modules either (it runs `:core:test :app:assembleDevDebug
+  :app:lintDevDebug`). Their schemas were checked by hand first - every
+  parameter is string, integer, boolean, or the one `object` the accessibility
+  helper marks open, and no `required` name is missing from its properties - so
+  the audits are expected to pass, but the first real verification is
+  `./gradlew test` on a machine with the SDK. Whether the app-server accepts
+  `dynamicTools` on `thread/resume` is also unverified; if it refuses, the retry
+  keeps the thread and the old behaviour.
 - `act_plan`, one call for a sequence already on screen — on 2026-09-16,
   `:core:test` passed (471 tests once dev was merged in, 23 of them the new
   `ActPlanTest`), covering:

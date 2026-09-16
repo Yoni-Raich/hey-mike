@@ -9,6 +9,9 @@
   keyboard opening or a list shifting between steps does not throw it off, and
   a step that does not land stops the sequence and reports what already
   happened. Sending still asks you first, wherever it sits in the sequence.
+- A chat you started before updating the app can now use the abilities the
+  update added. Until now those only worked in chats opened afterwards, while
+  Mike was told it had them - so it would try one and fail.
 - After Mike does something on your phone, the chat now ends with one line
   saying where the time went: how long in total, how much of it was Mike
   thinking, how much was the phone, and how much was waiting for you to answer.

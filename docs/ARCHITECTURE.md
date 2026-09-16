@@ -887,6 +887,23 @@ name, so `Options.adHocTool` makes the resume block name `act_plan` and a
 Everything else is the workflow contract unchanged - the failing step, what
 already ran, whether it may have half-happened.
 
+## A resumed thread gets the tools this version has
+
+`thread/start` sends `dynamicTools`; `thread/resume` did not. A thread binds the
+tool list it was created with, so a chat opened before an app update could never
+call a tool that update added - while the per-turn runtime snapshot, built from
+the live gateway, told the model it could. The model then called a tool its own
+thread had never been given. That reached a phone with `act_plan`, and the
+device-automation skill's warning that some tools "exist only in chats started
+after they shipped" was the symptom being documented rather than fixed.
+
+`resumeSessionParams` now takes the tool list, and `openSession` resumes with it
+first and retries the plain resume before falling back to a fresh thread. The
+order matters: a server that will not accept the parameter costs one extra round
+trip, while the fallback it would otherwise hit - starting a new thread - costs
+the user the conversation they were in. Null omits the key rather than sending
+an empty array, because an empty array reads as "this thread has no tools".
+
 ## Where a run's time went
 
 `RunMetrics` existed and only an instrumented test ever read it. A run that felt

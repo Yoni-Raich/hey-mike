@@ -823,7 +823,8 @@ class A11yDeviceTools(
             "LOCK" to AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN,
         )
 
-        private val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
+        /** Internal rather than private so this module's tests can audit it. */
+        internal val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ACT_AND_OBSERVE_DEFINITION,
             tool(
                 "read_ui",
