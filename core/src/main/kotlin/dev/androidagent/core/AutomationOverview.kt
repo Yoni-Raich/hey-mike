@@ -376,14 +376,13 @@ object AutomationSummaries {
     /**
      * Why a rule cannot run, short enough to sit inside the strip's sentence.
      *
-     * Named per trigger because the remedy differs: one is a permission the
-     * user can grant on the spot, the other is something the app cannot do at
-     * all yet, and telling them apart is the difference between a fixable
-     * problem and a wait.
+     * Named per trigger because the remedy differs, and every one of these is
+     * now something the user can grant rather than something the app cannot
+     * do — the wording says "yet" about a permission, not about a gap.
      */
     fun blockedReason(kind: AutomationTriggerKind): String = when (kind) {
         AutomationTriggerKind.NOTIFICATION -> "Mike can’t read notifications yet"
-        AutomationTriggerKind.PLACE -> "Mike can’t track location yet"
+        AutomationTriggerKind.PLACE -> "Mike can’t check where you are yet"
         AutomationTriggerKind.SCHEDULE -> "the alarm permission is missing"
         AutomationTriggerKind.DEVICE_STATE -> "Mike can’t watch the phone’s state yet"
         AutomationTriggerKind.MANUAL -> "this phone cannot run it"

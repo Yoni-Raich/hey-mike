@@ -364,9 +364,9 @@ and remedy, so the UI half of the distinction needed no change.
 ## Native capability API gateway
 
 Common phone data and system entry points do not need to be rebuilt from taps.
-`AndroidCapabilityTools` exposes five stable, operation-based tools —
-`contacts`, `calendar`, `files_media`, `communications` and `apps_settings` —
-with a rich JSON object per call. This keeps the advertised surface small while
+`AndroidCapabilityTools` exposes six stable, operation-based tools —
+`contacts`, `calendar`, `files_media`, `communications`, `apps_settings` and
+`location` — with a rich JSON object per call. This keeps the advertised surface small while
 letting one policy and one platform seam cover many use cases. The exact
 operation and argument keys are allowlisted, strings, rows and serialized
 results are bounded, and every reply is a typed JSON envelope whose `ok` value
@@ -389,6 +389,64 @@ in front of it. Other special access operations only open a setup screen and do
 not report the access as granted. Notification support is deliberately status
 and setup only — there is no `NotificationListenerService`, so the gateway
 cannot read notification content.
+
+### An action does not need a rule around it
+
+Rules and actions were built together, so the six things a rule can do became
+the six things only a rule could do. That was where the code sat, not a
+decision. `automation_rule(mode:"do")` performs one of them immediately —
+`AutomationAction.parse` for the same closed set and the same per-kind
+validation, then `AutomationActions.performOnce`, which is the same interface a
+fired rule's action reaches. It meets the same gateway, the same approval card
+and the same Stop.
+
+What it deliberately does not get is everything a rule owns: no evaluation, no
+cooldown or daily limit, no journal entry, and no `runLock` — the caller is a
+turn that already holds the device, so taking the lock would deadlock against
+its own run. The reply says `recorded:false` outright, because a model that
+assumed otherwise would tell the user a rule now exists.
+
+Three refusals carry the design. A `{{placeholder}}` has no event to fill it
+from, so it is refused where it is written rather than silently becoming an
+empty string. `agent_turn` is refused because the caller already is one, and
+the queued turn would arrive after the conversation moved on. `requiresApproval`
+is refused rather than honoured: it exists so an unattended rule can put a
+person in the loop, and accepting it here would imply a second gate that does
+not exist.
+
+The alternative — let the model create a rule, run it and delete it — was worse
+in the way that matters: anything going wrong between the three steps leaves a
+rule in the user's list that nobody asked for.
+
+### Location is a read, not a subscription
+
+`location` answers one question — where is this phone now — and it is built so
+it cannot quietly become anything else.
+
+**It never waits.** `current` returns the newest cached fix from the providers
+the request may use and nothing else. Requesting a fresh fix would hold the
+run's tool lock for as long as the sky takes; a phone whose radio has been idle
+answers `no_fix` instead, which the model can report or retry. Freshness is the
+caller's to state (`max_age_ms`, five minutes by default, a day at most), and
+every answer carries `age_ms`, because a fix from this morning is not an answer
+and nothing downstream could otherwise tell.
+
+**Coarse is the default.** `precise` is opt-in, and a coarse grant answering a
+precise request reports `precise:false` rather than passing a neighbourhood off
+as a street. `locationMissingFor` names both grants when nothing is held, so the
+user can answer with either on API 31+.
+
+**Background location is not reachable from here.** `ACCESS_BACKGROUND_LOCATION`
+is absent from `REQUESTABLE_PERMISSIONS` and from the manifest, and there is no
+watch or subscribe operation. A tool that could obtain it mid-turn would turn
+one answered question into a permanent tracker; watching for a place is a
+standing rule's job, asked for on its own screen where the user can see what is
+watching and why.
+
+**"Off" and "denied" are different failures.** The system location switch is
+checked before the read, so `location_off` is never reported as `no_fix` — one
+is fixed in Settings, the other by waiting or widening, and a model told the
+wrong one will do the wrong thing.
 
 The gateway shares the normal run revoke boundary and the visible control
 state. Its Android calls live behind `CapabilityPlatform`, while policy and
@@ -1224,13 +1282,46 @@ refusing rather than silently doing nothing.
 
 `AutomationToolGateway` carries `supportedTriggers`, which this host answers
 with what it can actually serve: `schedule`, `device_state` and `manual`
-always, `notification` once the user has granted the listener by hand. **`place`
-is served by nothing yet**, so a geofence rule is saved and reported **dormant**
-rather than accepted as live. That is a dependency decision, not an oversight:
-`GeofencingClient` means adding Google Play Services to a project that
-deliberately ships outside Play, and the AOSP alternative
-(`LocationManager.addProximityAlert`) is unreliable enough that shipping it
-quietly would be worse than reporting the gap.
+always, `notification` once the user has granted the listener by hand, and
+`place` once they have granted background location. A rule whose trigger is not
+served is saved and reported **dormant** rather than accepted as live — every
+one of those is now a permission the user can grant, not a gap the app cannot
+close.
+
+### Watching for a place without Play Services
+
+`AutomationPlaceWatcher` is the third way, after the two obvious ones were
+rejected. `GeofencingClient` means adding Google Play Services to a project that
+deliberately ships outside Play and is expected to run on phones without it.
+`LocationManager.addProximityAlert` is deprecated and unreliable enough that
+shipping it quietly would be worse than the gap. So the watcher subscribes
+directly, cheaply, and states its cost rather than hiding it.
+
+One coarse subscription on `NETWORK_PROVIDER` — the cellular and wifi estimate,
+not GPS — asking for no more than a fix every two minutes and only after 100m of
+movement. That is what other apps have already paid for, so listening is close
+to free and the GPS radio is never woken. The price is resolution: an arrival is
+noticed within a minute or two of happening rather than at the instant, and
+`save_place` says so in its own reply so the model cannot promise otherwise.
+
+Three things keep it from being a tracker. It runs **only while a rule is
+actually waiting on a place** — `syncPlaceWatch` follows every call site that
+changes the rules, so a subscription never outlives the feature using it.
+Nothing about where the phone has been is stored: the only persisted state is
+the set of place ids it is currently inside. And no tool can request
+`ACCESS_BACKGROUND_LOCATION` — `CapabilityPolicy` excludes it by name — so it is
+granted from the standing-rules screen, where the user can see which rule wants
+it, or not at all.
+
+That inside-set is persisted for a reason worth stating: without it, a reboot or
+a process kill would report the user arriving everywhere they already are.
+"Welcome home" at 3am because Android killed the app is exactly the failure that
+makes someone switch rules off. It is written before the events go out, for the
+same reason a rule's fire is recorded before its first action.
+
+`at_place` reads that saved set rather than taking a fresh fix. A condition is
+tested in the middle of deciding whether some *other* trigger fires, and
+blocking that on a location read would hold up every rule on the phone.
 
 Settings > Standing rules is where the feature says whether it actually works:
 how many rules are on, how many are **dormant**, when the next one is due, and

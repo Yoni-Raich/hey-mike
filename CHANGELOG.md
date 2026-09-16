@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Rules about arriving and leaving actually work now. "When I get home, turn the
+  lights on" was accepted and then quietly never fired; it needed a place to
+  point at and a way to notice you crossing it, and had neither. Turn on
+  location in the background from Settings > Standing rules, name a place, and
+  the rule goes live. Mike uses the rough network position rather than GPS and
+  only while a rule is waiting on a place, so it costs little battery — and an
+  arrival is noticed within a minute or two, not the instant it happens. Nowhere
+  you have been is stored or sent anywhere.
+- You can tell Mike where "home" is. Ask it to name where you are, and rules
+  about arriving and leaving have something to point at — before this a rule
+  could say "when I get home" and nothing on the phone knew where that was.
+  A place is a circle of at least 80m, because that is the resolution this can
+  honestly deliver, and the same name means the same spot to every rule.
+- Mike can do a one-off without inventing a rule for it. "Put a reminder on my
+  shade", "open the pharmacy in Maps", "run my evening post now" all happen
+  directly; nothing is saved and nothing shows up in your rules. Before this it
+  had to write a standing rule, fire it and delete it — and if anything went
+  wrong in the middle, the leftover rule was yours to find.
+- Mike can tell you where you are. Ask, and it reads the phone's current
+  position — the town by default, the street only if the task needs it and you
+  allow it. It asks for the permission the same way it asks for contacts or the
+  calendar: Android's own dialog, no extra card. It never sits waiting for a
+  GPS lock; if the phone has nothing recent it says so rather than hanging, and
+  it always says how old the reading is.
 - Mike no longer spends a thinking turn per tap when it can already see what to
   do. Reading the screen once shows it the message box *and* the Send button, so
   "tap the box, type this, send it" is now a single `act_plan` call instead of
@@ -82,7 +106,7 @@
   permissions rules need: notification access and exact alarms.
 - The side panel now opens on your rules, not just your chats. A strip above the
   chat list says what is running, what needs you, and the one thing worth
-  knowing right now — "Home lights can't run, Mike can't track location yet", or
+  knowing right now — "Home lights can't run, Mike can't check where you are yet", or
   "Next: Evening post, in 6 hours".
 - Tap the strip for every rule, grouped by what needs you: the ones that cannot
   run, the ones that are running, and the ones you turned off. Tap a rule to see

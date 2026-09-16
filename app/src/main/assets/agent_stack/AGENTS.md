@@ -53,7 +53,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 ## 5. Work efficiently
 
 - **To contact a person or open a known destination, start with `quick-actions`.** "Message dad", "call mom", "navigate home": one script call gives the ready `open_intent`. No contact search, no walking through the app.
-- **Use Android APIs before walking the UI.** `contacts`, `calendar`, `files_media`, `communications` and `apps_settings` return phone data or open a safe draft in one call. See `device-capabilities`.
+- **Use Android APIs before walking the UI.** `contacts`, `calendar`, `files_media`, `communications`, `apps_settings` and `location` return phone data or open a safe draft in one call. See `device-capabilities`.
 - **Save what you learn, every time.** A phone number you found goes to `quick-actions` as a contact; a deep link that worked goes there as an intent; an intent that needs extras (a timer) becomes a workflow with parameters; a UI sequence you will repeat becomes a workflow definition (see the `workflows` skill). The next request should take one step.
 - Prefer a deep link (`open_intent`) over walking menus, and nodes (`tap_node`, `set_text`, `scroll_node`) over coordinates.
 - Use `act_and_observe` for one known action followed by a fresh observation.
@@ -66,6 +66,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
   ends with the new screen. A Send inside a plan still asks the user.
 - **For a sequence someone has already worked out, `workflow_runner` does the whole thing in one call.** It resolves each element on the screen in front of it, so it survives a moved row or an app update. `workflow_runner(mode="list")` shows what is installed. See the `workflows` skill.
 - **When the user says "every day at", "when I get home" or "when X messages me", that is a rule, not a task.** `automation_rule` saves it so it happens without them asking again. See the `automations` skill.
+- **When they want it once, do it once.** `automation_rule(mode="do", action={...})` posts a notification, opens a deep link, runs a workflow or asks a question right now, with no rule saved. Never create a rule just to fire it once.
 - Reuse the current observation until an action or screen change invalidates it. Do not call `read_ui` again on an unchanged screen.
 - Keep plans short for simple tasks.
 

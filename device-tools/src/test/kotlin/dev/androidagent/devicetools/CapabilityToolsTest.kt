@@ -41,10 +41,10 @@ class CapabilityToolsTest {
 
     // ---- surface ----
 
-    @Test fun exactlyFiveOperationBasedTools() {
+    @Test fun exactlySixOperationBasedTools() {
         val tools = AndroidCapabilityTools(FakePlatform())
         assertEquals(
-            listOf("contacts", "calendar", "files_media", "communications", "apps_settings"),
+            listOf("contacts", "calendar", "files_media", "communications", "apps_settings", "location"),
             tools.definitions.map { it.name },
         )
         assertEquals(tools.definitions.map { it.name }.toSet(), tools.readyTools())
@@ -904,6 +904,7 @@ class CapabilityToolsTest {
             "files_media" to CapabilityPolicy.FILES_OPS,
             "communications" to CapabilityPolicy.COMM_OPS,
             "apps_settings" to CapabilityPolicy.APPS_OPS,
+            "location" to CapabilityPolicy.LOCATION_OPS,
         )
         val tools = AndroidCapabilityTools(FakePlatform())
         assertEquals(expected.keys, tools.definitions.map { it.name }.toSet())
@@ -1041,6 +1042,137 @@ class CapabilityToolsTest {
 
     // ---- helpers ----
 
+    // ---- location ----
+
+    @Test fun locationNeedsAGrantAndNamesTheOnesThatWouldDo() {
+        val fake = FakePlatform()
+        val result = invoke("location", buildJsonObject { put("operation", "current") }, fake = fake)
+        assertFailure(result, "location", "permission_denied")
+        assertTrue(result.text.contains("ACCESS_COARSE_LOCATION"))
+        // Refused before the platform was touched at all.
+        assertTrue(fake.calls.isEmpty())
+    }
+
+    @Test fun coarseAloneAnswersAnImpreciseRequest() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        val result = invoke("location", buildJsonObject { put("operation", "current") }, fake = fake)
+        assertTrue(result.success)
+        val body = Json.parseToJsonElement(result.text).jsonObject
+        assertEquals(32.0853, body["latitude"]!!.jsonPrimitive.content.toDouble(), 1e-6)
+        assertEquals(1_000L, body["age_ms"]!!.jsonPrimitive.content.toLong())
+        // Coarse can never report itself as precise.
+        assertFalse(body["precise"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test fun coarseAloneDoesNotSatisfyAPreciseRequest() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        val result = invoke(
+            "location",
+            buildJsonObject { put("operation", "current"); put("precise", true) },
+            fake = fake,
+        )
+        assertFailure(result, "location", "permission_denied")
+        assertTrue(result.text.contains("ACCESS_FINE_LOCATION"))
+    }
+
+    @Test fun fineGrantReportsThePositionAsPrecise() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_FINE
+        val result = invoke(
+            "location",
+            buildJsonObject { put("operation", "current"); put("precise", true) },
+            fake = fake,
+        )
+        assertTrue(result.success)
+        assertTrue(Json.parseToJsonElement(result.text).jsonObject["precise"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test fun locationOffIsItsOwnFailureNotAMissingFix() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        fake.locationOn = false
+        val result = invoke("location", buildJsonObject { put("operation", "current") }, fake = fake)
+        assertFailure(result, "location", "location_off")
+        // The read is never attempted, so "off" cannot be reported as "no fix".
+        assertTrue(fake.calls.none { it.startsWith("LOCATION:") })
+    }
+
+    @Test fun aFixTooOldIsNoFixRatherThanAStaleAnswer() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        fake.fix = LocationFix(1.0, 2.0, null, ageMs = 60 * 60 * 1000L, provider = "gps")
+        val result = invoke("location", buildJsonObject { put("operation", "current") }, fake = fake)
+        assertFailure(result, "location", "no_fix")
+    }
+
+    @Test fun theDefaultFreshnessIsFiveMinutesAndTheCallerCanWiden() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        invoke("location", buildJsonObject { put("operation", "current") }, fake = fake)
+        assertEquals(CapabilityPolicy.DEFAULT_LOCATION_MAX_AGE_MS, fake.lastLocationMaxAge)
+
+        fake.fix = LocationFix(1.0, 2.0, null, ageMs = 60 * 60 * 1000L, provider = "gps")
+        val widened = invoke(
+            "location",
+            buildJsonObject { put("operation", "current"); put("max_age_ms", 2 * 60 * 60 * 1000L) },
+            fake = fake,
+        )
+        assertTrue(widened.success)
+    }
+
+    @Test fun anAbsurdFreshnessIsClampedRatherThanRefused() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        invoke(
+            "location",
+            buildJsonObject { put("operation", "current"); put("max_age_ms", 999L * 24 * 60 * 60 * 1000) },
+            fake = fake,
+        )
+        assertEquals(CapabilityPolicy.MAX_LOCATION_MAX_AGE_MS, fake.lastLocationMaxAge)
+    }
+
+    @Test fun zeroFreshnessIsAMistakeNotARequestForALiveFix() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        val result = invoke(
+            "location",
+            buildJsonObject { put("operation", "current"); put("max_age_ms", 0) },
+            fake = fake,
+        )
+        assertFailure(result, "location", "invalid_argument")
+        assertTrue(fake.calls.none { it.startsWith("LOCATION:") })
+    }
+
+    @Test fun permissionStatusSeparatesTheGrantFromTheSystemSwitch() {
+        val fake = FakePlatform()
+        fake.granted += CapabilityPolicy.PERM_LOCATION_COARSE
+        fake.locationOn = false
+        val result = invoke("location", buildJsonObject { put("operation", "permission_status") }, fake = fake)
+        val body = Json.parseToJsonElement(result.text).jsonObject
+        assertTrue(body["coarse"]!!.jsonPrimitive.content.toBoolean())
+        assertFalse(body["fine"]!!.jsonPrimitive.content.toBoolean())
+        assertFalse(body["location_on"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test fun backgroundLocationIsNeverRequestableFromATool() {
+        val result = invoke(
+            "apps_settings",
+            buildJsonObject {
+                put("operation", "request_permissions")
+                put("permission", CapabilityPolicy.PERM_LOCATION_BACKGROUND)
+            },
+        )
+        assertFailure(result, "apps_settings", "permission_not_requestable")
+    }
+
+    @Test fun theTwoForegroundLocationGrantsAreRequestable() {
+        assertTrue(CapabilityPolicy.PERM_LOCATION_COARSE in CapabilityPolicy.REQUESTABLE_PERMISSIONS)
+        assertTrue(CapabilityPolicy.PERM_LOCATION_FINE in CapabilityPolicy.REQUESTABLE_PERMISSIONS)
+        assertFalse(CapabilityPolicy.PERM_LOCATION_BACKGROUND in CapabilityPolicy.REQUESTABLE_PERMISSIONS)
+    }
+
     private fun invoke(
         tool: String,
         args: JsonObject,
@@ -1074,6 +1206,9 @@ class CapabilityToolsTest {
         val calls = mutableListOf<String>()
         var handlerOk = true
         var notifEnabled = false
+        var locationOn = true
+        var lastLocationMaxAge = 0L
+        var fix: LocationFix? = LocationFix(32.0853, 34.7818, 12f, 1_000L, "network")
         var throwSecurity = false
         var throwCancellation = false
         var lastLimit = 0
@@ -1230,6 +1365,17 @@ class CapabilityToolsTest {
         override suspend fun openSystemSetting(action: String): Boolean {
             calls += "SYSTEM:$action"
             return handlerOk
+        }
+
+        override fun locationEnabled(): Boolean {
+            calls += "LOCATION_ENABLED"
+            return locationOn
+        }
+
+        override suspend fun lastLocation(maxAgeMs: Long, precise: Boolean): LocationFix? {
+            calls += "LOCATION:$maxAgeMs:$precise"
+            lastLocationMaxAge = maxAgeMs
+            return fix?.takeIf { it.ageMs <= maxAgeMs }
         }
     }
 }
