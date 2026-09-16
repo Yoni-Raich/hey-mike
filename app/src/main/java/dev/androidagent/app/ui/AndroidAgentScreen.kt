@@ -122,6 +122,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -135,6 +136,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.DrawerValue
@@ -220,6 +222,9 @@ fun AndroidAgentScreen(
         }
 
         val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()))
+        // Target, not current: the cascade starts the moment the panel is asked
+        // for, so it rides in with the sheet instead of after it has landed.
+        val drawerMotion = rememberDrawerMotion(drawerState.targetValue == DrawerValue.Open)
 
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -233,6 +238,7 @@ fun AndroidAgentScreen(
                     AgentDrawer(
                         state = state,
                         actions = actions,
+                        motion = drawerMotion,
                         close = { scope.launch { drawerState.close() } },
                     )
                 }
@@ -317,15 +323,19 @@ fun AndroidAgentScreen(
 private fun AgentDrawer(
     state: AgentUiState,
     actions: AgentUiActions,
+    motion: DrawerMotion,
     close: () -> Unit,
 ) {
+    // The panel comes in from the start edge, so its contents trail behind that
+    // edge — the other way round in a right-to-left layout.
+    val slide = if (LocalLayoutDirection.current == LayoutDirection.Rtl) 22.dp else (-22).dp
     Column(
         modifier = Modifier
             .fillMaxHeight()
             .padding(horizontal = 16.dp, vertical = 20.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().drawerStage(motion.header, slide),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -346,7 +356,8 @@ private fun AgentDrawer(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 48.dp),
+                .heightIn(min = 48.dp)
+                .drawerStage(motion.newChat, slide),
         ) {
             Icon(Icons.Outlined.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
@@ -358,6 +369,7 @@ private fun AgentDrawer(
         // answered before anyone reads a list.
         Spacer(Modifier.height(20.dp))
         AutomationStrip(
+            modifier = Modifier.drawerStage(motion.strip, slide),
             overview = state.automations.overview,
             onOpen = {
                 close()
@@ -370,14 +382,20 @@ private fun AgentDrawer(
         )
 
         Spacer(Modifier.height(22.dp))
-        Text("Chats", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Chats",
+            modifier = Modifier.drawerStage(motion.chats, slide),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(8.dp))
 
         when {
             state.isLoadingSessions -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .drawerStage(motion.list, slide),
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
@@ -386,7 +404,8 @@ private fun AgentDrawer(
             state.sessions.isEmpty() -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .drawerStage(motion.list, slide),
                 contentAlignment = Alignment.TopStart,
             ) {
                 Text(
@@ -398,7 +417,7 @@ private fun AgentDrawer(
             }
 
             else -> LazyColumn(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).drawerStage(motion.list, slide),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
@@ -417,26 +436,28 @@ private fun AgentDrawer(
             }
         }
 
-        HorizontalDivider(color = DividerDefaults.color)
-        Spacer(Modifier.height(8.dp))
-        NavigationDrawerItem(
-            label = { Text("Workspace files") },
-            selected = false,
-            onClick = {
-                close()
-                actions.onOpenWorkspaceFiles()
-            },
-            icon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
-        )
-        NavigationDrawerItem(
-            label = { Text("Settings") },
-            selected = false,
-            onClick = {
-                close()
-                actions.onOpenSettings()
-            },
-            icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
-        )
+        Column(Modifier.drawerStage(motion.list, slide)) {
+            HorizontalDivider(color = DividerDefaults.color)
+            Spacer(Modifier.height(8.dp))
+            NavigationDrawerItem(
+                label = { Text("Workspace files") },
+                selected = false,
+                onClick = {
+                    close()
+                    actions.onOpenWorkspaceFiles()
+                },
+                icon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
+            )
+            NavigationDrawerItem(
+                label = { Text("Settings") },
+                selected = false,
+                onClick = {
+                    close()
+                    actions.onOpenSettings()
+                },
+                icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+            )
+        }
     }
 }
 

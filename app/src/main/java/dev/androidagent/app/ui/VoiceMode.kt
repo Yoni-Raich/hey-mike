@@ -99,7 +99,8 @@ import dev.androidagent.core.VoiceState
 // status, the live caption and the controls rise in. Ending voice plays the
 // same choreography backwards into the voice button.
 
-private val Emphasized = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
+/** The app's own easing: leaves fast, lands slowly, never overshoots. */
+internal val Emphasized = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 private val ControlOutline = Color(0xFF383838)
 private val MutedFill = Color(0xFFF2F2F2)
 private val MutedInk = Color(0xFF111111)
