@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- You can tell Mike where "home" is. Ask it to name where you are, and rules
+  about arriving and leaving have something to point at — before this a rule
+  could say "when I get home" and nothing on the phone knew where that was.
+  A place is a circle of at least 80m, because that is the resolution this can
+  honestly deliver, and the same name means the same spot to every rule.
 - Mike can do a one-off without inventing a rule for it. "Put a reminder on my
   shade", "open the pharmacy in Maps", "run my evening post now" all happen
   directly; nothing is saved and nothing shows up in your rules. Before this it
@@ -93,7 +98,7 @@
   permissions rules need: notification access and exact alarms.
 - The side panel now opens on your rules, not just your chats. A strip above the
   chat list says what is running, what needs you, and the one thing worth
-  knowing right now — "Home lights can't run, Mike can't track location yet", or
+  knowing right now — "Home lights can't run, Mike can't check where you are yet", or
   "Next: Evening post, in 6 hours".
 - Tap the strip for every rule, grouped by what needs you: the ones that cannot
   run, the ones that are running, and the ones you turned off. Tap a rule to see

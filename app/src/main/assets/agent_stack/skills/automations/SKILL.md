@@ -17,7 +17,34 @@ automation_rule(mode="test", rule="evening-post", event={...}, now="...")
 automation_rule(mode="run", rule="evening-post")   -> fire it now, for real
 automation_rule(mode="enable"|"disable"|"delete", rule="evening-post")
 automation_rule(mode="do", action={...})           -> do one action now, no rule
+automation_rule(mode="places")                     -> the named places
+automation_rule(mode="save_place", place={...})    -> name where the phone is
+automation_rule(mode="forget_place", place="home")
 ```
+
+## Places
+
+A `place` trigger names a place; it does not say where it is. Until the name is
+saved, the rule is dormant. Name one from where the user actually is:
+
+```text
+location(operation="current")                      -> latitude, longitude, age_ms
+automation_rule(mode="save_place", place={"id":"home","label":"Home",
+                                          "latitude":32.0853,"longitude":34.7818})
+```
+
+Check `age_ms` before you save: a ten-minute-old fix is where they were, not
+where they are standing. If it is stale, say so and try again rather than
+naming the wrong spot — a wrong "home" is a rule that fires at the supermarket.
+
+The radius defaults to 150m and cannot go below 80m. That is not caution, it is
+the resolution: arriving is worked out from the coarse network position, so a
+rule fires within a minute or two of crossing, never at the instant. Do not
+promise the user otherwise.
+
+Watching needs location "all the time", which no tool can request. If a `place`
+rule reports its trigger dormant, tell the user to turn it on in
+Settings > Standing rules; do not try to request it yourself.
 
 ## Once is not a rule
 

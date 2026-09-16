@@ -28,6 +28,7 @@ import dev.androidagent.automations.AndroidAutomationActions
 import dev.androidagent.automations.AutomationHost
 import dev.androidagent.automations.AutomationHostOwner
 import dev.androidagent.core.AutomationActionResult
+import dev.androidagent.core.AutomationPlaceStore
 import dev.androidagent.core.AgentCoordinator
 import dev.androidagent.core.AutomationJournal
 import dev.androidagent.core.AutomationLibrary
@@ -180,6 +181,8 @@ class AgentGraph(private val app: Application) {
     )
     /** Standing rules, beside the workflows they name. */
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
+    /** Where "home" is. Beside the rules, so one name means the same to every rule. */
+    val automationPlaces = AutomationPlaceStore(AutomationPlaceStore.fileIn(runtime.homeDirectory))
     /** Read by the panel to say when each rule last ran; written only by the host. */
     val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
     private val automationActions = AndroidAutomationActions(
@@ -209,6 +212,8 @@ class AgentGraph(private val app: Application) {
         // The six things a rule can do were never rule-only by design, just by
         // where the code sat. This is the same action path with no rule around
         // it: nothing is saved, no guard applies, and the user is right here.
+        places = automationPlaces,
+        // Nothing watches for places yet, so there is nothing to tell.
         performNow = { action ->
             if (::automationHost.isInitialized) {
                 automationHost.performNow(action)

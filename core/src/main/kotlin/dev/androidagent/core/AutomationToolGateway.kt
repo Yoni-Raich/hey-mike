@@ -88,6 +88,14 @@ class AutomationToolGateway(
      * rule is not.
      */
     private val performNow: (suspend (AutomationAction) -> AutomationActionResult)? = null,
+    /**
+     * Named places, the thing a `place` trigger's name actually refers to.
+     * Null on a host that cannot watch for them at all, which makes the place
+     * modes refuse rather than let the user name a spot nothing will notice.
+     */
+    private val places: AutomationPlaceStore? = null,
+    /** Told after a place is saved or forgotten, so the watcher can re-read them. */
+    private val onPlacesChanged: () -> Unit = {},
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -143,6 +151,9 @@ class AutomationToolGateway(
                 "test" -> test(arguments)
                 "run" -> run(arguments)
                 "do" -> perform(arguments)
+                "places" -> listPlaces()
+                "save_place" -> savePlace(arguments)
+                "forget_place" -> forgetPlace(arguments)
                 else -> refusal("unknown_mode", "\"$mode\" is not a mode.")
             }
         } catch (invalid: AutomationFormatException) {
@@ -410,6 +421,100 @@ class AutomationToolGateway(
         )
     }
 
+    // ---- places ----
+
+    private fun placeStore(): AutomationPlaceStore? = places
+
+    private fun noPlaces(): ToolResult = refusal(
+        "places_unavailable",
+        "This phone cannot watch for places, so naming one would do nothing. " +
+            "Rules with a \"place\" trigger are saved and reported dormant.",
+    )
+
+    private fun listPlaces(): ToolResult {
+        val store = placeStore() ?: return noPlaces()
+        val all = store.all()
+        return ToolResult(
+            buildJsonObject {
+                put("ok", true)
+                put("places", JsonArray(all.map { it.toJson() }))
+                if (all.isEmpty()) {
+                    put(
+                        "note",
+                        "No places yet. A rule's \"place\" name means nothing until one is saved: read the " +
+                            "phone's position with the location tool while the user is there, then " +
+                            "mode:\"save_place\".",
+                    )
+                }
+            }.toString(),
+        )
+    }
+
+    /**
+     * Name where the phone is.
+     *
+     * The coordinates are the caller's to supply, from the `location` tool,
+     * rather than read here: this gateway touches no device, and a store that
+     * could reach for a position would be the one place in the file that does.
+     */
+    private fun savePlace(arguments: JsonObject): ToolResult {
+        val store = placeStore() ?: return noPlaces()
+        val body = arguments["place"] as? JsonObject
+            ?: return refusal(
+                "missing_place",
+                "mode:\"save_place\" needs \"place\": {id, latitude, longitude, label?, radiusMeters?}. " +
+                    "Read latitude and longitude from location(operation:\"current\") while the user is there.",
+            )
+        val place = AutomationPlace.parse(body)
+        val saved = runCatching { store.save(place) }.getOrElse { full ->
+            return refusal("too_many_places", full.message ?: "This phone holds too many places.")
+        }
+        onPlacesChanged()
+        val waiting = library.watching(AutomationTriggerKind.PLACE)
+            .filter { it.trigger.place?.let { name -> AutomationPlace.normalizeId(name) } == saved.id }
+        return ToolResult(
+            buildJsonObject {
+                put("ok", true)
+                put("place", saved.toJson())
+                // Named outright: a rule that was waiting for this name is live
+                // from now on, and the user should be told that, not left to
+                // find out the first time their lights come on.
+                put("rulesNowLive", JsonArray(waiting.map { JsonPrimitive(it.id) }))
+                put(
+                    "note",
+                    "Saved as a ${saved.radiusMeters}m circle. Arriving and leaving are decided from the " +
+                        "phone's position in the background, which is coarse: a rule fires within a minute " +
+                        "or two of crossing, not the instant it does.",
+                )
+            }.toString(),
+        )
+    }
+
+    private fun forgetPlace(arguments: JsonObject): ToolResult {
+        val store = placeStore() ?: return noPlaces()
+        val name = arguments.str("place")
+            ?: return refusal("missing_place", "mode:\"forget_place\" needs \"place\": the place's id.")
+        val existing = store.find(name)
+            ?: return refusal(
+                "place_not_found",
+                "No place called \"$name\". " +
+                    "Known: " + (store.all().joinToString(", ") { it.id }.ifEmpty { "none" }) + ".",
+            )
+        store.delete(existing.id)
+        onPlacesChanged()
+        val orphaned = library.watching(AutomationTriggerKind.PLACE)
+            .filter { it.trigger.place?.let { name2 -> AutomationPlace.normalizeId(name2) } == existing.id }
+        return ToolResult(
+            buildJsonObject {
+                put("ok", true)
+                put("forgot", existing.id)
+                // The rules are left alone rather than deleted: the user asked
+                // to forget a place, not to lose what they set up around it.
+                put("rulesNowDormant", JsonArray(orphaned.map { JsonPrimitive(it.id) }))
+            }.toString(),
+        )
+    }
+
     private fun run(arguments: JsonObject): ToolResult {
         val fire = fireNow ?: return refusal(
             "run_unavailable",
@@ -475,7 +580,10 @@ class AutomationToolGateway(
     )
 
     private companion object {
-        val MODES = listOf("create", "list", "describe", "enable", "disable", "delete", "test", "run", "do")
+        val MODES = listOf(
+            "create", "list", "describe", "enable", "disable", "delete", "test", "run", "do",
+            "places", "save_place", "forget_place",
+        )
 
         private fun enumOf(values: List<String>): JsonArray = JsonArray(values.map { JsonPrimitive(it) })
 
@@ -582,12 +690,38 @@ class AutomationToolGateway(
                                     put(
                                         "description",
                                         "create, list, describe, enable, disable, delete, test (decide without doing), " +
-                                            "run (fire an existing rule now for real) or do (perform one action " +
-                                            "right now, with no rule at all). Defaults to list.",
+                                            "run (fire an existing rule now for real), do (perform one action " +
+                                            "right now, with no rule at all), or places / save_place / " +
+                                            "forget_place. Defaults to list.",
                                     )
                                 },
                             )
                             put("rule", RULE_SCHEMA)
+                            put(
+                                "place",
+                                buildJsonObject {
+                                    put(
+                                        "description",
+                                        "For save_place: {id, latitude, longitude, label?, radiusMeters?}. " +
+                                            "Read the coordinates from location(operation:\"current\") while " +
+                                            "the user is there. For forget_place: the place's id as a string.",
+                                    )
+                                    put("properties", buildJsonObject {
+                                        put("id", buildJsonObject { put("type", "string") })
+                                        put("label", buildJsonObject { put("type", "string") })
+                                        put("latitude", buildJsonObject { put("type", "number") })
+                                        put("longitude", buildJsonObject { put("type", "number") })
+                                        put("radiusMeters", buildJsonObject {
+                                            put("type", "integer")
+                                            put(
+                                                "description",
+                                                "${AutomationPlace.MIN_RADIUS_M}-${AutomationPlace.MAX_RADIUS_M}, " +
+                                                    "default ${AutomationPlace.DEFAULT_RADIUS_M}.",
+                                            )
+                                        })
+                                    })
+                                },
+                            )
                             put(
                                 "action",
                                 buildJsonObject {

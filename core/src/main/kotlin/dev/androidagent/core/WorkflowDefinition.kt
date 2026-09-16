@@ -26,10 +26,10 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -356,6 +356,11 @@ internal fun JsonObject.str(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
 
 internal fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
+
+/** A number, however it was written. A quoted "32.08" is a coordinate, not a mistake. */
+internal fun JsonObject.dbl(key: String): Double? =
+    (this[key] as? JsonPrimitive)?.let { it.doubleOrNull ?: it.contentOrNull?.trim()?.toDoubleOrNull() }
+        ?.takeIf { it.isFinite() }
 
 internal fun JsonObject.millis(key: String, min: Long, max: Long): Long? =
     (this[key] as? JsonPrimitive)?.longOrNull?.coerceIn(min, max)

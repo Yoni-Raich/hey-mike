@@ -50,11 +50,13 @@ class AutomationToolGatewayTest {
     private val fired = mutableListOf<String>()
     private val performed = mutableListOf<AutomationAction>()
     private var performResult = AutomationActionResult.ok("done")
+    private var placesChanged = 0
 
     private fun gateway(
         supported: Set<AutomationTriggerKind> = AutomationTriggerKind.entries.toSet(),
         canFire: Boolean = true,
         canPerform: Boolean = true,
+        canHoldPlaces: Boolean = true,
     ) = AutomationToolGateway(
         library = library(),
         history = history,
@@ -63,6 +65,8 @@ class AutomationToolGatewayTest {
         supportedTriggers = { supported },
         fireNow = if (canFire) ({ id -> fired += id }) else null,
         performNow = if (canPerform) ({ action -> performed += action; performResult }) else null,
+        places = if (canHoldPlaces) AutomationPlaceStore(File(temp.root, "automations/places.json")) else null,
+        onPlacesChanged = { placesChanged++ },
     ).also { it.beginRun("run", temp.root) }
 
     private fun call(gateway: AutomationToolGateway, json: String): JsonObject = runBlocking {
@@ -385,5 +389,83 @@ class AutomationToolGatewayTest {
         // The rule's own history is untouched by an action that was never its.
         assertFalse(described.toString().contains("\"today\":1"))
         assertTrue(fired.isEmpty())
+    }
+
+    // ---- places ----
+
+    @Test fun anEmptyPlaceListSaysWhatToDoAboutIt() {
+        val body = call(gateway(), """{"mode":"places"}""")
+        assertEquals(0, body["places"]!!.jsonArray.size)
+        assertTrue(body["note"]!!.jsonPrimitive.content.contains("location"))
+    }
+
+    @Test fun savingAPlaceStoresItAndTellsTheWatcher() {
+        val gateway = gateway()
+        val saved = call(
+            gateway,
+            """{"mode":"save_place","place":{"id":"home","label":"Home","latitude":32.0853,"longitude":34.7818}}""",
+        )
+        assertTrue(saved["ok"]!!.jsonPrimitive.boolean)
+        assertEquals(1, placesChanged)
+        val listed = call(gateway, """{"mode":"places"}""")
+        assertEquals(1, listed["places"]!!.jsonArray.size)
+        assertEquals("home", listed["places"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun savingAPlaceNamesTheRulesItJustMadeLive() {
+        val gateway = gateway()
+        call(
+            gateway,
+            """{"mode":"create","rule":{"id":"home-lights","when":{"type":"place","place":"home","transition":"enter"},
+               "then":[{"type":"notify","text":"welcome"}]}}""",
+        )
+        val saved = call(
+            gateway,
+            """{"mode":"save_place","place":{"id":"home","latitude":32.0,"longitude":34.0}}""",
+        )
+        assertEquals(listOf("home-lights"), saved["rulesNowLive"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test fun forgettingAPlaceLeavesTheRulesAloneAndSaysTheyAreDormant() {
+        val gateway = gateway()
+        call(gateway, """{"mode":"save_place","place":{"id":"home","latitude":32.0,"longitude":34.0}}""")
+        call(
+            gateway,
+            """{"mode":"create","rule":{"id":"home-lights","when":{"type":"place","place":"home","transition":"enter"},
+               "then":[{"type":"notify","text":"welcome"}]}}""",
+        )
+        val forgot = call(gateway, """{"mode":"forget_place","place":"home"}""")
+        assertEquals("home", forgot["forgot"]!!.jsonPrimitive.content)
+        assertEquals(listOf("home-lights"), forgot["rulesNowDormant"]!!.jsonArray.map { it.jsonPrimitive.content })
+        // The rule itself survives: the user forgot a place, not their setup.
+        assertEquals(1, call(gateway, """{"mode":"list"}""")["rules"]!!.jsonArray.size)
+    }
+
+    @Test fun forgettingAPlaceThatIsNotThereListsTheOnesThatAre() {
+        val gateway = gateway()
+        call(gateway, """{"mode":"save_place","place":{"id":"office","latitude":32.0,"longitude":34.0}}""")
+        val body = call(gateway, """{"mode":"forget_place","place":"home"}""")
+        assertEquals("place_not_found", body["errorType"]!!.jsonPrimitive.content)
+        assertTrue(body["message"]!!.jsonPrimitive.content.contains("office"))
+    }
+
+    @Test fun aPlaceWithoutCoordinatesIsRefusedWithWhereToGetThem() {
+        val body = call(gateway(), """{"mode":"save_place","place":{"id":"home"}}""")
+        assertEquals("place_invalid", body["errorType"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun savePlaceWithoutAPlaceSaysWhatItNeeds() {
+        val body = call(gateway(), """{"mode":"save_place"}""")
+        assertEquals("missing_place", body["errorType"]!!.jsonPrimitive.content)
+        assertTrue(body["message"]!!.jsonPrimitive.content.contains("location"))
+    }
+
+    @Test fun aHostThatCannotWatchPlacesRefusesRatherThanStoringOne() {
+        val body = call(
+            gateway(canHoldPlaces = false),
+            """{"mode":"save_place","place":{"id":"home","latitude":32.0,"longitude":34.0}}""",
+        )
+        assertEquals("places_unavailable", body["errorType"]!!.jsonPrimitive.content)
+        assertEquals(0, placesChanged)
     }
 }
