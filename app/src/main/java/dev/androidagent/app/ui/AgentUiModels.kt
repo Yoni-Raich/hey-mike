@@ -28,6 +28,7 @@ import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.AdbEndpoint
 import dev.androidagent.a11y.A11yStatus
 import dev.androidagent.core.AdbStatus
+import dev.androidagent.core.AutomationOverview
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.EngineEvent
@@ -109,6 +110,8 @@ data class AgentUiState(
     val permissions: DevicePermissions = DevicePermissions(),
     /** Holding the power button opens Mike. Changed in system Settings, so re-read on resume. */
     val isDefaultAssistant: Boolean = false,
+    /** Standing rules and the two permissions they need. Re-read on resume, like the rest. */
+    val automations: AutomationsStatus = AutomationsStatus(),
     val runtimeStatus: RuntimeStatus = RuntimeStatus(),
     /**
      * Why the tunnel to OpenAI last failed, in one sentence, or null when it
@@ -133,6 +136,8 @@ data class AgentUiState(
     val sendGrants: List<dev.androidagent.core.SendGrant> = emptyList(),
     val isDrawerOpen: Boolean = false,
     val isSettingsOpen: Boolean = false,
+    /** The standing-rules sheet, opened from the panel's strip. */
+    val isAutomationsOpen: Boolean = false,
     /** The chat folder's file sheet is showing. */
     val isWorkspaceOpen: Boolean = false,
     val isLoadingSessions: Boolean = false,
@@ -182,6 +187,17 @@ data class AgentUiActions(
     val onOpenWirelessSettings: () -> Unit = {},
     val onOpenAccessibilitySettings: () -> Unit = {},
     val onOpenAssistantSettings: () -> Unit = {},
+    /** Notification access: the one permission no app can grant itself, and rules need it. */
+    val onOpenNotificationAccess: () -> Unit = {},
+    /** Alarms & reminders, so a rule that says 19:00 lands at 19:00 rather than whenever. */
+    val onOpenExactAlarmSettings: () -> Unit = {},
+    /** Open the rules list from the panel's strip. */
+    val onOpenAutomations: () -> Unit = {},
+    val onCloseAutomations: () -> Unit = {},
+    /** Turn one rule on or off. */
+    val onToggleRule: (id: String, enabled: Boolean) -> Unit = { _, _ -> },
+    /** Fire one rule now: naming it supplies its trigger, nothing else is waived. */
+    val onRunRule: (String) -> Unit = {},
     val onOpenAppInfo: () -> Unit = {},
     val onOpenOverlayPermission: () -> Unit = {},
     val onDisconnect: () -> Unit = {},
@@ -232,3 +248,31 @@ internal fun AgentUiState.setupRows(): List<SetupRow> = SetupChecklist.rows(
 )
 
 internal fun EngineEvent.Approval.detailsText(): String = details.toString().removeSurrounding("{", "}")
+
+/**
+ * The standing rules, as the panel and the settings screen read them.
+ *
+ * The [overview] is decided in `:core` — which rules are chips, which sentence
+ * the strip shows, whether the chat name wears its dot — so this carries it
+ * rather than recomputing anything. The two permissions ride alongside because
+ * they are the reason a rule is blocked, and only the Android side can read
+ * them.
+ */
+data class AutomationsStatus(
+    val overview: AutomationOverview = AutomationOverview.EMPTY,
+    /** Granted by hand in Settings; no app can grant it itself. */
+    val notificationAccess: Boolean = false,
+    /** False means a rule that says 19:00 may land an hour later under Doze. */
+    val exactAlarms: Boolean = true,
+) {
+    val total: Int get() = overview.summaries.size
+
+    /** The settings hub row, where there is space for one line and no chips. */
+    val summary: String
+        get() = when {
+            total == 0 -> "No rules yet"
+            overview.blocked > 0 -> "${overview.enabled} on · ${overview.blocked} cannot run on this phone"
+            overview.off > 0 -> "${overview.enabled} on · ${overview.off} off"
+            else -> "${overview.enabled} on"
+        }
+}

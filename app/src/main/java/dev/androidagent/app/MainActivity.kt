@@ -138,7 +138,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         model.graph.runtimePermissions.resumed(this)
         model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
-        model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole()
+        model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole(); model.refreshAutomations()
     }
     override fun onPause() {
         model.graph.runtimePermissions.paused(this)
@@ -165,6 +165,15 @@ class MainActivity : ComponentActivity() {
         onVoiceMuteToggle = model::toggleVoiceMute,
         onOpenSettings = { model.editUi { it.copy(isSettingsOpen = true) } },
         onCloseSettings = { model.editUi { it.copy(isSettingsOpen = false) } },
+        onOpenAutomations = {
+            // The strip is a snapshot from the last resume; re-read before
+            // showing the list, so a rule turned on elsewhere is already there.
+            model.refreshAutomations()
+            model.editUi { it.copy(isAutomationsOpen = true) }
+        },
+        onCloseAutomations = { model.editUi { it.copy(isAutomationsOpen = false) } },
+        onToggleRule = { id, enabled -> model.setRuleEnabled(id, enabled) },
+        onRunRule = { id -> ensureService(); model.runRule(id) },
         onPrepareRuntime = { ensureService(); model.prepare() },
         onLogin = { ensureService(); model.login() },
         onLogout = { model.logout() },
@@ -177,6 +186,21 @@ class MainActivity : ComponentActivity() {
             }
         },
         onOpenAppInfo = { openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
+        // Notification access has no per-app screen on most builds: the list is
+        // the only way in, and no app can grant it to itself.
+        onOpenNotificationAccess = {
+            openSettings(dev.androidagent.automations.AutomationNotificationListener.settingsIntent())
+        },
+        onOpenExactAlarmSettings = {
+            val exact = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName"))
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            }
+            if (!openSettings(exact, report = false)) {
+                openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+        },
         onOpenOverlayPermission = { openSettings(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) },
         onDisconnect = { model.disconnect() },
         onForgetPairing = { model.forgetPairing() },

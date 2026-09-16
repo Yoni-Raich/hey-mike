@@ -66,6 +66,7 @@ object WorkspaceSeeder {
         "app-cards",
         "quick-actions",
         "workflows",
+        "automations",
     )
 
     /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */

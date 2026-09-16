@@ -609,8 +609,9 @@ internal class CapabilityDispatcher(
                     put("enabled", platform.isNotificationListenerEnabled())
                     put(
                         "note",
-                        "Reports only whether the listener component is enabled. This app has " +
-                            "no NotificationListenerService and cannot read notifications.",
+                        "Reports only whether the listener component is enabled. Standing " +
+                            "rules match notifications through it on the phone; this tool " +
+                            "cannot read one, and no tool here can.",
                     )
                 },
             )
