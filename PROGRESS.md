@@ -368,10 +368,10 @@ not production-ready.
   it quietly would be worse than the gap. That is a decision for the owner, not
   a task.
 - **The whole side panel is unseen.** The strip, the rules sheet, the chain on a
-  rule's screen and the amber dot on the chat name compile and are driven by
+  rule's screen and the amber dot on the hamburger compile and are driven by
   unit-tested logic, but no one has looked at them on a phone or in an emulator,
   and no screenshot exists. Spacing, truncation at a long rule name, the sheet's
-  height on a short screen, and whether the dot reads at 20dp are all unproven.
+  height on a short screen, and whether the dot reads at 22dp are all unproven.
   `AGENTS.md` asks for UI evidence on visual changes; there is none for this.
 - The settings screen is partial. Settings > Standing rules now counts the rules,
   names the dormant ones, shows the next run and grants both permissions — but

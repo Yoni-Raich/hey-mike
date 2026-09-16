@@ -40,8 +40,8 @@ import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.EditNote
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Terminal
@@ -160,59 +160,14 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
     }
     val title = state.activeSessionTitle?.takeIf { it.isNotBlank() } ?: "Hey Mike"
     TopAppBar(
+        navigationIcon = { PanelButton(state, onOpenDrawer) },
         title = {
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(24.dp))
-                    .clickable(onClick = onOpenDrawer)
-                    .heightIn(min = 48.dp)
-                    .padding(start = 4.dp, end = 8.dp)
-                    .semantics {
-                        contentDescription = if (state.automations.overview.needsAttention) {
-                            "Switch chat. Current chat: $title. A standing rule cannot run."
-                        } else {
-                            "Switch chat. Current chat: $title"
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                // The chat name is the only way into the panel, so it carries
-                // the panel's one urgent fact: a rule that is switched on and
-                // cannot run is otherwise invisible until the day someone
-                // notices it never did anything. No dot when nothing is wrong —
-                // a badge that is always lit stops being read.
-                val ruleAlert = state.automations.overview.needsAttention
-                Box {
-                    Icon(
-                        Icons.Outlined.ExpandMore,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = if (ruleAlert) BlockedAmber else StatusMuted,
-                    )
-                    if (ruleAlert) {
-                        // A ring in the bar's own background, so the dot never
-                        // merges into the glyph at this size.
-                        Box(
-                            Modifier
-                                .align(Alignment.TopEnd)
-                                .offset(x = 2.dp, y = (-1).dp)
-                                .size(9.dp)
-                                .background(MaterialTheme.colorScheme.background, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(Modifier.size(6.dp).background(BlockedAmber, CircleShape))
-                        }
-                    }
-                }
-            }
+            Text(
+                title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+            )
         },
         actions = {
             AgentStatusButton(state) { showStatus = true }
@@ -223,6 +178,40 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
     )
     if (showStatus) StatusSheet(state, actions) { showStatus = false }
+}
+
+// The way into the panel is a button of its own, so the chat name is only a
+// name. It also carries the panel's one urgent fact: a rule that is switched
+// on and cannot run is otherwise invisible until the day someone notices it
+// never did anything. No dot when nothing is wrong — a badge that is always
+// lit stops being read.
+@Composable
+private fun PanelButton(state: AgentUiState, onOpenDrawer: () -> Unit) {
+    val ruleAlert = state.automations.overview.needsAttention
+    val spoken = if (ruleAlert) {
+        "Open chats and rules. A standing rule cannot run."
+    } else {
+        "Open chats and rules"
+    }
+    IconButton(onClick = onOpenDrawer, modifier = Modifier.semantics { contentDescription = spoken }) {
+        Box {
+            Icon(Icons.Outlined.Menu, contentDescription = null, modifier = Modifier.size(22.dp))
+            if (ruleAlert) {
+                // A ring in the bar's own background, so the dot never merges
+                // into the glyph at this size.
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 4.dp, y = (-3).dp)
+                        .size(9.dp)
+                        .background(MaterialTheme.colorScheme.background, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(6.dp).background(BlockedAmber, CircleShape))
+                }
+            }
+        }
+    }
 }
 
 @Composable

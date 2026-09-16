@@ -1142,13 +1142,18 @@ working until the day nobody notices anything happened, so it gets its own
 colour (the amber the status orb already uses for a blocked backend), its own
 group in the list, and the reason spelled out in words.
 
-**The chat name carries the dot.** The panel is the only place a rule's state
-lives, so the way in has to carry the one urgent fact: `ChatTopBar` tints the
-chevron amber and adds a 6dp dot when any rule is blocked, and shows nothing
-when nothing is wrong. The dot is deliberately not folded into the status orb
-on the right: the orb answers "can Mike act right now" (backends, run phase,
-quota), the chat name answers "what is inside the panel". Different questions,
-different sides, different shapes.
+**The door carries the dot.** The panel is the only place a rule's state
+lives, so the way in has to carry the one urgent fact: `ChatTopBar`'s
+`PanelButton` adds a 6dp dot on the hamburger when any rule is blocked, and
+shows nothing when nothing is wrong. The dot is deliberately not folded into
+the status orb on the right: the orb answers "can Mike act right now"
+(backends, run phase, quota), the button answers "what is inside the panel".
+Different questions, different sides, different shapes.
+
+The button itself is the second half of that. The chat name used to be the
+door, which made it mean two things at once — what you are reading, and where
+you go — and left the dot sitting on a chevron that read as "rename this chat".
+A hamburger in the navigation slot is the door; the title is only a title.
 
 **What leaves the phone is stated, not implied.** A rule's own screen names the
 exported fields in the user's terms — "Only the sender's name", with the note

@@ -62,9 +62,11 @@
   run, the ones that are running, and the ones you turned off. Tap a rule to see
   what it does as a chain — when, and, then — what it costs, and exactly which
   parts of an event leave your phone. Turn it off there, or run it now.
-- The chat name at the top turns amber with a small dot when a rule is switched
-  on and cannot run. That was invisible before: you would find out by the thing
-  never happening. No dot when everything is fine.
+- The panel opens from a menu button at the top left instead of from the chat's
+  name, so the name is just the name of what you are reading.
+- That button takes a small amber dot when a rule is switched on and cannot run.
+  That was invisible before: you would find out by the thing never happening. No
+  dot when everything is fine.
 - Rules now describe themselves in words rather than in their own format:
   "WhatsApp from Dad, after 19:00 and before 07:00", "Mon, Tue, Wed, Thu and Fri
   at 07:00", "Ran yesterday at 21:40 - twice today".
