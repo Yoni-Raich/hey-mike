@@ -162,10 +162,31 @@ or from these examples:
 | `key` | `arguments.keycode` | `BACK`, `HOME`, `APP_SWITCH` and the rest. `"action":"back"` is shorthand. |
 | `wait` | optional `timeoutMs` | Waits for the screen to change and settle. |
 | `observe` | — | Reads the screen. A checkpoint step whose whole job is its `verify`. |
+| `call` | `tool`, `arguments`, optional `output` | Calls one registered device capability with rich JSON. It does not read the screen unless the step asks for verification. |
 
 **Start with an intent when one reaches the screen.** A deep link or a settings
 action lands exactly where the taps would have, faster and with nothing to
 break on the way. Keep taps for the part no intent reaches.
+
+### API calls and captured output
+
+Use `call` for direct Android data instead of opening an app and reading its UI:
+
+```json
+{"id":"find","action":"call","tool":"contacts",
+ "arguments":{"operation":"search","query":"{{name}}","limit":1},
+ "output":"matches"}
+```
+
+Later call arguments and `type_text` can read fields such as
+`{{outputs.matches.items.0.id}}`. An exact placeholder keeps the JSON type.
+Only tools in the runner's explicit registry work; shell, install and nested
+workflow calls are always blocked. The called tool owns its normal permission
+or approval path, so do not add `requiresConfirmation` just to call it.
+
+If a later step fails, the returned `resume.arguments.outputs` carries every
+captured result. Pass the whole resume object unchanged. Do not run earlier
+calls again.
 
 ### Parameters
 

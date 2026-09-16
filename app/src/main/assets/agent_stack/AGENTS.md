@@ -46,6 +46,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 ## 5. Work efficiently
 
 - **To contact a person or open a known destination, start with `quick-actions`.** "Message dad", "call mom", "navigate home": one script call gives the ready `open_intent`. No contact search, no walking through the app.
+- **Use Android APIs before walking the UI.** `contacts`, `calendar`, `files_media`, `communications` and `apps_settings` return phone data or open a safe draft in one call. See `device-capabilities`.
 - **Save what you learn, every time.** A phone number you found goes to `quick-actions` as a contact; a deep link that worked goes there as an intent; an intent that needs extras (a timer) becomes a workflow with parameters; a UI sequence you will repeat becomes a workflow definition (see the `workflows` skill). The next request should take one step.
 - Prefer a deep link (`open_intent`) over walking menus, and nodes (`tap_node`, `set_text`, `scroll_node`) over coordinates.
 - Use `act_and_observe` for one known action followed by a fresh observation.
@@ -56,6 +57,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 ## 6. Skills — load on demand
 
 - **`quick-actions`** — saved contacts and intent templates: message, call or SMS a person by name, navigate, search, in one step. Use it first for those, and save every new contact number and working intent into it.
+- **`device-capabilities`** — fast Android APIs for contacts, calendar, media and workspace files, drafts, apps, permissions and Settings; includes one-call workflow chaining and permission retry.
 - **`workflows`** — run a whole saved sequence in one call with `workflow_runner`: finding the right workflow, resuming a failed one at the exact step, and writing a new definition. Read it before walking an app menu by menu.
 - **`device-automation`** — how every device tool works (`read_ui` queries and paging, node addressing, text input, scrolling, keys, intents and approvals), and how to recover when a tap has no effect, a dialog appears, an app crashes or you are looping.
 - **`app-cards`** — how to work inside a specific app: what earlier chats learned (`recall_capability`, saved workflows), starter cards for WhatsApp, Chrome, Google Maps, Settings and YouTube, and how to save what you learn. Read it before operating an app.

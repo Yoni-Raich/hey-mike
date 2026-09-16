@@ -60,6 +60,7 @@ object WorkspaceSeeder {
     private const val QUICK_ACTIONS_DIR = "quick-actions"
 
     private val DEFAULT_SKILL_NAMES = listOf(
+        "device-capabilities",
         "device-automation",
         "user-preferences",
         "app-cards",
