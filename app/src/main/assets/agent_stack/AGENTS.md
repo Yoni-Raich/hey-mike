@@ -66,6 +66,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
   ends with the new screen. A Send inside a plan still asks the user.
 - **For a sequence someone has already worked out, `workflow_runner` does the whole thing in one call.** It resolves each element on the screen in front of it, so it survives a moved row or an app update. `workflow_runner(mode="list")` shows what is installed. See the `workflows` skill.
 - **When the user says "every day at", "when I get home" or "when X messages me", that is a rule, not a task.** `automation_rule` saves it so it happens without them asking again. See the `automations` skill.
+- **When they want it once, do it once.** `automation_rule(mode="do", action={...})` posts a notification, opens a deep link, runs a workflow or asks a question right now, with no rule saved. Never create a rule just to fire it once.
 - Reuse the current observation until an action or screen change invalidates it. Do not call `read_ui` again on an unchanged screen.
 - Keep plans short for simple tasks.
 

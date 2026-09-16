@@ -27,6 +27,7 @@ import dev.androidagent.adb.AndroidAdbTransport
 import dev.androidagent.automations.AndroidAutomationActions
 import dev.androidagent.automations.AutomationHost
 import dev.androidagent.automations.AutomationHostOwner
+import dev.androidagent.core.AutomationActionResult
 import dev.androidagent.core.AgentCoordinator
 import dev.androidagent.core.AutomationJournal
 import dev.androidagent.core.AutomationLibrary
@@ -205,6 +206,16 @@ class AgentGraph(private val app: Application) {
         // Naming a rule supplies its trigger, so a scheduled rule can be proved
         // without waiting for its hour. Everything else about it still applies.
         fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
+        // The six things a rule can do were never rule-only by design, just by
+        // where the code sat. This is the same action path with no rule around
+        // it: nothing is saved, no guard applies, and the user is right here.
+        performNow = { action ->
+            if (::automationHost.isInitialized) {
+                automationHost.performNow(action)
+            } else {
+                AutomationActionResult.failed("automations are not running yet")
+            }
+        },
     )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.

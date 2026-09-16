@@ -16,7 +16,31 @@ automation_rule(mode="create", rule={...})
 automation_rule(mode="test", rule="evening-post", event={...}, now="...")
 automation_rule(mode="run", rule="evening-post")   -> fire it now, for real
 automation_rule(mode="enable"|"disable"|"delete", rule="evening-post")
+automation_rule(mode="do", action={...})           -> do one action now, no rule
 ```
+
+## Once is not a rule
+
+`mode="do"` performs a single action right now with nothing saved: no trigger,
+no conditions, no cooldown, and no entry in the rules list.
+
+```text
+automation_rule(mode="do", action={"type":"notify","text":"The rice is done"})
+automation_rule(mode="do", action={"type":"open_intent","action":"android.intent.action.VIEW","uri":"geo:0,0?q=pharmacy"})
+```
+
+Use it whenever the user asked for the **thing**, not for it to keep happening.
+"Put a reminder on my shade" is `do`. "Remind me every evening" is a rule. Do
+not create a rule, run it once and delete it — that leaves a rule behind if
+anything goes wrong in the middle, and the user sees it.
+
+Three things `do` refuses, all on purpose:
+
+- **`{{placeholders}}`** — there is no event to fill them from. Write the final
+  text.
+- **`agent_turn`** — you already are the turn. Do the thing yourself.
+- **`requiresApproval`** — that exists so an unattended rule can put a person in
+  the loop. The person is in the loop; ask them in the conversation.
 
 ## The shape
 

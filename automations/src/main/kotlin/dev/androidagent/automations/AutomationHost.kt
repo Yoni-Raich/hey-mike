@@ -28,7 +28,10 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.PowerManager
 import android.util.Log
+import dev.androidagent.core.AutomationAction
+import dev.androidagent.core.AutomationActionResult
 import dev.androidagent.core.AutomationActions
+import dev.androidagent.core.performOnce
 import dev.androidagent.core.AutomationContext
 import dev.androidagent.core.AutomationEvaluator
 import dev.androidagent.core.AutomationEvent
@@ -160,6 +163,19 @@ class AutomationHost(
 
     /** Run one rule by name, as if a person had asked for it. */
     fun runNow(ruleId: String) = onEvent(AutomationEvent.Manual(ruleId, ZonedDateTime.now(zone())))
+
+    /**
+     * Do one action with no rule behind it.
+     *
+     * It goes to the same [AutomationActions] a rule's action goes to, so it
+     * meets the same gateway, the same approval card and the same Stop. What
+     * it skips is everything a rule owns and a one-off does not have: no
+     * evaluation, no guard, no journal entry, and no [runLock] — the caller is
+     * a turn that already holds the device, and taking the lock here would
+     * deadlock against its own run.
+     */
+    suspend fun performNow(action: AutomationAction): AutomationActionResult =
+        actions.performOnce(action)
 
     /**
      * Point the single alarm at the earliest rule that is next due.

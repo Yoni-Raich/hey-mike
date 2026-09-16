@@ -22,6 +22,7 @@ package dev.androidagent.core
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -47,10 +48,13 @@ class AutomationToolGatewayTest {
     private fun library() = AutomationLibrary(File(temp.root, "automations"))
 
     private val fired = mutableListOf<String>()
+    private val performed = mutableListOf<AutomationAction>()
+    private var performResult = AutomationActionResult.ok("done")
 
     private fun gateway(
         supported: Set<AutomationTriggerKind> = AutomationTriggerKind.entries.toSet(),
         canFire: Boolean = true,
+        canPerform: Boolean = true,
     ) = AutomationToolGateway(
         library = library(),
         history = history,
@@ -58,6 +62,7 @@ class AutomationToolGatewayTest {
         now = { now },
         supportedTriggers = { supported },
         fireNow = if (canFire) ({ id -> fired += id }) else null,
+        performNow = if (canPerform) ({ action -> performed += action; performResult }) else null,
     ).also { it.beginRun("run", temp.root) }
 
     private fun call(gateway: AutomationToolGateway, json: String): JsonObject = runBlocking {
@@ -296,5 +301,89 @@ class AutomationToolGatewayTest {
         assertTrue(line, line.contains("1 on"))
         assertTrue(line, line.contains("1 off"))
         assertTrue(line, line.contains("dormant"))
+    }
+
+    // ---- do: one action, no rule ----
+
+    @Test fun doPerformsTheActionWithoutWritingARule() {
+        val gateway = gateway()
+        val body = call(gateway, """{"mode":"do","action":{"type":"notify","text":"the kettle boiled"}}""")
+        assertTrue(body["ok"]!!.jsonPrimitive.boolean)
+        assertEquals(1, performed.size)
+        assertEquals(AutomationActionKind.NOTIFY, performed.single().kind)
+        assertEquals("the kettle boiled", performed.single().raw["text"]!!.jsonPrimitive.content)
+        // Nothing was saved, and the reply says so rather than leaving the
+        // model to assume a rule now exists.
+        assertFalse(body["recorded"]!!.jsonPrimitive.boolean)
+        val listed = call(gateway, """{"mode":"list"}""")
+        assertEquals(0, listed["rules"]!!.jsonArray.size)
+    }
+
+    @Test fun doReportsAFailureAsAFailure() {
+        performResult = AutomationActionResult.failed("nothing handles that intent")
+        val body = call(gateway(), """{"mode":"do","action":{"type":"open_intent","action":"android.intent.action.NOPE"}}""")
+        assertFalse(body["ok"]!!.jsonPrimitive.boolean)
+        assertTrue(body["detail"]!!.jsonPrimitive.content.contains("nothing handles"))
+    }
+
+    @Test fun doNeverClaimsAFailedActionWasUndone() {
+        performResult = AutomationActionResult.failed("the workflow stopped at step 3", committed = true)
+        val body = call(gateway(), """{"mode":"do","action":{"type":"run_workflow","workflow":"evening-post"}}""")
+        assertFalse(body["ok"]!!.jsonPrimitive.boolean)
+        assertTrue(body["mayHaveRun"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test fun doRefusesAnActionWithAPlaceholderItCannotFill() {
+        val body = call(gateway(), """{"mode":"do","action":{"type":"notify","text":"from {{notification.title}}"}}""")
+        assertEquals("placeholder_without_event", body["errorType"]!!.jsonPrimitive.content)
+        assertTrue(performed.isEmpty())
+    }
+
+    @Test fun doRefusesAgentTurnBecauseTheCallerIsOne() {
+        val body = call(gateway(), """{"mode":"do","action":{"type":"agent_turn","prompt":"check the inbox"}}""")
+        assertEquals("agent_turn_not_one_off", body["errorType"]!!.jsonPrimitive.content)
+        assertTrue(performed.isEmpty())
+    }
+
+    @Test fun doRefusesRequiresApprovalRatherThanImplyingASecondGate() {
+        val body = call(
+            gateway(),
+            """{"mode":"do","action":{"type":"notify","text":"hi","requiresApproval":true}}""",
+        )
+        assertEquals("approval_not_applicable", body["errorType"]!!.jsonPrimitive.content)
+        assertTrue(performed.isEmpty())
+    }
+
+    @Test fun doRefusesAnUnknownActionKindWithTheWholeList() {
+        val body = call(gateway(), """{"mode":"do","action":{"type":"send_sms","text":"hi"}}""")
+        assertEquals("automation_invalid", body["errorType"]!!.jsonPrimitive.content)
+        assertTrue(body["message"]!!.jsonPrimitive.content.contains("notify"))
+        assertTrue(performed.isEmpty())
+    }
+
+    @Test fun doRefusesAnActionMissingTheFieldItsKindNeeds() {
+        val body = call(gateway(), """{"mode":"do","action":{"type":"notify"}}""")
+        assertEquals("automation_invalid", body["errorType"]!!.jsonPrimitive.content)
+        assertTrue(performed.isEmpty())
+    }
+
+    @Test fun doWithoutAnActionSaysWhatItNeeds() {
+        val body = call(gateway(), """{"mode":"do"}""")
+        assertEquals("missing_action", body["errorType"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aHostWithNoActionPathRefusesRatherThanDoingNothing() {
+        val body = call(gateway(canPerform = false), """{"mode":"do","action":{"type":"notify","text":"hi"}}""")
+        assertEquals("do_unavailable", body["errorType"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun doIsNotARuleFiringSoNothingCountsAgainstAQuota() {
+        val gateway = gateway()
+        call(gateway, dadRule.trimIndent().let { """{"mode":"create","rule":$it}""" })
+        call(gateway, """{"mode":"do","action":{"type":"notify","text":"one off"}}""")
+        val described = call(gateway, """{"mode":"describe","rule":"dad-after-seven"}""")
+        // The rule's own history is untouched by an action that was never its.
+        assertFalse(described.toString().contains("\"today\":1"))
+        assertTrue(fired.isEmpty())
     }
 }

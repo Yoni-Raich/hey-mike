@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Mike can do a one-off without inventing a rule for it. "Put a reminder on my
+  shade", "open the pharmacy in Maps", "run my evening post now" all happen
+  directly; nothing is saved and nothing shows up in your rules. Before this it
+  had to write a standing rule, fire it and delete it — and if anything went
+  wrong in the middle, the leftover rule was yours to find.
 - Mike can tell you where you are. Ask, and it reads the phone's current
   position — the town by default, the street only if the task needs it and you
   allow it. It asks for the permission the same way it asks for contacts or the

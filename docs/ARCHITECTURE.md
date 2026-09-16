@@ -390,6 +390,34 @@ not report the access as granted. Notification support is deliberately status
 and setup only — there is no `NotificationListenerService`, so the gateway
 cannot read notification content.
 
+### An action does not need a rule around it
+
+Rules and actions were built together, so the six things a rule can do became
+the six things only a rule could do. That was where the code sat, not a
+decision. `automation_rule(mode:"do")` performs one of them immediately —
+`AutomationAction.parse` for the same closed set and the same per-kind
+validation, then `AutomationActions.performOnce`, which is the same interface a
+fired rule's action reaches. It meets the same gateway, the same approval card
+and the same Stop.
+
+What it deliberately does not get is everything a rule owns: no evaluation, no
+cooldown or daily limit, no journal entry, and no `runLock` — the caller is a
+turn that already holds the device, so taking the lock would deadlock against
+its own run. The reply says `recorded:false` outright, because a model that
+assumed otherwise would tell the user a rule now exists.
+
+Three refusals carry the design. A `{{placeholder}}` has no event to fill it
+from, so it is refused where it is written rather than silently becoming an
+empty string. `agent_turn` is refused because the caller already is one, and
+the queued turn would arrive after the conversation moved on. `requiresApproval`
+is refused rather than honoured: it exists so an unattended rule can put a
+person in the loop, and accepting it here would imply a second gate that does
+not exist.
+
+The alternative — let the model create a rule, run it and delete it — was worse
+in the way that matters: anything going wrong between the three steps leaves a
+rule in the user's list that nobody asked for.
+
 ### Location is a read, not a subscription
 
 `location` answers one question — where is this phone now — and it is built so

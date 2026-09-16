@@ -62,6 +62,43 @@ interface AutomationActions {
     fun canAsk(): Boolean = true
 }
 
+/**
+ * Perform one action with no rule behind it.
+ *
+ * It reaches the same [AutomationActions] a rule's action reaches, so it meets
+ * the same gateway, the same approval card and the same Stop. What it skips is
+ * everything a rule owns and a one-off does not have: no evaluation, no guard,
+ * no journal entry, and no rule id to attribute it to.
+ *
+ * `agent_turn` is refused rather than served. A one-off is always started by a
+ * turn, and a turn queueing a turn to do what it was asked to do is a loop with
+ * extra steps whose result arrives after the conversation has moved on. The
+ * gateway refuses it first, with a reply that says what to do instead; this is
+ * the backstop for any other caller.
+ */
+suspend fun AutomationActions.performOnce(action: AutomationAction): AutomationActionResult =
+    when (action.kind) {
+        AutomationActionKind.RUN_WORKFLOW -> runWorkflow(
+            action.raw.str("workflow").orEmpty(),
+            (action.raw["parameters"] as? JsonObject) ?: JsonObject(emptyMap()),
+        )
+        AutomationActionKind.OPEN_INTENT -> openIntent(action.raw)
+        AutomationActionKind.NOTIFY -> notify(action.raw.str("title"), action.raw.str("text").orEmpty())
+        AutomationActionKind.VOICE_CALL -> voiceCall(action.raw.str("opening").orEmpty())
+        AutomationActionKind.ASK ->
+            if (!canAsk()) {
+                AutomationActionResult.failed("this phone has no way to put a question to you")
+            } else {
+                // The answer is the result: a one-off `ask` was asked for its
+                // answer, where a rule's `ask` is a gate on what follows.
+                val yes = ask(action.raw.str("question").orEmpty())
+                AutomationActionResult.ok(if (yes) "answered yes" else "answered no, or nobody answered")
+            }
+        AutomationActionKind.AGENT_TURN -> AutomationActionResult.failed(
+            "a one-off cannot queue a turn; whoever called this is already one",
+        )
+    }
+
 data class AutomationActionResult(
     val ok: Boolean,
     val detail: String = "",

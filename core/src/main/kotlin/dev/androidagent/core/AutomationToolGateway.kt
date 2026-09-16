@@ -49,6 +49,14 @@ import java.time.ZonedDateTime
  * which live on the Android side; keeping them out of here is what lets every
  * decision in this file be unit-tested and what stops a tool call from turning
  * into an unattended run.
+ *
+ * `mode:"do"` is the one exception, and it is not a rule firing. It performs a
+ * single action the caller wrote out, with the user right there in the
+ * conversation that asked for it — no trigger, no guard, no journal entry.
+ * Rules and actions were built together, so the six things a rule can do were
+ * the six things only a rule could do; that was an accident of where the code
+ * sat, not a decision. Posting a notification should not require inventing a
+ * standing rule, and a model that has to invent one leaves a rule behind.
  */
 class AutomationToolGateway(
     private val library: AutomationLibrary,
@@ -71,6 +79,15 @@ class AutomationToolGateway(
      * here would hold the coordinator's tool lock for the whole rule.
      */
     private val fireNow: ((String) -> Unit)? = null,
+    /**
+     * Perform one action right now, with no rule behind it. Null leaves
+     * `mode:"do"` refusing rather than silently doing nothing.
+     *
+     * Unlike [fireNow] this waits: the caller asked for one thing and wants to
+     * know whether it happened, and one action is bounded in a way a whole
+     * rule is not.
+     */
+    private val performNow: (suspend (AutomationAction) -> AutomationActionResult)? = null,
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -125,6 +142,7 @@ class AutomationToolGateway(
                 "delete" -> delete(arguments)
                 "test" -> test(arguments)
                 "run" -> run(arguments)
+                "do" -> perform(arguments)
                 else -> refusal("unknown_mode", "\"$mode\" is not a mode.")
             }
         } catch (invalid: AutomationFormatException) {
@@ -322,6 +340,76 @@ class AutomationToolGateway(
      * The reply says it started, not that it worked: the run takes the device
      * and may stop to ask the user, so its outcome arrives later.
      */
+    /**
+     * Do one action now, without a rule.
+     *
+     * Three things are deliberately refused rather than quietly allowed.
+     *
+     * A placeholder cannot be filled: there is no event, so `{{...}}` would
+     * either vanish into an empty string or reach the user as literal braces.
+     * Refusing it where it is written is the same choice `create` makes.
+     *
+     * `agent_turn` is refused because the caller already is one. A turn that
+     * queues a turn to do what it was asked to do is a loop with extra steps,
+     * and the queued one would arrive after the conversation moved on.
+     *
+     * `requiresApproval` is refused as meaningless here rather than honoured:
+     * it exists so an unattended rule can put a person in the loop, and the
+     * person is already in the loop. Accepting it would imply a second gate
+     * that does not exist.
+     */
+    private suspend fun perform(arguments: JsonObject): ToolResult {
+        val act = performNow ?: return refusal(
+            "do_unavailable",
+            "This host cannot perform an action on its own. Write a rule instead, or run an existing one.",
+        )
+        val body = arguments["action"] as? JsonObject
+            ?: return refusal(
+                "missing_action",
+                "mode:\"do\" needs \"action\": one action object, written exactly like an entry of a rule's " +
+                    "\"then\". Use " + AutomationActionKind.WIRE_NAMES.joinToString(", ") + ".",
+            )
+        val action = AutomationAction.parse(body, index = 1, ruleId = "this action")
+        if (AutomationRule.PLACEHOLDER_RE.containsMatchIn(action.raw.toString())) {
+            return refusal(
+                "placeholder_without_event",
+                "A one-off action has no event to fill \"{{...}}\" from. Write the final text, or put the " +
+                    "placeholder in a rule whose trigger supplies it.",
+            )
+        }
+        if (action.kind == AutomationActionKind.AGENT_TURN) {
+            return refusal(
+                "agent_turn_not_one_off",
+                "You are already the turn. Do the thing directly instead of queueing a turn to do it. " +
+                    "agent_turn exists so a rule can start one when nobody is here.",
+            )
+        }
+        if (action.requiresApproval) {
+            return refusal(
+                "approval_not_applicable",
+                "\"requiresApproval\" is for unattended rules; the user is already in this conversation. " +
+                    "Ask them yourself, or use a \"ask\" action.",
+            )
+        }
+        val result = act(action)
+        return ToolResult(
+            buildJsonObject {
+                put("ok", result.ok)
+                put("did", action.describe())
+                if (result.detail.isNotBlank()) put("detail", result.detail)
+                if (!result.ok && result.committed) put("mayHaveRun", true)
+                put("recorded", false)
+                put(
+                    "note",
+                    "One-off: no rule was created, nothing was written to the rules library, and no " +
+                        "cooldown or daily limit applied. If this should happen again on its own, " +
+                        "write a rule with mode:\"create\".",
+                )
+            }.toString(),
+            success = result.ok,
+        )
+    }
+
     private fun run(arguments: JsonObject): ToolResult {
         val fire = fireNow ?: return refusal(
             "run_unavailable",
@@ -387,7 +475,7 @@ class AutomationToolGateway(
     )
 
     private companion object {
-        val MODES = listOf("create", "list", "describe", "enable", "disable", "delete", "test", "run")
+        val MODES = listOf("create", "list", "describe", "enable", "disable", "delete", "test", "run", "do")
 
         private fun enumOf(values: List<String>): JsonArray = JsonArray(values.map { JsonPrimitive(it) })
 
@@ -493,12 +581,33 @@ class AutomationToolGateway(
                                     put("enum", JsonArray(MODES.map { JsonPrimitive(it) }))
                                     put(
                                         "description",
-                                        "create, list, describe, enable, disable, delete, test (decide without doing) " +
-                                            "or run (fire it now for real). Defaults to list.",
+                                        "create, list, describe, enable, disable, delete, test (decide without doing), " +
+                                            "run (fire an existing rule now for real) or do (perform one action " +
+                                            "right now, with no rule at all). Defaults to list.",
                                     )
                                 },
                             )
                             put("rule", RULE_SCHEMA)
+                            put(
+                                "action",
+                                buildJsonObject {
+                                    put("type", "object")
+                                    put(
+                                        "description",
+                                        "do only: one action, written exactly like an entry of a rule's \"then\". " +
+                                            "No trigger, no conditions, no cooldown, and nothing is saved. " +
+                                            "agent_turn is refused here — you are already the turn.",
+                                    )
+                                    put("properties", buildJsonObject {
+                                        put("type", buildJsonObject {
+                                            put("type", "string")
+                                            put("enum", enumOf(AutomationActionKind.WIRE_NAMES))
+                                        })
+                                    })
+                                    put("required", enumOf(listOf("type")))
+                                    put("additionalProperties", true)
+                                },
+                            )
                             put(
                                 "event",
                                 buildJsonObject {
@@ -571,6 +680,10 @@ class AutomationToolGateway(
                 "agent_turn that re-derives it every night. Always dry-run a new rule with " +
                 "mode:\"test\" before telling the user it works, and use mode:\"run\" to fire one " +
                 "now for real — naming a rule supplies its trigger, so a scheduled rule can be " +
-                "proved without waiting for its hour, while its conditions and limits still apply."
+                "proved without waiting for its hour, while its conditions and limits still apply. " +
+                "mode:\"do\" performs one of those same actions right now with no rule at all: " +
+                "use it when the user asked for the thing itself (\"remind me on the notification " +
+                "shade\", \"open Maps\") rather than for it to keep happening. It saves nothing, so " +
+                "do not invent a rule just to do something once."
     }
 }
