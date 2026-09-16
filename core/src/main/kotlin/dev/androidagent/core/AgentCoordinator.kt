@@ -56,6 +56,15 @@ class AgentCoordinator(
      * existing caller uses keeps binding to the parameter it always did.
      */
     private val bringToForeground: () -> Unit = {},
+    /**
+     * The monotonic clock every duration in [RunMetrics] is measured against.
+     *
+     * Injected for the same reason the runner's is: a summary that says where a
+     * run's time went is only worth what it can be tested against, and a test
+     * driving a virtual clock cannot verify a real one. Declared before
+     * [adbStatus] so that stays the trailing parameter.
+     */
+    private val nowNanos: () -> Long = System::nanoTime,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) {
     private val mutableState = MutableStateFlow(RunState())
@@ -78,6 +87,16 @@ class AgentCoordinator(
     private var firstResponseMs: Long? = null
     private var toolCalls = 0
     private var toolMs = 0L
+
+    /**
+     * Time a person was being waited on, kept apart from [toolMs].
+     *
+     * A send approval happens inside the tool call that asks for it, so without
+     * this the summary would report 20 seconds of "the phone" for 20 seconds of
+     * someone deciding whether to send a message. Atomic because the wait is
+     * counted where it happens and read where the run ends.
+     */
+    private val approvalNanos = java.util.concurrent.atomic.AtomicLong(0)
     private val metricsState = MutableStateFlow<Map<String, RunMetrics>>(emptyMap())
     val metrics = metricsState.asStateFlow()
     private var assistantId: String? = null
@@ -125,10 +144,11 @@ class AgentCoordinator(
             assistantId = null
             assistantItemId = null
             lastMessageWasFinal = false
-            runStartedNanos = System.nanoTime()
+            runStartedNanos = nowNanos()
             firstResponseMs = null
             toolCalls = 0
             toolMs = 0L
+            approvalNanos.set(0)
             assistantText.clear()
             assistantOutcome = "complete"
             controlTakeover = false
@@ -723,12 +743,15 @@ class AgentCoordinator(
     private suspend fun awaitLocalApproval(pending: PendingLocalApproval): LocalOutcome {
         // null means nobody answered; false means the user said no. They are
         // different outcomes and the model has to be able to tell them apart.
+        val askedAt = nowNanos()
         val decision = try {
             withTimeoutOrNull(LOCAL_APPROVAL_TIMEOUT_MS) { pending.decision.await() }
         } catch (cancelled: CancellationException) {
+            approvalNanos.addAndGet(nowNanos() - askedAt)
             clearLocalApproval(pending)
             throw cancelled
         }
+        approvalNanos.addAndGet(nowNanos() - askedAt)
         return synchronized(lifecycleLock) {
             val stillCurrent = pendingLocalApproval === pending &&
                 isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)
@@ -960,10 +983,16 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 mutableState.value = state.value.copy(phase = if (visible) RunPhase.CONTROLLING else RunPhase.TOOL, controlling = visible, status = status, toolName = toolName)
                             }
-                            val toolStart = System.nanoTime()
+                            val toolStart = nowNanos()
+                            // Any approval this call raises is subtracted below,
+                            // so tool time stays device time.
+                            val approvalsBefore = approvalNanos.get()
                             toolCalls++
                             try { result = tools.invoke(event.name, event.arguments) }
-                            finally { toolMs += (System.nanoTime() - toolStart) / 1_000_000 }
+                            finally {
+                                val waited = approvalNanos.get() - approvalsBefore
+                                toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
+                            }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (error: Exception) {
@@ -1084,7 +1113,7 @@ class AgentCoordinator(
         }
         synchronized(lifecycleLock) {
             ensureCurrentLocked(token)
-            if (firstResponseMs == null) firstResponseMs = (System.nanoTime() - runStartedNanos) / 1_000_000
+            if (firstResponseMs == null) firstResponseMs = (nowNanos() - runStartedNanos) / 1_000_000
             assistantText.append(text)
             textRevision++
         }
@@ -1186,7 +1215,19 @@ class AgentCoordinator(
             }
         }
         runCatching { overlay.finish(terminalOverlay) }
-        metricsState.value = metricsState.value + (sessionId to RunMetrics(firstResponseMs, (System.nanoTime() - runStartedNanos) / 1_000_000, toolCalls, toolMs))
+        val metrics = RunMetrics(
+            firstResponseMs = firstResponseMs,
+            totalMs = (nowNanos() - runStartedNanos) / 1_000_000,
+            toolCalls = toolCalls,
+            toolMs = toolMs,
+            approvalMs = approvalNanos.get() / 1_000_000,
+        )
+        metricsState.value = metricsState.value + (sessionId to metrics)
+        // Into the chat, not a log: the run that felt slow is the one someone
+        // will ask about, and the answer belongs where they are already looking.
+        RunSummary.line(metrics)?.let { summary ->
+            runCatching { sessions.append(message(sessionId, "system", summary)) }
+        }
         availableState.value = true
     }
 

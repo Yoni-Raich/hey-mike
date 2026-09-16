@@ -1,6 +1,6 @@
 ---
 name: device-automation
-description: How every device tool works and how to recover when the phone does not respond as expected — read_ui queries and paging, node addressing, text input, scrolling, keys, deep links and approvals, plus fixes for taps with no effect, dialogs, keyboards, crashes and loops.
+description: How every device tool works and how to recover when the phone does not respond as expected — read_ui queries and paging, node addressing, running a seen sequence in one call, text input, scrolling, keys, deep links and approvals, plus fixes for taps with no effect, dialogs, keyboards, crashes and loops.
 ---
 
 # Android Device Automation
@@ -124,6 +124,11 @@ itself, so they cannot miss because the screen scrolled a few pixels.
 - `wait_for_change(timeoutMs?)` — blocks until the screen changes and settles.
   Use it after an action that starts a transition instead of polling `read_ui`.
   `changed:false` means nothing moved, so the previous action did not land.
+- **When this observation already shows you several steps, do not spend a turn
+  on each.** `act_plan` runs the sequence in one call and resolves each step
+  against the screen in front of it. Name its targets by `text`,
+  `contentDescription`, `resourceId` or `class` — not by `nodeId`, which the
+  next read replaces. See the `workflows` skill.
 
 ## 2. Text Input (`type_text`, `set_text`)
 
@@ -199,7 +204,7 @@ A successful launch only means the intent was dispatched. Confirm with `read_ui`
 
 ### Sending asks the user — opening a draft does not
 
-Opening a chat with the text typed in (`wa.me/…` with `text`, `smsto:`, `mailto:`) sends nothing and opens at once. **The approval is on the Send itself**: when you tap a Send button (`tap`, `tap_node`, `act_and_observe`), or submit typed text in a messaging app (`type_text`/`set_text` with `submit=true`), the call pauses until the user answers.
+Opening a chat with the text typed in (`wa.me/…` with `text`, `smsto:`, `mailto:`) sends nothing and opens at once. **The approval is on the Send itself**: when you tap a Send button (`tap`, `tap_node`, `act_and_observe`, or a step of `act_plan`), or submit typed text in a messaging app (`type_text`/`set_text` with `submit=true`), the call pauses until the user answers. A plan whose last step is Send is not a way around this: that step asks like any other.
 
 - The app is raised and shows who gets which message, above the message box or on the voice screen.
 - The user taps **Allow** or **Deny**, or just says or types **"yes" / "כן"** or **"no" / "לא"**. You cannot answer for them.
@@ -224,7 +229,10 @@ A payment link (`amount`) still asks before it opens.
 ### A tap had no effect
 `read_ui` shows the same screen, or `"unchanged":true`, after an action that should have changed it.
 1. **Non-clickable target.** Use the node's `clickableAncestor.bounds`, or `tap_node` on the clickable node.
-2. **Still animating or loading.** Call `wait_for_change` once rather than tapping again.
+2. **Still animating or loading.** Call `wait_for_change` once rather than tapping again. For something
+   genuinely slow — a video attaching, an upload, an install — do not poll `read_ui`: run one
+   `act_plan` step that waits on the condition with your own estimate,
+   `{"action":"observe","verify":{"present":{...},"timeoutMs":45000}}`.
 3. **Covered or clipped.** A dialog, the keyboard or the screen edge is in the way. Dismiss it, or `scroll_node` the target into the middle first.
 4. Never repeat the identical tap more than twice.
 

@@ -843,6 +843,138 @@ to build a feature. A workflow is written instead: worked out once with the
 device tools, then saved as a definition, which is also the only form that can
 carry verification conditions and confirmation flags at all.
 
+## `act_plan`: one observation, one call
+
+`read_ui` answers more than the question that was asked. A chat screen returns
+the message field, the Send button and the row that names the recipient in the
+same reply - everything a send needs. The loop then spent a model turn per
+action anyway: focus, turn, type, turn, press. Three turns, all of them
+re-deriving what the first observation already said.
+
+`act_plan` takes that sequence as one call. It is `run_workflow`'s ergonomics -
+inline steps, nothing to save first - with `workflow_runner`'s execution: the
+same `WorkflowRunner`, so each step is resolved against the screen in front of
+*that* step, settled, and checked against its own `verify` before the next one
+runs. `WorkflowDefinition.adHoc` parses the inline steps through the same
+`parse` a definition file goes through, so a plan cannot express a step a file
+could not, and inherits its limits and refusals.
+
+Four decisions make it safe to plan ahead at all.
+
+**A plan carries labels, never ids.** A `nodeId` belongs to one observation and
+the runner re-reads the screen before every step, so ids would be stale by the
+second one - the reason a definition file cannot store them either. A plan that
+names a target by `nodeId`, `observationId` or `bounds` is refused with the
+fields to use instead (`plan_positional`), rather than having them dropped
+quietly: a silently ignored id leaves the model believing it named the target.
+Resolving by label is also what makes planning ahead sound - the keyboard
+opening between step one and step two moves every coordinate and changes no
+label.
+
+**Eight steps.** Enough for focus-type-send, a dialog, a search and its result;
+short of a sequence whose later steps are about screens the model has not read.
+Past that the refusal points at a workflow definition, which can be read, fixed
+and reused instead of re-derived in each chat.
+
+**The reply ends on the screen it landed on.** The runner's own reads never
+reach the model, so a plan that saved three round trips would cost one back to
+find out where it ended up. That final read is forced: unchanged-suppression
+answers "the same as revision N", and N is a node list the model never saw.
+
+**A failure resumes by the caller's own steps.** There is no library entry to
+name, so `Options.adHocTool` makes the resume block name `act_plan` and a
+`startAt`: the model resends the same steps and the committed prefix is skipped.
+Everything else is the workflow contract unchanged - the failing step, what
+already ran, whether it may have half-happened.
+
+## A resumed thread gets the tools this version has
+
+`thread/start` sends `dynamicTools`; `thread/resume` did not. A thread binds the
+tool list it was created with, so a chat opened before an app update could never
+call a tool that update added - while the per-turn runtime snapshot, built from
+the live gateway, told the model it could. The model then called a tool its own
+thread had never been given. That reached a phone with `act_plan`, and the
+device-automation skill's warning that some tools "exist only in chats started
+after they shipped" was the symptom being documented rather than fixed.
+
+`resumeSessionParams` now takes the tool list, and `openSession` resumes with it
+first and retries the plain resume before falling back to a fresh thread. The
+order matters: a server that will not accept the parameter costs one extra round
+trip, while the fallback it would otherwise hit - starting a new thread - costs
+the user the conversation they were in. Null omits the key rather than sending
+an empty array, because an empty array reads as "this thread has no tools".
+
+## Where a run's time went
+
+`RunMetrics` existed and only an instrumented test ever read it. A run that felt
+slow is the one someone asks about, so at the end of every run that touched the
+phone the coordinator writes one system line into the chat: total, thinking, time
+on the phone across how many calls, and time waiting for a person.
+
+Two decisions make the numbers honest.
+
+**Waiting for a person is its own bucket.** A send approval is raised *inside*
+the tool call that asks for it, so counting it as tool time reported twenty
+seconds of "the phone" for twenty seconds of somebody deciding whether to send a
+message. `awaitLocalApproval` accumulates that wait, and the tool dispatch
+subtracts the part of it that happened inside its own call - so tool time is
+device time, approval time is human time, and thinking is what is left (model
+turns and engine overhead). Three buckets, three different fixes: fewer turns, a
+faster path on screen, or nothing at all.
+
+**The clock is injected.** `AgentCoordinator` takes `nowNanos`, for the same
+reason `WorkflowRunner` does: a summary claiming to say where time went is worth
+what it can be tested against, and a test driving a virtual clock cannot verify a
+real one. The tests advance virtual time and assert the split exactly.
+
+A run that called no tool gets no line. One bucket is not a breakdown, and a
+line under every short answer teaches the user to skip it.
+
+**A tool schema that says `array` says nothing.** The first device run failed
+before touching the phone: `steps` was advertised as a bare
+`{"type":"array"}`, a client with no `items` renders that as an array of
+strings, and the agent reasonably sent each step as quoted JSON - which the
+validator refused. `steps.items` now spells the step object out, including the
+`action` enum and the target fields a `read_ui` reply carries, and the same is
+done for `run_workflow` and `save_workflow`. The sweep that followed found the
+same defect in three more places: `remember_capability`'s `fallbacks`, and
+`automation_rule`'s `places`, `deviceState` and `rule` - the last of which
+described a whole rule with no `type` and no fields at all. `ToolSchemaAudit`
+is now the shared definition of that defect and every gateway's tests run it
+over everything they advertise, so the next tool cannot reintroduce it: an
+array with no `items`, an object that neither names its keys nor declares them
+open, a property with no type and nothing else that says what it takes, or a
+`required` name that is not a property. Two things back that up: a quoted
+step is parsed rather than refused, the way a quoted number is already accepted
+as a number, and the example in the refusal, the tool description and the test
+is one shared constant that the test executes - an example that drifts from the
+validator is how a caller writes a call that cannot run.
+
+**A step says where its time went.** One `elapsedMs` per step reports that a
+step was slow; it cannot say whether the element took finding, the app took
+acting, or the screen never settled - and those have different fixes. Each
+record carries `timing` split into `resolve`, `act`, `settle` and `verify`
+(phases under 50ms are left out, so a fast step stays one line), and a failure
+carries `failedStepTiming` for the step the ledger does not otherwise hold. This
+came from a real post-with-media run on X that took minutes: the report could
+say it was slow, not which part was.
+
+**A `verify` timeout is the caller's estimate of the work.** It was capped at
+20s, a screen transition with room to spare, and `millis()` clamps rather than
+refuses - so a step that said "this import takes about 45 seconds" waited 20 and
+reported the condition false while it was still on its way. The ceiling is now
+60s, inside `MAX_TOTAL_MS` with room for the rest of the run, and Stop stays
+responsive because the poll loop checks revoke every cycle. Polling stops the
+moment the condition holds, so a generous estimate costs nothing when the work
+is quick; that is what makes an estimate the right thing to ask the model for.
+
+Nothing about approvals changes. A tap that lands on Send inside a plan reaches
+`tap_node` on the accessibility backend and hits `SendGuard` there, so it asks
+with the same card and the same spoken "yes" as a send the model dispatched on
+its own. A plan is not a way around a gate, because the plan never replaces the
+tool that owns it.
+
+
 ## Connected Apps: the surface exists, the answer does not
 
 `.codex-work/runtime/probe_apps.py` probes a running on-phone app-server for

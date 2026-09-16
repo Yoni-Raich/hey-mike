@@ -149,19 +149,28 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
         connect()
         if (!threadId.isNullOrBlank()) {
-            val resumeParams = resumeSessionParams(workspace, threadId, model)
-            try {
-                val result = request("thread/resume", resumeParams)
-                val resumedId = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() }
-                if (resumedId != null) return resumedId
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                // If thread/resume fails (e.g. "no rollout found for thread id",
-                // unmaterialized zero-turn thread, app update, or missing state),
-                // fall back to starting a fresh thread so the user is never locked out.
-                // Note: request() withTimeout(60_000) throws TimeoutCancellationException (a CancellationException),
-                // which deliberately propagates to the caller rather than triggering an unwanted fallback.
-                System.err.println("CodexEngine: Failed to resume thread $threadId, falling back to fresh thread: ${SecretRedactor.redact(error.message ?: error.toString())}")
+            // Tools first. A thread binds the tool list it was started with, so
+            // a chat opened before an app update could never call a tool that
+            // update added - while the per-turn runtime snapshot, built from the
+            // live gateway, said it could. That mismatch reached a phone with
+            // `act_plan`. The plain resume is the fallback rather than the
+            // first try, and a server that will not take the tools costs one
+            // extra round trip instead of the user's conversation.
+            for (attempt in listOf(tools, null)) {
+                try {
+                    val result = request("thread/resume", resumeSessionParams(workspace, threadId, model, attempt))
+                    val resumedId = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() }
+                    if (resumedId != null) return resumedId
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    // If thread/resume fails (e.g. "no rollout found for thread id",
+                    // unmaterialized zero-turn thread, app update, or missing state),
+                    // fall back to starting a fresh thread so the user is never locked out.
+                    // Note: request() withTimeout(60_000) throws TimeoutCancellationException (a CancellationException),
+                    // which deliberately propagates to the caller rather than triggering an unwanted fallback.
+                    val carrying = if (attempt == null) "" else " with its tool list"
+                    System.err.println("CodexEngine: Failed to resume thread $threadId$carrying: ${SecretRedactor.redact(error.message ?: error.toString())}")
+                }
             }
         }
         val startParams = startSessionParams(workspace, model, tools)
@@ -583,10 +592,19 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                 )
             }
 
+        /**
+         * Resume an existing thread.
+         *
+         * [tools] re-binds the tool list this session advertises. Null omits
+         * the key entirely rather than sending an empty array, which would read
+         * as "this thread has no tools" - the difference between the fallback
+         * attempt and taking every tool away from a resumed chat.
+         */
         internal fun resumeSessionParams(
             workspace: File,
             threadId: String,
             model: String?,
+            tools: List<ToolDefinition>? = null,
         ): JsonObject = buildJsonObject {
             put("cwd", workspace.absolutePath)
             put("approvalPolicy", "never")
@@ -596,6 +614,7 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             if (!model.isNullOrBlank()) put("model", model)
             put("threadId", threadId)
             put("excludeTurns", true)
+            tools?.let { put("dynamicTools", dynamicTools(it)) }
         }
 
         internal fun startSessionParams(
@@ -609,13 +628,21 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             put("developerInstructions", AGENT_INSTRUCTIONS)
             put("config", buildJsonObject { put("features.image_generation", true) })
             if (!model.isNullOrBlank()) put("model", model)
-            put("dynamicTools", JsonArray(tools.map { tool -> buildJsonObject {
-                put("type", "function")
-                put("name", tool.name)
-                put("description", tool.description)
-                put("inputSchema", tool.inputSchema)
-            } }))
+            put("dynamicTools", dynamicTools(tools))
         }
+
+        /** One wire shape for the tool list, so a resume advertises what a start does. */
+        private fun dynamicTools(tools: List<ToolDefinition>): JsonArray =
+            JsonArray(
+                tools.map { tool ->
+                    buildJsonObject {
+                        put("type", "function")
+                        put("name", tool.name)
+                        put("description", tool.description)
+                        put("inputSchema", tool.inputSchema)
+                    }
+                },
+            )
 
         internal fun turnStartParams(
             threadId: String,

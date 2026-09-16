@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Mike no longer spends a thinking turn per tap when it can already see what to
+  do. Reading the screen once shows it the message box *and* the Send button, so
+  "tap the box, type this, send it" is now a single `act_plan` call instead of
+  three turns. Each step is still found on the screen in front of it, so the
+  keyboard opening or a list shifting between steps does not throw it off, and
+  a step that does not land stops the sequence and reports what already
+  happened. Sending still asks you first, wherever it sits in the sequence.
+- A chat you started before updating the app can now use the abilities the
+  update added. Until now those only worked in chats opened afterwards, while
+  Mike was told it had them - so it would try one and fail.
+- After Mike does something on your phone, the chat now ends with one line
+  saying where the time went: how long in total, how much of it was Mike
+  thinking, how much was the phone, and how much was waiting for you to answer.
+  Waiting for you is counted separately, so approving a message is never
+  reported as the phone being slow.
+- Fixed a tool definition that described its own input wrongly, which made Mike
+  send a sequence in a form it then refused, costing a wasted round trip before
+  anything ran.
+- When Mike waits for something on the phone, it now says how long it expects
+  that to take instead of being held to a fixed few seconds. A video attaching
+  to a post, an upload or an install is no longer reported as "it did not
+  happen" while it was still on its way, and Mike stops waiting the moment it is
+  done.
+- Every step of a sequence now reports where its time went — finding the
+  element, the action itself, the screen settling, or waiting for the result —
+  so a slow run says which part was slow instead of just being slow.
 - Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
   **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
   anyone who wants to ship it inside a closed-source product. Personal use,

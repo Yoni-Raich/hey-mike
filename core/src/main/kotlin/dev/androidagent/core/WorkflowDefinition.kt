@@ -215,6 +215,33 @@ data class WorkflowDefinition(
 
         internal val PLACEHOLDER_RE = Regex("\\{\\{\\s*([A-Za-z][A-Za-z0-9_]{0,31})\\s*\\}\\}")
 
+        /**
+         * One inline plan, for `act_plan`, validated exactly like a file.
+         *
+         * A saved definition is written once and run for months, so it may
+         * carry nothing positional. A plan is different: the model has just
+         * read the screen, can already see the whole sequence, and the plan
+         * lives for one call. It is still parsed through [parse] rather than
+         * constructed, so an inline plan cannot express a step a definition
+         * file could not - the runner behind both is the same, and so are its
+         * limits and its refusals.
+         *
+         * Nothing is stored. [AD_HOC_ID] is a fixed name so the ledger reads the
+         * same for every plan, and the failure report resumes by the caller's
+         * own steps instead of by that name.
+         */
+        fun adHoc(packageName: String, steps: JsonArray): WorkflowDefinition =
+            parse(
+                buildJsonObject {
+                    put("id", AD_HOC_ID)
+                    put("package", packageName)
+                    put("steps", steps)
+                },
+            )
+
+        /** The ledger name every inline plan runs under. */
+        const val AD_HOC_ID = "plan"
+
         private fun substitute(element: JsonElement, values: Map<String, JsonPrimitive>): JsonElement = when (element) {
             is JsonObject -> JsonObject(element.mapValues { (_, value) -> substitute(value, values) })
             is JsonArray -> JsonArray(element.map { substitute(it, values) })
@@ -653,6 +680,17 @@ data class WorkflowVerification(
     val checked: Boolean? = null,
     /** Applies [checked] to this node instead of the step's own target. */
     val checkedOf: WorkflowSelector? = null,
+    /**
+     * How long this condition may take to become true — the caller's own
+     * estimate of the work behind it, not a generic retry budget.
+     *
+     * Five seconds covers a screen transition. A video coming back into a
+     * composer, an upload, a sync or an install does not, and the caller is
+     * the only one that knows which it is: it named the condition. So the
+     * ceiling is [MAX_TIMEOUT_MS] rather than the length of a transition, and
+     * a long wait costs nothing when the condition holds early - polling
+     * stops the moment it does.
+     */
     val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
 ) {
     fun describe(): String = buildList {
@@ -674,7 +712,19 @@ data class WorkflowVerification(
     companion object {
         const val DEFAULT_TIMEOUT_MS = 5_000L
         const val MIN_TIMEOUT_MS = 500L
-        const val MAX_TIMEOUT_MS = 20_000L
+
+        /**
+         * The longest a single condition may be waited for.
+         *
+         * It was 20s, which is a screen transition with room to spare and
+         * quietly clamped anything longer - so a step that said "this import
+         * takes about 45 seconds" waited 20 and reported the condition false
+         * while it was still true-to-be. A minute fits inside
+         * [WorkflowRunner.MAX_TOTAL_MS] with room for the rest of the run, and
+         * Stop stays responsive because the poll loop checks revoke every
+         * cycle.
+         */
+        const val MAX_TIMEOUT_MS = 60_000L
 
         /**
          * Null when nothing is asserted.

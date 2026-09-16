@@ -7,6 +7,70 @@ not production-ready.
 
 ### Verified
 
+- Run summaries and the tool-schema sweep — on 2026-09-16, `:core:test` passed
+  (483 tests). Every run that touched the phone now ends with one system line in
+  the chat naming total, thinking, phone time across N calls, and time waiting
+  for the user; `AgentCoordinator` takes an injected `nowNanos` so the split is
+  asserted against a virtual clock rather than machine speed, and
+  `RunSummaryTest` plus three `AgentCoordinatorTest` cases cover the line, its
+  absence on a run that called no tool, and a 20-second send approval landing in
+  the approval bucket rather than in tool time. The schema sweep fixed
+  `remember_capability.fallbacks`, `automation_rule.places`, `.deviceState` and
+  `.rule`, and `ToolSchemaAudit` now runs over every tool this module advertises.
+  The audit also runs in `:a11y` (`A11yToolSchemaTest`) and `:device-tools`
+  (`DeviceToolSchemaTest`), over the accessibility backend, the ADB backend and
+  the native capability tools, and `thread/resume` re-binds the tool list so a
+  chat opened before an app update can call what the update added.
+  **Not verified on a phone:** no summary line has been seen in the app's chat UI
+  (a `system` message renders as text, but that was not run), and the buckets
+  have not been checked against a real slow run.
+  **Written without an Android SDK here**, so nothing outside `:core` was
+  compiled locally. CI on `5e71235` (`:core:test :app:assembleDevDebug
+  :app:lintDevDebug`) is green, which does compile the *main* sources it depends
+  on - so the `CodexEngine` resume change and the `A11yDeviceTools` visibility
+  change build and lint clean. **Still never compiled:** the three test files,
+  `A11yToolSchemaTest`, `DeviceToolSchemaTest` and the new `CodexEngineTest`
+  case, because CI does not build non-`:core` test sources. Their schemas were
+  checked by hand first - every parameter is string, integer, boolean, or the one
+  `object` the accessibility helper marks open, and no `required` name is missing
+  from its properties - so the audits are expected to pass, but `./gradlew test`
+  on a machine with the SDK is the first thing that proves it. Whether the
+  app-server accepts `dynamicTools` on `thread/resume` is unverified too; if it
+  refuses, the retry keeps the thread and the old behaviour.
+- `act_plan`, one call for a sequence already on screen — on 2026-09-16,
+  `:core:test` passed (471 tests once dev was merged in, 23 of them the new
+  `ActPlanTest`), covering:
+  a three-step focus/type/send plan dispatching `tap_node`, `set_text`,
+  `tap_node` in order for one call; the trailing forced observation and
+  `observe=false`; refusal of a target named by `nodeId` and of an
+  `observationId` on the call, with nothing dispatched; the 8-step ceiling
+  pointing at `workflow_runner`; a malformed plan refused before the phone is
+  touched; a failing step reporting the prefix that ran, and a `resume` block
+  naming `act_plan` with `startAt`; a resume skipping the committed steps; and
+  the app in front being read rather than asked for; Stop mid-plan reporting the
+  step that had run and going back to the phone for nothing; and a closing read
+  that fails not unreporting the step that did run.
+  The advertised schema was wrong on the first device run: `steps` was a bare
+  `{"type":"array"}`, which a client renders as an array of strings, and the
+  agent sent each step as quoted JSON and was refused. `steps.items` now spells
+  out the step object with the action enum and the target fields (and so do
+  `run_workflow` and `save_workflow`), a quoted step is parsed rather than
+  refused, and the example in the refusal, the tool description and the test is
+  one shared constant that the test executes.
+  Per-step phase timing (`resolve`/`act`/`settle`/`verify`) and the 60s `verify`
+  ceiling are covered by three `WorkflowRunnerTest` cases against a clock that
+  moves only when the phone is touched, plus one parse case. Both came from a
+  real post-with-media run on X; **neither has been re-run on a phone**, so
+  whether 60s is enough for a video import, and whether the phase split points
+  at the right culprit on real hardware, is unproven.
+  **Not run in this environment:** no Android SDK, so `:device-tools:test`,
+  `:a11y:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
+  `:app:assembleDevDebug` and `:app:lintDevDebug` were not executed here — CI
+  runs `:core:test :app:assembleDevDebug :app:lintDevDebug`. **Not verified on
+  a phone at all:** no plan has run against a real app, so the step budget, the
+  settle timing between steps and a send approval landing mid-plan are unproven
+  on hardware. The UI label and pulse mappings for `act_plan` were not compiled
+  or seen on a screen.
 - Native capability APIs and API-capable workflows — on 2026-09-15,
   `:core:test :device-tools:test :workspace:testDebugUnitTest
   :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` passed

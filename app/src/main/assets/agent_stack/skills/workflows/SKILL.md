@@ -1,19 +1,108 @@
 ---
 name: workflows
-description: Run a whole multi-step phone sequence in one call with workflow_runner — how to find the right workflow, read its steps, resume a failed one, and write a new definition. Read this before walking an app menu by menu when the task sounds like something that has been done before.
+description: Run a whole multi-step phone sequence in one call — act_plan for the sequence you can already see on screen, workflow_runner for a saved definition. How to write a plan, find the right workflow, resume a failed run at the exact step, and save a new definition. Read this before acting one tap per turn, or before walking an app menu by menu.
 ---
 
-# Workflows
+# Sequences in one call
 
-A workflow is a saved sequence — open Settings, search, open the result, flip the
-switch — stored as a JSON file and executed by **one** tool call. No model turn
-per step.
+Two tools run several actions for one model turn. They share an engine: every
+step is resolved against the screen in front of **that** step, not replayed from
+coordinates, and a step that does not land stops the run.
 
-Use it when the task is a sequence someone has already worked out. Use the
-ordinary device tools when you are exploring, deciding, or doing something once.
+| | `act_plan` | `workflow_runner` |
+|---|---|---|
+| The steps come from | you, now, from the `read_ui` you just did | a saved definition file |
+| Use it when | you can already see the whole sequence on this screen | the task is one someone has worked out before |
+| Lives for | this one call | months, across chats and phones |
+| Limit | 8 steps | 24 steps, parameters, `skipIfVerified` |
+
+Neither replaces the ordinary device tools for exploring or deciding. Both stop
+and ask the user before anything sensitive, exactly as a single tool call does.
 ---
 
-## 1. Find the workflow
+## 1. The sequence you can already see (`act_plan`)
+
+One `read_ui` usually answers more than one question. A chat screen shows the
+message field **and** the Send button; a search screen shows the box and the
+result row. Acting one tap per turn re-derives what that observation already
+told you.
+
+```text
+act_plan(steps=[
+  {"id":"focus", "action":"tap",       "target":{"resourceId":"com.whatsapp:id/entry"}},
+  {"id":"write", "action":"type_text", "target":{"resourceId":"com.whatsapp:id/entry"},
+                 "text":"on my way"},
+  {"id":"send",  "action":"tap",       "target":{"contentDescription":"Send"},
+                 "verify":{"present":{"text":"on my way"}}}
+])
+```
+
+That is one call where there were three turns. **Each step is an object, not a
+string containing JSON** — the tool's schema spells out the step's fields, so
+send them as fields. (A quoted step is read anyway rather than refused, but the
+object form is the shape.) The steps use the same grammar as a definition file
+(section 6 lists every action, `verify`, and `optional`), with two rules of its
+own:
+
+- **Name targets by label, never by id.** `text`, `contentDescription`,
+  `resourceId`, `class` — the fields the observation just gave you. A `nodeId`
+  belongs to one observation and the runner re-reads the screen before every
+  step, so a plan carrying ids is refused (`plan_positional`), not guessed at.
+  This is what makes the plan survive the keyboard opening or a row moving
+  between steps.
+- **Only plan what you have seen.** A step for a screen you have not read is a
+  guess. Plan up to the point where you genuinely do not know what comes next,
+  let the plan end there, and read what it hands back.
+
+### Waiting for something slower than a screen
+
+A step's `verify` is also how you wait. It polls until the condition holds and
+stops the moment it does, so the timeout is your **estimate of the work**, not a
+retry budget:
+
+```text
+{"id":"await_media", "action":"observe",
+ "verify":{"present":{"contentDescription":"Remove media"}, "timeoutMs":45000}}
+```
+
+- A screen opening is the 5s default. A video attaching, an upload, an install,
+  a sync — say how long you actually expect, up to 60s.
+- Raise `totalBudgetMs` to cover it (up to 180000). A plan whose waits exceed
+  its budget stops with `budget_exhausted`, which is resumable but wasteful.
+- Waiting on a **condition** beats `{"action":"wait"}`: `wait` returns on any
+  movement, `verify` returns on the thing you are waiting for.
+
+The reply is the same ledger `workflow_runner` returns, plus the screen it
+landed on:
+
+```json
+{"ok":true,"workflow":"plan","ranSteps":3,
+ "steps":[{"id":"focus","action":"tap","status":"done","elapsedMs":3480,
+           "timing":{"resolve":310,"act":90,"settle":3000}}, ...],
+ "observation":{"ok":true,"observationId":"ui-9","activePackage":"com.whatsapp","nodes":[...]}}
+```
+
+`timing` says where a slow step spent its time — `resolve` is finding the
+element, `act` is the device call, `settle` is the screen still moving, `verify`
+is waiting for your condition. Read it before deciding a plan is "just slow":
+a large `resolve` means the selector is working too hard, a large `settle` means
+the app is.
+
+Use that `observation` for what comes next — it is a full `read_ui` reply, and
+its `observationId` is current, so `tap_node` and `set_text` accept its ids.
+Pass `observe=false` when you do not need the screen back.
+
+**A failure is the same contract as a workflow's** (section 4): the failing step
+is named, the steps before it are listed as `done` and must not be repeated. To
+continue, send the **same steps** again with `startAt` set to the step named in
+`resume` — everything before it is skipped. If the screen has moved on, read it
+and write a new plan instead.
+
+Worth keeping? A sequence you have now run twice belongs in a definition file
+(section 6), where the next chat gets it for free.
+---
+
+## 2. Find the workflow
 
 ```text
 workflow_runner(mode="list")                      -> every installed workflow
@@ -32,7 +121,7 @@ workflow_runner(workflow="wifi-toggle", mode="describe")
 `describe` runs nothing. It prints the step list so you can tell the user what is
 about to happen, or check that the workflow really matches the request.
 
-## 2. Run it
+## 3. Run it
 
 ```text
 workflow_runner(workflow="wifi-toggle", mode="run")
@@ -61,7 +150,7 @@ A clean run comes back as:
  "steps":[{"id":"open_settings","action":"open_app","status":"done","verified":true}, ...]}
 ```
 
-## 3. When a step fails
+## 4. When a step fails
 
 The reply names exactly where it stopped:
 
@@ -79,6 +168,11 @@ already happened; replaying them can send a message twice or turn a switch back
 off. Deal with whatever is in the way, then call `workflow_runner` with the
 `resume` arguments the reply handed you.
 
+- `failedStepTiming` — where the step that failed spent its time. A
+  `verification_failed` with `verify` equal to the timeout you set means the
+  condition never came true in the time you allowed; if the work was genuinely
+  still running, raise that step's `verify.timeoutMs` rather than repeating the
+  action.
 - `stepMayAlreadyHaveRun:true` — the failing step may already have changed the
   phone. Read the screen before you repeat anything.
 - `stepMayAlreadyHaveRun:false` — that step changed nothing, so resuming from it
@@ -95,7 +189,7 @@ off. Deal with whatever is in the way, then call `workflow_runner` with the
 | `stopped` | The user pressed Stop. | Report what had already run. Do not continue. |
 | `workflow_not_found` / `workflow_ambiguous` | The name did not resolve. | The reply lists the installed workflows. Use one of those names. |
 
-## 4. Steps that ask first
+## 5. Steps that ask first
 
 A step marked `requiresConfirmation` stops and asks the user before it runs —
 turning on wireless debugging, sending a message, paying, deleting, changing a
@@ -107,7 +201,7 @@ You cannot answer for them, and you must not end your turn to ask: the call
 itself pauses and returns once they have answered. Say in one short line what is
 about to happen, then make the call.
 
-## 5. Writing a new workflow
+## 6. Writing a new workflow
 
 Work the sequence out once with the ordinary device tools. When it runs cleanly,
 write it as `<id>.json` in `{{WORKFLOW_DEFINITIONS_DIR}}` so the next chat costs
@@ -163,6 +257,11 @@ or from these examples:
 | `wait` | optional `timeoutMs` | Waits for the screen to change and settle. |
 | `observe` | — | Reads the screen. A checkpoint step whose whole job is its `verify`. |
 | `call` | `tool`, `arguments`, optional `output` | Calls one registered device capability with rich JSON. It does not read the screen unless the step asks for verification. |
+
+**A `verify` timeout is an estimate, not a retry budget.** It polls and returns
+as soon as the condition holds, so a generous value costs nothing when things go
+well and is the difference between "it failed" and "it was still importing".
+Default 5s, ceiling 60s.
 
 **Start with an intent when one reaches the screen.** A deep link or a settings
 action lands exactly where the taps would have, faster and with nothing to
@@ -290,7 +389,7 @@ stores a literal list of tool calls that `run_workflow` replays. It is the older
 weaker mechanism: it resolves nothing at run time and breaks when the screen
 moves. Prefer a definition.
 
-## 6. Suggesting workflows from a chat
+## 7. Suggesting workflows from a chat
 
 When the user asks for workflow suggestions (the app's **Suggest workflows**
 button sends that request), look back over what you did on the phone in this
