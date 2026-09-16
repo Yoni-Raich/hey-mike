@@ -24,17 +24,19 @@ not production-ready.
   **Not verified on a phone:** no summary line has been seen in the app's chat UI
   (a `system` message renders as text, but that was not run), and the buckets
   have not been checked against a real slow run.
-  **Compiled and run nowhere here:** this environment has no Android SDK, so
-  `A11yToolSchemaTest`, `DeviceToolSchemaTest`, the `CodexEngine` resume change
-  and its test were written without being compiled once, and CI does not build
-  those modules either (it runs `:core:test :app:assembleDevDebug
-  :app:lintDevDebug`). Their schemas were checked by hand first - every
-  parameter is string, integer, boolean, or the one `object` the accessibility
-  helper marks open, and no `required` name is missing from its properties - so
-  the audits are expected to pass, but the first real verification is
-  `./gradlew test` on a machine with the SDK. Whether the app-server accepts
-  `dynamicTools` on `thread/resume` is also unverified; if it refuses, the retry
-  keeps the thread and the old behaviour.
+  **Written without an Android SDK here**, so nothing outside `:core` was
+  compiled locally. CI on `5e71235` (`:core:test :app:assembleDevDebug
+  :app:lintDevDebug`) is green, which does compile the *main* sources it depends
+  on - so the `CodexEngine` resume change and the `A11yDeviceTools` visibility
+  change build and lint clean. **Still never compiled:** the three test files,
+  `A11yToolSchemaTest`, `DeviceToolSchemaTest` and the new `CodexEngineTest`
+  case, because CI does not build non-`:core` test sources. Their schemas were
+  checked by hand first - every parameter is string, integer, boolean, or the one
+  `object` the accessibility helper marks open, and no `required` name is missing
+  from its properties - so the audits are expected to pass, but `./gradlew test`
+  on a machine with the SDK is the first thing that proves it. Whether the
+  app-server accepts `dynamicTools` on `thread/resume` is unverified too; if it
+  refuses, the retry keeps the thread and the old behaviour.
 - `act_plan`, one call for a sequence already on screen — on 2026-09-16,
   `:core:test` passed (471 tests once dev was merged in, 23 of them the new
   `ActPlanTest`), covering:
