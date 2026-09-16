@@ -24,6 +24,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -268,6 +269,17 @@ class ActPlanTest {
         assertTrue(json["message"]!!.jsonPrimitive.content.contains("\"action\":\"tap\""))
     }
 
+    @Test fun theExampleTheToolHandsOutIsItselfRunnable() {
+        // An example that drifts from what the validator accepts is how a
+        // caller writes a call that cannot run. The refusal, the tool
+        // description and this test all read the same array.
+        val json = plan(buildJsonObject { put("steps", PLAN_EXAMPLE_STEPS) })
+        assertTrue(json.toString(), json["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(3, json["ranSteps"]!!.jsonPrimitive.content.toInt())
+        val definition = gateway().definitions.single { it.name == "act_plan" }
+        assertTrue(definition.description.contains(PLAN_EXAMPLE_STEPS.toString()))
+    }
+
     // ---- a plan that half ran ----
 
     @Test fun aFailingStepStopsThePlanAndNamesEverythingThatAlreadyRan() {
@@ -339,6 +351,73 @@ class ActPlanTest {
             },
         )
         assertEquals("com.android.settings", json["package"]!!.jsonPrimitive.content)
+    }
+
+    // ---- the shape the schema promises ----
+
+    @Test fun theSchemaSpellsOutAStepSoItIsNotSentAsQuotedJson() {
+        // A bare {"type":"array"} renders as an array of strings, and a model
+        // then sends each step as JSON text and is refused for it.
+        val steps = gateway().definitions.single { it.name == "act_plan" }
+            .inputSchema["properties"]!!.jsonObject["steps"]!!.jsonObject
+        assertEquals("array", steps["type"]!!.jsonPrimitive.content)
+        val step = steps["items"]!!.jsonObject
+        assertEquals("object", step["type"]!!.jsonPrimitive.content)
+        val fields = step["properties"]!!.jsonObject
+        assertTrue(fields.keys.containsAll(setOf("id", "action", "target", "text", "verify", "arguments", "optional")))
+        // The actions are named, not left to be guessed from prose.
+        val actions = fields["action"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue(actions.containsAll(listOf("tap", "type_text", "observe", "open_intent")))
+        // And the target's fields are the ones a read_ui reply carries.
+        assertTrue(fields["target"]!!.jsonObject["properties"]!!.jsonObject.keys.containsAll(setOf("text", "contentDescription", "resourceId", "class")))
+    }
+
+    @Test fun theOlderStepListsAlsoSayWhatAStepIs() {
+        val names = listOf("run_workflow", "save_workflow")
+        for (name in names) {
+            val steps = gateway().definitions.single { it.name == name }
+                .inputSchema["properties"]!!.jsonObject["steps"]!!.jsonObject
+            assertEquals(name, "object", steps["items"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+            assertTrue(name, steps["items"]!!.jsonObject["properties"]!!.jsonObject.containsKey("tool"))
+        }
+    }
+
+    @Test fun aStepTheModelQuotedAsJsonStillRuns() {
+        // Verbatim from the bug report: the schema used to advertise a bare
+        // array, so this arrived. Refusing it costs a round trip to learn one
+        // thing about quoting.
+        val json = plan(
+            buildJsonObject {
+                put(
+                    "steps",
+                    buildJsonArray {
+                        add("""{"id":"focus","action":"tap","target":{"class":"android.widget.EditText"}}""")
+                        add("""{"id":"write","action":"type_text","target":{"class":"EditText"},"text":"on my way"}""")
+                    },
+                )
+            },
+        )
+        assertTrue(json.toString(), json["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(
+            listOf("focus", "write"),
+            json["steps"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content },
+        )
+        assertEquals(listOf("tap_node", "set_text"), dispatched().filter { it == "tap_node" || it == "set_text" })
+    }
+
+    @Test fun aStepThatIsNeitherAnObjectNorJsonSaysSoWithItsPosition() {
+        for (bad in listOf(JsonPrimitive("tap the send button"), JsonPrimitive(7))) {
+            calls.clear()
+            val json = plan(
+                buildJsonObject {
+                    put("steps", buildJsonArray { addJsonObject { put("action", "key"); putJsonObject("arguments") { put("keycode", "BACK") } }; add(bad) })
+                },
+            )
+            assertEquals("plan_invalid", json["errorType"]!!.jsonPrimitive.content)
+            assertTrue(json.toString(), json["message"]!!.jsonPrimitive.content.startsWith("Step 1 is not a step object"))
+            assertTrue(json["nothingRan"]!!.jsonPrimitive.content.toBoolean())
+            assertEquals(emptyList<String>(), dispatched().filter { it != "read_ui" })
+        }
     }
 
     // ---- how it is offered ----

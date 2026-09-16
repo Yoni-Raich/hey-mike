@@ -887,6 +887,18 @@ name, so `Options.adHocTool` makes the resume block name `act_plan` and a
 Everything else is the workflow contract unchanged - the failing step, what
 already ran, whether it may have half-happened.
 
+**A tool schema that says `array` says nothing.** The first device run failed
+before touching the phone: `steps` was advertised as a bare
+`{"type":"array"}`, a client with no `items` renders that as an array of
+strings, and the agent reasonably sent each step as quoted JSON - which the
+validator refused. `steps.items` now spells the step object out, including the
+`action` enum and the target fields a `read_ui` reply carries, and the same is
+done for `run_workflow` and `save_workflow`. Two things back that up: a quoted
+step is parsed rather than refused, the way a quoted number is already accepted
+as a number, and the example in the refusal, the tool description and the test
+is one shared constant that the test executes - an example that drifts from the
+validator is how a caller writes a call that cannot run.
+
 **A step says where its time went.** One `elapsedMs` per step reports that a
 step was slow; it cannot say whether the element took finding, the app took
 acting, or the screen never settled - and those have different fixes. Each

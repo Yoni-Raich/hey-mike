@@ -8,7 +8,7 @@ not production-ready.
 ### Verified
 
 - `act_plan`, one call for a sequence already on screen — on 2026-09-16,
-  `:core:test` passed (323 tests, 18 of them the new `ActPlanTest`), covering:
+  `:core:test` passed (328 tests, 23 of them the new `ActPlanTest`), covering:
   a three-step focus/type/send plan dispatching `tap_node`, `set_text`,
   `tap_node` in order for one call; the trailing forced observation and
   `observe=false`; refusal of a target named by `nodeId` and of an
@@ -19,6 +19,13 @@ not production-ready.
   the app in front being read rather than asked for; Stop mid-plan reporting the
   step that had run and going back to the phone for nothing; and a closing read
   that fails not unreporting the step that did run.
+  The advertised schema was wrong on the first device run: `steps` was a bare
+  `{"type":"array"}`, which a client renders as an array of strings, and the
+  agent sent each step as quoted JSON and was refused. `steps.items` now spells
+  out the step object with the action enum and the target fields (and so do
+  `run_workflow` and `save_workflow`), a quoted step is parsed rather than
+  refused, and the example in the refusal, the tool description and the test is
+  one shared constant that the test executes.
   Per-step phase timing (`resolve`/`act`/`settle`/`verify`) and the 60s `verify`
   ceiling are covered by three `WorkflowRunnerTest` cases against a clock that
   moves only when the phone is touched, plus one parse case. Both came from a

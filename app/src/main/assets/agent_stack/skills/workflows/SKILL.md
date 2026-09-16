@@ -37,9 +37,12 @@ act_plan(steps=[
 ])
 ```
 
-That is one call where there were three turns. The steps use the same grammar as
-a definition file (section 6 lists every action, `verify`, and `optional`), with
-two rules of its own:
+That is one call where there were three turns. **Each step is an object, not a
+string containing JSON** — the tool's schema spells out the step's fields, so
+send them as fields. (A quoted step is read anyway rather than refused, but the
+object form is the shape.) The steps use the same grammar as a definition file
+(section 6 lists every action, `verify`, and `optional`), with two rules of its
+own:
 
 - **Name targets by label, never by id.** `text`, `contentDescription`,
   `resourceId`, `class` — the fields the observation just gave you. A `nodeId`

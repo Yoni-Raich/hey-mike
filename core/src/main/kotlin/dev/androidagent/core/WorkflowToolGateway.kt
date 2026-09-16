@@ -23,14 +23,48 @@ package dev.androidagent.core
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.io.File
+
+/**
+ * The plan every `act_plan` refusal and doc example shows.
+ *
+ * One constant rather than three copies: an example that drifts from what the
+ * validator accepts is how a caller ends up writing a call that cannot run, and
+ * `ActPlanTest` runs this array to keep the promise honest.
+ */
+internal val PLAN_EXAMPLE_STEPS: JsonArray = buildJsonArray {
+    add(
+        buildJsonObject {
+            put("id", "focus")
+            put("action", "tap")
+            put("target", buildJsonObject { put("class", "EditText") })
+        },
+    )
+    add(
+        buildJsonObject {
+            put("id", "write")
+            put("action", "type_text")
+            put("target", buildJsonObject { put("class", "EditText") })
+            put("text", "on my way")
+        },
+    )
+    add(
+        buildJsonObject {
+            put("id", "send")
+            put("action", "tap")
+            put("target", buildJsonObject { put("contentDescription", "Send") })
+        },
+    )
+}
 
 /**
  * Exposes the workflow engine as tools.
@@ -250,15 +284,24 @@ class WorkflowToolGateway(
         val steps = when (val raw = arguments["steps"]) {
             null, is JsonNull -> return refusal(
                 "plan_steps_required",
-                "\"steps\" is required: the actions to run, in order, e.g. " +
-                    "steps=[{\"action\":\"tap\",\"target\":{\"text\":\"Message\"}}," +
-                    "{\"action\":\"type_text\",\"target\":{\"class\":\"EditText\"},\"text\":\"on my way\"}," +
-                    "{\"action\":\"tap\",\"target\":{\"contentDescription\":\"Send\"}}].",
+                "\"steps\" is required: the actions to run, in order, as objects - " +
+                    "steps=$PLAN_EXAMPLE_STEPS",
             )
-            is JsonArray -> raw
-            else -> return refusal("plan_invalid", "\"steps\" must be an array of steps.")
+            // A step the model quoted as JSON text is still a step: the schema
+            // used to advertise a bare array, so this arrived, and refusing it
+            // costs a whole round trip to learn one thing about quoting.
+            is JsonArray -> JsonArray(raw.map(::unquoted))
+            else -> return refusal("plan_invalid", "\"steps\" must be an array of step objects.")
         }
         if (steps.isEmpty()) return refusal("plan_invalid", "\"steps\" is empty, so there is nothing to run.")
+        steps.indexOfFirst { it !is JsonObject }.takeIf { it >= 0 }?.let { index ->
+            return refusal(
+                "plan_invalid",
+                "Step $index is not a step object. Each step is " +
+                    "{\"action\":\"tap\",\"target\":{\"text\":\"Send\"}} - an object with an " +
+                    "\"action\", not a string, a number or a list.",
+            )
+        }
         if (steps.size > MAX_PLAN_STEPS) {
             // A plan is what one screen's reading can justify. Longer than that
             // is a workflow: it deserves a definition file that can be read,
@@ -323,6 +366,17 @@ class WorkflowToolGateway(
         // call that saved three round trips would cost one back to find out
         // where it ended up.
         return if (arguments.bool("observe") == false) result else withObservation(result)
+    }
+
+    /**
+     * One step, with JSON text read as the object it spells.
+     *
+     * Anything else is handed back untouched, so it meets the refusal that
+     * names its position instead of being coerced into something else.
+     */
+    private fun unquoted(element: JsonElement): JsonElement {
+        val text = (element as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return element
+        return runCatching { Json.parseToJsonElement(text) }.getOrNull() as? JsonObject ?: element
     }
 
     /** The step [startAt] names, by id or by index, or null when it names none. */
@@ -558,6 +612,84 @@ class WorkflowToolGateway(
         val POSITIONAL_TARGET_KEYS = listOf("nodeId", "observationId", "bounds", "x", "y")
 
         /**
+         * How a step names the element it acts on.
+         *
+         * Open on purpose: the parser takes `class` and `className`, `id` and
+         * `resourceId`, and a strict schema would refuse a call the runner
+         * understands. What matters here is that these are the fields that
+         * exist at all — a plan that names a `nodeId` is refused, and this is
+         * where a model learns what to send instead.
+         */
+        private val TARGET_SCHEMA: JsonObject = openObject(
+            "Which element, by what the last read_ui showed. NOT a nodeId or coordinates.",
+            mapOf(
+                "text" to field("string", "Visible text or contentDescription, as a substring."),
+                "contentDescription" to field("string", "Accessibility label, as a substring."),
+                "resourceId" to field("string", "View id; the local half (\"search_src_text\") is enough."),
+                "class" to field("string", "Class name substring, e.g. EditText, Switch, RecyclerView."),
+                "exact" to field("boolean", "Require the whole field to equal the value."),
+                "index" to field("integer", "Which match to take when several score the same. Default 0."),
+                "clickable" to field("boolean", "Only a node that can be clicked, or has a clickable ancestor."),
+                "scrollable" to field("boolean", "Only a scrollable node."),
+                "scrollIntoView" to field("boolean", "Scroll looking for it before giving up."),
+            ),
+        )
+
+        /** What must be true for a step to count as done. */
+        private val VERIFY_SCHEMA: JsonObject = openObject(
+            "What must be true after the step. Polled until it holds, so timeoutMs is your estimate of the work.",
+            mapOf(
+                "present" to openObject("A selector that must be on screen."),
+                "absent" to openObject("A selector that must be gone."),
+                "package" to field("string", "The app that must be in front, as a substring."),
+                "checked" to field("boolean", "The target switch's expected state."),
+                "timeoutMs" to field("integer", "How long this may take. Default 5000, up to 60000."),
+            ),
+        )
+
+        /** One `act_plan` step, spelled out so a step arrives as an object. */
+        private val PLAN_STEP_SCHEMA: JsonObject = buildJsonObject {
+            put("type", "object")
+            put("description", "One action, with the element it acts on named by label.")
+            put("properties", buildJsonObject {
+                put("id", field("string", "Your name for this step. It comes back in the ledger and in startAt."))
+                put("action", buildJsonObject {
+                    put("type", "string")
+                    put("description", "What this step does.")
+                    put("enum", JsonArray(WorkflowAction.WIRE_NAMES.map { JsonPrimitive(it) }))
+                })
+                put("target", TARGET_SCHEMA)
+                put("text", field("string", "For type_text: the whole final text; it replaces the field."))
+                put("submit", field("boolean", "Press Enter after typing. In a chat this is Send, and it asks the user."))
+                put("arguments", openObject("Action arguments: keycode, direction, package, or an intent's action/uri/extras."))
+                put("verify", VERIFY_SCHEMA)
+                put("optional", field("boolean", "A step that may have nothing to do, like a dialog that does not always appear."))
+                put("skipIfVerified", field("boolean", "Check verify first and skip the step when it already holds."))
+                put("requiresConfirmation", field("boolean", "Ask the user before this step runs."))
+                put("timeoutMs", field("integer", "This step's own wait, 500-30000."))
+                put("waitForChange", field("boolean", "Wait for the screen to settle afterwards. Default true for an action."))
+                put("tool", field("string", "For action \"call\": the registered device tool to invoke."))
+                put("output", field("string", "For action \"call\": capture the result under this name."))
+            })
+            put("required", JsonArray(listOf(JsonPrimitive("action"))))
+            // Open, because an extra key the parser ignores is not worth
+            // failing a whole plan over.
+            put("additionalProperties", true)
+        }
+
+        /** One literal tool call, for the older `run_workflow` and `save_workflow`. */
+        private val LITERAL_STEP_SCHEMA: JsonObject = buildJsonObject {
+            put("type", "object")
+            put("description", "One tool call, replayed as written.")
+            put("properties", buildJsonObject {
+                put("tool", field("string", "The device tool to call, e.g. tap_node, set_text, key."))
+                put("arguments", openObject("That tool's own arguments."))
+                put("timeoutMs", field("integer", "This step's budget in milliseconds."))
+            })
+            put("required", JsonArray(listOf(JsonPrimitive("tool"))))
+            put("additionalProperties", true)
+        }
+        /**
          * The tool that turns one observation into one call.
          *
          * `read_ui` already told the model where the field and the button are,
@@ -575,7 +707,8 @@ class WorkflowToolGateway(
             "Run a short sequence of actions you can already see in ONE call, with no model turn per " +
                 "action. Use it as soon as read_ui shows you the whole sequence - focus a field, type, " +
                 "press Send is one act_plan call, not three. Each step is " +
-                "{action, target, text?}: action is tap, type_text, scroll, key, wait, observe, open_app, " +
+                "{action, target, text?} - for example steps=$PLAN_EXAMPLE_STEPS. action is " +
+                "tap, type_text, scroll, key, wait, observe, open_app, " +
                 "open_intent or call; target names the element by \"text\", \"contentDescription\", " +
                 "\"resourceId\" or \"class\" - NOT by nodeId, which belongs to one observation. The " +
                 "steps are resolved against the screen in front of each one, not replayed, so the plan " +
@@ -600,6 +733,9 @@ class WorkflowToolGateway(
                 "screenshotOnFailure" to "boolean",
             ),
             listOf("steps"),
+            structured = mapOf(
+                "steps" to array(PLAN_STEP_SCHEMA, "The actions to run, in order. Objects, not JSON text."),
+            ),
         )
 
         /**
@@ -647,6 +783,9 @@ class WorkflowToolGateway(
                     "step reported as possibly committed.",
                 mapOf("steps" to "array", "totalBudgetMs" to "integer"),
                 listOf("steps"),
+                structured = mapOf(
+                    "steps" to array(LITERAL_STEP_SCHEMA, "The tool calls to replay, in order."),
+                ),
             ),
             tool(
                 "save_workflow",
@@ -659,6 +798,9 @@ class WorkflowToolGateway(
                     "steps" to "array",
                 ),
                 listOf("name", "package", "steps"),
+                structured = mapOf(
+                    "steps" to array(LITERAL_STEP_SCHEMA, "The tool calls that worked, in order."),
+                ),
             ),
             tool(
                 "list_workflows",
@@ -669,19 +811,34 @@ class WorkflowToolGateway(
             ),
         )
 
+        /**
+         * A tool whose arguments are plain scalars, plus any spelled-out
+         * schemas in [structured].
+         *
+         * A bare `{"type":"array"}` is not a description of anything: a client
+         * with no `items` renders it as an array of strings, and a model then
+         * sends each element as quoted JSON and is refused for it. So every
+         * array here carries its `items`.
+         */
         fun tool(
             name: String,
             description: String,
             properties: Map<String, String>,
             required: List<String>,
+            structured: Map<String, JsonObject> = emptyMap(),
         ): ToolDefinition {
             val props = buildJsonObject {
                 for ((key, type) in properties) {
-                    put(key, buildJsonObject {
-                        put("type", type)
-                        // A free-form map, such as workflow_runner's params.
-                        if (type == "object") put("additionalProperties", true)
-                    })
+                    val spelled = structured[key]
+                    if (spelled != null) {
+                        put(key, spelled)
+                    } else {
+                        put(key, buildJsonObject {
+                            put("type", type)
+                            // A free-form map, such as workflow_runner's params.
+                            if (type == "object") put("additionalProperties", true)
+                        })
+                    }
                 }
             }
             val schema = buildJsonObject {
@@ -692,5 +849,28 @@ class WorkflowToolGateway(
             }
             return ToolDefinition(name, description, schema)
         }
+
+        private fun array(items: JsonObject, description: String): JsonObject = buildJsonObject {
+            put("type", "array")
+            put("description", description)
+            put("items", items)
+        }
+
+        private fun field(type: String, description: String): JsonObject = buildJsonObject {
+            put("type", type)
+            put("description", description)
+        }
+
+        /** An object whose own keys are open: a selector's aliases, an intent's extras. */
+        private fun openObject(description: String, properties: Map<String, JsonObject> = emptyMap()): JsonObject =
+            buildJsonObject {
+                put("type", "object")
+                put("description", description)
+                if (properties.isNotEmpty()) {
+                    put("properties", buildJsonObject { properties.forEach { (key, value) -> put(key, value) } })
+                }
+                put("additionalProperties", true)
+            }
+
     }
 }

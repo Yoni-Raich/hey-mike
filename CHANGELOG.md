@@ -9,6 +9,9 @@
   keyboard opening or a list shifting between steps does not throw it off, and
   a step that does not land stops the sequence and reports what already
   happened. Sending still asks you first, wherever it sits in the sequence.
+- Fixed a tool definition that described its own input wrongly, which made Mike
+  send a sequence in a form it then refused, costing a wasted round trip before
+  anything ran.
 - When Mike waits for something on the phone, it now says how long it expects
   that to take instead of being held to a fixed few seconds. A video attaching
   to a post, an upload or an install is no longer reported as "it did not
