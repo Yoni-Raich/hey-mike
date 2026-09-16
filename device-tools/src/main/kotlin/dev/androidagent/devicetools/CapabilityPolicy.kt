@@ -609,22 +609,38 @@ object CapabilityPolicy {
         put("message", "The result does not fit the output cap. Narrow the query or lower the limit.")
     }.toString()
 
+    /**
+     * Permission refusal with the retry the caller repeats after a grant.
+     *
+     * An empty [missing] still produces the typed envelope: a platform that
+     * refuses without naming a permission must not throw out of the contract
+     * the dispatcher promised its caller.
+     */
     fun permissionFailure(tool: String, operation: String, missing: List<String>, args: JsonObject): String =
-        fail(tool, operation, "permission_denied", missing.joinToString(", ") + " not granted.", {
-            put("permission", missing.first())
-            put("permissions", JsonArray(missing.map { JsonPrimitive(it) }))
-            put(
-                "retry",
-                buildJsonObject {
-                    put("tool", tool)
-                    put("arguments", retryArguments(args))
-                },
-            )
-            put(
-                "hint",
-                "Grant with apps_settings request_permissions, then repeat the retry call unchanged.",
-            )
-        })
+        fail(
+            tool,
+            operation,
+            "permission_denied",
+            if (missing.isEmpty()) "A permission this needs is not granted."
+            else missing.joinToString(", ") + " not granted.",
+            {
+                missing.firstOrNull()?.let { put("permission", it) }
+                if (missing.isNotEmpty()) {
+                    put("permissions", JsonArray(missing.map { JsonPrimitive(it) }))
+                }
+                put(
+                    "retry",
+                    buildJsonObject {
+                        put("tool", tool)
+                        put("arguments", retryArguments(args))
+                    },
+                )
+                put(
+                    "hint",
+                    "Grant with apps_settings request_permissions, then repeat the retry call unchanged.",
+                )
+            },
+        )
 
     fun parseMillis(args: JsonObject, key: String): Long? {
         val raw = args[key] ?: return null

@@ -461,6 +461,12 @@ internal class CapabilityDispatcher(
             "open" -> {
                 val uri = CapabilityPolicy.parseMediaStoreUri(args)
                 checkActive()
+                // Gated like list, search and info: a MediaStore id is a
+                // running number, so without this an unread grant could still
+                // be turned into "show me item 123" on the screen.
+                val state = platform.mediaReadState("any")
+                if (!state.granted) return permissionFailure(tool, operation, state.missing, args)
+                checkActive()
                 if (!platform.openContentUri(uri)) {
                     return noHandler(tool, operation, "No app can open that URI.")
                 }
@@ -472,6 +478,11 @@ internal class CapabilityDispatcher(
             }
             "share" -> {
                 val uri = CapabilityPolicy.parseMediaStoreUri(args)
+                checkActive()
+                // Same gate as open: handing an unread item to the share
+                // sheet is still reading it out of the phone.
+                val state = platform.mediaReadState("any")
+                if (!state.granted) return permissionFailure(tool, operation, state.missing, args)
                 checkActive()
                 if (!platform.shareContentUri(uri)) {
                     return noHandler(tool, operation, "No app can share that URI.")

@@ -216,6 +216,60 @@ class WorkflowCallTest {
         assertTrue(confirmations.single().summary.contains("remember_capability"))
     }
 
+    @Test fun theConfirmationCardNamesTheResolvedValuesNotTheTemplate() {
+        // The card is the user's only view of the call. Substitution happens
+        // just before dispatch, so a card built from the raw definition would
+        // ask them to allow "{{outputs.person.phone}}".
+        replies["recall_capability"] = """{"phone":"+15550001"}"""
+        val workflow = definition(
+            """{"id":"find","action":"call","tool":"recall_capability","output":"person"}""",
+            """{"id":"send","action":"call","tool":"remember_capability",
+                 "arguments":{"to":"{{outputs.person.phone}}"},"requiresConfirmation":true}""",
+        )
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options()) }
+        assertTrue(result.text, result.success)
+        val card = confirmations.single()
+        assertEquals("send", card.stepId)
+        assertTrue(card.summary, card.summary.contains("+15550001"))
+        assertFalse(card.summary, card.summary.contains("{{outputs"))
+    }
+
+    @Test fun typedTextAndIntentCardsShowTheResolvedValueToo() {
+        replies["recall_capability"] = """{"code":"4821"}"""
+        val workflow = definition(
+            """{"id":"find","action":"call","tool":"recall_capability","output":"otp"}""",
+            """{"id":"type","action":"type_text","text":"code {{outputs.otp.code}}",
+                 "requiresConfirmation":true}""",
+        )
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options()) }
+        assertTrue(result.text, result.success)
+        assertTrue(confirmations.single().summary, confirmations.single().summary.contains("code 4821"))
+
+        confirmations.clear()
+        val intent = definition(
+            """{"id":"find","action":"call","tool":"recall_capability","output":"place"}""",
+            """{"id":"go","action":"open_intent",
+                 "arguments":{"action":"android.intent.action.VIEW","uri":"geo:0,0?q={{outputs.place.code}}"},
+                 "requiresConfirmation":true}""",
+        )
+        assertTrue(runBlocking { runner().run(intent, WorkflowRunner.Options()) }.success)
+        assertTrue(confirmations.single().summary, confirmations.single().summary.contains("4821"))
+    }
+
+    @Test fun anUnresolvableReferenceStillAsksBeforeItFails() {
+        // Display never fails a run on its own: the card shows the template it
+        // could not resolve, and the step's own resolution reports it.
+        val workflow = definition(
+            """{"id":"send","action":"call","tool":"remember_capability",
+                 "arguments":{"to":"{{outputs.nobody.phone}}"},"requiresConfirmation":true}""",
+        )
+        val result = runBlocking { runner().run(workflow, WorkflowRunner.Options()) }
+        assertFalse(result.text, result.success)
+        assertEquals("unknown_output", parse(result)["errorType"]!!.jsonPrimitive.content)
+        assertTrue(confirmations.single().summary.contains("{{outputs.nobody.phone}}"))
+        assertTrue("nothing may be dispatched", calls.none { it.first == "remember_capability" })
+    }
+
     @Test fun aRegistryKeyMustMatchItsMetadataName() {
         val error = runCatching {
             WorkflowCallRegistry(mapOf("a" to WorkflowCallMetadata("b")))

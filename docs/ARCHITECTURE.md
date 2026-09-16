@@ -377,9 +377,12 @@ creation, SMS and email, phone dialing, sharing and settings changes only open
 the relevant visible system editor or screen; they never save, send, call or
 change a setting directly. Media access uses `MediaStore` and the permission
 model for the running Android version, including selected-photo access on
-Android 14+. File reads and writes outside MediaStore are limited to the
-current run workspace. Paths are relative, real-path checked and atomically
-replaced; there is no general filesystem or recursive delete operation.
+Android 14+. Opening or sharing a media item passes the same permission gate a
+read does: a MediaStore id is a running number, so an ungated `open` would put
+media on the screen that no grant ever covered. File reads and writes outside
+MediaStore are limited to the current run workspace. Paths are relative,
+real-path checked and atomically replaced; there is no general filesystem or
+recursive delete operation.
 
 `apps_settings.request_permissions` accepts only the permissions declared for
 these capabilities. `RuntimePermissionBroker` asks only for grants that are
@@ -813,7 +816,10 @@ and every workflow tool are blocked even if wiring tries to register them, so a
 workflow cannot recurse or become a weaker agent loop. The called tool still
 owns its normal Android permission or approval path; the runner does not add a
 duplicate confirmation. An author can still mark the whole step
-`requiresConfirmation` when the product flow needs an extra explicit user gate.
+`requiresConfirmation` when the product flow needs an extra explicit user gate;
+that card is built from the arguments as resolved, not from the definition's
+`{{outputs...}}` templates, so the user reads the number or address they are
+being asked to allow.
 
 **Call outputs are typed, bounded resume state.** `output` captures a successful
 tool reply and later JSON may refer to it as `{{outputs.name}}` or a nested

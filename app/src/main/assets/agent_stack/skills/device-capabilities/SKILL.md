@@ -36,7 +36,8 @@ apps_settings(operation="list_apps", query="maps", limit=10)
 
 Workspace operations only see the current run workspace. Paths must be relative.
 They cannot delete, escape with `..`, or use `file://`. Media open/share accepts
-only `content://media/...` URIs returned by `files_media` list or search.
+only `content://media/...` URIs and needs the same media permission a read
+does, so use the URIs `files_media` list or search returned.
 
 ## Permissions: one system request
 

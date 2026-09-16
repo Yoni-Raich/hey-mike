@@ -19,4 +19,9 @@ jobs:
           packages: ''
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - run: ./gradlew :core:test :app:assembleDevDebug :app:lintDevDebug
+      # The capability policy and dispatcher are unit-tested in
+      # :device-tools, and the seeded skill list in :workspace. Both run
+      # here: a suite the branch never runs protects nothing.
+      - run: >
+          ./gradlew :core:test :device-tools:test :workspace:testDebugUnitTest
+          :app:assembleDevDebug :app:lintDevDebug

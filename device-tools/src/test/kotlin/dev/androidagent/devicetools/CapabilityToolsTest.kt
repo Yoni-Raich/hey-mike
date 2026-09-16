@@ -199,6 +199,52 @@ class CapabilityToolsTest {
         assertFailure(result, "files_media", "permission_denied")
     }
 
+    @Test fun mediaOpenAndShareNeedPermissionToo() {
+        // A MediaStore id is a running number, so an ungated open or share
+        // would put media the user never granted on the screen, or into a
+        // share sheet, without ever passing a read.
+        for (operation in listOf("open", "share")) {
+            val fake = FakePlatform()
+            val result = invoke(
+                "files_media",
+                buildJsonObject { put("operation", operation); put("uri", "content://media/1") },
+                fake = fake,
+            )
+            assertFailure(result, "files_media", "permission_denied")
+            assertTrue("$operation must not reach the platform", fake.calls.isEmpty())
+        }
+    }
+
+    @Test fun mediaOpenAndShareRunOnceTheGrantIsThere() {
+        for (operation in listOf("open", "share")) {
+            val fake = FakePlatform()
+            fake.mediaGranted = true
+            val result = invoke(
+                "files_media",
+                buildJsonObject { put("operation", operation); put("uri", "content://media/1") },
+                fake = fake,
+            )
+            assertTrue(result.text, result.success)
+            assertEquals(1, fake.calls.size)
+        }
+    }
+
+    @Test fun aRefusalWithoutANamedPermissionStaysTyped() {
+        // The platform seam may refuse without naming a permission. The
+        // envelope still parses and still carries a repeatable retry.
+        val fake = FakePlatform()
+        fake.refuseMediaWithoutNaming = true
+        val result = invoke(
+            "files_media",
+            buildJsonObject { put("operation", "info"); put("uri", "content://media/1") },
+            fake = fake,
+        )
+        assertFailure(result, "files_media", "permission_denied")
+        val json = Json.parseToJsonElement(result.text).jsonObject
+        assertTrue("no permission is named", json["permission"] == null)
+        assertEquals("files_media", json["retry"]!!.jsonObject["tool"]!!.jsonPrimitive.content)
+    }
+
     @Test fun requestPermissionsRejectsOutsideAllowlistWithoutCallback() {
         val fake = FakePlatform()
         var callbackCalls = 0
@@ -1069,6 +1115,8 @@ class CapabilityToolsTest {
         val granted = mutableSetOf<String>()
         var mediaGranted = false
         var mediaMissing: List<String> = emptyList()
+        /** Refuse a media read without naming a permission, as a seam may. */
+        var refuseMediaWithoutNaming = false
         /** When true, behave like API 30-32: storage grant gates media. */
         var storageApi = false
         val calls = mutableListOf<String>()
@@ -1106,6 +1154,7 @@ class CapabilityToolsTest {
             }
 
         override fun mediaReadState(kind: String): MediaReadState {
+            if (refuseMediaWithoutNaming) return MediaReadState(granted = false, missing = emptyList())
             if (storageApi) {
                 return if (CapabilityPolicy.PERM_STORAGE in granted) MediaReadState(true)
                 else MediaReadState(false, listOf(CapabilityPolicy.PERM_STORAGE))

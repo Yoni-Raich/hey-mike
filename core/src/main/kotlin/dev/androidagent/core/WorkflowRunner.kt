@@ -178,9 +178,19 @@ class WorkflowRunner(
             // own: the called tool owns its approval, so there is one card and
             // one foregrounding path whether it is called directly or here.
             if (step.requiresConfirmation) {
+                // The card names what will actually happen: `{{outputs...}}`
+                // is substituted just before dispatch, so a card built from
+                // the raw definition would show the template instead of the
+                // number or address the user is being asked to allow. A
+                // reference that does not resolve is left as written; the
+                // step fails on it below, with nothing dispatched.
+                val shownArguments = resolvedForDisplay(step.arguments, captured)
+                val shownText = step.text?.let { template ->
+                    runCatching { WorkflowOutputRefs.resolveText(template, captured) }.getOrDefault(template)
+                }
                 val askedAt = nowMs()
                 val outcome = try {
-                    confirm(confirmationFor(definition, step))
+                    confirm(confirmationFor(definition, step, shownArguments, shownText))
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
@@ -197,13 +207,14 @@ class WorkflowRunner(
                         },
                         message = when (outcome) {
                             WorkflowConfirmationOutcome.DENIED ->
-                                "The user did not allow step \"${step.id}\" (${describe(step)}). It did not run. " +
+                                "The user did not allow step \"${step.id}\" (${describe(step, shownArguments, shownText)}). It did not run. " +
                                     "Do not retry it; ask what they want instead."
                             WorkflowConfirmationOutcome.TIMED_OUT ->
-                                "Nobody answered the confirmation for step \"${step.id}\" (${describe(step)}), " +
+                                "Nobody answered the confirmation for step \"${step.id}\" " +
+                                    "(${describe(step, shownArguments, shownText)}), " +
                                     "so it did not run. Ask the user, then resume from that step."
                             else ->
-                                "Step \"${step.id}\" (${describe(step)}) needs the user's confirmation and " +
+                                "Step \"${step.id}\" (${describe(step, shownArguments, shownText)}) needs the user's confirmation and " +
                                     "nothing here can ask for it. It did not run. Do this step yourself, " +
                                     "with the user's agreement, then resume from the next one."
                         },
@@ -241,6 +252,15 @@ class WorkflowRunner(
         }
         return success(definition, options, records, nowMs() - startedAt, outputs = captured)
     }
+
+    /**
+     * Best-effort substitution for what a person is shown. Display never
+     * fails a run: a reference that resolves to nothing stays as written and
+     * the step's own resolution reports it, before anything is dispatched.
+     */
+    private fun resolvedForDisplay(arguments: JsonObject, captured: Map<String, JsonElement>): JsonObject =
+        runCatching { WorkflowOutputRefs.resolve(arguments, captured) as? JsonObject }
+            .getOrNull() ?: arguments
 
     /** Whether a failure after this step counts as possibly committed. A call follows its registry entry. */
     private fun committedOf(step: WorkflowStep): Boolean =
@@ -1089,37 +1109,53 @@ class WorkflowRunner(
         }
     }
 
-    private fun confirmationFor(definition: WorkflowDefinition, step: WorkflowStep) = WorkflowConfirmation(
+    private fun confirmationFor(
+        definition: WorkflowDefinition,
+        step: WorkflowStep,
+        arguments: JsonObject = step.arguments,
+        text: String? = step.text,
+    ) = WorkflowConfirmation(
         workflowId = definition.id,
         stepId = step.id,
         action = step.action.wire,
-        summary = describe(step),
-        packageName = step.arguments.str("package") ?: definition.packageName,
+        summary = describe(step, arguments, text),
+        packageName = arguments.str("package") ?: definition.packageName,
     )
 
-    /** One line naming what a step does, for an approval card and for a failure. */
-    private fun describe(step: WorkflowStep): String = when (step.action) {
-        WorkflowAction.OPEN_APP -> "open ${step.arguments.str("package") ?: "the app"}"
+    /**
+     * One line naming what a step does, for an approval card and for a failure.
+     *
+     * [arguments] and [text] default to what the definition carries, and the
+     * caller passes the resolved pair once `{{outputs...}}` has been
+     * substituted: a card that shows the template instead of the value would
+     * ask the user to approve something it never names.
+     */
+    private fun describe(
+        step: WorkflowStep,
+        arguments: JsonObject = step.arguments,
+        text: String? = step.text,
+    ): String = when (step.action) {
+        WorkflowAction.OPEN_APP -> "open ${arguments.str("package") ?: "the app"}"
         WorkflowAction.OPEN_INTENT -> buildList {
-            add("open ${step.arguments.str("action") ?: step.arguments.str("uri") ?: "an intent"}")
-            step.arguments.str("uri")?.takeIf { step.arguments.str("action") != null }?.let { add(it.take(MAX_SUMMARY_TEXT)) }
-            (step.arguments["extras"] as? JsonObject)?.let { extras ->
+            add("open ${arguments.str("action") ?: arguments.str("uri") ?: "an intent"}")
+            arguments.str("uri")?.takeIf { arguments.str("action") != null }?.let { add(it.take(MAX_SUMMARY_TEXT)) }
+            (arguments["extras"] as? JsonObject)?.let { extras ->
                 (IntentExtras.parse(extras) as? IntentExtras.Parsed.Ok)?.extras?.takeIf { it.isNotEmpty() }
                     ?.let { add("with ${IntentExtras.describe(it)}") }
             }
         }.joinToString(" ")
         WorkflowAction.TAP -> "tap ${step.target?.describe() ?: "the target"}"
-        WorkflowAction.TYPE_TEXT -> "type \"${step.text?.take(MAX_SUMMARY_TEXT).orEmpty()}\"" +
+        WorkflowAction.TYPE_TEXT -> "type \"${text?.take(MAX_SUMMARY_TEXT).orEmpty()}\"" +
             if (step.submit) " and submit it" else ""
         WorkflowAction.SCROLL -> "scroll ${direction(step)}"
-        WorkflowAction.KEY -> "press ${step.arguments.str("keycode") ?: "a key"}"
+        WorkflowAction.KEY -> "press ${arguments.str("keycode") ?: "a key"}"
         WorkflowAction.WAIT -> "wait for the screen to settle"
         WorkflowAction.OBSERVE -> "read the screen"
         WorkflowAction.CALL -> buildString {
             append("call ${step.callTool ?: "a tool"}")
             // The arguments are what the call will do: an approval card or a
             // failure must show them, not just the tool name.
-            if (step.arguments.isNotEmpty()) append(" ${step.arguments.toString().take(MAX_SUMMARY_TEXT)}")
+            if (arguments.isNotEmpty()) append(" ${arguments.toString().take(MAX_SUMMARY_TEXT)}")
             step.output?.let { append(" as $it") }
         }
     }
