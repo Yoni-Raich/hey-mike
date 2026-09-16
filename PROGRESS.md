@@ -71,6 +71,29 @@ not production-ready.
   settle timing between steps and a send approval landing mid-plan are unproven
   on hardware. The UI label and pulse mappings for `act_plan` were not compiled
   or seen on a screen.
+- **`:a11y:test` is red on `dev`, and CI does not look.** On 2026-09-16,
+  `A11yToolSchemaTest`'s two cases fail at `0ff770a` with an
+  `ExceptionInInitializerError` / NPE initialising
+  `A11yDeviceTools.TOOL_DEFINITIONS` — a local JVM test reaching a static
+  initialiser that touches Android classes the stub jar answers with null. It
+  reproduces on `dev` with no local changes, so it is not from the location or
+  places work, which touches no file under `a11y/`. CI runs only
+  `:core:test :app:assembleDevDebug :app:lintDevDebug`, which is why it is red
+  and unnoticed; `:device-tools:test` has the same blind spot. Someone should
+  either fix the initialiser or widen the CI command, and until then a green
+  PR does not mean a green `./gradlew test`.
+- Location, places and one-off actions — on 2026-09-16,
+  `:core:test :device-tools:test :automations:testDebugUnitTest
+  :app:assembleDevDebug :app:lintDevDebug` passed together on a forced rerun:
+  634 tests across `:core` and `:device-tools` with zero failures, 0 lint
+  errors and 11 warnings, none in a file this change touches. New coverage is
+  17 cases for the place circle, its hysteresis and its store, 12 for the
+  `location` tool's grants, freshness and the off-versus-no-fix split, 11 for
+  one-off actions and 8 for the place modes. **Nothing here has run on a
+  phone:** no permission dialog has been seen, no fix has been read from a real
+  radio, no arrival has been detected, and no one-off action has been performed
+  on hardware. The settings copy for background location was not compiled onto
+  a screen.
 - Native capability APIs and API-capable workflows — on 2026-09-15,
   `:core:test :device-tools:test :workspace:testDebugUnitTest
   :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` passed
