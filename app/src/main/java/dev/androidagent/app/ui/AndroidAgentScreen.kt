@@ -122,6 +122,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -220,6 +221,8 @@ fun AndroidAgentScreen(
         }
 
         val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()))
+        val drawerPush = rememberDrawerPush(drawerState)
+        val layoutDirection = LocalLayoutDirection.current
 
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -250,6 +253,7 @@ fun AndroidAgentScreen(
             Scaffold(
                 modifier = Modifier
                     .fillMaxSize()
+                    .drawerPushed(drawerPush, layoutDirection)
                     .imePadding()
                     // The chat stays composed under voice mode; keep it out
                     // of touch exploration while it is off screen.
@@ -304,6 +308,9 @@ fun AndroidAgentScreen(
         if (state.isSettingsOpen) {
             AgentSettingsSheet(state = state, actions = actions)
         }
+        if (state.isAutomationsOpen) {
+            AutomationsSheet(state = state, actions = actions)
+        }
         if (state.isWorkspaceOpen) {
             WorkspaceFilesSheet(state = state, actions = actions)
         }
@@ -350,8 +357,24 @@ private fun AgentDrawer(
             Text("New chat")
         }
 
+        // Above the chats, because the question this panel is opened with is
+        // often "is the standing stuff still working", and that has to be
+        // answered before anyone reads a list.
+        Spacer(Modifier.height(20.dp))
+        AutomationStrip(
+            overview = state.automations.overview,
+            onOpen = {
+                close()
+                actions.onOpenAutomations()
+            },
+            onOpenRule = {
+                close()
+                actions.onOpenAutomations()
+            },
+        )
+
         Spacer(Modifier.height(22.dp))
-        Text("Sessions", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Chats", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
 
         when {
