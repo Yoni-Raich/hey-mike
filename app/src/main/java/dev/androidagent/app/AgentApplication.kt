@@ -146,6 +146,11 @@ class AgentGraph(private val app: Application) {
                 name = "apps_settings",
                 readOnlyOperations = setOf("list_apps", "app_info", "permission_status"),
             ),
+            WorkflowCallMetadata(
+                name = "location",
+                // Reading where the phone is changes nothing about it.
+                readOnlyOperations = setOf("permission_status", "current"),
+            ),
         ).associateBy { it.name },
     )
     // Accessibility first: it needs no ADB, keeps the phone's own settings

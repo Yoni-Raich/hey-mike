@@ -192,6 +192,17 @@ class AndroidCapabilityTools private constructor(
                     "kind" to str(), "setting" to str(),
                 ),
             ),
+            tool(
+                "location",
+                "Where the phone is, right now. operation: permission_status, current (max_age_ms?, " +
+                    "precise?). Foreground only: it reports the newest fix that is fresh enough and " +
+                    "never waits for a new one, so a cold GPS answers no_fix rather than stalling. " +
+                    "Coarse is enough unless precise is true. Every answer carries how old the fix is. " +
+                    "There is no background or continuous form here — a standing rule does that, under " +
+                    "its own permission.",
+                CapabilityPolicy.LOCATION_OPS,
+                mapOf("max_age_ms" to int(), "precise" to bool()),
+            ),
         )
     }
 }
@@ -252,6 +263,7 @@ internal class CapabilityDispatcher(
                 CapabilityPolicy.TOOL_FILES_MEDIA -> filesMedia(tool, operation, arguments, ws)
                 CapabilityPolicy.TOOL_COMMUNICATIONS -> communications(tool, operation, arguments)
                 CapabilityPolicy.TOOL_APPS_SETTINGS -> appsSettings(tool, operation, arguments)
+                CapabilityPolicy.TOOL_LOCATION -> location(tool, operation, arguments)
                 else -> throw ToolNotServiceable("capability_unsupported", "Unknown capability tool \"$tool\".")
             }
             checkActive()
@@ -761,6 +773,59 @@ internal class CapabilityDispatcher(
 
     private fun failure(tool: String, operation: String, errorType: String, message: String): ToolResult =
         ToolResult(CapabilityPolicy.fail(tool, operation, errorType, message), success = false)
+
+    // ---- location ----
+
+    private suspend fun location(tool: String, operation: String, args: JsonObject): ToolResult {
+        val precise = (args["precise"] as? JsonPrimitive)?.booleanOrNull ?: false
+        val granted: (String) -> Boolean = { platform.hasPermission(it) }
+        return when (operation) {
+            "permission_status" -> ToolResult(
+                CapabilityPolicy.ok(tool, operation) {
+                    put("coarse", granted(CapabilityPolicy.PERM_LOCATION_COARSE))
+                    put("fine", granted(CapabilityPolicy.PERM_LOCATION_FINE))
+                    put("location_on", platform.locationEnabled())
+                },
+            )
+            "current" -> {
+                val maxAge = CapabilityPolicy.parseLocationMaxAge(args)
+                val missing = CapabilityPolicy.locationMissingFor(precise, granted)
+                if (missing.isNotEmpty()) return permissionFailure(tool, operation, missing, args)
+                checkActive()
+                // Asked before the read, so "location is switched off" is never
+                // reported as "nothing has a fix" — different problem, different fix.
+                if (!platform.locationEnabled()) {
+                    return failure(
+                        tool, operation, "location_off",
+                        "Location is switched off for the whole phone. " +
+                            "open_system_setting can open the screen that turns it back on.",
+                    )
+                }
+                val fix = platform.lastLocation(maxAge, precise)
+                checkActive()
+                if (fix == null) {
+                    return failure(
+                        tool, operation, "no_fix",
+                        "No position this phone has is newer than ${maxAge}ms. Nothing was waited for. " +
+                            "Retry with a larger max_age_ms, or after something else has used location.",
+                    )
+                }
+                ToolResult(
+                    CapabilityPolicy.ok(tool, operation) {
+                        put("latitude", fix.latitude)
+                        put("longitude", fix.longitude)
+                        fix.accuracyMeters?.let { put("accuracy_m", it) }
+                        put("age_ms", fix.ageMs)
+                        fix.provider?.let { put("provider", it) }
+                        // Said outright: a coarse grant can answer a precise
+                        // request, and the model must not treat it as precise.
+                        put("precise", precise && granted(CapabilityPolicy.PERM_LOCATION_FINE))
+                    },
+                )
+            }
+            else -> throw ToolNotServiceable("capability_unsupported", "Unknown location operation \"$operation\".")
+        }
+    }
 
     private fun permissionFailure(tool: String, operation: String, missing: List<String>, args: JsonObject): ToolResult =
         ToolResult(CapabilityPolicy.permissionFailure(tool, operation, missing, args), success = false)

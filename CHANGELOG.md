@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Mike can tell you where you are. Ask, and it reads the phone's current
+  position — the town by default, the street only if the task needs it and you
+  allow it. It asks for the permission the same way it asks for contacts or the
+  calendar: Android's own dialog, no extra card. It never sits waiting for a
+  GPS lock; if the phone has nothing recent it says so rather than hanging, and
+  it always says how old the reading is.
 - Mike no longer spends a thinking turn per tap when it can already see what to
   do. Reading the screen once shows it the message box *and* the Send button, so
   "tap the box, type this, send it" is now a single `act_plan` call instead of

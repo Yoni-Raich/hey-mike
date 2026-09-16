@@ -364,9 +364,9 @@ and remedy, so the UI half of the distinction needed no change.
 ## Native capability API gateway
 
 Common phone data and system entry points do not need to be rebuilt from taps.
-`AndroidCapabilityTools` exposes five stable, operation-based tools —
-`contacts`, `calendar`, `files_media`, `communications` and `apps_settings` —
-with a rich JSON object per call. This keeps the advertised surface small while
+`AndroidCapabilityTools` exposes six stable, operation-based tools —
+`contacts`, `calendar`, `files_media`, `communications`, `apps_settings` and
+`location` — with a rich JSON object per call. This keeps the advertised surface small while
 letting one policy and one platform seam cover many use cases. The exact
 operation and argument keys are allowlisted, strings, rows and serialized
 results are bounded, and every reply is a typed JSON envelope whose `ok` value
@@ -389,6 +389,36 @@ in front of it. Other special access operations only open a setup screen and do
 not report the access as granted. Notification support is deliberately status
 and setup only — there is no `NotificationListenerService`, so the gateway
 cannot read notification content.
+
+### Location is a read, not a subscription
+
+`location` answers one question — where is this phone now — and it is built so
+it cannot quietly become anything else.
+
+**It never waits.** `current` returns the newest cached fix from the providers
+the request may use and nothing else. Requesting a fresh fix would hold the
+run's tool lock for as long as the sky takes; a phone whose radio has been idle
+answers `no_fix` instead, which the model can report or retry. Freshness is the
+caller's to state (`max_age_ms`, five minutes by default, a day at most), and
+every answer carries `age_ms`, because a fix from this morning is not an answer
+and nothing downstream could otherwise tell.
+
+**Coarse is the default.** `precise` is opt-in, and a coarse grant answering a
+precise request reports `precise:false` rather than passing a neighbourhood off
+as a street. `locationMissingFor` names both grants when nothing is held, so the
+user can answer with either on API 31+.
+
+**Background location is not reachable from here.** `ACCESS_BACKGROUND_LOCATION`
+is absent from `REQUESTABLE_PERMISSIONS` and from the manifest, and there is no
+watch or subscribe operation. A tool that could obtain it mid-turn would turn
+one answered question into a permanent tracker; watching for a place is a
+standing rule's job, asked for on its own screen where the user can see what is
+watching and why.
+
+**"Off" and "denied" are different failures.** The system location switch is
+checked before the read, so `location_off` is never reported as `no_fix` — one
+is fixed in Settings, the other by waiting or widening, and a model told the
+wrong one will do the wrong thing.
 
 The gateway shares the normal run revoke boundary and the visible control
 state. Its Android calls live behind `CapabilityPlatform`, while policy and
