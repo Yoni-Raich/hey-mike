@@ -8,7 +8,8 @@ not production-ready.
 ### Verified
 
 - `act_plan`, one call for a sequence already on screen — on 2026-09-16,
-  `:core:test` passed (328 tests, 23 of them the new `ActPlanTest`), covering:
+  `:core:test` passed (471 tests once dev was merged in, 23 of them the new
+  `ActPlanTest`), covering:
   a three-step focus/type/send plan dispatching `tap_node`, `set_text`,
   `tap_node` in order for one call; the trailing forced observation and
   `observe=false`; refusal of a target named by `nodeId` and of an
