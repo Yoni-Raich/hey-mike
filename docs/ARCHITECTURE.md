@@ -1155,20 +1155,31 @@ door, which made it mean two things at once — what you are reading, and where
 you go — and left the dot sitting on a chevron that read as "rename this chat".
 A hamburger in the navigation slot is the door; the title is only a title.
 
-**Opening it is choreographed, not a slide.** `DrawerMotion` drives the panel's
-contents from one `Transition`: the surface arrives on Material's own slide,
-and the parts ride in behind its edge on staggered delays — name, new chat,
-rules strip, "Chats", then the list and the footer. The stagger is what makes
-the strip read as the headline rather than one more row. Three things keep it
-honest. Progress is read at draw time inside `graphicsLayer`, so the cascade
-never recomposes the panel. It is driven by `targetValue`, so it starts when
-the panel is *asked* for rather than when the sheet lands. And closing runs the
-delays backwards and faster (170ms against 340ms), because the sheet is sliding
-out underneath and a part still fading after the panel is gone reads as a
-dropped frame — the same rule voice mode set, that a transition plays backwards
-rather than cutting. It shares voice mode's easing (`Emphasized`) literally,
-not by copying the numbers, and `animationsEnabled()` shows every part at once
-when the system says no motion.
+**Opening it makes room rather than covering.** `rememberDrawerPush` and
+`Modifier.drawerPushed` step the chat back and aside as the panel arrives: it
+slides towards the far edge, shrinks to 0.88 and rounds to a 28dp card, so what
+is left showing beside the panel reads as the screen you were on rather than a
+screen that got cut off. Three directions were drawn (unfolding out of the
+button, pushing the chat aside, cascading the contents in) and this is the one
+the owner picked; the other two are on the canvas.
+
+Progress is read at draw time inside `graphicsLayer`, so the push never
+recomposes the chat, and at zero the layer sets nothing at all — the chat is
+byte-for-byte what it was before any of this existed. It rides on the drawer's
+`targetValue`, not the sheet's live offset: the target is what the menu button
+sets the moment it is tapped, so the push starts *with* the sheet rather than
+after it, and a drag carries the chat along once it crosses the anchor. The
+price, stated rather than hidden, is that mid-drag the chat animates towards
+where the drag is going instead of tracking the finger — invisible on a tap,
+slight on a drag. Closing is quicker than opening (260ms against 340ms),
+because the sheet is already leaving and a chat still settling reads as lag.
+It shares voice mode's easing (`Emphasized`) literally, not by copying the
+numbers, signs its shift for the layout direction, and `animationsEnabled()`
+leaves the chat still when the system says no motion.
+
+No shadow under the sheet: the scrim already sits between the two on a black
+background, where a drop shadow would be invisible. The separation is carried
+by the chat's own corners and scale instead.
 
 **What leaves the phone is stated, not implied.** A rule's own screen names the
 exported fields in the user's terms — "Only the sender's name", with the note

@@ -64,10 +64,10 @@
   parts of an event leave your phone. Turn it off there, or run it now.
 - The panel opens from a menu button at the top left instead of from the chat's
   name, so the name is just the name of what you are reading.
-- Opening it is choreographed: the panel slides in and its contents arrive
-  behind it a beat later, one after another — the name, the new-chat button,
-  the rules strip, then your chats. Closing plays the same thing backwards.
-  Turning off animations in Android's developer settings turns it off too.
+- Opening it makes room instead of covering: the chat steps back and aside and
+  rounds into a card while the panel takes the space, so you can still see where
+  you were. Closing hands the screen back the same way. Turning off animations
+  in Android's developer settings leaves the chat still.
 - That button takes a small amber dot when a rule is switched on and cannot run.
   That was invisible before: you would find out by the thing never happening. No
   dot when everything is fine.

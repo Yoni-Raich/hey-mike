@@ -372,9 +372,11 @@ not production-ready.
   unit-tested logic, but no one has looked at them on a phone or in an emulator,
   and no screenshot exists. Spacing, truncation at a long rule name, the sheet's
   height on a short screen, and whether the dot reads at 22dp are all unproven.
-  The opening cascade is unseen too: the delays were chosen against voice
-  mode's, not against a phone, so whether it reads as deliberate or as lag is
-  the one thing only a device can answer.
+  The opening push is unseen too: the shift, the 0.88 scale and the 28dp
+  corner were chosen against the mockup, not against a phone, so whether the
+  chat reads as a card set aside or as a glitch is the one thing only a device
+  can answer — as is how it behaves mid-drag, where the chat animates towards
+  the drag's target rather than tracking the finger.
   `AGENTS.md` asks for UI evidence on visual changes; there is none for this.
 - The settings screen is partial. Settings > Standing rules now counts the rules,
   names the dormant ones, shows the next run and grants both permissions — but
