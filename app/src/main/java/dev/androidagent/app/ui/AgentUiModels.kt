@@ -191,6 +191,8 @@ data class AgentUiActions(
     val onOpenNotificationAccess: () -> Unit = {},
     /** Alarms & reminders, so a rule that says 19:00 lands at 19:00 rather than whenever. */
     val onOpenExactAlarmSettings: () -> Unit = {},
+    /** Background location, asked for here so the user can see which rule wants it. */
+    val onAllowPlaceWatch: () -> Unit = {},
     /** Open the rules list from the panel's strip. */
     val onOpenAutomations: () -> Unit = {},
     val onCloseAutomations: () -> Unit = {},
@@ -264,6 +266,10 @@ data class AutomationsStatus(
     val notificationAccess: Boolean = false,
     /** False means a rule that says 19:00 may land an hour later under Doze. */
     val exactAlarms: Boolean = true,
+    /** Background location: what noticing an arrival while the app is closed needs. */
+    val placeWatch: Boolean = false,
+    /** How many places have been named. Watching nothing is not a permission problem. */
+    val namedPlaces: Int = 0,
 ) {
     val total: Int get() = overview.summaries.size
 

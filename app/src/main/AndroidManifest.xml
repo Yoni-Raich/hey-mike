@@ -20,6 +20,13 @@
     -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+        Watching for a place means noticing an arrival while the app is closed,
+        which is what this grants and nothing less does. Asked for only from
+        the standing-rules screen, where the user can see which rule wants it;
+        no tool can request it, so a turn cannot obtain it in passing.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

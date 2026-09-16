@@ -42,9 +42,9 @@ the resolution: arriving is worked out from the coarse network position, so a
 rule fires within a minute or two of crossing, never at the instant. Do not
 promise the user otherwise.
 
-Watching needs location "all the time", which no tool can request. If a `place`
-rule reports its trigger dormant, tell the user to turn it on in
-Settings > Standing rules; do not try to request it yourself.
+Watching needs location "all the time", which no tool can request. If
+`save_place` or a `place` rule reports the trigger dormant, tell the user to
+turn it on in Settings > Standing rules; do not try to request it yourself.
 
 ## Once is not a rule
 

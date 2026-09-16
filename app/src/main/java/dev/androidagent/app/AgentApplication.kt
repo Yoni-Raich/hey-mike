@@ -213,7 +213,9 @@ class AgentGraph(private val app: Application) {
         // where the code sat. This is the same action path with no rule around
         // it: nothing is saved, no guard applies, and the user is right here.
         places = automationPlaces,
-        // Nothing watches for places yet, so there is nothing to tell.
+        // Naming a place can make a dormant rule live, and forgetting one can
+        // stop the only thing that was being watched for.
+        onPlacesChanged = { if (::automationHost.isInitialized) automationHost.syncPlaceWatch() },
         performNow = { action ->
             if (::automationHost.isInitialized) {
                 automationHost.performNow(action)
@@ -277,6 +279,7 @@ class AgentGraph(private val app: Application) {
             library = automations,
             history = automationJournal,
             actions = automationActions,
+            places = automationPlaces,
             scope = scope,
             agentAvailable = { runCoordinator.available.value },
         )

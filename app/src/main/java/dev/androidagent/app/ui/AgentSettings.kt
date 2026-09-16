@@ -65,6 +65,7 @@ import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.MicNone
 import androidx.compose.material.icons.outlined.NotificationsNone
+import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
@@ -584,6 +585,41 @@ private fun ColumnScope.AutomationSettings(state: AgentUiState, actions: AgentUi
             label = if (automations.notificationAccess) "Review notification access" else "Allow notification access",
             spinnerColor = MaterialTheme.colorScheme.onPrimary,
         )
+    }
+
+    StatusLine(
+        title = when {
+            automations.placeWatch && automations.namedPlaces > 0 ->
+                "Places: watching ${automations.namedPlaces}"
+            automations.placeWatch -> "Places: allowed, none named"
+            else -> "Places: off"
+        },
+        detail = when {
+            automations.placeWatch && automations.namedPlaces > 0 ->
+                "Rules fire when you arrive or leave"
+            automations.placeWatch ->
+                "Ask Mike to call somewhere \"home\" while you are there"
+            else -> "Rules about arriving somewhere cannot run"
+        },
+        color = if (automations.placeWatch) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (!automations.placeWatch) {
+        Explanation(
+            "Noticing that you arrived somewhere means checking where the phone is while Hey Mike " +
+                "is closed, which Android treats as its own permission — on newer phones you grant " +
+                "it as \"Allow all the time\" on the next screen. Mike uses the coarse network " +
+                "position rather than GPS and only while a rule is actually waiting on a place, so " +
+                "an arrival is noticed within a minute or two rather than the instant it happens. " +
+                "Nothing about where you have been is stored or sent anywhere.",
+        )
+        Button(onClick = actions.onAllowPlaceWatch, modifier = Modifier.fillMaxWidth()) {
+            LoadingButtonContent(
+                loading = false,
+                icon = Icons.Outlined.Place,
+                label = "Allow location in the background",
+                spinnerColor = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
     }
 
     StatusLine(

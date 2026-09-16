@@ -37,8 +37,10 @@ import dev.androidagent.core.AutomationEvaluator
 import dev.androidagent.core.AutomationEvent
 import dev.androidagent.core.AutomationHistory
 import dev.androidagent.core.AutomationLibrary
+import dev.androidagent.core.AutomationPlaceStore
 import dev.androidagent.core.AutomationRunReport
 import dev.androidagent.core.AutomationRunner
+import dev.androidagent.core.AutomationTrigger.PlaceTransition
 import dev.androidagent.core.AutomationTriggerKind
 import dev.androidagent.core.AutomationWakeups
 import kotlinx.coroutines.CoroutineScope
@@ -87,6 +89,8 @@ class AutomationHost(
     val library: AutomationLibrary,
     private val history: AutomationHistory,
     private val actions: AutomationActions,
+    /** Named circles a `place` trigger refers to. Empty until the user names one. */
+    val places: AutomationPlaceStore,
     private val scope: CoroutineScope,
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
     /** True when a turn could run now: signed in, runtime up, nothing else running. */
@@ -98,6 +102,13 @@ class AutomationHost(
     private val evaluator = AutomationEvaluator(history)
     private val runner = AutomationRunner(actions, history, { ZonedDateTime.now(zone()) })
     private val alarms = AutomationAlarms(context)
+    private val placeWatcher = AutomationPlaceWatcher(context, places) { change ->
+        val at = ZonedDateTime.now(zone())
+        // Arrivals before departures: a rule written for "enter the office"
+        // should not wait behind one for "leave home" on the same fix.
+        change.entered.forEach { onEvent(AutomationEvent.Place(it.id, PlaceTransition.ENTER, at)) }
+        change.left.forEach { onEvent(AutomationEvent.Place(it.id, PlaceTransition.EXIT, at)) }
+    }
     private val runLock = Mutex()
 
     @Volatile private var started = false
@@ -111,6 +122,7 @@ class AutomationHost(
         context.registerReceiver(deviceStateReceiver, deviceStateFilter)
         lastDeviceState = readDeviceState()
         rearm()
+        syncPlaceWatch()
     }
 
     fun stop() {
@@ -118,21 +130,36 @@ class AutomationHost(
         started = false
         runCatching { context.unregisterReceiver(deviceStateReceiver) }
         alarms.cancel()
+        placeWatcher.sync(wanted = false)
     }
 
     /**
      * Which triggers this phone can actually serve right now.
      *
      * Handed to `AutomationToolGateway`, which saves a rule it cannot serve and
-     * reports it **dormant** rather than pretending it is live. `place` is
-     * absent because no geofence source is built yet — see the architecture
-     * notes on why that needs a dependency decision first.
+     * reports it **dormant** rather than pretending it is live.
+     *
+     * `place` needs background location, so a rule naming one is dormant until
+     * the user grants it — a fixable state the rules screen offers to fix,
+     * rather than the permanent gap it used to be.
      */
     fun supportedTriggers(): Set<AutomationTriggerKind> = buildSet {
         add(AutomationTriggerKind.SCHEDULE)
         add(AutomationTriggerKind.DEVICE_STATE)
         add(AutomationTriggerKind.MANUAL)
         if (AutomationNotificationListener.isEnabled(context)) add(AutomationTriggerKind.NOTIFICATION)
+        if (placeWatcher.canWatch()) add(AutomationTriggerKind.PLACE)
+    }
+
+    /** True when this phone may watch for places at all. */
+    fun canWatchPlaces(): Boolean = placeWatcher.canWatch()
+
+    /**
+     * Listen only while a rule actually watches a place. Called at start, and
+     * whenever the rules, the places or the permission may have changed.
+     */
+    fun syncPlaceWatch() {
+        placeWatcher.sync(wanted = started && library.watching(AutomationTriggerKind.PLACE).isNotEmpty())
     }
 
     /** True when the clock can be trusted to the minute rather than to the hour. */
@@ -186,13 +213,18 @@ class AutomationHost(
     fun rearm() {
         val next = AutomationWakeups.nextRunAt(library.all(), ZonedDateTime.now(zone()))
         if (next == null) alarms.cancel() else alarms.armFor(next)
+        // The same call sites that change the rules decide whether anything
+        // still watches a place, so the subscription follows them rather than
+        // needing every caller to remember it.
+        syncPlaceWatch()
     }
 
     private fun snapshot(now: ZonedDateTime) = AutomationContext(
         now = now,
-        // No geofence source yet, so nothing is ever inside a place and an
-        // `at_place` condition is false rather than quietly true.
-        places = emptySet(),
+        // The watcher's saved answer, not a fresh read: a condition is tested
+        // while deciding some other trigger, and blocking that on a location
+        // read would hold up every rule on the phone.
+        places = placeWatcher.currentlyInside(),
         deviceState = lastDeviceState,
         userReachable = userReachable(),
         agentAvailable = agentAvailable(),

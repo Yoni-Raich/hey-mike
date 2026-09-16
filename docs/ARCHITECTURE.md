@@ -1282,13 +1282,46 @@ refusing rather than silently doing nothing.
 
 `AutomationToolGateway` carries `supportedTriggers`, which this host answers
 with what it can actually serve: `schedule`, `device_state` and `manual`
-always, `notification` once the user has granted the listener by hand. **`place`
-is served by nothing yet**, so a geofence rule is saved and reported **dormant**
-rather than accepted as live. That is a dependency decision, not an oversight:
-`GeofencingClient` means adding Google Play Services to a project that
-deliberately ships outside Play, and the AOSP alternative
-(`LocationManager.addProximityAlert`) is unreliable enough that shipping it
-quietly would be worse than reporting the gap.
+always, `notification` once the user has granted the listener by hand, and
+`place` once they have granted background location. A rule whose trigger is not
+served is saved and reported **dormant** rather than accepted as live — every
+one of those is now a permission the user can grant, not a gap the app cannot
+close.
+
+### Watching for a place without Play Services
+
+`AutomationPlaceWatcher` is the third way, after the two obvious ones were
+rejected. `GeofencingClient` means adding Google Play Services to a project that
+deliberately ships outside Play and is expected to run on phones without it.
+`LocationManager.addProximityAlert` is deprecated and unreliable enough that
+shipping it quietly would be worse than the gap. So the watcher subscribes
+directly, cheaply, and states its cost rather than hiding it.
+
+One coarse subscription on `NETWORK_PROVIDER` — the cellular and wifi estimate,
+not GPS — asking for no more than a fix every two minutes and only after 100m of
+movement. That is what other apps have already paid for, so listening is close
+to free and the GPS radio is never woken. The price is resolution: an arrival is
+noticed within a minute or two of happening rather than at the instant, and
+`save_place` says so in its own reply so the model cannot promise otherwise.
+
+Three things keep it from being a tracker. It runs **only while a rule is
+actually waiting on a place** — `syncPlaceWatch` follows every call site that
+changes the rules, so a subscription never outlives the feature using it.
+Nothing about where the phone has been is stored: the only persisted state is
+the set of place ids it is currently inside. And no tool can request
+`ACCESS_BACKGROUND_LOCATION` — `CapabilityPolicy` excludes it by name — so it is
+granted from the standing-rules screen, where the user can see which rule wants
+it, or not at all.
+
+That inside-set is persisted for a reason worth stating: without it, a reboot or
+a process kill would report the user arriving everywhere they already are.
+"Welcome home" at 3am because Android killed the app is exactly the failure that
+makes someone switch rules off. It is written before the events go out, for the
+same reason a rule's fire is recorded before its first action.
+
+`at_place` reads that saved set rather than taking a fresh fix. A condition is
+tested in the middle of deciding whether some *other* trigger fires, and
+blocking that on a location read would hold up every rule on the phone.
 
 Settings > Standing rules is where the feature says whether it actually works:
 how many rules are on, how many are **dormant**, when the next one is due, and

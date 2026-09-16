@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Rules about arriving and leaving actually work now. "When I get home, turn the
+  lights on" was accepted and then quietly never fired; it needed a place to
+  point at and a way to notice you crossing it, and had neither. Turn on
+  location in the background from Settings > Standing rules, name a place, and
+  the rule goes live. Mike uses the rough network position rather than GPS and
+  only while a rule is waiting on a place, so it costs little battery — and an
+  arrival is noticed within a minute or two, not the instant it happens. Nowhere
+  you have been is stored or sent anywhere.
 - You can tell Mike where "home" is. Ask it to name where you are, and rules
   about arriving and leaving have something to point at — before this a rule
   could say "when I get home" and nothing on the phone knew where that was.

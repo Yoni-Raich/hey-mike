@@ -423,14 +423,16 @@ not production-ready.
   similar builds, decide whether a 19:00 alarm actually lands on a sideloaded
   app. The existing foreground service helps; nothing here proves it is enough,
   on any phone.
-- `place` triggers are served by nothing and are reported dormant. One of the two
-  reasons is now gone: `RuntimePermissionBroker`, merged with the capability
-  tools, is the machinery for requesting `ACCESS_BACKGROUND_LOCATION`. The other
-  stands — nothing provides a geofence, and adding one means either a Google Play
-  Services dependency in a project that ships outside Play, or
-  `LocationManager.addProximityAlert`, which is unreliable enough that shipping
-  it quietly would be worse than the gap. That is a decision for the owner, not
-  a task.
+- **`place` triggers now have a path, and none of it has run on hardware.**
+  `AutomationPlaceWatcher` subscribes to the coarse network provider and
+  `AutomationPlaceWatch` decides arriving and leaving; the decision half is unit
+  tested, the subscription half is not testable off a phone and has never seen
+  one. Unproven: whether `NETWORK_PROVIDER` updates arrive at all under Doze on
+  a sideloaded app, what the real battery cost is over a day, whether the 80m
+  radius floor is generous enough to stop flapping in practice, and whether the
+  background-location grant survives on OEM builds that revoke permissions for
+  unused apps. The 80m floor and the two-minute interval were reasoned from
+  typical network-fix accuracy, not measured.
 - **The whole side panel is unseen.** The strip, the rules sheet, the chain on a
   rule's screen and the amber dot on the hamburger compile and are driven by
   unit-tested logic, but no one has looked at them on a phone or in an emulator,

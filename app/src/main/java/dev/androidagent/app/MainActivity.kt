@@ -55,6 +55,26 @@ class MainActivity : ComponentActivity() {
     // Set while the permission dialog is up for an assistant press, so the
     // grant starts voice the assistant way rather than toggling it.
     private var voiceForAssistant = false
+    // Background location is two dialogs on API 30+, in order: Android
+    // auto-denies the background grant unless the foreground one is already
+    // held, so asking for both at once would silently fail.
+    private val backgroundLocationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            model.refreshPermissions()
+            if (!granted) {
+                model.error(
+                    "Rules about arriving somewhere need location \"all the time\". " +
+                        "You can change it later in Android's app permissions.",
+                )
+            }
+        }
+    private val foregroundLocationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            model.refreshPermissions()
+            if (result.values.any { it }) askForBackgroundLocation() else {
+                model.error("Rules about arriving somewhere need location permission.")
+            }
+        }
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         model.refreshPermissions()
         val forAssistant = voiceForAssistant.also { voiceForAssistant = false }
@@ -191,6 +211,17 @@ class MainActivity : ComponentActivity() {
         onOpenNotificationAccess = {
             openSettings(dev.androidagent.automations.AutomationNotificationListener.settingsIntent())
         },
+        onAllowPlaceWatch = {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                askForBackgroundLocation()
+            } else {
+                foregroundLocationPermission.launch(
+                    arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
+                )
+            }
+        },
         onOpenExactAlarmSettings = {
             val exact = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName"))
@@ -261,6 +292,27 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Returns false when nothing on the phone can handle the intent. */
+    /**
+     * Ask for location "all the time".
+     *
+     * On API 30+ Android does not show a dialog for this at all — it sends the
+     * user to the app's permission screen — so a request that is refused
+     * outright is followed to that screen rather than reported as a failure
+     * the user cannot act on. Below API 29 there is no separate background
+     * grant and the foreground one already covers it.
+     */
+    private fun askForBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            model.refreshPermissions()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            return
+        }
+        backgroundLocationPermission.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    }
+
     private fun openSettings(intent: Intent, report: Boolean = true): Boolean {
         val started = runCatching { startActivity(intent); true }.getOrDefault(false)
         if (!started && report) model.error("This phone has no settings screen for that.")
