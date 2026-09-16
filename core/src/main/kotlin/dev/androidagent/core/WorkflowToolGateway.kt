@@ -59,6 +59,11 @@ class WorkflowToolGateway(
      */
     private val confirm: suspend (WorkflowConfirmation) -> WorkflowConfirmationOutcome =
         { WorkflowConfirmationOutcome.UNAVAILABLE },
+    /**
+     * The allowlist for `call` steps: plain metadata, so wiring passes names
+     * without a construction cycle back through the composite that routes them.
+     */
+    private val callRegistry: WorkflowCallRegistry = WorkflowCallRegistry.EMPTY,
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -73,6 +78,7 @@ class WorkflowToolGateway(
         invokeTool = { name, args -> router().invoke(name, args) },
         isRevoked = { revoked },
         confirm = confirm,
+        callRegistry = callRegistry,
     )
 
     override val definitions: List<ToolDefinition> =
@@ -166,6 +172,17 @@ class WorkflowToolGateway(
         }
         if (mode == "describe") return describe(definition)
 
+        // A resume without a starting step has nowhere to continue from, and
+        // re-running the whole workflow could repeat committed calls.
+        val startAt = arguments.str("startAt") ?: arguments.str("fromStep")
+        if (mode == "resume" && startAt.isNullOrBlank()) {
+            return refusal(
+                "workflow_start_required",
+                "mode=\"resume\" needs \"startAt\" naming the step to resume from. " +
+                    "Use the \"resume\" arguments from the failure reply, which name it.",
+            )
+        }
+
         val params = when (val raw = arguments["params"]) {
             null, is JsonNull -> JsonObject(emptyMap())
             is JsonObject -> raw
@@ -184,14 +201,27 @@ class WorkflowToolGateway(
         }
         val budget = arguments.millis("totalBudgetMs", WorkflowRunner.MIN_TOTAL_MS, WorkflowRunner.MAX_TOTAL_MS)
             ?: WorkflowRunner.DEFAULT_TOTAL_MS
+        // Outputs a previous attempt captured, carried in `resume` so the
+        // resumed run reuses them instead of re-running committed calls.
+        // Validated here, before anything runs: resume state comes from the
+        // model, so it is checked like any other argument.
+        val priorOutputs = when (val raw = arguments["outputs"]) {
+            null, is JsonNull -> JsonObject(emptyMap())
+            is JsonObject -> {
+                validateResumeOutputs(mode, raw)?.let { return refusal("workflow_outputs_invalid", it) }
+                raw
+            }
+            else -> return refusal("workflow_outputs_invalid", "\"outputs\" must be an object of name to value.")
+        }
         return runner.run(
             bound,
             WorkflowRunner.Options(
                 mode = mode,
-                startAt = arguments.str("startAt") ?: arguments.str("fromStep"),
+                startAt = startAt,
                 totalBudgetMs = budget,
                 screenshotOnFailure = arguments.bool("screenshotOnFailure") ?: false,
                 params = params,
+                outputs = priorOutputs,
             ),
         )
     }
@@ -280,6 +310,39 @@ class WorkflowToolGateway(
         }
     }
 
+    /**
+     * Resume state comes from the model, so it is bounded like a capture:
+     * accepted only on resume, at most [WorkflowCallRegistry.MAX_OUTPUT_BINDINGS]
+     * bindings under usable names, with no binding over
+     * [WorkflowCallRegistry.MAX_CAPTURED_OUTPUT_CHARS] and no whole map over
+     * [WorkflowCallRegistry.MAX_TOTAL_OUTPUT_CHARS] serialized.
+     * Null when the outputs are acceptable.
+     */
+    private fun validateResumeOutputs(mode: String, outputs: JsonObject): String? {
+        if (outputs.isEmpty()) return null
+        if (mode != "resume") {
+            return "\"outputs\" rides only in a resume, next to \"startAt\". " +
+                "Start fresh without it, or resume from the failing step with the \"resume\" arguments."
+        }
+        if (outputs.size > WorkflowCallRegistry.MAX_OUTPUT_BINDINGS) {
+            return "There are ${outputs.size} outputs; the limit is ${WorkflowCallRegistry.MAX_OUTPUT_BINDINGS}."
+        }
+        outputs.keys.firstOrNull { !WorkflowStep.OUTPUT_NAME_RE.matches(it) }?.let { bad ->
+            return "\"$bad\" is not a usable output name: use letters, digits and \"_\"."
+        }
+        val cap = WorkflowCallRegistry.MAX_CAPTURED_OUTPUT_CHARS
+        outputs.entries.firstOrNull { (_, value) -> value.toString().length > cap }?.let { (name, value) ->
+            return "Output \"$name\" is ${value.toString().length} characters; the limit is $cap."
+        }
+        // The same total the runner enforces before storing a capture, so a
+        // resume the runner emitted is always accepted back here.
+        val totalCap = WorkflowCallRegistry.MAX_TOTAL_OUTPUT_CHARS
+        if (outputs.toString().length > totalCap) {
+            return "The outputs are ${outputs.toString().length} characters together; the limit is $totalCap."
+        }
+        return null
+    }
+
     /** Nothing was dispatched, so the reply says so before anything else. */
     private fun refusal(errorType: String, message: String): ToolResult = ToolResult(
         buildJsonObject {
@@ -310,7 +373,10 @@ class WorkflowToolGateway(
                 "updates. mode=\"list\" names the installed workflows, mode=\"describe\" prints the " +
                 "steps without running anything, mode=\"run\" executes them. A workflow that lists " +
                 "parameters takes their values in params, e.g. params={\"minutes\":10}. A step marked " +
-                "requiresConfirmation stops and asks the user. On failure the reply names the exact step, " +
+                "requiresConfirmation stops and asks the user. A step with action \"call\" invokes one " +
+                "registered device tool with JSON args and may capture its result with \"output\" for " +
+                "later steps as {{outputs.name}}. Captured outputs ride only in a resume, next to " +
+                "startAt. On failure the reply names the exact step, " +
                 "whether it may already have run, what is on screen and the arguments to resume from that " +
                 "step - resume with those, never start again.",
             mapOf(
@@ -318,6 +384,7 @@ class WorkflowToolGateway(
                 "package" to "string",
                 "mode" to "string",
                 "params" to "object",
+                "outputs" to "object",
                 "startAt" to "string",
                 "totalBudgetMs" to "integer",
                 "screenshotOnFailure" to "boolean",

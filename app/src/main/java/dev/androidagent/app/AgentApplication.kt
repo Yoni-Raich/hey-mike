@@ -36,11 +36,14 @@ import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.WorkflowConfirmationOutcome
+import dev.androidagent.core.WorkflowCallMetadata
+import dev.androidagent.core.WorkflowCallRegistry
 import dev.androidagent.core.WorkflowLibrary
 import dev.androidagent.core.WorkflowStore
 import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
+import dev.androidagent.devicetools.AndroidCapabilityTools
 import dev.androidagent.enginecodex.CodexEngine
 import dev.androidagent.overlay.FloatingControlOverlay
 import dev.androidagent.runtime.AndroidRuntimeHost
@@ -115,6 +118,36 @@ class AgentGraph(private val app: Application) {
     // WorkspaceSeeder does not rewrite on every access.
     val knowledge = KnowledgeStore(KnowledgeStore.directoryIn(runtime.homeDirectory))
     val knowledgeTools = KnowledgeToolGateway(knowledge)
+    val runtimePermissions = RuntimePermissionBroker(app)
+    val capabilityTools = AndroidCapabilityTools(app) { requested ->
+        runtimePermissions.request(requested)
+    }
+    private val workflowCalls = WorkflowCallRegistry(
+        listOf(
+            WorkflowCallMetadata(
+                name = "contacts",
+                readOnlyOperations = setOf("permission_status", "search", "list", "get"),
+            ),
+            WorkflowCallMetadata(
+                name = "calendar",
+                readOnlyOperations = setOf("permission_status", "list", "get"),
+            ),
+            WorkflowCallMetadata(
+                name = "files_media",
+                readOnlyOperations = setOf(
+                    "permission_status", "list", "search", "info", "ws_list", "ws_read_text",
+                ),
+            ),
+            WorkflowCallMetadata(
+                name = "communications",
+                readOnlyOperations = setOf("notification_access_status"),
+            ),
+            WorkflowCallMetadata(
+                name = "apps_settings",
+                readOnlyOperations = setOf("list_apps", "app_info", "permission_status"),
+            ),
+        ).associateBy { it.name },
+    )
     // Accessibility first: it needs no ADB, keeps the phone's own settings
     // untouched, and falls through to ADB for anything it cannot do. The
     // knowledge gateway shares no tool name with either device backend, so its
@@ -137,6 +170,7 @@ class AgentGraph(private val app: Application) {
                 if (outcome == WorkflowConfirmationOutcome.ALLOWED) leaveApprovalScreen()
             }
         },
+        callRegistry = workflowCalls,
     )
     /** Standing rules, beside the workflows they name. */
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
@@ -170,7 +204,7 @@ class AgentGraph(private val app: Application) {
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator

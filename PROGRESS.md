@@ -1,12 +1,29 @@
 # Progress
 
-## Status — 2026-09-11
+## Status — 2026-09-15
 
 Android Agent is a Developer Preview. It is useful for local testing, but it is
 not production-ready.
 
 ### Verified
 
+- Native capability APIs and API-capable workflows — on 2026-09-15,
+  `:core:test :device-tools:test :workspace:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` passed
+  together (405 actionable tasks). A forced `:device-tools:test` rerun passed
+  200 test executions across debug and release variants with zero failures;
+  the current `:core:test` results contain 301 passing tests. The five native
+  tools cover contacts, calendar, MediaStore and run-workspace files,
+  communication drafts/dialer, and apps/settings. Declarative workflows can
+  call those tools with JSON, capture typed output, use it in later steps and
+  carry it through resume without re-running completed calls. The callable set
+  is explicit; shell, install and workflow recursion are blocked. Runtime
+  grants use one Android permission request for only the missing allowlisted
+  permissions, with no second Hey Mike approval. `python -m unittest
+  tools.test_prepare_runtime` passed (5 tests) and `git diff --check` is clean.
+  Not verified on a physical phone: provider rows, selected-photo behavior,
+  OEM editor/settings intent handling, the runtime permission dialog, or a
+  complete workflow that carries one real API result into another call.
 - Standing rules (`automation_rule`) — on 2026-09-15 the full CI gate passes:
   `gradlew test :app:assembleDevDebug :app:lintDevDebug`, with 0 lint errors and
   no lint warning naming an automations file. `:core` carries 390 tests, 116 of
@@ -342,11 +359,14 @@ not production-ready.
   similar builds, decide whether a 19:00 alarm actually lands on a sideloaded
   app. The existing foreground service helps; nothing here proves it is enough,
   on any phone.
-- `place` triggers are served by nothing and are reported dormant. Adding them
-  means either a Google Play Services dependency in a project that ships outside
-  Play, or `LocationManager.addProximityAlert`, which is unreliable enough that
-  shipping it quietly would be worse than the gap. That is a decision for the
-  owner, not a task.
+- `place` triggers are served by nothing and are reported dormant. One of the two
+  reasons is now gone: `RuntimePermissionBroker`, merged with the capability
+  tools, is the machinery for requesting `ACCESS_BACKGROUND_LOCATION`. The other
+  stands — nothing provides a geofence, and adding one means either a Google Play
+  Services dependency in a project that ships outside Play, or
+  `LocationManager.addProximityAlert`, which is unreliable enough that shipping
+  it quietly would be worse than the gap. That is a decision for the owner, not
+  a task.
 - **The whole side panel is unseen.** The strip, the rules sheet, the chain on a
   rule's screen and the amber dot on the chat name compile and are driven by
   unit-tested logic, but no one has looked at them on a phone or in an emulator,

@@ -55,6 +55,14 @@ can't talk right now" — is a **workflow** with a parameter, not an
 every night. Reach for `agent_turn` only when something has to be read,
 decided or composed.
 
+**A workflow a rule names can `call` the device capabilities** — contacts, the
+calendar, a drafted SMS or email, app info — so a rule like "every weekday at
+07:00, tell me my first meeting" is a `run_workflow`, not an `agent_turn`. It
+needs no screen, no accessibility and no thinking turn. See the
+`device-capabilities` skill for what a `call` step can reach, and `workflows`
+for how to write one. Only reach past this when the rule has to *decide*
+something.
+
 Mike works out `attention` from the actions, so you cannot write it yourself. A
 rule whose attention is `user` is **held** while the phone is locked rather
 than fired, and one whose attention is `model` is held when no turn can run.

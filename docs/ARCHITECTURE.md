@@ -361,6 +361,40 @@ The setup hub already separates the two as their own checklist rows,
 `SetupItem.SCREEN_CONTROL` and `SetupItem.WIRELESS_ADB`, each with its own state
 and remedy, so the UI half of the distinction needed no change.
 
+## Native capability API gateway
+
+Common phone data and system entry points do not need to be rebuilt from taps.
+`AndroidCapabilityTools` exposes five stable, operation-based tools —
+`contacts`, `calendar`, `files_media`, `communications` and `apps_settings` —
+with a rich JSON object per call. This keeps the advertised surface small while
+letting one policy and one platform seam cover many use cases. The exact
+operation and argument keys are allowlisted, strings, rows and serialized
+results are bounded, and every reply is a typed JSON envelope whose `ok` value
+also controls `ToolResult.success`.
+
+Reads go through Android providers and `PackageManager`. Contact and event
+creation, SMS and email, phone dialing, sharing and settings changes only open
+the relevant visible system editor or screen; they never save, send, call or
+change a setting directly. Media access uses `MediaStore` and the permission
+model for the running Android version, including selected-photo access on
+Android 14+. File reads and writes outside MediaStore are limited to the
+current run workspace. Paths are relative, real-path checked and atomically
+replaced; there is no general filesystem or recursive delete operation.
+
+`apps_settings.request_permissions` accepts only the permissions declared for
+these capabilities. `RuntimePermissionBroker` asks only for grants that are
+still missing and makes one Android `RequestMultiplePermissions` request. The
+system dialog is the approval: Hey Mike does not put a second confirmation card
+in front of it. Other special access operations only open a setup screen and do
+not report the access as granted. Notification support is deliberately status
+and setup only — there is no `NotificationListenerService`, so the gateway
+cannot read notification content.
+
+The gateway shares the normal run revoke boundary and the visible control
+state. Its Android calls live behind `CapabilityPlatform`, while policy and
+dispatch are JVM-testable without a phone. Provider behavior, OEM intent
+handlers and the permission dialog still need physical-device proof.
+
 ## Session queue and exclusive device ownership
 
 The MVP still allows one active run per phone, because one phone screen cannot
@@ -741,7 +775,7 @@ of it:
 live (`<homeDirectory>/workflows/definitions/<id>.json`, beside `WorkflowStore`'s
 per-package step lists), and `WorkflowRunner` is the execution engine.
 
-Five decisions carry the design.
+Seven decisions carry the design.
 
 **Selector criteria are scored, not ANDed.** A target naming both
 `resourceId` and the visible label still resolves after the app renames the id,
@@ -771,6 +805,24 @@ resuming re-runs the failing step, a toggle step marked `skipIfVerified` checks
 its condition *before* acting: re-running "turn it on" on something already on
 turns it off. Running out of the time budget is therefore a recoverable outcome
 rather than a lost run, which is why the ceiling can stay short.
+
+**API calls are allowed explicitly, not opened generally.** A declarative step
+may use `action: "call"` with one registered tool and a JSON `arguments` object.
+The app registers only the five native capability tools. Shell, package install
+and every workflow tool are blocked even if wiring tries to register them, so a
+workflow cannot recurse or become a weaker agent loop. The called tool still
+owns its normal Android permission or approval path; the runner does not add a
+duplicate confirmation. An author can still mark the whole step
+`requiresConfirmation` when the product flow needs an extra explicit user gate.
+
+**Call outputs are typed, bounded resume state.** `output` captures a successful
+tool reply and later JSON may refer to it as `{{outputs.name}}` or a nested
+object/array path. A whole-value reference keeps its JSON type. Missing paths,
+oversized values and too many bindings fail before another call is dispatched.
+Failure replies carry the captured outputs in the resume arguments, so a
+completed call is not repeated merely to rebuild context. Whether a failed call
+may have committed is classified from its resolved `operation`; known reads are
+reported as read-only and unknown operations stay conservative.
 
 **A sensitive step stops and asks, and refuses when nothing can ask.**
 `requiresConfirmation` routes through `AgentCoordinator.authorizeWorkflowStep`,
@@ -948,6 +1000,16 @@ the noisy ones: one busy group chat is otherwise a hundred unattended turns.
 step set is closed: no shell, no arbitrary tool, no inline steps, at most four
 actions. A rule that could run anything would be a second agent loop with none
 of the coordinator's approval routing or revoke semantics.
+
+That set stayed closed when the native capability tools landed, and it did not
+need to widen: a workflow's own `call` step reaches them, so a rule that names
+a workflow reaches contacts, the calendar and a drafted message without any
+change to the rule format. This is the split paying off — "every weekday at
+07:00, tell me my first meeting" is a `run_workflow` with no screen, no
+accessibility and no thinking turn, and `AutomationActionKind` learned nothing
+new. Whether a rule should also be able to `call` a capability *directly*,
+skipping the one-step workflow wrapper, is open: `WorkflowDefinition` still
+requires a `package`, which a capability call has no use for.
 
 Nothing in `:core` fires a rule; the `:automations` module below does.
 
