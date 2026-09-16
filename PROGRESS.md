@@ -8,7 +8,7 @@ not production-ready.
 ### Verified
 
 - `act_plan`, one call for a sequence already on screen — on 2026-09-16,
-  `:core:test` passed (319 tests, 18 of them the new `ActPlanTest`), covering:
+  `:core:test` passed (323 tests, 18 of them the new `ActPlanTest`), covering:
   a three-step focus/type/send plan dispatching `tap_node`, `set_text`,
   `tap_node` in order for one call; the trailing forced observation and
   `observe=false`; refusal of a target named by `nodeId` and of an
@@ -19,6 +19,12 @@ not production-ready.
   the app in front being read rather than asked for; Stop mid-plan reporting the
   step that had run and going back to the phone for nothing; and a closing read
   that fails not unreporting the step that did run.
+  Per-step phase timing (`resolve`/`act`/`settle`/`verify`) and the 60s `verify`
+  ceiling are covered by three `WorkflowRunnerTest` cases against a clock that
+  moves only when the phone is touched, plus one parse case. Both came from a
+  real post-with-media run on X; **neither has been re-run on a phone**, so
+  whether 60s is enough for a video import, and whether the phase split points
+  at the right culprit on real hardware, is unproven.
   **Not run in this environment:** no Android SDK, so `:device-tools:test`,
   `:a11y:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
   `:app:assembleDevDebug` and `:app:lintDevDebug` were not executed here — CI

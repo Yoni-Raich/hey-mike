@@ -9,6 +9,14 @@
   keyboard opening or a list shifting between steps does not throw it off, and
   a step that does not land stops the sequence and reports what already
   happened. Sending still asks you first, wherever it sits in the sequence.
+- When Mike waits for something on the phone, it now says how long it expects
+  that to take instead of being held to a fixed few seconds. A video attaching
+  to a post, an upload or an install is no longer reported as "it did not
+  happen" while it was still on its way, and Mike stops waiting the moment it is
+  done.
+- Every step of a sequence now reports where its time went — finding the
+  element, the action itself, the screen settling, or waiting for the result —
+  so a slow run says which part was slow instead of just being slow.
 - Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
   **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
   anyone who wants to ship it inside a closed-source product. Personal use,

@@ -99,6 +99,17 @@ class WorkflowRunner(
     /** The largest box seen on the screen, so a gesture is never aimed at an assumed resolution. */
     private var viewport: List<Int>? = null
 
+    /**
+     * Where the step being run is spending its time. Reset per step.
+     *
+     * One `elapsedMs` per step says a step was slow; it does not say whether
+     * the element took finding, the app took acting, or the screen took
+     * settling - and those have different fixes. Single-run state like
+     * [viewport]: the coordinator serializes tool calls, so one run holds this
+     * runner at a time.
+     */
+    private var stepTiming = StepTiming()
+
     /** One run's request, after the gateway has read the tool arguments. */
     data class Options(
         val mode: String = "run",
@@ -167,6 +178,7 @@ class WorkflowRunner(
                 )
             }
             val stepStarted = nowMs()
+            stepTiming = StepTiming()
 
             // A step whose condition already holds is not repeated. This is
             // what makes resuming safe — flipping a switch that is already on
@@ -238,7 +250,8 @@ class WorkflowRunner(
             }
             val stepMs = nowMs() - stepStarted
             when (outcome) {
-                is StepOutcome.Done -> records += StepRecord(step, "done", outcome.note, stepMs, outcome.verified)
+                is StepOutcome.Done ->
+                    records += StepRecord(step, "done", outcome.note, stepMs, outcome.verified, stepTiming.toJson())
                 is StepOutcome.Skipped -> records += StepRecord(step, "skipped", outcome.reason, stepMs)
                 is StepOutcome.Failed -> return failure(
                     definition, options, records, step, index,
@@ -246,6 +259,10 @@ class WorkflowRunner(
                     committed = outcome.committed,
                     screen = outcome.screen,
                     outputs = captured,
+                    // Where the failing step spent its time is the first
+                    // question about a slow or timed-out step, and the ledger
+                    // does not carry the step that did not finish.
+                    timing = stepTiming.toJson(),
                 )
             }
         }
@@ -286,7 +303,10 @@ class WorkflowRunner(
         val target = step.target
             ?: WorkflowSelector(scrollable = true).takeIf { step.action == WorkflowAction.SCROLL }
         val resolved = if (target != null) {
-            when (val found = resolve(target, step)) {
+            val resolveStarted = nowMs()
+            val found = resolve(target, step)
+            stepTiming.resolveMs = nowMs() - resolveStarted
+            when (found) {
                 is Resolution.Found -> found
                 is Resolution.Missing -> {
                     if (step.optional) {
@@ -317,6 +337,7 @@ class WorkflowRunner(
             null
         }
 
+        val actStarted = nowMs()
         val action = try {
             act(definition, step, resolved, captured)
         } catch (cancelled: CancellationException) {
@@ -334,6 +355,8 @@ class WorkflowRunner(
                 "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
                 committed = committedOf(step),
             )
+        } finally {
+            stepTiming.actMs = nowMs() - actStarted
         }
         return afterAction(step, action, resolved)
     }
@@ -392,6 +415,7 @@ class WorkflowRunner(
                 committed = false,
             )
         }
+        val callStarted = nowMs()
         val result = try {
             invokeTool(name, args)
         } catch (cancelled: CancellationException) {
@@ -402,6 +426,8 @@ class WorkflowRunner(
                 "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
                 committed = mayCommit,
             )
+        } finally {
+            stepTiming.actMs = nowMs() - callStarted
         }
         if (!result.success) {
             return afterAction(step, result, resolved = null, committed = mayCommit)
@@ -467,10 +493,15 @@ class WorkflowRunner(
             )
         }
 
-        if (step.waitForChange) settle(step)
+        if (step.waitForChange) {
+            val settleStarted = nowMs()
+            settle(step)
+            stepTiming.settleMs = nowMs() - settleStarted
+        }
 
         val verification = step.verify ?: return StepOutcome.Done(null, verified = false)
-        val deadline = nowMs() + verification.timeoutMs
+        val verifyStarted = nowMs()
+        val deadline = verifyStarted + verification.timeoutMs
         var complaint: String? = "the screen could not be read"
         var lastScreen: Screen? = null
         while (true) {
@@ -486,11 +517,15 @@ class WorkflowRunner(
             lastScreen = screen
             if (screen.ok) {
                 complaint = verifiedOnScreen(screen, verification, step.target)
-                if (complaint == null) return StepOutcome.Done(null, verified = true)
+                if (complaint == null) {
+                    stepTiming.verifyMs = nowMs() - verifyStarted
+                    return StepOutcome.Done(null, verified = true)
+                }
             }
             if (nowMs() >= deadline) break
             delay(VERIFY_POLL_MS.coerceAtMost((deadline - nowMs()).coerceAtLeast(1L)))
         }
+        stepTiming.verifyMs = nowMs() - verifyStarted
         return StepOutcome.Failed(
             errorType = "verification_failed",
             // What the action itself reported is the first thing anyone fixing
@@ -1088,6 +1123,8 @@ class WorkflowRunner(
         val note: String?,
         val elapsedMs: Long,
         val verified: Boolean = false,
+        /** Where that time went, when any phase was slow enough to measure. */
+        val timing: JsonObject? = null,
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             put("id", step.id)
@@ -1096,6 +1133,33 @@ class WorkflowRunner(
             if (status == "done") put("verified", verified)
             note?.let { put("note", it) }
             if (elapsedMs > 0) put("elapsedMs", elapsedMs)
+            timing?.let { put("timing", it) }
+        }
+    }
+
+    /**
+     * One step's time, split by phase.
+     *
+     * "The step took 14 seconds" and "finding the element took 12 of them" ask
+     * for different fixes: a better selector, a slower app, or a screen that
+     * never settles. Phases below [MIN_REPORTED_PHASE_MS] are left out, so a
+     * fast step still reports as one line.
+     */
+    private class StepTiming(
+        /** Reading the screen and finding the node, including re-reads and any scroll hunt. */
+        var resolveMs: Long = 0,
+        /** The device call itself. */
+        var actMs: Long = 0,
+        /** Waiting for the screen to stop moving afterwards. */
+        var settleMs: Long = 0,
+        /** Polling until the step's own condition held, or until it timed out. */
+        var verifyMs: Long = 0,
+    ) {
+        fun toJson(): JsonObject? {
+            val parts = listOf("resolve" to resolveMs, "act" to actMs, "settle" to settleMs, "verify" to verifyMs)
+                .filter { it.second >= MIN_REPORTED_PHASE_MS }
+            if (parts.isEmpty()) return null
+            return buildJsonObject { parts.forEach { (name, value) -> put(name, value) } }
         }
     }
 
@@ -1176,6 +1240,7 @@ class WorkflowRunner(
         committed: Boolean = false,
         screen: Screen? = null,
         outputs: Map<String, JsonElement> = emptyMap(),
+        timing: JsonObject? = null,
     ): ToolResult {
         val shot = if (options.screenshotOnFailure) {
             runCatching { invokeTool("screenshot", JsonObject(emptyMap())) }.getOrNull()?.takeIf { it.success }
@@ -1194,6 +1259,7 @@ class WorkflowRunner(
                     put("failedStep", it.id)
                     put("failedStepIndex", index)
                     put("failedStepDoes", describe(it))
+                    timing?.let { spent -> put("failedStepTiming", spent) }
                 }
                 put("steps", JsonArray(records.map { record -> record.toJson() }))
                 put("ranSteps", records.count { it.status == "done" })
@@ -1310,6 +1376,9 @@ class WorkflowRunner(
         private const val MAX_STEP_TEXT = 400
         private const val MAX_SUMMARY_TEXT = 120
         private const val MAX_REPORTED_NODES = 24
+
+        /** Below this a phase is noise, and every step would carry four numbers. */
+        private const val MIN_REPORTED_PHASE_MS = 50L
         private const val MAX_REPORTED_FIELD = 80
 
         /** Below this a reverse match is noise: "on" is inside half the labels on a screen. */

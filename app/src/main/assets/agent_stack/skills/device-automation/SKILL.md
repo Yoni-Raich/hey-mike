@@ -229,7 +229,10 @@ A payment link (`amount`) still asks before it opens.
 ### A tap had no effect
 `read_ui` shows the same screen, or `"unchanged":true`, after an action that should have changed it.
 1. **Non-clickable target.** Use the node's `clickableAncestor.bounds`, or `tap_node` on the clickable node.
-2. **Still animating or loading.** Call `wait_for_change` once rather than tapping again.
+2. **Still animating or loading.** Call `wait_for_change` once rather than tapping again. For something
+   genuinely slow — a video attaching, an upload, an install — do not poll `read_ui`: run one
+   `act_plan` step that waits on the condition with your own estimate,
+   `{"action":"observe","verify":{"present":{...},"timeoutMs":45000}}`.
 3. **Covered or clipped.** A dialog, the keyboard or the screen edge is in the way. Dismiss it, or `scroll_node` the target into the middle first.
 4. Never repeat the identical tap more than twice.
 

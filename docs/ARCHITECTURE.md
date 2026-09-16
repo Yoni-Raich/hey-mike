@@ -887,6 +887,24 @@ name, so `Options.adHocTool` makes the resume block name `act_plan` and a
 Everything else is the workflow contract unchanged - the failing step, what
 already ran, whether it may have half-happened.
 
+**A step says where its time went.** One `elapsedMs` per step reports that a
+step was slow; it cannot say whether the element took finding, the app took
+acting, or the screen never settled - and those have different fixes. Each
+record carries `timing` split into `resolve`, `act`, `settle` and `verify`
+(phases under 50ms are left out, so a fast step stays one line), and a failure
+carries `failedStepTiming` for the step the ledger does not otherwise hold. This
+came from a real post-with-media run on X that took minutes: the report could
+say it was slow, not which part was.
+
+**A `verify` timeout is the caller's estimate of the work.** It was capped at
+20s, a screen transition with room to spare, and `millis()` clamps rather than
+refuses - so a step that said "this import takes about 45 seconds" waited 20 and
+reported the condition false while it was still on its way. The ceiling is now
+60s, inside `MAX_TOTAL_MS` with room for the rest of the run, and Stop stays
+responsive because the poll loop checks revoke every cycle. Polling stops the
+moment the condition holds, so a generous estimate costs nothing when the work
+is quick; that is what makes an estimate the right thing to ask the model for.
+
 Nothing about approvals changes. A tap that lands on Send inside a plan reaches
 `tap_node` on the accessibility backend and hits `SendGuard` there, so it asks
 with the same card and the same spoken "yes" as a send the model dispatched on

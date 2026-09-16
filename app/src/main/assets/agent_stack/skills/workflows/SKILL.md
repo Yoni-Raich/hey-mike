@@ -51,14 +51,39 @@ two rules of its own:
   guess. Plan up to the point where you genuinely do not know what comes next,
   let the plan end there, and read what it hands back.
 
+### Waiting for something slower than a screen
+
+A step's `verify` is also how you wait. It polls until the condition holds and
+stops the moment it does, so the timeout is your **estimate of the work**, not a
+retry budget:
+
+```text
+{"id":"await_media", "action":"observe",
+ "verify":{"present":{"contentDescription":"Remove media"}, "timeoutMs":45000}}
+```
+
+- A screen opening is the 5s default. A video attaching, an upload, an install,
+  a sync — say how long you actually expect, up to 60s.
+- Raise `totalBudgetMs` to cover it (up to 180000). A plan whose waits exceed
+  its budget stops with `budget_exhausted`, which is resumable but wasteful.
+- Waiting on a **condition** beats `{"action":"wait"}`: `wait` returns on any
+  movement, `verify` returns on the thing you are waiting for.
+
 The reply is the same ledger `workflow_runner` returns, plus the screen it
 landed on:
 
 ```json
 {"ok":true,"workflow":"plan","ranSteps":3,
- "steps":[{"id":"focus","action":"tap","status":"done"}, ...],
+ "steps":[{"id":"focus","action":"tap","status":"done","elapsedMs":3480,
+           "timing":{"resolve":310,"act":90,"settle":3000}}, ...],
  "observation":{"ok":true,"observationId":"ui-9","activePackage":"com.whatsapp","nodes":[...]}}
 ```
+
+`timing` says where a slow step spent its time — `resolve` is finding the
+element, `act` is the device call, `settle` is the screen still moving, `verify`
+is waiting for your condition. Read it before deciding a plan is "just slow":
+a large `resolve` means the selector is working too hard, a large `settle` means
+the app is.
 
 Use that `observation` for what comes next — it is a full `read_ui` reply, and
 its `observationId` is current, so `tap_node` and `set_text` accept its ids.
@@ -140,6 +165,11 @@ already happened; replaying them can send a message twice or turn a switch back
 off. Deal with whatever is in the way, then call `workflow_runner` with the
 `resume` arguments the reply handed you.
 
+- `failedStepTiming` — where the step that failed spent its time. A
+  `verification_failed` with `verify` equal to the timeout you set means the
+  condition never came true in the time you allowed; if the work was genuinely
+  still running, raise that step's `verify.timeoutMs` rather than repeating the
+  action.
 - `stepMayAlreadyHaveRun:true` — the failing step may already have changed the
   phone. Read the screen before you repeat anything.
 - `stepMayAlreadyHaveRun:false` — that step changed nothing, so resuming from it
@@ -224,6 +254,11 @@ or from these examples:
 | `wait` | optional `timeoutMs` | Waits for the screen to change and settle. |
 | `observe` | — | Reads the screen. A checkpoint step whose whole job is its `verify`. |
 | `call` | `tool`, `arguments`, optional `output` | Calls one registered device capability with rich JSON. It does not read the screen unless the step asks for verification. |
+
+**A `verify` timeout is an estimate, not a retry budget.** It polls and returns
+as soon as the condition holds, so a generous value costs nothing when things go
+well and is the difference between "it failed" and "it was still importing".
+Default 5s, ceiling 60s.
 
 **Start with an intent when one reaches the screen.** A deep link or a settings
 action lands exactly where the taps would have, faster and with nothing to

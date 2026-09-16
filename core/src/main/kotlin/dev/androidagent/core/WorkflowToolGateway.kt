@@ -581,6 +581,11 @@ class WorkflowToolGateway(
                 "steps are resolved against the screen in front of each one, not replayed, so the plan " +
                 "still lands after the keyboard opens or a row moves. Add \"verify\" to a step to say " +
                 "what must be true afterwards, \"optional\":true for a dialog that may not appear. " +
+                "When a step waits on something slower than a screen opening - a video attaching, an " +
+                "upload, an install - say how long you expect it to take: " +
+                "\"verify\":{\"present\":{...},\"timeoutMs\":45000} waits up to 45s and stops the " +
+                "moment the condition holds; raise totalBudgetMs to match. Each step reports where its " +
+                "time went (resolve, act, settle, verify), so a slow plan says which part was slow. " +
                 "A tap on Send still asks the user, exactly as it does on its own. The reply ends with " +
                 "a fresh observation (observe=false drops it). On failure it names the failing step and " +
                 "every step that already ran: resend the same steps with startAt to continue, or " +
