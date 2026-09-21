@@ -5,6 +5,11 @@
 Android Agent is a Developer Preview. It is useful for local testing, but it is
 not production-ready.
 
+- 2026-09-21: Prepared the separate `dev-nightly` update channel. The `dev`
+  flavor checks the prerelease by package and monotonic `versionCode`, and the
+  workflow builds only for a new `dev` commit. The workflow uses the existing
+  dev debug keystore from repository secrets; no physical install was performed.
+
 ### Verified
 
 - Run summaries and the tool-schema sweep — on 2026-09-16, `:core:test` passed
