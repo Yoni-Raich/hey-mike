@@ -1,18 +1,32 @@
 # Progress
 
-## Jev experiment — 2026-09-21
+## Jev UI engine experiment — 2026-09-22
 
-On branch `experiment/jev-ui-tool`, the first Jev integration slice is in
-place. Settings has a Jev toggle and a masked token form. The token is stored
-encrypted with Android Keystore AES/GCM. The agent sees a static
-`jev_choose_ui_action` tool when the thread starts; the tool reads the current
-UI from any visible app, builds a bounded candidate list, and asks Jev to
-choose tap, scroll, or Back. It does not pre-filter editable or password UI;
-text generation is simply not part of this adapter. Device execution still
-goes through the existing gateways. `:core:test`,
-`:app:testDevDebugUnitTest`, and `:app:assembleDevDebug` passed on 2026-09-21.
-No real Jev token or phone run was used, so the live API response, UI freshness,
-and physical navigation loop remain untested.
+On branch `experiment/jev-ui-tool`, Jev now runs the full bounded UI loop behind
+one static `jev_run_ui_task` call. Codex supplies the complete goal once; the
+gateway pages through a fresh UI observation, asks Jev one multi-question
+operation/target request, strictly validates only the selected branch, executes
+through the existing composite device gateway, observes the result, and repeats.
+This removes one Codex/model turn per UI step while preserving visible control,
+Stop/revoke, stale node checks, message-send approval, and backend fallback.
+
+The code-owned action space includes installed-app launch, tap, four semantic
+scroll directions, exact text replacement for a focused non-password field,
+Back, Home, Enter, Wait, Done, and semantic `SET_PROGRESS`. Accessibility UI
+observations now expose editable/selected state, range min/max/current and
+`ACTION_SET_PROGRESS`; `set_progress` verifies the resulting value. Jev sees
+only opaque candidate keys and cannot invent a selector, package, coordinate,
+text value, or progress value. Exact text comes from the tool's `texts` input or
+bounded verbatim spans of the goal. Failed/uncertain mutations are never retried;
+only a changed pre-action observation causes a fresh Jev decision.
+
+Verified on 2026-09-22: `:core:test`, `:a11y:testDebugUnitTest`,
+`:device-tools:test`, and `:app:compileDevDebugKotlin` passed. Unit coverage
+includes a multi-step task completed by one public tool call, selected-head-only
+validation, semantic 75% slider control, and no retry after a failed mutation.
+No real Jev token or physical phone run was used, so live TypeSafe latency and
+response compatibility, real Accessibility range behavior, the AndroidGym five
+task run, and end-to-end Stop behavior remain unverified.
 
 ## Status — 2026-09-15
 

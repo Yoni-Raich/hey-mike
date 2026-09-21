@@ -942,12 +942,12 @@ private fun ColumnScope.JevSettings(state: AgentUiState, actions: AgentUiActions
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("Use Jev for bounded UI choices", fontWeight = FontWeight.Medium)
+            Text("Use Jev as the UI engine", fontWeight = FontWeight.Medium)
             Text(
                 when {
                     !state.jevEnabled -> "Off. The agent cannot use the Jev tool."
                     !state.jevTokenConfigured -> "On, but a token is still needed."
-                    else -> "On. Jev can choose from a safe action list built from the current Settings screen."
+                    else -> "On. Jev can run complete UI tasks through Hey Mike's device controls."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -956,9 +956,9 @@ private fun ColumnScope.JevSettings(state: AgentUiState, actions: AgentUiActions
         Switch(checked = state.jevEnabled, onCheckedChange = actions.onJevEnabledChanged)
     }
     Explanation(
-        "Jev only chooses one action from a safe list built by Hey Mike from the current Settings screen. " +
-            "It cannot tap, type, run shell commands, or invent coordinates. Hey Mike still verifies the " +
-            "current screen and executes through its device tools.",
+        "One agent call gives Jev the complete goal. Jev then observes, chooses and verifies each step " +
+            "without waiting for the main model between taps. It can use every supported UI action, including " +
+            "exact text and sliders; Hey Mike still executes the actions, handles approvals, and stops locally.",
     )
     var token by rememberSaveable { mutableStateOf("") }
     OutlinedTextField(
@@ -984,8 +984,8 @@ private fun ColumnScope.JevSettings(state: AgentUiState, actions: AgentUiActions
         ) { Text("Clear token") }
     }
     Text(
-        "The token is encrypted with Android Keystore and is sent only to api.typesafe.ai when Jev is called. " +
-            "It is not shown to the agent or stored in chat history.",
+        "The goal and current on-screen labels are sent to api.typesafe.ai while Jev runs. The token is " +
+            "encrypted with Android Keystore, is not shown to the agent, and is not stored in chat history.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

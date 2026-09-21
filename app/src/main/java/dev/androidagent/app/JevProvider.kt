@@ -4,16 +4,18 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import dev.androidagent.core.JevCandidate
 import dev.androidagent.core.JevDecision
 import dev.androidagent.core.JevDecisionProvider
 import dev.androidagent.core.JevDecisionRequest
+import dev.androidagent.core.JevDecisionResponse
 import dev.androidagent.core.JevProviderState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -21,6 +23,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.KeyStore
@@ -129,12 +132,17 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
     fun saveToken(token: String) = tokens.saveToken(token)
     fun clearToken() = tokens.clearToken()
 
-    override suspend fun choose(request: JevDecisionRequest): JevDecision = withContext(Dispatchers.IO) {
+    override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse = withContext(Dispatchers.IO) {
         val token = tokens.readToken() ?: throw IOException("Jev token is unavailable")
+        val body = requestBody(request)
+        if (body.toByteArray(Charsets.UTF_8).size > MAX_REQUEST_BYTES) {
+            throw IOException("Jev request is too large")
+        }
         val connection = (URL(API_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
+            instanceFollowRedirects = false
             doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
@@ -142,52 +150,61 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
         }
         try {
             connection.outputStream.use { output ->
-                output.write(requestBody(request).toByteArray(Charsets.UTF_8))
+                output.write(body.toByteArray(Charsets.UTF_8))
             }
             val code = connection.responseCode
             if (code !in 200..299) throw IOException("Jev request failed with HTTP $code")
-            parseResponse(connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() })
+            parseResponse(readBounded(connection.inputStream))
         } finally {
             connection.disconnect()
         }
     }
 
+    private fun readBounded(input: InputStream): String = input.bufferedReader(Charsets.UTF_8).use { reader ->
+        val output = StringBuilder()
+        val buffer = CharArray(4_096)
+        while (true) {
+            val read = reader.read(buffer)
+            if (read < 0) break
+            output.append(buffer, 0, read)
+            if (output.length > MAX_RESPONSE_CHARS) throw IOException("Jev response is too large")
+        }
+        output.toString()
+    }
+
     private fun requestBody(request: JevDecisionRequest): String = buildJsonObject {
         put("model", MODEL)
-        put("state", buildState(request))
+        put("state", request.state)
         put("questions", buildJsonObject {
-            put("next_action", buildJsonObject {
-                put("type", "choice")
-                put("instructions", "Which one legal next UI action best advances the goal? Choose ESCALATE if none fits.")
-                put("criteria", buildJsonObject {
-                    request.candidates.forEach { candidate -> put(candidate.key, candidate.description) }
+            request.questions.forEach { question ->
+                put(question.name, buildJsonObject {
+                    put("type", "choice")
+                    put("instructions", question.instructions)
+                    put("criteria", buildJsonObject {
+                        question.criteria.forEach { (key, description) -> put(key, description) }
+                    })
                 })
-            })
+            }
         })
     }.toString()
 
-    private fun buildState(request: JevDecisionRequest): String = buildString {
-        append("GOAL:\n").append(request.goal)
-        append("\n\nFRESH UI OBSERVATION:\n").append(request.observation)
-        append("\n\nOnly choose one of the listed candidate keys. Do not invent an action.")
-    }
-
-    private fun parseResponse(body: String): JevDecision {
+    private fun parseResponse(body: String): JevDecisionResponse {
         val root = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(body).jsonObject }
             .getOrElse { throw IOException("Jev returned invalid JSON") }
-        val answer = root["answers"]?.jsonObject?.get("next_action")?.jsonObject
-            ?: throw IOException("Jev response has no next_action answer")
-        val choice = answer["choice"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-            ?: throw IOException("Jev response has no choice")
-        val confidence = answer["confidence"]?.jsonPrimitive?.doubleOrNull
-            ?: throw IOException("Jev response has no confidence")
-        val probabilities = answer["probabilities"]?.jsonObject?.mapNotNull { (key, value) ->
-            value.jsonPrimitive.doubleOrNull?.let { key to it }
-        }?.toMap() ?: emptyMap()
-        return JevDecision(
-            choice = choice,
-            confidence = confidence.coerceIn(0.0, 1.0),
-            probabilities = probabilities,
+        val answers = root["answers"]?.jsonObject
+            ?: throw IOException("Jev response has no answers")
+        return JevDecisionResponse(
+            answers = answers.mapNotNull { (name, element) ->
+                val answer = element as? JsonObject ?: return@mapNotNull null
+                name to JevDecision(
+                    type = (answer["type"] as? JsonPrimitive)?.contentOrNull,
+                    choice = (answer["choice"] as? JsonPrimitive)?.contentOrNull,
+                    confidence = (answer["confidence"] as? JsonPrimitive)?.doubleOrNull,
+                    probabilities = (answer["probabilities"] as? JsonObject)?.mapNotNull { (key, value) ->
+                        (value as? JsonPrimitive)?.doubleOrNull?.let { key to it }
+                    }?.toMap() ?: emptyMap(),
+                )
+            }.toMap(),
             model = root["model"]?.jsonPrimitive?.contentOrNull ?: MODEL,
         )
     }
@@ -197,5 +214,7 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
         const val MODEL = "jev-latest"
         const val CONNECT_TIMEOUT_MS = 5_000
         const val READ_TIMEOUT_MS = 15_000
+        const val MAX_REQUEST_BYTES = 150_000
+        const val MAX_RESPONSE_CHARS = 150_000
     }
 }

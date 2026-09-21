@@ -202,11 +202,9 @@ class AgentGraph(private val app: Application) {
         // without waiting for its hour. Everything else about it still applies.
         fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
     )
-    /** Jev only chooses from a bounded catalog; it never executes a phone action. */
+    /** One Jev call owns the bounded observe-decide-act loop and routes every action here. */
     val jev = AndroidJevProvider(app)
-    val jevTools = JevToolGateway(jev) {
-        tools.invoke("read_ui", kotlinx.serialization.json.buildJsonObject { })
-    }
+    val jevTools = JevToolGateway(jev) { tools }
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(

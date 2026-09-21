@@ -707,29 +707,51 @@ tool name reaches the model without new plumbing, not because remembering is a
 device action — it touches no device, and `needsControl` is false for both
 tools.
 
-## Experimental Jev decision tool
+## Experimental Jev UI engine
 
 The `experiment/jev-ui-tool` branch adds `JevToolGateway` beside the local
-knowledge and workflow gateways. It exposes one static tool,
-`jev_choose_ui_action`, because Codex binds tool definitions at `thread/start`.
-The tool is read-only: it accepts only a goal, reads the current UI through the
-existing composite gateway, builds a code-owned list from the visible UI, and
-returns Jev's selected key, confidence, probability distribution, and model id
-for measurement. Confidence and margin are not policy gates in this experiment.
-It never executes the selected
-key itself; execution remains in the existing device gateways, with their
-freshness, approval, verification, revoke, and Stop rules. The experiment does
-not pre-filter controls by package, checkable state, password state, or
-editability. It exposes navigation actions available from the observation;
-text generation is simply not an action produced by this first Jev adapter.
+knowledge and workflow gateways. It exposes one static `jev_run_ui_task` tool,
+because Codex binds tool definitions at `thread/start`. One call owns a bounded
+local loop:
+
+```text
+read fresh UI -> build code-owned action space -> one Jev operation/target request
+-> validate the selected branch -> re-read for freshness -> route one action
+through CompositeDeviceToolGateway -> observe and repeat
+```
+
+This is the fast path: Codex supplies one complete goal and does not spend a
+model turn between UI steps. Jev selects only opaque candidate keys. Local code
+maps those keys to installed-app launch, observed node taps, semantic scrolling,
+exact focused-field text, semantic progress, Back, Home or Enter. Jev cannot
+invent selectors, node ids, packages, coordinates, text or range values. Text
+is drawn only from explicit `texts` or bounded verbatim goal spans; password
+fields never receive a text candidate. Progress values are numeric values or
+percentages already present in the goal.
+
+Every mutation still goes through the existing composite device gateway, so
+Accessibility/ADB fallback, send approval, visible control and Stop remain in
+one place. The loop re-observes immediately before input and discards a stale
+decision. It never retries an action failure or transport exception because the
+mutation may already have committed. Repeated action/screen signatures, stale
+screens, waits, steps, decisions and wall time are bounded. `DONE` completes
+only after one more fresh observation matches the state Jev judged.
+
+Large UI observations are consumed through the existing `read_ui` paging
+contract and merged with the newest observation id. Accessibility observations
+also carry editable/selected state and range min/max/current plus supported
+semantic actions. `set_progress` uses Android `ACTION_SET_PROGRESS` and reports
+the refreshed value rather than simulating a coordinate swipe.
 
 The app keeps the feature flag and Jev token in `JevTokenStore`. The token is
 encrypted with an Android Keystore AES/GCM key and is read only by the app's
-`AndroidJevProvider` for the official TypeSafe endpoint. The token is not part
-of UI state, tool arguments, session files, or diagnostics. The experimental
-surface is intentionally decision-only until physical-device tests prove
-freshness rejection, independent verification, cancellation, and low-confidence
-escalation.
+`AndroidJevProvider` for the fixed TypeSafe endpoint. It is not part of UI
+state, tool arguments, session files, or diagnostics. The HTTP adapter sends
+one request per cycle with an operation head and speculative target heads.
+Probability maps must contain exactly the offered choices, be finite, sum to
+one within tolerance, and make the chosen entry maximal. Only the target head
+selected by the operation is validated and consumed. Requests, responses and
+timeouts are bounded, and redirects carrying the token are disabled.
 
 ## Why a 502 from the tunnel is now explained
 

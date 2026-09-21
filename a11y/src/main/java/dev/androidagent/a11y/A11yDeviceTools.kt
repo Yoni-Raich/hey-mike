@@ -50,10 +50,12 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
+import kotlin.math.absoluteValue
 
 /**
  * Device gateway backed by the accessibility service, so observation and
@@ -202,6 +204,7 @@ class A11yDeviceTools(
             "open_app" -> openApp(arguments)
             "tap_node" -> tapNode(arguments)
             "set_text" -> setText(arguments)
+            "set_progress" -> setProgress(arguments)
             "scroll_node" -> scrollNode(arguments)
             "wait_for_change" -> waitForChange(arguments)
             "resolve_intent" -> intents.resolve(arguments)
@@ -571,6 +574,46 @@ class A11yDeviceTools(
         )
     }
 
+    private suspend fun setProgress(arguments: JsonObject): ToolResult {
+        val requested = arguments["value"]?.jsonPrimitive?.doubleOrNull
+            ?: throw IllegalArgumentException("value is required")
+        require(requested.isFinite()) { "value must be finite" }
+        val (node, view) = resolveNode(arguments)
+        val min = view.rangeMin?.toDouble()
+        val max = view.rangeMax?.toDouble()
+        val previous = view.rangeCurrent?.toDouble()
+        if (min == null || max == null || previous == null || !view.supportsSetProgress) {
+            return ToolResult("Node $node does not expose semantic progress control.", success = false)
+        }
+        require(requested in min..max) { "value must be between $min and $max" }
+        val extras = Bundle().apply {
+            putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, requested.toFloat())
+        }
+        val committed = view.node.performAction(
+            AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
+            extras,
+        )
+        if (!committed) {
+            return ToolResult("Node $node rejected progress $requested.", success = false)
+        }
+        val current = runCatching {
+            view.node.refresh()
+            view.node.rangeInfo?.current?.toDouble()
+        }.getOrNull()
+        val tolerance = ((max - min).absoluteValue * 0.005).coerceAtLeast(0.001)
+        val verified = current != null && (current - requested).absoluteValue <= tolerance
+        return ToolResult(
+            buildJsonObject {
+                put("nodeId", node)
+                put("previous", previous)
+                put("requested", requested)
+                current?.let { put("current", it) }
+                put("verified", verified)
+            }.toString(),
+            success = verified,
+        )
+    }
+
     private suspend fun waitForChange(arguments: JsonObject): ToolResult {
         val timeout = (arguments["timeoutMs"]?.jsonPrimitive?.intOrNull?.toLong() ?: QUIESCENCE_TIMEOUT_MS)
             .coerceIn(100L, MAX_WAIT_MS)
@@ -800,14 +843,17 @@ class A11yDeviceTools(
 
         private const val MAX_WAIT_MS = 30_000L
 
-        private val SCROLL_ACTIONS = mapOf(
-            "forward" to AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
-            "backward" to AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
-            "up" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id,
-            "down" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id,
-            "left" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id,
-            "right" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id,
-        )
+        // A getter avoids resolving AccessibilityAction singleton objects when
+        // host-side schema tests load this class against the Android stub jar.
+        private val SCROLL_ACTIONS: Map<String, Int>
+            get() = mapOf(
+                "forward" to AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+                "backward" to AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+                "up" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id,
+                "down" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id,
+                "left" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id,
+                "right" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id,
+            )
 
         private val PACKAGE_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
 
@@ -867,6 +913,13 @@ class A11yDeviceTools(
                     "when the field did not take the value, which some chat and Compose inputs do not.",
                 mapOf("nodeId" to "string", "observationId" to "string", "text" to "string", "submit" to "boolean"),
                 listOf("nodeId", "observationId", "text"),
+            ),
+            tool(
+                "set_progress",
+                "Set the absolute value of a ranged control from the most recent read_ui. " +
+                    "Use the min, max and current range values exposed on that node.",
+                mapOf("nodeId" to "string", "observationId" to "string", "value" to "number"),
+                listOf("nodeId", "observationId", "value"),
             ),
             tool(
                 "scroll_node",
