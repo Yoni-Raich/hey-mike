@@ -1,5 +1,19 @@
 # Progress
 
+## Jev experiment — 2026-09-21
+
+On branch `experiment/jev-ui-tool`, the first Jev integration slice is in
+place. Settings has a Jev toggle and a masked token form. The token is stored
+encrypted with Android Keystore AES/GCM. The agent sees a static
+`jev_choose_ui_action` tool when the thread starts; the tool reads the current
+UI from any visible app, builds a bounded candidate list, and asks Jev to
+choose tap, scroll, or Back. It does not pre-filter editable or password UI;
+text generation is simply not part of this adapter. Device execution still
+goes through the existing gateways. `:core:test`,
+`:app:testDevDebugUnitTest`, and `:app:assembleDevDebug` passed on 2026-09-21.
+No real Jev token or phone run was used, so the live API response, UI freshness,
+and physical navigation loop remain untested.
+
 ## Status — 2026-09-15
 
 Android Agent is a Developer Preview. It is useful for local testing, but it is
@@ -128,6 +142,20 @@ not production-ready.
   regression. It passes under `LANG=C.UTF-8`, and nothing in this change
   touches `quick-actions`.
 
+- The agent's own messages now reach the floating card, not only the chat.
+  `ControlOverlay.say` is a separate channel from the status label;
+  `AgentCoordinator` mirrors every assistant segment to it as it is stored,
+  and the card keeps the last line through the tool calls that follow. On
+  2026-09-15 on Linux/JDK 21: `:core:test`, `:overlay:test`,
+  `:app:assembleDevDebug`, `:app:lintDevDebug` (0 errors, 18 warnings) and
+  `:app:assembleDevDebugAndroidTest` all pass. That proves the mapping, the
+  coordinator wiring and that everything compiles — nothing more. Not tested:
+  any phone. The card itself, the new
+  `FloatingControlOverlayTest.theAgentsOwnWordsStayOnTheCardAcrossToolCalls`,
+  and how a long message reads in the four lines it now gets have not been run
+  on hardware; no device was available in this environment. The full gate
+  (`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug`)
+  was not run.
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
   (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`

@@ -440,6 +440,20 @@ under a size cap. Image generation is enabled through the app-server
 `features.image_generation` config, and the agent is instructed never to
 present a screenshot as generated artwork.
 
+## What the agent says on the floating card
+
+The agent's own words reach the card, not only the chat. `ControlOverlay.say`
+is a channel of its own, separate from the status label: `AgentCoordinator`
+mirrors each assistant segment to it as that segment is written to the session,
+while it streams and again when it completes, so the card shows the same text
+the chat shows. Keeping it off the label matters — a label is parsed for a tool
+name, and a short sentence from the agent reads like one. The card holds the
+last line until the agent says something new, so a tool call changes the
+headline and leaves the words in place. Engine activity lines ("Working",
+"Working in session files", "Updating session files") say which kind of work
+started, not what the agent thinks, so they stay headlines and never overwrite
+what the agent said.
+
 ## Overlay bubble and manual exit
 
 The floating card collapses to a 56dp bubble that keeps the status colour, can
@@ -692,6 +706,30 @@ free-form file write.
 tool name reaches the model without new plumbing, not because remembering is a
 device action — it touches no device, and `needsControl` is false for both
 tools.
+
+## Experimental Jev decision tool
+
+The `experiment/jev-ui-tool` branch adds `JevToolGateway` beside the local
+knowledge and workflow gateways. It exposes one static tool,
+`jev_choose_ui_action`, because Codex binds tool definitions at `thread/start`.
+The tool is read-only: it accepts only a goal, reads the current UI through the
+existing composite gateway, builds a code-owned list from the visible UI, and
+returns Jev's selected key, confidence, probability distribution, and model id
+for measurement. Confidence and margin are not policy gates in this experiment.
+It never executes the selected
+key itself; execution remains in the existing device gateways, with their
+freshness, approval, verification, revoke, and Stop rules. The experiment does
+not pre-filter controls by package, checkable state, password state, or
+editability. It exposes navigation actions available from the observation;
+text generation is simply not an action produced by this first Jev adapter.
+
+The app keeps the feature flag and Jev token in `JevTokenStore`. The token is
+encrypted with an Android Keystore AES/GCM key and is read only by the app's
+`AndroidJevProvider` for the official TypeSafe endpoint. The token is not part
+of UI state, tool arguments, session files, or diagnostics. The experimental
+surface is intentionally decision-only until physical-device tests prove
+freshness rejection, independent verification, cancellation, and low-confidence
+escalation.
 
 ## Why a 502 from the tunnel is now explained
 

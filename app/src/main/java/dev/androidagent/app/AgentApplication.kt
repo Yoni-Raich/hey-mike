@@ -41,6 +41,7 @@ import dev.androidagent.core.WorkflowCallRegistry
 import dev.androidagent.core.WorkflowLibrary
 import dev.androidagent.core.WorkflowStore
 import dev.androidagent.core.WorkflowToolGateway
+import dev.androidagent.core.JevToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
 import dev.androidagent.devicetools.AndroidCapabilityTools
@@ -201,10 +202,15 @@ class AgentGraph(private val app: Application) {
         // without waiting for its hour. Everything else about it still applies.
         fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
     )
+    /** Jev only chooses from a bounded catalog; it never executes a phone action. */
+    val jev = AndroidJevProvider(app)
+    val jevTools = JevToolGateway(jev) {
+        tools.invoke("read_ui", kotlinx.serialization.json.buildJsonObject { })
+    }
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, jevTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator

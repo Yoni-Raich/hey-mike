@@ -61,6 +61,7 @@ internal fun overlayContent(label: String, previousCommentary: String?): Overlay
             when {
                 detail == null -> OverlayContent(tone, if (controlling) "On your screen" else "Working", previousCommentary)
                 isApproval(detail) -> OverlayContent(OverlayTone.WAITING, detail, previousCommentary, needsApproval = true)
+                detail in ENGINE_ACTIVITY -> OverlayContent(tone, detail, previousCommentary)
                 action != null -> OverlayContent(tone, action, previousCommentary)
                 // Anything that is not a tool name is the agent talking.
                 else -> OverlayContent(OverlayTone.ACTIVE, "Working", oneLine(detail))
@@ -69,6 +70,13 @@ internal fun overlayContent(label: String, previousCommentary: String?): Overlay
         else -> OverlayContent(OverlayTone.ACTIVE, label.trim().ifEmpty { "Working" }, previousCommentary)
     }
 }
+
+/**
+ * Engine activity lines, which say which kind of work started, not what the
+ * agent thinks. They belong on the headline; treating them as speech would
+ * wipe the agent's own words on every reasoning step.
+ */
+private val ENGINE_ACTIVITY = setOf("Working", "Working in session files", "Updating session files")
 
 private fun isApproval(detail: String): Boolean =
     detail.equals("Waiting for approval", ignoreCase = true) || detail.startsWith("Approve", ignoreCase = true)
