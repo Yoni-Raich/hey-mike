@@ -19,3 +19,6 @@ research/runtime/app-server-package-1534/bin/
 research/runtime/app-server-package-1534/codex-path/
 research/runtime/app-server-package-1534/codex-resources/
 research/runtime/codex-app-server*
+
+.claude/
+Temps_and_logs/

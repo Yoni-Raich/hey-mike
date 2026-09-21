@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="a11y_service_description">Lets Hey Mike read the screen and tap, type and scroll for you without Wireless Debugging. While a task is running it reads on-screen text in whatever app is open and sends it to the model. Between tasks it reads nothing and stores nothing.</string>
+</resources>

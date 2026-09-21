@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app.update
 
 import org.junit.Assert.assertEquals
@@ -36,7 +56,7 @@ class AppUpdateManagerTest {
           "assets": [
             {
               "name": "android-agent-0.1.2.apk",
-              "browser_download_url": "https://github.com/Yoni-Raich/android-agent-use/releases/download/v0.1.2/android-agent-0.1.2.apk",
+              "browser_download_url": "https://github.com/Yoni-Raich/hey-mike/releases/download/v0.1.2/android-agent-0.1.2.apk",
               "size": 250000000
             },
             {
@@ -68,7 +88,7 @@ class AppUpdateManagerTest {
           "assets": [
             {
               "name": "android-agent-0.1.1.apk",
-              "browser_download_url": "https://github.com/Yoni-Raich/android-agent-use/releases/download/v0.1.1/android-agent-0.1.1.apk",
+              "browser_download_url": "https://github.com/Yoni-Raich/hey-mike/releases/download/v0.1.1/android-agent-0.1.1.apk",
               "size": 289000000
             }
           ]

@@ -1,26 +1,56 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.overlay
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.ComponentCallbacks
 import android.content.Context
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.ShapeDrawable
+import android.graphics.drawable.shapes.OvalShape
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -38,10 +68,13 @@ import kotlin.coroutines.resume
 /**
  * Native floating controls used for the full lifetime of an agent run.
  *
- * The small glass pill is the only touchable window, so other apps keep
- * receiving their own input outside its bounds.
+ * A pill under the status bar says what the agent is doing right now, with
+ * Stop always on it. A tap grows it into a card with the agent's latest words
+ * and a field to steer; another tap on the pill shrinks it back. The pill is
+ * the only touchable window, so other apps keep receiving their own input
+ * outside its bounds.
  * There is no AccessibilityService dependency here; device actions stay in
- * the core ADB gateway.
+ * the core gateways.
  */
 class FloatingControlOverlay(
     context: Context,
@@ -56,19 +89,33 @@ class FloatingControlOverlay(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var controlRoot: FrameLayout? = null
-    private var statusView: TextView? = null
+    private var card: LinearLayout? = null
+    private var header: LinearLayout? = null
+    private var body: LinearLayout? = null
+    private var headlineView: TextView? = null
+    private var commentaryView: TextView? = null
+    private var steerRow: View? = null
+    private var approveButton: View? = null
+    private var orbView: OverlayOrbView? = null
     private var inputView: EditText? = null
     private var controlParams: WindowManager.LayoutParams? = null
-    private var statusDot: View? = null
     private var configCallbacks: ComponentCallbacks? = null
     private var attachListener: View.OnAttachStateChangeListener? = null
+    private var morph: ValueAnimator? = null
     private var showing = false
     private var inputFocusEnabled = false
     private var captureHidden = false
     private var finishRunnable: Runnable? = null
     private var appForeground = false
+    private var collapsed = true
     private var runActive = false
     private var currentStatus = "Ready"
+    private var content: OverlayContent? = null
+
+    // Horizontal centre the pill keeps as it grows and shrinks, in screen px.
+    // Null until the user drags it, which means "centred on the screen".
+    private var anchorX: Int? = null
+    private var imeBottomInsetPx = 0
 
     override suspend fun show(status: String) {
         requireOverlayPermission()
@@ -77,6 +124,11 @@ class FloatingControlOverlay(
             // keeps permission denial ahead of any visible/device action.
             requireOverlayPermission()
             currentStatus = status.ifBlank { "Ready" }
+            if (!runActive) {
+                // Every run starts as the pill, with nothing said yet.
+                collapsed = true
+                content = null
+            }
             runActive = true
             if (appForeground) {
                 // The app owns the foreground surface, so keep the run state
@@ -111,7 +163,9 @@ class FloatingControlOverlay(
             finishRunnable?.let(mainHandler::removeCallbacks)
             finishRunnable = null
             currentStatus = state.label
+            val hadControl = runActive
             runActive = false
+            if (!hadControl) { removeViews(); return@runOnMain }
             if (appForeground) {
                 removeViews()
                 return@runOnMain
@@ -167,7 +221,8 @@ class FloatingControlOverlay(
 
     /**
      * Temporarily removes the overlay from the captured view without
-     * clearing the edit text. Core can restore them after a screenshot/read.
+     * clearing the edit text. Only needed where a capture cannot leave our
+     * window out by itself; core restores it straight after.
      */
     override suspend fun setCaptureHidden(hidden: Boolean) {
         withContext(Dispatchers.Main.immediate) {
@@ -189,21 +244,21 @@ class FloatingControlOverlay(
         }
     }
 
-    /** Move the small card away when a planned device tap would hit it. */
+    /** Move the pill away when a planned device tap would hit it. */
     override fun avoidTouch(x: Int, y: Int) {
         runOnMain {
             val control = controlRoot ?: return@runOnMain
             val lp = controlParams ?: return@runOnMain
             if (!control.isAttachedToWindow || captureHidden) return@runOnMain
 
-            val width = control.width.takeIf { it > 0 } ?: panelWidthPx()
-            val height = control.height.takeIf { it > 0 } ?: dp(72)
+            val width = lp.width.takeIf { it > 0 } ?: control.width.takeIf { it > 0 } ?: windowWidthPx()
+            val height = control.height.takeIf { it > 0 } ?: dp(HEADER_DP + ROOT_PAD_DP * 2)
             val bounds = screenBounds()
             if (!pointInside(lp.x, lp.y, width, height, x, y)) return@runOnMain
 
             val margin = dp(12)
             val maxX = (bounds.width() - width - margin).coerceAtLeast(margin)
-            val maxY = (bounds.height() - height - margin).coerceAtLeast(margin)
+            val maxY = bottomLimit(bounds, height, margin)
             val currentX = lp.x
             val currentY = lp.y
             val candidates = listOf(
@@ -219,6 +274,7 @@ class FloatingControlOverlay(
             } ?: return@runOnMain
             lp.x = destination.first
             lp.y = destination.second
+            anchorX = lp.x + width / 2
             updateControlLayout(control, lp)
         }
     }
@@ -231,7 +287,7 @@ class FloatingControlOverlay(
             return
         }
         if (controlRoot != null || controlParams != null) removeViews()
-        buildViews(currentStatus)
+        buildViews()
         val control = controlRoot ?: error("Overlay controls were not created")
         val controlLayout = controlParams ?: error("Overlay control parameters were not created")
         try {
@@ -245,14 +301,12 @@ class FloatingControlOverlay(
         }
     }
 
-    private fun buildViews(status: String) {
-        val dark = isDark()
-        val accent = Color.parseColor(if (dark) "#B9C2FF" else "#4169E1")
-        val onCard = Color.parseColor(if (dark) "#F3F4FB" else "#1B1C22")
-        val hintColor = Color.parseColor(if (dark) "#989EAF" else "#676A78")
-
+    private fun buildViews() {
         val root = FrameLayout(appContext).apply {
-            setPadding(dp(2), dp(2), dp(2), dp(2))
+            // The window owns the shadow halo. Keep padding stable so IME
+            // insets never create an invisible, touch-blocking strip.
+            val pad = dp(ROOT_PAD_DP)
+            setPadding(pad, pad, pad, pad)
             clipChildren = false
             clipToPadding = false
             isClickable = false
@@ -261,56 +315,80 @@ class FloatingControlOverlay(
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
 
-        val cardBackground = glassBackground(dark)
-        val card = LinearLayout(appContext).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = cardBackground
-            setPadding(dp(8), dp(5), dp(8), dp(5))
-            elevation = dpF(8f)
-            isClickable = true
-            isFocusable = false
-        }
-
-        val handle = DragHandleView(appContext, dark).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(24), dp(46))
-            contentDescription = "Drag agent controls"
-            isClickable = true
-            isFocusable = false
-        }
-        val dot = View(appContext).apply {
-            background = dotDrawable(accent)
-            layoutParams = LinearLayout.LayoutParams(dp(8), dp(8)).apply {
-                setMargins(dp(2), 0, dp(7), 0)
-            }
-            isClickable = false
-            isFocusable = false
-        }
-        statusDot = dot
-        val center = LinearLayout(appContext).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            minimumWidth = dp(112)
-            isClickable = false
-            isFocusable = false
-        }
-        val statusLabel = TextView(appContext).apply {
-            text = status.ifBlank { "Ready" }
-            setTextColor(onCard)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+        val orb = OverlayOrbView(appContext)
+        orbView = orb
+        val headline = TextView(appContext).apply {
+            setTextColor(INK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
             includeFontPadding = false
             maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
             isClickable = false
             isFocusable = false
         }
-        this.statusView = statusLabel
+        headlineView = headline
+        val stopButton = circleButton(
+            description = "Stop run",
+            diameterDp = 36,
+            fill = INK,
+            stroke = Color.TRANSPARENT,
+            icon = ActionIcon.STOP,
+            tint = ON_LIGHT,
+            iconDp = 13,
+        ) {
+            // Release any IME focus before the immediate local stop callback.
+            disableInputFocus()
+            hideKeyboard()
+            onStop()
+        }
+        val headerRow = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPaddingRelative(dp(8), 0, 0, 0)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { setCollapsed(!collapsed) }
+            addView(orb, LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(10) })
+            addView(headline, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(stopButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }
+        header = headerRow
+        // The pill is also its own drag handle; a tap without movement toggles it.
+        attachDrag(headerRow)
+
+        val commentary = TextView(appContext).apply {
+            setTextColor(INK_DIM)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setLineSpacing(0f, 1.3f)
+            includeFontPadding = false
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+            setPaddingRelative(dp(16), dp(2), dp(16), 0)
+            visibility = View.GONE
+        }
+        commentaryView = commentary
+
+        val openButton = circleButton(
+            description = "Open Hey Mike",
+            diameterDp = 40,
+            fill = Color.TRANSPARENT,
+            stroke = OUTLINE,
+            icon = ActionIcon.OPEN,
+            tint = INK,
+            iconDp = 18,
+        ) {
+            // Release focus before handing control back to the app window.
+            disableInputFocus()
+            hideKeyboard()
+            onOpenApp()
+        }
         val input = EditText(appContext).apply {
-            this.hint = "Steer or reply"
-            setHintTextColor(hintColor)
-            setTextColor(onCard)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            hint = "Steer or reply"
+            setHintTextColor(HINT)
+            setTextColor(INK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             includeFontPadding = false
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             imeOptions = EditorInfo.IME_ACTION_SEND
@@ -318,17 +396,11 @@ class FloatingControlOverlay(
             isSingleLine = true
             isFocusable = true
             isFocusableInTouchMode = true
-            background = roundedBackground(
-                fill = if (dark) Color.argb(35, 255, 255, 255) else Color.argb(18, 0, 0, 0),
-                stroke = if (dark) Color.argb(45, 255, 255, 255) else Color.argb(35, 0, 0, 0),
-                radius = 10f,
-            )
-            setPadding(dp(8), 0, dp(8), 0)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(28),
-            ).apply { topMargin = dp(3) }
+            textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+            background = rounded(fill = FIELD, stroke = OUTLINE, radiusDp = 22f)
+            setPaddingRelative(dp(16), 0, dp(16), 0)
             contentDescription = "Steer or reply"
+            setOnClickListener { enableInputFocus() }
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) enableInputFocus()
                 false
@@ -343,49 +415,98 @@ class FloatingControlOverlay(
             }
         }
         inputView = input
-        center.addView(statusLabel)
-        center.addView(input)
-
-        val sendButton = actionButton("↑", "Send message", onCard, accent) {
+        val sendButton = circleButton(
+            description = "Send message",
+            diameterDp = 40,
+            fill = INK,
+            stroke = Color.TRANSPARENT,
+            icon = ActionIcon.ARROW_UP,
+            tint = ON_LIGHT,
+            iconDp = 20,
+        ) {
             sendFromInput()
         }
-        val stopButton = actionButton("■", "Stop run", onCard, Color.parseColor("#D14D61")) {
-            // Release any IME focus before the immediate local stop callback.
-            disableInputFocus()
-            hideKeyboard()
-            onStop()
+        val steer = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(4), dp(4))
+            addView(openButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+            addView(input, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                marginStart = dp(4)
+                marginEnd = dp(4)
+            })
+            addView(sendButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         }
-        val openButton = actionButton("↗", "Open Android Agent", onCard, accent) {
-            // Release focus before handing control back to the app window.
-            disableInputFocus()
-            hideKeyboard()
-            onOpenApp()
-        }
+        steerRow = steer
 
-        card.addView(handle)
-        card.addView(dot)
-        card.addView(center)
-        card.addView(sendButton)
-        card.addView(stopButton)
-        card.addView(openButton)
+        // Shown instead of the steer field while an approval is waiting: the
+        // approval card lives only in the app.
+        val approve = TextView(appContext).apply {
+            text = "Review in Hey Mike"
+            setTextColor(APPROVE_INK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = rounded(fill = APPROVE, stroke = Color.TRANSPARENT, radiusDp = 22f)
+            foreground = ripple(APPROVE_INK, rounded(Color.WHITE, Color.TRANSPARENT, 22f))
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            setOnClickListener {
+                disableInputFocus()
+                hideKeyboard()
+                onOpenApp()
+            }
+        }
+        approveButton = approve
+
+        val bodyColumn = LinearLayout(appContext).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(commentary, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(steer, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(approve, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).apply {
+                setMargins(dp(12), dp(12), dp(12), dp(12))
+            })
+            visibility = if (collapsed) View.GONE else View.VISIBLE
+        }
+        body = bodyColumn
+
+        val cardView = LinearLayout(appContext).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(fill = GLASS, stroke = GLASS_EDGE, radiusDp = CARD_RADIUS_DP)
+            // Clip to the rounded card so the body can grow out of the pill.
+            clipToOutline = true
+            elevation = dpF(12f)
+            isClickable = true
+            isFocusable = false
+            addView(headerRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(HEADER_DP)))
+            addView(bodyColumn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        card = cardView
         root.addView(
-            card,
-            FrameLayout.LayoutParams(panelWidthPx(), FrameLayout.LayoutParams.WRAP_CONTENT),
+            cardView,
+            FrameLayout.LayoutParams(cardWidthPx(), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL),
         )
-        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(dp(2), dp(2), dp(2), dp(2) + maxOf(ime.bottom, bars.bottom) / 4)
+            val bottomInset = maxOf(ime.bottom, bars.bottom)
+            // Keep the card's measured size stable and use the inset only as
+            // a positioning bound while the keyboard is visible.
+            if (imeBottomInsetPx != bottomInset) {
+                imeBottomInsetPx = bottomInset
+                runOnMain { resizeControlWindow() }
+            }
             insets
         }
 
-        attachDrag(handle)
         controlRoot = root
         inputFocusEnabled = false
         captureHidden = false
 
         controlParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            windowWidthPx(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -393,51 +514,61 @@ class FloatingControlOverlay(
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = dp(12)
-            y = dp(112)
+            // x is an absolute screen coordinate, also on Hebrew/RTL devices.
+            gravity = Gravity.TOP or Gravity.LEFT
+            y = defaultTopPx()
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
             token = null
-            this.title = "AndroidAgentControl"
-        }
+            // The accessibility screenshot recognises our window by this title.
+            this.title = WINDOW_TITLE
+        }.also(::positionFromAnchor)
+        updateHeaderDescription()
     }
 
-    private fun actionButton(
-        text: String,
+    /** A round button with a 48dp touch target around a smaller visible disc. */
+    private fun circleButton(
         description: String,
-        textColor: Int,
-        accent: Int,
+        diameterDp: Int,
+        fill: Int,
+        stroke: Int,
+        icon: ActionIcon,
+        tint: Int,
+        iconDp: Int,
         action: () -> Unit,
-    ): Button = Button(appContext).apply {
-        this.text = text
-        this.contentDescription = description
-        setTextColor(textColor)
-        setAllCaps(false)
-        minWidth = dp(34)
-        minimumWidth = dp(34)
-        minHeight = dp(38)
-        minimumHeight = dp(38)
-        setPadding(dp(2), 0, dp(2), 0)
-        background = roundedBackground(
-            fill = Color.argb(35, Color.red(accent), Color.green(accent), Color.blue(accent)),
-            stroke = Color.argb(100, Color.red(accent), Color.green(accent), Color.blue(accent)),
-            radius = 11f,
+    ): FrameLayout = FrameLayout(appContext).apply {
+        contentDescription = description
+        isClickable = true
+        isFocusable = true
+        addView(
+            View(appContext).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(fill)
+                    if (stroke != Color.TRANSPARENT) setStroke(dp(1), stroke)
+                }
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            FrameLayout.LayoutParams(dp(diameterDp), dp(diameterDp), Gravity.CENTER),
         )
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-        isFocusable = false
-        isFocusableInTouchMode = false
+        addView(
+            ActionIconView(appContext, icon, tint).apply {
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            FrameLayout.LayoutParams(dp(iconDp), dp(iconDp), Gravity.CENTER),
+        )
+        foreground = ripple(if (fill == INK) ON_LIGHT else INK, ShapeDrawable(OvalShape()))
         setOnClickListener { action() }
     }
 
-    private fun attachDrag(header: View) {
+    private fun attachDrag(handle: View) {
         val slop = ViewConfiguration.get(appContext).scaledTouchSlop
         var downX = 0f
         var downY = 0f
         var startX = 0
         var startY = 0
         var dragging = false
-        header.setOnTouchListener { _, event ->
+        handle.setOnTouchListener { _, event ->
             val lp = controlParams ?: return@setOnTouchListener false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -458,6 +589,7 @@ class FloatingControlOverlay(
                         lp.x = startX + dx
                         lp.y = startY + dy
                         clampPosition(lp)
+                        anchorX = lp.x + lp.width / 2
                         updateControlLayout(controlRoot, lp)
                         true
                     } else {
@@ -467,6 +599,7 @@ class FloatingControlOverlay(
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val moved = dragging
                     dragging = false
+                    if (!moved && event.actionMasked == MotionEvent.ACTION_UP) handle.performClick()
                     moved
                 }
                 else -> false
@@ -515,6 +648,96 @@ class FloatingControlOverlay(
         }
     }
 
+    // ---------- pill and card ----------
+
+    private fun setCollapsed(value: Boolean) {
+        disableInputFocus()
+        hideKeyboard()
+        if (collapsed == value) return
+        collapsed = value
+        val cardView = card ?: return
+        val bodyView = body ?: return
+        val lp = controlParams ?: return
+        val previous = morph
+        morph = null
+        previous?.cancel()
+        if (!showing || !ValueAnimator.areAnimatorsEnabled()) {
+            settleLayout()
+            return
+        }
+
+        val panel = panelWidthPx()
+        val fromWidth = cardView.width.takeIf { it > 0 } ?: cardView.layoutParams.width
+        val toWidth = cardWidthPx()
+        bodyView.visibility = View.VISIBLE
+        bodyView.measure(
+            View.MeasureSpec.makeMeasureSpec(panel, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val fullBody = bodyView.measuredHeight
+        val fromBody = if (value) bodyView.height.takeIf { it > 0 } ?: fullBody else 0
+        val toBody = if (value) 0 else fullBody
+
+        // Hold the window at the card's largest size while the card changes
+        // shape inside it, so the window manager relayouts twice, not per frame.
+        lp.width = panel + dp(ROOT_PAD_DP) * 2
+        lp.height = dp(HEADER_DP) + fullBody + dp(ROOT_PAD_DP) * 2
+        positionFromAnchor(lp)
+        updateControlLayout(controlRoot, lp)
+        setBodyHeight(bodyView, fromBody)
+
+        morph = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = MORPH_MS
+            interpolator = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
+            addUpdateListener { animator ->
+                val progress = animator.animatedValue as Float
+                cardView.layoutParams = cardView.layoutParams.also { it.width = lerp(fromWidth, toWidth, progress) }
+                setBodyHeight(bodyView, lerp(fromBody, toBody, progress))
+                // The body fades out quickly on the way in to the pill and
+                // arrives late on the way out, so text never squeezes visibly.
+                bodyView.alpha = if (value) {
+                    (1f - progress / 0.5f).coerceIn(0f, 1f)
+                } else {
+                    ((progress - 0.35f) / 0.65f).coerceIn(0f, 1f)
+                }
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    if (morph !== animation) return
+                    morph = null
+                    settleLayout()
+                }
+            })
+            start()
+        }
+    }
+
+    /** Final sizes for the current state, with the window fitted to the card. */
+    private fun settleLayout() {
+        val cardView = card ?: return
+        val bodyView = body ?: return
+        val lp = controlParams ?: return
+        cardView.layoutParams = cardView.layoutParams.also { it.width = cardWidthPx() }
+        setBodyHeight(bodyView, LinearLayout.LayoutParams.WRAP_CONTENT)
+        bodyView.alpha = 1f
+        bodyView.visibility = if (collapsed) View.GONE else View.VISIBLE
+        lp.width = windowWidthPx()
+        lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+        positionFromAnchor(lp)
+        updateControlLayout(controlRoot, lp)
+        updateHeaderDescription()
+        controlRoot?.post { clampPosition() }
+    }
+
+    private fun setBodyHeight(bodyView: View, height: Int) {
+        bodyView.layoutParams = bodyView.layoutParams.also { it.height = height }
+    }
+
+    private fun updateHeaderDescription() {
+        val headline = content?.headline ?: currentStatus
+        header?.contentDescription = if (collapsed) "Expand agent controls · $headline" else "Collapse agent controls"
+    }
+
     // ---------- window lifecycle ----------
 
     private fun requireOverlayPermission() {
@@ -555,7 +778,7 @@ class FloatingControlOverlay(
         if (configCallbacks != null) return
         val callbacks = object : ComponentCallbacks {
             override fun onConfigurationChanged(newConfig: Configuration) {
-                runOnMain { clampPosition() }
+                runOnMain { resizeControlWindow() }
             }
 
             override fun onLowMemory() = Unit
@@ -567,6 +790,9 @@ class FloatingControlOverlay(
     private fun removeViews() {
         finishRunnable?.let(mainHandler::removeCallbacks)
         finishRunnable = null
+        val running = morph
+        morph = null
+        running?.cancel()
         hideKeyboard()
         disableInputFocus()
         configCallbacks?.let {
@@ -582,10 +808,17 @@ class FloatingControlOverlay(
         attachListener = null
         removeWindow(controlRoot)
         controlRoot = null
-        statusView = null
-        statusDot = null
+        card = null
+        header = null
+        body = null
+        headlineView = null
+        commentaryView = null
+        steerRow = null
+        approveButton = null
+        orbView = null
         inputView = null
         controlParams = null
+        imeBottomInsetPx = 0
         showing = false
         captureHidden = false
     }
@@ -632,20 +865,52 @@ class FloatingControlOverlay(
 
     private fun clampPosition(lp: WindowManager.LayoutParams) {
         val root = controlRoot
-        val width = root?.width?.takeIf { it > 0 } ?: panelWidthPx()
-        val height = root?.height?.takeIf { it > 0 } ?: dp(72)
+        val width = lp.width.takeIf { it > 0 } ?: root?.width?.takeIf { it > 0 } ?: windowWidthPx()
+        val height = root?.height?.takeIf { it > 0 } ?: dp(HEADER_DP + ROOT_PAD_DP * 2)
         val bounds = screenBounds()
-        val margin = dp(8)
+        val margin = dp(4)
         lp.x = lp.x.coerceIn(margin, (bounds.width() - width - margin).coerceAtLeast(margin))
-        lp.y = lp.y.coerceIn(margin, (bounds.height() - height - margin).coerceAtLeast(margin))
+        lp.y = lp.y.coerceIn(margin, bottomLimit(bounds, height, margin))
+    }
+
+    /** Centre the window on the pill's anchor, which survives every resize. */
+    private fun positionFromAnchor(lp: WindowManager.LayoutParams) {
+        val centre = anchorX ?: (screenBounds().width() / 2)
+        lp.x = centre - lp.width / 2
+        clampPosition(lp)
     }
 
     private fun screenBounds() = windowManager.currentWindowMetrics.bounds
 
+    /** Just under the status bar, where the pill is out of the way of most content. */
+    private fun defaultTopPx(): Int {
+        val statusBar = runCatching {
+            windowManager.currentWindowMetrics.windowInsets
+                .getInsets(android.view.WindowInsets.Type.statusBars()).top
+        }.getOrDefault(0)
+        return statusBar + dp(8) - dp(ROOT_PAD_DP)
+    }
+
     private fun panelWidthPx(): Int = minOf(
         dp(PANEL_WIDTH_DP),
-        (screenBounds().width() - dp(16)).coerceAtLeast(dp(280)),
+        (screenBounds().width() - dp(16)).coerceAtLeast(dp(1)),
     )
+
+    private fun cardWidthPx(): Int = if (collapsed) minOf(dp(PILL_WIDTH_DP), panelWidthPx()) else panelWidthPx()
+
+    private fun windowWidthPx(): Int = cardWidthPx() + dp(ROOT_PAD_DP) * 2
+
+    private fun bottomLimit(bounds: android.graphics.Rect, height: Int, margin: Int): Int =
+        (bounds.height() - imeBottomInsetPx - height - margin).coerceAtLeast(margin)
+
+    private fun resizeControlWindow() {
+        if (morph != null) return
+        val lp = controlParams ?: return
+        card?.let { cardView -> cardView.layoutParams = cardView.layoutParams.also { it.width = cardWidthPx() } }
+        lp.width = windowWidthPx()
+        positionFromAnchor(lp)
+        updateControlLayout(controlRoot, lp)
+    }
 
     private fun pointInside(left: Int, top: Int, width: Int, height: Int, x: Int, y: Int): Boolean =
         x >= left && x <= left + width && y >= top && y <= top + height
@@ -655,61 +920,57 @@ class FloatingControlOverlay(
     }
 
     private fun applyStatus(status: String) {
-        val value = status.ifBlank { "Ready" }
-        statusView?.text = value
-        statusDot?.background = dotDrawable(statusColor(value))
+        val next = overlayContent(status.ifBlank { "Ready" }, content?.commentary)
+        val headlineChanged = next.headline != content?.headline
+        content = next
+        headlineView?.text = next.headline
+        commentaryView?.apply {
+            text = next.commentary.orEmpty()
+            visibility = if (next.commentary.isNullOrBlank()) View.GONE else View.VISIBLE
+        }
+        steerRow?.visibility = if (next.needsApproval) View.GONE else View.VISIBLE
+        approveButton?.visibility = if (next.needsApproval) View.VISIBLE else View.GONE
+        orbView?.let { orb ->
+            orb.setTone(toneColor(next.tone), toneActivity(next.tone))
+            if (headlineChanged && next.tone == OverlayTone.CONTROLLING) orb.pulse()
+        }
+        updateHeaderDescription()
     }
 
-    private fun statusColor(status: String): Int {
-        return when (overlayTone(status)) {
-            OverlayTone.STOPPING -> Color.parseColor("#F2A65A")
-            OverlayTone.DONE -> Color.parseColor("#6EDC9A")
-            OverlayTone.ERROR -> Color.parseColor("#FF7188")
-            OverlayTone.CONTROLLING -> Color.parseColor("#B8C3FF")
-            OverlayTone.ACTIVE -> Color.parseColor("#9AA9FF")
-        }
+    private fun toneColor(tone: OverlayTone): Int = when (tone) {
+        OverlayTone.ACTIVE -> TONE_WORKING
+        OverlayTone.CONTROLLING -> TONE_CONTROLLING
+        OverlayTone.WAITING, OverlayTone.STOPPING -> TONE_WAITING
+        OverlayTone.DONE -> TONE_DONE
+        OverlayTone.ERROR -> TONE_ERROR
+    }
+
+    // How hard the sphere churns: busiest while acting on the screen.
+    private fun toneActivity(tone: OverlayTone): Float = when (tone) {
+        OverlayTone.ACTIVE -> 0.28f
+        OverlayTone.CONTROLLING -> 0.42f
+        OverlayTone.WAITING, OverlayTone.STOPPING -> 0.2f
+        OverlayTone.DONE -> 0.12f
+        OverlayTone.ERROR -> 0.08f
     }
 
     // ---------- small visual helpers ----------
 
-    private fun isDark(): Boolean =
-        appContext.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-            Configuration.UI_MODE_NIGHT_YES
+    private fun ripple(tint: Int, mask: android.graphics.drawable.Drawable) = RippleDrawable(
+        ColorStateList.valueOf(Color.argb(45, Color.red(tint), Color.green(tint), Color.blue(tint))),
+        null,
+        mask,
+    )
 
-    private fun roundedBackground(fill: Int, stroke: Int, radius: Float): GradientDrawable =
+    private fun rounded(fill: Int, stroke: Int, radiusDp: Float): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = dpF(radius)
+            cornerRadius = dpF(radiusDp)
             setColor(fill)
-            setStroke(dp(1), stroke)
+            if (stroke != Color.TRANSPARENT) setStroke(dp(1), stroke)
         }
 
-    /** Translucent gradient fallback that reads like glass on API 30+. */
-    private fun glassBackground(dark: Boolean): GradientDrawable {
-        val colors = if (dark) {
-            intArrayOf(
-                Color.argb(232, 43, 47, 66),
-                Color.argb(208, 22, 25, 37),
-            )
-        } else {
-            intArrayOf(
-                Color.argb(244, 250, 251, 255),
-                Color.argb(226, 227, 231, 242),
-            )
-        }
-        return GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
-            cornerRadius = dpF(24f)
-            setStroke(
-                dp(1),
-                if (dark) Color.argb(78, 255, 255, 255) else Color.argb(70, 25, 28, 40),
-            )
-        }
-    }
-
-    private fun dotDrawable(color: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setColor(color)
-    }
+    private fun lerp(from: Int, to: Int, fraction: Float): Int = (from + (to - from) * fraction).toInt()
 
     private fun dp(value: Int): Int = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP,
@@ -724,39 +985,95 @@ class FloatingControlOverlay(
     )
 
     private companion object {
-        const val PANEL_WIDTH_DP = 348
+        const val PANEL_WIDTH_DP = 358
+        const val PILL_WIDTH_DP = 248
+        const val HEADER_DP = 48
+        const val ROOT_PAD_DP = 6
+        const val CARD_RADIUS_DP = 24f
+        const val MORPH_MS = 320L
         const val FINISH_DISPLAY_MS = 350L
+
+        /** The accessibility screenshot leaves the window with this title out. */
+        const val WINDOW_TITLE = "AndroidAgentControl"
+
+        // Always dark, like the app: the same ink, field and outline colours
+        // as its composer, on near-black glass.
+        val GLASS = Color.argb(235, 18, 18, 18)
+        val GLASS_EDGE = Color.argb(23, 255, 255, 255)
+        val INK = Color.parseColor("#F2F2F2")
+        val INK_DIM = Color.parseColor("#BDBDBD")
+        val ON_LIGHT = Color.parseColor("#111111")
+        val FIELD = Color.parseColor("#202020")
+        val OUTLINE = Color.parseColor("#383838")
+        val HINT = Color.parseColor("#8A8A8A")
+        val APPROVE = Color.parseColor("#F6B86A")
+        val APPROVE_INK = Color.parseColor("#2A1A05")
+        val TONE_WORKING = Color.parseColor("#83D9CA")
+        val TONE_CONTROLLING = Color.parseColor("#69A7FF")
+        val TONE_WAITING = Color.parseColor("#F6B86A")
+        val TONE_DONE = Color.parseColor("#78E2B4")
+        val TONE_ERROR = Color.parseColor("#FFB4AB")
     }
 
-    private class DragHandleView(context: Context, dark: Boolean) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (dark) Color.argb(190, 224, 228, 244) else Color.argb(170, 75, 80, 95)
+    private enum class ActionIcon {
+        ARROW_UP,
+        OPEN,
+        STOP,
+    }
+
+    /** Icons drawn on a 24-unit grid, scaled to the view. */
+    private class ActionIconView(
+        context: Context,
+        private val icon: ActionIcon,
+        tint: Int,
+    ) : View(context) {
+        private val path = Path()
+        private val rect = RectF()
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = tint
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = tint
             style = Paint.Style.FILL
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val centerX = width / 2f
-            val centerY = height / 2f
-            val spacing = dp(6).toFloat()
-            val radius = dp(1.5f)
-            for (row in -1..1) {
-                val y = centerY + row * spacing
-                canvas.drawCircle(centerX - spacing / 2f, y, radius, paint)
-                canvas.drawCircle(centerX + spacing / 2f, y, radius, paint)
+            val unit = minOf(width, height) / 24f
+            stroke.strokeWidth = (if (icon == ActionIcon.ARROW_UP) 2.2f else 1.9f) * unit
+            fun x(value: Float) = value * unit
+            when (icon) {
+                ActionIcon.ARROW_UP -> {
+                    path.reset()
+                    path.moveTo(x(12f), x(19f))
+                    path.lineTo(x(12f), x(5f))
+                    path.moveTo(x(6f), x(11f))
+                    path.lineTo(x(12f), x(5f))
+                    path.lineTo(x(18f), x(11f))
+                    canvas.drawPath(path, stroke)
+                }
+                ActionIcon.OPEN -> {
+                    path.reset()
+                    path.moveTo(x(14f), x(4f))
+                    path.lineTo(x(20f), x(4f))
+                    path.lineTo(x(20f), x(10f))
+                    path.moveTo(x(20f), x(4f))
+                    path.lineTo(x(11f), x(13f))
+                    path.moveTo(x(18f), x(14f))
+                    path.lineTo(x(18f), x(20f))
+                    path.lineTo(x(4f), x(20f))
+                    path.lineTo(x(4f), x(6f))
+                    path.lineTo(x(10f), x(6f))
+                    canvas.drawPath(path, stroke)
+                }
+                ActionIcon.STOP -> {
+                    rect.set(x(1f), x(1f), x(23f), x(23f))
+                    canvas.drawRoundRect(rect, x(5f), x(5f), fill)
+                }
             }
         }
-
-        private fun dp(value: Int): Int = TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value.toFloat(),
-            resources.displayMetrics,
-        ).toInt()
-
-        private fun dp(value: Float): Float = TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value,
-            resources.displayMetrics,
-        )
     }
 }

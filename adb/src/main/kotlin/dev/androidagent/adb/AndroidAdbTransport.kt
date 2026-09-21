@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.adb
 
 import android.content.Context
@@ -144,6 +164,44 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                 clearActive(job, null)
             }
         }
+    }
+
+    /**
+     * Pair, then find the connect port and use it. Wireless Debugging only
+     * advertises its connect service once pairing is accepted, and it can take
+     * a moment to appear, so this looks more than once instead of making the
+     * user read the port off the system dialog.
+     *
+     * Returns the port it connected on. On failure the pairing identity is
+     * still stored, so [startAutoReconnect] keeps trying in the background.
+     */
+    suspend fun pairAndConnect(pairingPort: Int, code: String, onProgress: (String) -> Unit): Int {
+        pair(pairingPort, code)
+        val deadline = System.currentTimeMillis() + AdbAutoConnectPlan.TOTAL_BUDGET_MS
+        val tried = mutableSetOf<Int>()
+        var attempt = 0
+        while (attempt < AdbAutoConnectPlan.MAX_ATTEMPTS && System.currentTimeMillis() < deadline) {
+            currentCoroutineContext().ensureActive()
+            val endpoints = discover()
+            // Re-read the saved port every pass: a successful connect writes it.
+            val port = AdbAutoConnectPlan.target(savedConnectPort(), endpoints, tried)
+            onProgress(AdbAutoConnectPlan.attemptMessage(attempt, port))
+            if (port != null) {
+                tried += port
+                try {
+                    connect(port)
+                    return port
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Keep the failure quiet and try the next endpoint; connect()
+                    // has already published the error status.
+                }
+            }
+            attempt++
+            delay(AdbReconnectPolicy.retryDelayMs(attempt))
+        }
+        throw IOException(AdbAutoConnectPlan.giveUpMessage(wirelessDebuggingEnabled()))
     }
 
     override suspend fun connect(port: Int) {
@@ -564,7 +622,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
         private const val CONNECT_TIMEOUT_MS = 10_000L
         private const val SOCKET_TIMEOUT_MS = 30_000L
         private const val LOOPBACK = "127.0.0.1"
-        private const val DEVICE_NAME = "android-agent"
+        private const val DEVICE_NAME = "hey-mike"
         private const val IDENTITY_DIRECTORY = "kadb_identity"
         private const val CERTIFICATE_FILE = "certificate.pem"
         private const val PRIVATE_KEY_FILE = "private_key.pem"

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Yoni-Raich/hey-mike/blob/main/SECURITY.md
+    about: Read SECURITY.md and use GitHub private vulnerability reporting when it is available.

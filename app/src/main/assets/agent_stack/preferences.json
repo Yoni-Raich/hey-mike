@@ -1,0 +1,9 @@
+{
+  "apps": {
+    "messaging": "WhatsApp",
+    "browser": "Chrome",
+    "maps": "Google Maps",
+    "music": "YouTube"
+  },
+  "addresses": {}
+}

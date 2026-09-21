@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 /**
@@ -46,6 +66,25 @@ object SecretRedactor {
         out = deviceCodePattern.replace(out, "\$1 [REDACTED]")
         out = bodyHintPattern.replace(out, "\$1[REDACTED]")
         out = queryPattern.replace(out, "?[REDACTED]")
+        return out
+    }
+
+    /**
+     * Removes credentials from text read off the user's screen.
+     *
+     * Deliberately narrower than [redact]: it applies the credential patterns
+     * but not the URL-query or request-body rules, which exist for diagnostics
+     * and would mangle ordinary UI content — [redact] rewrites everything after
+     * any "?" character, and screens are full of question marks.
+     */
+    fun redactUiText(raw: String): String {
+        var out = colorRemainderPattern.replace(ansiCsiPattern.replace(raw, ""), "")
+        out = cookieHeaderPattern.replace(out, "Cookie: [REDACTED]")
+        out = bearerPattern.replace(out, "Bearer [REDACTED]")
+        out = jwtPattern.replace(out, "[REDACTED_JWT]")
+        out = apiKeyPattern.replace(out, "[REDACTED_API_KEY]")
+        out = keyValuePattern.replace(out, "$1[REDACTED]")
+        out = deviceCodePattern.replace(out, "$1 [REDACTED]")
         return out
     }
 

@@ -1,6 +1,7 @@
 import java.util.Properties
 plugins { id("com.android.application"); kotlin("android"); kotlin("plugin.compose") }
 val appVersion = Properties().apply { rootProject.file("version.properties").inputStream().use(::load) }
+configurations.configureEach { exclude(group = "org.jetbrains", module = "annotations-java5") }
 val versionCodeOverride = project.findProperty("versionCodeOverride")?.toString()?.toIntOrNull()
 val versionNameOverride = project.findProperty("versionNameOverride")?.toString()
 val nightlyKeystorePath = System.getenv("DEV_NIGHTLY_KEYSTORE")?.takeIf { it.isNotBlank() }
@@ -20,8 +21,8 @@ android {
     }
     flavorDimensions += "channel"
     productFlavors {
-        create("prod") { dimension = "channel"; resValue("string", "app_name", "Android Agent") }
-        create("dev") { dimension = "channel"; applicationIdSuffix = ".dev"; resValue("string", "app_name", "Android Agent Dev") }
+        create("prod") { dimension = "channel"; resValue("string", "app_name", "Hey Mike") }
+        create("dev") { dimension = "channel"; applicationIdSuffix = ".dev"; resValue("string", "app_name", "Hey Mike Dev") }
     }
     signingConfigs {
         if (nightlyKeystorePath != null) {
@@ -61,7 +62,7 @@ val prepareCodexRuntime by tasks.registering(Exec::class) {
 tasks.named("preBuild") { dependsOn(prepareCodexRuntime) }
 dependencies {
     implementation(project(":core")); implementation(project(":workspace")); implementation(project(":runtime"))
-    implementation(project(":engine-codex")); implementation(project(":adb")); implementation(project(":device-tools")); implementation(project(":overlay")); implementation(project(":voice"))
+    implementation(project(":engine-codex")); implementation(project(":adb")); implementation(project(":device-tools")); implementation(project(":overlay")); implementation(project(":voice")); implementation(project(":a11y")); implementation(project(":automations"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
@@ -71,6 +72,12 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
+    implementation("io.noties.markwon:ext-strikethrough:4.6.2")
+    implementation("io.noties.markwon:syntax-highlight:4.6.2")
+    annotationProcessor("io.noties:prism4j-bundler:2.0.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove secrets, tokens, pairing codes, and private screen data before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Give the app version or commit where you saw the problem.
+      placeholder: v0.6.0 or abc1234
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Android version and device class
+      description: Include the Android version and say whether this was a phone, tablet, emulator, or another device class. Do not include a device serial.
+      placeholder: Android 16, physical phone
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest sequence that shows the problem.
+      placeholder: |
+        1. Open ...
+        2. Start ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Paste relevant logs after removing secrets, tokens, pairing codes, and personal data.
+      render: text
+  - type: dropdown
+    id: test_boundary
+    attributes:
+      label: Test boundary
+      description: State the strongest evidence you have. Build or install success does not prove a phone run.
+      options:
+        - Physical phone run
+        - Emulator run
+        - Build or unit tests only
+        - Not tested yet
+    validations:
+      required: true

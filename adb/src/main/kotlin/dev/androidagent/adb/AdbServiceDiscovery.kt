@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.adb
 
 import android.content.Context
@@ -40,7 +60,9 @@ class AdbServiceDiscovery(context: Context) {
         const val SERVICE_TYPE_CONNECT = "_adb-tls-connect._tcp."
         const val SERVICE_TYPE_PAIRING = "_adb-tls-pairing._tcp."
         private const val LOOPBACK = "127.0.0.1"
-        private const val DEFAULT_TIMEOUT_MS = 3_000L
+        // Also read by AdbAutoConnectPlan's budget test, which has to know what one
+        // discovery pass costs.
+        internal const val DEFAULT_TIMEOUT_MS = 3_000L
         private val DIRECT_EXECUTOR = Executor { it.run() }
 
         fun isValidAdbPort(port: Int): Boolean = port in 1024..65535

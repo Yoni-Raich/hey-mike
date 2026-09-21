@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.runtime
 
 import android.content.Context
@@ -90,6 +110,8 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
     private var process: Process? = null
     private var proxy: LocalhostConnectProxy? = null
     private val proxyEvents = ArrayDeque<String>()
+    private val mutableProxyEvents = MutableStateFlow<List<String>>(emptyList())
+    val proxyEventState: StateFlow<List<String>> = mutableProxyEvents
     private var prepared = false
 
     override suspend fun prepare() {
@@ -288,10 +310,12 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
     }
 
     private fun recordProxyEvent(event: String) {
-        synchronized(proxyEvents) {
+        val snapshot = synchronized(proxyEvents) {
             if (proxyEvents.size >= MAX_PROXY_EVENTS) proxyEvents.removeFirst()
             proxyEvents.addLast(event)
+            proxyEvents.toList()
         }
+        mutableProxyEvents.value = snapshot
         if (event.startsWith("CONNECT ")) Log.i(TAG, event)
         else if (event.startsWith("proxy-error:")) Log.w(TAG, event)
     }
@@ -396,7 +420,7 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
         private const val MAX_PROXY_EVENTS = 64
         private const val REALTIME_FEATURE = "realtime_conversation"
         private const val DEFAULT_CONFIG =
-            "# Managed by Android Agent. Credentials stay in app-private CODEX_HOME.\n" +
+            "# Managed by Hey Mike. Credentials stay in app-private CODEX_HOME.\n" +
                 "# Helper discovery (rg/code-mode-host/zsh) is limited while the\n" +
                 "# upstream package layout cannot be preserved under nativeLibraryDir.\n"
         private val TOML_TABLE = Regex("^\\s*\\[([^]]+)](?:\\s*#.*)?$")
@@ -416,7 +440,7 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
          */
         val PACKAGE_LINKS: List<Pair<String, String>> = listOf(
             "bin/codex-app-server" to "libcodex_app_server.so",
-            "bin/codex-code-mode-host" to "codex-code-mode-x.so",
+            "bin/codex-code-mode-host" to "libcodex_codemode.so",
             "codex-path/rg" to "libcodex_rg.so",
             "codex-path/bwrap" to "libcodex_bwrap.so",
             "codex-resources/bwrap" to "libcodex_bwrap.so",

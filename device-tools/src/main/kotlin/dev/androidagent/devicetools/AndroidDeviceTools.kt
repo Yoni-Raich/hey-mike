@@ -1,11 +1,42 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.devicetools
 
 import dev.androidagent.adb.AdbFileTransport
 import dev.androidagent.core.AdbTransport
 import dev.androidagent.core.CommandResult
+import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.DeviceToolGateway
+import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
+import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
+import dev.androidagent.core.READ_UI_DESCRIPTION
+import dev.androidagent.core.ToolNotServiceable
+import dev.androidagent.core.ObservationFingerprint
+import dev.androidagent.core.ObservationState
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.UiNode
+import dev.androidagent.core.UiObservation
+import dev.androidagent.core.UiObservationSerializer
+import dev.androidagent.core.UiQuery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CancellationException
@@ -16,16 +47,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.File
+import java.io.StringReader
 import java.util.Base64
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserFactory
 
 /**
  * Sole agent-facing device gateway. Every device operation goes through [adb].
@@ -43,13 +80,17 @@ class AndroidDeviceTools(
     private val adb: AdbTransport,
     /** Full IME component, for example `com.example/.AgentInputMethodService`. */
     private val inputMethodComponent: String? = null,
+    /** Shared with every other gateway so revisions never move backwards. */
+    private val observations: ObservationState = ObservationState(),
+    /** Moves the floating card out of the way before a gesture lands on it. */
+    private val avoidTouch: (Int, Int) -> Unit = { _, _ -> },
+    private val observationVisibility: suspend (Boolean) -> Unit = {},
 ) : DeviceToolGateway {
 
     private val lock = Any()
     @Volatile private var revoked = true
     @Volatile private var workspace: File? = null
     @Volatile private var runId: String? = null
-
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
 
     override fun beginRun(runId: String, workspace: File) {
@@ -58,6 +99,7 @@ class AndroidDeviceTools(
             this.runId = runId
             this.workspace = workspace.absoluteFile
             workspace.absoluteFile.mkdirs()
+            observations.reset()
             revoked = false
         }
     }
@@ -74,16 +116,49 @@ class AndroidDeviceTools(
             else -> true
         }
 
+    override fun hidesOverlayDuringCapture(name: String): Boolean =
+        // Both capture the composited screen, so the overlay must step aside.
+        name == "read_ui" || name == "screenshot"
+
+    override fun statusLine(): String? {
+        // Worded as an optional extra: the model reads this line every turn,
+        // and a bare "ADB: DISCONNECTED" reads as "the phone is unreachable".
+        val s = adb.status.value
+        return "Wireless ADB (optional): ${s.phase.name.lowercase()} - ${s.message}"
+    }
+
+    /**
+     * Nothing here works without the transport, so a disconnected ADB serves
+     * no tool at all. The advertised list is untouched: a call still fails
+     * with its own typed error, this only tells the turn snapshot the truth.
+     */
+    override fun readyTools(): Set<String> =
+        if (adb.status.value.phase == ConnectionPhase.CONNECTED) {
+            definitions.map { it.name }.toSet()
+        } else {
+            emptySet()
+        }
+
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
         val ws = workspace
         if (revoked || ws == null) {
             throw IllegalStateException("Run stopped. No device action was performed.")
         }
         checkActive()
+        if (name != "device_status" && adb.status.value.phase != ConnectionPhase.CONNECTED) {
+            // Typed, and before any device call, so the composite reports the
+            // accessibility backend's own reason instead of a bare transport
+            // error that reads as "this task needs ADB".
+            throw ToolNotServiceable(
+                "adb_not_connected",
+                "Wireless ADB is an optional advanced backend and is not connected.",
+            )
+        }
         val result = when (name) {
             "device_status" -> deviceStatus()
             "read_ui" -> readUi(arguments)
             "screenshot" -> screenshot(arguments)
+            "act_and_observe" -> actAndObserve(arguments)
             "tap" -> tap(arguments)
             "swipe" -> swipe(arguments)
             "type_text" -> typeText(arguments)
@@ -105,6 +180,29 @@ class AndroidDeviceTools(
 
     // ---- tools ----
 
+    private suspend fun actAndObserve(arguments: JsonObject): ToolResult {
+        val action = arguments["action"]?.jsonPrimitive?.contentOrNull
+        require(action in ACT_AND_OBSERVE_ACTIONS) { "Choose one supported action." }
+        val args = arguments["arguments"] as? JsonObject ?: error("Action arguments are required.")
+        val result = invoke(action!!, args)
+        if (!result.success) return result // Never retry a side effect or observe after a failed commit.
+        checkActive()
+        val observation = try {
+            observationVisibility(true)
+            readUi(buildJsonObject {})
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            ToolResult("Observation failed: ${failure.message}. Do not repeat the completed action.", success = false)
+        } finally { withContext(NonCancellable) { observationVisibility(false) } }
+        return ToolResult(buildJsonObject {
+            put("actionCompleted", true)
+            put("actionResult", result.text)
+            put("observationSucceeded", observation.success)
+            put("observation", runCatching { Json.parseToJsonElement(observation.text) }.getOrElse { JsonPrimitive(observation.text) })
+        }.toString(), success = observation.success)
+    }
+
     private fun deviceStatus(): ToolResult {
         val s = adb.status.value
         val port = s.port?.toString() ?: "-"
@@ -112,23 +210,287 @@ class AndroidDeviceTools(
     }
 
     private suspend fun readUi(arguments: JsonObject): ToolResult {
-        val timeout = arguments.timeoutMsOrDefault()
-        // /dev/tty prints the hierarchy to stdout without staging a file.
-        val direct = runCatching { userExecute("uiautomator dump --compressed /dev/tty", timeout) }
-            .getOrNull()?.output.orEmpty()
-        if (direct.contains("<hierarchy")) return ToolResult(bound(direct))
-        val fallback = userExecute(
-            "uiautomator dump --compressed ${quotedRemote(UI_DUMP_PATH)} && cat ${quotedRemote(UI_DUMP_PATH)}",
-            timeout,
+        val timeout = arguments.timeoutMsOrDefault(READ_UI_DEFAULT_TIMEOUT_MS)
+        val raw = arguments["raw"]?.jsonPrimitive?.booleanOrNull ?: false
+        val force = arguments["force"]?.jsonPrimitive?.booleanOrNull ?: false
+        val query = UiQuery.from(arguments)
+        val revision = observations.nextRevision()
+        val observationId = "ui-$revision"
+        val startedAt = System.nanoTime()
+
+        return try {
+            val result = withTimeout(timeout) {
+                readUiWithinBudget(raw, force, query, revision, observationId, startedAt, timeout)
+            }
+            // A failed observation means the screen is unknown, so the next
+            // successful one must carry a full payload rather than a diff.
+            if (!result.success) observations.reset()
+            result
+        } catch (error: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            observations.reset()
+            uiFailure(
+                observationId = observationId,
+                revision = revision,
+                startedAt = startedAt,
+                errorType = "ui_timeout",
+                message = "UI hierarchy timed out before a stable dump completed; try screenshot or retry",
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            observations.reset()
+            uiFailure(
+                observationId = observationId,
+                revision = revision,
+                startedAt = startedAt,
+                errorType = "ui_dump_failure",
+                message = error.message ?: "UI hierarchy dump failed",
+            )
+        }
+    }
+
+    private suspend fun readUiWithinBudget(
+        raw: Boolean,
+        force: Boolean,
+        query: UiQuery,
+        revision: Long,
+        observationId: String,
+        startedAt: Long,
+        totalBudgetMs: Long,
+    ): ToolResult {
+        // Staging the dump to a file and reading it back is the only path that
+        // returns a hierarchy across shell transports. Writing the dump to
+        // /dev/tty (or /proc/self/fd/1) makes uiautomator report success and
+        // exit 0 while emitting no hierarchy unless the shell service happens to
+        // forward raw stdout, so that shortcut is never attempted: on the
+        // supported device it cost ~2.2s per call and always returned nothing.
+        val attempt = runUiDumpCommand(
+            uiDumpCommand(UI_DUMP_PATH),
+            remainingBudget(startedAt, totalBudgetMs),
         )
-        return ToolResult(
-            text = bound(fallback.output),
-            success = fallback.exitCode == 0,
+        val completed = when (attempt) {
+            is UiDumpAttempt.TimedOut -> return uiFailure(
+                observationId, revision, startedAt, "ui_timeout",
+                "UI hierarchy dump timed out within the total budget",
+            )
+            is UiDumpAttempt.Completed -> attempt
+        }
+
+        val dump = completed.result
+        if (isIdleFailure(dump.output)) {
+            return uiFailure(
+                observationId, revision, startedAt, "ui_idle_failure",
+                "UI Automator could not get idle state; no additional dump was attempted",
+            )
+        }
+        val xml = extractHierarchyXml(dump.output)
+            ?: return uiFailure(
+                observationId, revision, startedAt, "ui_dump_failure",
+                "UI hierarchy dump returned no hierarchy XML",
+            )
+        if (dump.exitCode != 0) {
+            return uiFailure(
+                observationId, revision, startedAt, "ui_dump_failure",
+                "UI hierarchy dump failed with exit ${dump.exitCode}",
+            )
+        }
+        return completeUiObservation(
+            xml, "file", raw, force, query, observationId, revision, startedAt,
+        )
+    }
+
+    private suspend fun runUiDumpCommand(command: String, timeoutMs: Long): UiDumpAttempt {
+        if (timeoutMs <= 0L) return UiDumpAttempt.TimedOut(0L)
+        val startedAt = System.nanoTime()
+        return try {
+            UiDumpAttempt.Completed(
+                userExecute(command, timeoutMs),
+                elapsedMs(startedAt),
+            )
+        } catch (error: TimeoutCancellationException) {
+            UiDumpAttempt.TimedOut(elapsedMs(startedAt))
+        }
+    }
+
+    private fun completeUiObservation(
+        xml: String,
+        source: String,
+        raw: Boolean,
+        force: Boolean,
+        query: UiQuery,
+        observationId: String,
+        revision: Long,
+        startedAt: Long,
+    ): ToolResult {
+        // raw=true is an explicit compatibility/debug path. It does not claim
+        // that semantic parsing succeeded, and it never participates in
+        // unchanged-screen suppression.
+        if (raw) return ToolResult(bound(xml))
+        return try {
+            val parsed = parseUiHierarchy(xml)
+            val rendered = UiObservationSerializer.render(
+                observation = parsed,
+                source = source,
+                backend = BACKEND,
+                observationId = observationId,
+                revision = revision,
+                elapsedMs = elapsedMs(startedAt),
+                previous = observations.last(),
+                force = force,
+                // uiautomator only answers once the window is already idle.
+                stable = true,
+                query = query,
+            )
+            rendered.fingerprint?.let { observations.record(it) }
+            ToolResult(bound(rendered.text), success = rendered.ok)
+        } catch (error: Exception) {
+            uiFailure(
+                observationId, revision, startedAt, "ui_parse_failure",
+                "UI hierarchy XML could not be parsed safely: ${error.message ?: "invalid XML"}",
+            )
+        }
+    }
+
+    private fun parseUiHierarchy(xml: String): UiObservation {
+        require(xml.length <= MAX_UI_XML_CHARS) { "hierarchy XML is too large" }
+        require(!xml.contains("<!DOCTYPE", ignoreCase = true)) { "DOCTYPE is not allowed" }
+        require(!xml.contains("<!ENTITY", ignoreCase = true)) { "ENTITY declarations are not allowed" }
+
+        val parser = XmlPullParserFactory.newInstance().newPullParser().apply {
+            setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+            runCatching { setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false) }
+            setInput(StringReader(xml))
+        }
+        val ancestors = ArrayDeque<UiNode>()
+        val meaningful = mutableListOf<UiNode>()
+        val packages = mutableMapOf<String, Int>()
+        var nodeCount = 0
+        var sawHierarchy = false
+        var event = parser.eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                XmlPullParser.START_TAG -> when (parser.name) {
+                    "hierarchy" -> {
+                        require(!sawHierarchy) { "multiple hierarchy roots" }
+                        sawHierarchy = true
+                    }
+                    "node" -> {
+                        require(sawHierarchy) { "node appears before hierarchy root" }
+                        require(parser.depth <= MAX_UI_XML_DEPTH) { "hierarchy is too deep" }
+                        require(nodeCount < MAX_UI_NODES) { "hierarchy has too many nodes" }
+                        val node = UiNode(
+                            nodeId = "n${nodeCount++}",
+                            text = parser.attribute("text").compactUiText(),
+                            contentDescription = parser.attribute("content-desc").compactUiText(),
+                            resourceId = parser.attribute("resource-id").compactUiText(),
+                            className = parser.attribute("class").compactUiText(),
+                            bounds = parseBounds(parser.attribute("bounds")),
+                            enabled = parser.attribute("enabled")?.toBooleanStrictOrNull() ?: true,
+                            clickable = parser.attribute("clickable")?.toBooleanStrictOrNull() ?: false,
+                            scrollable = parser.attribute("scrollable")?.toBooleanStrictOrNull() ?: false,
+                            focused = parser.attribute("focused")?.toBooleanStrictOrNull() ?: false,
+                            packageName = parser.attribute("package").compactUiText(),
+                            password = parser.attribute("password")?.toBooleanStrictOrNull() ?: false,
+                            checkable = parser.attribute("checkable")?.toBooleanStrictOrNull() ?: false,
+                            checked = parser.attribute("checked")?.toBooleanStrictOrNull() ?: false,
+                            clickableAncestor = ancestors.lastOrNull { it.clickable }?.asClickTarget(),
+                            // The nearest ancestor that will itself be emitted:
+                            // a subtree query has to resolve from the flat list.
+                            parentId = ancestors.lastOrNull { it.isMeaningful() }?.nodeId,
+                        )
+                        node.packageName?.let { packages[it] = (packages[it] ?: 0) + 1 }
+                        if (node.isMeaningful()) meaningful += node
+                        ancestors.addLast(node)
+                    }
+                }
+                XmlPullParser.END_TAG -> if (parser.name == "node" && ancestors.isNotEmpty()) {
+                    ancestors.removeLast()
+                }
+            }
+            event = parser.next()
+        }
+        require(sawHierarchy) { "missing hierarchy root" }
+        require(ancestors.isEmpty()) { "unclosed node elements" }
+        return UiObservation(
+            activePackage = packages.maxByOrNull { it.value }?.key,
+            nodes = meaningful,
+        )
+    }
+
+    private fun uiFailure(
+        observationId: String,
+        revision: Long,
+        startedAt: Long,
+        errorType: String,
+        message: String,
+    ): ToolResult = ToolResult(
+        UiObservationSerializer.failureJson(
+            observationId = observationId,
+            revision = revision,
+            elapsedMs = elapsedMs(startedAt),
+            errorType = errorType,
+            message = message,
+        ),
+        success = false,
+    )
+
+    private fun extractHierarchyXml(output: String): String? {
+        val start = output.indexOf("<hierarchy")
+        if (start < 0) return null
+        val end = output.indexOf("</hierarchy>", start)
+        if (end < 0) return null
+        return output.substring(start, end + "</hierarchy>".length)
+    }
+
+    private fun isIdleFailure(output: String): Boolean =
+        output.contains("could not get idle state", ignoreCase = true)
+
+    private fun remainingBudget(startedAt: Long, totalBudgetMs: Long): Long =
+        (totalBudgetMs - elapsedMs(startedAt)).coerceAtLeast(0L)
+
+    private fun elapsedMs(startedAt: Long): Long =
+        ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(0L)
+
+    private sealed interface UiDumpAttempt {
+        data class Completed(val result: CommandResult, val elapsedMs: Long) : UiDumpAttempt
+        data class TimedOut(val elapsedMs: Long) : UiDumpAttempt
+    }
+
+    private fun XmlPullParser.attribute(name: String): String? = getAttributeValue(null, name)
+
+    private fun String?.compactUiText(): String? = UiObservationSerializer.compactField(this)
+
+    private fun parseBounds(value: String?): List<Int>? {
+        val match = BOUNDS_RE.matchEntire(value?.trim().orEmpty()) ?: return null
+        return listOf(
+            match.groupValues[1].toIntOrNull() ?: return null,
+            match.groupValues[2].toIntOrNull() ?: return null,
+            match.groupValues[3].toIntOrNull() ?: return null,
+            match.groupValues[4].toIntOrNull() ?: return null,
         )
     }
 
     private suspend fun screenshot(arguments: JsonObject): ToolResult {
         val timeout = arguments.timeoutMsOrDefault().coerceIn(1L, MAX_TIMEOUT_MS)
+        // screencap photographs every window, ours included. The coordinator
+        // only steps the card aside when this backend is asked first, not after
+        // a fall-through from accessibility, so step it aside here as well.
+        observationVisibility(true)
+        val png = try {
+            screencapPng(timeout)
+        } finally {
+            withContext(NonCancellable) { observationVisibility(false) }
+        }
+        val encoded = Base64.getEncoder().encodeToString(png)
+        checkActive()
+        val image = File(checkNotNull(workspace), "screenshots/${java.util.UUID.randomUUID()}.png")
+        image.parentFile!!.mkdirs()
+        image.writeBytes(png)
+        return ToolResult("Screenshot captured (${png.size} bytes, PNG)", imageBase64 = encoded, attachmentPaths = listOf(image.absolutePath))
+    }
+
+    private suspend fun screencapPng(timeout: Long): ByteArray {
         val bytes = runCatching { userExecuteBytes("screencap -p", timeout) }.getOrNull()
         val png = if (bytes != null && isPng(bytes)) {
             bytes
@@ -148,13 +510,14 @@ class AndroidDeviceTools(
             }
         }
         check(png.size <= MAX_SCREENSHOT_BYTES) { "Screenshot exceeds size limit" }
-        val encoded = Base64.getEncoder().encodeToString(png)
-        return ToolResult("Screenshot captured (${png.size} bytes, PNG)", imageBase64 = encoded)
+        return png
     }
 
     private suspend fun tap(arguments: JsonObject): ToolResult {
         val x = arguments.requireCoordinate("x")
         val y = arguments.requireCoordinate("y")
+        // A coordinate tap hits whatever is topmost, including our own card.
+        avoidTouch(x, y)
         val timeout = arguments.timeoutMsOrDefault()
         val out = userExecute("input tap $x $y", timeout)
         return ToolResult(
@@ -170,6 +533,7 @@ class AndroidDeviceTools(
         val y2 = arguments.requireCoordinate("y2")
         val duration = arguments.get("durationMs")?.jsonPrimitive?.intOrNull ?: 300
         require(duration in 0..5_000) { "durationMs must be between 0 and 5000" }
+        avoidTouch(x1, y1)
         val timeout = arguments.timeoutMsOrDefault()
         val out = userExecute("input swipe $x1 $y1 $x2 $y2 $duration", timeout)
         return ToolResult(
@@ -336,15 +700,19 @@ class AndroidDeviceTools(
         val activity = arguments.get("activity")?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
         val timeout = arguments.timeoutMsOrDefault()
         val result = if (activity == null) {
-            userExecute("monkey -p ${shellQuote(pkg)} -c android.intent.category.LAUNCHER 1", timeout)
+            // Monkey is a fuzzing harness and changes device state on cleanup.
+            // Resolve a normal launcher intent in the owner's profile instead.
+            userExecute("am start --user 0 -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p ${shellQuote(pkg)}", timeout)
         } else {
-            val component = if (activity.startsWith(".")) pkg + activity else activity
+            val component = if ('/' in activity) activity else "$pkg/$activity"
             requireValidComponent(component)
-            userExecute("am start --user current -n ${shellQuote(component)}", timeout)
+            require(component.substringBefore('/') == pkg) { "Activity must belong to the requested package." }
+            userExecute("am start --user 0 -W -n ${shellQuote(component)}", timeout)
         }
+        val opened = result.exitCode == 0 && !Regex("(?im)^(Error|Exception|SecurityException)").containsMatchIn(result.output)
         return ToolResult(
-            text = bound("Opened $pkg${result.output.ifBlank { "" }.prefix(" :: ")}"),
-            success = result.exitCode == 0,
+            text = bound("${if (opened) "Opened" else "Could not open"} $pkg${result.output.ifBlank { "" }.prefix(" :: ")}"),
+            success = opened,
         )
     }
 
@@ -490,7 +858,8 @@ class AndroidDeviceTools(
     companion object {
         const val DEFAULT_TIMEOUT_MS = 30_000L
         const val MAX_TIMEOUT_MS = 120_000L
-        const val MAX_OUTPUT_CHARS = 20_000
+        const val MAX_OUTPUT_CHARS = UiObservationSerializer.MAX_OUTPUT_CHARS
+        const val READ_UI_DEFAULT_TIMEOUT_MS = 6_000L
         const val MAX_SHELL_CHARS = 8_000
         const val MAX_COORDINATE = 10_000
         const val MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
@@ -498,6 +867,14 @@ class AndroidDeviceTools(
         const val MAX_PUSH_BYTES = 64 * 1024 * 1024
         const val MAX_APK_BYTES = 256 * 1024 * 1024
         const val UI_DUMP_PATH = "/sdcard/window_dump.xml"
+        private const val MAX_UI_FIELD_CHARS = UiObservationSerializer.MAX_UI_FIELD_CHARS
+        private const val MAX_UI_XML_CHARS = 512 * 1024
+        private const val MAX_UI_XML_DEPTH = 128
+        private const val MAX_UI_NODES = UiObservationSerializer.MAX_UI_NODES
+        private val BOUNDS_RE = Regex("\\[(-?\\d+),(-?\\d+)]\\[(-?\\d+),(-?\\d+)]")
+
+        /** Scopes unchanged-suppression to this backend. */
+        private const val BACKEND = "adb"
 
         private const val IME_ACTION_SUFFIX = ".INPUT_TEXT"
         private const val IME_EXTRA_PAYLOAD = "payload_base64"
@@ -513,6 +890,35 @@ class AndroidDeviceTools(
         fun shellQuote(arg: String): String = "'" + arg.replace("'", "'\\''") + "'"
 
         fun quotedRemote(path: String): String = shellQuote(path)
+
+        /**
+         * Dump the hierarchy without leaking `uiautomator`'s rotation side effect.
+         *
+         * `uiautomator dump` runs inside a UiAutomation session, and AOSP's
+         * `UiAutomationConnection.shutdown()` restores rotation state on teardown:
+         * when the session never froze a rotation itself it calls
+         * `WindowManagerService.thawRotation()`, which writes
+         * `Settings.System.accelerometer_rotation = 1`. So every plain dump turns
+         * system Auto-Rotate on and discards the user's manual orientation lock,
+         * which is why it appears to flip on by itself during agent runs (#12).
+         *
+         * The guard snapshots the user's rotation settings, runs the dump, and puts
+         * them back in the same shell round trip, so the dump's own exit code still
+         * reaches the caller and the fix costs no extra transport latency. The
+         * post-dump read is short-circuited away when Auto-Rotate was already on,
+         * which is the common case. Public for unit tests.
+         */
+        fun uiDumpCommand(path: String): String {
+            val quoted = quotedRemote(path)
+            return "__ar=\$(settings get system accelerometer_rotation); " +
+                "__ur=\$(settings get system user_rotation); " +
+                "uiautomator dump --compressed $quoted && cat $quoted; __rc=\$?; " +
+                "if [ \"\$__ar\" = 0 ] && " +
+                "[ \"\$(settings get system accelerometer_rotation)\" != 0 ]; then " +
+                "case \"\$__ur\" in 0|1|2|3) settings put system user_rotation \"\$__ur\";; esac; " +
+                "settings put system accelerometer_rotation 0; " +
+                "fi; exit \$__rc"
+        }
 
         private val PACKAGE_RE = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
         private val COMPONENT_RE = Regex("^[A-Za-z][A-Za-z0-9_.]*(/[A-Za-z0-9_.\$]+)+$")
@@ -657,8 +1063,20 @@ class AndroidDeviceTools(
                 bytes[6] == 0x1A.toByte() && bytes[7] == 0x0A.toByte()
 
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
-            tool("device_status", "Read ADB connection state. Read-only.", emptyMap(), emptyList()),
-            tool("read_ui", "Dump the current UI hierarchy as XML. Read-only.", emptyMap(), emptyList()),
+            ACT_AND_OBSERVE_DEFINITION,
+            tool("device_status", "Report which device backends are live: the accessibility service, and the optional Wireless ADB. Read-only.", emptyMap(), emptyList()),
+            tool(
+                "read_ui",
+                READ_UI_DESCRIPTION,
+                mapOf(
+                    "timeoutMs" to "integer", "raw" to "boolean", "force" to "boolean",
+                    "text" to "string", "resourceId" to "string", "class" to "string",
+                    "package" to "string", "rootNodeId" to "string",
+                    "clickableOnly" to "boolean", "scrollableOnly" to "boolean",
+                    "offset" to "integer", "maxNodes" to "integer", "maxChars" to "integer",
+                ),
+                emptyList(),
+            ),
             tool("screenshot", "Capture a PNG screenshot. Returns imageBase64. Read-only.", emptyMap(), emptyList()),
             tool("tap", "Tap the screen at pixel coordinates.", mapOf("x" to "integer", "y" to "integer"), listOf("x", "y")),
             tool("swipe", "Swipe from one point to another.", mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"), listOf("x1", "y1", "x2", "y2")),

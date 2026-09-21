@@ -61,10 +61,12 @@ CA_BUNDLE_SHA256 = "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d2848
 # alias codex-path/bwrap -> libcodex_bwrap.so so bwrap is discoverable on PATH.
 LIB_MAPPING = {
     "bin/codex-app-server": "libcodex_app_server.so",
-    # Android's native-library packaging accepts .so files, but does not
-    # preserve an executable with no extension. The app-server is patched at
-    # staging time to request this exact name from nativeLibraryDir.
-    "bin/codex-code-mode-host": "codex-code-mode-x.so",
+    # Android extracts an APK native-library entry into nativeLibraryDir only
+    # when its name starts with "lib" and ends with ".so". Debuggable builds
+    # are exempt, which is how a name without the prefix worked in debug APKs
+    # and went missing in release ones. The app-server is patched at staging
+    # time to request this exact name from nativeLibraryDir.
+    "bin/codex-code-mode-host": "libcodex_codemode.so",
     "codex-path/rg": "libcodex_rg.so",
     "codex-resources/bwrap": "libcodex_bwrap.so",
     "codex-resources/zsh/bin/zsh": "libcodex_zsh.so",
@@ -74,7 +76,7 @@ EM_AARCH64 = 183
 EM_X86_64 = 62
 ELF_MAGIC = b"\x7fELF"
 CODE_MODE_HOST_NAME = b"codex-code-mode-host"
-CODE_MODE_HOST_ANDROID_NAME = b"codex-code-mode-x.so"
+CODE_MODE_HOST_ANDROID_NAME = b"libcodex_codemode.so"
 
 
 def fail(message: str) -> "NoReturn":  # type: ignore[name-defined]
@@ -195,13 +197,19 @@ def check_elf(path: str, expected_machine: int, abi: str) -> int:
     return e_machine
 
 
+def is_extractable_lib_name(name: str) -> bool:
+    """Whether Android extracts this APK native-library entry in a release build."""
+    return name.startswith("lib") and name.endswith(".so") and "/" not in name
+
+
 def patch_code_mode_host_lookup(path: str) -> None:
     """Point the staged app-server at the Android-packaged helper name.
 
     Codex 0.153.4 resolves the helper as a sibling named
     ``codex-code-mode-host``. Android only extracts native-library entries
-    from the APK when they have a ``.so`` suffix, so the exact sibling cannot
-    exist in ``nativeLibraryDir``. The final occurrence is the compiled
+    from the APK when their name starts with ``lib`` and ends with ``.so``
+    (debuggable apps are exempt), so the exact sibling cannot exist in the
+    ``nativeLibraryDir`` of a release build. The final occurrence is the compiled
     install-context constant; the earlier occurrence is user-facing error
     text and must remain unchanged. The Rust string is stored adjacent to
     other read-only data, so the replacement must have the exact same width:
@@ -251,6 +259,11 @@ def stage_libraries(
     staged: list[dict] = []
     for package_path in sorted(LIB_MAPPING):
         lib_name = LIB_MAPPING[package_path]
+        if not is_extractable_lib_name(lib_name):
+            fail(
+                "staged name %s is not lib*.so; a release APK would not extract it"
+                % lib_name
+            )
         src = os.path.join(package_dir, *package_path.split("/"))
         if not os.path.isfile(src):
             fail("missing extracted file: " + src)
@@ -314,7 +327,7 @@ def stage_assets(
         "notes": (
             "The official rust-v0.153.4 app-server is staged with an in-place "
             "helper-name patch: its final code-mode host lookup uses "
-            "codex-code-mode-x.so, the .so entry Android extracts into "
+            "libcodex_codemode.so, the lib*.so entry Android extracts into "
             "nativeLibraryDir. The original package archive is unchanged; "
             "rg/zsh/bwrap discovery remains best effort. No device success is "
             "claimed by this script."
