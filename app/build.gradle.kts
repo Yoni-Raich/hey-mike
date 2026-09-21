@@ -1,6 +1,9 @@
 import java.util.Properties
 plugins { id("com.android.application"); kotlin("android"); kotlin("plugin.compose") }
 val appVersion = Properties().apply { rootProject.file("version.properties").inputStream().use(::load) }
+val versionCodeOverride = project.findProperty("versionCodeOverride")?.toString()?.toIntOrNull()
+val versionNameOverride = project.findProperty("versionNameOverride")?.toString()
+val nightlyKeystorePath = System.getenv("DEV_NIGHTLY_KEYSTORE")?.takeIf { it.isNotBlank() }
 android {
     namespace = "dev.androidagent.app"
     compileSdk = 35
@@ -8,8 +11,8 @@ android {
         applicationId = "dev.androidagent.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = appVersion.getProperty("versionCode").toInt()
-        versionName = appVersion.getProperty("versionName")
+        versionCode = versionCodeOverride ?: appVersion.getProperty("versionCode").toInt()
+        versionName = versionNameOverride ?: appVersion.getProperty("versionName")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Package native Codex binaries for both the ARM64 phone and the local
         // x86_64 emulator so emulator tests do not use ARM translation.
@@ -20,7 +23,22 @@ android {
         create("prod") { dimension = "channel"; resValue("string", "app_name", "Android Agent") }
         create("dev") { dimension = "channel"; applicationIdSuffix = ".dev"; resValue("string", "app_name", "Android Agent Dev") }
     }
-    buildTypes { release { isMinifyEnabled = false; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") } }
+    signingConfigs {
+        if (nightlyKeystorePath != null) {
+            create("devNightly") {
+                storeFile = file(nightlyKeystorePath)
+                storePassword = System.getenv("DEV_NIGHTLY_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("DEV_NIGHTLY_KEY_ALIAS")
+                keyPassword = System.getenv("DEV_NIGHTLY_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            if (nightlyKeystorePath != null) signingConfig = signingConfigs.getByName("devNightly")
+        }
+        release { isMinifyEnabled = false; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }

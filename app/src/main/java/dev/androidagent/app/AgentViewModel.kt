@@ -301,8 +301,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val info = updateManager.checkForUpdates()
             if (info.isUpdateAvailable) {
-                val dismissedTag = preferences.getString("dismissed_update_tag", null)
-                val isDismissed = dismissedTag == info.latestTag
+                val dismissedKey = preferences.getString("dismissed_update_key", null)
+                    ?: preferences.getString("dismissed_update_tag", null)
+                val isDismissed = dismissedKey == (info.commitSha ?: info.latestTag)
                 mutable.update { it.copy(updateStatus = UpdateStatus.Available(info), updateInfo = info, isUpdateBannerVisible = !isDismissed) }
             } else {
                 mutable.update { it.copy(updateStatus = UpdateStatus.UpToDate(info.latestVersionName), updateInfo = info) }
@@ -353,8 +354,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { error("Could not open install settings: ${it.message}") }
     }
     fun dismissUpdateBanner() {
-        val tag = mutable.value.updateInfo?.latestTag
-        if (tag != null) preferences.edit().putString("dismissed_update_tag", tag).apply()
+        val info = mutable.value.updateInfo
+        if (info != null) {
+            preferences.edit().putString("dismissed_update_key", info.commitSha ?: info.latestTag).apply()
+        }
         mutable.update { it.copy(isUpdateBannerVisible = false) }
     }
     private fun parsePort(value: String): Int = value.trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: kotlin.error("Enter a port from 1 to 65535.")

@@ -36,63 +36,63 @@ class AgentInputMethodService : InputMethodService() {
             override fun onReceive(context: Context, intent: Intent) {
                 if (intent.action !in setOf(inputAction, "$packageName$PROBE_SUFFIX")) return
 
-                    if (Build.VERSION.SDK_INT >= 34 && intentSenderUid() !in setOf(Process.SHELL_UID, Process.INVALID_UID)) {
-                        setFailure(RESULT_UNAUTHORIZED)
-                        return
-                    }
-                    // DUMP is enforced on the sender by registerReceiver. Android may
-                    // hide shell identity unless the sender opts into sharing it.
-                    if (intent.action == "$packageName$PROBE_SUFFIX") {
-                        val ready = currentInputConnection != null && currentInputEditorInfo != null &&
-                            currentInputEditorInfo.inputType != 0
-                        setResultCode(if (ready) RESULT_SUCCESS else RESULT_NO_INPUT_CONNECTION)
-                        setResultData(if (ready) RESULT_DATA_OK else RESULT_DATA_ERROR)
-                        return
-                    }
-                    val encoded = intent.getStringExtra(EXTRA_PAYLOAD)
-                    if (encoded.isNullOrBlank() || encoded.length > MAX_BASE64_CHARS ||
-                        encoded.length % 4 != 0 ||
-                        !encoded.matches(BASE64_RE)
-                    ) {
-                        setFailure(RESULT_INVALID_PAYLOAD)
-                        return
-                    }
-                    val bytes = try {
-                        Base64.decode(encoded, Base64.NO_WRAP)
-                    } catch (_: IllegalArgumentException) {
-                        setFailure(RESULT_INVALID_PAYLOAD)
-                        return
-                    }
-                    if (Base64.encodeToString(bytes, Base64.NO_WRAP) != encoded) {
-                        setFailure(RESULT_INVALID_PAYLOAD)
-                        return
-                    }
-                    if (bytes.isEmpty() || bytes.size > MAX_TEXT_BYTES) {
-                        setFailure(RESULT_INVALID_PAYLOAD)
-                        return
-                    }
-                    val text = try {
-                        decodeUtf8(bytes)
-                    } catch (_: java.nio.charset.CharacterCodingException) {
-                        setFailure(RESULT_INVALID_PAYLOAD)
-                        return
-                    }
-                    val connection = currentInputConnection
-                    if (connection == null || currentInputEditorInfo == null || currentInputEditorInfo.inputType == 0) {
-                        setFailure(RESULT_NO_INPUT_CONNECTION)
-                        return
-                    }
-                    val committed = try {
-                        connection.commitText(text, 1)
-                    } catch (_: RuntimeException) {
-                        false
-                    }
-                    if (committed) {
-                        setResultCode(RESULT_SUCCESS)
-                        setResultData(RESULT_DATA_OK)
-                    } else {
-                        setFailure(RESULT_COMMIT_FAILED)
-                    }
+                if (Build.VERSION.SDK_INT >= 34 && intentSenderUid() !in setOf(Process.SHELL_UID, Process.INVALID_UID)) {
+                    setFailure(RESULT_UNAUTHORIZED)
+                    return
+                }
+                // DUMP is enforced on the sender by registerReceiver. Android may
+                // hide shell identity unless the sender opts into sharing it.
+                if (intent.action == "$packageName$PROBE_SUFFIX") {
+                    val ready = currentInputConnection != null && currentInputEditorInfo != null &&
+                        currentInputEditorInfo.inputType != 0
+                    setResultCode(if (ready) RESULT_SUCCESS else RESULT_NO_INPUT_CONNECTION)
+                    setResultData(if (ready) RESULT_DATA_OK else RESULT_DATA_ERROR)
+                    return
+                }
+                val encoded = intent.getStringExtra(EXTRA_PAYLOAD)
+                if (encoded.isNullOrBlank() || encoded.length > MAX_BASE64_CHARS ||
+                    encoded.length % 4 != 0 ||
+                    !encoded.matches(BASE64_RE)
+                ) {
+                    setFailure(RESULT_INVALID_PAYLOAD)
+                    return
+                }
+                val bytes = try {
+                    Base64.decode(encoded, Base64.NO_WRAP)
+                } catch (_: IllegalArgumentException) {
+                    setFailure(RESULT_INVALID_PAYLOAD)
+                    return
+                }
+                if (Base64.encodeToString(bytes, Base64.NO_WRAP) != encoded) {
+                    setFailure(RESULT_INVALID_PAYLOAD)
+                    return
+                }
+                if (bytes.isEmpty() || bytes.size > MAX_TEXT_BYTES) {
+                    setFailure(RESULT_INVALID_PAYLOAD)
+                    return
+                }
+                val text = try {
+                    decodeUtf8(bytes)
+                } catch (_: java.nio.charset.CharacterCodingException) {
+                    setFailure(RESULT_INVALID_PAYLOAD)
+                    return
+                }
+                val connection = currentInputConnection
+                if (connection == null || currentInputEditorInfo == null || currentInputEditorInfo.inputType == 0) {
+                    setFailure(RESULT_NO_INPUT_CONNECTION)
+                    return
+                }
+                val committed = try {
+                    connection.commitText(text, 1)
+                } catch (_: RuntimeException) {
+                    false
+                }
+                if (committed) {
+                    setResultCode(RESULT_SUCCESS)
+                    setResultData(RESULT_DATA_OK)
+                } else {
+                    setFailure(RESULT_COMMIT_FAILED)
+                }
             }
 
             @RequiresApi(34)

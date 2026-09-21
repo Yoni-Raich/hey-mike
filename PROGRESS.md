@@ -4,6 +4,11 @@
 A fully usable Android app with Codex chat, on-phone execution, per-session files, wireless ADB to the same phone, full ADB tools, floating control UI, live steering, and local stop.
 
 ## Current state
+- 2026-09-21: Prepared the separate `dev-nightly` update channel. The `dev`
+  flavor checks the prerelease by package and monotonic `versionCode`, and the
+  scheduled workflow builds only for a new `dev` commit. The workflow still
+  needs the existing dev debug keystore in the four repository secrets listed
+  in `docs/DEV_NIGHTLY.md`; no GitHub run or physical install was performed.
 - 2026-09-05: Requirements and eight module boundaries agreed.
 - Existing APK Manager source reviewed. Reuse candidate: Kadb pairing, persistent identity, localhost connection, discovery.
 - Test device: Q8G64TD6ZTB6H6ZL, Android 13, ARM64. USB works; wireless debugging enabled. A shell-UID TCP connection to the current localhost ADB port succeeds. App-UID authenticated self-ADB remains unverified.
