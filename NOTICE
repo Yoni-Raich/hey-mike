@@ -22,10 +22,10 @@ Third-party components
 ----------------------
 
 The build preparation script fetches and stages the pinned OpenAI Codex
-app-server package version 0.153.4 for generated APKs. The tracked project
+app-server package version 0.156.0 for generated APKs. The tracked project
 research identifies that package as Apache-2.0 licensed. A copy of that license
 text is kept at
-third_party/licenses/openai-codex-app-server-0.153.4-Apache-2.0.txt.
+third_party/licenses/openai-codex-app-server-0.156.0-Apache-2.0.txt.
 
 Other dependencies and runtime components keep their own upstream licenses.
 This notice does not relicense them, and the licenses above do not apply to

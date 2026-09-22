@@ -2,7 +2,7 @@
 """Stage the official Codex app-server package for the Android APK.
 
 Pipeline (stdlib only, reproducible):
-  1. Verify SHA-256 of the official rust-v0.153.4 ARM64 and x86_64 musl packages.
+  1. Verify SHA-256 of the official rust-v0.156.0 ARM64 and x86_64 musl packages.
   2. Safely extract them to .codex-work/runtime/package-* (no absolute paths,
      no "..", no symlinks/hardlinks, no devices).
   3. Copy native ELFs to app/build/generated/runtime/jniLibs/<abi>/ as .so
@@ -31,14 +31,20 @@ import urllib.request
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXPECTED_SHA256 = "5673c5a8935ff2f85ca67b489e560fdd5e08fb0f0e2f7426f048ec7449aa4fdc"
-PACKAGE_VERSION = "0.153.4"
+EXPECTED_SHA256 = "817e464eec79ae7b3af56ea1395e4ddd58387e76e294bac0721dc58ceddec636"
+PACKAGE_VERSION = "0.156.0"
 PACKAGE_TARGET = "aarch64-unknown-linux-musl"
 X86_PACKAGE_TARGET = "x86_64-unknown-linux-musl"
 
-DEFAULT_PACKAGE = os.path.join(".codex-work", "runtime", "codex-package.tar.gz")
+# Cached archives carry the version so a bump downloads the new package
+# instead of failing the hash check against an older cached one.
+DEFAULT_PACKAGE = os.path.join(
+    ".codex-work", "runtime", "codex-package-%s.tar.gz" % PACKAGE_VERSION
+)
 DEFAULT_PACKAGE_DIR = os.path.join(".codex-work", "runtime", "package")
-DEFAULT_X86_PACKAGE = os.path.join(".codex-work", "runtime", "codex-package-x86_64.tar.gz")
+DEFAULT_X86_PACKAGE = os.path.join(
+    ".codex-work", "runtime", "codex-package-%s-x86_64.tar.gz" % PACKAGE_VERSION
+)
 DEFAULT_X86_PACKAGE_DIR = os.path.join(".codex-work", "runtime", "package-x86_64")
 DEFAULT_JNILIBS = os.path.join(
     "app", "build", "generated", "runtime", "jniLibs", "arm64-v8a"
@@ -205,7 +211,7 @@ def is_extractable_lib_name(name: str) -> bool:
 def patch_code_mode_host_lookup(path: str) -> None:
     """Point the staged app-server at the Android-packaged helper name.
 
-    Codex 0.153.4 resolves the helper as a sibling named
+    Codex 0.156.0 resolves the helper as a sibling named
     ``codex-code-mode-host``. Android only extracts native-library entries
     from the APK when their name starts with ``lib`` and ends with ``.so``
     (debuggable apps are exempt), so the exact sibling cannot exist in the
@@ -325,7 +331,7 @@ def stage_assets(
             "launch": "<nativeLibraryDir>/libcodex_app_server.so --listen stdio://",
         },
         "notes": (
-            "The official rust-v0.153.4 app-server is staged with an in-place "
+            "The official rust-v0.156.0 app-server is staged with an in-place "
             "helper-name patch: its final code-mode host lookup uses "
             "libcodex_codemode.so, the lib*.so entry Android extracts into "
             "nativeLibraryDir. The original package archive is unchanged; "
@@ -349,18 +355,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--out-assets", default=DEFAULT_ASSETS)
     parser.add_argument(
         "--url",
-        default="https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz",
+        default="https://github.com/openai/codex/releases/download/rust-v0.156.0/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz",
         help="Download the package from this URL when --package is missing.",
     )
     parser.add_argument("--x86-package", default=DEFAULT_X86_PACKAGE)
     parser.add_argument("--x86-package-dir", default=DEFAULT_X86_PACKAGE_DIR)
     parser.add_argument(
         "--x86-expected-sha256",
-        default="a5d37ff1fa6953ee6d317b7e69bfafd39f5f53350b631d790fa7531159f22420",
+        default="037a10600af8228fca6f600ccd37048eb70b875df9097774fa9776f494ea55ea",
     )
     parser.add_argument(
         "--x86-url",
-        default="https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-app-server-package-x86_64-unknown-linux-musl.tar.gz",
+        default="https://github.com/openai/codex/releases/download/rust-v0.156.0/codex-app-server-package-x86_64-unknown-linux-musl.tar.gz",
         help="Download the x86_64 package from this URL when --x86-package is missing.",
     )
     parser.add_argument("--ca-bundle", default=DEFAULT_CA_BUNDLE)
