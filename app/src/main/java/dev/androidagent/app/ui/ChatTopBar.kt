@@ -306,6 +306,10 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
             TextButton(onClick = actions.onRefreshAccount, enabled = !state.isRefreshingAccount) {
                 LoadingButtonContent(loading = state.isRefreshingAccount, icon = Icons.Outlined.Refresh, label = "Refresh usage", loadingLabel = "Refreshing…")
             }
+            if (state.savedAccounts.accounts.isNotEmpty()) {
+                StatusLabel("ACCOUNT")
+                AccountSwitcher(state, actions)
+            }
             HorizontalDivider(color = RingTrack)
             Column {
                 LinkRow(Icons.Outlined.Folder, "Workspace files") { onDismiss(); actions.onOpenWorkspaceFiles() }

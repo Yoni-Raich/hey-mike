@@ -428,6 +428,32 @@ for the visible chat only. A missing `usedPercent` is surfaced as unknown and
 never rendered as zero. `RunMetrics` records first-response latency, total run
 time, and tool count/time per session.
 
+## Several Codex accounts
+
+Codex keeps an account in exactly one file, `CODEX_HOME/auth.json`; chats,
+rollouts, skills and config in CODEX_HOME belong to no account. So switching
+account is a file swap, done by `CodexAccountVault` (`:core`) while the
+app-server is stopped:
+
+- Saved sign-ins live in `<files>/runtime/accounts/<id>.auth.json` with an
+  `accounts.json` index, beside CODEX_HOME and never in it, so Codex only
+  ever sees the live one. Files are owner-only and written atomically.
+- The live account is captured under the label Codex reports (the email) at
+  sign-in, prepare and refresh; the same email is updated, not duplicated.
+- Before any swap the live file is copied back into its slot, because Codex
+  rewrites it when it refreshes a token.
+- *Switch*: stop the app-server, copy the chosen slot to `auth.json`, restart,
+  re-read account, quota and models. *Add*: save the live one, remove
+  `auth.json`, start the normal device-code sign-in. *Log out* removes the
+  live one from the list; *remove* forgets a saved one that is not live.
+- A switch refuses while a run or voice is active and pauses the turn queue
+  for its duration, so nothing restarts Codex half-way.
+
+Chats are untouched: the app's sessions keep their engine thread IDs and the
+next turn resumes that thread from its local rollout under the new account.
+Token usage stays per thread; the quota bars are cleared and read again,
+because quota is the only thing that follows the account.
+
 ## Rich chat presentation
 
 Assistant markdown is rendered with Markwon (tables, strikethrough, prism4j

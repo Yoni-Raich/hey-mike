@@ -119,6 +119,10 @@ data class AgentUiState(
      */
     val networkDiagnostic: String? = null,
     val accountStatus: AccountStatus? = null,
+    /** Every Codex sign-in saved on this phone and which one is live. */
+    val savedAccounts: dev.androidagent.core.AccountVaultState = dev.androidagent.core.AccountVaultState(),
+    /** An account switch is stopping and restarting Codex. */
+    val isSwitchingAccount: Boolean = false,
     val availableModels: List<String> = emptyList(),
     val modelCatalog: List<AgentModel> = emptyList(),
     val availableSkills: List<AgentSkill> = emptyList(),
@@ -183,6 +187,12 @@ data class AgentUiActions(
     val onPrepareRuntime: () -> Unit = {},
     val onLogin: () -> Unit = {},
     val onLogout: () -> Unit = {},
+    /** Sign in to one more account; the live one stays saved. */
+    val onAddAccount: () -> Unit = {},
+    /** Make a saved account the live one. Chats are untouched. */
+    val onSwitchAccount: (String) -> Unit = {},
+    /** Forget a saved account that is not live. */
+    val onRemoveAccount: (String) -> Unit = {},
     val onRefreshAccount: () -> Unit = {},
     val onPair: (code: String, port: String) -> Unit = { _, _ -> },
     val onConnect: (port: String) -> Unit = {},

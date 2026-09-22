@@ -56,6 +56,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try { checkForUpdates(manual = false) } catch (_: Exception) {}
         }
+        viewModelScope.launch { refreshSavedAccounts() }
         viewModelScope.launch {
             graph.sessions.sessions.collect { list ->
                 mutable.update { it.copy(sessions = list) }
@@ -111,7 +112,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.engine.voiceEvents.collect(::handleVoiceEvent) }
         viewModelScope.launch { graph.engine.events.collect { event ->
             when (event) {
-                is EngineEvent.AccountChanged -> { mutable.update { it.copy(accountStatus = event.status, infoMessage = if (event.status.signedIn) "Signed in. You can start chatting." else null) }; if (event.status.signedIn) loadModels() }
+                is EngineEvent.AccountChanged -> {
+                    mutable.update { it.copy(accountStatus = event.status, infoMessage = if (event.status.signedIn) "Signed in. You can start chatting." else null) }
+                    if (event.status.signedIn) { rememberAccount(event.status); loadModels(); runCatching { graph.engine.refreshUsage() } }
+                }
                 is EngineEvent.UsageChanged -> {
                     val eventThread = event.threadId
                     val eventUsage = event.usage
@@ -313,6 +317,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 graph.runtime.prepare(); graph.engine.connect()
                 val account = graph.engine.account()
                 mutable.update { it.copy(accountStatus = account) }
+                rememberAccount(account)
                 loadModels()
                 loadSkills()
                 runCatching { graph.engine.refreshUsage() }
@@ -323,13 +328,95 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val status = graph.engine.login()
         mutable.update { it.copy(accountStatus = status, isSettingsOpen = true, errorMessage = null) }
     }
-    fun logout() = task { check(!graph.coordinator.state.value.active && !graph.voice.state.value.active) { "Stop the current run or voice conversation before signing out." }; graph.engine.logout(); mutable.update { it.copy(accountStatus = AccountStatus(false, "Sign in to Codex")) } }
+    fun logout() = task {
+        check(!graph.coordinator.state.value.active && !graph.voice.state.value.active) { "Stop the current run or voice conversation before signing out." }
+        graph.engine.logout()
+        // Signing out ends this sign-in for good, so it leaves the saved list;
+        // the other saved accounts stay one tap away.
+        withContext(Dispatchers.IO) { graph.accounts.state().activeId?.let(graph.accounts::remove) }
+        refreshSavedAccounts()
+        mutable.update { it.copy(accountStatus = AccountStatus(false, "Sign in to Codex"), usageLimits = emptyList()) }
+    }
+
+    private val accountChange = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Sign in to one more account. The live one is saved and taken off
+     * Codex first, so the device-code sign-in lands in an empty slot instead
+     * of replacing it.
+     */
+    fun addAccount() = changeAccount("adding an account") {
+        withContext(Dispatchers.IO) { graph.accounts.detach() }
+        val status = graph.engine.login()
+        mutable.update { it.copy(accountStatus = status, isSettingsOpen = true) }
+    }
+
+    /**
+     * Make a saved account the live one. Only Codex's credentials file is
+     * swapped: every chat, its thread and its history stay as they are and
+     * resume under this account on the next turn. The quota shown is read
+     * again, because quota is the one thing that belongs to the account.
+     */
+    fun switchAccount(id: String) {
+        if (mutable.value.savedAccounts.activeId == id && mutable.value.accountStatus?.signedIn == true) return
+        changeAccount("switching account") { activate(id) }
+    }
+
+    private suspend fun activate(id: String) {
+        val target = withContext(Dispatchers.IO) { graph.accounts.activate(id) }
+        val account = graph.engine.account()
+        mutable.update { it.copy(accountStatus = account, infoMessage = "Switched to ${target.label}. Your chats are unchanged.") }
+        runCatching { graph.engine.refreshUsage() }
+        runCatching { loadModels() }
+    }
+
+    fun removeAccount(id: String) = task {
+        check(mutable.value.savedAccounts.activeId != id) { "Switch to another account first, or log out of this one." }
+        withContext(Dispatchers.IO) { graph.accounts.remove(id) }
+        refreshSavedAccounts()
+    }
+
+    /**
+     * Codex writes auth.json while it runs, so the swap happens with the
+     * app-server stopped and nothing queued able to start it again.
+     */
+    private fun changeAccount(what: String, block: suspend () -> Unit) = task {
+        check(!graph.coordinator.state.value.active && !graph.voice.state.value.active) { "Stop the current run or voice conversation before $what." }
+        if (!accountChange.tryLock()) return@task
+        val wasPaused = graph.queue.paused.value
+        graph.queue.pause()
+        mutable.update { it.copy(isSwitchingAccount = true, usageLimits = emptyList(), errorMessage = null) }
+        try {
+            graph.engine.close()
+            block()
+        } finally {
+            refreshSavedAccounts()
+            mutable.update { it.copy(isSwitchingAccount = false) }
+            accountChange.unlock()
+            if (!wasPaused) graph.queue.resume()
+        }
+    }
+
+    /** Keep the live sign-in in the saved list, under the email Codex reports. */
+    private suspend fun rememberAccount(status: AccountStatus) {
+        if (!status.signedIn) return
+        runCatching { withContext(Dispatchers.IO) { graph.accounts.captureActive(status.label) } }
+        refreshSavedAccounts()
+    }
+
+    private suspend fun refreshSavedAccounts() {
+        val saved = runCatching { withContext(Dispatchers.IO) { graph.accounts.state() } }.getOrNull() ?: return
+        mutable.update { it.copy(savedAccounts = saved) }
+    }
     fun refreshAccount() = task {
         if (graph.runtime.status.value.phase !in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) return@task
+        // A switch has Codex stopped on purpose; reading now would restart it mid-swap.
+        if (accountChange.isLocked) return@task
         mutable.update { it.copy(isRefreshingAccount = true) }
         try {
             val account = graph.engine.account()
             mutable.update { it.copy(accountStatus = account) }
+            rememberAccount(account)
             runCatching { graph.engine.refreshUsage() }
         } finally {
             mutable.update { it.copy(isRefreshingAccount = false) }

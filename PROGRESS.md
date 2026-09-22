@@ -1,5 +1,22 @@
 # Progress
 
+## Multiple Codex accounts — 2026-09-22
+
+On branch `claude/multiple-accounts-branch-i6emwt`, the app keeps several
+Codex sign-ins and switches between them in one tap from Settings → Account or
+the usage sheet in the top bar. Only `CODEX_HOME/auth.json` is swapped (see
+`docs/ARCHITECTURE.md`, "Several Codex accounts"); chats and threads stay, and
+the quota is read again for the new account.
+
+Verified: `./gradlew :core:test` passed, including six new
+`CodexAccountVaultTest` cases (dedupe by email, detach/add, swap keeps chat
+files, refreshed tokens survive a round trip, remove). Not verified: the
+`:app` changes were not compiled (no Android SDK in that environment), and
+nothing ran on a phone. Still to check on a device: a device-code sign-in for
+a second account, a switch followed by a turn in an existing chat (the resumed
+thread carries reasoning items created under the other account), and that the
+quota bars change.
+
 ## Jev UI engine experiment — 2026-09-22
 
 On branch `experiment/jev-ui-tool`, Jev now runs the full bounded UI loop behind
