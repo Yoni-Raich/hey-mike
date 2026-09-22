@@ -195,7 +195,16 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
                     if (!continuation.isActive) return@execute
                     connection.outputStream.use { output -> output.write(body.toByteArray(Charsets.UTF_8)) }
                     val code = connection.responseCode
-                    if (code !in 200..299) throw IOException("Jev request failed with HTTP $code")
+                    if (code !in 200..299) {
+                        val detail = runCatching {
+                            connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                                val buffer = CharArray(MAX_ERROR_CHARS)
+                                val read = reader.read(buffer)
+                                if (read > 0) String(buffer, 0, read) else ""
+                            }
+                        }.getOrNull()?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+                        throw IOException("Jev request failed with HTTP $code" + if (detail.isEmpty()) "" else ": $detail")
+                    }
                     val response = parseResponse(readBounded(connection.inputStream))
                     if (continuation.isActive) {
                         val accepted = synchronized(requestLock) {
@@ -275,5 +284,6 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
         const val READ_TIMEOUT_MS = 15_000
         const val MAX_REQUEST_BYTES = 150_000
         const val MAX_RESPONSE_CHARS = 150_000
+        const val MAX_ERROR_CHARS = 400
     }
 }

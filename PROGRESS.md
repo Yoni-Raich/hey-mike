@@ -87,6 +87,64 @@ a second account, a switch followed by a turn in an existing chat (the resumed
 thread carries reasoning items created under the other account), and that the
 quota bars change.
 
+## Jev on-device measurement and loop fixes — 2026-09-22 (evening)
+
+Branch `fix/jev-navigation-recovery`, Nothing A059, dev builds 31-40 installed
+with `install -r`; the accessibility service stayed bound throughout. Tasks were
+sent to Mike's chat, and results read from the rollout JSONL.
+
+Settings -> Display, "do not change any settings": `incomplete` (all four
+requirements pending) became `done_visible` in 1 step, 3 Jev calls and 7.0-7.4s
+(handoff baseline 26.7s / 8 calls). The deep link acts in ~20ms; the audit now
+answers with P(PENDING) 0.05-0.2.
+
+Fixed, each with a unit test:
+
+- **The completion audit split its vote.** Each retained screen was its own
+  option, so `PENDING` won the plurality (0.55-0.60) on screens that plainly
+  qualified. One yes/no question per requirement; code attaches the evidence.
+- **Prohibitions were unprovable.** "Do not change any settings" is now judged
+  against a complete `actionsTaken` list kept by the ledger.
+- **Jev could flip action pages until the wall limit.** A Gym Notes run made 3
+  real actions in 4s, then 112 page flips for 286s. Paging stops once every
+  page of a screen has been shown. The same run now ends in 36s as `incomplete`,
+  with exactly one pending requirement: the Gym shows no visible confirmation
+  after Submit, even for a physical tap.
+- **WAIT on an unchanged screen, and DONE after an audit rejection, are
+  withdrawn on that screen.** One Wi-Fi run spent 9 WAITs (~13s) on a stable page.
+- **Settings deep links hijacked app goals.** "Enable Dark Theme, set Volume to
+  75%" in the Gym opened system Sound settings and changed the phone's media
+  volume (16 -> 12, restored by hand). Deep links now need the goal to mention
+  settings.
+- **`package` was silently dropped.** Mike passes it; Jev got "open the app" with
+  no app. It is now accepted, and unknown arguments are refused.
+- **Unnamed checkboxes.** The Tasks row's checkbox precedes its label, so the
+  audit and Jev could not see Task #3 was already ticked, and Jev toggled it seven
+  times. Checkable controls borrow their row's label, and tap offers say on/off.
+- **`max_tokens_exceeded`.** Every decision carried the full ledger evidence.
+  Decisions now get requirement statuses and four screen summaries.
+- **`needs_input` with the value supplied.** When Jev answers that no supplied
+  value fits a field, that field is withdrawn on the screen instead.
+- Diagnostics: `timings.decisions`, `taskLedger.lastAudit`, and the Jev API
+  error body in `model_error` (it named `max_tokens_exceeded`).
+
+Still open, seen in the last full AndroidGym run (timeout, 117 steps):
+
+- BACK at the Gym's root closes it, and the Gym loses its state when it closes;
+  Jev pressed BACK six times and redid the settings each time.
+- A refusal is suppressed per node id, and ids change between observations, so
+  "Replace field Standard" (a read-only dropdown) was refused many times.
+- Jev taps the Gym's checklist text ("2. Select 'Urgent'…") as if it were the
+  control, and it bounces between the Gym's two tabs through different targets.
+- The Gym grades Notes (item 4) on keyboard text-change events: a verified
+  accessibility text write plus Submit left it unchecked, while real key presses
+  checked it. That is the benchmark's grading, not a failed write.
+- The "Accessibility - Off" mismatch did not reproduce after `install -r`; the
+  settings sheet showed On with the service bound.
+
+`:core:test :a11y:testDebugUnitTest :device-tools:test :app:testDevDebugUnitTest
+:app:lintDevDebug :app:assembleDevDebug` and `git diff --check` pass.
+
 ## Jev physical-device debugging — 2026-09-22
 
 Branch `fix/jev-navigation-recovery`, on the Nothing A059 with a real Jev token.

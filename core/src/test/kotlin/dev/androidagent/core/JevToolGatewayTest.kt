@@ -210,6 +210,178 @@ class JevToolGatewayTest {
         assertTrue("invented token was accepted", invented is IllegalArgumentException)
     }
 
+    @Test
+    fun `wait is withdrawn on a screen that two waits did not change`() = runBlocking {
+        val router = FakeRouter(mutableListOf(screen("ui-1", "Submit", true)))
+        val offered = mutableListOf<Boolean>()
+        val script = mutableListOf("WAIT", "WAIT", "T1", "DONE")
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevToolGatewayTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                val question = request.questions.firstOrNull { it.name == "action" } ?: return auditAnswer(request)
+                offered += "WAIT" in question.criteria
+                return JevDecisionResponse(mapOf("action" to choice(question, script.removeAt(0))), "jev-test")
+            }
+        }
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        val result = gateway.invoke("jev_run_ui_task", requestJson("Tap Submit"))
+
+        assertEquals("done_visible", Json.parseToJsonElement(result.text).jsonObject["status"]?.jsonPrimitive?.content)
+        assertEquals(listOf(true, true, false), offered.take(3))
+    }
+
+    @Test
+    fun `a rejected done is not offered again on the same screen`() = runBlocking {
+        val router = FakeRouter(mutableListOf(screen("ui-1", "Internet", false)))
+        val doneOffered = mutableListOf<Boolean>()
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevToolGatewayTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                val question = request.questions.firstOrNull { it.name == "action" }
+                    ?: return JevDecisionResponse(request.questions.associate { it.name to choice(it, "PENDING") }, "jev-test")
+                val canFinish = "DONE" in question.criteria
+                doneOffered += canFinish
+                return JevDecisionResponse(mapOf("action" to choice(question, if (canFinish) "DONE" else "BLOCKED")), "jev-test")
+            }
+        }
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        val result = gateway.invoke("jev_run_ui_task", requestJson("Open the Wi-Fi page"))
+
+        val json = Json.parseToJsonElement(result.text).jsonObject
+        assertEquals(listOf(true, false, false), doneOffered)
+        assertEquals("incomplete", json["status"]?.jsonPrimitive?.content)
+        assertTrue(json.containsKey("taskLedger"))
+    }
+
+    @Test
+    fun `a package scopes the goal to that app`() = runBlocking {
+        val router = FakeRouter(mutableListOf(screen("ui-1", "Done", false)))
+        var seenGoal: String? = null
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevToolGatewayTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                val question = request.questions.firstOrNull { it.name == "action" } ?: return auditAnswer(request)
+                seenGoal = request.state["goal"]?.jsonPrimitive?.content
+                return JevDecisionResponse(mapOf("action" to choice(question, "DONE")), "jev-test")
+            }
+        }
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        gateway.invoke("jev_run_ui_task", buildJsonObject {
+            put("goal", "Open the app and set Volume to 75%")
+            put("package", "com.example.androidgym")
+        })
+
+        assertEquals("In the app com.example.androidgym: Open the app and set Volume to 75%", seenGoal)
+    }
+
+    @Test
+    fun `an unknown argument is refused instead of dropped`() = runBlocking {
+        val gateway = JevToolGateway(ScriptedProvider(state, mutableListOf())) { FakeRouter(mutableListOf(screen("ui-1", "Done", false))) }
+        gateway.beginRun("run-1", File("."))
+
+        val failure = runCatching {
+            gateway.invoke("jev_run_ui_task", buildJsonObject { put("goal", "Open the app"); put("app", "Gym") })
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure!!.message!!.contains("app"))
+    }
+
+    @Test
+    fun `an unnamed checkbox is named by its row and a toggle loop stops`() = runBlocking {
+        var checked = false
+        val router = object : DeviceToolGateway by FakeRouter(mutableListOf(screen("ui-1", "x", false))) {
+            var taps = 0
+            override suspend fun invoke(name: String, arguments: JsonObject): ToolResult = when (name) {
+                "apps_settings" -> ToolResult("{\"ok\":true,\"items\":[]}")
+                "read_ui" -> ToolResult(buildJsonObject {
+                    put("ok", true); put("observationId", "ui-$checked"); put("screenDigest", "row:$checked")
+                    put("activePackage", "com.example"); put("truncated", false)
+                    put("nodes", buildJsonArray {
+                        add(buildJsonObject {
+                            put("nodeId", "n1"); put("class", "android.widget.CheckBox"); put("enabled", true)
+                            put("clickable", true); put("checkable", true); put("checked", checked)
+                            put("bounds", buildJsonArray { add(40); add(500); add(160); add(620) })
+                        })
+                        add(buildJsonObject {
+                            put("nodeId", "n2"); put("text", "Task #3: Validate System Telemetry"); put("enabled", true)
+                            put("bounds", buildJsonArray { add(200); add(510); add(900); add(560) })
+                        })
+                    })
+                }.toString())
+                else -> { taps++; checked = !checked; ToolResult("ok") }
+            }
+        }
+        val labels = mutableListOf<String>()
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevToolGatewayTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                val question = request.questions.firstOrNull { it.name == "action" } ?: return auditAnswer(request)
+                val tap = question.criteria.entries.firstOrNull { it.value.startsWith("Tap ") }
+                tap?.let { labels += it.value }
+                return JevDecisionResponse(mapOf("action" to choice(question, tap?.key ?: "BLOCKED")), "jev-test")
+            }
+        }
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        val result = gateway.invoke("jev_run_ui_task", requestJson("Complete Task #3"))
+
+        assertEquals("Tap Task #3: Validate System Telemetry (currently off) [n1]", labels.first())
+        // The state in the label is what stops a real run; this is the backstop:
+        // a control whose screen transition repeats is withdrawn.
+        val perControl = Json.parseToJsonElement(result.text).jsonObject["history"]!!.jsonArray
+            .map { it.jsonObject["label"]!!.jsonPrimitive.content }
+            .filter { it.startsWith("Tap ") }
+            .groupingBy { it.substringAfterLast('[') }.eachCount()
+        assertTrue(perControl.toString(), perControl.values.all { it <= 4 })
+    }
+
+    @Test
+    fun `none of the supplied values withdraws that field instead of ending the run`() = runBlocking {
+        val field = ToolResult(buildJsonObject {
+            put("ok", true); put("observationId", "ui-1"); put("screenDigest", "notes"); put("activePackage", "com.example")
+            put("truncated", false)
+            put("nodes", buildJsonArray {
+                add(buildJsonObject {
+                    put("nodeId", "n1"); put("text", "JevTest123"); put("class", "android.widget.EditText")
+                    put("enabled", true); put("editable", true); put("clickable", true); put("focused", false)
+                })
+            })
+        }.toString())
+        val router = FakeRouter(mutableListOf(field))
+        var typeOffers = 0
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevToolGatewayTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                request.questions.firstOrNull { it.name == "text_value" }?.let {
+                    return JevDecisionResponse(mapOf("text_value" to choice(it, "NONE")), "jev-test")
+                }
+                val question = request.questions.firstOrNull { it.name == "action" } ?: return auditAnswer(request)
+                val type = question.criteria.entries.firstOrNull { it.value.startsWith("Replace field") }
+                if (type != null) typeOffers++
+                return JevDecisionResponse(mapOf("action" to choice(question, type?.key ?: "DONE")), "jev-test")
+            }
+        }
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        val result = gateway.invoke("jev_run_ui_task", buildJsonObject {
+            put("goal", "Enter JevTest123 in Notes")
+            put("texts", buildJsonArray { add("JevTest123") })
+        })
+
+        assertEquals("done_visible", Json.parseToJsonElement(result.text).jsonObject["status"]?.jsonPrimitive?.content)
+        assertEquals(1, typeOffers)
+        assertTrue(router.actions.isEmpty())
+    }
+
     private fun requestJson(goal: String) = buildJsonObject { put("goal", goal) }
 
     private fun screen(id: String, text: String, clickable: Boolean): ToolResult = ToolResult(
@@ -294,7 +466,7 @@ class JevToolGatewayTest {
 
     companion object {
         private fun auditAnswer(request: JevDecisionRequest) = JevDecisionResponse(
-            request.questions.associate { it.name to choice(it, if ("COMPLETE" in it.criteria) "COMPLETE" else it.criteria.keys.last()) },
+            request.questions.associate { it.name to choice(it, JevTaskLedger.SATISFIED) },
             "jev-test",
         )
         private fun choice(question: JevChoiceQuestion, selected: String): JevDecision = JevDecision(

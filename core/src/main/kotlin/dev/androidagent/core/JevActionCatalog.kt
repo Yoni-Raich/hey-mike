@@ -112,6 +112,10 @@ internal class JevActionCatalog private constructor(
             questions = questions.filter { it.name == "action" },
         )
 
+    /** The key under which [build] filters an attempted candidate on this screen. */
+    fun attemptKey(fingerprint: String, id: String): String? =
+        candidates[id]?.let { "$fingerprint:$id:${it.action?.label ?: it.label}" }
+
     fun select(response: JevDecisionResponse): JevSelectedAction {
         val id = validateJevChoice(response.answers["action"], candidates.mapValues { it.value.label }, "action")
         val candidate = candidates.getValue(id)
@@ -293,7 +297,8 @@ internal class JevActionCatalog private constructor(
                         node["bounds"]?.let { put("bounds", it) }
                         put("enabled", node.enabled())
                         node.string("text")?.let { put("text", it.take(400)) }
-                        node.string("contentDescription")?.let { put("label", it.take(200)) }
+                        (node.string("contentDescription") ?: JevNodeNames.rowLabel(nodes, node))
+                            ?.let { put("label", it.take(200)) }
                         node["windowType"]?.let { put("windowType", it) }
                         node["actions"]?.let { put("actions", it) }
                         node.string("class")?.let { put("class", it) }
@@ -357,10 +362,16 @@ internal class JevActionCatalog private constructor(
                 (candidate.action?.tool ?: candidate.textTool).let { it !in ready } ||
                     "${observation.fingerprint}:$id:${candidate.action?.label ?: candidate.label}" in attempted
             }
-            if (pages.size > 1) candidates["MORE_ACTIONS"] = JevCandidate("MORE_ACTIONS",
+            if (pages.size > 1 && "${observation.fingerprint}:MORE_ACTIONS" !in attempted) candidates["MORE_ACTIONS"] = JevCandidate("MORE_ACTIONS",
                 "Inspect the next action page (${page + 1}/${pages.size}); more observed controls and installed apps are available")
-            candidates["WAIT"] = JevCandidate("WAIT", "Briefly wait only for loading or an expected control to appear")
-            candidates["DONE"] = JevCandidate("DONE", "The entire goal is visibly satisfied")
+            // A wait that changed nothing, or a DONE the audit rejected, is not
+            // offered again on the same screen; Jev has to act instead.
+            if ("${observation.fingerprint}:WAIT" !in attempted) {
+                candidates["WAIT"] = JevCandidate("WAIT", "Briefly wait only for loading or an expected control to appear")
+            }
+            if ("${observation.fingerprint}:DONE" !in attempted) {
+                candidates["DONE"] = JevCandidate("DONE", "The entire goal is visibly satisfied")
+            }
             candidates["BLOCKED"] = JevCandidate("BLOCKED", "No offered action can advance the goal")
 
             val questions = mutableListOf(
@@ -379,7 +390,7 @@ internal class JevActionCatalog private constructor(
             val textPage = requestedTextPage.coerceIn(0, (textPages.size - 1).coerceAtLeast(0))
             if (candidates.values.any { it.operation == "TYPE_TEXT" }) {
                 val values = LinkedHashMap(textPages.getOrNull(textPage).orEmpty())
-                if (textPages.size > 1) values["MORE_TEXT"] = "Inspect the next page of exact text values without changing the device"
+                if (textPages.size > 1 && "${observation.fingerprint}:MORE_TEXT" !in attempted) values["MORE_TEXT"] = "Inspect the next page of exact text values without changing the device"
                 values["NONE"] = "None of these is the intended complete field value."
                 questions += JevChoiceQuestion(
                     "text_value",
@@ -404,6 +415,10 @@ internal class JevActionCatalog private constructor(
             val out = linkedMapOf<String, JevCandidate>()
             if ("open_intent" !in ready) return out
             val lower = goal.lowercase()
+            // "Volume", "dark theme" or "notifications" also name controls inside
+            // ordinary apps; without this a goal about an app's own slider was
+            // routed into system Sound settings and changed the phone's volume.
+            if (SETTINGS_ROOT.words.none { it in lower }) return out
             val matched = SETTINGS_INTENTS.filter { destination -> destination.words.any { it in lower } }
             if (matched.isEmpty()) return out
             (matched + SETTINGS_ROOT).distinctBy { it.action }.take(MAX_INTENT_CHOICES)
@@ -557,7 +572,8 @@ internal class JevActionCatalog private constructor(
                     else -> (node["clickableAncestor"] as? JsonObject)?.string("nodeId")
                         ?: nodeId.takeIf { node.bounds() != null && (node.string("text") != null || node.string("contentDescription") != null) }
                 } ?: return@forEach
-                val named = node.string("text") != null || node.string("contentDescription") != null
+                val name = tapName(nodes, node)
+                val named = name != null
                 val targetBounds = if (clickTarget == nodeId) node.bounds() else {
                     (node["clickableAncestor"] as? JsonObject)?.let { ancestor ->
                         ancestor["bounds"]?.jsonArray?.mapNotNull { it.jsonPrimitive.intOrNull }
@@ -566,7 +582,8 @@ internal class JevActionCatalog private constructor(
                 }
                 val previous = targets[clickTarget]
                 if (previous == null || (!previous.named && named)) {
-                    targets[clickTarget] = JevTapCandidate(node.label(), named, targetBounds)
+                    val state = if (node.bool("checkable")) if (node.bool("checked")) " (currently on)" else " (currently off)" else ""
+                    targets[clickTarget] = JevTapCandidate((name?.take(180) ?: node.label()) + state, named, targetBounds)
                 }
             }
             // Over budget, a named control outranks an anonymous container:
@@ -712,6 +729,9 @@ internal class JevActionCatalog private constructor(
             }
             return out
         }
+
+        private fun tapName(nodes: List<JsonObject>, node: JsonObject): String? =
+            node.string("text") ?: node.string("contentDescription") ?: JevNodeNames.rowLabel(nodes, node)
 
         /**
          * A name for a field that carries none of its own.

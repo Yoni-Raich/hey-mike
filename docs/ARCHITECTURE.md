@@ -811,7 +811,18 @@ misread. The table is code-owned and the goal only decides which entries are
 worth a choice slot, so Jev still composes no intent; the launch goes through
 `IntentPolicy` like every other one, and a destination this phone does not
 declare is refused before dispatch and suppressed like any other unavailable
-action rather than ending the run.
+action rather than ending the run. The table is offered only when the goal
+mentions settings. "Volume", "dark theme" and "notifications" also name controls
+inside ordinary apps: matched on those words alone, a goal about an app's own
+volume slider was routed into system Sound settings and changed the phone's media
+volume.
+
+An unnamed checkbox or switch is named by its row. In a list the control and its
+label are siblings, so `{checked: true}` read as belonging to nothing; Jev could
+not see a task was already ticked and toggled it back and forth. The control
+borrows the name of the labelled node that shares its vertical extent, and a tap
+offer on a checkable control says whether it is currently on or off. The ledger
+evidence carries the same label.
 
 Launching an app reports success only when the target actually owns the screen.
 `rootInActiveWindow` alone goes stale through quick settings, recents and
@@ -840,7 +851,34 @@ existing send-approval guard; a visible submit control remains available.
 
 Each history entry carries its own `actionMs` and `observeMs`. The aggregate
 timings say a run was slow; these say which step was, which is the difference
-between guessing at a cause and reading one.
+between guessing at a cause and reading one. `timings.decisions` counts Jev's
+choices by operation, so a run that spent its budget deciding rather than acting
+shows where.
+
+Choices that change nothing are not offered again on the same screen: WAIT after
+two waits that left the screen as it was, DONE after the audit rejected it there,
+and MORE_ACTIONS / MORE_TEXT once every page has been shown. Paging wraps, and
+without that stop one run flipped action pages 112 times until the five-minute
+wall. A control whose screen transition repeats is withdrawn on its second
+repetition, which bounds a toggle that alternates between two screens. When exact
+texts were supplied and Jev answers that none of them fits the chosen field, that
+field is withdrawn on the screen instead of ending the run in `needs_input`; the
+field may already hold the value.
+
+The completion audit asks one yes/no question per requirement (`PENDING` or
+`SATISFIED`) and code attaches the evidence. Offering each retained screen as its
+own option split the "supported" probability across screens, so `PENDING` won the
+plurality on screens that plainly qualified. Each retained screen carries a
+one-line `screen` summary, and the ledger keeps every action taken, so a
+prohibition ("do not change any settings") is judged against the complete action
+list rather than being unprovable from screens. `taskLedger.lastAudit` records
+each answer with its confidence. An action decision gets only the requirement
+statuses and the last four screen summaries; the full evidence goes to the audit.
+Sending it on every decision grew requests past the model's token limit.
+
+`jev_run_ui_task` accepts an optional `package`, which scopes the goal to that
+app, and refuses any argument it does not know. An unknown argument used to be
+dropped silently, which once left Jev with "open the app" and no app.
 
 The executor returns typed dispatch evidence (`NOT_DISPATCHED`, `ACKNOWLEDGED`,
 `VERIFIED` or `UNKNOWN`). The task ledger keeps compact evidence from earlier

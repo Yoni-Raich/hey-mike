@@ -110,6 +110,13 @@ class JevToolGateway(
         val state = provider.state.value
         if (!state.enabled) throw ToolNotServiceable("jev_disabled", "Jev is disabled in Hey Mike settings.")
         if (!state.tokenConfigured) throw ToolNotServiceable("jev_not_configured", "Jev is enabled but its API token is missing.")
+        // An argument dropped silently changes the task: an ignored package
+        // once left Jev with "open the app" and no app.
+        val unknown = arguments.keys - ARGUMENTS
+        require(unknown.isEmpty()) { "Unknown jev_run_ui_task argument(s): ${unknown.joinToString()}. Accepted: ${ARGUMENTS.joinToString()}." }
+        val pkg = arguments.string("package")
+        require(pkg == null || PACKAGE_NAME.matches(pkg)) { "package must be an Android package name" }
+        val statedGoal = arguments.string("goal")?.let { stated -> pkg?.let { "In the app $it: $stated" } ?: stated }
 
         // The token carries the goal, so a resumed segment cannot be pointed at
         // a different intent by a caller that restated it loosely.
@@ -120,7 +127,7 @@ class JevToolGateway(
             )
         }
         val goal = resumed?.goal
-            ?: arguments.string("goal")
+            ?: statedGoal
             ?: throw IllegalArgumentException("goal is required unless resume is given")
         require(goal.length <= MAX_GOAL_CHARS) { "goal is too long" }
         val suppliedTexts = arguments["texts"]?.jsonArray?.map { element ->
@@ -130,7 +137,7 @@ class JevToolGateway(
         }?.distinct().orEmpty()
         require(suppliedTexts.size <= MAX_TEXT_VALUES) { "Too many text values" }
         if (resumed != null) {
-            require(arguments.string("goal")?.let { it == resumed.goal } != false) { "A resume token cannot change the goal" }
+            require(statedGoal?.let { it == resumed.goal } != false) { "A resume token cannot change the goal" }
             require(suppliedTexts.isEmpty() || suppliedTexts == resumed.texts) { "Start a new goal to change its exact text values" }
         }
         val texts = suppliedTexts.ifEmpty { resumed?.texts.orEmpty() }
@@ -270,6 +277,7 @@ class JevToolGateway(
         var menuScreen = ""
         val inspectedPages = mutableSetOf<Int>()
         val transitions = mutableMapOf<String, Int>()
+        val idleWaits = mutableMapOf<String, Int>()
 
         // Paging, stale observations and recovery decisions are not device
         // steps. Give them their own generous internal budget so the public
@@ -285,7 +293,7 @@ class JevToolGateway(
             val modelStart = TimeSource.Monotonic.markNow()
             val response = try {
                 provider.choose(space.request(goal, observation, history, textOptions.source,
-                    journal.ledger.state(), journal.writes.state()))
+                    journal.ledger.decisionState(), journal.writes.state()))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -301,6 +309,7 @@ class JevToolGateway(
             } catch (failure: IllegalArgumentException) {
                 return terminal("invalid_decision", history, timings, observation, failure.message, started, segment = journal.segment)
             }
+            timings.decisions.merge(selected.operation, 1, Int::plus)
             if (selected.operation == "TYPE_TEXT" && space.hasTextOptions) {
                 val textStarted = TimeSource.Monotonic.markNow()
                 selected = try {
@@ -316,12 +325,16 @@ class JevToolGateway(
                 }
                 checkActive()
             }
+            // Paging wraps, so without a stop Jev could flip pages until the wall
+            // limit. Once every page of this screen has been shown, stay put.
             if (selected.operation == "MORE_ACTIONS") {
-                actionPage = (space.page + 1) % space.pageCount
+                val next = (space.page + 1) % space.pageCount
+                if (next in inspectedPages) repeated += "${observation.fingerprint}:MORE_ACTIONS" else actionPage = next
                 return@repeat
             }
             if (selected.operation == "MORE_TEXT") {
-                textPage = (space.textPage + 1) % space.textPageCount
+                val next = (space.textPage + 1) % space.textPageCount
+                if (next == 0) repeated += "${observation.fingerprint}:MORE_TEXT" else textPage = next
                 return@repeat
             }
             if (selected.operation == "BLOCKED") {
@@ -339,6 +352,11 @@ class JevToolGateway(
                     observation = observe(timings)
                     journal.observation = observation
                     return@repeat
+                }
+                if (rejectedDone == observation.fingerprint) {
+                    return terminal("incomplete", history, timings, observation,
+                        "Completion was rejected: the requirement ledger still has pending work.", started,
+                        response.model, segment = journal.segment, ledger = journal.ledger.state())
                 }
                 return terminal("blocked", history, timings, observation, "Jev found no supported action that can advance the goal.", started, response.model, segment = journal.segment)
             }
@@ -369,7 +387,8 @@ class JevToolGateway(
                             response.model, segment = journal.segment, ledger = journal.ledger.state())
                     }
                     rejectedDone = final.fingerprint
-                    history += JevHistoryEntry("RECOVER", "DONE rejected by requirement audit. Continue the pending requirements in taskLedger.")
+                    repeated += "${final.fingerprint}:DONE"
+                    history += JevHistoryEntry("RECOVER", "DONE rejected by requirement audit. Continue the pending requirements in taskLedger; reveal missing evidence, for example by scrolling.")
                     observation = final
                     return@repeat
                 }
@@ -384,6 +403,15 @@ class JevToolGateway(
                     segment = journal.segment,
                     ledger = journal.ledger.state(),
                 )
+            }
+            // With values supplied, "none of them" is about this field (it may
+            // already hold the value, or be the wrong field), not a missing input.
+            val declined = selected.target?.let { space.attemptKey(observation.fingerprint, it) }
+            if (selected.operation == "TYPE_TEXT" && selected.action == null &&
+                textOptions.source == "supplied" && declined != null && declined !in repeated) {
+                repeated += declined
+                history += JevHistoryEntry("RECOVER", "No supplied value fits that field; it is withdrawn on this screen.")
+                return@repeat
             }
             if (selected.operation == "TYPE_TEXT" && selected.action == null) {
                 val reason = if (textOptions.overflow) {
@@ -409,8 +437,14 @@ class JevToolGateway(
                 if (consecutiveWaits > MAX_CONSECUTIVE_WAITS) {
                     return terminal("loading_timeout", history, timings, observation, "The screen did not become actionable after repeated waits.", started, response.model, segment = journal.segment)
                 }
+                val waitedOn = observation.fingerprint
                 observation = observe(timings)
                 journal.observation = observation
+                if (observation.fingerprint == waitedOn) {
+                    val idle = (idleWaits[waitedOn] ?: 0) + 1
+                    idleWaits[waitedOn] = idle
+                    if (idle >= MAX_IDLE_WAITS_PER_SCREEN) repeated += "$waitedOn:WAIT"
+                }
                 return@repeat
             }
 
@@ -536,7 +570,9 @@ class JevToolGateway(
             val transition = "$signature:${observation.fingerprint}:${journal.ledger.revision}"
             val visits = (transitions[transition] ?: 0) + 1
             transitions[transition] = visits
-            if (visits >= 3) repeated.add(signature)
+            // A toggle alternates between two screens, so "same action, same
+            // screen" never fires; a transition seen twice is a loop.
+            if (visits >= MAX_TRANSITION_VISITS) repeated.add(signature)
             // Internal checkpoints retain ownership of the same goal. Only the
             // caller's overall step/deadline budget can return a continuation.
             if (history.count { it.operation != "RECOVER" } % 8 == 0) auditRequirements(goal, journal)
@@ -583,6 +619,17 @@ class JevToolGateway(
         val choices = try { questions.mapIndexed { index, question ->
             index to validateJevChoice(response.answers[question.name], question.criteria, question.name)
         }.toMap() } catch (invalid: IllegalArgumentException) { throw JevAuditFailure(invalid) }
+        journal.ledger.lastAudit = buildJsonArray {
+            questions.forEachIndexed { index, question ->
+                val answer = response.answers[question.name]
+                add(buildJsonObject {
+                    put("id", "R$index")
+                    put("choice", choices.getValue(index))
+                    answer?.confidence?.let { put("confidence", it) }
+                    answer?.probabilities?.get("PENDING")?.let { put("pPending", it) }
+                })
+            }
+        }
         return journal.ledger.apply(choices)
     }
 
@@ -764,6 +811,7 @@ class JevToolGateway(
                 put("jevDecisionCalls", timings.modelCalls)
                 put("orchestratorModelCalls", 0)
                 put("staleRetries", timings.staleRetries)
+                put("decisions", buildJsonObject { timings.decisions.forEach { (operation, count) -> put(operation, count) } })
                 started?.let { put("wallMs", it.elapsedNow().inWholeMilliseconds) }
             })
             put("history", buildJsonArray {
@@ -823,6 +871,7 @@ class JevToolGateway(
         var waitMs: Long = 0,
         var modelCalls: Int = 0,
         var staleRetries: Int = 0,
+        val decisions: MutableMap<String, Int> = sortedMapOf(),
     )
     private data class TextOptions(val values: List<String>, val source: String, val overflow: Boolean)
 
@@ -851,6 +900,10 @@ class JevToolGateway(
         const val MAX_APP_QUERY_CHARS = 80
         const val MAX_CONSECUTIVE_STALE = 3
         const val MAX_CONSECUTIVE_WAITS = 8
+        const val MAX_IDLE_WAITS_PER_SCREEN = 2
+        const val MAX_TRANSITION_VISITS = 2
+        private val ARGUMENTS = setOf("goal", "package", "resume", "requirements", "texts", "maxSteps", "timeoutMs")
+        private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
         const val WAIT_BASE_MS = 100L
         const val WAIT_MAX_MS = 1_000L
         const val MAX_RESULT_MESSAGE = 1_000
@@ -871,6 +924,10 @@ class JevToolGateway(
                     put("goal", buildJsonObject {
                         put("type", "string"); put("minLength", 1); put("maxLength", MAX_GOAL_CHARS)
                         put("description", "The complete UI task, including every requested final state. Required unless resume is given.")
+                    })
+                    put("package", buildJsonObject {
+                        put("type", "string"); put("maxLength", 255)
+                        put("description", "Optional Android package the goal is about. The goal is scoped to that app; name it here or in goal.")
                     })
                     put("resume", buildJsonObject {
                         put("type", "string"); put("minLength", 1)

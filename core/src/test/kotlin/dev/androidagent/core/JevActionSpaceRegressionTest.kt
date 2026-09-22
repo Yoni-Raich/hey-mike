@@ -218,6 +218,34 @@ class JevActionSpaceRegressionTest {
     }
 
     @Test
+    fun `paging stops once every page of a screen has been shown`() = runBlocking {
+        val router = FakeRouter(MutableList(2) { crowdedScreen(named = 150, anonymous = 150) })
+        var pagesAsked = 0
+        var pages = 0
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevActionSpaceRegressionTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                if (request.questions.none { it.name == "action" }) return auditAnswer(request)
+                val question = request.questions.single { it.name == "action" }
+                pages = request.state.getValue("actionPages").jsonPrimitive.content.toInt()
+                val wantsMore = "MORE_ACTIONS" in question.criteria
+                if (wantsMore) pagesAsked++
+                return JevDecisionResponse(mapOf("action" to choice(question, if (wantsMore) "MORE_ACTIONS" else "BLOCKED")), "test")
+            }
+        }
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        val result = gateway.invoke("jev_run_ui_task", buildJsonObject { put("goal", "Find a control that is not there") })
+
+        val json = Json.parseToJsonElement(result.text).jsonObject
+        assertEquals("blocked", json["status"]?.jsonPrimitive?.content)
+        assertTrue("expected a multi-page screen, got $pages", pages > 2)
+        assertEquals(pages, pagesAsked)
+        assertEquals(pages, json["timings"]!!.jsonObject["decisions"]!!.jsonObject["MORE_ACTIONS"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test
     fun `a settings goal offers the one-step route, most specific first`() {
         val labels = deepLinkOffers(
             goal = "Open the display settings and turn on dark theme",
@@ -230,6 +258,15 @@ class JevActionSpaceRegressionTest {
             listOf("android.settings.DISPLAY_SETTINGS", "android.settings.SETTINGS"),
             labels.mapNotNull { label -> SETTINGS_ACTION.find(label)?.value },
         )
+    }
+
+    @Test
+    fun `an app goal that shares words with a settings screen gets no deep link`() {
+        val labels = deepLinkOffers(
+            goal = "Open the gym app, enable Dark Theme and set Volume to 75%",
+            ready = DEFAULT_READY + "open_intent",
+        )
+        assertTrue(labels.toString(), labels.none { SETTINGS_ACTION.containsMatchIn(it) })
     }
 
     @Test
@@ -494,7 +531,7 @@ class JevActionSpaceRegressionTest {
         private val SETTINGS_ACTION = Regex("android\\.settings\\.[A-Z_]+")
 
         private fun auditAnswer(request: JevDecisionRequest) = JevDecisionResponse(
-            request.questions.associate { it.name to choice(it, if ("COMPLETE" in it.criteria) "COMPLETE" else it.criteria.keys.last()) },
+            request.questions.associate { it.name to choice(it, JevTaskLedger.SATISFIED) },
             "jev-test",
         )
         private fun choice(question: JevChoiceQuestion, selected: String): JevDecision = JevDecision(
