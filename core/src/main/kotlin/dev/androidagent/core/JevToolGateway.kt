@@ -25,8 +25,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
-import java.security.MessageDigest
 import kotlin.math.abs
+import kotlin.math.round
 import kotlin.time.TimeSource
 
 data class JevProviderState(
@@ -62,6 +62,8 @@ data class JevDecisionResponse(
 interface JevDecisionProvider {
     val state: StateFlow<JevProviderState>
     suspend fun choose(request: JevDecisionRequest): JevDecisionResponse
+    fun beginRun() = Unit
+    fun cancelActiveRequest() = Unit
 }
 
 /** A complete bounded observe-decide-act Jev loop inside one Codex tool call. */
@@ -75,11 +77,13 @@ class JevToolGateway(
 
     override fun beginRun(runId: String, workspace: File) {
         require(runId.isNotBlank()) { "runId cannot be blank" }
+        provider.beginRun()
         revoked = false
     }
 
     override fun revoke() {
         revoked = true
+        provider.cancelActiveRequest()
     }
 
     override fun needsControl(name: String): Boolean = name == TOOL_NAME
@@ -112,16 +116,37 @@ class JevToolGateway(
         val wallMs = (arguments["timeoutMs"]?.jsonPrimitive?.intOrNull ?: DEFAULT_WALL_MS.toInt())
             .toLong().coerceIn(MIN_WALL_MS, MAX_WALL_MS)
 
-        return withTimeoutOrNull(wallMs) { runLoop(goal, texts, maxSteps) }
-            ?: terminal("timeout", emptyList(), Timings(), null, "Jev UI task reached its ${wallMs}ms wall limit.")
+        val journal = RunJournal()
+        return withTimeoutOrNull(wallMs) { runLoop(goal, texts, maxSteps, journal) }
+            ?: terminal(
+                status = if (journal.pendingMutation != null) "uncertain_mutation" else "timeout",
+                history = journal.history,
+                timings = journal.timings,
+                observation = journal.observation,
+                message = journal.pendingMutation?.let {
+                    "Timed out while $it may have been dispatched. Its result is unknown and it was not retried."
+                } ?: if (journal.history.isNotEmpty()) {
+                    "Jev reached its ${wallMs}ms wall limit. Completed actions are recorded, but the final UI may be unknown; do not repeat the last action blindly."
+                } else {
+                    "Jev UI task reached its ${wallMs}ms wall limit."
+                },
+                started = journal.started,
+            )
     }
 
-    override suspend fun cancel() = Unit
+    override suspend fun cancel() {
+        provider.cancelActiveRequest()
+    }
 
-    private suspend fun runLoop(goal: String, suppliedTexts: List<String>, maxSteps: Int): ToolResult {
-        val started = TimeSource.Monotonic.markNow()
-        val timings = Timings()
-        val history = mutableListOf<HistoryEntry>()
+    private suspend fun runLoop(
+        goal: String,
+        suppliedTexts: List<String>,
+        maxSteps: Int,
+        journal: RunJournal,
+    ): ToolResult {
+        val started = journal.started
+        val timings = journal.timings
+        val history = journal.history
         val repeated = mutableSetOf<String>()
         val textOptions = textCandidates(goal, suppliedTexts)
         val (apps, initialObservation) = coroutineScope {
@@ -130,6 +155,7 @@ class JevToolGateway(
             apps.await() to observation.await()
         }
         var observation = initialObservation
+        journal.observation = observation
         var consecutiveWaits = 0
         var consecutiveStale = 0
 
@@ -161,13 +187,23 @@ class JevToolGateway(
                 val final = observe(timings)
                 if (final.fingerprint != observation.fingerprint) {
                     observation = final
+                    journal.observation = observation
                     consecutiveStale++
                     if (consecutiveStale >= MAX_CONSECUTIVE_STALE) {
                         return terminal("unstable_screen", history, timings, observation, "The screen kept changing before DONE could be verified.", started, response.model)
                     }
                     return@repeat
                 }
-                return terminal("done", history, timings, final, "Goal is visibly satisfied on the final fresh observation.", started, response.model)
+                journal.observation = final
+                return terminal(
+                    "done_visible",
+                    history,
+                    timings,
+                    final,
+                    "Jev judged the goal satisfied on an unchanged fresh observation. No task-specific verifier ran.",
+                    started,
+                    response.model,
+                )
             }
             if (selected.operation == "TYPE_TEXT" && selected.action == null) {
                 val reason = if (textOptions.overflow) {
@@ -191,6 +227,7 @@ class JevToolGateway(
                     return terminal("loading_timeout", history, timings, observation, "The screen did not become actionable after repeated waits.", started, response.model)
                 }
                 observation = observe(timings)
+                journal.observation = observation
                 return@repeat
             }
 
@@ -198,6 +235,7 @@ class JevToolGateway(
             if (fresh.fingerprint != observation.fingerprint) {
                 timings.staleRetries++
                 observation = fresh
+                journal.observation = observation
                 consecutiveStale++
                 if (consecutiveStale >= MAX_CONSECUTIVE_STALE) {
                     return terminal("unstable_screen", history, timings, observation, "The screen changed before three consecutive actions.", started, response.model)
@@ -215,6 +253,7 @@ class JevToolGateway(
             }
 
             checkActive()
+            journal.pendingMutation = action.label
             val actionStart = TimeSource.Monotonic.markNow()
             val actionResult = try {
                 router().invoke(action.tool, action.arguments)
@@ -222,8 +261,8 @@ class JevToolGateway(
                 throw cancelled
             } catch (failure: Exception) {
                 return terminal(
-                    "action_error", history, timings, fresh,
-                    "${action.label}: ${failure.message ?: "action failed"}. The action was not retried.",
+                    "uncertain_mutation", history, timings, fresh,
+                    "${action.label}: ${failure.message ?: "action result unknown"}. The action may have been dispatched and was not retried.",
                     started, response.model,
                 )
             } finally {
@@ -231,13 +270,29 @@ class JevToolGateway(
             }
             if (!actionResult.success) {
                 return terminal(
-                    "action_failed", history, timings, fresh,
-                    "${action.label}: ${actionResult.text.take(MAX_RESULT_MESSAGE)}. The action was not retried.",
+                    "uncertain_mutation", history, timings, fresh,
+                    "${action.label}: ${actionResult.text.take(MAX_RESULT_MESSAGE)}. The action may have been dispatched and was not retried.",
                     started, response.model,
                 )
             }
             history += HistoryEntry(selected.operation, action.label)
-            observation = observe(timings)
+            journal.pendingMutation = null
+            observation = try {
+                observe(timings)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                return terminal(
+                    "observation_failed_after_action",
+                    history,
+                    timings,
+                    fresh,
+                    "${action.label} succeeded, but its resulting screen could not be read: ${failure.message}. Do not repeat the action blindly.",
+                    started,
+                    response.model,
+                )
+            }
+            journal.observation = observation
             history.last().screenChanged = observation.fingerprint != fresh.fingerprint
         }
         return terminal("decision_limit", history, timings, observation, "Jev exhausted its decision budget.", started)
@@ -246,44 +301,62 @@ class JevToolGateway(
     private suspend fun observe(timings: Timings): Observation {
         val started = TimeSource.Monotonic.markNow()
         try {
-            val merged = mutableListOf<JsonElement>()
-            var offset = 0
-            var page = 0
-            var latest: JsonObject? = null
-            do {
-                checkActive()
-                val result = router().invoke("read_ui", buildJsonObject {
-                    put("force", true)
-                    put("offset", offset)
-                    put("maxChars", UiObservationSerializer.MAX_OUTPUT_CHARS)
-                })
-                if (!result.success) throw IllegalStateException("read_ui failed: ${result.text.take(MAX_RESULT_MESSAGE)}")
-                val json = runCatching { Json.parseToJsonElement(result.text).jsonObject }
-                    .getOrElse { throw IllegalStateException("read_ui returned invalid JSON") }
-                if (json["ok"]?.jsonPrimitive?.booleanOrNull == false) {
-                    throw IllegalStateException(json.string("message") ?: "read_ui failed")
+            repeat(MAX_PAGING_RETRIES) { attempt ->
+                try {
+                    return observePages()
+                } catch (changed: PagedObservationChanged) {
+                    if (attempt == MAX_PAGING_RETRIES - 1) throw changed
                 }
-                latest = json
-                merged += json["nodes"]?.jsonArray.orEmpty()
-                val next = json["nextOffset"]?.jsonPrimitive?.intOrNull
-                if (next == null) break
-                offset = next
-                page++
-            } while (page < MAX_UI_PAGES)
-            val last = latest ?: throw IllegalStateException("read_ui returned no observation")
-            if (last["truncated"]?.jsonPrimitive?.booleanOrNull == true && last["nextOffset"] != null) {
-                throw IllegalStateException("UI exceeds the Jev paging limit")
             }
-            val observationId = last.string("observationId")
-                ?: throw IllegalStateException("read_ui returned no observationId")
-            val normalized = buildJsonObject {
-                last.string("activePackage")?.let { put("activePackage", it) }
-                put("nodes", JsonArray(merged))
-            }
-            return Observation(observationId, normalized, digest(normalized.toString()))
+            error("unreachable")
         } finally {
             timings.observationMs += started.elapsedNow().inWholeMilliseconds
         }
+    }
+
+    private suspend fun observePages(): Observation {
+        val merged = mutableListOf<JsonElement>()
+        var offset = 0
+        var page = 0
+        var latest: JsonObject? = null
+        var screenDigest: String? = null
+        do {
+            checkActive()
+            val result = router().invoke("read_ui", buildJsonObject {
+                put("force", true)
+                put("offset", offset)
+                put("maxChars", UiObservationSerializer.MAX_OUTPUT_CHARS)
+            })
+            if (!result.success) throw IllegalStateException("read_ui failed: ${result.text.take(MAX_RESULT_MESSAGE)}")
+            val json = runCatching { Json.parseToJsonElement(result.text).jsonObject }
+                .getOrElse { throw IllegalStateException("read_ui returned invalid JSON") }
+            if (json["ok"]?.jsonPrimitive?.booleanOrNull == false) {
+                throw IllegalStateException(json.string("message") ?: "read_ui failed")
+            }
+            val pageDigest = json.string("screenDigest")
+                ?: throw IllegalStateException("read_ui returned no screenDigest")
+            if (screenDigest != null && screenDigest != pageDigest) {
+                throw PagedObservationChanged()
+            }
+            screenDigest = pageDigest
+            latest = json
+            merged += json["nodes"]?.jsonArray.orEmpty()
+            val next = json["nextOffset"]?.jsonPrimitive?.intOrNull
+            if (next == null) break
+            offset = next
+            page++
+        } while (page < MAX_UI_PAGES)
+        val last = latest ?: throw IllegalStateException("read_ui returned no observation")
+        if (last["truncated"]?.jsonPrimitive?.booleanOrNull == true && last["nextOffset"] != null) {
+            throw IllegalStateException("UI exceeds the Jev paging limit")
+        }
+        val observationId = last.string("observationId")
+            ?: throw IllegalStateException("read_ui returned no observationId")
+        val normalized = buildJsonObject {
+            last.string("activePackage")?.let { put("activePackage", it) }
+            put("nodes", JsonArray(merged))
+        }
+        return Observation(observationId, normalized, checkNotNull(screenDigest))
     }
 
     private suspend fun loadApps(): List<InstalledApp> {
@@ -320,6 +393,7 @@ class JevToolGateway(
     ): ToolResult = ToolResult(
         buildJsonObject {
             put("status", status)
+            if (status == "done_visible") put("verified", false)
             put("steps", history.size)
             message?.let { put("message", it) }
             model?.let { put("model", it) }
@@ -343,7 +417,7 @@ class JevToolGateway(
             })
             observation?.let { put("finalObservation", it.json) }
         }.toString(),
-        success = status == "done",
+        success = status == "done_visible",
     )
 
     private suspend fun checkActive() {
@@ -352,10 +426,18 @@ class JevToolGateway(
     }
 
     private data class Observation(val observationId: String, val json: JsonObject, val fingerprint: String)
+    private class PagedObservationChanged : IllegalStateException("UI changed while read_ui pages were being collected")
     private data class InstalledApp(val packageName: String, val label: String)
     private data class SafeAction(val tool: String, val arguments: JsonObject, val label: String)
     private data class Selected(val operation: String, val target: String?, val action: SafeAction?)
     private data class HistoryEntry(val operation: String, val label: String, var screenChanged: Boolean = false)
+    private data class RunJournal(
+        val started: TimeSource.Monotonic.ValueTimeMark = TimeSource.Monotonic.markNow(),
+        val timings: Timings = Timings(),
+        val history: MutableList<HistoryEntry> = mutableListOf(),
+        var observation: Observation? = null,
+        var pendingMutation: String? = null,
+    )
     private data class Timings(
         var modelMs: Long = 0,
         var observationMs: Long = 0,
@@ -510,10 +592,12 @@ class JevToolGateway(
                     val min = range["min"]?.jsonPrimitive?.doubleOrNull ?: return@forEach
                     val max = range["max"]?.jsonPrimitive?.doubleOrNull ?: return@forEach
                     val current = range["current"]?.jsonPrimitive?.doubleOrNull ?: return@forEach
+                    val rangeType = range.string("type")
                     val nodeId = node.string("nodeId") ?: return@forEach
                     progressValues(goal).mapNotNull { value ->
                         val resolved = if (value.percent) min + (max - min) * value.number / 100.0 else value.number
-                        resolved.takeIf { it in min..max }
+                        val typed = if (rangeType == "int") round(resolved) else resolved
+                        typed.takeIf { it in min..max }
                     }.distinct().forEach valueLoop@ { value ->
                         if (progress.size >= MAX_CHOICES_PER_HEAD) return@valueLoop
                         val target = "P${progressIndex++}"
@@ -560,10 +644,6 @@ class JevToolGateway(
                 )
                 operations["BACK"] = "Navigate back one screen."
                 operations["HOME"] = "Go to the Android home screen."
-                if (focused != null) {
-                    controls["ENTER"] = SafeAction("key", buildJsonObject { put("keycode", "ENTER") }, "Submit the focused input")
-                    operations["ENTER"] = "Press Enter to submit the focused input."
-                }
                 operations["WAIT"] = "Briefly wait only for loading or an expected control to appear."
                 operations["DONE"] = "The entire goal is visibly satisfied."
                 operations["BLOCKED"] = "No offered operation can advance the goal."
@@ -618,6 +698,7 @@ class JevToolGateway(
         const val MIN_WALL_MS = 5_000L
         const val MAX_WALL_MS = 90_000L
         const val MAX_UI_PAGES = 8
+        const val MAX_PAGING_RETRIES = 3
         const val MAX_APPS = 50
         const val MAX_VISIBLE_TEXT = 300
         const val MAX_STATE_ELEMENTS = 500
@@ -634,8 +715,8 @@ class JevToolGateway(
 
         val TOOL_DEFINITION: ToolDefinition = ToolDefinition(
             TOOL_NAME,
-            "Run a complete Android UI task with the fast Jev engine in ONE tool call. Jev repeatedly observes, decides, acts and verifies locally; do not call read_ui or per-step UI tools first. " +
-                "Use texts for exact values that must be typed. Returns done, blocked, needs_input, stuck or a bounded failure with timings and the final fresh UI.",
+            "Run a complete Android UI task with the fast Jev engine in ONE tool call. Jev repeatedly observes, decides, acts and checks the next screen locally; do not call read_ui or per-step UI tools first. " +
+                "Use texts for exact values that must be typed. Returns done_visible (Jev judgment, not task-specific verification), blocked, needs_input, stuck or a bounded failure with timings and the final fresh UI.",
             buildJsonObject {
                 put("type", "object")
                 put("additionalProperties", false)
@@ -693,10 +774,6 @@ class JevToolGateway(
             Regex("(-?\\d+(?:\\.\\d+)?)\\s*(%)?").findAll(goal).mapNotNull { match ->
                 match.groupValues[1].toDoubleOrNull()?.let { ProgressValue(it, match.groupValues[2] == "%") }
             }.take(16).toList()
-
-        private fun digest(value: String): String = MessageDigest.getInstance("SHA-256")
-            .digest(value.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
         private fun JsonObject.string(key: String): String? =
             this[key]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }

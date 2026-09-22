@@ -56,6 +56,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
 import kotlin.math.absoluteValue
+import kotlin.math.round
 
 /**
  * Device gateway backed by the accessibility service, so observation and
@@ -585,33 +586,53 @@ class A11yDeviceTools(
         if (min == null || max == null || previous == null || !view.supportsSetProgress) {
             return ToolResult("Node $node does not expose semantic progress control.", success = false)
         }
-        require(requested in min..max) { "value must be between $min and $max" }
+        val rangeType = view.rangeType
+        val target = if (rangeType == "int") round(requested) else requested
+        require(target in min..max) { "value must be between $min and $max" }
         val extras = Bundle().apply {
-            putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, requested.toFloat())
+            putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target.toFloat())
         }
         val committed = view.node.performAction(
             AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
             extras,
         )
         if (!committed) {
-            return ToolResult("Node $node rejected progress $requested.", success = false)
+            return ToolResult("Node $node rejected progress $target.", success = false)
         }
-        val current = runCatching {
-            view.node.refresh()
-            view.node.rangeInfo?.current?.toDouble()
-        }.getOrNull()
-        val tolerance = ((max - min).absoluteValue * 0.005).coerceAtLeast(0.001)
-        val verified = current != null && (current - requested).absoluteValue <= tolerance
+        var current: Double? = null
+        val verificationStarted = System.nanoTime()
+        var verified = false
+        while (!verified && (System.nanoTime() - verificationStarted) / 1_000_000L < PROGRESS_VERIFY_TIMEOUT_MS) {
+            currentCoroutineContext().ensureActive()
+            current = runCatching {
+                view.node.refresh()
+                view.node.rangeInfo?.current?.toDouble()
+            }.getOrNull()
+            verified = current != null && progressMatches(current!!, target, rangeType)
+            if (!verified) delay(PROGRESS_VERIFY_POLL_MS)
+        }
         return ToolResult(
             buildJsonObject {
                 put("nodeId", node)
                 put("previous", previous)
                 put("requested", requested)
+                put("target", target)
+                rangeType?.let { put("rangeType", it) }
+                put("dispatched", true)
                 current?.let { put("current", it) }
                 put("verified", verified)
             }.toString(),
             success = verified,
         )
+    }
+
+    private fun progressMatches(current: Double, target: Double, rangeType: String?): Boolean {
+        val tolerance = when (rangeType) {
+            "int" -> 0.0001
+            "percent" -> 0.01
+            else -> maxOf(0.0001, target.absoluteValue * 0.0001)
+        }
+        return (current - target).absoluteValue <= tolerance
     }
 
     private suspend fun waitForChange(arguments: JsonObject): ToolResult {
@@ -830,6 +851,8 @@ class A11yDeviceTools(
         private const val QUIESCENCE_IDLE_MS = 350L
         private const val QUIESCENCE_TIMEOUT_MS = 3_000L
         private const val QUIESCENCE_POLL_MS = 50L
+        private const val PROGRESS_VERIFY_TIMEOUT_MS = 750L
+        private const val PROGRESS_VERIFY_POLL_MS = 25L
         private const val MAX_COORDINATE = 20_000
         private const val RETURN_TIMEOUT_MS = 4_000L
         private const val APP_OPEN_TIMEOUT_MS = 5_000L

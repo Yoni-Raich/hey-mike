@@ -50,6 +50,7 @@ class NodeTraversalTest {
         override val rangeMin: Float? = null,
         override val rangeMax: Float? = null,
         override val rangeCurrent: Float? = null,
+        override val rangeType: String? = null,
         override val supportsSetProgress: Boolean = false,
         override val isCheckable: Boolean = false,
         override val isChecked: Boolean = false,
@@ -326,6 +327,7 @@ class NodeTraversalTest {
                     rangeMin = 0f,
                     rangeMax = 100f,
                     rangeCurrent = 20f,
+                    rangeType = "int",
                     supportsSetProgress = true,
                 ),
             ),
@@ -334,6 +336,7 @@ class NodeTraversalTest {
         assertEquals(0.0, node.range!!.min, 0.0)
         assertEquals(100.0, node.range!!.max, 0.0)
         assertEquals(20.0, node.range!!.current, 0.0)
+        assertEquals("int", node.range!!.type)
         assertTrue(node.supportsSetProgress)
         assertTrue(node.toJson()["actions"].toString().contains("SET_PROGRESS"))
     }

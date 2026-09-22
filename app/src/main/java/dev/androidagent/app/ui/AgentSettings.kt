@@ -956,7 +956,7 @@ private fun ColumnScope.JevSettings(state: AgentUiState, actions: AgentUiActions
         Switch(checked = state.jevEnabled, onCheckedChange = actions.onJevEnabledChanged)
     }
     Explanation(
-        "One agent call gives Jev the complete goal. Jev then observes, chooses and verifies each step " +
+        "One agent call gives Jev the complete goal. Jev then observes, chooses and checks the next screen " +
             "without waiting for the main model between taps. It can use every supported UI action, including " +
             "exact text and sliders; Hey Mike still executes the actions, handles approvals, and stops locally.",
     )

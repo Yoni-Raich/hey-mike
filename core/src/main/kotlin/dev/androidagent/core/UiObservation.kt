@@ -110,6 +110,7 @@ data class UiNode(
                 put("min", value.min)
                 put("max", value.max)
                 put("current", value.current)
+                value.type?.let { put("type", it) }
             })
         }
         if (supportsSetProgress) {
@@ -150,7 +151,12 @@ data class UiNode(
     )
 }
 
-data class UiRange(val min: Double, val max: Double, val current: Double)
+data class UiRange(
+    val min: Double,
+    val max: Double,
+    val current: Double,
+    val type: String? = null,
+)
 
 /** A parsed screen, before it is rendered for the model. */
 data class UiObservation(val activePackage: String?, val nodes: List<UiNode>)
@@ -416,6 +422,8 @@ object UiObservationSerializer {
         elapsedMs: Long,
         truncated: Boolean,
         stable: Boolean,
+        /** Digest of the complete unfiltered screen, shared by every page. */
+        screenDigest: String? = null,
         /** Omitted only by callers that render a node list they never narrowed. */
         page: UiPage? = null,
     ): String = buildJsonObject {
@@ -425,6 +433,7 @@ object UiObservationSerializer {
         put("elapsedMs", elapsedMs)
         put("source", source)
         put("stable", stable)
+        screenDigest?.let { put("screenDigest", it) }
         observation.activePackage?.let { put("activePackage", it) }
         put("truncated", truncated)
         // Before the nodes, so a model that stops reading early still learns
@@ -602,6 +611,7 @@ object UiObservationSerializer {
             )
         }
         val window = matched.drop(query.offset).let { rest -> query.maxNodes?.let(rest::take) ?: rest }
+        val fullScreenDigest = digest(observation.activePackage, observation.nodes)
         val render = { count: Int ->
             semanticJson(
                 observation = observation.copy(nodes = window.take(count)),
@@ -611,6 +621,7 @@ object UiObservationSerializer {
                 elapsedMs = elapsedMs,
                 truncated = query.offset + count < matched.size,
                 stable = stable,
+                screenDigest = fullScreenDigest,
                 page = UiPage(
                     totalNodes = observation.nodes.size,
                     matchedNodes = matched.size,

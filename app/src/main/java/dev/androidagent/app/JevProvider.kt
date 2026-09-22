@@ -126,11 +126,23 @@ class JevTokenStore(context: Context) {
 /** Android network adapter for the official TypeSafe System One endpoint. */
 class AndroidJevProvider(context: Context) : JevDecisionProvider {
     private val tokens = JevTokenStore(context)
+    private val requestLock = Any()
+    @Volatile private var activeConnection: HttpURLConnection? = null
+    @Volatile private var requestCancelled = false
     override val state: StateFlow<JevProviderState> = tokens.state()
 
     fun setEnabled(enabled: Boolean) = tokens.setEnabled(enabled)
     fun saveToken(token: String) = tokens.saveToken(token)
     fun clearToken() = tokens.clearToken()
+    override fun beginRun() {
+        synchronized(requestLock) { requestCancelled = false }
+    }
+    override fun cancelActiveRequest() {
+        synchronized(requestLock) {
+            requestCancelled = true
+            activeConnection?.disconnect()
+        }
+    }
 
     override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse = withContext(Dispatchers.IO) {
         val token = tokens.readToken() ?: throw IOException("Jev token is unavailable")
@@ -148,6 +160,13 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Authorization", "Bearer $token")
         }
+        synchronized(requestLock) {
+            if (requestCancelled) {
+                connection.disconnect()
+                throw IOException("Jev request was cancelled")
+            }
+            activeConnection = connection
+        }
         try {
             connection.outputStream.use { output ->
                 output.write(body.toByteArray(Charsets.UTF_8))
@@ -156,6 +175,9 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
             if (code !in 200..299) throw IOException("Jev request failed with HTTP $code")
             parseResponse(readBounded(connection.inputStream))
         } finally {
+            synchronized(requestLock) {
+                if (activeConnection === connection) activeConnection = null
+            }
             connection.disconnect()
         }
     }

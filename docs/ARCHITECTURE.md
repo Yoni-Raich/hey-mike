@@ -723,7 +723,7 @@ through CompositeDeviceToolGateway -> observe and repeat
 This is the fast path: Codex supplies one complete goal and does not spend a
 model turn between UI steps. Jev selects only opaque candidate keys. Local code
 maps those keys to installed-app launch, observed node taps, semantic scrolling,
-exact focused-field text, semantic progress, Back, Home or Enter. Jev cannot
+exact focused-field text, semantic progress, Back or Home. Jev cannot
 invent selectors, node ids, packages, coordinates, text or range values. Text
 is drawn only from explicit `texts` or bounded verbatim goal spans; password
 fields never receive a text candidate. Progress values are numeric values or
@@ -735,13 +735,18 @@ one place. The loop re-observes immediately before input and discards a stale
 decision. It never retries an action failure or transport exception because the
 mutation may already have committed. Repeated action/screen signatures, stale
 screens, waits, steps, decisions and wall time are bounded. `DONE` completes
-only after one more fresh observation matches the state Jev judged.
+only after one more fresh observation matches the state Jev judged, and returns
+`done_visible` with `verified:false`; this is not a task-specific verifier. Raw
+Enter is not in Jev's action space because its ADB fallback could bypass the
+existing send-approval guard; a visible submit control remains available.
 
 Large UI observations are consumed through the existing `read_ui` paging
 contract and merged with the newest observation id. Accessibility observations
 also carry editable/selected state and range min/max/current plus supported
 semantic actions. `set_progress` uses Android `ACTION_SET_PROGRESS` and reports
-the refreshed value rather than simulating a coordinate swipe.
+the typed range and polls for the requested value rather than simulating a
+coordinate swipe. A dispatched but unverified change is reported as uncertain
+and is never retried.
 
 The app keeps the feature flag and Jev token in `JevTokenStore`. The token is
 encrypted with an Android Keystore AES/GCM key and is read only by the app's

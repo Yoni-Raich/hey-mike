@@ -104,6 +104,7 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
                         min = view.rangeMin!!.toDouble(),
                         max = view.rangeMax!!.toDouble(),
                         current = view.rangeCurrent!!.toDouble(),
+                        type = view.rangeType,
                     )
                 } else {
                     null

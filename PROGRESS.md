@@ -12,21 +12,29 @@ Stop/revoke, stale node checks, message-send approval, and backend fallback.
 
 The code-owned action space includes installed-app launch, tap, four semantic
 scroll directions, exact text replacement for a focused non-password field,
-Back, Home, Enter, Wait, Done, and semantic `SET_PROGRESS`. Accessibility UI
-observations now expose editable/selected state, range min/max/current and
-`ACTION_SET_PROGRESS`; `set_progress` verifies the resulting value. Jev sees
+Back, Home, Wait, Done, and semantic `SET_PROGRESS`. Accessibility UI
+observations now expose editable/selected state, typed range min/max/current and
+`ACTION_SET_PROGRESS`; `set_progress` polls and verifies the resulting value. Jev sees
 only opaque candidate keys and cannot invent a selector, package, coordinate,
 text value, or progress value. Exact text comes from the tool's `texts` input or
 bounded verbatim spans of the goal. Failed/uncertain mutations are never retried;
 only a changed pre-action observation causes a fresh Jev decision.
+Raw Enter is not offered because it can route through ADB around the existing
+send-approval guard; Jev can use a visible submit control instead. `DONE`
+returns `done_visible` with `verified:false`: it is Jev's judgment over a stable
+fresh screen, not a task-specific deterministic verifier.
 
 Verified on 2026-09-22: `:core:test`, `:a11y:testDebugUnitTest`,
-`:device-tools:test`, and `:app:compileDevDebugKotlin` passed. Unit coverage
+`:device-tools:test`, `:app:testDevDebugUnitTest`, `:app:lintDevDebug`, and
+`:app:assembleDevDebug` passed. The resulting APK was verified as package
+`dev.androidagent.app.dev`, version `0.12.0`/code `26`, and installed with
+`pm install -r` on the designated Nothing A059; `MainActivity` launched and
+the existing Accessibility service entries remained enabled. Unit coverage
 includes a multi-step task completed by one public tool call, selected-head-only
 validation, semantic 75% slider control, and no retry after a failed mutation.
-No real Jev token or physical phone run was used, so live TypeSafe latency and
-response compatibility, real Accessibility range behavior, the AndroidGym five
-task run, and end-to-end Stop behavior remain unverified.
+No real Jev token or Jev task was run on the phone, so live TypeSafe latency and
+response compatibility, real AndroidGym five-task behavior, and end-to-end Stop
+of an in-flight network request remain unverified.
 
 ## Status — 2026-09-15
 

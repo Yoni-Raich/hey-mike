@@ -38,7 +38,8 @@ class JevToolGatewayTest {
 
         val json = Json.parseToJsonElement(result.text).jsonObject
         assertTrue(result.success)
-        assertEquals("done", json["status"]?.jsonPrimitive?.content)
+        assertEquals("done_visible", json["status"]?.jsonPrimitive?.content)
+        assertEquals(false, json["verified"]?.jsonPrimitive?.content?.toBoolean())
         assertEquals(2, provider.calls)
         assertEquals(listOf("tap_node"), router.actions.map { it.first })
         assertTrue(gateway.needsControl("jev_run_ui_task"))
@@ -106,7 +107,7 @@ class JevToolGatewayTest {
         val result = gateway.invoke("jev_run_ui_task", requestJson("Tap Submit"))
 
         assertFalse(result.success)
-        assertEquals("action_failed", Json.parseToJsonElement(result.text).jsonObject["status"]?.jsonPrimitive?.content)
+        assertEquals("uncertain_mutation", Json.parseToJsonElement(result.text).jsonObject["status"]?.jsonPrimitive?.content)
         assertEquals(1, router.actions.size)
         assertEquals(1, provider.calls)
     }
@@ -132,6 +133,7 @@ class JevToolGatewayTest {
         buildJsonObject {
             put("ok", true)
             put("observationId", id)
+            put("screenDigest", "screen:$text:$clickable")
             put("activePackage", "com.example")
             put("truncated", false)
             put("nodes", buildJsonArray {
@@ -151,6 +153,7 @@ class JevToolGatewayTest {
         buildJsonObject {
             put("ok", true)
             put("observationId", id)
+            put("screenDigest", "slider:$current")
             put("activePackage", "com.example")
             put("truncated", false)
             put("nodes", buildJsonArray {
@@ -161,7 +164,12 @@ class JevToolGatewayTest {
                     put("clickable", false)
                     put("scrollable", false)
                     put("focused", false)
-                    put("range", buildJsonObject { put("min", 0.0); put("max", 100.0); put("current", current) })
+                    put("range", buildJsonObject {
+                        put("min", 0.0)
+                        put("max", 100.0)
+                        put("current", current)
+                        put("type", "int")
+                    })
                     put("actions", buildJsonArray { add("SET_PROGRESS") })
                 })
             })
