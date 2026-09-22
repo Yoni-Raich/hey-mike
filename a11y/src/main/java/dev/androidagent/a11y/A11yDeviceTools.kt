@@ -92,6 +92,7 @@ class A11yDeviceTools(
         ToolResult(
             "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"This intent needs approval in the app.\"}",
             success = false,
+            dispatch = ToolDispatch.NOT_DISPATCHED,
         )
     },
     /**
@@ -102,6 +103,7 @@ class A11yDeviceTools(
         ToolResult(
             "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"Sending needs approval in the app. Nothing was sent.\"}",
             success = false,
+            dispatch = ToolDispatch.NOT_DISPATCHED,
         )
     },
     /** Move the approval screen out of the way so the app underneath is back in front. */
@@ -218,6 +220,11 @@ class A11yDeviceTools(
             throw IllegalStateException("Run stopped. No device action was performed.")
         }
         checkActive()
+        if (name in MUTATING_TOOLS) {
+            // A node action invalidates the immutable paging snapshot. The
+            // next read must capture the post-action screen from scratch.
+            synchronized(lock) { snapshot = null }
+        }
         val result = when (name) {
             "act_and_observe" -> actAndObserve(arguments)
             "read_ui" -> readUi(arguments)
@@ -273,7 +280,7 @@ class A11yDeviceTools(
             put("actionResult", result.text)
             put("observationSucceeded", observation.success)
             put("observation", runCatching { Json.parseToJsonElement(observation.text) }.getOrElse { JsonPrimitive(observation.text) })
-        }.toString(), success = observation.success)
+        }.toString(), success = observation.success, dispatch = result.dispatch)
     }
 
     // ---- observation ----
@@ -420,7 +427,11 @@ class A11yDeviceTools(
             return gatedSend(service, root) { pressSend(it) }
         }
         val landed = service.dispatchTap(x, y)
-        return ToolResult("Tapped $x,$y", success = landed)
+        return ToolResult(
+            "Tapped $x,$y",
+            success = landed,
+            dispatch = if (landed) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
+        )
     }
 
     private suspend fun swipe(arguments: JsonObject): ToolResult {
@@ -433,7 +444,11 @@ class A11yDeviceTools(
         requireNotOurOwnUi(x1, y1)
         val service = requireService()
         val landed = service.dispatchSwipe(x1, y1, x2, y2, duration.toLong())
-        return ToolResult("Swiped ($x1,$y1)->($x2,$y2) ${duration}ms", success = landed)
+        return ToolResult(
+            "Swiped ($x1,$y1)->($x2,$y2) ${duration}ms",
+            success = landed,
+            dispatch = if (landed) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
+        )
     }
 
     private suspend fun typeText(arguments: JsonObject): ToolResult {
@@ -452,14 +467,27 @@ class A11yDeviceTools(
         }
         val committed = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments1)
         if (!committed) {
-            return ToolResult("Text was rejected by the field; nothing was typed.", success = false)
+            return ToolResult(
+                "Text was rejected by the field; nothing was typed.",
+                success = false,
+                dispatch = ToolDispatch.NOT_DISPATCHED,
+            )
         }
         val pkg = target.packageName?.toString()
         if (submit && SendGuard.isMessagingApp(pkg)) {
             // In a chat, submit is Send. The text stays typed in; only the
             // press waits for the user.
             val root = service.rootInActiveWindow?.let(::RealNodeView) ?: RealNodeView(target)
-            return gatedSend(service, root) { submitDraft(it) }
+            val send = gatedSend(service, root) { submitDraft(it) }
+            // ACTION_SET_TEXT already committed before the approval gate. A
+            // refusal here cannot truthfully be reported as NOT_DISPATCHED.
+            return send.copy(
+                dispatch = if (send.dispatch == ToolDispatch.NOT_DISPATCHED) {
+                    ToolDispatch.ACKNOWLEDGED
+                } else if (send.dispatch == ToolDispatch.UNKNOWN && send.success) {
+                    ToolDispatch.ACKNOWLEDGED
+                } else send.dispatch,
+            )
         }
         // ACTION_SET_TEXT replaces the whole field, and some Compose and chat
         // composers do not propagate it. Report what the field actually holds
@@ -478,6 +506,8 @@ class A11yDeviceTools(
                 put("verified", verified)
                 if (submit) put("submitted", submitted)
             }.toString(),
+            success = verified && (!submit || submitted),
+            dispatch = if (!submit && verified) ToolDispatch.VERIFIED else ToolDispatch.ACKNOWLEDGED,
         )
     }
 
@@ -573,21 +603,24 @@ class A11yDeviceTools(
             // made act_and_observe read the previous app, and the agent decided
             // the app had not opened and went looking for another way in.
             val service = A11yServiceHandle.service.value
-                ?: return ToolResult("Opened $pkg")
+                ?: return ToolResult("Opened $pkg", dispatch = ToolDispatch.ACKNOWLEDGED)
             val inFront = withTimeoutOrNull(APP_OPEN_TIMEOUT_MS) {
                 while (service.rootInActiveWindow?.packageName?.toString() != pkg) delay(QUIESCENCE_POLL_MS)
                 true
             } ?: false
             if (inFront) {
                 awaitQuiescence(service)
-                ToolResult("Opened $pkg; it is in front")
+                ToolResult("Opened $pkg; it is in front", dispatch = ToolDispatch.ACKNOWLEDGED)
             } else {
-                ToolResult("Launched $pkg, but it was not in front after ${APP_OPEN_TIMEOUT_MS / 1_000}s. Call read_ui to see what is showing.")
+                ToolResult(
+                    "Launched $pkg, but it was not in front after ${APP_OPEN_TIMEOUT_MS / 1_000}s. Call read_ui to see what is showing.",
+                    dispatch = ToolDispatch.ACKNOWLEDGED,
+                )
             }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            ToolResult("Could not open $pkg: ${error.message}", success = false)
+            ToolResult("Could not open $pkg: ${error.message}", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         }
     }
 
@@ -600,7 +633,12 @@ class A11yDeviceTools(
         if (SendGuard.isSendTap(view, ancestors)) {
             val service = requireService()
             val root = service.rootInActiveWindow?.let(::RealNodeView) ?: view
-            return gatedSend(service, root) { pressSend(it) }
+            val send = gatedSend(service, root) { pressSend(it) }
+            return send.copy(
+                dispatch = if (send.dispatch == ToolDispatch.UNKNOWN && send.success) {
+                    ToolDispatch.ACKNOWLEDGED
+                } else send.dispatch,
+            )
         }
         if (view.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             return ToolResult("Tapped $node", dispatch = ToolDispatch.ACKNOWLEDGED)
@@ -637,7 +675,14 @@ class A11yDeviceTools(
         if (submit && SendGuard.isMessagingApp(view.packageName)) {
             val service = requireService()
             val root = service.rootInActiveWindow?.let(::RealNodeView) ?: view
-            return gatedSend(service, root) { submitDraft(it) }
+            val send = gatedSend(service, root) { submitDraft(it) }
+            return send.copy(
+                dispatch = if (send.dispatch == ToolDispatch.NOT_DISPATCHED) {
+                    ToolDispatch.ACKNOWLEDGED
+                } else if (send.dispatch == ToolDispatch.UNKNOWN && send.success) {
+                    ToolDispatch.ACKNOWLEDGED
+                } else send.dispatch,
+            )
         }
         // ACTION_SET_TEXT replaces the whole field and some composers drop it,
         // so report what the field holds instead of assuming the write took.
@@ -659,7 +704,9 @@ class A11yDeviceTools(
                 put("typed", text.length)
                 put("verified", verified)
                 if (submit) put("submitted", submitted)
-            }.toString(), dispatch = if (verified && !submit) ToolDispatch.VERIFIED else ToolDispatch.ACKNOWLEDGED,
+            }.toString(),
+            success = verified && (!submit || submitted),
+            dispatch = if (!submit && verified) ToolDispatch.VERIFIED else ToolDispatch.ACKNOWLEDGED,
         )
     }
 
@@ -875,11 +922,15 @@ class A11yDeviceTools(
             ?: return ToolResult(
                 sendFailure("send_control_gone", "The Send button is not on screen any more. Nothing was sent; call read_ui."),
                 success = false,
+                dispatch = ToolDispatch.NOT_DISPATCHED,
             )
         var target: android.view.accessibility.AccessibilityNodeInfo? = send.node
         repeat(3) {
             if (target?.isClickable == true && target!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                return ToolResult("{\"ok\":true,\"sent\":true,\"note\":\"Pressed Send. Confirm with read_ui that the message appears in the chat.\"}")
+                return ToolResult(
+                    "{\"ok\":true,\"sent\":true,\"note\":\"Pressed Send. Confirm with read_ui that the message appears in the chat.\"}",
+                    dispatch = ToolDispatch.ACKNOWLEDGED,
+                )
             }
             target = runCatching { target?.parent }.getOrNull()
         }
@@ -891,13 +942,17 @@ class A11yDeviceTools(
         return ToolResult(
             "{\"ok\":$landed,\"sent\":$landed,\"note\":\"Tapped Send. Confirm with read_ui that the message appears in the chat.\"}",
             success = landed,
+            dispatch = if (landed) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
         )
     }
 
     private suspend fun submitDraft(service: AgentAccessibilityService): ToolResult {
         val field = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
         if (field != null && field.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) {
-            return ToolResult("{\"ok\":true,\"submitted\":true,\"note\":\"Submitted. Confirm with read_ui that the message was sent.\"}")
+            return ToolResult(
+                "{\"ok\":true,\"submitted\":true,\"note\":\"Submitted. Confirm with read_ui that the message was sent.\"}",
+                dispatch = ToolDispatch.ACKNOWLEDGED,
+            )
         }
         // Coming back from the approval can drop input focus; the Send button
         // does the same thing.
@@ -991,6 +1046,12 @@ class A11yDeviceTools(
 
         private const val MAX_WAIT_MS = 30_000L
 
+        private val MUTATING_TOOLS = setOf(
+            "act_and_observe", "tap", "swipe", "drag", "long_press_node", "type_text",
+            "key", "open_app", "tap_node", "set_text", "set_progress", "scroll_node",
+            "open_intent",
+        )
+
         // A getter avoids resolving AccessibilityAction singleton objects when
         // host-side schema tests load this class against the Android stub jar.
         private val SCROLL_ACTIONS: Map<String, Int>
@@ -1047,8 +1108,8 @@ class A11yDeviceTools(
                 listOf("x1", "y1", "x2", "y2")),
             tool(
                 "type_text",
-                "Type text into the focused field. Tap the field first so it holds input focus.",
-                mapOf("text" to "string", "submit" to "boolean"),
+                "Type text into the focused field. Jev may also provide a target coordinate; accessibility ignores it because set_text is preferred.",
+                mapOf("text" to "string", "submit" to "boolean", "nodeId" to "string", "observationId" to "string", "x" to "integer", "y" to "integer"),
                 listOf("text"),
             ),
             tool("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),

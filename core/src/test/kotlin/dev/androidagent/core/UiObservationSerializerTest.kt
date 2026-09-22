@@ -76,7 +76,7 @@ class UiObservationSerializerTest {
             """{"ok":true,"observationId":"ui-1","revision":1,"elapsedMs":42,"source":"uiautomator",""" +
                 """"stable":true,"activePackage":"com.example","truncated":false,"nodes":""" +
                 """[{"nodeId":"n0","text":"Send","resourceId":"com.example:id/send",""" +
-                """"class":"android.widget.Button","bounds":[10,20,110,60],"enabled":true,""" +
+                """"package":"com.example","class":"android.widget.Button","bounds":[10,20,110,60],"enabled":true,""" +
                 """"clickable":true,"scrollable":false,"focused":false}]}""",
             text,
         )

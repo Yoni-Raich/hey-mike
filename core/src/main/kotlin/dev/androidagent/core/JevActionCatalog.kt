@@ -7,7 +7,7 @@ import kotlin.math.round
 internal data class JevObservation(val observationId: String, val json: JsonObject, val fingerprint: String)
 internal data class JevInstalledApp(val packageName: String, val label: String)
 internal data class JevSafeAction(val tool: String, val arguments: JsonObject, val label: String)
-internal data class JevTapCandidate(val label: String, val named: Boolean)
+internal data class JevTapCandidate(val label: String, val named: Boolean, val bounds: List<Int>?)
 
 /**
  * One concrete offer in the flat action space.
@@ -21,6 +21,8 @@ internal data class JevCandidate(
     val label: String,
     val action: JevSafeAction? = null,
     val nodeId: String? = null,
+    val textTool: String = "set_text",
+    val targetBounds: List<Int>? = null,
 )
 internal data class JevSelectedAction(
     val operation: String,
@@ -114,7 +116,10 @@ internal class JevActionCatalog private constructor(
         val field = candidates.getValue(requireNotNull(selected.target))
         return JevDecisionRequest(buildJsonObject {
             put("goal", goal)
-            put("selectedField", buildJsonObject { put("nodeId", field.nodeId); put("description", field.label) })
+            put("selectedField", buildJsonObject {
+                put("nodeId", requireNotNull(field.nodeId))
+                put("description", field.label)
+            })
             put("textPage", textPage + 1); put("textPages", textPageCount)
         }, questions.filter { it.name == "text_value" })
     }
@@ -152,10 +157,16 @@ internal class JevActionCatalog private constructor(
     private fun typeAction(candidate: JevCandidate, text: String): JevSafeAction? {
         val nodeId = candidate.nodeId ?: return null
         return JevSafeAction(
-            "set_text",
+            candidate.textTool,
             buildJsonObject {
                 put("nodeId", nodeId)
                 put("observationId", observationId)
+                if (candidate.textTool == "type_text") {
+                    candidate.targetBounds?.let { bounds ->
+                        put("x", (bounds[0] + bounds[2]) / 2)
+                        put("y", (bounds[1] + bounds[3]) / 2)
+                    }
+                }
                 put("text", text)
             },
             candidate.label,
@@ -231,20 +242,20 @@ internal class JevActionCatalog private constructor(
             // Page all families together; no family can silently consume the
             // entire question budget and hide the remaining controls.
             val progress = progressCandidates(goal, nodes, observationId)
-            val typing = typeCandidates(nodes, texts)
+            val typing = typeCandidates(nodes, ready)
             val appOpens = appCandidates(goal, observation, apps)
-            val scrolls = scrollCandidates(nodes, observationId)
+            val scrolls = scrollCandidates(nodes, observationId, ready)
             val gestures = gestureCandidates(observation, nodes)
-            val taps = tapCandidates(nodes, observationId, Int.MAX_VALUE)
+            val taps = tapCandidates(nodes, observationId, Int.MAX_VALUE, ready)
             val families = listOf(taps, scrolls, progress, typing, appOpens, gestures,
-                longPressCandidates(nodes, observationId), dragCandidates(nodes, observation)).map { it.entries.toList() }
+                longPressCandidates(nodes, observationId), dragCandidates(goal, nodes, observation, ready)).map { it.entries.toList() }
             // Interleave families, then page. No supported target is silently
             // discarded to meet the provider's per-question choice ceiling.
             val entries = (0 until (families.maxOfOrNull { it.size } ?: 0)).flatMap { index ->
                 families.mapNotNull { it.getOrNull(index) }
             }.filter { (id, candidate) ->
-                (candidate.action?.tool ?: "set_text") in ready &&
-                    "${observation.fingerprint}:$id:${candidate.action?.label ?: candidate.label}" !in attempted
+                (candidate.action?.tool ?: candidate.textTool) in ready &&
+                "${observation.fingerprint}:$id:${candidate.action?.label ?: candidate.label}" !in attempted
             }
             val pages = entries.chunked(ACTION_PAGE_SIZE).ifEmpty { listOf(emptyList()) }
             val page = requestedPage.coerceIn(0, pages.lastIndex)
@@ -269,7 +280,7 @@ internal class JevActionCatalog private constructor(
                 }, label))
             }
             candidates.entries.removeAll { (id, candidate) ->
-                candidate.action?.tool?.let { it !in ready } == true ||
+                (candidate.action?.tool ?: candidate.textTool).let { it !in ready } ||
                     "${observation.fingerprint}:$id:${candidate.action?.label ?: candidate.label}" in attempted
             }
             if (pages.size > 1) candidates["MORE_ACTIONS"] = JevCandidate("MORE_ACTIONS",
@@ -347,16 +358,67 @@ internal class JevActionCatalog private constructor(
             return out
         }
 
-        private fun dragCandidates(nodes: List<JsonObject>, observation: JevObservation): LinkedHashMap<String, JevCandidate> {
+        private fun dragCandidates(
+            goal: String,
+            nodes: List<JsonObject>,
+            observation: JevObservation,
+            ready: Set<String>,
+        ): LinkedHashMap<String, JevCandidate> {
             val out = linkedMapOf<String, JevCandidate>()
+            val tool = when {
+                "drag" in ready -> "drag"
+                "swipe" in ready -> "swipe"
+                else -> return out
+            }
             val viewport = observation.json["viewport"]?.jsonArray?.mapNotNull { it.jsonPrimitive.intOrNull }
                 ?.takeIf { it.size == 4 } ?: return out
-            nodes.forEachIndexed { index, node ->
-                if (!node.enabled() || !node.bool("longClickable")) return@forEachIndexed
-                val bounds = node.bounds() ?: return@forEachIndexed
+            var index = 0
+            nodes.forEach { node ->
+                if (!node.enabled()) return@forEach
+                val bounds = node.bounds() ?: return@forEach
                 val x = (bounds[0] + bounds[2]) / 2
                 val y = (bounds[1] + bounds[3]) / 2
-                if (x !in viewport[0] until viewport[2] || y !in viewport[1] until viewport[3]) return@forEachIndexed
+                if (x !in viewport[0] until viewport[2] || y !in viewport[1] until viewport[3]) return@forEach
+                val range = node["range"] as? JsonObject
+                val className = node.string("class")?.lowercase().orEmpty()
+                val rangeLike = range != null || className.contains("seekbar") || className.contains("slider")
+                if (!node.bool("longClickable") && !rangeLike) return@forEach
+                index++
+                if (rangeLike) {
+                    val requested = progressValues(goal).firstOrNull { it.percent }
+                    if (requested != null) {
+                        val min = range?.get("min")?.jsonPrimitive?.doubleOrNull ?: 0.0
+                        val max = range?.get("max")?.jsonPrimitive?.doubleOrNull ?: 100.0
+                        val current = range?.get("current")?.jsonPrimitive?.doubleOrNull
+                            ?: Regex("(-?\\d+(?:\\.\\d+)?)\\s*%")
+                                .find(node.label())?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                            ?: 0.0
+                        val target = (min + (max - min) * requested.number / 100.0).coerceIn(min, max)
+                        if (abs(target - current) > PROGRESS_EPSILON) {
+                            val horizontal = bounds[2] - bounds[0] >= bounds[3] - bounds[1]
+                            val startFraction = ((current - min) / (max - min).coerceAtLeast(PROGRESS_EPSILON)).coerceIn(0.0, 1.0)
+                            val endFraction = ((target - min) / (max - min).coerceAtLeast(PROGRESS_EPSILON)).coerceIn(0.0, 1.0)
+                            val start = if (horizontal) {
+                                ((bounds[0] + (bounds[2] - bounds[0]) * startFraction).toInt()) to y
+                            } else {
+                                x to (bounds[3] - (bounds[3] - bounds[1]) * startFraction).toInt()
+                            }
+                            val end = if (horizontal) {
+                                ((bounds[0] + (bounds[2] - bounds[0]) * endFraction).toInt()) to y
+                            } else {
+                                x to (bounds[3] - (bounds[3] - bounds[1]) * endFraction).toInt()
+                            }
+                            val label = "Drag ${node.label()} from about $current to about $target"
+                            val args = buildJsonObject {
+                                put("x1", start.first); put("y1", start.second)
+                                put("x2", end.first); put("y2", end.second)
+                                put("durationMs", 700)
+                            }
+                            out["D${index}TARGET"] = JevCandidate("DRAG", label, JevSafeAction(tool, args, label))
+                        }
+                        return@forEach
+                    }
+                }
                 val width = viewport[2] - viewport[0]
                 val height = viewport[3] - viewport[1]
                 mapOf("left" to (viewport[0] + width / 10 to y), "right" to (viewport[2] - width / 10 to y),
@@ -364,7 +426,7 @@ internal class JevActionCatalog private constructor(
                     .forEach { (direction, end) ->
                         if (abs(x - end.first) + abs(y - end.second) < 20) return@forEach
                         val label = "Hold then drag ${node.label()} ${direction} to (${end.first},${end.second})"
-                        out["D$index$direction"] = JevCandidate("DRAG", label, JevSafeAction("drag", buildJsonObject {
+                        out["D$index$direction"] = JevCandidate("DRAG", label, JevSafeAction(tool, buildJsonObject {
                             put("x1", x); put("y1", y); put("x2", end.first); put("y2", end.second); put("durationMs", 700)
                         }, label))
                     }
@@ -384,8 +446,9 @@ internal class JevActionCatalog private constructor(
             nodes: List<JsonObject>,
             observationId: String,
             budget: Int,
+            ready: Set<String>,
         ): LinkedHashMap<String, JevCandidate> {
-            if (budget <= 0) return linkedMapOf()
+            if (budget <= 0 || ("tap_node" !in ready && "tap" !in ready)) return linkedMapOf()
             val targets = linkedMapOf<String, JevTapCandidate>()
             nodes.forEach { node ->
                 if (!node.enabled()) return@forEach
@@ -396,9 +459,15 @@ internal class JevActionCatalog private constructor(
                         ?: nodeId.takeIf { node.bounds() != null && (node.string("text") != null || node.string("contentDescription") != null) }
                 } ?: return@forEach
                 val named = node.string("text") != null || node.string("contentDescription") != null
+                val targetBounds = if (clickTarget == nodeId) node.bounds() else {
+                    (node["clickableAncestor"] as? JsonObject)?.let { ancestor ->
+                        ancestor["bounds"]?.jsonArray?.mapNotNull { it.jsonPrimitive.intOrNull }
+                            ?.takeIf { it.size == 4 }
+                    }
+                }
                 val previous = targets[clickTarget]
                 if (previous == null || (!previous.named && named)) {
-                    targets[clickTarget] = JevTapCandidate(node.label(), named)
+                    targets[clickTarget] = JevTapCandidate(node.label(), named, targetBounds)
                 }
             }
             // Over budget, a named control outranks an anonymous container:
@@ -411,14 +480,27 @@ internal class JevActionCatalog private constructor(
             }
             val out = linkedMapOf<String, JevCandidate>()
             ordered.take(budget).forEachIndexed { index, (nodeId, candidate) ->
+                val semantic = "tap_node" in ready
+                val bounds = candidate.bounds
+                if (!semantic && bounds == null) return@forEachIndexed
                 out["T${index + 1}"] = JevCandidate(
                     "TAP",
                     "Tap ${candidate.label} [$nodeId]",
-                    JevSafeAction(
-                        "tap_node",
-                        buildJsonObject { put("nodeId", nodeId); put("observationId", observationId) },
-                        "Tap ${candidate.label} [$nodeId]",
-                    ),
+                    if (semantic) {
+                        JevSafeAction(
+                            "tap_node",
+                            buildJsonObject { put("nodeId", nodeId); put("observationId", observationId) },
+                            "Tap ${candidate.label} [$nodeId]",
+                        )
+                    } else {
+                        val x = (bounds!![0] + bounds[2]) / 2
+                        val y = (bounds[1] + bounds[3]) / 2
+                        JevSafeAction(
+                            "tap",
+                            buildJsonObject { put("x", x); put("y", y) },
+                            "Tap ${candidate.label} at ($x,$y)",
+                        )
+                    },
                 )
             }
             return out
@@ -435,7 +517,9 @@ internal class JevActionCatalog private constructor(
         private fun scrollCandidates(
             nodes: List<JsonObject>,
             observationId: String,
+            ready: Set<String>,
         ): LinkedHashMap<String, JevCandidate> {
+            if ("scroll_node" !in ready && "swipe" !in ready) return linkedMapOf()
             val out = linkedMapOf<String, JevCandidate>()
             var index = 0
             nodes.forEach nodeLoop@ { node ->
@@ -448,9 +532,8 @@ internal class JevActionCatalog private constructor(
                 val directions = if (wide) listOf("RIGHT", "LEFT", "DOWN", "UP") else listOf("DOWN", "UP", "RIGHT", "LEFT")
                 directions.forEach { direction ->
                     val offer = "Scroll ${direction.lowercase()} in $label"
-                    out["S$index${direction.first()}"] = JevCandidate(
-                        "SCROLL_$direction",
-                        offer,
+                    val semantic = "scroll_node" in ready
+                    val action = if (semantic) {
                         JevSafeAction(
                             "scroll_node",
                             buildJsonObject {
@@ -459,7 +542,31 @@ internal class JevActionCatalog private constructor(
                                 put("direction", direction.lowercase())
                             },
                             offer,
-                        ),
+                        )
+                    } else {
+                        val boundsForSwipe = bounds ?: return@forEach
+                        val x1 = (boundsForSwipe[0] + boundsForSwipe[2]) / 2
+                        val y1 = (boundsForSwipe[1] + boundsForSwipe[3]) / 2
+                        val distanceX = ((boundsForSwipe[2] - boundsForSwipe[0]) / 3).coerceAtLeast(40)
+                        val distanceY = ((boundsForSwipe[3] - boundsForSwipe[1]) / 3).coerceAtLeast(40)
+                        val (sx, sy, ex, ey) = when (direction) {
+                            "UP" -> listOf(x1, y1 + distanceY, x1, y1 - distanceY)
+                            "DOWN" -> listOf(x1, y1 - distanceY, x1, y1 + distanceY)
+                            "LEFT" -> listOf(x1 + distanceX, y1, x1 - distanceX, y1)
+                            else -> listOf(x1 - distanceX, y1, x1 + distanceX, y1)
+                        }
+                        JevSafeAction(
+                            "swipe",
+                            buildJsonObject {
+                                put("x1", sx); put("y1", sy); put("x2", ex); put("y2", ey); put("durationMs", 350)
+                            },
+                            offer,
+                        )
+                    }
+                    out["S$index${direction.first()}"] = JevCandidate(
+                        "SCROLL_$direction",
+                        offer,
+                        action,
                     )
                 }
             }
@@ -508,8 +615,13 @@ internal class JevActionCatalog private constructor(
         }
 
         /** Semantic replacement targets fields directly, without tapping the IME. */
-        private fun typeCandidates(nodes: List<JsonObject>, texts: List<String>): LinkedHashMap<String, JevCandidate> {
+        private fun typeCandidates(nodes: List<JsonObject>, ready: Set<String>): LinkedHashMap<String, JevCandidate> {
             val out = linkedMapOf<String, JevCandidate>()
+            val textTool = when {
+                "set_text" in ready -> "set_text"
+                "type_text" in ready -> "type_text"
+                else -> return out
+            }
             nodes.filter { it.enabled() && it.bool("editable") && !it.bool("password") }
                 .forEachIndexed { index, field ->
                 val nodeId = field.string("nodeId") ?: return@forEachIndexed
@@ -518,6 +630,8 @@ internal class JevActionCatalog private constructor(
                     "Replace field ${field.label()} [$nodeId] with one exact offered value",
                     action = null,
                     nodeId = nodeId,
+                    textTool = textTool,
+                    targetBounds = field.bounds(),
                 )
             }
             return out

@@ -754,8 +754,8 @@ tools.
 
 ## Experimental Jev UI engine
 
-The `experiment/jev-ui-tool` branch adds `JevToolGateway` beside the local
-knowledge and workflow gateways. It exposes one static `jev_run_ui_task` tool,
+The Jev navigation branch adds `JevToolGateway` beside the local knowledge and
+workflow gateways. It exposes one static `jev_run_ui_task` tool,
 because Codex binds tool definitions at `thread/start`. One call owns a bounded
 local loop:
 
@@ -774,21 +774,20 @@ an operation that might not be taken. `TAP` and `SCROLL_DOWN` are not comparable
 options; the concrete actions are, and that is the shape Jev's probabilities
 mean something over.
 
-One flat question means one 255-choice ceiling shared by everything on screen,
-so the space is budgeted rather than filled first-come: five slots are reserved
-for Back, Home, Wait, Done and Blocked; scrolling, progress and app launches are
-each capped; and what is left goes to taps, which is what a screen is actually
-navigated with. Over budget, a named control outranks an anonymous container,
-because the name is the only thing Jev can reason about. Scrollable regions are
-offered on their own axis only — a region taller than it is wide does not scroll
-sideways. The one decision still asked separately is which exact string to type:
-a goal yields hundreds of candidate spans, and folding them in would crowd out
-every control on the screen.
+One flat question has a 255-choice ceiling shared by everything on screen, so
+the space is paged rather than silently dropping controls. Named controls
+outrank anonymous containers when a page is full. Scrollable regions expose
+both axes; the backend decides whether a direction is supported. When only ADB
+is live, the catalog falls back to coordinate tap, swipe, drag-to-range and
+field-focus-before-type actions. The one decision still asked separately is
+which exact string to type: a goal yields candidate spans, and folding them in
+would crowd out every control on the screen.
 
 This is the fast path: Codex supplies one complete goal and does not spend a
 model turn between UI steps. Jev selects only opaque candidate keys. Local code
-maps those keys to installed-app launch, observed node taps, semantic scrolling,
-exact focused-field text, semantic progress, Back or Home. Jev cannot
+maps those keys to installed-app launch, observed node taps, semantic or
+coordinate scrolling, long press/drag, exact field text, semantic or
+coordinate progress, Back, Home, Recents and system surfaces. Jev cannot
 invent selectors, node ids, packages, coordinates, text or range values. Text
 is drawn only from explicit `texts` or bounded verbatim goal spans; password
 fields never receive a text candidate. Progress values are numeric values or
@@ -810,13 +809,21 @@ only after one more fresh observation matches the state Jev judged, and returns
 Enter is not in Jev's action space because its ADB fallback could bypass the
 existing send-approval guard; a visible submit control remains available.
 
+The executor returns typed dispatch evidence (`NOT_DISPATCHED`, `ACKNOWLEDGED`,
+`VERIFIED` or `UNKNOWN`). The task ledger keeps compact evidence from earlier
+screens, and exact text writes remain pending until a later observation matches
+the requested field value. The Jev HTTP provider also tags each request with a
+run generation, so Stop or a new run cannot deliver an old response into the
+current controller.
+
 Large UI observations are consumed through the existing `read_ui` paging
-contract and merged with the newest observation id. Accessibility observations
-also carry editable/selected state and range min/max/current plus supported
-semantic actions. `set_progress` uses Android `ACTION_SET_PROGRESS` and reports
-the typed range and polls for the requested value rather than simulating a
-coordinate swipe. A dispatched but unverified change is reported as uncertain
-and is never retried.
+contract. Accessibility and ADB both retain an immutable parsed snapshot behind
+the observation id, so paging does not dump a second screen. Observations carry
+editable/selected state, viewport/window facts, range min/max/current and
+supported semantic actions. `set_progress` uses Android
+`ACTION_SET_PROGRESS` and reports the typed range; the fallback uses grounded
+coordinates from the observed slider. A dispatched but unverified change is
+reported as uncertain and is never retried.
 
 A step, wall or decision limit is out of budget, not out of options, so those
 three replies carry a `continuation` token: calling `jev_run_ui_task` again with

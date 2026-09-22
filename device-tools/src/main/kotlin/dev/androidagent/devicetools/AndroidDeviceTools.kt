@@ -32,6 +32,7 @@ import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ObservationFingerprint
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.ToolDefinition
+import dev.androidagent.core.ToolDispatch
 import dev.androidagent.core.ToolResult
 import dev.androidagent.core.UiNode
 import dev.androidagent.core.UiObservation
@@ -56,6 +57,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.File
@@ -91,6 +93,18 @@ class AndroidDeviceTools(
     @Volatile private var revoked = true
     @Volatile private var workspace: File? = null
     @Volatile private var runId: String? = null
+    /**
+     * A Jev observation can be larger than one reply. Keep the parsed screen
+     * behind its observation id so paging does not run a second uiautomator
+     * dump and accidentally merge two different screens.
+     */
+    private data class Snapshot(
+        val observation: UiObservation,
+        val id: String,
+        val revision: Long,
+        val rawXml: String,
+    )
+    @Volatile private var snapshot: Snapshot? = null
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
 
     override fun beginRun(runId: String, workspace: File) {
@@ -100,12 +114,16 @@ class AndroidDeviceTools(
             this.workspace = workspace.absoluteFile
             workspace.absoluteFile.mkdirs()
             observations.reset()
+            snapshot = null
             revoked = false
         }
     }
 
     override fun revoke() {
-        synchronized(lock) { revoked = true }
+        synchronized(lock) {
+            revoked = true
+            snapshot = null
+        }
     }
 
     override fun needsControl(name: String): Boolean =
@@ -154,6 +172,9 @@ class AndroidDeviceTools(
                 "Wireless ADB is an optional advanced backend and is not connected.",
             )
         }
+        if (name in MUTATING_TOOLS) {
+            synchronized(lock) { snapshot = null }
+        }
         val result = when (name) {
             "device_status" -> deviceStatus()
             "read_ui" -> readUi(arguments)
@@ -200,7 +221,7 @@ class AndroidDeviceTools(
             put("actionResult", result.text)
             put("observationSucceeded", observation.success)
             put("observation", runCatching { Json.parseToJsonElement(observation.text) }.getOrElse { JsonPrimitive(observation.text) })
-        }.toString(), success = observation.success)
+        }.toString(), success = observation.success, dispatch = result.dispatch)
     }
 
     private fun deviceStatus(): ToolResult {
@@ -214,6 +235,33 @@ class AndroidDeviceTools(
         val raw = arguments["raw"]?.jsonPrimitive?.booleanOrNull ?: false
         val force = arguments["force"]?.jsonPrimitive?.booleanOrNull ?: false
         val query = UiQuery.from(arguments)
+        arguments["snapshotId"]?.jsonPrimitive?.contentOrNull?.let { requestedId ->
+            val held = snapshot?.takeIf { it.id == requestedId }
+                ?: throw ToolNotServiceable(
+                    "snapshot_expired",
+                    "Snapshot expired; start read_ui again without snapshotId.",
+                )
+            if (raw) return ToolResult(bound(held.rawXml))
+            val page = UiObservationSerializer.render(
+                observation = held.observation,
+                source = "file",
+                backend = BACKEND,
+                observationId = held.id,
+                revision = held.revision,
+                elapsedMs = 0L,
+                previous = null,
+                // Paging must always carry nodes, even when the first page was
+                // already rendered. It is the same immutable screen.
+                force = true,
+                stable = true,
+                query = query,
+            )
+            return ToolResult(
+                JsonObject(Json.parseToJsonElement(page.text).jsonObject +
+                    ("snapshotPaging" to JsonPrimitive(true))).toString(),
+                success = page.ok,
+            )
+        }
         val revision = observations.nextRevision()
         val observationId = "ui-$revision"
         val startedAt = System.nanoTime()
@@ -343,7 +391,16 @@ class AndroidDeviceTools(
                 query = query,
             )
             rendered.fingerprint?.let { observations.record(it) }
-            ToolResult(bound(rendered.text), success = rendered.ok)
+            if (rendered.ok) {
+                synchronized(lock) {
+                    if (!revoked) snapshot = Snapshot(parsed, observationId, revision, xml)
+                }
+            }
+            ToolResult(
+                JsonObject(Json.parseToJsonElement(rendered.text).jsonObject +
+                    ("snapshotPaging" to JsonPrimitive(true))).toString(),
+                success = rendered.ok,
+            )
         } catch (error: Exception) {
             uiFailure(
                 observationId, revision, startedAt, "ui_parse_failure",
@@ -367,6 +424,10 @@ class AndroidDeviceTools(
         val packages = mutableMapOf<String, Int>()
         var nodeCount = 0
         var sawHierarchy = false
+        var minLeft = Int.MAX_VALUE
+        var minTop = Int.MAX_VALUE
+        var maxRight = 0
+        var maxBottom = 0
         var event = parser.eventType
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
@@ -379,13 +440,20 @@ class AndroidDeviceTools(
                         require(sawHierarchy) { "node appears before hierarchy root" }
                         require(parser.depth <= MAX_UI_XML_DEPTH) { "hierarchy is too deep" }
                         require(nodeCount < MAX_UI_NODES) { "hierarchy has too many nodes" }
+                        val nodeBounds = parseBounds(parser.attribute("bounds"))
+                        nodeBounds?.let { bounds ->
+                            minLeft = minOf(minLeft, bounds[0])
+                            minTop = minOf(minTop, bounds[1])
+                            maxRight = maxOf(maxRight, bounds[2])
+                            maxBottom = maxOf(maxBottom, bounds[3])
+                        }
                         val node = UiNode(
                             nodeId = "n${nodeCount++}",
                             text = parser.attribute("text").compactUiText(),
                             contentDescription = parser.attribute("content-desc").compactUiText(),
                             resourceId = parser.attribute("resource-id").compactUiText(),
                             className = parser.attribute("class").compactUiText(),
-                            bounds = parseBounds(parser.attribute("bounds")),
+                            bounds = nodeBounds,
                             enabled = parser.attribute("enabled")?.toBooleanStrictOrNull() ?: true,
                             clickable = parser.attribute("clickable")?.toBooleanStrictOrNull() ?: false,
                             scrollable = parser.attribute("scrollable")?.toBooleanStrictOrNull() ?: false,
@@ -421,6 +489,9 @@ class AndroidDeviceTools(
         return UiObservation(
             activePackage = packages.maxByOrNull { it.value }?.key,
             nodes = meaningful,
+            viewport = if (maxRight > minLeft && maxBottom > minTop) {
+                listOf(minLeft, minTop, maxRight, maxBottom)
+            } else null,
         )
     }
 
@@ -529,6 +600,7 @@ class AndroidDeviceTools(
         return ToolResult(
             text = bound("Tapped $x,$y${out.output.ifBlank { "" }.prefix(" :: ")}"),
             success = out.exitCode == 0,
+            dispatch = if (out.exitCode == 0) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
         )
     }
 
@@ -545,6 +617,7 @@ class AndroidDeviceTools(
         return ToolResult(
             text = bound("Swiped ($x1,$y1)->($x2,$y2) ${duration}ms${out.output.ifBlank { "" }.prefix(" :: ")}"),
             success = out.exitCode == 0,
+            dispatch = if (out.exitCode == 0) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
         )
     }
 
@@ -553,6 +626,15 @@ class AndroidDeviceTools(
             ?: throw IllegalArgumentException("text is required")
         val submit = arguments.get("submit")?.jsonPrimitive?.booleanOrNull ?: false
         val timeout = arguments.timeoutMsOrDefault()
+        val focusX = arguments["x"]?.jsonPrimitive?.intOrNull
+        val focusY = arguments["y"]?.jsonPrimitive?.intOrNull
+        require((focusX == null) == (focusY == null)) { "x and y must be supplied together" }
+        if (focusX != null && focusY != null) {
+            require(focusX >= 0 && focusY >= 0) { "focus coordinates must be non-negative" }
+            checkActive()
+            val tap = userExecute("input tap $focusX $focusY", timeout)
+            check(tap.exitCode == 0) { "Could not focus the text field; text was not sent" }
+        }
         val component = inputMethodComponent
         if (component != null) {
             return typeTextThroughIme(text, submit, timeout, component)
@@ -573,7 +655,10 @@ class AndroidDeviceTools(
             val submitResult = userExecute("input keyevent 66", timeout)
             check(submitResult.exitCode == 0) { "Enter key command failed after text input" }
         }
-        return ToolResult(bound("Typed ${text.length} chars" + if (submit) " + Enter" else ""))
+        return ToolResult(
+            bound("Typed ${text.length} chars" + if (submit) " + Enter" else ""),
+            dispatch = ToolDispatch.ACKNOWLEDGED,
+        )
     }
 
     /**
@@ -634,7 +719,10 @@ class AndroidDeviceTools(
                 val submitResult = userExecute("input keyevent 66", timeout)
                 check(submitResult.exitCode == 0) { "Enter key command failed after text input" }
             }
-            return ToolResult(bound("Typed ${text.length} chars" + if (submit) " + Enter" else ""))
+            return ToolResult(
+                bound("Typed ${text.length} chars" + if (submit) " + Enter" else ""),
+                dispatch = ToolDispatch.ACKNOWLEDGED,
+            )
         } finally {
             val restore = previous?.takeIf { switched && it != component }
             if (restore != null) {
@@ -696,6 +784,7 @@ class AndroidDeviceTools(
         return ToolResult(
             text = bound("Key $code sent${out.output.ifBlank { "" }.prefix(" :: ")}"),
             success = out.exitCode == 0,
+            dispatch = if (out.exitCode == 0) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
         )
     }
 
@@ -719,6 +808,7 @@ class AndroidDeviceTools(
         return ToolResult(
             text = bound("${if (opened) "Opened" else "Could not open"} $pkg${result.output.ifBlank { "" }.prefix(" :: ")}"),
             success = opened,
+            dispatch = if (opened) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
         )
     }
 
@@ -881,6 +971,11 @@ class AndroidDeviceTools(
 
         /** Scopes unchanged-suppression to this backend. */
         private const val BACKEND = "adb"
+
+        private val MUTATING_TOOLS = setOf(
+            "act_and_observe", "tap", "swipe", "type_text", "key", "open_app",
+            "shell", "push_file", "install_apk",
+        )
 
         private const val IME_ACTION_SUFFIX = ".INPUT_TEXT"
         private const val IME_EXTRA_PAYLOAD = "payload_base64"
@@ -1079,14 +1174,14 @@ class AndroidDeviceTools(
                     "text" to "string", "resourceId" to "string", "class" to "string",
                     "package" to "string", "rootNodeId" to "string",
                     "clickableOnly" to "boolean", "scrollableOnly" to "boolean",
-                    "offset" to "integer", "maxNodes" to "integer", "maxChars" to "integer",
+                    "snapshotId" to "string", "offset" to "integer", "maxNodes" to "integer", "maxChars" to "integer",
                 ),
                 emptyList(),
             ),
             tool("screenshot", "Capture a PNG screenshot. Returns imageBase64. Read-only.", emptyMap(), emptyList()),
             tool("tap", "Tap the screen at pixel coordinates.", mapOf("x" to "integer", "y" to "integer"), listOf("x", "y")),
             tool("swipe", "Swipe from one point to another.", mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"), listOf("x1", "y1", "x2", "y2")),
-            tool("type_text", "Type text. Uses the configured IME for full Unicode; ASCII falls back to adb input when no IME is configured.", mapOf("text" to "string", "submit" to "boolean"), listOf("text")),
+            tool("type_text", "Type text, optionally focusing an observed field first. Uses the configured IME for full Unicode; ASCII falls back to adb input when no IME is configured.", mapOf("text" to "string", "submit" to "boolean", "x" to "integer", "y" to "integer"), listOf("text")),
             tool("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),
             tool("open_app", "Launch an app by package, optionally with activity.", mapOf("package" to "string", "activity" to "string"), listOf("package")),
             tool("shell", "Run an arbitrary shell command. Visible device control.", mapOf("command" to "string", "timeoutMs" to "integer"), listOf("command")),

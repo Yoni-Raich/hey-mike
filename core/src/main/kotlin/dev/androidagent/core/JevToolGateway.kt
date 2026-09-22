@@ -255,7 +255,7 @@ class JevToolGateway(
         val repeated = journal.repeated
         val textOptions = textCandidates(goal, suppliedTexts)
         val (apps, initialObservation) = coroutineScope {
-            val apps = async { loadApps() }
+            val apps = async { loadApps(goal) }
             val observation = async { observe(timings) }
             apps.await() to observation.await()
         }
@@ -271,7 +271,10 @@ class JevToolGateway(
         val inspectedPages = mutableSetOf<Int>()
         val transitions = mutableMapOf<String, Int>()
 
-        repeat(maxSteps * 2 + 4) {
+        // Paging, stale observations and recovery decisions are not device
+        // steps. Give them their own generous internal budget so the public
+        // maxSteps/deadline remain the only normal continuation boundaries.
+        repeat(maxSteps * DECISIONS_PER_STEP + DECISION_OVERHEAD) {
             checkActive()
             journal.writes.reconcile(observation.json)
             journal.ledger.observe(observation.fingerprint, observation.json, null, null)
@@ -442,7 +445,7 @@ class JevToolGateway(
                 val actionResult = router().invoke(action.tool, action.arguments)
                 dispatch = actionResult.dispatch
                 outcome = actionResult.text.take(MAX_RESULT_MESSAGE)
-                if (action.tool == "set_text") outcome = buildJsonObject {
+                if (action.tool in setOf("set_text", "type_text")) outcome = buildJsonObject {
                     put("executorResult", outcome)
                     put("exactRequestedText", action.arguments.getValue("text"))
                 }.toString().take(MAX_RESULT_MESSAGE)
@@ -472,7 +475,8 @@ class JevToolGateway(
                 }
                 val navigation = action.tool in setOf("open_app", "scroll_node") ||
                     action.tool == "key" && action.arguments.string("keycode") in setOf("BACK", "HOME", "RECENTS", "QUICK_SETTINGS", "NOTIFICATIONS")
-                val exactWrite = action.tool in setOf("set_text", "set_progress") && dispatch == ToolDispatch.ACKNOWLEDGED
+                val exactWrite = action.tool in setOf("set_text", "type_text", "set_progress") &&
+                    dispatch in setOf(ToolDispatch.ACKNOWLEDGED, ToolDispatch.VERIFIED)
                 if (after == null || dispatch != ToolDispatch.NOT_DISPATCHED && !navigation && !exactWrite) {
                     after?.let { journal.observation = it }
                     return terminal(
@@ -488,10 +492,7 @@ class JevToolGateway(
                 observation = after
                 journal.observation = observation
                 journal.ledger.observe(after.fingerprint, after.json, action.label, "dispatch=$dispatch; $refusal")
-                if (action.tool == "set_text" && dispatch != ToolDispatch.NOT_DISPATCHED) {
-                    journal.writes.recordText(fresh.json, action.arguments.getValue("nodeId").jsonPrimitive.content,
-                        action.arguments.getValue("text").jsonPrimitive.content, dispatch)
-                }
+                recordTextWrite(journal, fresh, action, dispatch)
                 return@repeat
             }
             history += JevHistoryEntry(selected.operation, action.label, outcome = outcome)
@@ -514,9 +515,8 @@ class JevToolGateway(
             }
             journal.observation = observation
             actionPage = 0
-            if (action.tool == "set_text") {
-                journal.writes.recordText(fresh.json, action.arguments.getValue("nodeId").jsonPrimitive.content,
-                    action.arguments.getValue("text").jsonPrimitive.content, dispatch)
+            if (action.tool in setOf("set_text", "type_text")) {
+                recordTextWrite(journal, fresh, action, dispatch)
                 journal.writes.reconcile(observation.json)
             }
             history.last().screenChanged = observation.fingerprint != fresh.fingerprint
@@ -534,6 +534,19 @@ class JevToolGateway(
             "decision_limit", goal, suppliedTexts, journal, observation,
             "Jev exhausted its decision budget for this call.",
         )
+    }
+
+    /** Record an exact field write only when the action carried a grounded node. */
+    private fun recordTextWrite(
+        journal: RunJournal,
+        before: JevObservation,
+        action: JevSafeAction,
+        dispatch: ToolDispatch,
+    ) {
+        if (dispatch == ToolDispatch.NOT_DISPATCHED) return
+        val nodeId = action.arguments["nodeId"]?.jsonPrimitive?.contentOrNull ?: return
+        val text = action.arguments["text"]?.jsonPrimitive?.contentOrNull ?: return
+        journal.writes.recordText(before.json, nodeId, text, dispatch)
     }
 
     private suspend fun auditRequirements(goal: String, journal: RunJournal): Boolean {
@@ -642,18 +655,33 @@ class JevToolGateway(
         return JevObservation(observationId, normalized, "$backend:${checkNotNull(screenDigest)}:${last["viewport"]}:${last["windows"]}")
     }
 
-    private suspend fun loadApps(): List<JevInstalledApp> {
+    private suspend fun loadApps(goal: String): List<JevInstalledApp> {
+        val explicitPackages = PACKAGE_RE.findAll(goal).map { it.value }
+            .distinct()
+            .map { JevInstalledApp(it, it) }
+            .toList()
+        val query = appQuery(goal)
+        // App enumeration is the slowest part of a local observation on some
+        // phones. Do not list every installed app for an ordinary in-app task.
+        // Only goals that can launch or name an app get a bounded lookup.
+        if (query == null) return explicitPackages
         val apps = linkedMapOf<String, JevInstalledApp>()
-        for (offset in 0 until 10000 step MAX_APPS) {
-            val page = loadAppsPage(offset)
+        for (offset in 0 until MAX_APP_QUERY_RESULTS step MAX_APPS) {
+            val page = loadAppsPage(offset, query)
             val before = apps.size
             page.forEach { apps[it.packageName] = it }
             if (page.size < MAX_APPS || apps.size == before) break
         }
-        return apps.values.toList()
+        // An unqualified label can miss a launcher because the platform sorts
+        // before taking the page. A small unfiltered fallback is still cheaper
+        // than the former 10,000-app scan and keeps navigation recoverable.
+        if (apps.isEmpty()) {
+            loadAppsPage(0, null).forEach { apps[it.packageName] = it }
+        }
+        return (explicitPackages + apps.values).distinctBy { it.packageName }
     }
 
-    private suspend fun loadAppsPage(offset: Int): List<JevInstalledApp> {
+    private suspend fun loadAppsPage(offset: Int, query: String?): List<JevInstalledApp> {
         checkActive()
         val result = try {
             router().invoke("apps_settings", buildJsonObject {
@@ -661,6 +689,7 @@ class JevToolGateway(
                 put("limit", MAX_APPS)
                 put("offset", offset)
                 put("include_system", true)
+                query?.let { put("query", it) }
             })
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -675,6 +704,23 @@ class JevToolGateway(
                 JevInstalledApp(pkg, app.string("label") ?: pkg)
             }
         }.getOrDefault(emptyList())
+    }
+
+    private fun appQuery(goal: String): String? {
+        val lower = goal.lowercase()
+        if (!APP_GOAL_WORDS.any { word -> Regex("(^|[^\\p{L}\\p{N}])${Regex.escape(word)}([^\\p{L}\\p{N}]|$)").containsMatchIn(lower) }) {
+            return null
+        }
+        listOf("settings", "chrome", "telegram", "whatsapp", "youtube", "maps", "gym")
+            .firstOrNull { it in lower }
+            ?.let { return it }
+        val target = Regex("(?i)(?:open|launch|start|switch\\s+to|go\\s+to|navigate\\s+to)\\s+(.+)")
+            .find(goal)?.groupValues?.getOrNull(1)
+            ?.split(Regex("\\s+|[,.;:()\\[\\]]"))
+            ?.map { it.trim('-', '_') }
+            ?.filter { it.length >= 3 && it.lowercase() !in APP_STOP_WORDS }
+            ?.lastOrNull()
+        return target?.take(MAX_APP_QUERY_CHARS)
     }
 
     private fun terminal(
@@ -780,17 +826,26 @@ class JevToolGateway(
 
         const val DEFAULT_MAX_STEPS = 120
         const val MAX_STEPS = 500
+        const val DECISIONS_PER_STEP = 8
+        const val DECISION_OVERHEAD = 64
         const val DEFAULT_WALL_MS = 300_000L
         const val MIN_WALL_MS = 5_000L
         const val MAX_WALL_MS = 900_000L
         const val MAX_UI_PAGES = 128
         const val MAX_PAGING_RETRIES = 3
         const val MAX_APPS = 50
+        const val MAX_APP_QUERY_RESULTS = 100
+        const val MAX_APP_QUERY_CHARS = 80
         const val MAX_CONSECUTIVE_STALE = 3
         const val MAX_CONSECUTIVE_WAITS = 8
         const val WAIT_BASE_MS = 100L
         const val WAIT_MAX_MS = 1_000L
         const val MAX_RESULT_MESSAGE = 1_000
+        val PACKAGE_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
+        val APP_GOAL_WORDS = setOf("open", "launch", "start", "switch", "navigate", "settings", "app", "application")
+        val APP_STOP_WORDS = setOf(
+            "the", "and", "then", "screen", "page", "into", "with", "from", "to", "on", "in", "at", "after",
+        )
         val TOOL_DEFINITION: ToolDefinition = ToolDefinition(
             TOOL_NAME,
             "Run a complete Android UI task with the fast Jev engine in ONE tool call. Jev repeatedly observes, decides, acts and checks the next screen locally; do not call read_ui or per-step UI tools first. " +

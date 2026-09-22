@@ -120,6 +120,55 @@ class JevActionSpaceRegressionTest {
     }
 
     @Test
+    fun `adb text fallback carries the observed field focus point`() {
+        val observation = JevObservation(
+            observationId = "ui-1",
+            json = buildJsonObject {
+                put("activePackage", "com.example")
+                put("nodes", buildJsonArray {
+                    add(buildJsonObject {
+                        put("nodeId", "n7")
+                        put("text", "Notes")
+                        put("class", "android.widget.EditText")
+                        put("bounds", buildJsonArray { listOf(40, 200, 1040, 320).forEach { add(it) } })
+                        put("enabled", true)
+                        put("editable", true)
+                        put("focused", false)
+                    })
+                })
+            },
+            fingerprint = "adb:screen",
+        )
+        val catalog = JevActionCatalog.build(
+            goal = "Enter \"hello\" in Notes",
+            observation = observation,
+            texts = listOf("hello"),
+            apps = emptyList(),
+            ready = setOf("read_ui", "tap", "type_text", "key"),
+            attempted = emptySet(),
+            requestedPage = 0,
+            requestedTextPage = 0,
+        )
+        val actionQuestion = catalog.request(
+            "Enter \"hello\" in Notes", observation, emptyList(), "supplied",
+            buildJsonObject { }, buildJsonArray { },
+        ).questions.single()
+        val selected = catalog.select(
+            JevDecisionResponse(mapOf("action" to choice(actionQuestion, "TYPE")), "test"),
+        )
+        val textQuestion = catalog.textRequest(selected, "Enter \"hello\" in Notes").questions.single()
+        val typed = catalog.selectText(
+            selected,
+            JevDecisionResponse(mapOf("text_value" to choice(textQuestion, "V1")), "test"),
+        )
+
+        assertEquals("type_text", typed.action?.tool)
+        assertEquals("n7", typed.action?.arguments?.get("nodeId")?.jsonPrimitive?.content)
+        assertEquals(540, typed.action?.arguments?.get("x")?.jsonPrimitive?.content?.toInt())
+        assertEquals(260, typed.action?.arguments?.get("y")?.jsonPrimitive?.content?.toInt())
+    }
+
+    @Test
     fun `every concrete action is one choice in a single question`() = runBlocking {
         val router = FakeRouter(MutableList(2) { listWithScrollableRow() })
         val provider = QuestionCapturingProvider(state)

@@ -134,6 +134,7 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
     private val requestLock = Any()
     @Volatile private var activeConnection: HttpURLConnection? = null
     @Volatile private var requestCancelled = false
+    private val lifecycle = java.util.concurrent.atomic.AtomicLong(0L)
     private val choosing = AtomicBoolean(false)
     override val state: StateFlow<JevProviderState> = tokens.state()
 
@@ -141,10 +142,16 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
     fun saveToken(token: String) = tokens.saveToken(token)
     fun clearToken() = tokens.clearToken()
     override fun beginRun() {
-        synchronized(requestLock) { requestCancelled = false }
+        synchronized(requestLock) {
+            lifecycle.incrementAndGet()
+            requestCancelled = false
+            activeConnection?.disconnect()
+            activeConnection = null
+        }
     }
     override fun cancelActiveRequest() {
         synchronized(requestLock) {
+            lifecycle.incrementAndGet()
             requestCancelled = true
             activeConnection?.disconnect()
         }
@@ -161,6 +168,7 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
         if (body.toByteArray(Charsets.UTF_8).size > MAX_REQUEST_BYTES) {
             throw IOException("Jev request is too large")
         }
+        val requestLifecycle = lifecycle.get()
         val connection = (URL(API_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = CONNECT_TIMEOUT_MS
@@ -172,7 +180,7 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
             setRequestProperty("Authorization", "Bearer $token")
         }
         synchronized(requestLock) {
-            if (requestCancelled) {
+            if (requestCancelled || requestLifecycle != lifecycle.get()) {
                 connection.disconnect()
                 throw IOException("Jev request was cancelled")
             }
@@ -189,7 +197,13 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
                     val code = connection.responseCode
                     if (code !in 200..299) throw IOException("Jev request failed with HTTP $code")
                     val response = parseResponse(readBounded(connection.inputStream))
-                    if (continuation.isActive) continuation.resume(response)
+                    if (continuation.isActive) {
+                        val accepted = synchronized(requestLock) {
+                            !requestCancelled && requestLifecycle == lifecycle.get() && activeConnection === connection
+                        }
+                        if (accepted) continuation.resume(response)
+                        else continuation.resumeWithException(IOException("Jev request was cancelled"))
+                    }
                 } catch (failure: Exception) {
                     if (continuation.isActive) continuation.resumeWithException(failure)
                 } finally {

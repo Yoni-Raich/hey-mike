@@ -1,143 +1,114 @@
 # Jev engine architecture review
 
-Reviewed against PR #77, commit `2d47543`, with local follow-up changes.
-This is a source review. No claim of full-device reliability follows from it.
-The user requested no further builds or test runs during this review.
+This review records the implementation in checkpoint `019370c` (Astra) and
+the follow-up fixes on the Luna branch. The target is one local controller:
+Mike gives Jev one complete goal, and the phone-local loop observes, chooses,
+acts, verifies and recovers until the goal is done, stopped, blocked or out of
+the caller's budget.
 
-## Required contract
+The controller does not call Mike between UI actions. Jev is the decision
+engine; the existing device gateway remains the executor and safety boundary.
 
-Mike gives one complete goal and exact text values. A phone-local controller
-owns observation, Jev decisions, execution, verification and recovery until the
-goal is complete, stopped, genuinely blocked or reaches the caller's overall
-budget. Jev inference is expected; another Mike turn per action is not.
+## Implemented design
 
-The composite gateway is a useful executor. Calling it from a Kotlin loop does
-not itself invoke Mike. Replacing it with another executor would duplicate the
-device backends, cancellation and approval routing without removing a model
-round trip. The problem is the controller's state and action coverage.
+### One owned task loop
 
-## Findings and local changes
+`jev_run_ui_task` is the only public Jev tool. `JevToolGateway` owns one
+invocation at a time and runs the complete observe -> decide -> act -> observe
+cycle. Step and wall-clock limits are caller budgets, not per-action model
+turns. A bounded continuation token preserves the same goal, history, ledger
+and repeat detector when a caller budget expires.
 
-1. **App discovery silently loses destinations.** `loadApps` requested 50 apps;
-   `AndroidCapabilityPlatform.queryApps` sorts before taking that limit. Matching
-   the goal afterwards cannot recover a missing app. Local changes add offset
-   paging, duplicate-page detection and package-name matching. This establishes
-   the defect in the code, not Settings' actual rank on the user's phone.
+The provider has its own request generation. Stop, a new run, or a timeout
+invalidates older HTTP responses before they can re-enter the loop.
 
-2. **The controller cannot express common navigation.** Its menu omitted the
-   executor's swipe, Recents, notification shade and Quick Settings operations.
-   Local changes offer these operations. Gestures use an observed region and
-   retain pre-action freshness checks; they do not invent screen dimensions.
-   The largest observed region is only a fallback, not a proven display bound.
+### Code-owned action space
 
-3. **Aspect ratio is not scroll capability.** A portrait launcher can contain a
-   horizontal pager. Local changes offer both axes instead of excluding one.
-   A future capability list should identify actual supported directions.
+`JevActionCatalog` creates concrete choices from the current observation. Jev
+receives opaque keys and labels; it cannot invent node ids, selectors,
+packages, coordinates, text or progress values.
 
-4. **Repeat detection rejects legitimate revisits.** A global screen/action set
-   used to stop the run even after successful navigation back to a menu. Local
-   changes remember failed or visibly unchanged attempts and remove them before
-   the next decision. Successful changed-screen actions remain available on a
-   later visit. This still needs a separate bounded cycle detector: alternating
-   between two screens is different from a no-op on one screen.
+The catalog covers:
 
-5. **Execution acknowledgement was mistaken for usable evidence.** `set_text`
-   can return `success=true` with `verified=false`. Its result was discarded.
-   Local changes retain the bounded executor result in history and the Jev
-   request. Quoted exact values are preferred over hundreds of arbitrary spans.
-   This improves evidence but does not implement a deterministic text verifier.
+- observed taps, including clickable-ancestor targeting;
+- semantic scrolling in both axes, with coordinate swipe fallback;
+- long press and drag when Accessibility is live;
+- semantic range changes and coordinate slider fallback;
+- exact text values from `texts`, quoted goal values or bounded goal spans;
+- app launch, Back, Home, Recents, notifications and Quick Settings;
+- action paging when a screen has more choices than Jev can score at once.
 
-6. **Task memory loses earlier work.** Requests included only the last eight
-   actions. Local changes retain the bounded run history, including outcomes.
-   A compact evidence ledger is still needed to keep long runs below the
-   provider's 150 KB request ceiling without losing completed requirements.
+App lookup is goal-directed and paged. Ordinary in-app tasks do not enumerate
+every installed package. An app goal searches by label/package and still has a
+bounded unfiltered fallback.
 
-7. **Observation-to-action grounding is weak.** Jev saw an index and label but
-   not resource ids, bounds, package or enabled state. Local changes preserve
-   those fields; serialized UI nodes now include their owning package. This
-   helps distinguish app controls from keyboard or system controls. It does
-   not prove that the reported keyboard failure had a particular cause.
+The ADB text fallback now targets the observed editable field before typing.
+Accessibility still prefers `set_text`, which addresses the field directly
+and can verify its value without using the keyboard.
 
-8. **Metrics are ambiguous.** `modelCalls` counts calls to the Jev provider, not
-   Mike. Add explicit `jevDecisionCalls` and `orchestratorModelCalls` (zero inside
-   this controller), retaining the old field for compatibility. Outer chat
-   turns are outside the controller's measurement scope.
+### Immutable observations
 
-## Remaining architectural gaps
+Both Accessibility and ADB keep the parsed screen behind the observation id.
+Paging re-renders that same snapshot instead of dumping the device again, so
+one Jev decision cannot combine nodes from two different screens. Snapshots
+are cleared on mutation, revoke and run start. Viewport, windows, package,
+node bounds, editable state, range values and supported actions are exposed as
+facts in the semantic envelope.
 
-### Completion has no requirement ledger
+The loop still performs one fresh read immediately before a mutation. If the
+fingerprint changed, the old choice is discarded and Jev chooses again.
 
-`DONE` plus two matching screen digests only proves the screen stayed still.
-It does not prove Notes was submitted, nor preserve evidence from a previous
-screen. Keep one goal ledger with pending/satisfied/uncertain requirements and
-the observation/action that supports each status. Completion must check every
-requirement and distinguish Jev's judgment from deterministic verification.
-Do not fix this with a special case for the AndroidGym Submit button.
+### Evidence and failure handling
 
-### Recovery needs typed execution outcomes
+`JevTaskLedger` keeps compact evidence from earlier screens and audits all
+requirements before `DONE`. `JevMutationEvidence` retains exact text writes
+until a later observation matches the requested value.
 
-`ToolResult.success` cannot distinguish not-dispatched, acknowledged, verified,
-no visible progress, and outcome-unknown. Equal screenshots do not prove that
-an action had no external side effect. An exception after dispatch must not be
-treated as a normal refusal. The executor contract should carry this distinction
-and the controller should reconcile unknown results before considering another
-mutation. Text replacement and navigation can have different recovery rules
-from submitting a form.
+`ToolDispatch` separates:
 
-### One-call ownership still has short segment limits
+- `NOT_DISPATCHED` — safe to consider another route;
+- `ACKNOWLEDGED` — the executor accepted the action, but visible success is
+  not established;
+- `VERIFIED` — the backend checked the value;
+- `UNKNOWN` — the action may have landed and must not be blindly retried.
 
-The default is 20 steps/60 seconds and the hard ceiling is 50 steps/90 seconds.
-Resuming requires an outer tool call. This does not meet the whole-goal contract
-for longer tasks. Separate internal decision/settle budgets from a caller-owned
-overall deadline. Internal continuation must preserve the same goal and ledger;
-Stop must remain responsive. Raising numbers alone does not solve recovery.
+An unchanged screen after a refusal is not treated as proof that nothing
+happened. Unknown mutations end the run with `uncertain_mutation`; definite
+pre-dispatch refusals are recorded and suppressed on that screen. Send
+approval and visible-control policy stay in the composite gateway.
 
-### Observation and capabilities are incomplete
+## Verification completed
 
-The semantic tree is not the screen: custom canvas content may have no useful
-nodes. No visual interpretation or coordinate-target discovery exists in the
-current Jev adapter. Long press, drag paths and richer gestures are not represented
-in the current action menu. Viewport/window/IME identity and available node
-actions should be explicit facts from the backend. Full control cannot be
-claimed from a menu of labels alone, or by guessing that a large node is the
-whole display.
+With Android SDK configured, this command passed on 2026-09-22:
 
-### Stability and failure paths need a single controller policy
+```text
+:core:test
+:a11y:testDebugUnitTest
+:device-tools:testDebugUnitTest
+:app:testDevDebugUnitTest
+:app:lintDevDebug
+:app:assembleDevDebug
+```
 
-Paging repeatedly rereads the whole tree, then actions read again before and
-after dispatch. This is costly even with fast Jev inference. Capture one immutable
-snapshot, page that snapshot, and validate the selected target immediately before
-execution. Preserve the existing freshness protection while reducing repeated
-tree reads. Observation failures currently escape from several loop locations;
-classify them into retryable observation failure versus unavailable backend.
+The build produced the Dev APK. Unit coverage includes action paging, app
+lookup paging, system recovery, semantic slider control, immutable ADB UI
+paging, typed failure outcomes, continuation tokens, and the ADB field-focus
+fallback. This is source/build evidence, not proof of a real Jev token or an
+AndroidGym end-to-end run.
 
-### Cancellation and parallel calls need stronger ownership
+## Known boundaries
 
-The provider has one active connection and the gateway has one revoked boolean.
-A second invocation can compete with the first; a new run can reset the boolean.
-Use one invocation owner plus a run generation checked before every dispatch.
-Coroutine timeout does not by itself interrupt blocking HttpURLConnection I/O;
-disconnect must also be coupled to request cancellation, not just user Stop.
+1. `done_visible` is still an audited Jev judgment and returns
+   `verified:false`. A task-specific deterministic verifier is not inferred
+   from a stable screen.
+2. Custom canvas and other surfaces with no semantic Accessibility nodes have
+   no visual target resolver in this adapter. `screenshot` remains available,
+   but the local catalog cannot safely invent a visual coordinate.
+3. A caller can still choose a small `maxSteps` or timeout. The controller
+   returns a continuation instead of silently restarting; continuation storage
+   is intentionally bounded to five segments.
+4. Physical device validation with a real Jev token, AndroidGym, keyboard,
+   service reconnect and Stop during network I/O is still required.
 
-## Code design direction
-
-Split the current large gateway by responsibility:
-
-- `JevTaskController`: one goal, deadline, Stop, lifecycle and terminal status.
-- `ObservationSource`: immutable snapshots, windows, viewport and target freshness.
-- `ActionCatalog`: backend-supported atomic actions, stable target identities,
-  choice budgeting and alternate action pages rather than silently dropped nodes.
-- `ActionExecutor`: the existing composite gateway behind typed outcomes.
-- `TaskLedger`: requirements, evidence, unknown effects and cycle detection.
-- `JevDecisionProvider`: transport only; no device actions or task lifecycle.
-
-The controller asks Jev for the next choice and feeds it observed outcomes. All
-recovery stays inside that controller. Mike receives the final result or a
-specific need for missing information, rather than coordinating each UI step.
-
-## Review boundary
-
-The local follow-up fixes concrete action-discovery and evidence-loss defects.
-It is not a completed redesign and must not be described as full control from
-every screen. Completion, typed recovery, whole-goal ownership, custom-rendered
-screens and cancellation ownership remain explicit work, not inferred successes.
+These boundaries are explicit. They are not reasons to add an outer model
+call for every action or to bypass the typed device gateway.

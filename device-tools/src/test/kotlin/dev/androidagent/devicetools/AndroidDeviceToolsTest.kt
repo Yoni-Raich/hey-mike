@@ -339,6 +339,29 @@ class AndroidDeviceToolsTest {
         assertTrue(adb.timeouts.single() in 1..AndroidDeviceTools.READ_UI_DEFAULT_TIMEOUT_MS)
     }
 
+    @Test fun readUiPagingReusesOneImmutableDump() = runBlocking {
+        val adb = ScriptedUiAdb(mutableListOf(CommandResult(PAGED_UI_XML, 0)))
+        val tools = AndroidDeviceTools(adb)
+        tools.beginRun("ui", Files.createTempDirectory("ws").toFile())
+
+        val first = Json.parseToJsonElement(
+            tools.invoke("read_ui", buildJsonObject { put("force", true); put("maxNodes", 1) }).text,
+        ).jsonObject
+        val next = first["nextOffset"]!!.jsonPrimitive.content.toInt()
+        val second = Json.parseToJsonElement(
+            tools.invoke("read_ui", buildJsonObject {
+                put("snapshotId", first["observationId"]!!.jsonPrimitive.content)
+                put("offset", next)
+                put("maxNodes", 1)
+            }).text,
+        ).jsonObject
+
+        assertEquals(1, adb.commands.size)
+        assertEquals(first["observationId"]!!.jsonPrimitive.content, second["observationId"]!!.jsonPrimitive.content)
+        assertEquals("true", second["snapshotPaging"]!!.jsonPrimitive.content)
+        assertEquals("Second", second["nodes"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content)
+    }
+
     @Test fun readUiFiltersTheParsedScreenWhenTheModelAsksAFocusedQuestion() = runBlocking {
         val adb = ScriptedUiAdb(mutableListOf(CommandResult(SAMPLE_UI_XML, 0)))
         val tools = AndroidDeviceTools(adb)
@@ -391,7 +414,7 @@ class AndroidDeviceToolsTest {
         val properties = schema.inputSchema["properties"]!!.jsonObject
         for (key in listOf(
             "text", "resourceId", "class", "package", "rootNodeId",
-            "clickableOnly", "scrollableOnly", "offset", "maxNodes", "maxChars",
+            "clickableOnly", "scrollableOnly", "snapshotId", "offset", "maxNodes", "maxChars",
         )) {
             assertTrue("read_ui must advertise $key", properties.containsKey(key))
         }
@@ -502,7 +525,8 @@ class AndroidDeviceToolsTest {
             json["unchangedSinceRevision"]!!.jsonPrimitive.content)
         // The whole point: the node list is not resent.
         assertNull(json["nodes"])
-        assertTrue(second.text.length < 400)
+        assertEquals("true", json["snapshotPaging"]!!.jsonPrimitive.content)
+        assertTrue("unchanged response must stay compact", second.text.length < 800)
         // The dump still runs, so a changed screen is never missed.
         assertEquals(2, adb.commands.size)
     }
@@ -714,5 +738,6 @@ class AndroidDeviceToolsTest {
 
     companion object {
         private const val SAMPLE_UI_XML = """<hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="com.whatsapp" content-desc="" clickable="true" enabled="true" scrollable="false" focused="false" bounds="[900,2100][1080,2300]"><node index="0" text="Send" resource-id="com.whatsapp:id/send" class="android.widget.TextView" package="com.whatsapp" content-desc="" clickable="false" enabled="true" scrollable="false" focused="false" bounds="[920,2120][1060,2280]"/><node index="1" text="" resource-id="" class="android.view.View" package="com.whatsapp" content-desc="" clickable="false" enabled="true" scrollable="false" focused="false" bounds="[0,0][1,1]"/></node></hierarchy>"""
+        private const val PAGED_UI_XML = """<hierarchy rotation="0"><node index="0" text="First" resource-id="id/first" class="android.widget.Button" package="com.example" content-desc="" clickable="true" enabled="true" scrollable="false" focused="false" bounds="[0,0][100,100]"/><node index="1" text="Second" resource-id="id/second" class="android.widget.Button" package="com.example" content-desc="" clickable="true" enabled="true" scrollable="false" focused="false" bounds="[0,100][100,200]"/></hierarchy>"""
     }
 }
