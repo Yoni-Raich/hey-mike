@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Editing a rule is now a form instead of raw JSON. The time is picked from a
+  clock, the days are seven taps, and the numbers and the text inside a
+  condition or an action — a caption, a notification message, what Mike should
+  say — each have their own field, grouped under the step they belong to. A
+  value that cannot work says why under that field, and nothing is saved until
+  it can. Anything bigger than a value (another trigger, a new condition, a
+  different workflow) goes to Mike from the bottom of the same screen.
+
 - You can now delete and edit a standing rule from its own screen in the rules
   panel. Delete asks first. Edit lets you tell Mike what to change in plain
   words, or change the rule directly; a direct edit is checked exactly like a

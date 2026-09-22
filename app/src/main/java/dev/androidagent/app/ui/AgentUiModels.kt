@@ -213,10 +213,10 @@ data class AgentUiActions(
     val onRunRule: (String) -> Unit = {},
     /** Delete one rule for good. The screen asks first. */
     val onDeleteRule: (String) -> Unit = {},
-    /** The saved rule as editable JSON, or null when it cannot be read. */
-    val ruleDefinition: (String) -> String? = { null },
-    /** Save an edited rule. Null on success, else the reason it was refused. */
-    val onSaveRule: (id: String, json: String) -> String? = { _, _ -> null },
+    /** A rule's editable values: times, days, numbers and text. Empty when it cannot be read. */
+    val ruleEditFields: (String) -> List<dev.androidagent.core.AutomationEditField> = { emptyList() },
+    /** Save the edit form. Null on success, else the reason it was refused. */
+    val onSaveRule: (id: String, values: Map<String, String>) -> String? = { _, _ -> null },
     val onOpenAppInfo: () -> Unit = {},
     val onOpenOverlayPermission: () -> Unit = {},
     val onDisconnect: () -> Unit = {},
