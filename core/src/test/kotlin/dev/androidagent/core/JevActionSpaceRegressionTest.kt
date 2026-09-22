@@ -165,6 +165,7 @@ class JevActionSpaceRegressionTest {
         )
 
         assertEquals("type_text", typed.action?.tool)
+        assertEquals("replace", typed.action?.arguments?.get("mode")?.jsonPrimitive?.content)
         assertEquals("n7", typed.action?.arguments?.get("nodeId")?.jsonPrimitive?.content)
         assertEquals(540, typed.action?.arguments?.get("x")?.jsonPrimitive?.content?.toInt())
         assertEquals(260, typed.action?.arguments?.get("y")?.jsonPrimitive?.content?.toInt())
@@ -218,7 +219,7 @@ class JevActionSpaceRegressionTest {
     }
 
     @Test
-    fun `paging stops once every page of a screen has been shown`() = runBlocking {
+    fun `paging revisits earlier pages but bounds endless scans`() = runBlocking {
         val router = FakeRouter(MutableList(2) { crowdedScreen(named = 150, anonymous = 150) })
         var pagesAsked = 0
         var pages = 0
@@ -239,10 +240,11 @@ class JevActionSpaceRegressionTest {
         val result = gateway.invoke("jev_run_ui_task", buildJsonObject { put("goal", "Find a control that is not there") })
 
         val json = Json.parseToJsonElement(result.text).jsonObject
-        assertEquals("blocked", json["status"]?.jsonPrimitive?.content)
+        assertEquals("decision_limit", json["status"]?.jsonPrimitive?.content)
+        assertTrue(json.containsKey("continuation"))
         assertTrue("expected a multi-page screen, got $pages", pages > 2)
-        assertEquals(pages, pagesAsked)
-        assertEquals(pages, json["timings"]!!.jsonObject["decisions"]!!.jsonObject["MORE_ACTIONS"]!!.jsonPrimitive.content.toInt())
+        assertEquals(2 * pages + 1, pagesAsked)
+        assertEquals(pagesAsked, json["timings"]!!.jsonObject["decisions"]!!.jsonObject["MORE_ACTIONS"]!!.jsonPrimitive.content.toInt())
     }
 
     @Test
@@ -256,6 +258,18 @@ class JevActionSpaceRegressionTest {
         // phone whose Settings does not declare the narrower action.
         assertEquals(
             listOf("android.settings.DISPLAY_SETTINGS", "android.settings.SETTINGS"),
+            labels.mapNotNull { label -> SETTINGS_ACTION.find(label)?.value },
+        )
+    }
+
+    @Test
+    fun `network and internet offers the dashboard intent before settings root`() {
+        val labels = deepLinkOffers(
+            goal = "Open Android Settings Network and internet without changing settings",
+            ready = DEFAULT_READY + "open_intent",
+        )
+        assertEquals(
+            listOf("android.settings.WIRELESS_SETTINGS", "android.settings.SETTINGS"),
             labels.mapNotNull { label -> SETTINGS_ACTION.find(label)?.value },
         )
     }
@@ -530,10 +544,7 @@ class JevActionSpaceRegressionTest {
         )
         private val SETTINGS_ACTION = Regex("android\\.settings\\.[A-Z_]+")
 
-        private fun auditAnswer(request: JevDecisionRequest) = JevDecisionResponse(
-            request.questions.associate { it.name to choice(it, JevTaskLedger.SATISFIED) },
-            "jev-test",
-        )
+        private fun auditAnswer(request: JevDecisionRequest) = jevAuditFixture(request)
         private fun choice(question: JevChoiceQuestion, selected: String): JevDecision = JevDecision(
             type = "choice",
             choice = selected,

@@ -1124,7 +1124,7 @@ private fun ColumnScope.JevSettings(state: AgentUiState, actions: AgentUiActions
             Text("Use Jev as the UI engine", fontWeight = FontWeight.Medium)
             Text(
                 when {
-                    !state.jevEnabled -> "Off. The agent cannot use the Jev tool."
+                    !state.jevEnabled -> "Off. Codex controls the device with its own tools. No requests go to Jev."
                     !state.jevTokenConfigured -> "On, but a token is still needed."
                     else -> "On. Jev can run complete UI tasks through Hey Mike's device controls."
                 },

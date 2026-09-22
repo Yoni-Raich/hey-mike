@@ -40,6 +40,8 @@ import dev.androidagent.core.UiObservation
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.UiObservationSerializer
 import dev.androidagent.core.UiQuery
+import dev.androidagent.core.UiTextContract
+import dev.androidagent.core.TextEditMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -167,7 +169,7 @@ class A11yDeviceTools(
 
     override fun needsControl(name: String): Boolean =
         when (name) {
-            "read_ui", "screenshot", "resolve_intent" -> false
+            "read_ui", "verify_text", "screenshot", "resolve_intent" -> false
             else -> true
         }
 
@@ -241,6 +243,7 @@ class A11yDeviceTools(
             "open_app" -> openApp(arguments)
             "tap_node" -> tapNode(arguments)
             "set_text" -> setText(arguments)
+            "verify_text" -> verifyText(arguments)
             "set_progress" -> setProgress(arguments)
             "scroll_node" -> scrollNode(arguments)
             "wait_for_change" -> waitForChange(arguments)
@@ -455,63 +458,17 @@ class A11yDeviceTools(
     }
 
     private suspend fun typeText(arguments: JsonObject): ToolResult {
-        val text = arguments["text"]?.jsonPrimitive?.contentOrNull
-            ?: throw IllegalArgumentException("text is required")
-        require(text.length <= MAX_TEXT_CHARS) { "text must be at most $MAX_TEXT_CHARS characters" }
-        val submit = arguments["submit"]?.jsonPrimitive?.booleanOrNull ?: false
-        val service = requireService()
-        val target = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
-            ?: throw ToolNotServiceable(
-                "no_text_focus",
-                "No editable field has input focus. Tap the centre of the text field first, then retry.",
-            )
-        val arguments1 = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        val mode = TextEditMode.from(arguments)
+        val target = if (arguments["nodeId"] != null) resolveNode(arguments).second else {
+            require((arguments["x"] == null) == (arguments["y"] == null)) { "x and y must be supplied together" }
+            if (arguments["x"] != null) {
+                val focused = tap(arguments)
+                if (!focused.success) return focused
+            }
+            requireService().findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+                ?.let(::RealNodeView) ?: throw ToolNotServiceable("no_text_focus", "Focus an editable field before typing.")
         }
-        val committed = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments1)
-        if (!committed) {
-            return ToolResult(
-                "Text was rejected by the field; nothing was typed.",
-                success = false,
-                dispatch = ToolDispatch.NOT_DISPATCHED,
-            )
-        }
-        val pkg = target.packageName?.toString()
-        if (submit && SendGuard.isMessagingApp(pkg)) {
-            // In a chat, submit is Send. The text stays typed in; only the
-            // press waits for the user.
-            val root = service.rootInActiveWindow?.let(::RealNodeView) ?: RealNodeView(target)
-            val send = gatedSend(service, root) { submitDraft(it) }
-            // ACTION_SET_TEXT already committed before the approval gate. A
-            // refusal here cannot truthfully be reported as NOT_DISPATCHED.
-            return send.copy(
-                dispatch = if (send.dispatch == ToolDispatch.NOT_DISPATCHED) {
-                    ToolDispatch.ACKNOWLEDGED
-                } else if (send.dispatch == ToolDispatch.UNKNOWN && send.success) {
-                    ToolDispatch.ACKNOWLEDGED
-                } else send.dispatch,
-            )
-        }
-        // ACTION_SET_TEXT replaces the whole field, and some Compose and chat
-        // composers do not propagate it. Report what the field actually holds
-        // rather than assuming the write took.
-        val verified = runCatching { service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.text?.toString() }
-            .getOrNull() == text
-        var submitted = false
-        if (submit) {
-            submitted = target.performAction(
-                AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id,
-            )
-        }
-        return ToolResult(
-            buildJsonObject {
-                put("typed", text.length)
-                put("verified", verified)
-                if (submit) put("submitted", submitted)
-            }.toString(),
-            success = verified && (!submit || submitted),
-            dispatch = if (!submit && verified) ToolDispatch.VERIFIED else ToolDispatch.ACKNOWLEDGED,
-        )
+        return writeText(arguments, target, mode)
     }
 
     private suspend fun longPressNode(arguments: JsonObject): ToolResult {
@@ -685,21 +642,54 @@ class A11yDeviceTools(
     }
 
     private suspend fun setText(arguments: JsonObject): ToolResult {
+        return writeText(arguments, resolveNode(arguments).second, TextEditMode.REPLACE)
+    }
+
+    private fun AccessibilityNodeInfo.fieldValue(): String = if (isShowingHintText) "" else text?.toString().orEmpty()
+
+    private suspend fun verifyText(arguments: JsonObject): ToolResult {
+        val expected = arguments["text"]?.jsonPrimitive?.contentOrNull ?: error("text is required")
+        val (_, view) = resolveNode(arguments)
+        checkActive()
+        if (view.isPassword) throw ToolNotServiceable("private_field", "Password fields cannot be inspected.")
+        // Compare the live, full value. Never return it or use the read_ui preview.
+        return UiTextContract.verification(view.node.fieldValue() == expected)
+    }
+
+    private suspend fun writeText(arguments: JsonObject, view: RealNodeView, mode: TextEditMode): ToolResult {
         val text = arguments["text"]?.jsonPrimitive?.contentOrNull
             ?: throw IllegalArgumentException("text is required")
         require(text.length <= MAX_TEXT_CHARS) { "text must be at most $MAX_TEXT_CHARS characters" }
         val submit = arguments["submit"]?.jsonPrimitive?.booleanOrNull ?: false
-        val (node, view) = resolveNode(arguments)
+        val node = arguments["nodeId"]?.jsonPrimitive?.contentOrNull
         if (!view.isEditable) {
-            return ToolResult("Node $node is not an editable field; nothing was typed.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
+            return UiTextContract.rejected("not_editable", "Node $node is not editable; nothing was typed.")
+        }
+        val expected = if (mode == TextEditMode.REPLACE) text else {
+            val old = view.node.fieldValue()
+            val start = view.node.textSelectionStart
+            val end = view.node.textSelectionEnd
+            if (start !in 0..old.length || end !in 0..old.length) {
+                return ToolResult("The insertion point is unknown; nothing was typed.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
+            }
+            old.replaceRange(minOf(start, end), maxOf(start, end), text)
         }
         val extras = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, expected)
         }
+        checkActive()
         if (!view.node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, extras)) {
-            return ToolResult("Node $node rejected the text; nothing was typed.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
+            return UiTextContract.rejected("set_text_rejected", "Node $node rejected the text; nothing was typed.")
         }
-        if (submit && SendGuard.isMessagingApp(view.packageName)) {
+        val verified = withTimeoutOrNull(PROGRESS_VERIFY_TIMEOUT_MS) {
+            while (true) {
+                checkActive()
+                if (view.node.refresh() && view.node.fieldValue() == expected) return@withTimeoutOrNull true
+                delay(PROGRESS_VERIFY_POLL_MS)
+            }
+            @Suppress("UNREACHABLE_CODE") false
+        } ?: false
+        if (submit && verified && SendGuard.isMessagingApp(view.packageName)) {
             val service = requireService()
             val root = service.rootInActiveWindow?.let(::RealNodeView) ?: view
             val send = gatedSend(service, root) { submitDraft(it) }
@@ -711,18 +701,9 @@ class A11yDeviceTools(
                 } else send.dispatch,
             )
         }
-        // ACTION_SET_TEXT replaces the whole field and some composers drop it,
-        // so report what the field holds instead of assuming the write took.
-        val verified = withTimeoutOrNull(PROGRESS_VERIFY_TIMEOUT_MS) {
-            while (true) {
-                checkActive()
-                if (view.node.refresh() && view.node.text?.toString() == text) return@withTimeoutOrNull true
-                delay(PROGRESS_VERIFY_POLL_MS)
-            }
-            @Suppress("UNREACHABLE_CODE") false
-        } ?: false
         var submitted = false
-        if (submit) {
+        if (submit && verified) {
+            checkActive()
             submitted = view.node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
         }
         return ToolResult(
@@ -1071,7 +1052,7 @@ class A11yDeviceTools(
 
         /** Tools that work with the accessibility service off. */
         internal val SERVICE_FREE_TOOLS = setOf("open_app", "open_intent", "resolve_intent")
-        private const val MAX_TEXT_CHARS = 4_000
+        private const val MAX_TEXT_CHARS = UiTextContract.MAX_EDIT_CHARS
 
         /** Same ceiling the ADB backend enforces, so the two agree. */
         private const val MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
@@ -1113,6 +1094,7 @@ class A11yDeviceTools(
         /** Internal rather than private so this module's tests can audit it. */
         internal val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ACT_AND_OBSERVE_DEFINITION,
+            UiTextContract.verifyDefinition,
             tool(
                 "read_ui",
                 READ_UI_DESCRIPTION,
@@ -1138,12 +1120,7 @@ class A11yDeviceTools(
             tool("drag", "Hold then drag between two observed screen points.",
                 mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"),
                 listOf("x1", "y1", "x2", "y2")),
-            tool(
-                "type_text",
-                "Type text into the focused field. Jev may also provide a target coordinate; accessibility ignores it because set_text is preferred.",
-                mapOf("text" to "string", "submit" to "boolean", "nodeId" to "string", "observationId" to "string", "x" to "integer", "y" to "integer"),
-                listOf("text"),
-            ),
+            UiTextContract.editDefinition,
             tool("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),
             tool("open_app", "Launch an app by package, optionally with activity.", mapOf("package" to "string", "activity" to "string"), listOf("package")),
             tool(

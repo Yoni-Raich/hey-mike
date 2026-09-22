@@ -36,10 +36,15 @@ data class JevDecisionResponse(
 
 interface JevDecisionProvider {
     val state: StateFlow<JevProviderState>
+    /** Changes on a settings switch, including off-then-on during one task. */
+    val availabilityEpoch: Long get() = 0L
     suspend fun choose(request: JevDecisionRequest): JevDecisionResponse
     fun beginRun() = Unit
     fun cancelActiveRequest() = Unit
 }
+
+/** A Jev opt-out is a handoff to Codex, not cancellation of the whole agent run. */
+class JevDisabledException(message: String = "Jev was disabled. Continue with ordinary device tools.") : IllegalStateException(message)
 
 
 internal fun validateJevChoice(answer: JevDecision?, criteria: Map<String, String>, name: String): String {

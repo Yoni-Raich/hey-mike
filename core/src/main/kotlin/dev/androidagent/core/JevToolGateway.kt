@@ -20,7 +20,6 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -28,8 +27,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.abs
-import kotlin.math.round
 import kotlin.time.TimeSource
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
@@ -43,7 +40,7 @@ class JevToolGateway(
     private val tokens = AtomicLong(0)
     private val generation = AtomicLong(0)
     private val invocation = Mutex()
-    private class RunEpoch(val value: Long) : AbstractCoroutineContextElement(Key) {
+    private class RunEpoch(val value: Long, val availability: Long) : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<RunEpoch>
     }
 
@@ -98,7 +95,7 @@ class JevToolGateway(
         check(invocation.tryLock()) { "A Jev task already owns the device loop" }
         val epoch = generation.get()
         return try {
-            withContext(RunEpoch(epoch)) { invokeOwned(name, arguments) }
+            withContext(RunEpoch(epoch, provider.availabilityEpoch)) { invokeOwned(name, arguments) }
         } finally {
             invocation.unlock()
         }
@@ -106,10 +103,10 @@ class JevToolGateway(
 
     private suspend fun invokeOwned(name: String, arguments: JsonObject): ToolResult {
         if (name != TOOL_NAME) throw ToolNotServiceable("jev_unsupported", "Jev does not implement \"$name\".")
-        checkActive()
         val state = provider.state.value
         if (!state.enabled) throw ToolNotServiceable("jev_disabled", "Jev is disabled in Hey Mike settings.")
         if (!state.tokenConfigured) throw ToolNotServiceable("jev_not_configured", "Jev is enabled but its API token is missing.")
+        checkActive()
         // An argument dropped silently changes the task: an ignored package
         // once left Jev with "open the app" and no app.
         val unknown = arguments.keys - ARGUMENTS
@@ -150,7 +147,7 @@ class JevToolGateway(
             ledger = resumed?.ledger ?: JevTaskLedger(JevTaskLedger.requirements(goal,
                 arguments["requirements"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty())),
             history = resumed?.history.orEmpty().toMutableList(),
-            repeated = resumed?.repeated.orEmpty().toMutableSet(),
+            progress = resumed?.progress ?: JevProgressTracker(),
             carriedSteps = resumed?.history?.count { it.operation != "RECOVER" } ?: 0,
             segment = (resumed?.segment ?: 0) + 1,
             writes = resumed?.writes ?: JevMutationEvidence(),
@@ -158,9 +155,13 @@ class JevToolGateway(
         val result = withTimeoutOrNull(wallMs) {
             try { runLoop(goal, texts, maxSteps, journal) }
             catch (cancelled: CancellationException) { throw cancelled }
+            catch (disabled: JevDisabledException) {
+                disabledResult(journal)
+            }
             catch (failure: Exception) {
                 terminal(when { journal.pendingMutation != null -> "uncertain_mutation"
                     failure is JevAuditFailure -> "completion_audit_error"
+                    failure is JevDecisionFailure -> "model_error"
                     else -> "observation_error" },
                     journal.history, journal.timings, journal.observation,
                     failure.message ?: "Jev task failed", journal.started, segment = journal.segment)
@@ -193,7 +194,8 @@ class JevToolGateway(
                 )
             }
         return result.copy(text = JsonObject(Json.parseToJsonElement(result.text).jsonObject + mapOf(
-            "taskLedger" to journal.ledger.state(), "unverifiedWrites" to journal.writes.state(),
+            "taskLedger" to journal.ledger.resultState(), "unverifiedWrites" to journal.writes.state(),
+            "pendingMutation" to (journal.pendingMutation?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull),
         )).toString())
     }
 
@@ -212,7 +214,8 @@ class JevToolGateway(
         baseMessage: String,
         model: String? = null,
     ): ToolResult {
-        val continuation = registerContinuation(goal, texts, journal)
+        val continuation = try { registerContinuation(goal, texts, journal) }
+            catch (disabled: JevDisabledException) { return disabledResult(journal) }
         val token = continuation?.string("token")
         val message = if (token == null) {
             "$baseMessage It has no resume budget left after ${journal.segment} segments; " +
@@ -223,16 +226,24 @@ class JevToolGateway(
         }
         return terminal(
             status, journal.history, journal.timings, observation, message,
-            journal.started, model, continuation, journal.segment, journal.ledger.state(),
+            journal.started, model, continuation, journal.segment, journal.ledger.resultState(),
         )
     }
+
+    private fun disabledResult(journal: RunJournal): ToolResult = terminal(
+        "disabled", journal.history, journal.timings, journal.observation,
+        "Jev is no longer enabled for this task. Continue with Codex and ordinary device tools. " +
+            (if (journal.pendingMutation == null) "Use the recorded progress; read the current UI before continuing."
+            else "${journal.pendingMutation} may have been dispatched; its result is unknown. Do not replay it blindly."),
+        journal.started, segment = journal.segment,
+    )
 
     private suspend fun registerContinuation(goal: String, texts: List<String>, journal: RunJournal): JsonObject? {
         checkActive()
         if (journal.segment >= MAX_RESUME_SEGMENTS) return null
         val epoch = currentCoroutineContext()[RunEpoch]?.value
         val token = "jev-resume-${tokens.incrementAndGet()}"
-        val run = SuspendedRun(goal, texts, journal.history.toList(), journal.repeated.toSet(), journal.segment, journal.ledger, journal.writes)
+        val run = SuspendedRun(goal, texts, journal.history.toList(), journal.progress, journal.segment, journal.ledger, journal.writes)
         synchronized(suspended) {
             if (revoked || epoch != generation.get()) throw CancellationException("Cannot resume a stopped run")
             suspended[token] = run
@@ -259,7 +270,7 @@ class JevToolGateway(
         val started = journal.started
         val timings = journal.timings
         val history = journal.history
-        val repeated = journal.repeated
+        val progress = journal.progress
         val textOptions = textCandidates(goal, suppliedTexts)
         val (apps, initialObservation) = coroutineScope {
             val apps = async { loadApps(goal) }
@@ -273,23 +284,21 @@ class JevToolGateway(
         var rejectedDone: String? = null
         var blockedScreen: String? = null
         var actionPage = 0
-        var textPage = 0
-        var menuScreen = ""
-        val inspectedPages = mutableSetOf<Int>()
-        val transitions = mutableMapOf<String, Int>()
-        val idleWaits = mutableMapOf<String, Int>()
+        val menu = JevMenuCursor()
+        fun catalog(screen: JevObservation, page: Int, textPage: Int = 0) = JevActionCatalog.build(
+            goal, screen, textOptions.values, apps, router().readyTools(), emptySet(), page, textPage,
+            progress, journal.ledger.revision + journal.writes.revision, journal.writes::allows)
 
         // Paging, stale observations and recovery decisions are not device
         // steps. Give them their own generous internal budget so the public
         // maxSteps/deadline remain the only normal continuation boundaries.
         repeat(maxSteps * DECISIONS_PER_STEP + DECISION_OVERHEAD) {
             checkActive()
-            journal.writes.reconcile(observation.json)
+            reconcileWrites(journal, observation)
             journal.ledger.observe(observation.fingerprint, observation.json, null, null)
-            val space = JevActionCatalog.build(goal, observation, textOptions.values, apps,
-                router().readyTools(), repeated, actionPage, textPage)
-            if (menuScreen != observation.fingerprint) { inspectedPages.clear(); menuScreen = observation.fingerprint }
-            inspectedPages += space.page
+            progress.checkpoint(journal.ledger.progressRevision)
+            val space = catalog(observation, actionPage)
+            menu.visit(space)
             val modelStart = TimeSource.Monotonic.markNow()
             val response = try {
                 provider.choose(space.request(goal, observation, history, textOptions.source,
@@ -297,6 +306,7 @@ class JevToolGateway(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
+                checkActive()
                 return terminal("model_error", history, timings, observation, failure.message ?: "Jev request failed.", started, segment = journal.segment)
             } finally {
                 timings.modelMs += modelStart.elapsedNow().inWholeMilliseconds
@@ -311,34 +321,45 @@ class JevToolGateway(
             }
             timings.decisions.merge(selected.operation, 1, Int::plus)
             if (selected.operation == "TYPE_TEXT" && space.hasTextOptions) {
+                val fieldSelection = selected
+                var textSpace = space
+                val inspectedTextPages = mutableSetOf<Int>()
                 val textStarted = TimeSource.Monotonic.markNow()
-                selected = try {
-                    space.selectText(selected, provider.choose(space.textRequest(selected, goal)))
+                try {
+                    // Stay with this selected semantic field while paging its values.
+                    // A different field always starts at page zero.
+                    for (hop in 0 until 2 * space.textPageCount) {
+                        checkActive()
+                        inspectedTextPages += textSpace.textPage
+                        timings.modelCalls++
+                        selected = textSpace.selectText(fieldSelection, provider.choose(textSpace.textRequest(fieldSelection, goal)))
+                        if (selected.action != null) break
+                        if (selected.operation != "MORE_TEXT" && inspectedTextPages.size == space.textPageCount) break
+                        val next = (textSpace.textPage + 1) % space.textPageCount
+                        textSpace = catalog(observation, space.page, next)
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
+                    checkActive()
                     return terminal("text_decision_error", history, timings, observation,
                         failure.message ?: "Jev could not select an exact field value", started, segment = journal.segment)
                 } finally {
-                    timings.modelCalls++
                     timings.modelMs += textStarted.elapsedNow().inWholeMilliseconds
                 }
                 checkActive()
             }
-            // Paging wraps, so without a stop Jev could flip pages until the wall
-            // limit. Once every page of this screen has been shown, stay put.
             if (selected.operation == "MORE_ACTIONS") {
-                val next = (space.page + 1) % space.pageCount
-                if (next in inspectedPages) repeated += "${observation.fingerprint}:MORE_ACTIONS" else actionPage = next
+                actionPage = menu.next(space.page, space.pageCount) ?: return budgetExhausted(
+                    "decision_limit", goal, suppliedTexts, journal, observation, "Action-page selection did not converge.")
                 return@repeat
             }
             if (selected.operation == "MORE_TEXT") {
-                val next = (space.textPage + 1) % space.textPageCount
-                if (next == 0) repeated += "${observation.fingerprint}:MORE_TEXT" else textPage = next
-                return@repeat
+                return budgetExhausted("decision_limit", goal, suppliedTexts, journal, observation,
+                    "Text-page selection did not converge for the selected field.")
             }
             if (selected.operation == "BLOCKED") {
-                val nextPage = (0 until space.pageCount).firstOrNull { it !in inspectedPages }
+                val nextPage = menu.unseen(space.pageCount)
                 if (nextPage != null) {
                     actionPage = nextPage
                     history += JevHistoryEntry("RECOVER", "Inspect another page of available actions before declaring the goal blocked")
@@ -346,17 +367,17 @@ class JevToolGateway(
                 }
                 // Give Jev a fresh screen and an explicit recovery phase before
                 // returning to Mike. No action is guessed or forced here.
-                if (blockedScreen != observation.fingerprint) {
-                    blockedScreen = observation.fingerprint
+                if (blockedScreen != observation.semantics.screenKey) {
+                    blockedScreen = observation.semantics.screenKey
                     history += JevHistoryEntry("RECOVER", "Look for another route: Back, recent apps, quick settings, drawer swipes or another action page.")
                     observation = observe(timings)
                     journal.observation = observation
                     return@repeat
                 }
-                if (rejectedDone == observation.fingerprint) {
+                if (rejectedDone == observation.semantics.screenKey) {
                     return terminal("incomplete", history, timings, observation,
                         "Completion was rejected: the requirement ledger still has pending work.", started,
-                        response.model, segment = journal.segment, ledger = journal.ledger.state())
+                        response.model, segment = journal.segment, ledger = journal.ledger.resultState())
                 }
                 return terminal("blocked", history, timings, observation, "Jev found no supported action that can advance the goal.", started, response.model, segment = journal.segment)
             }
@@ -373,6 +394,7 @@ class JevToolGateway(
                 }
                 journal.observation = final
                 journal.ledger.observe(final.fingerprint, final.json, null, null)
+                reconcileWrites(journal, final)
                 val complete = auditRequirements(goal, journal) && journal.writes.resolved
                 val auditedScreen = observe(timings)
                 journal.observation = auditedScreen
@@ -380,14 +402,15 @@ class JevToolGateway(
                     observation = auditedScreen
                     return@repeat
                 }
-                if (!complete) {
-                    if (rejectedDone == final.fingerprint) {
+                reconcileWrites(journal, auditedScreen)
+                if (!complete || !journal.writes.resolved) {
+                    if (rejectedDone == final.semantics.screenKey) {
                         return terminal("incomplete", history, timings, final,
                             "Completion was rejected: the requirement ledger still has pending work.", started,
-                            response.model, segment = journal.segment, ledger = journal.ledger.state())
+                            response.model, segment = journal.segment, ledger = journal.ledger.resultState())
                     }
-                    rejectedDone = final.fingerprint
-                    repeated += "${final.fingerprint}:DONE"
+                    rejectedDone = final.semantics.screenKey
+                    progress.rejectDone(final.semantics.screenKey, journal.ledger.revision + journal.writes.revision)
                     history += JevHistoryEntry("RECOVER", "DONE rejected by requirement audit. Continue the pending requirements in taskLedger; reveal missing evidence, for example by scrolling.")
                     observation = final
                     return@repeat
@@ -396,20 +419,20 @@ class JevToolGateway(
                     "done_visible",
                     history,
                     timings,
-                    final,
+                    auditedScreen,
                     "Jev audited every requirement against recorded evidence. Semantic judgments are not deterministic verification.",
                     started,
                     response.model,
                     segment = journal.segment,
-                    ledger = journal.ledger.state(),
+                    ledger = journal.ledger.resultState(),
                 )
             }
             // With values supplied, "none of them" is about this field (it may
             // already hold the value, or be the wrong field), not a missing input.
-            val declined = selected.target?.let { space.attemptKey(observation.fingerprint, it) }
+            val declined = selected.target?.let(space::actionKey)
             if (selected.operation == "TYPE_TEXT" && selected.action == null &&
-                textOptions.source == "supplied" && declined != null && declined !in repeated) {
-                repeated += declined
+                textOptions.source == "supplied" && declined != null) {
+                progress.decline(observation.semantics.screenKey, declined)
                 history += JevHistoryEntry("RECOVER", "No supplied value fits that field; it is withdrawn on this screen.")
                 return@repeat
             }
@@ -437,17 +460,22 @@ class JevToolGateway(
                 if (consecutiveWaits > MAX_CONSECUTIVE_WAITS) {
                     return terminal("loading_timeout", history, timings, observation, "The screen did not become actionable after repeated waits.", started, response.model, segment = journal.segment)
                 }
-                val waitedOn = observation.fingerprint
+                val waitedOn = observation.semantics.screenKey
                 observation = observe(timings)
                 journal.observation = observation
-                if (observation.fingerprint == waitedOn) {
-                    val idle = (idleWaits[waitedOn] ?: 0) + 1
-                    idleWaits[waitedOn] = idle
-                    if (idle >= MAX_IDLE_WAITS_PER_SCREEN) repeated += "$waitedOn:WAIT"
-                }
+                progress.waited(waitedOn, observation.semantics.screenKey)
                 return@repeat
             }
 
+            val offered = space.resolve(selected)
+            val writeRevision = journal.writes.revision
+            val submission = offered?.let { submissionRelation(goal, journal, observation, it, space.targetNode(selected)) } ?: "UNRELATED"
+            if (submission in setOf("COMMIT", "UNKNOWN") && journal.writes.pendingIn(observation.json.string("activePackage")).isNotEmpty()) {
+                selected.target?.let(space::actionKey)?.let(journal.writes::blockSubmission)
+                actionPage = 0
+                history += JevHistoryEntry("RECOVER", "Submission held: repair and verify the exact field value first.")
+                return@repeat
+            }
             val fresh = observe(timings)
             if (fresh.fingerprint != observation.fingerprint) {
                 timings.staleRetries++
@@ -461,12 +489,17 @@ class JevToolGateway(
             }
             consecutiveStale = 0
             consecutiveWaits = 0
-            val freshSpace = JevActionCatalog.build(goal, fresh, textOptions.values, apps,
-                router().readyTools(), repeated, space.page, space.textPage)
+            reconcileWrites(journal, fresh)
+            if (journal.writes.revision != writeRevision) {
+                observation = fresh
+                journal.observation = fresh
+                return@repeat
+            }
+            val freshSpace = catalog(fresh, space.page)
             val action = freshSpace.resolve(selected)
                 ?: return terminal("stale_action", history, timings, fresh, "The selected action is no longer available on the fresh screen.", started, response.model, segment = journal.segment)
-            val signature = "${fresh.fingerprint}:${selected.target.orEmpty()}:${action.label}"
-            if (signature in repeated) {
+            val signature = freshSpace.actionKey(requireNotNull(selected.target)) ?: error("Missing action identity")
+            if (!progress.allows(fresh.semantics.screenKey, signature)) {
                 return terminal("stuck", history, timings, fresh, "Jev selected the same action on the same screen twice.", started, response.model, segment = journal.segment)
             }
 
@@ -480,10 +513,12 @@ class JevToolGateway(
                 val actionResult = router().invoke(action.tool, action.arguments)
                 dispatch = actionResult.dispatch
                 outcome = actionResult.text.take(MAX_RESULT_MESSAGE)
-                if (action.tool in setOf("set_text", "type_text")) outcome = buildJsonObject {
-                    put("executorResult", outcome)
-                    put("exactRequestedText", action.arguments.getValue("text"))
-                }.toString().take(MAX_RESULT_MESSAGE)
+                if (action.tool in setOf("set_text", "type_text")) recordTextWrite(journal, fresh, action, dispatch)
+                if (submission == "COMMIT" && actionResult.success && dispatch in setOf(ToolDispatch.ACKNOWLEDGED, ToolDispatch.VERIFIED)) {
+                    // A cleared form after submission does not undo the earlier
+                    // exact write. The ledger still has to prove the submission.
+                    journal.writes.submitted(fresh.json.string("activePackage"))
+                }
                 if (actionResult.success) null else actionResult.text.take(MAX_RESULT_MESSAGE)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -496,6 +531,11 @@ class JevToolGateway(
                 stepActionMs = actionStart.elapsedNow().inWholeMilliseconds
                 timings.actionMs += stepActionMs
             }
+            // Record the dispatch before a read or a toggle change can interrupt
+            // this segment. Codex must be able to continue without replaying it.
+            history += JevHistoryEntry(selected.operation, action.label, failed = refusal != null,
+                outcome = "dispatch=$dispatch; ${refusal ?: outcome.orEmpty()}", actionMs = stepActionMs)
+            if (dispatch != ToolDispatch.UNKNOWN) journal.pendingMutation = null
             if (refusal != null) {
                 // The backend refuses plenty it definitively did not perform: a
                 // node that rejects the text or the progress value, a coordinate
@@ -507,6 +547,8 @@ class JevToolGateway(
                     observe(timings)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
+                } catch (disabled: JevDisabledException) {
+                    throw disabled
                 } catch (_: Exception) {
                     null
                 }
@@ -528,17 +570,15 @@ class JevToolGateway(
                     )
                 }
                 journal.pendingMutation = null
-                history += JevHistoryEntry(selected.operation, "${action.label} - unsuccessful: $refusal", failed = true,
-                    outcome = "dispatch=$dispatch; inspect the fresh state; no success is assumed",
-                    actionMs = stepActionMs).also { it.observeMs = timings.observationMs - refusedObserveStart }
-                repeated.add(signature)
+                history.last().observeMs = timings.observationMs - refusedObserveStart
+                if (dispatch == ToolDispatch.NOT_DISPATCHED && action.tool in setOf("set_text", "type_text") &&
+                    UiTextContract.isCapabilityRejection(outcome)) progress.refuse(signature)
+                else progress.decline(fresh.semantics.screenKey, signature)
                 observation = after
                 journal.observation = observation
-                journal.ledger.observe(after.fingerprint, after.json, action.label, "dispatch=$dispatch; $refusal")
-                recordTextWrite(journal, fresh, action, dispatch)
+                journal.ledger.observe(after.fingerprint, after.json, action.label, "dispatch=$dispatch; $refusal", selected.operation)
                 return@repeat
             }
-            history += JevHistoryEntry(selected.operation, action.label, outcome = outcome, actionMs = stepActionMs)
             journal.pendingMutation = null
             val observeStart = timings.observationMs
             observation = try {
@@ -546,6 +586,7 @@ class JevToolGateway(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
+                checkActive()
                 return terminal(
                     "observation_failed_after_action",
                     history,
@@ -560,19 +601,10 @@ class JevToolGateway(
             journal.observation = observation
             history.last().observeMs = timings.observationMs - observeStart
             actionPage = 0
-            if (action.tool in setOf("set_text", "type_text")) {
-                recordTextWrite(journal, fresh, action, dispatch)
-                journal.writes.reconcile(observation.json)
-            }
-            history.last().screenChanged = observation.fingerprint != fresh.fingerprint
-            if (!history.last().screenChanged) repeated.add(signature)
-            journal.ledger.observe(observation.fingerprint, observation.json, action.label, outcome)
-            val transition = "$signature:${observation.fingerprint}:${journal.ledger.revision}"
-            val visits = (transitions[transition] ?: 0) + 1
-            transitions[transition] = visits
-            // A toggle alternates between two screens, so "same action, same
-            // screen" never fires; a transition seen twice is a loop.
-            if (visits >= MAX_TRANSITION_VISITS) repeated.add(signature)
+            reconcileWrites(journal, observation)
+            history.last().screenChanged = observation.semantics.screenKey != fresh.semantics.screenKey
+            journal.ledger.observe(observation.fingerprint, observation.json, action.label, outcome, selected.operation)
+            progress.record(fresh.semantics.screenKey, signature, observation.semantics.screenKey)
             // Internal checkpoints retain ownership of the same goal. Only the
             // caller's overall step/deadline budget can return a continuation.
             if (history.count { it.operation != "RECOVER" } % 8 == 0) auditRequirements(goal, journal)
@@ -598,39 +630,72 @@ class JevToolGateway(
 
     private suspend fun auditRequirements(goal: String, journal: RunJournal): Boolean {
         checkActive()
-        val questions = journal.ledger.questions()
-        val started = TimeSource.Monotonic.markNow()
-        val response = try {
-            provider.choose(JevDecisionRequest(buildJsonObject {
-                put("goal", goal)
-                put("taskLedger", journal.ledger.state())
-                put("unverifiedWrites", journal.writes.state())
-                put("purpose", "Check completion evidence; do not execute actions")
-            }, questions))
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            throw JevAuditFailure(failure)
-        } finally {
-            journal.timings.modelCalls++
-            journal.timings.modelMs += started.elapsedNow().inWholeMilliseconds
-        }
-        checkActive()
-        val choices = try { questions.mapIndexed { index, question ->
-            index to validateJevChoice(response.answers[question.name], question.criteria, question.name)
-        }.toMap() } catch (invalid: IllegalArgumentException) { throw JevAuditFailure(invalid) }
-        journal.ledger.lastAudit = buildJsonArray {
-            questions.forEachIndexed { index, question ->
-                val answer = response.answers[question.name]
-                add(buildJsonObject {
-                    put("id", "R$index")
-                    put("choice", choices.getValue(index))
-                    answer?.confidence?.let { put("confidence", it) }
-                    answer?.probabilities?.get("PENDING")?.let { put("pPending", it) }
-                })
+        val ledger = journal.ledger
+        fun request(questions: List<JevChoiceQuestion>, proofs: JsonObject? = null) = JevDecisionRequest(buildJsonObject {
+            put("goal", goal); put("taskLedger", ledger.state())
+            put("exactWrites", journal.writes.proofState())
+            proofs?.let { put("proofs", it) }
+            put("purpose", "Check observed evidence, not intended or attempted actions")
+        }, questions)
+        try {
+            val initial = ask(request(ledger.questions() + ledger.scopeQuestions()), journal)
+            val choices = ledger.requirements.indices.associateWith { initial.getValue("requirement_$it") }
+            val scopes = ledger.requirements.indices.associateWith { initial.getValue("scope_$it") }
+            val sources = ask(request(ledger.witnessQuestions(choices, scopes)), journal)
+            val witnesses = sources.mapKeys { it.key.removePrefix("witness_").toInt() }
+            val proofs = ask(request(ledger.proofQuestions(scopes, witnesses), ledger.proofState(scopes, witnesses)), journal)
+            val supported = ledger.requirements.indices.associateWith { index ->
+                if (choices[index] != JevTaskLedger.SATISFIED) "PENDING"
+                else ledger.actionInvariantVerdict(index, scopes[index], witnesses[index])
+                    ?: proofs["proof_$index"] ?: "PENDING"
+            }
+            ledger.lastAudit = buildJsonArray {
+                ledger.requirements.indices.forEach { index -> add(buildJsonObject {
+                    put("id", "R$index"); put("choice", supported.getValue(index))
+                    put("scope", scopes.getValue(index)); witnesses[index]?.let { put("witness", it) }
+                }) }
+            }
+            return ledger.apply(supported, scopes, witnesses)
+        } catch (cancelled: CancellationException) { throw cancelled }
+          catch (disabled: JevDisabledException) { throw disabled }
+          catch (failure: Exception) { throw JevAuditFailure(failure) }
+    }
+
+    private suspend fun reconcileWrites(journal: RunJournal, observation: JevObservation) {
+        journal.writes.reconcile(observation) { name, args -> checkActive(); router().invoke(name, args) }
+    }
+
+    private suspend fun submissionRelation(goal: String, journal: RunJournal, observation: JevObservation,
+        action: JevSafeAction, target: JsonObject?): String {
+        val writes = journal.writes.activeIn(observation.json.string("activePackage"))
+        if (writes.isEmpty() || !JevSubmissionGuard.needsClassification(action)) return "UNRELATED"
+        if (action.tool in setOf("tap", "tap_node") && target?.bool("editable") == true) return "NAVIGATE_OR_EDIT"
+        if (JevSubmissionGuard.obviousCommit(action)) return "COMMIT"
+        return try {
+            ask(JevSubmissionGuard.request(goal, observation, action, writes, target), journal).getValue("write_dependency")
+        } catch (cancelled: CancellationException) { throw cancelled }
+          catch (disabled: JevDisabledException) { throw disabled }
+          catch (failure: Exception) { throw JevDecisionFailure(failure) }
+    }
+
+    /** Bound each audit request without changing the evidence snapshot between batches. */
+    private suspend fun ask(request: JevDecisionRequest, journal: RunJournal): Map<String, String> {
+        val answers = linkedMapOf<String, String>()
+        for (questions in request.questions.chunked(16)) {
+            checkActive()
+            val started = TimeSource.Monotonic.markNow()
+            val response = try {
+                provider.choose(request.copy(questions = questions))
+            } finally {
+                journal.timings.modelCalls++
+                journal.timings.modelMs += started.elapsedNow().inWholeMilliseconds
+            }
+            checkActive()
+            questions.forEach { question ->
+                answers[question.name] = validateJevChoice(response.answers[question.name], question.criteria, question.name)
             }
         }
-        return journal.ledger.apply(choices)
+        return answers
     }
 
     private suspend fun observe(timings: Timings): JevObservation {
@@ -638,12 +703,15 @@ class JevToolGateway(
         try {
             repeat(MAX_PAGING_RETRIES) { attempt ->
                 try {
-                    return observePages()
+                    val observed = observePages()
+                    checkActive()
+                    return observed
                 } catch (changed: PagedObservationChanged) {
                     if (attempt == MAX_PAGING_RETRIES - 1) throw changed
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
+                    checkActive()
                     // Read-only retries cannot replay an action. Start from page
                     // zero so an expired snapshot never mixes two screens.
                     if (attempt == MAX_PAGING_RETRIES - 1) throw failure
@@ -814,20 +882,10 @@ class JevToolGateway(
                 put("decisions", buildJsonObject { timings.decisions.forEach { (operation, count) -> put(operation, count) } })
                 started?.let { put("wallMs", it.elapsedNow().inWholeMilliseconds) }
             })
-            put("history", buildJsonArray {
-                history.forEach { entry ->
-                    add(buildJsonObject {
-                        put("operation", entry.operation)
-                        put("label", entry.label)
-                        put("screenChanged", entry.screenChanged)
-                        if (entry.failed) put("refused", true)
-                        entry.actionMs?.let { put("actionMs", it) }
-                        entry.observeMs?.let { put("observeMs", it) }
-                        entry.outcome?.let { put("result", it) }
-                    })
-                }
-            })
-            observation?.let { put("finalObservation", it.json) }
+            put("historyCount", history.size)
+            if (history.size > 12) put("historyTruncated", true)
+            put("history", JevResultProjection.history(history))
+            observation?.let { put("finalObservation", JevResultProjection.observation(it)) }
         }.toString(),
         success = status == "done_visible",
     )
@@ -837,15 +895,19 @@ class JevToolGateway(
         if (revoked || currentCoroutineContext()[RunEpoch]?.value?.let { it != generation.get() } == true) {
             throw CancellationException("Run stopped or superseded. Jev UI control was revoked.")
         }
+        if (!provider.state.value.ready || currentCoroutineContext()[RunEpoch]?.availability?.let { it != provider.availabilityEpoch } == true) {
+            throw JevDisabledException()
+        }
     }
 
     private class PagedObservationChanged : IllegalStateException("UI changed while read_ui pages were being collected")
     private class JevAuditFailure(cause: Exception) : IllegalStateException("Jev completion audit failed: ${cause.message}", cause)
+    private class JevDecisionFailure(cause: Exception) : IllegalStateException("Jev dependency decision failed: ${cause.message}", cause)
     private data class SuspendedRun(
         val goal: String,
         val texts: List<String>,
         val history: List<JevHistoryEntry>,
-        val repeated: Set<String>,
+        val progress: JevProgressTracker,
         val segment: Int,
         val ledger: JevTaskLedger,
         val writes: JevMutationEvidence,
@@ -857,7 +919,7 @@ class JevToolGateway(
         val timings: Timings = Timings(),
         val history: MutableList<JevHistoryEntry> = mutableListOf(),
         /** Screen-and-action signatures already tried, carried across segments. */
-        val repeated: MutableSet<String> = mutableSetOf(),
+        val progress: JevProgressTracker = JevProgressTracker(),
         /** Steps inherited from earlier segments; maxSteps is per call. */
         val carriedSteps: Int = 0,
         val segment: Int = 1,
@@ -879,7 +941,7 @@ class JevToolGateway(
     private companion object {
         const val TOOL_NAME = "jev_run_ui_task"
         const val MAX_GOAL_CHARS = 2_000
-        const val MAX_TEXT_CHARS = 4_000
+        const val MAX_TEXT_CHARS = UiTextContract.MAX_EDIT_CHARS
         const val MAX_TEXT_VALUES = 254
 
         /** Calls one goal may be spread over before it has to be decomposed. */
@@ -900,8 +962,6 @@ class JevToolGateway(
         const val MAX_APP_QUERY_CHARS = 80
         const val MAX_CONSECUTIVE_STALE = 3
         const val MAX_CONSECUTIVE_WAITS = 8
-        const val MAX_IDLE_WAITS_PER_SCREEN = 2
-        const val MAX_TRANSITION_VISITS = 2
         private val ARGUMENTS = setOf("goal", "package", "resume", "requirements", "texts", "maxSteps", "timeoutMs")
         private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
         const val WAIT_BASE_MS = 100L
@@ -916,7 +976,8 @@ class JevToolGateway(
             TOOL_NAME,
             "Run a complete Android UI task with the fast Jev engine in ONE tool call. Jev repeatedly observes, decides, acts and checks the next screen locally; do not call read_ui or per-step UI tools first. " +
                 "Use texts for exact values that must be typed. Returns done_visible (Jev judgment, not task-specific verification), blocked, needs_input, stuck or a bounded failure with timings and the final fresh UI. " +
-                "A goal too large for one call ends in step_limit, timeout or decision_limit with a \"continuation\" token: call this tool again with resume set to that token to continue the same goal with its history, instead of restarting it blind.",
+                "A goal too large for one call ends in step_limit, timeout or decision_limit with a \"continuation\" token: call this tool again with resume set to that token to continue the same goal with its history, instead of restarting it blind. " +
+                "If Jev is off or this returns disabled, do not call Jev again: continue with Codex's ordinary tools, preserve the recorded progress and inspect any uncertain mutation before acting.",
             buildJsonObject {
                 put("type", "object")
                 put("additionalProperties", false)

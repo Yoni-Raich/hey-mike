@@ -271,7 +271,7 @@ parsed in `:core` and applied by both backends through the same
 - `rootNodeId` returns one node and its descendants. `UiNode.parentId` carries
   the nearest ancestor that was **itself emitted**, so a subtree resolves from
   the flat node list in one forward pass over the pre-order traversal; it is
-  never serialized, so it costs the character budget nothing. A `rootNodeId`
+  serialized for semantic context as well as local subtree queries. A `rootNodeId`
   that is not on screen is a typed `ui_unknown_node` failure, because an empty
   node list would read as "that part of the screen is empty".
 - `offset` is the cursor. Every reply reports `totalNodes`, `returnedNodes`,
@@ -836,13 +836,11 @@ path already records and suppresses.
 Every mutation still goes through the existing composite device gateway, so
 Accessibility/ADB fallback, send approval, visible control and Stop remain in
 one place. The loop re-observes immediately before input and discards a stale
-decision. A refused action is never retried, but it does not end the run either:
-the accessibility backend refuses plenty it definitively did not perform — a
-node that rejects the text or the progress value, a coordinate our own overlay
-covers — so the screen is re-read, and an unchanged screen proves nothing was
-mutated. The refusal is then recorded, marked `refused` in the history Jev sees,
-and Jev chooses again. Only a screen that did change stays `uncertain_mutation`,
-because that one may already have committed. Repeated action/screen signatures,
+decision. Dispatch evidence, not an unchanged screen, decides whether recovery
+is safe. A definite refusal can be suppressed and another route chosen.
+An unknown mutation stops without replay; a screen that looks unchanged is not
+proof that nothing happened. Navigation and exact-write acknowledgements have
+their own recovery paths. Repeated action/screen signatures,
 stale screens, waits, steps, decisions and wall time are bounded. `DONE` completes
 only after one more fresh observation matches the state Jev judged, and returns
 `done_visible` with `verified:false`; this is not a task-specific verifier. Raw
@@ -857,24 +855,28 @@ shows where.
 
 Choices that change nothing are not offered again on the same screen: WAIT after
 two waits that left the screen as it was, DONE after the audit rejected it there,
-and MORE_ACTIONS / MORE_TEXT once every page has been shown. Paging wraps, and
-without that stop one run flipped action pages 112 times until the five-minute
-wall. A control whose screen transition repeats is withdrawn on its second
+while action pages can wrap back to an earlier offer. `JevMenuCursor` tracks
+the catalog version and bounds page hops; exhausting that budget returns a
+continuation, not a false claim that no action exists. Text paging stays with
+one selected field and starts at zero for the next field. A control whose
+screen transition repeats is withdrawn on its second
 repetition, which bounds a toggle that alternates between two screens. When exact
 texts were supplied and Jev answers that none of them fits the chosen field, that
 field is withdrawn on the screen instead of ending the run in `needs_input`; the
 field may already hold the value.
 
-The completion audit asks one yes/no question per requirement (`PENDING` or
-`SATISFIED`) and code attaches the evidence. Offering each retained screen as its
-own option split the "supported" probability across screens, so `PENDING` won the
-plurality on screens that plainly qualified. Each retained screen carries a
-one-line `screen` summary, and the ledger keeps every action taken, so a
-prohibition ("do not change any settings") is judged against the complete action
-list rather than being unprovable from screens. `taskLedger.lastAudit` records
-each answer with its confidence. An action decision gets only the requirement
-statuses and the last four screen summaries; the full evidence goes to the audit.
-Sending it on every decision grew requests past the model's token limit.
+The completion audit separates three judgments: binary satisfaction and time
+scope, selection of the actual evidence source (or an explicit source bundle),
+then validation of that proof against later contradictions. Evidence has an
+explicit order and stays sorted, even when old sources are retained. Historical
+visits are separate from current, persistent, invariant and compound conditions.
+A new observation invalidates the current status of non-historical proofs, not
+their source records. The latest unrelated screen is never pinned as a guess.
+Source retention is bounded to 32 screens plus the recent 12; if a new proof
+cannot fit, it stays pending and reports `proofCapacityReached`. Action history
+reports truncation, which prevents claiming an unbroken prohibition from a
+partial log. Audit questions are batched; ordinary action decisions carry only
+requirement status and four recent summaries.
 
 `jev_run_ui_task` accepts an optional `package`, which scopes the goal to that
 app, and refuses any argument it does not know. An unknown argument used to be
@@ -882,8 +884,30 @@ dropped silently, which once left Jev with "open the app" and no app.
 
 The executor returns typed dispatch evidence (`NOT_DISPATCHED`, `ACKNOWLEDGED`,
 `VERIFIED` or `UNKNOWN`). The task ledger keeps compact evidence from earlier
-screens, and exact text writes remain pending until a later observation matches
-the requested field value. The Jev HTTP provider also tags each request with a
+screens. `JevUiSemantics` owns stable field names, context and recovery keys;
+snapshot IDs and coordinates remain dispatch addresses. Failure memory ignores
+node renumbering and keyboard layout changes. Back with an open keyboard has
+its own context. Ambiguous fields cannot silently verify each other's writes.
+
+`UiTextContract` separates insert from replace and defines `verify_text`. Replace
+is the default, preserving the accessibility contract of existing Codex sessions;
+append/selection insertion requires explicit `mode=insert`. The
+accessibility backend compares the live full value; ADB compares a private full
+snapshot value or gets exact verification from the IME. Those values are never
+serialized as UI text. The IME selects and checks the complete field before
+replacement, and cannot append while claiming to replace. Workflows request
+replacement explicitly too.
+
+`JevMutationEvidence` keeps exact writes pending until a local comparison
+succeeds. `JevSubmissionGuard` recognizes explicit commit controls and asks a
+separate dependency question for ambiguous controls. Local code withholds a
+dependent or unknown submission while its fields are unresolved. Navigation
+and repair remain available. After an acknowledged commit, clearing the form
+does not undo the earlier exact-write evidence; the ledger still must prove
+the submission outcome. Field labels, current-value previews and context are
+separate inputs to text selection.
+
+The Jev HTTP provider also tags each request with a
 run generation, so Stop or a new run cannot deliver an old response into the
 current controller.
 
@@ -895,6 +919,13 @@ supported semantic actions. `set_progress` uses Android
 `ACTION_SET_PROGRESS` and reports the typed range; the fallback uses grounded
 coordinates from the observed slider. A dispatched but unverified change is
 reported as uncertain and is never retried.
+
+The terminal Jev tool result is a handoff, not another raw `read_ui` response.
+`JevResultProjection` sends a bounded, non-actionable screen summary and the
+last 12 history entries; `JevTaskLedger.resultState` sends requirement status
+and proof ids without screen facts or full action traces. The internal ledger
+still keeps full evidence for audits and resumed segments. A fresh `read_ui`
+is required before Codex acts on the returned screen summary.
 
 A step, wall or decision limit is out of budget, not out of options, so those
 three replies carry a `continuation` token: calling `jev_run_ui_task` again with
@@ -918,6 +949,18 @@ entry maximal. The text answer is validated and consumed only when the chosen
 action types text, so an answer to a question that was not asked cannot block a
 decision. Requests, responses and timeouts are bounded, and redirects carrying
 the token are disabled.
+
+Transient transport errors and HTTP 408/429/500/502/503/504/529 get at most three
+decision attempts in 30 seconds, with backoff and `Retry-After`. Protocol, auth,
+validation and TLS failures are not retried. No device action is inside this
+retry scope. Stop and settings changes invalidate queued and active responses.
+
+The toggle is a hard opt-out. Off removes Jev from `readyTools`, rejects direct
+invocations, cancels active decisions and prevents a disabled task from restarting
+after off/on. Codex and the composite device gateway stay active. A mid-task
+`disabled` result returns history, exact-write state and any uncertain mutation
+for Codex to continue with its ordinary tools. Static tool definitions remain
+for existing Codex sessions; they do not grant permission to call Jev while off.
 
 ## Why a 502 from the tunnel is now explained
 

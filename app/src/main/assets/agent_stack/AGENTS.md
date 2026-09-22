@@ -51,6 +51,12 @@ honestly. `jevDecisionCalls` counts Jev, not new Mike turns.
 
 When Jev is off or unavailable, use this manual loop:
 
+The Jev toggle is a user choice. Off means no Jev calls, including resume calls.
+If `jev_run_ui_task` returns `disabled`, continue with the normal Codex tools.
+Keep its recorded progress, read the current screen, and do not replay a
+`pendingMutation` or an acknowledged action blindly. Turning Jev off does not
+stop Codex or remove its device tools. Do not ask the user to turn Jev back on.
+
 1. **Observe** with `read_ui` (compact semantic JSON). Use `screenshot` when semantics are missing (games, canvas, some web views) or the layout itself matters.
 2. **Evaluate** against your immediate subgoal: did the last action land, did a dialog or keyboard appear?
 3. **Plan** as far ahead as the observation actually shows you. Usually that is

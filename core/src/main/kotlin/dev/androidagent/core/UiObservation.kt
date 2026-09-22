@@ -73,17 +73,19 @@ data class UiNode(
     /**
      * Nearest ancestor that was itself emitted, or null for a root.
      *
-     * Deliberately never serialized: it exists so [UiQuery.rootNodeId] can cut
-     * a subtree out of the flat list, and emitting it on every node would
-     * spend the character budget the subtree query is there to save.
+     * Used for subtree queries and semantic field context. This is a local
+     * snapshot address, not a persistent identity.
      */
     val parentId: String? = null,
     val longClickable: Boolean = false,
     val actions: List<String> = emptyList(),
     val windowType: String? = null,
+    val hintText: String? = null,
+    /** Used only for local equality checks, never serialized or included in a digest. */
+    val textValue: UiTextValue? = null,
 ) {
     fun isMeaningful(): Boolean =
-        text != null || contentDescription != null || resourceId != null ||
+        text != null || contentDescription != null || hintText != null || resourceId != null ||
             clickable || scrollable || focused || editable || selected || range != null ||
             supportsSetProgress || longClickable || actions.isNotEmpty() || !enabled || checkable
 
@@ -100,6 +102,8 @@ data class UiNode(
         resourceId?.let { put("resourceId", it) }
         packageName?.let { put("package", it) }
         windowType?.let { put("windowType", it) }
+        parentId?.let { put("parentId", it) }
+        hintText?.let { put("hintText", UiObservationSerializer.safeField(it)) }
         if (longClickable) put("longClickable", true)
         className?.let { put("class", it) }
         bounds?.let { values ->
@@ -156,6 +160,8 @@ data class UiNode(
         checked = false,
         clickableAncestor = null,
         parentId = null,
+        textValue = null,
+        hintText = null,
     )
 }
 

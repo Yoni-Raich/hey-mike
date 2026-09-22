@@ -42,7 +42,7 @@ class JevToolGatewayTest {
         assertTrue(result.success)
         assertEquals("done_visible", json["status"]?.jsonPrimitive?.content)
         assertEquals(false, json["verified"]?.jsonPrimitive?.content?.toBoolean())
-        assertEquals(3, provider.calls) // two navigation decisions plus completion audit
+        assertEquals(5, provider.calls) // two decisions, then judgment, source selection and proof validation
         assertEquals(listOf("tap_node"), router.actions.map { it.first })
         assertTrue(gateway.needsControl("jev_run_ui_task"))
     }
@@ -109,7 +109,7 @@ class JevToolGatewayTest {
         val json = Json.parseToJsonElement(result.text).jsonObject
         assertEquals("done_visible", json["status"]?.jsonPrimitive?.content)
         // The refusal did not end the run, and Jev was asked again.
-        assertEquals(3, provider.calls)
+        assertEquals(5, provider.calls)
         assertEquals(1, router.actions.size)
         val refused = json["history"]?.jsonArray.orEmpty().single().jsonObject
         assertEquals(true, refused["refused"]?.jsonPrimitive?.content?.toBoolean())
@@ -240,7 +240,7 @@ class JevToolGatewayTest {
             override val state = this@JevToolGatewayTest.state
             override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
                 val question = request.questions.firstOrNull { it.name == "action" }
-                    ?: return JevDecisionResponse(request.questions.associate { it.name to choice(it, "PENDING") }, "jev-test")
+                    ?: return jevAuditFixture(request, satisfied = false)
                 val canFinish = "DONE" in question.criteria
                 doneOffered += canFinish
                 return JevDecisionResponse(mapOf("action" to choice(question, if (canFinish) "DONE" else "BLOCKED")), "jev-test")
@@ -322,7 +322,8 @@ class JevToolGatewayTest {
         val provider = object : JevDecisionProvider {
             override val state = this@JevToolGatewayTest.state
             override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
-                val question = request.questions.firstOrNull { it.name == "action" } ?: return auditAnswer(request)
+                val question = request.questions.firstOrNull { it.name == "action" }
+                    ?: return jevAuditFixture(request, satisfied = false)
                 val tap = question.criteria.entries.firstOrNull { it.value.startsWith("Tap ") }
                 tap?.let { labels += it.value }
                 return JevDecisionResponse(mapOf("action" to choice(question, tap?.key ?: "BLOCKED")), "jev-test")
@@ -465,10 +466,7 @@ class JevToolGatewayTest {
     }
 
     companion object {
-        private fun auditAnswer(request: JevDecisionRequest) = JevDecisionResponse(
-            request.questions.associate { it.name to choice(it, JevTaskLedger.SATISFIED) },
-            "jev-test",
-        )
+        private fun auditAnswer(request: JevDecisionRequest) = jevAuditFixture(request)
         private fun choice(question: JevChoiceQuestion, selected: String): JevDecision = JevDecision(
             type = "choice",
             choice = selected,

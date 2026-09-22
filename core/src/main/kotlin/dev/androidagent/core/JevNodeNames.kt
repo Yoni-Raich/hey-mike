@@ -27,6 +27,7 @@ internal object JevNodeNames {
         if (height <= 0) return null
         return nodes.asSequence()
             .filter { it !== node }
+            .filter { it["package"] == node["package"] && it["windowType"] == node["windowType"] }
             .mapNotNull { other ->
                 val name = other.name() ?: return@mapNotNull null
                 val label = other.box() ?: return@mapNotNull null

@@ -24,10 +24,11 @@ class JevTaskLedgerTest {
         val facts = ledger.state()["evidence"]!!.jsonArray.single().jsonObject["facts"]!!.jsonObject
         val nodes = facts["nodes"]!!.jsonArray
         assertEquals(3, nodes.size)
-        assertEquals("Display", nodes[0].jsonObject["text"]!!.jsonPrimitive.content)
-        assertEquals("Dark theme", nodes[1].jsonObject["text"]!!.jsonPrimitive.content)
-        assertTrue(nodes[2].jsonObject["checked"]!!.jsonPrimitive.boolean)
-        assertEquals(bounds(700, 300, 1000, 400), nodes[2].jsonObject["bounds"])
+        assertTrue(nodes.any { it.jsonObject["text"]?.jsonPrimitive?.content == "Display" })
+        assertTrue(nodes.any { it.jsonObject["text"]?.jsonPrimitive?.content == "Dark theme" })
+        val toggle = nodes.single { "checked" in it.jsonObject }.jsonObject
+        assertTrue(toggle["checked"]!!.jsonPrimitive.boolean)
+        assertEquals(bounds(700, 300, 1000, 400), toggle["bounds"])
         assertFalse(facts["partial"]!!.jsonPrimitive.boolean)
     }
 
@@ -70,18 +71,55 @@ class JevTaskLedgerTest {
                 add(buildJsonObject { put("contentDescription", "Display") })
                 add(buildJsonObject { put("contentDescription", "Dark theme"); put("checked", true) })
             })
-        }, "Open Display settings directly", "ok")
+        }, "Open Display settings directly", "ok", "OPEN_INTENT")
 
         ledger.questions().forEach { assertEquals(setOf("PENDING", JevTaskLedger.SATISFIED), it.criteria.keys) }
         val screen = ledger.state()["evidence"]!!.jsonArray.last().jsonObject["screen"]!!.jsonPrimitive.content
-        assertEquals("app com.android.settings after \"Open Display settings directly\": Display · Dark theme=on", screen)
+        assertTrue(screen.startsWith("app com.android.settings after \"Open Display settings directly\":"))
+        assertTrue(screen.contains("Display"))
+        assertTrue(screen.contains("Dark theme=on"))
 
-        val done = ledger.apply(mapOf(0 to JevTaskLedger.SATISFIED, 1 to JevTaskLedger.SATISFIED, 2 to JevTaskLedger.SATISFIED))
+        val scopes = mapOf(0 to "HISTORY", 1 to "CURRENT", 2 to "INVARIANT")
+        val witnesses = mapOf(0 to "E2", 1 to "E2", 2 to "ACTIONS")
+        val done = ledger.apply(mapOf(0 to JevTaskLedger.SATISFIED, 1 to JevTaskLedger.SATISFIED, 2 to JevTaskLedger.SATISFIED), scopes, witnesses)
         assertTrue(done)
         val statuses = ledger.state()["requirements"]!!.jsonArray.map { it.jsonObject }
-        assertEquals("E2", statuses[1]["evidence"]!!.jsonPrimitive.content)
+        assertEquals(listOf("E2"), statuses[1]["evidenceIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(statuses[2]["actionHistory"]!!.jsonPrimitive.boolean)
+        assertTrue(statuses[2]["evidenceIds"]!!.jsonArray.isEmpty())
 
-        assertFalse(ledger.apply(mapOf(0 to JevTaskLedger.SATISFIED, 1 to "PENDING", 2 to JevTaskLedger.SATISFIED)))
+        assertFalse(ledger.apply(mapOf(0 to JevTaskLedger.SATISFIED, 1 to "PENDING", 2 to JevTaskLedger.SATISFIED), scopes, witnesses))
+    }
+
+    @Test
+    fun `prohibition uses action history and refuses a truncated trace`() {
+        val ledger = JevTaskLedger(listOf("Do not change settings", "Open Display without changing settings"))
+        ledger.observe("display", buildJsonObject {
+            put("activePackage", "com.android.settings")
+            put("nodes", buildJsonArray { add(buildJsonObject { put("text", "Display") }) })
+        }, "Open Display settings directly", "ok", "OPEN_INTENT")
+        val choices = mapOf(0 to JevTaskLedger.SATISFIED, 1 to JevTaskLedger.SATISFIED)
+        val scopes = mapOf(0 to "INVARIANT", 1 to "COMPOSITE")
+        val questions = ledger.witnessQuestions(choices, scopes)
+        assertTrue("ACTIONS" in questions[0].criteria)
+        assertTrue("SCREEN_AND_ACTIONS" in questions[1].criteria)
+        assertTrue("MULTIPLE_AND_ACTIONS" in questions[1].criteria)
+        assertEquals(JevTaskLedger.SATISFIED, ledger.actionInvariantVerdict(0, "INVARIANT", "ACTIONS"))
+        assertFalse(ledger.proofQuestions(scopes, mapOf(0 to "ACTIONS")).any { it.name == "proof_0" })
+        assertTrue(ledger.apply(choices, scopes, mapOf(0 to "ACTIONS", 1 to "SCREEN_AND_ACTIONS")))
+        val proof = ledger.state()["requirements"]!!.jsonArray[1].jsonObject
+        assertEquals(listOf("E1"), proof["evidenceIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(proof["actionHistory"]!!.jsonPrimitive.boolean)
+
+        val risky = JevTaskLedger(listOf("No setting is toggled or modified"))
+        risky.observe("display", buildJsonObject { put("nodes", buildJsonArray { }) }, "Tap Dark theme", "ok", "TAP")
+        assertEquals("PENDING", risky.actionInvariantVerdict(0, "INVARIANT", "ACTIONS"))
+        assertFalse(risky.apply(mapOf(0 to JevTaskLedger.SATISFIED), mapOf(0 to "INVARIANT"), mapOf(0 to "ACTIONS")))
+
+        repeat(81) { index -> ledger.observe("screen-$index", buildJsonObject { put("nodes", buildJsonArray { }) }, "Scroll $index", "ok") }
+        assertTrue(ledger.state()["actionsTakenTruncated"]!!.jsonPrimitive.boolean)
+        assertFalse("ACTIONS" in ledger.witnessQuestions(choices, scopes)[0].criteria)
+        assertFalse(ledger.apply(choices, scopes, mapOf(0 to "ACTIONS", 1 to "SCREEN_AND_ACTIONS")))
     }
 
     @Test
@@ -111,6 +149,23 @@ class JevTaskLedgerTest {
         assertEquals(4, view["recentScreens"]!!.jsonArray.size)
         assertFalse("facts" in view.toString())
         assertTrue(view.toString().length < ledger.state().toString().length / 5)
+    }
+
+    @Test
+    fun `terminal ledger gives statuses but not the full audit evidence`() {
+        val ledger = JevTaskLedger(listOf("Complete Task #3", "Long requirement " + "x".repeat(1900)))
+        repeat(20) { step -> ledger.observe("screen-$step", buildJsonObject {
+            put("nodes", buildJsonArray { repeat(30) { add(buildJsonObject { put("text", "Row $it " + "y".repeat(150)) }) } })
+        }, "Tap row $step", "ok") }
+
+        val result = ledger.resultState()
+        assertEquals(2, result["requirements"]!!.jsonArray.size)
+        assertEquals("pending", result["requirements"]!!.jsonArray[0].jsonObject["status"]!!.jsonPrimitive.content)
+        assertTrue(result["requirements"]!!.jsonArray[1].jsonObject["requirementTruncated"]!!.jsonPrimitive.boolean)
+        assertEquals(20, result["actionCount"]!!.jsonPrimitive.int)
+        assertFalse("evidence" in result)
+        assertFalse("actionsTaken" in result)
+        assertTrue(result.toString().length < ledger.state().toString().length / 5)
     }
 
     private fun bounds(vararg values: Int) = buildJsonArray { values.forEach { add(it) } }

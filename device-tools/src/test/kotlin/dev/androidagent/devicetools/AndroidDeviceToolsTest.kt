@@ -206,13 +206,11 @@ class AndroidDeviceToolsTest {
         val tools = AndroidDeviceTools(adb, component)
         tools.beginRun("ime", Files.createTempDirectory("ws").toFile())
 
-        try {
-            tools.invoke("type_text", buildJsonObject { put("text", "שלום") })
-            fail("expected the IME commit to be rejected")
-        } catch (error: IllegalStateException) {
-            assertTrue(error.message!!.contains("No Enter key was sent", ignoreCase = true))
-            assertTrue(error.message!!.contains("editor", ignoreCase = true))
-        }
+        val result = tools.invoke("type_text", buildJsonObject { put("text", "שלום") })
+        assertFalse(result.success)
+        assertEquals(dev.androidagent.core.ToolDispatch.NOT_DISPATCHED, result.dispatch)
+        assertTrue(result.text.contains("No Enter was sent", ignoreCase = true))
+        assertTrue(result.text.contains("editor", ignoreCase = true))
         assertTrue(adb.commands.count { it.startsWith("am broadcast") } >= 2)
     }
 
@@ -221,10 +219,9 @@ class AndroidDeviceToolsTest {
         val adb = ImeFakeAdb(component, 1, 5)
         val tools = AndroidDeviceTools(adb, component)
         tools.beginRun("ime", Files.createTempDirectory("ws").toFile())
-        try {
-            tools.invoke("type_text", buildJsonObject { put("text", "שלום"); put("submit", true) })
-            fail("expected ambiguous commit failure")
-        } catch (_: IllegalStateException) { }
+        val result = tools.invoke("type_text", buildJsonObject { put("text", "שלום"); put("submit", true) })
+        assertFalse(result.success)
+        assertEquals(dev.androidagent.core.ToolDispatch.UNKNOWN, result.dispatch)
         assertEquals(1, adb.commands.count { it.contains("INPUT_TEXT") })
         assertFalse(adb.commands.any { it == "input keyevent 66" })
         assertTrue(adb.commands.last().startsWith("ime set"))

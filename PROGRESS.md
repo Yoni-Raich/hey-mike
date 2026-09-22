@@ -70,6 +70,44 @@ placing the widget, its size on a real launcher grid, that a switch moves
 "In use" and records the new account's quota under the right account, and the
 30-minute refresh.
 
+## Jev dev rebase and bounded result — 2026-09-22
+
+Rebased `fix/jev-navigation-recovery` onto `origin/dev`. The
+working branch includes the earlier PR #78 fixes plus the terminal-result
+projection. `read_ui` already parses and pages the device tree; the large
+payload was the final Jev tool reply, which copied full ledger evidence,
+history and the raw last observation back to Codex. The reply now includes
+requirement status, a bounded screen summary and recent actions. Full evidence
+stays inside Jev for audits and continuation.
+
+Checks: `:core:test` passed (including result-size/privacy cases),
+`:app:assembleDevDebug :app:lintDevDebug -PversionCodeOverride=42` passed, and
+the resulting `dev.androidagent.app.dev` APK was installed with `adb install -r`
+on Nothing A059. On-device Settings -> Display, without
+changing a setting, returned `done_visible` in one device action and five Jev
+decisions. Its tool JSON was 2,590 characters and remained parseable; the
+earlier full AndroidGym reply was about 39,772 characters and was truncated
+by the caller. This is proof of the handoff reduction, not of the full Gym
+workflow. The latest five-task Gym attempt still stopped at `decision_limit`
+after six device actions; Notes + Submit was not completed.
+
+On the rebased APK, a second read-only goal to reach Network & internet first
+hit `decision_limit` (11 actions, 34 Jev decisions, 68.1s): the intent catalog
+had no matching network dashboard, so Jev opened Settings root and searched.
+On the Nothing, `android.settings.WIRELESS_SETTINGS` resolves to
+`Settings$NetworkDashboardActivity`. Added that fixed intent for Network &
+internet goals, with a catalog test. Rebuilt and reinstalled the Dev APK;
+the same goal then returned `done_visible` in one intent action, seven Jev
+decisions and 13.4s. All three requirements were supported, and the returned
+JSON was 2,535 characters. After the last `dev` rebase, the exact APK was
+rebuilt and reinstalled; the same goal again returned `done_visible` in one
+intent action, five Jev decisions and 8.3s (2,534-character JSON). This
+verifies that one route on this device, not
+general navigation success or the full AndroidGym task.
+
+Not yet verified: a fresh full five-task Gym run with this projection, a live
+toggle-off during a request, and release-build/device behavior. The installed
+APK is a Dev Debug build, not a release.
 ## Multiple Codex accounts — 2026-09-22
 
 On branch `claude/multiple-accounts-branch-i6emwt`, the app keeps several
@@ -86,6 +124,33 @@ nothing ran on a phone. Still to check on a device: a device-code sign-in for
 a second account, a switch followed by a turn in an existing chat (the resumed
 thread carries reasoning items created under the other account), and that the
 quota bars change.
+
+## Jev PR #78 review fixes — 2026-09-22 (code only)
+
+Implemented the eight selected review fixes and the user's Jev-off requirement
+in `fix/jev-navigation-recovery`. The main checkout was left unchanged.
+
+- Added semantic target/action memory, field label/value/context separation,
+  catalog-scoped action paging and field-local text paging.
+- Completion proofs now retain their selected source or explicit source bundle,
+  ordered by observation sequence, with separate time scopes. Retention limits
+  leave requirements pending instead of discarding proof silently.
+- Added full local `verify_text` checks, dependent-submit preconditions and
+  separate write/commit evidence. A cleared submitted form is not re-filled just
+  because its earlier text is gone.
+- Unified insert/replace semantics across accessibility and ADB. IME replacement
+  selects and checks the full field; plain ADB text input cannot claim replacement.
+- Added bounded decision-only HTTP retries and cancellable backoff. Off cancels
+  Jev decisions and hands recorded progress back to Codex; ordinary tools remain
+  available. Off/on cannot resurrect an old decision.
+- Updated app text, on-device instructions and architecture notes.
+- Updated existing audit fixtures for the new source-selection protocol and
+  explicit replacement contract. These are source edits only; they were not run.
+
+Evidence: source and diff inspection only. No builds, tests, E2E runs, phone
+operations, release or push were performed in this pass, as requested. This is
+not runtime proof. Compilation, protocol regression fixtures, device behavior,
+latency, custom-editor IME support and live toggle/Stop behavior remain unverified.
 
 ## Jev on-device measurement and loop fixes — 2026-09-22 (evening)
 

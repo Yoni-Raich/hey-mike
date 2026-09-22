@@ -135,7 +135,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
     fun setJevEnabled(enabled: Boolean) {
         graph.jev.setEnabled(enabled)
-        mutable.update { it.copy(infoMessage = if (enabled) "Jev enabled for future tool calls." else "Jev disabled.") }
+        mutable.update { it.copy(infoMessage = if (enabled) "Jev enabled for new UI tasks." else "Jev disabled. Codex can continue with its own tools.") }
     }
     fun saveJevToken(token: String) {
         runCatching { graph.jev.saveToken(token) }

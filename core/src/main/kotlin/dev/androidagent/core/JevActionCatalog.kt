@@ -4,7 +4,9 @@ import kotlinx.serialization.json.*
 import kotlin.math.abs
 import kotlin.math.round
 
-internal data class JevObservation(val observationId: String, val json: JsonObject, val fingerprint: String)
+internal data class JevObservation(val observationId: String, val json: JsonObject, val fingerprint: String) {
+    val semantics: JevUiSemantics by lazy { JevUiSemantics(json) }
+}
 internal data class JevInstalledApp(val packageName: String, val label: String)
 internal data class JevSafeAction(val tool: String, val arguments: JsonObject, val label: String)
 internal data class JevTapCandidate(val label: String, val named: Boolean, val bounds: List<Int>?)
@@ -23,6 +25,7 @@ internal data class JevCandidate(
     val nodeId: String? = null,
     val textTool: String = "set_text",
     val targetBounds: List<Int>? = null,
+    val memoryValue: String? = null,
 )
 internal data class JevSelectedAction(
     val operation: String,
@@ -76,6 +79,8 @@ internal class JevActionCatalog private constructor(
     val pageCount: Int,
     val textPage: Int,
     val textPageCount: Int,
+    private val semantics: JevUiSemantics,
+    val version: String,
 ) {
     fun request(goal: String, observation: JevObservation, history: List<JevHistoryEntry>, textSource: String,
         ledger: JsonObject, unverifiedWrites: JsonArray) =
@@ -113,8 +118,18 @@ internal class JevActionCatalog private constructor(
         )
 
     /** The key under which [build] filters an attempted candidate on this screen. */
-    fun attemptKey(fingerprint: String, id: String): String? =
-        candidates[id]?.let { "$fingerprint:$id:${it.action?.label ?: it.label}" }
+    fun actionKey(id: String): String? = candidates[id]?.let(semantics::actionKey)
+
+    @Suppress("UNUSED_PARAMETER")
+    fun attemptKey(fingerprint: String, id: String): String? = actionKey(id)?.let { "${semantics.screenKey}:$it" }
+
+    fun targetNode(selected: JevSelectedAction): JsonObject? {
+        val candidate = candidates[selected.target] ?: return null
+        val id = candidate.nodeId ?: candidate.action?.arguments?.get("nodeId")?.jsonPrimitive?.contentOrNull ?: return null
+        return semantics.nodes.singleOrNull { it["nodeId"]?.jsonPrimitive?.contentOrNull == id }
+    }
+
+    fun fieldState(selected: JevSelectedAction): JsonObject? = targetNode(selected)?.let(semantics::fieldState)
 
     fun select(response: JevDecisionResponse): JevSelectedAction {
         val id = validateJevChoice(response.answers["action"], candidates.mapValues { it.value.label }, "action")
@@ -127,13 +142,10 @@ internal class JevActionCatalog private constructor(
         ?.criteria?.keys?.any { it.startsWith("V") } == true
 
     fun textRequest(selected: JevSelectedAction, goal: String): JevDecisionRequest {
-        val field = candidates.getValue(requireNotNull(selected.target))
         return JevDecisionRequest(buildJsonObject {
             put("goal", goal)
-            put("selectedField", buildJsonObject {
-                put("nodeId", requireNotNull(field.nodeId))
-                put("description", field.label)
-            })
+            put("selectedField", requireNotNull(fieldState(selected)))
+            put("elements", stateElements)
             put("textPage", textPage + 1); put("textPages", textPageCount)
         }, questions.filter { it.name == "text_value" })
     }
@@ -176,6 +188,7 @@ internal class JevActionCatalog private constructor(
                 put("nodeId", nodeId)
                 put("observationId", observationId)
                 if (candidate.textTool == "type_text") {
+                    put("mode", "replace")
                     candidate.targetBounds?.let { bounds ->
                         put("x", (bounds[0] + bounds[2]) / 2)
                         put("y", (bounds[1] + bounds[3]) / 2)
@@ -193,9 +206,6 @@ internal class JevActionCatalog private constructor(
         private const val MAX_STATE_ELEMENTS = 100
         private const val PROGRESS_EPSILON = 1e-6
         private const val MAX_INTENT_CHOICES = 8
-
-        /** Deep enough for a Compose field's own subtree, not the screen's. */
-        private const val MAX_LABEL_LOOKAHEAD = 6
 
         /** The root Settings screen: the fallback route to every entry below. */
         private val SETTINGS_ROOT = JevIntentDestination(
@@ -219,6 +229,8 @@ internal class JevActionCatalog private constructor(
         private val SETTINGS_INTENTS: List<JevIntentDestination> = listOf(
             JevIntentDestination("android.settings.WIFI_SETTINGS", "Wi-Fi settings",
                 listOf("wifi", "wi-fi", "wlan", "וויפי", "אלחוטית")),
+            JevIntentDestination("android.settings.WIRELESS_SETTINGS", "Network and internet settings",
+                listOf("network and internet", "network & internet", "internet settings", "wireless settings", "רשת ואינטרנט")),
             JevIntentDestination("android.settings.BLUETOOTH_SETTINGS", "Bluetooth settings",
                 listOf("bluetooth", "בלוטות")),
             JevIntentDestination("android.settings.DISPLAY_SETTINGS", "Display settings",
@@ -280,8 +292,11 @@ internal class JevActionCatalog private constructor(
             (string("text") ?: string("contentDescription") ?: string("resourceId") ?: string("class") ?: string("nodeId") ?: "control").take(180)
 
         fun build(goal: String, observation: JevObservation, texts: List<String>, apps: List<JevInstalledApp>,
-            ready: Set<String>, attempted: Set<String>, requestedPage: Int, requestedTextPage: Int): JevActionCatalog {
+            ready: Set<String>, attempted: Set<String>, requestedPage: Int, requestedTextPage: Int,
+            progressMemory: JevProgressTracker? = null, evidenceRevision: Int = 0,
+            allowed: (String) -> Boolean = { true }): JevActionCatalog {
             val nodes = observation.json["nodes"]?.jsonArray.orEmpty().map { it.jsonObject }
+            val semantics = observation.semantics
             val observationId = observation.observationId
             fun elements(offers: Collection<JevCandidate>): JsonArray {
                 val targets = offers.mapNotNull { it.nodeId ?: it.action?.arguments?.string("nodeId") }.toSet()
@@ -318,7 +333,7 @@ internal class JevActionCatalog private constructor(
             // Page all families together; no family can silently consume the
             // entire question budget and hide the remaining controls.
             val progress = progressCandidates(goal, nodes, observationId)
-            val typing = typeCandidates(nodes, ready)
+            val typing = typeCandidates(nodes, ready, semantics)
             val appOpens = appCandidates(goal, observation, apps)
             val scrolls = scrollCandidates(nodes, observationId, ready)
             val gestures = gestureCandidates(observation, nodes)
@@ -332,9 +347,11 @@ internal class JevActionCatalog private constructor(
             // discarded to meet the provider's per-question choice ceiling.
             val entries = (0 until (families.maxOfOrNull { it.size } ?: 0)).flatMap { index ->
                 families.mapNotNull { it.getOrNull(index) }
-            }.filter { (id, candidate) ->
+            }.filter { (_, candidate) ->
                 (candidate.action?.tool ?: candidate.textTool) in ready &&
-                "${observation.fingerprint}:$id:${candidate.action?.label ?: candidate.label}" !in attempted
+                progressMemory?.allows(semantics.screenKey, semantics.actionKey(candidate)) != false &&
+                allowed(semantics.actionKey(candidate)) &&
+                "${semantics.screenKey}:${semantics.actionKey(candidate)}" !in attempted
             }
             val pages = entries.chunked(ACTION_PAGE_SIZE).ifEmpty { listOf(emptyList()) }
             val page = requestedPage.coerceIn(0, pages.lastIndex)
@@ -358,18 +375,20 @@ internal class JevActionCatalog private constructor(
                     put("keycode", key)
                 }, label))
             }
-            candidates.entries.removeAll { (id, candidate) ->
+            candidates.entries.removeAll { (_, candidate) ->
                 (candidate.action?.tool ?: candidate.textTool).let { it !in ready } ||
-                    "${observation.fingerprint}:$id:${candidate.action?.label ?: candidate.label}" in attempted
+                    progressMemory?.allows(semantics.screenKey, semantics.actionKey(candidate)) == false ||
+                    !allowed(semantics.actionKey(candidate)) ||
+                    "${semantics.screenKey}:${semantics.actionKey(candidate)}" in attempted
             }
-            if (pages.size > 1 && "${observation.fingerprint}:MORE_ACTIONS" !in attempted) candidates["MORE_ACTIONS"] = JevCandidate("MORE_ACTIONS",
+            if (pages.size > 1) candidates["MORE_ACTIONS"] = JevCandidate("MORE_ACTIONS",
                 "Inspect the next action page (${page + 1}/${pages.size}); more observed controls and installed apps are available")
             // A wait that changed nothing, or a DONE the audit rejected, is not
             // offered again on the same screen; Jev has to act instead.
-            if ("${observation.fingerprint}:WAIT" !in attempted) {
+            if (progressMemory?.canWait(semantics.screenKey) != false && "${semantics.screenKey}:WAIT" !in attempted) {
                 candidates["WAIT"] = JevCandidate("WAIT", "Briefly wait only for loading or an expected control to appear")
             }
-            if ("${observation.fingerprint}:DONE" !in attempted) {
+            if (progressMemory?.canFinish(semantics.screenKey, evidenceRevision) != false && "${semantics.screenKey}:DONE" !in attempted) {
                 candidates["DONE"] = JevCandidate("DONE", "The entire goal is visibly satisfied")
             }
             candidates["BLOCKED"] = JevCandidate("BLOCKED", "No offered action can advance the goal")
@@ -390,7 +409,7 @@ internal class JevActionCatalog private constructor(
             val textPage = requestedTextPage.coerceIn(0, (textPages.size - 1).coerceAtLeast(0))
             if (candidates.values.any { it.operation == "TYPE_TEXT" }) {
                 val values = LinkedHashMap(textPages.getOrNull(textPage).orEmpty())
-                if (textPages.size > 1 && "${observation.fingerprint}:MORE_TEXT" !in attempted) values["MORE_TEXT"] = "Inspect the next page of exact text values without changing the device"
+                if (textPages.size > 1) values["MORE_TEXT"] = "Inspect the next page of exact text values without changing the device"
                 values["NONE"] = "None of these is the intended complete field value."
                 questions += JevChoiceQuestion(
                     "text_value",
@@ -401,7 +420,8 @@ internal class JevActionCatalog private constructor(
                 )
             }
             return JevActionCatalog(candidates, questions, elements(candidates.values), observationId, page, pages.size,
-                textPage, textPages.size.coerceAtLeast(1))
+                textPage, textPages.size.coerceAtLeast(1), semantics,
+                JevUiSemantics.digest(semantics.screenKey + entries.joinToString { semantics.actionKey(it.value) }))
         }
 
         /**
@@ -528,7 +548,8 @@ internal class JevActionCatalog private constructor(
                                 put("x2", end.first); put("y2", end.second)
                                 put("durationMs", 700)
                             }
-                            out["D${index}TARGET"] = JevCandidate("DRAG", label, JevSafeAction(tool, args, label))
+                            out["D${index}TARGET"] = JevCandidate("DRAG", label, JevSafeAction(tool, args, label),
+                                nodeId = node.string("nodeId"), memoryValue = "value:$target")
                         }
                         return@forEach
                     }
@@ -542,7 +563,7 @@ internal class JevActionCatalog private constructor(
                         val label = "Hold then drag ${node.label()} ${direction} to (${end.first},${end.second})"
                         out["D$index$direction"] = JevCandidate("DRAG", label, JevSafeAction(tool, buildJsonObject {
                             put("x1", x); put("y1", y); put("x2", end.first); put("y2", end.second); put("durationMs", 700)
-                        }, label))
+                        }, label), nodeId = node.string("nodeId"), memoryValue = "direction:$direction")
                     }
             }
             return out
@@ -617,6 +638,7 @@ internal class JevActionCatalog private constructor(
                             "Tap ${candidate.label} at ($x,$y)",
                         )
                     },
+                    nodeId = nodeId,
                 )
             }
             return out
@@ -683,6 +705,7 @@ internal class JevActionCatalog private constructor(
                         "SCROLL_$direction",
                         offer,
                         action,
+                        nodeId = nodeId,
                     )
                 }
             }
@@ -733,48 +756,20 @@ internal class JevActionCatalog private constructor(
         private fun tapName(nodes: List<JsonObject>, node: JsonObject): String? =
             node.string("text") ?: node.string("contentDescription") ?: JevNodeNames.rowLabel(nodes, node)
 
-        /**
-         * A name for a field that carries none of its own.
-         *
-         * A Compose text field reports as an `android.widget.EditText` with
-         * empty text and no description; its name sits on a descendant. The
-         * offer therefore read "Replace field android.widget.EditText", which
-         * is not distinguishable from the next field on the screen - a
-         * dropdown that also reports as an EditText. Jev answered NONE to the
-         * text question and the run ended in `needs_input` with the field
-         * right in front of it. Descendants follow their field in traversal
-         * order and sit inside its bounds, so the first name found there is
-         * the field's own name and not a neighbour's.
-         */
-        private fun fieldLabel(nodes: List<JsonObject>, index: Int): String {
-            val field = nodes[index]
-            (field.string("text") ?: field.string("contentDescription"))?.let { return it.take(180) }
-            val bounds = field.bounds() ?: return field.label()
-            for (offset in index + 1 until minOf(nodes.size, index + 1 + MAX_LABEL_LOOKAHEAD)) {
-                val inner = nodes[offset].bounds() ?: break
-                val within = inner[0] >= bounds[0] && inner[1] >= bounds[1] &&
-                    inner[2] <= bounds[2] && inner[3] <= bounds[3]
-                if (!within) break
-                (nodes[offset].string("contentDescription") ?: nodes[offset].string("text"))
-                    ?.let { return it.take(180) }
-            }
-            return field.label()
-        }
-
         /** Semantic replacement targets fields directly, without tapping the IME. */
-        private fun typeCandidates(nodes: List<JsonObject>, ready: Set<String>): LinkedHashMap<String, JevCandidate> {
+        private fun typeCandidates(nodes: List<JsonObject>, ready: Set<String>, semantics: JevUiSemantics): LinkedHashMap<String, JevCandidate> {
             val out = linkedMapOf<String, JevCandidate>()
             val textTool = when {
                 "set_text" in ready -> "set_text"
                 "type_text" in ready -> "type_text"
                 else -> return out
             }
-            nodes.forEachIndexed { index, field ->
-                if (!field.enabled() || !field.bool("editable") || field.bool("password")) return@forEachIndexed
-                val nodeId = field.string("nodeId") ?: return@forEachIndexed
+            nodes.forEach { field ->
+                if (!field.enabled() || !field.bool("editable") || field.bool("password")) return@forEach
+                val nodeId = field.string("nodeId") ?: return@forEach
                 out[if (out.isEmpty()) "TYPE" else "TYPE${out.size + 1}"] = JevCandidate(
                     "TYPE_TEXT",
-                    "Replace field ${fieldLabel(nodes, index)} [$nodeId] with one exact offered value",
+                    "Replace field ${semantics.fieldLabel(field).take(180)} [$nodeId] with one exact offered value",
                     action = null,
                     nodeId = nodeId,
                     textTool = textTool,

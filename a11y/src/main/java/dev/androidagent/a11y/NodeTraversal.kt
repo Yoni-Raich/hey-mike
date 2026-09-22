@@ -89,6 +89,7 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
             val node = UiNode(
                 nodeId = "n${nextId++}",
                 text = UiObservationSerializer.compactField(view.text),
+                hintText = UiObservationSerializer.compactField(view.hintText),
                 contentDescription = UiObservationSerializer.compactField(view.contentDescription),
                 resourceId = UiObservationSerializer.compactField(view.viewIdResourceName),
                 className = UiObservationSerializer.compactField(view.className),

@@ -31,6 +31,7 @@ import android.view.accessibility.AccessibilityNodeInfo
  */
 interface A11yNodeView {
     val text: String?
+    val hintText: String? get() = null
     val contentDescription: String?
     val viewIdResourceName: String?
     val className: String?
@@ -68,6 +69,7 @@ interface A11yNodeView {
 /** Wraps a live platform node. Holds no state of its own. */
 class RealNodeView(val node: AccessibilityNodeInfo) : A11yNodeView {
     override val text: String? get() = node.text?.toString()
+    override val hintText: String? get() = node.hintText?.toString()
     override val contentDescription: String? get() = node.contentDescription?.toString()
     override val viewIdResourceName: String? get() = node.viewIdResourceName
     override val className: String? get() = node.className?.toString()

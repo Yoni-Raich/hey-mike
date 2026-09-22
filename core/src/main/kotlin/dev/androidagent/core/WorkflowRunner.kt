@@ -576,7 +576,7 @@ class WorkflowRunner(
             // earlier call read. A missing reference throws before dispatch.
             val text = WorkflowOutputRefs.resolveText(template, captured)
             if (resolved == null) {
-                invokeTool("type_text", buildJsonObject { put("text", text); if (step.submit) put("submit", true) })
+                invokeTool("type_text", buildJsonObject { put("text", text); put("mode", "replace"); if (step.submit) put("submit", true) })
             } else {
                 val byHandle = attempt(
                     "set_text",
@@ -594,7 +594,7 @@ class WorkflowRunner(
                     if (!focused.success) focused
                     else invokeTool(
                         "type_text",
-                        buildJsonObject { put("text", text); if (step.submit) put("submit", true) },
+                        buildJsonObject { put("text", text); put("mode", "replace"); if (step.submit) put("submit", true) },
                     )
                 }
             }
