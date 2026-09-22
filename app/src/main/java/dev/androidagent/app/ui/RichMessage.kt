@@ -47,6 +47,7 @@ import coil.compose.SubcomposeAsyncImage
 import io.noties.markwon.Markwon
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.MarkwonConfiguration
+import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.movement.MovementMethodPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tables.TableAwareMovementMethod
@@ -59,12 +60,38 @@ import java.io.File
 @Composable
 internal fun MarkdownMessage(value: String, textColor: Color) {
     val context = LocalContext.current
-    val renderer = remember(context) {
+    val accent = MaterialTheme.colorScheme.secondary.toArgb()
+    val fontSize = MaterialTheme.typography.bodyLarge.fontSize.value
+    val renderer = remember(context, accent) {
+        val density = context.resources.displayMetrics.density
         Markwon.builder(context)
-            .usePlugin(TablePlugin.create(context))
+            .usePlugin(TablePlugin.create { table ->
+                table.tableBorderColor(MarkdownBorder)
+                    .tableBorderWidth(density.toInt().coerceAtLeast(1))
+                    .tableCellPadding((8 * density).toInt())
+                    .tableHeaderRowBackgroundColor(MarkdownSurface)
+                    .tableEvenRowBackgroundColor(0)
+                    .tableOddRowBackgroundColor(0)
+            })
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(MovementMethodPlugin.create(TableAwareMovementMethod.create()))
             .usePlugin(CodeLanguages.syntax())
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                // After the syntax plugin, so these colors win over its theme.
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder.codeBackgroundColor(MarkdownInlineCode)
+                        .codeTextColor(MarkdownCodeInk)
+                        .codeBlockBackgroundColor(MarkdownCodeBlock)
+                        .codeBlockMargin((12 * density).toInt())
+                        .blockQuoteColor(accent)
+                        .blockQuoteWidth((3 * density).toInt())
+                        .linkColor(accent)
+                        .bulletWidth((5 * density).toInt())
+                        .thematicBreakColor(MarkdownBorder)
+                        .headingBreakHeight(0)
+                        .headingTextSizeMultipliers(floatArrayOf(1.4f, 1.25f, 1.12f, 1f, 0.95f, 0.9f))
+                }
+            })
             .usePlugin(object : AbstractMarkwonPlugin() {
                 override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
                     builder.linkResolver { view, link ->
@@ -80,8 +107,9 @@ internal fun MarkdownMessage(value: String, textColor: Color) {
     AndroidView(
         modifier = Modifier.fillMaxWidth().semantics { text = AnnotatedString(rendered.toString()) },
         factory = { TextView(it).apply {
-            textSize = 16f
-            setLineSpacing(0f, 1.18f)
+            // Follows the app's type scale; sp keeps the phone's font size setting.
+            textSize = fontSize
+            setLineSpacing(0f, 1.25f)
             setTextIsSelectable(true)
             // Decided per line: any Hebrew or Arabic letter makes the whole
             // line right-to-left, so "Yoni Raich (את/ה)" no longer flips a
@@ -94,6 +122,13 @@ internal fun MarkdownMessage(value: String, textColor: Color) {
         },
     )
 }
+
+// Markdown surfaces, matched to the dark chat palette in ChatComposer.
+private const val MarkdownSurface = 0xFF1B1B1B.toInt()
+private const val MarkdownBorder = 0xFF333333.toInt()
+private const val MarkdownInlineCode = 0xFF2A2A2A.toInt()
+private const val MarkdownCodeBlock = 0xFF0C0C0C.toInt()
+private const val MarkdownCodeInk = 0xFFE6E6E6.toInt()
 
 internal fun isImagePath(path: String): Boolean = File(path).extension.lowercase() in setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
 

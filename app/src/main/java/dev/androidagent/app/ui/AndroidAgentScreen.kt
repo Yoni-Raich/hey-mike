@@ -586,16 +586,38 @@ private fun AgentChatContent(
         if (followLatest && listState.layoutInfo.totalItemsCount > 0) {
             automaticScroll = true
             try {
-                listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1)
+                // Int.MAX_VALUE is clamped to the end of the list, so a long
+                // reply shows its last line, not the top of its bubble.
+                listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
             } finally {
                 automaticScroll = false
             }
         }
     }
 
+    // Streamed text and markdown views grow after composition, without a new
+    // item. Watch the laid-out end of the list and keep it pinned to the bottom.
+    LaunchedEffect(listState, state.activeSessionId) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            Triple(info.totalItemsCount, last?.index, last?.let { it.offset + it.size })
+        }.collect {
+            if (followLatest && !automaticScroll && !listState.isScrollInProgress && listState.canScrollForward) {
+                automaticScroll = true
+                try {
+                    listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
+                } finally {
+                    automaticScroll = false
+                }
+            }
+        }
+    }
+
+    Box(modifier = modifier) {
     LazyColumn(
         state = listState,
-        modifier = modifier,
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(22.dp),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 24.dp),
     ) {
@@ -659,6 +681,34 @@ private fun AgentChatContent(
                 }
             }
         }
+    }
+    // Shown once the user scrolls up; tapping it resumes following the reply.
+    val coroutineScope = rememberCoroutineScope()
+    androidx.compose.animation.AnimatedVisibility(
+        visible = !followLatest && listState.canScrollForward,
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+        enter = androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.fadeOut(),
+    ) {
+        androidx.compose.material3.SmallFloatingActionButton(
+            onClick = {
+                followLatest = true
+                coroutineScope.launch {
+                    automaticScroll = true
+                    try {
+                        listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
+                    } finally {
+                        automaticScroll = false
+                    }
+                }
+            },
+            shape = CircleShape,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Icon(Icons.Outlined.ExpandMore, contentDescription = "Jump to latest")
+        }
+    }
     }
 }
 
