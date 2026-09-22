@@ -439,6 +439,7 @@ class JevToolGateway(
             checkActive()
             journal.pendingMutation = action.label
             val actionStart = TimeSource.Monotonic.markNow()
+            var stepActionMs = 0L
             var outcome: String? = null
             var dispatch = ToolDispatch.UNKNOWN
             val refusal = try {
@@ -458,7 +459,8 @@ class JevToolGateway(
             } catch (failure: Exception) {
                 failure.message ?: "action result unknown"
             } finally {
-                timings.actionMs += actionStart.elapsedNow().inWholeMilliseconds
+                stepActionMs = actionStart.elapsedNow().inWholeMilliseconds
+                timings.actionMs += stepActionMs
             }
             if (refusal != null) {
                 // The backend refuses plenty it definitively did not perform: a
@@ -466,6 +468,7 @@ class JevToolGateway(
                 // our own overlay covers. An unchanged screen does NOT prove
                 // that no side effect happened. Record the failure without a
                 // success claim and suppress that action on this screen.
+                val refusedObserveStart = timings.observationMs
                 val after = try {
                     observe(timings)
                 } catch (cancelled: CancellationException) {
@@ -473,7 +476,12 @@ class JevToolGateway(
                 } catch (_: Exception) {
                     null
                 }
+                // A settings deep link only lands on a screen. Treating a
+                // refused one as a possible mutation would end the whole run
+                // over a destination this phone simply does not declare.
                 val navigation = action.tool in setOf("open_app", "scroll_node") ||
+                    action.tool == "open_intent" &&
+                    action.arguments.string("action")?.startsWith("android.settings.") == true ||
                     action.tool == "key" && action.arguments.string("keycode") in setOf("BACK", "HOME", "RECENTS", "QUICK_SETTINGS", "NOTIFICATIONS")
                 val exactWrite = action.tool in setOf("set_text", "type_text", "set_progress") &&
                     dispatch in setOf(ToolDispatch.ACKNOWLEDGED, ToolDispatch.VERIFIED)
@@ -487,7 +495,8 @@ class JevToolGateway(
                 }
                 journal.pendingMutation = null
                 history += JevHistoryEntry(selected.operation, "${action.label} - unsuccessful: $refusal", failed = true,
-                    outcome = "dispatch=$dispatch; inspect the fresh state; no success is assumed")
+                    outcome = "dispatch=$dispatch; inspect the fresh state; no success is assumed",
+                    actionMs = stepActionMs).also { it.observeMs = timings.observationMs - refusedObserveStart }
                 repeated.add(signature)
                 observation = after
                 journal.observation = observation
@@ -495,8 +504,9 @@ class JevToolGateway(
                 recordTextWrite(journal, fresh, action, dispatch)
                 return@repeat
             }
-            history += JevHistoryEntry(selected.operation, action.label, outcome = outcome)
+            history += JevHistoryEntry(selected.operation, action.label, outcome = outcome, actionMs = stepActionMs)
             journal.pendingMutation = null
+            val observeStart = timings.observationMs
             observation = try {
                 observe(timings)
             } catch (cancelled: CancellationException) {
@@ -514,6 +524,7 @@ class JevToolGateway(
                 )
             }
             journal.observation = observation
+            history.last().observeMs = timings.observationMs - observeStart
             actionPage = 0
             if (action.tool in setOf("set_text", "type_text")) {
                 recordTextWrite(journal, fresh, action, dispatch)
@@ -762,6 +773,8 @@ class JevToolGateway(
                         put("label", entry.label)
                         put("screenChanged", entry.screenChanged)
                         if (entry.failed) put("refused", true)
+                        entry.actionMs?.let { put("actionMs", it) }
+                        entry.observeMs?.let { put("observeMs", it) }
                         entry.outcome?.let { put("result", it) }
                     })
                 }

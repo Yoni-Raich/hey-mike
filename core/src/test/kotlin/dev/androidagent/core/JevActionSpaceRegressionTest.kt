@@ -2,10 +2,12 @@ package dev.androidagent.core
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -215,6 +217,136 @@ class JevActionSpaceRegressionTest {
         assertTrue(router.actions.isEmpty())
     }
 
+    @Test
+    fun `a settings goal offers the one-step route, most specific first`() {
+        val labels = deepLinkOffers(
+            goal = "Open the display settings and turn on dark theme",
+            ready = DEFAULT_READY + "open_intent",
+        )
+        // Quick settings, a launcher, a gear and a scroll used to be the only
+        // way in. The named screen leads; the root stays as the fallback for a
+        // phone whose Settings does not declare the narrower action.
+        assertEquals(
+            listOf("android.settings.DISPLAY_SETTINGS", "android.settings.SETTINGS"),
+            labels.mapNotNull { label -> SETTINGS_ACTION.find(label)?.value },
+        )
+    }
+
+    @Test
+    fun `no deep link is offered when the backend cannot launch one`() {
+        val labels = deepLinkOffers(
+            goal = "Open the display settings and turn on dark theme",
+            ready = DEFAULT_READY,
+        )
+        assertTrue(labels.toString(), labels.none { SETTINGS_ACTION.containsMatchIn(it) })
+    }
+
+    @Test
+    fun `a deep link this phone does not handle costs one step, not the run`() = runBlocking {
+        val router = FakeRouter(
+            MutableList(2) { listWithScrollableRow() },
+            ready = DEFAULT_READY + "open_intent",
+            refuse = setOf("open_intent"),
+        )
+        val provider = ScriptedProvider(state, mutableListOf("I1", "DONE"))
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        val result = gateway.invoke(
+            "jev_run_ui_task",
+            buildJsonObject { put("goal", "Open the bluetooth settings") },
+        )
+
+        // A refused settings intent only failed to navigate. Treating it as a
+        // mutation that may have landed would end the goal over a destination
+        // this phone simply does not declare.
+        val json = Json.parseToJsonElement(result.text).jsonObject
+        assertEquals(json.toString(), "done_visible", json.getValue("status").jsonPrimitive.content)
+        assertEquals("open_intent", router.actions.single().first)
+        assertEquals(
+            "android.settings.BLUETOOTH_SETTINGS",
+            router.actions.single().second.getValue("action").jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `a compose field is named by its own subtree, not by its class`() {
+        // Shapes taken from AndroidGym on the phone: both fields report as
+        // android.widget.EditText, the notes field carries no name of its own,
+        // and the dropdown's own text is its value rather than its name.
+        val observation = JevObservation(
+            observationId = "ui-1",
+            json = buildJsonObject {
+                put("activePackage", "com.example.androidgym")
+                put("nodes", buildJsonArray {
+                    add(editText("n6", text = "Urgent", bounds = listOf(42, 1449, 1038, 1617)))
+                    add(plainNode("n7", contentDescription = "Priority Dropdown", bounds = listOf(84, 1449, 371, 1491)))
+                    add(editText("n10", text = null, bounds = listOf(42, 1961, 1038, 2129)))
+                    add(plainNode("n11", contentDescription = "Agent Notes Field", bounds = listOf(42, 1961, 1038, 2129)))
+                    add(plainNode("n12", text = "Enter Benchmark Report Notes", bounds = listOf(84, 2024, 735, 2087)))
+                })
+            },
+            fingerprint = "a11y:gym",
+        )
+        val goal = "Enter the notes and submit them"
+        val catalog = JevActionCatalog.build(
+            goal = goal, observation = observation, texts = listOf("JevTest123"), apps = emptyList(),
+            ready = DEFAULT_READY, attempted = emptySet(), requestedPage = 0, requestedTextPage = 0,
+        )
+
+        val offers = catalog.request(goal, observation, emptyList(), "supplied", buildJsonObject { }, buildJsonArray { })
+            .questions.single().criteria.values
+        // "Replace field android.widget.EditText" twice on one screen is a
+        // choice Jev cannot make. It answered NONE and the run returned
+        // needs_input with the field on screen.
+        assertTrue(offers.toString(), offers.any { it.startsWith("Replace field Agent Notes Field [n10]") })
+        assertTrue(offers.toString(), offers.none { it.contains("Replace field android.widget.EditText") })
+    }
+
+    private fun editText(nodeId: String, text: String?, bounds: List<Int>) = buildJsonObject {
+        put("nodeId", nodeId)
+        text?.let { put("text", it) }
+        put("class", "android.widget.EditText")
+        put("bounds", buildJsonArray { bounds.forEach { add(it) } })
+        put("enabled", true)
+        put("clickable", true)
+        put("editable", true)
+        put("focused", false)
+    }
+
+    private fun plainNode(
+        nodeId: String,
+        text: String? = null,
+        contentDescription: String? = null,
+        bounds: List<Int>,
+    ) = buildJsonObject {
+        put("nodeId", nodeId)
+        text?.let { put("text", it) }
+        contentDescription?.let { put("contentDescription", it) }
+        put("class", "android.view.View")
+        put("bounds", buildJsonArray { bounds.forEach { add(it) } })
+        put("enabled", true)
+        put("clickable", false)
+        put("focused", false)
+    }
+
+    private fun deepLinkOffers(goal: String, ready: Set<String>): Collection<String> {
+        val observation = JevObservation(
+            observationId = "ui-1",
+            json = buildJsonObject {
+                put("activePackage", "com.example")
+                put("nodes", buildJsonArray { })
+            },
+            fingerprint = "a11y:screen",
+        )
+        val catalog = JevActionCatalog.build(
+            goal = goal, observation = observation, texts = emptyList(), apps = emptyList(),
+            ready = ready, attempted = emptySet(), requestedPage = 0, requestedTextPage = 0,
+        )
+        return catalog.request(goal, observation, emptyList(), "goal", buildJsonObject { }, buildJsonArray { })
+            .questions.single().criteria.values
+    }
+
     /** A label whose only clickable target is an ancestor absent from the node list. */
     private fun labelInsideClickableRow(): ToolResult = screenOf("row-screen") {
         add(buildJsonObject {
@@ -332,10 +464,15 @@ class JevActionSpaceRegressionTest {
         }
     }
 
-    private class FakeRouter(private val screens: MutableList<ToolResult>) : DeviceToolGateway {
+    private class FakeRouter(
+        private val screens: MutableList<ToolResult>,
+        private val ready: Set<String> = DEFAULT_READY,
+        /** Tools this phone dispatches nothing for, as a missing handler would. */
+        private val refuse: Set<String> = emptySet(),
+    ) : DeviceToolGateway {
         val actions = mutableListOf<Pair<String, JsonObject>>()
         override val definitions = emptyList<ToolDefinition>()
-        override fun readyTools() = setOf("read_ui", "apps_settings", "tap_node", "scroll_node", "set_progress", "set_text", "key", "swipe", "open_app")
+        override fun readyTools() = ready
         override fun beginRun(runId: String, workspace: File) = Unit
         override fun revoke() = Unit
         override fun needsControl(name: String) = true
@@ -343,11 +480,19 @@ class JevActionSpaceRegressionTest {
         override suspend fun invoke(name: String, arguments: JsonObject): ToolResult = when (name) {
             "apps_settings" -> ToolResult("{\"ok\":true,\"items\":[]}")
             "read_ui" -> if (screens.size > 1) screens.removeAt(0) else screens.first()
+            in refuse -> ToolResult("nothing on this device handles that", success = false,
+                dispatch = ToolDispatch.NOT_DISPATCHED).also { actions += name to arguments }
             else -> ToolResult("ok").also { actions += name to arguments }
         }
     }
 
     companion object {
+        private val DEFAULT_READY = setOf(
+            "read_ui", "apps_settings", "tap_node", "scroll_node", "set_progress",
+            "set_text", "key", "swipe", "open_app",
+        )
+        private val SETTINGS_ACTION = Regex("android\\.settings\\.[A-Z_]+")
+
         private fun auditAnswer(request: JevDecisionRequest) = JevDecisionResponse(
             request.questions.associate { it.name to choice(it, if ("COMPLETE" in it.criteria) "COMPLETE" else it.criteria.keys.last()) },
             "jev-test",

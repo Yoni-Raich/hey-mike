@@ -104,6 +104,11 @@ class AgentAccessibilityService : AccessibilityService() {
     /** Milliseconds since the last window or content change. */
     val idleMs: Long get() = (System.nanoTime() - lastEventNanos) / 1_000_000L
 
+    /** A dispatched action can return before Android sends its first UI event. */
+    internal fun expectUiChange() {
+        lastEventNanos = System.nanoTime()
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         A11yServiceHandle.attach(this)

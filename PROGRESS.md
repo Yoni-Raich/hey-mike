@@ -87,6 +87,68 @@ a second account, a switch followed by a turn in an existing chat (the resumed
 thread carries reasoning items created under the other account), and that the
 quota bars change.
 
+## Jev physical-device debugging — 2026-09-22
+
+Branch `fix/jev-navigation-recovery`, on the Nothing A059 with a real Jev token.
+Jev does execute real multi-step navigation on the phone; the failures were slow
+and false-negative, not structural.
+
+Five causes were found and fixed.
+
+**Completion evidence was too weak.** `JevTaskLedger` sorted interactive nodes
+first and kept ~1200 bytes, so a screen's switch values survived while the labels
+that said which setting each belonged to did not. The audit then could not prove
+a result the device had actually reached, and the run returned `incomplete` with
+`steps: 0`. The ledger now drops resource-only layout wrappers, keeps screen
+order so a label stays next to its control, prefers app nodes over system
+windows, retains bounds, and has a 2400-byte budget.
+
+**Post-action reads happened before Android had reacted.** `read_ui` waits for
+quiescence, but pre-action idle time already satisfied it, so the first read
+after an action could return the previous screen. `AgentAccessibilityService`
+gained `expectUiChange()`, and `A11yDeviceTools` calls it before every mutating
+dispatch.
+
+**App-open confirmation was slow and unreliable.** `rootInActiveWindow` is stale
+through quick settings, recents and launcher transitions, so a landed launch was
+still reported "not in front" after the full five seconds, and the agent launched
+the same app again. The active window and the front-most application window now
+both count, the timeout is 3s, and an unconfirmed launch is reported as
+unsuccessful so the caller suppresses the repeat instead of trusting a screen it
+has not seen.
+
+**There was no direct route to a system screen.** The catalog offered
+`open_app`, quick settings and recents but no intent, so reaching Display meant
+four transitions before the task began. A closed, code-owned table of
+`android.settings.*` destinations is now offered as ordinary choices, most
+specific first, with the root Settings screen as the fallback. A refused deep
+link costs one step, not the run.
+
+**An unnamed field could not be chosen for.** The AndroidGym `needs_input`
+failure was not the keyboard. The Agent Notes field is a Compose
+`android.widget.EditText` with empty text whose name is on a descendant
+(`content-desc="Agent Notes Field"`), confirmed by `uiautomator dump` on the
+phone. The offer therefore read "Replace field android.widget.EditText", which
+is indistinguishable from the Priority dropdown beside it — also an `EditText`.
+Jev answered `NONE` to the text question, which is the correct answer to an
+ambiguous one, and the gateway returned `needs_input`. A field with no name of
+its own now borrows the first name from its own subtree.
+
+Each history entry now carries `actionMs` and `observeMs`, so the next
+investigation can read which step was slow instead of inferring it.
+
+Measured on the phone, Settings → Display, before and after the first two fixes:
+17 model calls / `incomplete` / 3 stale retries became 8 model calls /
+`done_visible` / 0 stale retries. The app-open and deep-link fixes are covered by
+unit tests but have not yet been re-measured on the phone.
+
+Still open: a UI/state mismatch where Hey Mike shows "Accessibility — Off" while
+`dumpsys accessibility` shows the Dev service enabled and bound (reproduce after
+cold start, process restart, and returning from Android Settings, against
+`A11yServiceHandle`/`A11yAvailability`); end-to-end Stop during a live Jev HTTP
+request; and re-measuring the full five-task AndroidGym run and Settings →
+Display on the phone against this build.
+
 ## Jev engine completion follow-up — 2026-09-22
 
 Checkpoint `019370c` preserves the Astra implementation. The Luna follow-up

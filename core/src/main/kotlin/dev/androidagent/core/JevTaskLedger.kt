@@ -17,23 +17,28 @@ internal class JevTaskLedger(val requirements: List<String>) {
         wholeGoalSupported = false
         val compactNodes = mutableListOf<JsonElement>()
         var bytes = 0
-        // Changed/interactive facts come first; a large decorative label must
-        // not crowd a checked switch or a field value out of the evidence.
-        val nodes = observation["nodes"]?.jsonArray.orEmpty()
-        for (element in nodes.sortedByDescending {
-            val node = it.jsonObject
-            listOf("checked", "range", "editable", "selected").count { key -> key in node }
-        }) {
+        // Keep labels and controls together in screen order. Resource-only
+        // layout wrappers (especially the status bar) are not completion
+        // evidence and previously displaced the labels of unnamed switches.
+        val nodes = observation["nodes"]?.jsonArray.orEmpty().filter { element ->
+            val node = element.jsonObject
+            listOf("text", "contentDescription").any { key ->
+                node[key]?.jsonPrimitive?.contentOrNull?.isNotBlank() == true
+            } || listOf("checked", "range").any { it in node } ||
+                node["editable"]?.jsonPrimitive?.booleanOrNull == true ||
+                node["selected"]?.jsonPrimitive?.booleanOrNull == true
+        }.sortedBy { if (it.jsonObject["windowType"]?.jsonPrimitive?.contentOrNull == "system") 1 else 0 }
+        for (element in nodes) {
             val compact = JsonObject(element.jsonObject.filterKeys { it in FACT_KEYS })
             val size = compact.toString().toByteArray(Charsets.UTF_8).size
-            if (bytes + size > 1200) continue
+            if (bytes + size > 2400) continue
             compactNodes += compact
             bytes += size
         }
         val facts = buildJsonObject {
             observation["activePackage"]?.let { put("app", it) }
             put("nodes", JsonArray(compactNodes))
-            put("partial", compactNodes.size < observation["nodes"]?.jsonArray.orEmpty().size || observation["treeTruncated"]?.jsonPrimitive?.booleanOrNull == true)
+            put("partial", compactNodes.size < nodes.size || observation["treeTruncated"]?.jsonPrimitive?.booleanOrNull == true)
             action?.let { put("action", it.take(300)) }
             outcome?.let { put("outcome", it.take(350)) }
         }
@@ -82,7 +87,7 @@ internal class JevTaskLedger(val requirements: List<String>) {
     }
 
     companion object {
-        private val FACT_KEYS = setOf("text", "contentDescription", "resourceId", "package", "checked", "selected", "range", "editable")
+        private val FACT_KEYS = setOf("text", "contentDescription", "bounds", "checked", "selected", "range", "editable")
         fun requirements(goal: String, explicit: List<String>): List<String> {
             require(explicit.size <= 32) { "At most 32 requirements are supported" }
             require(explicit.sumOf { it.length } <= 8000) { "Requirements are too long" }

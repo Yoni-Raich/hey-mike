@@ -793,6 +793,35 @@ is drawn only from explicit `texts` or bounded verbatim goal spans; password
 fields never receive a text candidate. Progress values are numeric values or
 percentages already present in the goal.
 
+A field is named by its own subtree. A Compose text field reports as an
+`android.widget.EditText` with empty text and no description, and its name sits
+on a descendant, so the offer read "Replace field android.widget.EditText" —
+indistinguishable from the dropdown beside it, which also reports as an
+`EditText`. Jev answered `NONE` to the text question and the run returned
+`needs_input` with the field on screen. Descendants follow their field in
+traversal order and sit inside its bounds, so the first name found there is the
+field's own and not a neighbour's.
+
+The catalog also offers a small closed table of system deep links — the root
+Settings screen and the Wi-Fi, Bluetooth, display, sound, notification, battery
+and similar screens — as ordinary `open_intent` choices, most specific first.
+Reaching Display used to mean quick settings, a launcher, a tap on a gear and a
+scroll: four transitions before the task began, each of which could be missed or
+misread. The table is code-owned and the goal only decides which entries are
+worth a choice slot, so Jev still composes no intent; the launch goes through
+`IntentPolicy` like every other one, and a destination this phone does not
+declare is refused before dispatch and suppressed like any other unavailable
+action rather than ending the run.
+
+Launching an app reports success only when the target actually owns the screen.
+`rootInActiveWindow` alone goes stale through quick settings, recents and
+launcher transitions, so a launch that had already landed was still reported as
+"not in front" once the whole timeout had run out, and the agent launched the
+same app a second time. The active window and the front-most application window
+now both count, and an unconfirmed launch is reported as unsuccessful: it was
+dispatched and must not be repeated blindly, which is exactly what the refusal
+path already records and suppresses.
+
 Every mutation still goes through the existing composite device gateway, so
 Accessibility/ADB fallback, send approval, visible control and Stop remain in
 one place. The loop re-observes immediately before input and discards a stale
@@ -808,6 +837,10 @@ only after one more fresh observation matches the state Jev judged, and returns
 `done_visible` with `verified:false`; this is not a task-specific verifier. Raw
 Enter is not in Jev's action space because its ADB fallback could bypass the
 existing send-approval guard; a visible submit control remains available.
+
+Each history entry carries its own `actionMs` and `observeMs`. The aggregate
+timings say a run was slow; these say which step was, which is the difference
+between guessing at a cause and reading one.
 
 The executor returns typed dispatch evidence (`NOT_DISPATCHED`, `ACKNOWLEDGED`,
 `VERIFIED` or `UNKNOWN`). The task ledger keeps compact evidence from earlier

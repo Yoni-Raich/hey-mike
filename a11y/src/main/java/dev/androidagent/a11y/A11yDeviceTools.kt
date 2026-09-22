@@ -224,6 +224,9 @@ class A11yDeviceTools(
             // A node action invalidates the immutable paging snapshot. The
             // next read must capture the post-action screen from scratch.
             synchronized(lock) { snapshot = null }
+            // Do not mistake pre-action idle time for a settled result. The
+            // first accessibility event may arrive after ACTION_CLICK returns.
+            A11yServiceHandle.service.value?.expectUiChange()
         }
         val result = when (name) {
             "act_and_observe" -> actAndObserve(arguments)
@@ -605,15 +608,22 @@ class A11yDeviceTools(
             val service = A11yServiceHandle.service.value
                 ?: return ToolResult("Opened $pkg", dispatch = ToolDispatch.ACKNOWLEDGED)
             val inFront = withTimeoutOrNull(APP_OPEN_TIMEOUT_MS) {
-                while (service.rootInActiveWindow?.packageName?.toString() != pkg) delay(QUIESCENCE_POLL_MS)
+                while (!isInFront(service, pkg)) delay(QUIESCENCE_POLL_MS)
                 true
             } ?: false
+            awaitQuiescence(service)
             if (inFront) {
-                awaitQuiescence(service)
                 ToolResult("Opened $pkg; it is in front", dispatch = ToolDispatch.ACKNOWLEDGED)
             } else {
+                // Reported as unsuccessful on purpose: the launch was
+                // dispatched, but nothing here proves it landed. Claiming
+                // success made the agent trust a screen it had not seen;
+                // claiming failure lets the caller suppress a second launch of
+                // the same app and read what is actually showing instead.
                 ToolResult(
-                    "Launched $pkg, but it was not in front after ${APP_OPEN_TIMEOUT_MS / 1_000}s. Call read_ui to see what is showing.",
+                    "Launched $pkg, but it could not be confirmed in front within ${APP_OPEN_TIMEOUT_MS}ms. " +
+                        "The launch was dispatched and must not be repeated blindly. Read the screen.",
+                    success = false,
                     dispatch = ToolDispatch.ACKNOWLEDGED,
                 )
             }
@@ -622,6 +632,23 @@ class A11yDeviceTools(
         } catch (error: Exception) {
             ToolResult("Could not open $pkg: ${error.message}", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         }
+    }
+
+    /**
+     * Whether [pkg] owns the screen.
+     *
+     * `rootInActiveWindow` alone goes stale through Quick Settings, Recents and
+     * launcher transitions, so a launch that had already landed was still
+     * reported as "not in front" once the whole timeout had run out, and the
+     * agent opened the same app again. The window list carries the same answer
+     * a beat earlier: the active window and the front-most application window
+     * both count, and neither is satisfied by an app merely sitting behind one.
+     */
+    private fun isInFront(service: AgentAccessibilityService, pkg: String): Boolean {
+        if (runCatching { service.rootInActiveWindow?.packageName?.toString() }.getOrNull() == pkg) return true
+        val windows = runCatching { service.visibleWindows() }.getOrDefault(emptyList())
+        if (windows.firstOrNull { it.active }?.root?.packageName == pkg) return true
+        return windows.firstOrNull { it.type == "application" }?.root?.packageName == pkg
     }
 
     // ---- node addressing ----
@@ -1035,7 +1062,12 @@ class A11yDeviceTools(
         private const val OWN_UI_SETTLE_ATTEMPTS = 4
         private const val OWN_UI_SETTLE_MS = 40L
         private const val RETURN_TIMEOUT_MS = 4_000L
-        private const val APP_OPEN_TIMEOUT_MS = 5_000L
+        /**
+         * A launch is normally visible well inside this. Five seconds was spent
+         * in full on every launch the old package check could not see, which
+         * was most of them.
+         */
+        private const val APP_OPEN_TIMEOUT_MS = 3_000L
 
         /** Tools that work with the accessibility service off. */
         internal val SERVICE_FREE_TOOLS = setOf("open_app", "open_intent", "resolve_intent")
