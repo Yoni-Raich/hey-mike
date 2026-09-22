@@ -514,6 +514,14 @@ private fun ColumnScope.AccountSettings(state: AgentUiState, actions: AgentUiAct
             )
         }
     }
+    if (state.savedAccounts.accounts.isNotEmpty() || account?.signedIn == true) {
+        Text("Accounts", style = MaterialTheme.typography.labelLarge)
+        Explanation(
+            "Keep several accounts signed in and switch in one tap. Chats and their history stay exactly as they are; " +
+                "only the usage quota follows the account.",
+        )
+        AccountSwitcher(state, actions, allowRemove = true)
+    }
 }
 
 @Composable

@@ -31,6 +31,7 @@ import dev.androidagent.core.AgentCoordinator
 import dev.androidagent.core.AutomationJournal
 import dev.androidagent.core.AutomationLibrary
 import dev.androidagent.core.AutomationToolGateway
+import dev.androidagent.core.CodexAccountVault
 import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
@@ -73,6 +74,8 @@ class AgentGraph(private val app: Application) {
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
     val engine = CodexEngine(runtime)
+    // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
+    val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     val adb = AndroidAdbTransport(app)
     private lateinit var runCoordinator: AgentCoordinator
     // Declared before the gateways: they take `overlay` as a constructor argument,
