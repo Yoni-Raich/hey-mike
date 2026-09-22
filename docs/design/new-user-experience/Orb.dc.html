@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mike orb</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>body{margin:0;background:#000000}</style>
+</helmet>
+<svg width="{{size}}" height="{{size}}" viewBox="-50 -50 100 100" aria-hidden="true" style="display: block;">
+<defs>
+<radialGradient id="{{glowId}}"><stop offset="0" stop-color="{{color}}" stop-opacity="{{glow}}"></stop><stop offset="1" stop-color="{{color}}" stop-opacity="0"></stop></radialGradient>
+</defs>
+<circle cx="0" cy="0" r="50" fill="url(#{{glowId}})"></circle>
+<sc-for list="{{dots}}" as="d" hint-placeholder-count="0">
+<circle cx="{{d.x}}" cy="{{d.y}}" r="{{d.r}}" fill="{{d.c}}" fill-opacity="{{d.a}}"></circle>
+</sc-for>
+</svg>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"color":{"editor":"color","default":"#83D9CA","options":["#83D9CA","#69A7FF","#F6B86A","#8F8F8F"]},"size":{"editor":"int","default":160,"min":24,"max":400},"level":{"editor":"range","default":0.26,"min":0,"max":1,"step":0.02},"$preview":{"width":160,"height":160}}'>
+class Component extends DCLogic {
+constructor(p) {
+super(p);
+this.state = { t: 0 };
+const pts = [];
+const n = 220;
+for (let i = 0; i < n; i++) {
+const y = 1 - (i / (n - 1)) * 2;
+const r = Math.sqrt(1 - y * y);
+const a = i * 2.399963;
+pts.push([Math.cos(a) * r, y, Math.sin(a) * r]);
+}
+this.pts = pts;
+this.gid = 'orbglow' + Math.random().toString(36).slice(2, 8);
+}
+componentDidMount() {
+this.timer = setInterval(() => this.setState({ t: this.state.t + 0.05 }), 50);
+}
+componentWillUnmount() { clearInterval(this.timer); }
+renderVals() {
+const t = this.state.t;
+const level = Number(this.props.level ?? 0.26);
+const color = this.props.color ?? '#83D9CA';
+const spin = t * (0.35 + 0.9 * level);
+const cy = Math.cos(spin), sy = Math.sin(spin), cx = Math.cos(0.38), sx = Math.sin(0.38);
+const R = 33;
+const dots = this.pts.map(([x, y, z]) => {
+const w = Math.sin(3.1 * x + t * 1.9) * Math.sin(2.7 * y - t * 1.3) * Math.sin(3.3 * z + t * 2.2);
+const pos = (1 - Math.abs(y)) * 7;
+const band = level * Math.exp(-Math.pow((pos - 3.4) / 3, 2)) * (0.6 + 0.4 * Math.sin(t * 4.3 + pos * 2.1));
+const push = 1 + 0.06 * w * (0.4 + level) + 0.3 * band * (0.55 + 0.45 * w);
+const px = x * push, py = y * push, pz = z * push;
+const tx = px * cy + pz * sy, tz = -px * sy + pz * cy;
+const ty = py * cx - tz * sx, tz2 = py * sx + tz * cx;
+const persp = 2.6 / (2.6 - tz2);
+const depth = Math.min(1, Math.max(0, (tz2 + 1) / 2));
+return {
+x: (tx * R * persp).toFixed(2),
+y: (ty * R * persp).toFixed(2),
+r: ((0.35 + 0.75 * depth) * 2.5 * (1 + 0.3 * level)).toFixed(2),
+a: (0.1 + 0.9 * depth * depth).toFixed(2),
+c: depth > 0.85 && level > 0.3 ? '#FFFFFF' : color
+};
+});
+return { dots, size: Number(this.props.size ?? 160), color, glow: (0.2 + 0.3 * level).toFixed(2), glowId: this.gid };
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Before we start</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#000000;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 28px 20px 24px; display: flex; flex-direction: column; gap: 16px; background: #000000;">
+<div style="display: flex; align-items: center; gap: 12px;">
+<dc-import name="Orb" size="56" level="0.12" color="#F6B86A" hint-size="56px,56px"></dc-import>
+<div style="display: flex; flex-direction: column; gap: 2px;">
+<h1 style="margin: 0; font-size: 26px; font-weight: 500;">Before we start</h1>
+<span style="font-size: 14px; color: #8F8F8F;">Please read and confirm all three</span>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<sc-for list="{{terms}}" as="term" hint-placeholder-count="3">
+<label style="display: flex; gap: 14px; align-items: flex-start; padding: 16px; border-radius: 18px; background: #141414; border: 1px solid {{term.border}}; cursor: pointer;">
+<input type="checkbox" checked="{{term.on}}" onChange="{{term.toggle}}" style="width: 22px; height: 22px; margin: 2px 0 0; flex-shrink: 0; accent-color: #2F7CF6;">
+<div style="display: flex; flex-direction: column; gap: 6px;">
+<span style="font-size: 16px; font-weight: 600;">{{term.title}}</span>
+<span style="font-size: 14px; line-height: 1.5; color: #B9B9B9;">{{term.body}}</span>
+</div>
+</label>
+</sc-for>
+</div>
+<a href="https://openai.com/policies/" style="font-size: 14px; text-decoration: none;">Read the Codex and OpenAI policies</a>
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<sc-if value="{{ready}}" hint-placeholder-val="{{ready}}">
+<a href="SignIn.dc.html" style="height: 56px; border-radius: 28px; background: #2F7CF6; color: #FFFFFF; font-size: 17px; font-weight: 500; display: flex; align-items: center; justify-content: center; text-decoration: none;">I understand and agree</a>
+</sc-if>
+<sc-if value="{{notReady}}" hint-placeholder-val="{{notReady}}">
+<button type="button" disabled="{{notReady}}" style="height: 56px; border-radius: 28px; border: none; background: #1F1F1F; color: #6B6B6B; font-family: inherit; font-size: 17px; font-weight: 500;">Confirm all {{left}} to continue</button>
+</sc-if>
+<a href="Main.dc.html" style="height: 44px; display: flex; align-items: center; justify-content: center; color: #B9B9B9; font-size: 15px; text-decoration: none;">Not now</a>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+constructor(p) { super(p); this.state = { on: {} }; }
+renderVals() {
+const base = [
+{ id: 'risk', title: 'Full control of this phone is a real risk', body: 'With your permission, Mike can see the screen, tap, type, open apps and change settings, including apps with private data like messages and banking. Only continue if you accept that risk.' },
+{ id: 'mistakes', title: 'Mike can make mistakes', body: 'It can misread the screen or tap the wrong thing. Watch what it does, check anything important, and press Stop if something looks wrong. Actions already done may not be undone.' },
+{ id: 'data', title: 'Your data goes only to Codex', body: 'Hey Mike has no servers of its own and collects nothing. What Mike sees and what you type goes straight to Codex (OpenAI) to answer you, and is covered only by the Codex policies.' }
+];
+const on = this.state.on;
+const terms = base.map((b) => ({
+...b,
+on: !!on[b.id],
+border: on[b.id] ? '#2F7CF6' : '#2A2A2A',
+toggle: () => this.setState({ on: { ...on, [b.id]: !on[b.id] } })
+}));
+const left = terms.filter((t) => !t.on).length;
+return { terms, left, ready: left === 0, notReady: left > 0 };
+}
+}
+</script>
+</body>
+</html>

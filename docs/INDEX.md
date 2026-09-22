@@ -7,6 +7,7 @@
 - [Release process](RELEASES.md)
 - [Known issues](KNOWN_ISSUES.md)
 - [Architecture](ARCHITECTURE.md)
+- [New user experience design](design/NEW_USER_EXPERIENCE.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Contributor License Agreement](../CLA.md)
 - [License (AGPL-3.0)](../LICENSE)
