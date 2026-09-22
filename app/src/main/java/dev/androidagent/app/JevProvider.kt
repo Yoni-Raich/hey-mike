@@ -14,6 +14,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -129,6 +134,7 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
     private val requestLock = Any()
     @Volatile private var activeConnection: HttpURLConnection? = null
     @Volatile private var requestCancelled = false
+    private val choosing = AtomicBoolean(false)
     override val state: StateFlow<JevProviderState> = tokens.state()
 
     fun setEnabled(enabled: Boolean) = tokens.setEnabled(enabled)
@@ -144,7 +150,12 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
         }
     }
 
-    override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse = withContext(Dispatchers.IO) {
+    override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+        check(choosing.compareAndSet(false, true)) { "A Jev request is already in flight" }
+        return try { chooseOwned(request) } finally { choosing.set(false) }
+    }
+
+    private suspend fun chooseOwned(request: JevDecisionRequest): JevDecisionResponse = withContext(Dispatchers.IO) {
         val token = tokens.readToken() ?: throw IOException("Jev token is unavailable")
         val body = requestBody(request)
         if (body.toByteArray(Charsets.UTF_8).size > MAX_REQUEST_BYTES) {
@@ -167,18 +178,27 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
             }
             activeConnection = connection
         }
-        try {
-            connection.outputStream.use { output ->
-                output.write(body.toByteArray(Charsets.UTF_8))
+        suspendCancellableCoroutine { continuation ->
+            // The coroutine deadline must disconnect blocking I/O immediately,
+            // even when nobody presses the app's Stop button.
+            continuation.invokeOnCancellation { connection.disconnect() }
+            NETWORK.execute {
+                try {
+                    if (!continuation.isActive) return@execute
+                    connection.outputStream.use { output -> output.write(body.toByteArray(Charsets.UTF_8)) }
+                    val code = connection.responseCode
+                    if (code !in 200..299) throw IOException("Jev request failed with HTTP $code")
+                    val response = parseResponse(readBounded(connection.inputStream))
+                    if (continuation.isActive) continuation.resume(response)
+                } catch (failure: Exception) {
+                    if (continuation.isActive) continuation.resumeWithException(failure)
+                } finally {
+                    synchronized(requestLock) {
+                        if (activeConnection === connection) activeConnection = null
+                    }
+                    connection.disconnect()
+                }
             }
-            val code = connection.responseCode
-            if (code !in 200..299) throw IOException("Jev request failed with HTTP $code")
-            parseResponse(readBounded(connection.inputStream))
-        } finally {
-            synchronized(requestLock) {
-                if (activeConnection === connection) activeConnection = null
-            }
-            connection.disconnect()
         }
     }
 
@@ -232,6 +252,9 @@ class AndroidJevProvider(context: Context) : JevDecisionProvider {
     }
 
     private companion object {
+        val NETWORK = Executors.newFixedThreadPool(2) { task ->
+            Thread(task, "jev-http").apply { isDaemon = true }
+        }
         const val API_URL = "https://api.typesafe.ai/v1/systemone"
         const val MODEL = "jev-latest"
         const val CONNECT_TIMEOUT_MS = 5_000

@@ -78,11 +78,14 @@ data class UiNode(
      * spend the character budget the subtree query is there to save.
      */
     val parentId: String? = null,
+    val longClickable: Boolean = false,
+    val actions: List<String> = emptyList(),
+    val windowType: String? = null,
 ) {
     fun isMeaningful(): Boolean =
         text != null || contentDescription != null || resourceId != null ||
             clickable || scrollable || focused || editable || selected || range != null ||
-            supportsSetProgress || !enabled || checkable
+            supportsSetProgress || longClickable || actions.isNotEmpty() || !enabled || checkable
 
     fun toJson(): JsonObject = buildJsonObject {
         put("nodeId", nodeId)
@@ -95,6 +98,9 @@ data class UiNode(
         }
         contentDescription?.let { put("contentDescription", UiObservationSerializer.safeField(it)) }
         resourceId?.let { put("resourceId", it) }
+        packageName?.let { put("package", it) }
+        windowType?.let { put("windowType", it) }
+        if (longClickable) put("longClickable", true)
         className?.let { put("class", it) }
         bounds?.let { values ->
             put("bounds", buildJsonArray { values.forEach { add(JsonPrimitive(it)) } })
@@ -113,8 +119,10 @@ data class UiNode(
                 value.type?.let { put("type", it) }
             })
         }
-        if (supportsSetProgress) {
-            put("actions", buildJsonArray { add("SET_PROGRESS") })
+        if (supportsSetProgress || actions.isNotEmpty()) {
+            put("actions", buildJsonArray {
+                (actions + if (supportsSetProgress) listOf("SET_PROGRESS") else emptyList()).distinct().forEach { add(it) }
+            })
         }
         // Only for a node that has a state to report. Emitting "checked":false
         // on every label would cost the character budget for no information.
@@ -159,7 +167,12 @@ data class UiRange(
 )
 
 /** A parsed screen, before it is rendered for the model. */
-data class UiObservation(val activePackage: String?, val nodes: List<UiNode>)
+data class UiObservation(
+    val activePackage: String?, val nodes: List<UiNode>,
+    val viewport: List<Int>? = null,
+    val windows: List<JsonObject> = emptyList(),
+    val treeTruncated: Boolean = false,
+)
 
 /**
  * The one `read_ui` description, so both backends advertise the same tool.
@@ -435,6 +448,9 @@ object UiObservationSerializer {
         put("stable", stable)
         screenDigest?.let { put("screenDigest", it) }
         observation.activePackage?.let { put("activePackage", it) }
+        observation.viewport?.let { put("viewport", buildJsonArray { it.forEach { value -> add(value) } }) }
+        if (observation.windows.isNotEmpty()) put("windows", buildJsonArray { observation.windows.forEach { add(it) } })
+        if (observation.treeTruncated) put("treeTruncated", true)
         put("truncated", truncated)
         // Before the nodes, so a model that stops reading early still learns
         // that there is more and how to ask for it.
@@ -520,10 +536,16 @@ object UiObservationSerializer {
         activePackage: String?,
         nodes: List<UiNode>,
         query: UiQuery = UiQuery.ALL,
+        viewport: List<Int>? = null,
+        windows: List<JsonObject> = emptyList(),
+        treeTruncated: Boolean = false,
     ): String {
         val payload = buildJsonObject {
             activePackage?.let { put("activePackage", it) }
             put("nodes", buildJsonArray { nodes.forEach { add(it.toJson()) } })
+            viewport?.let { put("viewport", buildJsonArray { it.forEach { value -> add(value) } }) }
+            if (windows.isNotEmpty()) put("windows", buildJsonArray { windows.forEach { add(it) } })
+            if (treeTruncated) put("treeTruncated", true)
             // The same screen answers two different queries differently, so a
             // query is part of the identity of a reply. An empty one adds
             // nothing, which keeps every unfiltered digest what it always was.
@@ -593,7 +615,7 @@ object UiObservationSerializer {
         }
         val matched = select(observation.nodes, query)
         val fingerprint = ObservationFingerprint(
-            digest = digest(observation.activePackage, observation.nodes, query),
+            digest = digest(observation.activePackage, observation.nodes, query, observation.viewport, observation.windows, observation.treeTruncated),
             revision = revision,
             backend = backend,
         )
@@ -611,7 +633,8 @@ object UiObservationSerializer {
             )
         }
         val window = matched.drop(query.offset).let { rest -> query.maxNodes?.let(rest::take) ?: rest }
-        val fullScreenDigest = digest(observation.activePackage, observation.nodes)
+        val fullScreenDigest = digest(observation.activePackage, observation.nodes,
+            viewport = observation.viewport, windows = observation.windows, treeTruncated = observation.treeTruncated)
         val render = { count: Int ->
             semanticJson(
                 observation = observation.copy(nodes = window.take(count)),

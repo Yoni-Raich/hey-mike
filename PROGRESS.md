@@ -87,6 +87,17 @@ a second account, a switch followed by a turn in an existing chat (the resumed
 thread carries reasoning items created under the other account), and that the
 quota bars change.
 
+## Jev architecture review follow-up
+
+Source review of PR #77 is recorded in `docs/JEV_ARCHITECTURE_REVIEW.md`.
+Local changes improve app discovery, gesture/system navigation, no-progress
+suppression, observation grounding, exact quoted text candidates and action
+outcome history. These do not establish full control or reliable completion.
+The review identifies remaining gaps in requirement verification, typed
+execution outcomes, whole-goal ownership, visual observation and cancellation.
+The user requested no further builds or test runs during the review. Changes
+made after that instruction have only been inspected in source.
+
 ## Jev UI engine experiment — 2026-09-22
 
 On branch `experiment/jev-ui-tool`, Jev now runs the full bounded UI loop behind

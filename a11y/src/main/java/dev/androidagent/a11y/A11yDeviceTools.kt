@@ -35,6 +35,8 @@ import dev.androidagent.core.ObservationState
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.ToolDispatch
+import dev.androidagent.core.UiObservation
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.UiObservationSerializer
 import dev.androidagent.core.UiQuery
@@ -43,18 +45,26 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlin.math.absoluteValue
 import kotlin.math.round
 
@@ -99,6 +109,10 @@ class A11yDeviceTools(
 ) : DeviceToolGateway {
 
     private val lock = Any()
+    private val generation = AtomicLong()
+    private class RunEpoch(val value: Long) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<RunEpoch>
+    }
 
     /** Direct navigation, tried before walking the UI. */
     private val intents = IntentTools(context, authorizeIntent = authorizeIntent)
@@ -121,12 +135,15 @@ class A11yDeviceTools(
      * our own advice would be refused as stale.
      */
     @Volatile private var handleObservationIds: Set<String> = emptySet()
+    private data class Snapshot(val observation: UiObservation, val id: String, val revision: Long, val stable: Boolean)
+    @Volatile private var snapshot: Snapshot? = null
 
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
 
     override fun beginRun(runId: String, workspace: File) {
         require(runId.isNotBlank()) { "runId cannot be blank" }
         synchronized(lock) {
+            generation.incrementAndGet()
             this.workspace = workspace.absoluteFile
             workspace.absoluteFile.mkdirs()
             clearHandles()
@@ -139,6 +156,7 @@ class A11yDeviceTools(
 
     override fun revoke() {
         synchronized(lock) {
+            generation.incrementAndGet()
             revoked = true
             clearHandles()
         }
@@ -190,6 +208,12 @@ class A11yDeviceTools(
     }
 
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
+        checkActive()
+        val epoch = currentCoroutineContext()[RunEpoch] ?: RunEpoch(generation.get())
+        return withContext(epoch) { invokeOwned(name, arguments) }
+    }
+
+    private suspend fun invokeOwned(name: String, arguments: JsonObject): ToolResult {
         if (revoked || workspace == null) {
             throw IllegalStateException("Run stopped. No device action was performed.")
         }
@@ -200,6 +224,8 @@ class A11yDeviceTools(
             "screenshot" -> screenshot()
             "tap" -> tap(arguments)
             "swipe" -> swipe(arguments)
+            "drag" -> drag(arguments)
+            "long_press_node" -> longPressNode(arguments)
             "type_text" -> typeText(arguments)
             "key" -> pressKey(arguments)
             "open_app" -> openApp(arguments)
@@ -264,6 +290,14 @@ class A11yDeviceTools(
         val service = requireService()
         val force = arguments["force"]?.jsonPrimitive?.booleanOrNull ?: false
         val query = UiQuery.from(arguments)
+        arguments["snapshotId"]?.jsonPrimitive?.contentOrNull?.let { id ->
+            val held = snapshot?.takeIf { it.id == id }
+                ?: throw ToolNotServiceable("snapshot_expired", "Snapshot expired; start read_ui again without snapshotId.")
+            val page = UiObservationSerializer.render(held.observation, SOURCE, BACKEND, held.id,
+                held.revision, 0, null, true, held.stable, query)
+            return ToolResult(JsonObject(Json.parseToJsonElement(page.text).jsonObject +
+                ("snapshotPaging" to JsonPrimitive(true))).toString(), success = page.ok)
+        }
         val revision = observations.nextRevision()
         val observationId = "ui-$revision"
         val startedAt = System.nanoTime()
@@ -273,9 +307,19 @@ class A11yDeviceTools(
         val stable = awaitQuiescence(service)
         checkActive()
 
-        val result = traverse(service.visibleWindows(), context.packageName)
+        val visible = service.visibleWindows()
+        val result = traverse(visible, context.packageName)
+        val display = requireNotNull(service.getSystemService(android.view.WindowManager::class.java)).maximumWindowMetrics.bounds
+        val observed = result.observation.copy(
+            viewport = listOf(display.left, display.top, display.right, display.bottom),
+            windows = visible.filter { it.root?.packageName != context.packageName }.map { window -> buildJsonObject {
+                put("type", window.type); put("active", window.active)
+                window.root?.packageName?.let { put("package", it) }
+                window.root?.boundsInScreen?.let { put("bounds", buildJsonArray { it.forEach { value -> add(value) } }) }
+            } },
+        )
         val rendered = UiObservationSerializer.render(
-            observation = result.observation,
+            observation = observed,
             source = SOURCE,
             backend = BACKEND,
             observationId = observationId,
@@ -286,20 +330,23 @@ class A11yDeviceTools(
             stable = stable,
             query = query,
         )
+        val epoch = currentCoroutineContext()[RunEpoch]?.value
         synchronized(lock) {
             // A rejected query never reached the model as a node list, so the
             // ids it already holds have to keep working.
-            if (!revoked && rendered.ok) {
+            if (!revoked && epoch == generation.get() && rendered.ok) {
                 // Handles come from the whole traversal, never from the page
                 // that was emitted: a node the query filtered out is still on
                 // screen, and an action that names it must still land.
                 handles = result.handles
+                snapshot = Snapshot(observed, observationId, revision, stable)
                 handleObservationIds =
                     if (rendered.unchanged) handleObservationIds + observationId else setOf(observationId)
             }
         }
         rendered.fingerprint?.let { observations.record(it) }
-        return ToolResult(rendered.text, success = rendered.ok)
+        return ToolResult(JsonObject(Json.parseToJsonElement(rendered.text).jsonObject +
+            ("snapshotPaging" to JsonPrimitive(true))).toString(), success = rendered.ok)
     }
 
     /** True when the screen stopped changing before the budget ran out. */
@@ -434,6 +481,57 @@ class A11yDeviceTools(
         )
     }
 
+    private suspend fun longPressNode(arguments: JsonObject): ToolResult {
+        val (id, view) = resolveNode(arguments)
+        checkActive()
+        if (view.node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+            return ToolResult("Long pressed $id", dispatch = ToolDispatch.ACKNOWLEDGED)
+        }
+        val b = view.boundsInScreen
+        val x = (b[0] + b[2]) / 2
+        val y = (b[1] + b[3]) / 2
+        requireNotOurOwnUi(x, y)
+        checkActive()
+        val landed = requireService().dispatchSwipe(x, y, x, y, 650)
+        return ToolResult("Long press $id acknowledged=$landed", success = landed,
+            dispatch = if (landed) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN)
+    }
+
+    private suspend fun drag(arguments: JsonObject): ToolResult {
+        val x1 = arguments.requireCoordinate("x1")
+        val y1 = arguments.requireCoordinate("y1")
+        val x2 = arguments.requireCoordinate("x2")
+        val y2 = arguments.requireCoordinate("y2")
+        val duration = arguments["durationMs"]?.jsonPrimitive?.intOrNull ?: 700
+        require(duration in 100..3000) { "Drag duration must be 100..3000 ms" }
+        requireNotOurOwnUi(x1, y1)
+        requireNotOurOwnUi(x2, y2)
+        checkActive()
+        val service = requireService()
+        val holdPath = Path().apply { moveTo(x1.toFloat(), y1.toFloat()) }
+        val hold = GestureDescription.StrokeDescription(holdPath, 0, 600, true)
+        var released = false
+        try {
+            val held = service.dispatchAndAwait(GestureDescription.Builder().addStroke(hold).build())
+            if (!held) return ToolResult("Drag hold outcome unknown", success = false, dispatch = ToolDispatch.UNKNOWN)
+            checkActive()
+            val path = Path().apply { moveTo(x1.toFloat(), y1.toFloat()); lineTo(x2.toFloat(), y2.toFloat()) }
+            val stroke = hold.continueStroke(path, 0, duration.toLong(), false)
+            val landed = service.dispatchAndAwait(GestureDescription.Builder().addStroke(stroke).build())
+            released = true
+            return ToolResult("Drag acknowledged=$landed", success = landed,
+                dispatch = if (landed) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN)
+        } finally {
+            if (!released) kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                // Release an in-progress contact when Stop interrupts the hold.
+                runCatching {
+                    val release = hold.continueStroke(holdPath, 0, 1, false)
+                    withTimeoutOrNull(500) { service.dispatchAndAwait(GestureDescription.Builder().addStroke(release).build()) }
+                }
+            }
+        }
+    }
+
     private suspend fun pressKey(arguments: JsonObject): ToolResult {
         val raw = arguments["keycode"]?.jsonPrimitive?.contentOrNull
             ?: throw IllegalArgumentException("keycode is required")
@@ -447,7 +545,8 @@ class A11yDeviceTools(
             )
         val service = requireService()
         val sent = service.performGlobalAction(action)
-        return ToolResult("Sent $normalized", success = sent)
+        return ToolResult("Sent $normalized", success = sent,
+            dispatch = if (sent) ToolDispatch.ACKNOWLEDGED else ToolDispatch.NOT_DISPATCHED)
     }
 
     private suspend fun openApp(arguments: JsonObject): ToolResult {
@@ -504,7 +603,7 @@ class A11yDeviceTools(
             return gatedSend(service, root) { pressSend(it) }
         }
         if (view.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            return ToolResult("Tapped $node")
+            return ToolResult("Tapped $node", dispatch = ToolDispatch.ACKNOWLEDGED)
         }
         // A labelled node is often not the clickable one. Fall back to its
         // centre rather than reporting a failure the model cannot act on.
@@ -516,6 +615,7 @@ class A11yDeviceTools(
         return ToolResult(
             "Node $node did not accept a click; tapped its centre $x,$y instead",
             success = landed,
+            dispatch = if (landed) ToolDispatch.ACKNOWLEDGED else ToolDispatch.UNKNOWN,
         )
     }
 
@@ -526,13 +626,13 @@ class A11yDeviceTools(
         val submit = arguments["submit"]?.jsonPrimitive?.booleanOrNull ?: false
         val (node, view) = resolveNode(arguments)
         if (!view.isEditable) {
-            return ToolResult("Node $node is not an editable field; nothing was typed.", success = false)
+            return ToolResult("Node $node is not an editable field; nothing was typed.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         }
         val extras = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
         if (!view.node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, extras)) {
-            return ToolResult("Node $node rejected the text; nothing was typed.", success = false)
+            return ToolResult("Node $node rejected the text; nothing was typed.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         }
         if (submit && SendGuard.isMessagingApp(view.packageName)) {
             val service = requireService()
@@ -541,7 +641,14 @@ class A11yDeviceTools(
         }
         // ACTION_SET_TEXT replaces the whole field and some composers drop it,
         // so report what the field holds instead of assuming the write took.
-        val verified = runCatching { view.node.refresh(); view.node.text?.toString() }.getOrNull() == text
+        val verified = withTimeoutOrNull(PROGRESS_VERIFY_TIMEOUT_MS) {
+            while (true) {
+                checkActive()
+                if (view.node.refresh() && view.node.text?.toString() == text) return@withTimeoutOrNull true
+                delay(PROGRESS_VERIFY_POLL_MS)
+            }
+            @Suppress("UNREACHABLE_CODE") false
+        } ?: false
         var submitted = false
         if (submit) {
             submitted = view.node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
@@ -552,7 +659,7 @@ class A11yDeviceTools(
                 put("typed", text.length)
                 put("verified", verified)
                 if (submit) put("submitted", submitted)
-            }.toString(),
+            }.toString(), dispatch = if (verified && !submit) ToolDispatch.VERIFIED else ToolDispatch.ACKNOWLEDGED,
         )
     }
 
@@ -565,13 +672,14 @@ class A11yDeviceTools(
             )
         val (node, view) = resolveNode(arguments)
         if (!view.isScrollable) {
-            return ToolResult("Node $node is not scrollable.", success = false)
+            return ToolResult("Node $node is not scrollable.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         }
         val scrolled = view.node.performAction(action)
         return ToolResult(
             if (scrolled) "Scrolled $node $direction"
             else "Node $node would not scroll $direction; it may already be at the end.",
             success = scrolled,
+            dispatch = if (scrolled) ToolDispatch.ACKNOWLEDGED else ToolDispatch.NOT_DISPATCHED,
         )
     }
 
@@ -584,7 +692,7 @@ class A11yDeviceTools(
         val max = view.rangeMax?.toDouble()
         val previous = view.rangeCurrent?.toDouble()
         if (min == null || max == null || previous == null || !view.supportsSetProgress) {
-            return ToolResult("Node $node does not expose semantic progress control.", success = false)
+            return ToolResult("Node $node does not expose semantic progress control.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         }
         val rangeType = view.rangeType
         val target = if (rangeType == "int") round(requested) else requested
@@ -597,7 +705,7 @@ class A11yDeviceTools(
             extras,
         )
         if (!committed) {
-            return ToolResult("Node $node rejected progress $target.", success = false)
+            return ToolResult("Node $node rejected progress $target.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         }
         var current: Double? = null
         val verificationStarted = System.nanoTime()
@@ -623,6 +731,7 @@ class A11yDeviceTools(
                 put("verified", verified)
             }.toString(),
             success = verified,
+            dispatch = if (verified) ToolDispatch.VERIFIED else ToolDispatch.ACKNOWLEDGED,
         )
     }
 
@@ -672,35 +781,38 @@ class A11yDeviceTools(
             ?: throw IllegalArgumentException("observationId is required")
         val accepted = handleObservationIds
         if (accepted.isEmpty()) {
-            throw IllegalStateException("No observation is held. Call read_ui before addressing a node.")
+            throw ToolNotServiceable("stale_node", "No observation is held. Call read_ui before addressing a node.")
         }
         if (observationId !in accepted) {
-            throw IllegalStateException(
+            throw ToolNotServiceable("stale_node",
                 "$nodeId belongs to observation $observationId, which is no longer current " +
                     "(holding ${accepted.sorted().joinToString(", ")}). " +
                     "Call read_ui and use the node ids it returns.",
             )
         }
         val view = handles[nodeId] as? RealNodeView
-            ?: throw IllegalStateException(
+            ?: throw ToolNotServiceable("stale_node",
                 "$nodeId is not in the current observation. Call read_ui and pick a node it lists.",
             )
         if (!runCatching { view.node.refresh() }.getOrDefault(false)) {
-            throw IllegalStateException("$nodeId is no longer on screen. Call read_ui and pick a current node.")
+            throw ToolNotServiceable("stale_node", "$nodeId is no longer on screen. Call read_ui and pick a current node.")
         }
         return nodeId to view
     }
 
     // ---- helpers ----
 
-    private suspend fun requireService(): AgentAccessibilityService =
-        A11yServiceHandle.service.value
+    private suspend fun requireService(): AgentAccessibilityService {
+        val service = A11yServiceHandle.service.value
             ?: A11yServiceHandle.await(CONNECT_GRACE_MS)
             ?: throw ToolNotServiceable(
                 "a11y_unavailable",
                 "The Hey Mike accessibility service is not running. Ask the user to " +
                     "enable it in Settings > Accessibility > Hey Mike.",
             )
+        checkActive()
+        return service
+    }
 
     // ---- sending ----
 
@@ -832,11 +944,14 @@ class A11yDeviceTools(
     private fun clearHandles() {
         handles = emptyMap()
         handleObservationIds = emptySet()
+        snapshot = null
     }
 
     private suspend fun checkActive() {
         currentCoroutineContext().ensureActive()
-        if (revoked) throw IllegalStateException("Run stopped. No device action was performed.")
+        if (revoked || currentCoroutineContext()[RunEpoch]?.value?.let { it != generation.get() } == true) {
+            throw CancellationException("Device control was stopped or superseded")
+        }
     }
 
     private fun elapsedMs(startedAt: Long): Long =
@@ -909,7 +1024,7 @@ class A11yDeviceTools(
                 "read_ui",
                 READ_UI_DESCRIPTION,
                 mapOf(
-                    "timeoutMs" to "integer", "raw" to "boolean", "force" to "boolean",
+                    "timeoutMs" to "integer", "raw" to "boolean", "force" to "boolean", "snapshotId" to "string",
                     "text" to "string", "resourceId" to "string", "class" to "string",
                     "package" to "string", "rootNodeId" to "string",
                     "clickableOnly" to "boolean", "scrollableOnly" to "boolean",
@@ -925,6 +1040,11 @@ class A11yDeviceTools(
                 mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"),
                 listOf("x1", "y1", "x2", "y2"),
             ),
+            tool("long_press_node", "Long press a node from read_ui.",
+                mapOf("nodeId" to "string", "observationId" to "string"), listOf("nodeId", "observationId")),
+            tool("drag", "Hold then drag between two observed screen points.",
+                mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"),
+                listOf("x1", "y1", "x2", "y2")),
             tool(
                 "type_text",
                 "Type text into the focused field. Tap the field first so it holds input focus.",
@@ -1005,6 +1125,11 @@ internal fun AgentAccessibilityService.visibleWindows(): List<A11yWindow> =
             A11yWindow(
                 root = runCatching { window.root }.getOrNull()?.let(::RealNodeView),
                 active = window.isActive,
+                type = when (window.type) {
+                    android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "keyboard"
+                    android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM -> "system"
+                    else -> "application"
+                },
             )
         }
     }.getOrElse {

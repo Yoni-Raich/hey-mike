@@ -52,6 +52,8 @@ interface A11yNodeView {
     val rangeCurrent: Float? get() = null
     val rangeType: String? get() = null
     val supportsSetProgress: Boolean get() = false
+    val isLongClickable: Boolean get() = false
+    val actionNames: List<String> get() = emptyList()
 
     /** True for a switch, checkbox or radio. [isChecked] means nothing without it. */
     val isCheckable: Boolean
@@ -86,6 +88,22 @@ class RealNodeView(val node: AccessibilityNodeInfo) : A11yNodeView {
     override val isPassword: Boolean get() = node.isPassword
     override val isEditable: Boolean get() = node.isEditable
     override val isSelected: Boolean get() = node.isSelected
+    override val isLongClickable: Boolean get() = node.isLongClickable
+    override val actionNames: List<String>
+        get() = node.actionList.mapNotNull { action ->
+            when (action.id) {
+                AccessibilityNodeInfo.ACTION_CLICK -> "CLICK"
+                AccessibilityNodeInfo.ACTION_LONG_CLICK -> "LONG_CLICK"
+                AccessibilityNodeInfo.ACTION_SET_TEXT -> "SET_TEXT"
+                AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> "SCROLL_FORWARD"
+                AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> "SCROLL_BACKWARD"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id -> "SCROLL_UP"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id -> "SCROLL_DOWN"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id -> "SCROLL_LEFT"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id -> "SCROLL_RIGHT"
+                else -> null
+            }
+        }
     override val rangeMin: Float? get() = node.rangeInfo?.min
     override val rangeMax: Float? get() = node.rangeInfo?.max
     override val rangeCurrent: Float? get() = node.rangeInfo?.current

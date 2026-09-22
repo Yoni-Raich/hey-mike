@@ -22,6 +22,72 @@ class JevActionSpaceRegressionTest {
     private val state = MutableStateFlow(JevProviderState(enabled = true, tokenConfigured = true))
 
     @Test
+    fun `an app beyond the first fifty is offered by package name`() = runBlocking {
+        val offsets = mutableListOf<Int>()
+        val router = object : DeviceToolGateway by FakeRouter(MutableList(2) { listWithScrollableRow() }) {
+            override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
+                if (name == "read_ui") return listWithScrollableRow()
+                assertEquals("apps_settings", name)
+                val offset = arguments.getValue("offset").jsonPrimitive.content.toInt()
+                offsets += offset
+                return ToolResult(buildJsonObject {
+                    put("items", buildJsonArray {
+                        if (offset == 0) repeat(50) { index -> add(buildJsonObject {
+                            put("package", "example.app$index"); put("label", "App $index")
+                        }) } else add(buildJsonObject {
+                            put("package", "com.android.settings"); put("label", "Localized settings")
+                        })
+                    })
+                }.toString())
+            }
+        }
+        val provider = QuestionCapturingProvider(state)
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run", File("."))
+        gateway.invoke("jev_run_ui_task", buildJsonObject { put("goal", "Open com.android.settings") })
+        assertEquals(listOf(0, 50), offsets)
+        assertTrue(provider.questions.single().criteria.values.any { it.contains("com.android.settings") })
+    }
+
+    @Test
+    fun `home no-op is removed and a gesture remains available without another orchestrator call`() = runBlocking {
+        val screen = listWithScrollableRow()
+        val router = FakeRouter(MutableList(4) { screen })
+        var calls = 0
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevActionSpaceRegressionTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                if (request.questions.none { it.name == "action" }) return auditAnswer(request)
+                val question = request.questions.first { it.name == "action" }
+                val selected = if (calls++ == 0) "HOME" else {
+                    assertTrue("no-op HOME remains offered", "HOME" !in question.criteria)
+                    assertTrue("drawer swipe missing", "GUP" in question.criteria)
+                    "DONE"
+                }
+                return JevDecisionResponse(mapOf("action" to choice(question, selected)), "test")
+            }
+        }
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run", File("."))
+        gateway.invoke("jev_run_ui_task", buildJsonObject { put("goal", "Open Settings") })
+        assertEquals(2, calls)
+        assertEquals(1, router.actions.size)
+    }
+
+    @Test
+    fun `tall scroll region keeps horizontal navigation and bounded swipe options`() = runBlocking {
+        val router = FakeRouter(MutableList(2) { listWithScrollableRow() })
+        val provider = QuestionCapturingProvider(state)
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run", File("."))
+        gateway.invoke("jev_run_ui_task", buildJsonObject { put("goal", "Open another launcher page") })
+        val choices = provider.questions.single().criteria
+        assertTrue(choices.values.any { it.startsWith("Scroll left") })
+        assertTrue("GUP" in choices)
+        assertTrue(choices.size <= 255)
+    }
+
+    @Test
     fun `labelled child taps its clickable ancestor, not itself`() = runBlocking {
         val router = FakeRouter(MutableList(4) { labelInsideClickableRow() })
         val provider = ScriptedProvider(state, mutableListOf("T1", "DONE"))
@@ -67,7 +133,7 @@ class JevActionSpaceRegressionTest {
         val question = provider.questions.single { it.name == "action" }
         assertEquals(listOf("action"), provider.questions.map { it.name })
         val labels = question.criteria.values
-        assertTrue("no tap offered: $labels", labels.any { it == "Tap Wi-Fi" })
+        assertTrue("no tap offered: $labels", labels.any { it.startsWith("Tap Wi-Fi") })
         assertTrue("no scroll offered: $labels", labels.any { it.startsWith("Scroll down in") })
         assertTrue("controls missing: ${question.criteria.keys}", question.criteria.keys.containsAll(
             listOf("BACK", "HOME", "WAIT", "DONE", "BLOCKED"),
@@ -75,21 +141,29 @@ class JevActionSpaceRegressionTest {
     }
 
     @Test
-    fun `a screen past the choice budget keeps its named controls`() = runBlocking {
+    fun `a screen past the choice budget exposes every control through pages`() = runBlocking {
         val router = FakeRouter(MutableList(2) { crowdedScreen(named = 150, anonymous = 150) })
-        val provider = QuestionCapturingProvider(state)
+        val taps = mutableSetOf<String>()
+        val provider = object : JevDecisionProvider {
+            override val state = this@JevActionSpaceRegressionTest.state
+            override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                if (request.questions.none { it.name == "action" }) return auditAnswer(request)
+                val question = request.questions.single { it.name == "action" }
+                assertTrue(question.criteria.size <= 255)
+                taps += question.criteria.values.filter { it.startsWith("Tap ") }
+                val page = request.state.getValue("actionPage").jsonPrimitive.content.toInt()
+                val pages = request.state.getValue("actionPages").jsonPrimitive.content.toInt()
+                return JevDecisionResponse(mapOf("action" to choice(question, if (page < pages) "MORE_ACTIONS" else "DONE")), "test")
+            }
+        }
         val gateway = JevToolGateway(provider) { router }
         gateway.beginRun("run-1", File("."))
 
         gateway.invoke("jev_run_ui_task", buildJsonObject { put("goal", "Open settings") })
 
-        val question = provider.questions.single { it.name == "action" }
-        // One flat question means one 255-choice ceiling for everything: 250
-        // taps out of the 300 the screen affords, plus the five controls.
-        assertEquals(255, question.criteria.size)
-        assertTrue(question.criteria.keys.contains("DONE"))
-        // An anonymous container is what gets dropped, never a named control.
-        assertEquals(150, question.criteria.values.count { it.startsWith("Tap named-") })
+        assertEquals(300, taps.size)
+        assertEquals(150, taps.count { it.startsWith("Tap named-") })
+        assertTrue(router.actions.isEmpty())
     }
 
     /** A label whose only clickable target is an ancestor absent from the node list. */
@@ -189,7 +263,7 @@ class JevActionSpaceRegressionTest {
         private val script: MutableList<String>,
     ) : JevDecisionProvider {
         override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse =
-            JevDecisionResponse(
+            if (request.questions.none { it.name == "action" }) auditAnswer(request) else JevDecisionResponse(
                 mapOf("action" to choice(request.questions.first { it.name == "action" }, script.removeAt(0))),
                 "jev-test",
             )
@@ -200,6 +274,7 @@ class JevActionSpaceRegressionTest {
     ) : JevDecisionProvider {
         val questions = mutableListOf<JevChoiceQuestion>()
         override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+            if (request.questions.none { it.name == "action" }) return auditAnswer(request)
             questions += request.questions
             return JevDecisionResponse(
                 mapOf("action" to choice(request.questions.first { it.name == "action" }, "DONE")),
@@ -211,18 +286,23 @@ class JevActionSpaceRegressionTest {
     private class FakeRouter(private val screens: MutableList<ToolResult>) : DeviceToolGateway {
         val actions = mutableListOf<Pair<String, JsonObject>>()
         override val definitions = emptyList<ToolDefinition>()
+        override fun readyTools() = setOf("read_ui", "apps_settings", "tap_node", "scroll_node", "set_progress", "set_text", "key", "swipe", "open_app")
         override fun beginRun(runId: String, workspace: File) = Unit
         override fun revoke() = Unit
         override fun needsControl(name: String) = true
         override suspend fun cancel() = Unit
         override suspend fun invoke(name: String, arguments: JsonObject): ToolResult = when (name) {
             "apps_settings" -> ToolResult("{\"ok\":true,\"items\":[]}")
-            "read_ui" -> screens.removeAt(0)
+            "read_ui" -> if (screens.size > 1) screens.removeAt(0) else screens.first()
             else -> ToolResult("ok").also { actions += name to arguments }
         }
     }
 
     companion object {
+        private fun auditAnswer(request: JevDecisionRequest) = JevDecisionResponse(
+            request.questions.associate { it.name to choice(it, if ("COMPLETE" in it.criteria) "COMPLETE" else it.criteria.keys.last()) },
+            "jev-test",
+        )
         private fun choice(question: JevChoiceQuestion, selected: String): JevDecision = JevDecision(
             type = "choice",
             choice = selected,

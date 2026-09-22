@@ -23,8 +23,17 @@ package dev.androidagent.core
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Routes each tool to the first backend that declares it, and falls through to
@@ -42,6 +51,11 @@ import java.io.File
 class CompositeDeviceToolGateway(
     private val members: List<DeviceToolGateway>,
 ) : DeviceToolGateway {
+    private val dispatchOwner = Mutex()
+    private val generation = AtomicLong()
+    private class Owner(val gateway: CompositeDeviceToolGateway, val epoch: Long) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<Owner>
+    }
 
     init {
         require(members.isNotEmpty()) { "A composite gateway needs at least one backend" }
@@ -64,6 +78,7 @@ class CompositeDeviceToolGateway(
         }
 
     override fun beginRun(runId: String, workspace: File) {
+        generation.incrementAndGet()
         val failures = mutableListOf<Throwable>()
         for (member in members) {
             runCatching { member.beginRun(runId, workspace) }.onFailure { failures += it }
@@ -77,6 +92,7 @@ class CompositeDeviceToolGateway(
     }
 
     override fun revoke() {
+        generation.incrementAndGet()
         // Every member is revoked even when an earlier one throws. Skipping a
         // revocation would leave a live backend after Stop.
         val failures = mutableListOf<Throwable>()
@@ -114,11 +130,27 @@ class CompositeDeviceToolGateway(
         members.any { member -> runCatching { member.deviceBackendLive() }.getOrDefault(false) }
 
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
+        currentCoroutineContext().ensureActive()
+        val inherited = currentCoroutineContext()[Owner]?.takeIf { it.gateway === this }
+        if (inherited != null) {
+            if (inherited.epoch != generation.get()) throw CancellationException("Device run was superseded")
+            return dispatch(name, arguments)
+        }
+        val epoch = generation.get()
+        return dispatchOwner.withLock {
+            if (epoch != generation.get()) throw CancellationException("Queued device call was superseded")
+            // Nested atomic calls inherit ownership, so a whole Jev/workflow
+            // call cannot interleave with an unrelated caller's UI actions.
+            withContext(Owner(this, epoch)) { dispatch(name, arguments) }
+        }
+    }
+
+    private suspend fun dispatch(name: String, arguments: JsonObject): ToolResult {
         if (name == DEVICE_STATUS) {
             // Only the composite knows every backend, so it answers this itself.
             return ToolResult(statusLine() ?: "No device backend is configured.")
         }
-        val chain = routes[name] ?: return ToolResult("Unknown tool: $name", success = false)
+        val chain = routes[name] ?: return ToolResult("Unknown tool: $name", success = false, dispatch = ToolDispatch.NOT_DISPATCHED)
         val refusals = mutableListOf<ToolNotServiceable>()
         for (member in chain) {
             try {
@@ -175,6 +207,7 @@ class CompositeDeviceToolGateway(
                 reasons = refusals.map { "${it.errorType}: ${it.message}" },
             ),
             success = false,
+            dispatch = ToolDispatch.NOT_DISPATCHED,
         )
     }
 

@@ -42,7 +42,7 @@ class JevToolGatewayTest {
         assertTrue(result.success)
         assertEquals("done_visible", json["status"]?.jsonPrimitive?.content)
         assertEquals(false, json["verified"]?.jsonPrimitive?.content?.toBoolean())
-        assertEquals(2, provider.calls)
+        assertEquals(3, provider.calls) // two navigation decisions plus completion audit
         assertEquals(listOf("tap_node"), router.actions.map { it.first })
         assertTrue(gateway.needsControl("jev_run_ui_task"))
     }
@@ -74,6 +74,7 @@ class JevToolGatewayTest {
         val provider = object : JevDecisionProvider {
             override val state = this@JevToolGatewayTest.state
             override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
+                if (request.questions.none { it.name == "action" }) return auditAnswer(request)
                 val action = choice(request.questions.first { it.name == "action" }, "DONE")
                 return JevDecisionResponse(
                     answers = mapOf(
@@ -97,7 +98,7 @@ class JevToolGatewayTest {
     fun `refusal on an unchanged screen is recorded and the run continues`() = runBlocking {
         val router = FakeRouter(
             MutableList(4) { screen("ui-1", "Submit", true) },
-            actionResult = ToolResult("Node n1 rejected the text; nothing was typed.", success = false),
+            actionResult = ToolResult("Node n1 rejected the text; nothing was typed.", success = false, dispatch = ToolDispatch.NOT_DISPATCHED),
         )
         val provider = ScriptedProvider(state, mutableListOf("T1", "DONE"))
         val gateway = JevToolGateway(provider) { router }
@@ -108,7 +109,7 @@ class JevToolGatewayTest {
         val json = Json.parseToJsonElement(result.text).jsonObject
         assertEquals("done_visible", json["status"]?.jsonPrimitive?.content)
         // The refusal did not end the run, and Jev was asked again.
-        assertEquals(2, provider.calls)
+        assertEquals(3, provider.calls)
         assertEquals(1, router.actions.size)
         val refused = json["history"]?.jsonArray.orEmpty().single().jsonObject
         assertEquals(true, refused["refused"]?.jsonPrimitive?.content?.toBoolean())
@@ -154,7 +155,7 @@ class JevToolGatewayTest {
     @Test
     fun `a step limit hands back a token that continues the same goal`() = runBlocking {
         val router = FakeRouter(MutableList(8) { screen("ui-1", "Submit", true) })
-        val provider = ScriptedProvider(state, mutableListOf("T1", "T1", "DONE"))
+        val provider = ScriptedProvider(state, mutableListOf("T1", "BACK", "DONE"))
         val gateway = JevToolGateway(provider) { router }
         gateway.beginRun("run-1", File("."))
 
@@ -184,7 +185,7 @@ class JevToolGatewayTest {
     @Test
     fun `a resume token cannot be replayed or invented`() = runBlocking {
         val router = FakeRouter(MutableList(8) { screen("ui-1", "Submit", true) })
-        val provider = ScriptedProvider(state, mutableListOf("T1", "T1", "DONE"))
+        val provider = ScriptedProvider(state, mutableListOf("T1", "BACK", "DONE"))
         val gateway = JevToolGateway(provider) { router }
         gateway.beginRun("run-1", File("."))
 
@@ -266,6 +267,7 @@ class JevToolGatewayTest {
         var calls = 0
         override suspend fun choose(request: JevDecisionRequest): JevDecisionResponse {
             calls++
+            if (request.questions.none { it.name == "action" }) return auditAnswer(request)
             val question = request.questions.first { it.name == "action" }
             return JevDecisionResponse(mapOf("action" to choice(question, script.removeAt(0))), "jev-test")
         }
@@ -278,18 +280,23 @@ class JevToolGatewayTest {
         var reads = 0
         val actions = mutableListOf<Pair<String, JsonObject>>()
         override val definitions = emptyList<ToolDefinition>()
+        override fun readyTools() = setOf("read_ui", "apps_settings", "tap_node", "scroll_node", "set_progress", "set_text", "key", "swipe", "open_app")
         override fun beginRun(runId: String, workspace: File) = Unit
         override fun revoke() = Unit
         override fun needsControl(name: String) = true
         override suspend fun cancel() = Unit
         override suspend fun invoke(name: String, arguments: JsonObject): ToolResult = when (name) {
             "apps_settings" -> ToolResult("{\"ok\":true,\"items\":[]}")
-            "read_ui" -> screens.removeAt(0).also { reads++ }
+            "read_ui" -> (if (screens.size > 1) screens.removeAt(0) else screens.first()).also { reads++ }
             else -> actionResult.also { actions += name to arguments }
         }
     }
 
     companion object {
+        private fun auditAnswer(request: JevDecisionRequest) = JevDecisionResponse(
+            request.questions.associate { it.name to choice(it, if ("COMPLETE" in it.criteria) "COMPLETE" else it.criteria.keys.last()) },
+            "jev-test",
+        )
         private fun choice(question: JevChoiceQuestion, selected: String): JevDecision = JevDecision(
             type = "choice",
             choice = selected,

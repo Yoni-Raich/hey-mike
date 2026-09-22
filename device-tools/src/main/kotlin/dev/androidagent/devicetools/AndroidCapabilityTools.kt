@@ -187,7 +187,7 @@ class AndroidCapabilityTools private constructor(
                 CapabilityPolicy.APPS_OPS,
                 mapOf(
                     "query" to str(), "limit" to int(),
-                    "include_system" to bool(), "package" to str(),
+                    "include_system" to bool(), "package" to str(), "offset" to int(),
                     "permissions" to strList(), "permission" to str(),
                     "kind" to str(), "setting" to str(),
                 ),
@@ -639,7 +639,12 @@ internal class CapabilityDispatcher(
                 val limit = CapabilityPolicy.parseLimit(args)
                 val includeSystem = CapabilityPolicy.parseBoolean(args, "include_system")
                 checkActive()
-                val rows = platform.queryApps(query, limit, includeSystem)
+                val offset = if ("offset" in args) {
+                    args["offset"]?.jsonPrimitive?.content?.toIntOrNull()
+                        ?: throw IllegalArgumentException("offset must be an integer")
+                } else 0
+                require(offset in 0..10000) { "offset must be between 0 and 10000" }
+                val rows = platform.queryApps(query, limit + offset, includeSystem).drop(offset)
                 listResult(tool, operation, limit, rows.map { appJson(it) })
             }
             "app_info" -> {

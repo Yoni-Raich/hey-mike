@@ -7,6 +7,14 @@ description: How every device tool works and how to recover when the phone does 
 
 The exact mechanics of each device tool, and what to do when an action does not land.
 
+If `jev_run_ui_task` is ready, give it the user's complete UI goal in one call,
+including all subtasks and exact values in `texts`. Do not call `read_ui` or
+open an app first, and do not make a separate Jev call for each subtask. Its
+internal controller reads, chooses, acts, checks and recovers without another
+Mike turn. Use the tools below directly when Jev is unavailable or the user
+asked for manual control. A budget continuation resumes the same goal; it is
+not permission to repeat a submission with an unknown outcome.
+
 The accessibility service serves every tool below except `shell`, `push_file`, `pull_file` and `install_apk`, which need the optional Wireless ADB. The `source` field in an observation says which backend answered (`accessibility` or `uiautomator`), and `stable:false` means the screen had not settled when it was read.
 
 ---

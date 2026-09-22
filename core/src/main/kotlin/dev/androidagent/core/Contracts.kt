@@ -72,7 +72,16 @@ interface RuntimeHost {
 }
 
 data class ToolDefinition(val name: String, val description: String, val inputSchema: JsonObject)
-data class ToolResult(val text: String, val imageBase64: String? = null, val success: Boolean = true, val attachmentPaths: List<String> = emptyList())
+/** Dispatch evidence, separate from transport success and visible goal completion. */
+enum class ToolDispatch { NOT_DISPATCHED, ACKNOWLEDGED, VERIFIED, UNKNOWN }
+
+data class ToolResult(
+    val text: String,
+    val imageBase64: String? = null,
+    val success: Boolean = true,
+    val attachmentPaths: List<String> = emptyList(),
+    val dispatch: ToolDispatch = ToolDispatch.UNKNOWN,
+)
 data class LocalIntentRequest(
     val action: String,
     val uri: String?,
