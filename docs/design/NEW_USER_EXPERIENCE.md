@@ -1,8 +1,22 @@
 # New user experience - design
 
-Status: design proposal, not implemented. The screens live as Design
-Component sources in [new-user-experience/](new-user-experience/) and on
-a private canvas (ask the owner for access).
+Status: implemented in the app (`OnboardingFlow.kt`, `AgentSettings.kt`, the
+side panel in `AndroidAgentScreen.kt`; order and grouping in `:core`
+`Onboarding` and `ChatDayGroups`). The mockups live as Design Component
+sources in [new-user-experience/](new-user-experience/) and on a private
+canvas (ask the owner for access).
+
+Differences from the mockups:
+
+- The handover lists each offer with its own button instead of one
+  "Set up N things" button: the floating Stop button and notifications are
+  Android screens only the user can tap, and wireless debugging waits for
+  the floating control.
+- The floating control is still its own grant (see Open questions).
+- The in-chat permission card (`JustInTime`) is not built yet; the
+  microphone and update-install requests keep their current prompts.
+- The first-task suggestions (`Ready`) are not built; the chat opens empty.
+- Jev stays in Settings, under *Advanced*, because it already ships.
 
 ## Problem
 
@@ -87,6 +101,7 @@ the main visual. `Orb.dc.html` reproduces `AgentOrb.kt` for the mockups.
 - The consent text needs legal review. The claim "collects nothing" must
   be checked against the code: update checks also leave the phone
   (`docs/PERMISSIONS_AND_PRIVACY.md`), though they carry no user data.
-- Decide what "Withdraw consent" does exactly (stop, sign out, open
-  accessibility settings, keep or delete chats).
-- Where consent is stored, and whether a changed text asks again.
+- Withdraw consent, as built: stop, sign out, forget the consent, open
+  Accessibility settings; chats stay. Confirm this is the wanted behavior.
+- Consent is stored in the app's `ui` preferences with a version
+  (`Onboarding.CONSENT_VERSION`); raising it asks everyone again.

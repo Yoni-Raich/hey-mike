@@ -1,5 +1,25 @@
 # Progress
 
+## New user experience — 2026-09-23
+
+On branch `claude/new-user-experience-design-b75114` (PR #84), first launch is
+a step-by-step flow (`OnboardingFlow`): welcome, consent, sign-in, screen
+access (with the restricted-settings rescue), and a handover where the
+floating Stop button and notifications are one tap each and Mike sets up
+wireless debugging after an in-app confirmation. Settings are regrouped by
+ability with a Privacy and consent page that can withdraw; the side panel has
+the orb status, chat search and day groups. See `docs/ARCHITECTURE.md`,
+"First launch: two things by hand, the rest offered".
+
+Verified: `./gradlew.bat :core:test :app:assembleDevDebug :app:lintDevDebug`
+passed (lint 0 errors, no warnings in the changed files), including nine new
+`OnboardingTest` and three `ChatDayGroupsTest` cases; `git diff --check` clean.
+Not verified: nothing ran on a phone. Still to check on a device: the whole
+first launch from a fresh install, the restricted-settings path, an upgrade
+from 0.12.0 (should show only consent and handover), "Let Mike set it up" for
+wireless debugging end to end (Mike reaching Developer options and the pairing
+reader catching the code within five minutes), and withdraw consent.
+
 ## Multiple Codex accounts — 2026-09-22
 
 On branch `claude/multiple-accounts-branch-i6emwt`, the app keeps several

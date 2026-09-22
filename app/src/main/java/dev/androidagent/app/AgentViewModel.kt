@@ -44,6 +44,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         AgentUiState(
             selectedModel = preferences.getString("model", null),
             selectedReasoningEffort = preferences.getString("reasoningEffort", null),
+            onboarding = readOnboarding(),
         )
     )
     val ui: StateFlow<AgentUiState> = mutable.asStateFlow()
@@ -145,6 +146,66 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(infoMessage = "Jev token removed.") }
     }
     fun newChat() = task { current.value = graph.sessions.createSession().id }
+
+    // First launch and consent live in the same "ui" preferences as the model
+    // choice: on this phone only, never sent anywhere.
+    private fun readOnboarding() = OnboardingProgress(
+        welcomed = preferences.getBoolean(KEY_WELCOMED, false),
+        consentVersion = preferences.getInt(KEY_CONSENT_VERSION, 0).takeIf { it > 0 },
+        consentAt = preferences.getLong(KEY_CONSENT_AT, 0L).takeIf { it > 0L },
+        finished = preferences.getBoolean(KEY_ONBOARDED, false),
+    )
+
+    private fun saveOnboarding(change: (OnboardingProgress) -> OnboardingProgress) {
+        val next = change(mutable.value.onboarding)
+        preferences.edit()
+            .putBoolean(KEY_WELCOMED, next.welcomed)
+            .putInt(KEY_CONSENT_VERSION, next.consentVersion ?: 0)
+            .putLong(KEY_CONSENT_AT, next.consentAt ?: 0L)
+            .putBoolean(KEY_ONBOARDED, next.finished)
+            .apply()
+        mutable.update { it.copy(onboarding = next) }
+    }
+
+    fun markWelcomed() = saveOnboarding { it.copy(welcomed = true) }
+
+    fun acceptConsent() = saveOnboarding {
+        it.copy(welcomed = true, consentVersion = Onboarding.CONSENT_VERSION, consentAt = System.currentTimeMillis())
+    }
+
+    fun finishOnboarding() = saveOnboarding { it.copy(finished = true) }
+
+    /**
+     * Forget the consent and stop acting. Signing out needs the run and voice
+     * to be over, so stop first. Screen access is a system switch the app
+     * cannot turn off; the caller opens its screen.
+     */
+    fun withdrawConsent() {
+        stop()
+        saveOnboarding { it.copy(consentVersion = null, consentAt = null, finished = false) }
+        task {
+            withTimeoutOrNull(10_000L) {
+                graph.coordinator.state.first { !it.active }
+                graph.voice.state.first { !it.active }
+            }
+            if (mutable.value.accountStatus?.signedIn == true) logout()
+        }
+    }
+
+    /**
+     * Hand wireless debugging to Mike. The pairing reader is armed first, while
+     * no run is active, so it can read the code once Mike opens the dialog;
+     * the code itself never reaches the model.
+     */
+    fun letMikeSetUpWireless() = task {
+        check(!graph.coordinator.state.value.active) { "Stop the current run first." }
+        check(dev.androidagent.a11y.PairingWatcher.available) { "Turn on screen access first." }
+        finishOnboarding()
+        current.value = graph.sessions.createSession().id
+        // Its own job: it waits for the dialog while Mike's run is active.
+        task { pairFromDialog(timeoutMs = WIRELESS_SETUP_TIMEOUT_MS) }
+        send(WIRELESS_SETUP_PROMPT, emptyList())
+    }
     fun select(id: String) { current.value = id }
     fun rename(id: String, title: String) = task { graph.sessions.rename(id, title) }
     fun delete(id: String) {
@@ -653,19 +714,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun capturePairing() = task {
         check(!graph.coordinator.state.value.active) { "Stop the current run before changing the connection." }
+        pairFromDialog(timeoutMs = 120_000L)
+    }
+
+    private suspend fun pairFromDialog(timeoutMs: Long) {
         if (!dev.androidagent.a11y.PairingWatcher.available) {
             mutable.update {
                 it.copy(infoMessage = "Turn on Screen control to read the code automatically, or type it below.")
             }
-            return@task
+            return
         }
         mutable.update {
             it.copy(infoMessage = "Tap \"Pair device with pairing code\" — the code is read from the dialog.", errorMessage = null)
         }
-        val details = dev.androidagent.a11y.PairingWatcher.await()
+        val details = dev.androidagent.a11y.PairingWatcher.await(timeoutMs = timeoutMs)
         if (details == null) {
             mutable.update { it.copy(infoMessage = "No pairing dialog was found. Type the code below instead.") }
-            return@task
+            return
         }
         pairAndConnect(details.code, details.port)
     }
@@ -868,3 +933,25 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         catch (failure: Exception) { error(failure.message ?: "Something went wrong.") }
     }
 }
+
+private const val KEY_WELCOMED = "onboardingWelcomed"
+private const val KEY_CONSENT_VERSION = "consentVersion"
+private const val KEY_CONSENT_AT = "consentAt"
+private const val KEY_ONBOARDED = "onboardingFinished"
+
+/** Long enough for Mike to reach Developer options, including turning them on. */
+private const val WIRELESS_SETUP_TIMEOUT_MS = 300_000L
+
+// The user approved this in the app before the run starts, so the prompt says
+// so rather than asking Mike to ask again, which would end the turn and let
+// the pairing reader time out.
+private const val WIRELESS_SETUP_PROMPT =
+    "Set up wireless debugging on this phone so you can run commands, move files and install apps. " +
+        "I already approved turning on Developer options and Wireless debugging for this.\n" +
+        "1. Open Settings > Developer options. If Developer options is hidden, open About phone and tap " +
+        "Build number seven times. If the phone asks for a PIN, stop and tell me.\n" +
+        "2. Turn on Wireless debugging and accept Android's confirmation.\n" +
+        "3. Open Wireless debugging and tap \"Pair device with pairing code\". Leave that dialog open: " +
+        "Hey Mike reads the code from it and pairs by itself. Never read the code aloud or type it anywhere.\n" +
+        "4. Wait until the dialog closes, then go back to Hey Mike and tell me in one sentence whether it worked. " +
+        "Change no other setting."

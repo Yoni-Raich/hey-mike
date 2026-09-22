@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- First launch is now two steps you do by hand, sign-in and screen access,
+  instead of an eight-item checklist. Before them, a welcome screen and a
+  consent screen: full control of the phone is a risk, Mike can make mistakes,
+  and your data goes only to Codex. After them, Mike offers the rest — the
+  floating Stop button, progress notifications, and wireless debugging, which
+  Mike turns on and pairs itself after you allow it. The microphone, update
+  installs and notification access are asked for when a task needs them.
+- Settings are grouped by what Mike can do, how Mike works, account and
+  privacy, and advanced. A new Privacy and consent page shows where data goes
+  and what you agreed to, and lets you withdraw.
+- The side panel shows Mike's orb with whether it can act right now, a chat
+  search, and chats grouped by day.
+
 - Editing a rule is now a form instead of raw JSON. The time is picked from a
   clock, the days are seven taps, and the numbers and the text inside a
   condition or an action — a caption, a notification message, what Mike should

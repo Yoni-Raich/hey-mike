@@ -92,7 +92,10 @@ class MainActivity : ComponentActivity() {
         val fromAssistant = savedInstanceState == null && handleAssistantPress(intent)
         val fromCapabilityRequest = intent.getBooleanExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST, false)
         intent.removeExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST)
-        if (!fromAssistant && !fromCapabilityRequest && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        // First launch asks for this on its own screen, with a reason; asking
+        // at launch put a system dialog in front of the welcome.
+        val onboarded = model.ui.value.onboarding.finished
+        if (onboarded && !fromAssistant && !fromCapabilityRequest && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askedForNotifications = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -251,6 +254,20 @@ class MainActivity : ComponentActivity() {
         onJevEnabledChanged = model::setJevEnabled,
         onSaveJevToken = model::saveJevToken,
         onClearJevToken = model::clearJevToken,
+        onOnboardingWelcomed = model::markWelcomed,
+        onAcceptConsent = model::acceptConsent,
+        onFinishOnboarding = model::finishOnboarding,
+        onWithdrawConsent = {
+            model.editUi { it.copy(isSettingsOpen = false) }
+            model.withdrawConsent()
+            // The switch is the user's to turn off; the app cannot.
+            openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        },
+        onLetMikeSetUpWireless = {
+            ensureService()
+            model.editUi { it.copy(isSettingsOpen = false) }
+            model.letMikeSetUpWireless()
+        },
     )
 
     /**

@@ -138,6 +138,8 @@ fun SettingsHubRow(
     onClick: () -> Unit,
     state: SetupState? = null,
     importance: SetupImportance = SetupImportance.REQUIRED,
+    /** A short verb shown at the end, such as "Set up" or "Fix", in place of "Optional". */
+    action: String? = null,
 ) {
     val spoken = state?.let { "${readinessWord(it)}. " }.orEmpty()
     Row(
@@ -172,7 +174,17 @@ fun SettingsHubRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (importance != SetupImportance.REQUIRED && state != null && state != SetupState.DONE) {
+        if (action != null) {
+            Text(
+                action,
+                style = MaterialTheme.typography.labelMedium,
+                color = when (state) {
+                    SetupState.BLOCKED -> MaterialTheme.colorScheme.error
+                    SetupState.DONE -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> ActionBlueInk
+                },
+            )
+        } else if (importance != SetupImportance.REQUIRED && state != null && state != SetupState.DONE) {
             Text(
                 "Optional",
                 style = MaterialTheme.typography.labelSmall,

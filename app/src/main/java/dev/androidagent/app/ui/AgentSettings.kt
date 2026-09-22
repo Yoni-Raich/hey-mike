@@ -70,10 +70,12 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -114,10 +116,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.ConnectionPhase
+import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.SetupChecklist
 import dev.androidagent.core.SetupImportance
 import dev.androidagent.core.SetupItem
+import dev.androidagent.core.SetupRow
 import dev.androidagent.core.SetupState
 import dev.androidagent.core.UsageSummary
 
@@ -129,7 +133,7 @@ private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
     MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
-    JEV,
+    JEV, PRIVACY,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -146,20 +150,21 @@ private fun SetupItem.route(): SettingsRoute = when (this) {
 private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.RUNTIME -> "Local runtime"
     SettingsRoute.ACCOUNT -> "Codex account"
-    SettingsRoute.SCREEN_CONTROL -> "Screen control"
-    SettingsRoute.FLOATING_CONTROL -> "Floating control"
-    SettingsRoute.WIRELESS_ADB -> "Wireless ADB"
-    SettingsRoute.NOTIFICATIONS -> "Notifications"
-    SettingsRoute.INSTALL_UPDATES -> "Install updates"
-    SettingsRoute.MICROPHONE -> "Voice input"
+    SettingsRoute.SCREEN_CONTROL -> "See and tap the screen"
+    SettingsRoute.FLOATING_CONTROL -> "Floating Stop button"
+    SettingsRoute.WIRELESS_ADB -> "Run commands and install apps"
+    SettingsRoute.NOTIFICATIONS -> "Show progress"
+    SettingsRoute.INSTALL_UPDATES -> "Install app updates"
+    SettingsRoute.MICROPHONE -> "Hear you"
     SettingsRoute.MODEL -> "Model"
     SettingsRoute.WORKSPACE -> "Workspace"
     SettingsRoute.USAGE -> "Usage"
     SettingsRoute.UPDATES -> "App updates"
-    SettingsRoute.SEND_APPROVALS -> "Sending approvals"
-    SettingsRoute.ASSISTANT -> "Digital assistant"
+    SettingsRoute.SEND_APPROVALS -> "Ask before sending"
+    SettingsRoute.ASSISTANT -> "Power button assistant"
     SettingsRoute.AUTOMATIONS -> "Standing rules"
     SettingsRoute.JEV -> "Jev"
+    SettingsRoute.PRIVACY -> "Privacy and consent"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -179,6 +184,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.ASSISTANT -> Icons.Outlined.Assistant
     SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
     SettingsRoute.JEV -> Icons.Outlined.Tune
+    SettingsRoute.PRIVACY -> Icons.Outlined.Shield
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -256,61 +262,79 @@ internal fun AgentSettingsSheet(state: AgentUiState, actions: AgentUiActions) {
 @Composable
 private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     val rows = state.setupRows()
-    val outstanding = SetupChecklist.outstanding(rows)
-    Text(
-        SetupChecklist.headline(rows),
-        style = MaterialTheme.typography.titleMedium,
-        color = if (outstanding == 0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
-    )
-    Text(
-        if (outstanding == 0) "Everything the agent needs is set up on this phone." else
-            "The agent can only run once the steps below are done.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    val ready = SetupChecklist.readyForRuns(rows)
+    fun row(item: SetupItem) = rows.first { it.item == item }
 
-    HubGroup("Set up") {
-        rows.filter { it.importance == SetupImportance.REQUIRED }.forEach { row ->
-            val target = row.item.route()
-            SettingsHubRow(
-                icon = target.icon(),
-                title = target.title(),
-                summary = row.summary,
-                state = row.state,
-                importance = row.importance,
-                onClick = { onOpen(target) },
+    // The orb says at a glance whether Mike can act, the same way the chat's
+    // top bar does, and one sentence says what to do if not.
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            AgentOrb(
+                modifier = Modifier.size(72.dp),
+                phase = RunPhase.IDLE,
+                idleColor = if (ready) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    if (ready) "Mike is ready" else "Mike needs your help",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (ready) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    if (ready) "Everything needed is on. Mike asks before adding more." else
+                        "${SetupChecklist.headline(rows)}. Everything else is fine.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 
-    HubGroup("Nice to have") {
-        rows.filter { it.importance != SetupImportance.REQUIRED }.forEach { row ->
-            val target = row.item.route()
-            SettingsHubRow(
-                icon = target.icon(),
-                title = target.title(),
-                summary = row.summary,
-                state = row.state,
-                importance = row.importance,
-                onClick = { onOpen(target) },
-            )
-        }
+    // Abilities rather than permissions: the user decides what Mike may do,
+    // and the Android grant behind each one is a detail of its page. Screen
+    // control and the floating control are one row because neither works
+    // without the other.
+    HubGroup("What Mike can do") {
+        val screen = combined(row(SetupItem.SCREEN_CONTROL), row(SetupItem.FLOATING_CONTROL))
+        AbilityRow(SettingsRoute.SCREEN_CONTROL, screen.first, screen.second, onOpen)
+        AbilityRow(SettingsRoute.NOTIFICATIONS, row(SetupItem.NOTIFICATIONS).state, row(SetupItem.NOTIFICATIONS).summary, onOpen)
+        val adb = row(SetupItem.WIRELESS_ADB)
+        AbilityRow(
+            SettingsRoute.WIRELESS_ADB,
+            adb.state,
+            if (adb.state == SetupState.PENDING) "Optional · Mike can set it up for you" else adb.summary,
+            onOpen,
+        )
+        val access = state.automations.notificationAccess
+        AbilityRow(
+            SettingsRoute.AUTOMATIONS,
+            if (access) SetupState.DONE else SetupState.PENDING,
+            if (access) "On · for rules that react to messages" else "Asked when a rule needs it",
+            onOpen,
+            title = "Read notifications",
+        )
+        AbilityRow(SettingsRoute.MICROPHONE, row(SetupItem.MICROPHONE).state, row(SetupItem.MICROPHONE).summary, onOpen)
+        AbilityRow(SettingsRoute.INSTALL_UPDATES, row(SetupItem.INSTALL_UPDATES).state, row(SetupItem.INSTALL_UPDATES).summary, onOpen)
     }
 
     // No dots here on purpose: these are choices, not steps, and marking them
     // green would teach the eye to skip the markers that do mean something.
-    HubGroup("Configure") {
+    HubGroup("How Mike works") {
         SettingsHubRow(
             icon = SettingsRoute.AUTOMATIONS.icon(),
-            title = SettingsRoute.AUTOMATIONS.title(),
+            title = "Standing rules",
             summary = state.automations.summary,
             onClick = { onOpen(SettingsRoute.AUTOMATIONS) },
         )
         SettingsHubRow(
-            icon = SettingsRoute.ASSISTANT.icon(),
-            title = SettingsRoute.ASSISTANT.title(),
-            summary = if (state.isDefaultAssistant) "Hold the power button to talk to Mike" else "Gemini still answers the power button",
-            onClick = { onOpen(SettingsRoute.ASSISTANT) },
+            icon = SettingsRoute.SEND_APPROVALS.icon(),
+            title = SettingsRoute.SEND_APPROVALS.title(),
+            summary = if (state.sendGrants.isEmpty()) "Every message asks first" else "${state.sendGrants.size} always allowed",
+            onClick = { onOpen(SettingsRoute.SEND_APPROVALS) },
         )
         SettingsHubRow(
             icon = SettingsRoute.MODEL.icon(),
@@ -319,10 +343,21 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
             onClick = { onOpen(SettingsRoute.MODEL) },
         )
         SettingsHubRow(
-            icon = SettingsRoute.WORKSPACE.icon(),
-            title = SettingsRoute.WORKSPACE.title(),
-            summary = if (state.workspaceFiles.isEmpty()) "No files loaded" else "${state.workspaceFiles.size} files loaded",
-            onClick = { onOpen(SettingsRoute.WORKSPACE) },
+            icon = SettingsRoute.ASSISTANT.icon(),
+            title = SettingsRoute.ASSISTANT.title(),
+            summary = if (state.isDefaultAssistant) "Hold the power button to talk to Mike" else "Gemini still answers the power button",
+            onClick = { onOpen(SettingsRoute.ASSISTANT) },
+        )
+    }
+
+    HubGroup("Account and privacy") {
+        val account = row(SetupItem.ACCOUNT)
+        SettingsHubRow(
+            icon = SettingsRoute.ACCOUNT.icon(),
+            title = SettingsRoute.ACCOUNT.title(),
+            summary = account.summary,
+            state = account.state.takeIf { it != SetupState.DONE },
+            onClick = { onOpen(SettingsRoute.ACCOUNT) },
         )
         SettingsHubRow(
             icon = SettingsRoute.USAGE.icon(),
@@ -333,10 +368,27 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
             onClick = { onOpen(SettingsRoute.USAGE) },
         )
         SettingsHubRow(
-            icon = SettingsRoute.SEND_APPROVALS.icon(),
-            title = SettingsRoute.SEND_APPROVALS.title(),
-            summary = if (state.sendGrants.isEmpty()) "Every message asks first" else "${state.sendGrants.size} always allowed",
-            onClick = { onOpen(SettingsRoute.SEND_APPROVALS) },
+            icon = SettingsRoute.PRIVACY.icon(),
+            title = SettingsRoute.PRIVACY.title(),
+            summary = "What you agreed to · where data goes",
+            onClick = { onOpen(SettingsRoute.PRIVACY) },
+        )
+        SettingsHubRow(
+            icon = SettingsRoute.WORKSPACE.icon(),
+            title = SettingsRoute.WORKSPACE.title(),
+            summary = if (state.workspaceFiles.isEmpty()) "No files loaded" else "${state.workspaceFiles.size} files loaded",
+            onClick = { onOpen(SettingsRoute.WORKSPACE) },
+        )
+    }
+
+    HubGroup("Advanced") {
+        val runtime = row(SetupItem.RUNTIME)
+        SettingsHubRow(
+            icon = SettingsRoute.RUNTIME.icon(),
+            title = SettingsRoute.RUNTIME.title(),
+            summary = runtime.summary,
+            state = runtime.state.takeIf { it != SetupState.DONE },
+            onClick = { onOpen(SettingsRoute.RUNTIME) },
         )
         SettingsHubRow(
             icon = SettingsRoute.JEV.icon(),
@@ -353,6 +405,97 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
             title = SettingsRoute.UPDATES.title(),
             summary = "Version ${dev.androidagent.app.BuildConfig.VERSION_NAME}",
             onClick = { onOpen(SettingsRoute.UPDATES) },
+        )
+    }
+}
+
+/** Screen control and the floating control as one ability: the worse of the two wins. */
+private fun combined(screen: SetupRow, floating: SetupRow): Pair<SetupState, String> = when {
+    screen.state != SetupState.DONE -> screen.state to screen.summary
+    floating.state != SetupState.DONE -> floating.state to "Stop button not allowed · Mike can't act yet"
+    else -> SetupState.DONE to "On · with the floating Stop button"
+}
+
+@Composable
+private fun AbilityRow(
+    route: SettingsRoute,
+    state: SetupState,
+    summary: String,
+    onOpen: (SettingsRoute) -> Unit,
+    title: String = route.title(),
+) {
+    SettingsHubRow(
+        icon = route.icon(),
+        title = title,
+        summary = summary,
+        state = state,
+        action = when (state) {
+            SetupState.DONE -> "On"
+            SetupState.BLOCKED -> "Fix"
+            SetupState.WORKING -> "…"
+            SetupState.PENDING -> "Set up"
+        },
+        onClick = { onOpen(route) },
+    )
+}
+
+@Composable
+private fun ColumnScope.PrivacySettings(state: AgentUiState, actions: AgentUiActions) {
+    val uriHandler = LocalUriHandler.current
+    var confirmWithdraw by rememberSaveable { mutableStateOf(false) }
+    Text("Where your data goes", fontWeight = FontWeight.Medium)
+    Explanation(
+        "Hey Mike has no servers of its own. Chats, files and your sign-in stay on this phone. What Mike sees " +
+            "and what you type goes to Codex (OpenAI) to answer you, and is covered only by the Codex policies. " +
+            "Update checks ask GitHub for the latest version and send nothing about you.",
+    )
+    TextButton(onClick = { uriHandler.openUri(POLICIES_URL) }) { Text("Read the Codex and OpenAI policies") }
+
+    val agreedAt = state.onboarding.consentAt
+    Text(
+        agreedAt?.let {
+            "You agreed on " + java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(it))
+        } ?: "You have not agreed yet",
+        fontWeight = FontWeight.Medium,
+    )
+    ConsentStatements.forEach { (title, body) ->
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(
+                Icons.Outlined.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(end = 10.dp, top = 2.dp).size(18.dp),
+            )
+            Column {
+                Text(title, style = MaterialTheme.typography.bodyMedium)
+                Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Withdraw consent", fontWeight = FontWeight.Medium)
+    Explanation(
+        "Mike stops, signs out and opens Accessibility settings so you can turn off screen access, which only " +
+            "you can do. Your chats stay on this phone until you delete them.",
+    )
+    OutlinedButton(
+        onClick = { confirmWithdraw = true },
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Withdraw and stop Mike", color = MaterialTheme.colorScheme.error) }
+
+    if (confirmWithdraw) {
+        AlertDialog(
+            onDismissRequest = { confirmWithdraw = false },
+            title = { Text("Withdraw consent?") },
+            text = { Text("Mike stops any task, signs out, and asks for consent again before it can run.") },
+            confirmButton = {
+                TextButton(onClick = { confirmWithdraw = false; actions.onWithdrawConsent() }) {
+                    Text("Withdraw", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmWithdraw = false }) { Text("Cancel") } },
         )
     }
 }
@@ -377,6 +520,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
             SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
             SettingsRoute.JEV -> JevSettings(state, actions)
+            SettingsRoute.PRIVACY -> PrivacySettings(state, actions)
         }
     }
 }
@@ -554,6 +698,9 @@ private fun ColumnScope.ScreenControlSettings(state: AgentUiState, actions: Agen
             spinnerColor = MaterialTheme.colorScheme.onPrimary,
         )
     }
+    Spacer(Modifier.height(8.dp))
+    Text(SettingsRoute.FLOATING_CONTROL.title(), fontWeight = FontWeight.Medium)
+    FloatingControlSettings(state, actions)
 }
 
 @Composable
@@ -709,6 +856,30 @@ private fun ColumnScope.WirelessAdbSettings(state: AgentUiState, actions: AgentU
         if (state.adbStatus.phase == ConnectionPhase.ERROR) advanced = true
     }
 
+    var confirmMike by rememberSaveable { mutableStateOf(false) }
+    val canHandOff = state.adbStatus.phase != ConnectionPhase.CONNECTED && !busy &&
+        state.a11yStatus.connected && state.permissions.overlay && !state.runState.active
+    if (state.adbStatus.phase != ConnectionPhase.CONNECTED) {
+        Explanation("With this, Mike can also run system commands for exact changes, move and organize files, and install or remove apps.")
+        Button(onClick = { confirmMike = true }, enabled = canHandOff, modifier = Modifier.fillMaxWidth()) {
+            LoadingButtonContent(
+                loading = false,
+                icon = Icons.Outlined.Wifi,
+                label = "Let Mike set it up",
+                spinnerColor = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Explanation(
+            if (canHandOff) "Mike turns on Wireless debugging and pairs while you watch. Or do it yourself below."
+            else "Mike needs screen access and the floating Stop button to do this. Or do it yourself below.",
+        )
+        if (confirmMike) {
+            WirelessSetupDialog(
+                onAllow = { confirmMike = false; actions.onLetMikeSetUpWireless() },
+                onDismiss = { confirmMike = false },
+            )
+        }
+    }
     StatusLine(
         title = readableConnectionPhase(state.adbStatus.phase),
         detail = buildString {

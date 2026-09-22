@@ -163,6 +163,8 @@ data class AgentUiState(
     val updateStatus: UpdateStatus = UpdateStatus.Idle,
     val updateInfo: AppUpdateInfo? = null,
     val isUpdateBannerVisible: Boolean = true,
+    /** First-launch progress and the consent the user gave. Stored on the phone only. */
+    val onboarding: dev.androidagent.core.OnboardingProgress = dev.androidagent.core.OnboardingProgress(),
 )
 
 /**
@@ -250,11 +252,26 @@ data class AgentUiActions(
     val onJevEnabledChanged: (Boolean) -> Unit = {},
     val onSaveJevToken: (String) -> Unit = {},
     val onClearJevToken: () -> Unit = {},
+    /** Leave the welcome screen for the consent screen. */
+    val onOnboardingWelcomed: () -> Unit = {},
+    /** The user checked every consent statement. */
+    val onAcceptConsent: () -> Unit = {},
+    /** Leave the handover screen for the chat. */
+    val onFinishOnboarding: () -> Unit = {},
+    /** Stop, sign out and forget the consent. Screen access has to be turned off by hand. */
+    val onWithdrawConsent: () -> Unit = {},
+    /** Start a chat in which Mike turns on wireless debugging and pairs, asking first. */
+    val onLetMikeSetUpWireless: () -> Unit = {},
 )
 
 /** The setup checklist for this state, so no screen assembles the signals itself. */
-internal fun AgentUiState.setupRows(): List<SetupRow> = SetupChecklist.rows(
-    SetupSignals(
+internal fun AgentUiState.setupRows(): List<SetupRow> = SetupChecklist.rows(setupSignals())
+
+/** Which first-launch screen to show, or [dev.androidagent.core.OnboardingStep.DONE]. */
+internal fun AgentUiState.onboardingStep(): dev.androidagent.core.OnboardingStep =
+    dev.androidagent.core.Onboarding.step(onboarding, setupSignals())
+
+internal fun AgentUiState.setupSignals(): SetupSignals = SetupSignals(
         runtimePhase = runtimeStatus.phase,
         signedIn = accountStatus?.signedIn,
         loginPending = accountStatus?.signedIn == false && accountStatus?.loginUrl != null,
@@ -266,8 +283,7 @@ internal fun AgentUiState.setupRows(): List<SetupRow> = SetupChecklist.rows(
         microphoneGranted = permissions.microphone,
         adbPhase = adbStatus.phase,
         adbPort = adbStatus.port,
-    ),
-)
+    )
 
 internal fun EngineEvent.Approval.detailsText(): String = details.toString().removeSurrounding("{", "}")
 
