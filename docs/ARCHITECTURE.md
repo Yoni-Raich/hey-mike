@@ -1492,9 +1492,21 @@ because the earliest due rule may have changed.
 
 A rule's screen also deletes and edits it. Delete asks first — it is the one
 change here that cannot be switched back, and the dialog points at the switch
-for pausing instead. Edit is a third level of the same sheet with two paths:
-tell Mike in words, which goes to the chat and through `mode:"update"` and a dry
-run like any request, or edit the saved JSON directly. The direct path is
-`AutomationLibrary.update` with every key the editor dropped removed, so it
-passes the same validation as the tool, shows the refusal in place, and writes
-nothing when it fails.
+for pausing instead. Edit is a third level of the same sheet: a form, never the
+rule's JSON. `AutomationEditor` in `:core` turns a rule into the plain values a
+person changes — the time (picked from a clock), the days (seven toggles,
+Sunday first), numbers, and the text inside a condition or an action, grouped
+under the condition or action they belong to — and turns the edited values back
+into the `changes` that `AutomationLibrary.update` takes. So the form saves
+through exactly the validation the agent's `mode:"update"` does: a bad value is
+named under its own field, a rule refused as a whole shows the reason above
+Save, and nothing is written when it fails. Only values that differ from what
+the form opened with are written, so opening and saving changes nothing.
+
+What the form leaves out is what changes a rule's *shape* rather than a value
+in it: another kind of trigger or action, adding or removing a condition, and
+the identifiers underneath (which workflow runs, an intent's action, which
+event field a text test reads). Typing over a workflow's name would point the
+rule at one that may not exist. Those go through "Want a bigger change?" at the
+bottom, which sends the request to Mike, who uses `mode:"update"` and a dry run
+like any other request.

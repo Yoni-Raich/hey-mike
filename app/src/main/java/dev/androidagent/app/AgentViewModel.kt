@@ -511,36 +511,29 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         refreshAutomations()
     }
 
-    /** The rule as saved, pretty-printed for the editor. Null when it is gone or unreadable. */
-    fun ruleDefinition(id: String): String? = runCatching {
-        graph.automations.get(id)?.toJson()?.let { RULE_JSON.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), it) }
-    }.getOrNull()
+    /** The rule's editable values, for the edit form. Empty when it is gone or unreadable. */
+    fun ruleEditFields(id: String): List<AutomationEditField> =
+        runCatching { graph.automations.get(id)?.let(AutomationEditor::fields) }.getOrNull().orEmpty()
 
     /**
-     * Save an edited rule from the editor.
+     * Save the edit form.
      *
-     * Goes through the same merge and validation as the agent's
-     * `mode:"update"`, so the screen cannot save what the tool would refuse.
-     * Returns null on success, or the reason in words for the editor to show;
-     * nothing is written when it fails.
+     * The form's values become the same `changes` the agent's `mode:"update"`
+     * takes, and go through the same merge and validation, so the screen cannot
+     * save what the tool would refuse. Returns null on success, or the reason
+     * in words for the form to show; nothing is written when it fails.
      */
-    fun saveRuleDefinition(id: String, text: String): String? {
-        val json = runCatching {
-            kotlinx.serialization.json.Json.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject
-        }.getOrNull() ?: return "That is not valid JSON. Check the brackets and quotes."
-        // Every key the editor dropped is removed, not kept: what is on screen
-        // is the whole rule.
-        val saved = graph.automations.get(id)?.toJson() ?: return "This rule no longer exists."
-        val removed = saved.keys.filter { it !in json && it != "id" }
-            .associateWith { kotlinx.serialization.json.JsonNull }
-        val changes = kotlinx.serialization.json.JsonObject(json + removed)
+    fun saveRuleEdits(id: String, values: Map<String, String>): String? {
+        val rule = graph.automations.get(id) ?: return "This rule no longer exists."
+        val changes = AutomationEditor.changes(rule, values)
+        if (changes.isEmpty()) return null
         return try {
             graph.automations.update(id, changes)
             runCatching { graph.automationHost.rearm() }
-            mutable.update { it.copy(infoMessage = "Saved \"" + dev.androidagent.core.AutomationSummaries.chipName(id) + "\"") }
+            mutable.update { it.copy(infoMessage = "Saved \"" + AutomationSummaries.chipName(id) + "\"") }
             refreshAutomations()
             null
-        } catch (invalid: dev.androidagent.core.AutomationFormatException) {
+        } catch (invalid: AutomationFormatException) {
             invalid.message
         } catch (failure: Exception) {
             failure.message ?: "The rule could not be saved."
@@ -875,6 +868,3 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         catch (failure: Exception) { error(failure.message ?: "Something went wrong.") }
     }
 }
-
-/** Indented, because a person reads and edits this on a phone screen. */
-private val RULE_JSON = kotlinx.serialization.json.Json { prettyPrint = true }

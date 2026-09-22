@@ -175,6 +175,17 @@ not production-ready.
   it even when the action throws, waits for a turn that already holds it rather
   than reporting busy, gives up rather than surfacing long after its moment, and
   a Stop mid-rule revokes the gateways and keeps the teardown.
+- Standing rules, the edit form — on 2026-09-22 `:core:test` passes, 536 tests,
+  none failing; `AutomationEditorTest` is new (14). It establishes: a rule
+  becomes plain values with no braces on screen, grouped under their condition
+  or action; saving an untouched form changes nothing; moving the time changes
+  only `when`; a loose "7:5" saves as 07:05; clearing the days means every day;
+  text inside a workflow parameter, a notification and a condition is edited in
+  place; an emptied optional value is removed; the ask-first switch round-trips;
+  limits are written as one guard and keep an untouched sub-minute cooldown; the
+  workflow's own name is not offered for typing over; and each bad value is
+  named on its own field. `:app:compileDevDebugKotlin` and `:app:lintDevDebug`
+  pass, 0 lint errors and no warning in a changed file.
 - Standing rules, delete/edit and reliability — on 2026-09-22 `:core:test`
   passes, 516 tests, none failing; 20 of them new across `AutomationLibraryTest`,
   `AutomationToolGatewayTest` and `AutomationEvaluatorTest`.
@@ -537,9 +548,10 @@ not production-ready.
   been run, so the screen is built over behaviour that is known rather than
   assumed.
 - **Delete and edit on a rule's screen are unseen.** The buttons, the confirm
-  dialog and the editor compile; nobody has used them on a phone. The raw JSON
-  editor is usable but not friendly on a small screen — asking Mike in words is
-  the path meant for most people. The catch-up on unlock and at start, and
+  dialog and the edit form compile, and the form was rendered once off-device
+  (Robolectric, native graphics, 400dp wide, dark theme) from a scratch test
+  that was not kept; nobody has used any of it on a phone, and the clock
+  dialog has not been seen at all. The catch-up on unlock and at start, and
   evaluation under the run lock, are in `:automations`, which still has no
   tests of its own.
 - `notify` taps open the app, not the rule's own chat: deep-linking to one chat

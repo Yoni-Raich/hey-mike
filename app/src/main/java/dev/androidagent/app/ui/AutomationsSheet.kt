@@ -76,11 +76,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
+import dev.androidagent.core.AutomationEditField
+import dev.androidagent.core.AutomationEditor
+import java.time.DayOfWeek
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.androidagent.core.AutomationAttention
@@ -476,35 +486,111 @@ private fun ColumnScope.RuleDetail(
 }
 
 /**
- * Change a rule: in words, or directly.
+ * Change a rule's values: its time, its days, a number, a line of text.
  *
- * In words is the first choice, because Mike already knows the format and
- * dry-runs the result; the request goes to the chat like anything else the
- * person types. The direct editor is for the exact change — a time, a limit —
- * and saves through the same validation as the agent's `update`, so a rule
- * that would be refused there is refused here, with the reason, and nothing
- * is written.
+ * A form, not the rule's JSON. `AutomationEditor` in `:core` decides which
+ * values a person may change and turns them back into the `changes` the
+ * agent's `update` takes, so what saves here is validated exactly as it would
+ * be there — a problem with one value is shown under that value, and a rule
+ * that would be refused as a whole shows the reason above Save. Changing what
+ * a rule *is* (another trigger, a new condition) is left to asking Mike, at
+ * the bottom.
  */
 @Composable
 private fun ColumnScope.RuleEditor(rule: AutomationSummary, actions: AgentUiActions, onDone: () -> Unit) {
-    var request by rememberSaveable(rule.id) { mutableStateOf("") }
-    var text by rememberSaveable(rule.id) { mutableStateOf(actions.ruleDefinition(rule.id).orEmpty()) }
-    var error by rememberSaveable(rule.id) { mutableStateOf<String?>(null) }
+    val fields = remember(rule.id) { actions.ruleEditFields(rule.id) }
+    val values = remember(rule.id) { mutableStateMapOf<String, String>().apply { fields.forEach { put(it.key, it.value) } } }
+    var errors by remember(rule.id) { mutableStateOf(emptyMap<String, String>()) }
+    var saveError by remember(rule.id) { mutableStateOf<String?>(null) }
 
+    if (fields.isEmpty()) {
+        Explanation("This rule could not be read, so there is nothing to edit here.")
+    }
+
+    AutomationEditor.Section.entries.forEach { section ->
+        val inSection = fields.filter { it.section == section }
+        if (inSection.isEmpty()) return@forEach
+        Text(
+            section.title.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                var lastGroup: String? = null
+                inSection.forEach { field ->
+                    if (field.group != null && field.group != lastGroup) {
+                        Text(
+                            field.group!!,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    lastGroup = field.group
+                    EditFieldRow(
+                        field = field,
+                        value = values[field.key].orEmpty(),
+                        error = errors[field.key],
+                        onChange = { changed ->
+                            values[field.key] = changed
+                            errors = errors - field.key
+                            saveError = null
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    saveError?.let { reason ->
+        Text(reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedButton(onClick = onDone, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Cancel") }
+        Button(
+            onClick = {
+                val problems = fields.mapNotNull { field ->
+                    AutomationEditor.problem(field, values[field.key].orEmpty())?.let { field.key to it }
+                }.toMap()
+                errors = problems
+                if (problems.isEmpty()) {
+                    val refused = actions.onSaveRule(rule.id, values.toMap())
+                    if (refused == null) onDone() else saveError = refused
+                } else {
+                    saveError = "Fix the highlighted value" + (if (problems.size > 1) "s" else "") + " first."
+                }
+            },
+            enabled = fields.isNotEmpty(),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+        ) { Text("Save") }
+    }
+
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+    var request by rememberSaveable(rule.id) { mutableStateOf("") }
     Text(
-        "TELL MIKE WHAT TO CHANGE",
+        "WANT A BIGGER CHANGE?",
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    Explanation("Another trigger, a new condition, a different action — tell Mike and it rewrites the rule.")
     OutlinedTextField(
         value = request,
         onValueChange = { request = it },
-        placeholder = { Text("e.g. make it 20:00, and only on weekdays") },
+        placeholder = { Text("e.g. also run it on Fridays, but only when I'm charging") },
         modifier = Modifier.fillMaxWidth(),
         minLines = 2,
     )
-    Button(
+    OutlinedButton(
         onClick = {
             actions.onSend(
                 "Change my standing rule \"" + rule.id + "\": " + request.trim() +
@@ -515,50 +601,140 @@ private fun ColumnScope.RuleEditor(rule: AutomationSummary, actions: AgentUiActi
             actions.onCloseAutomations()
         },
         enabled = request.isNotBlank(),
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) { Text("Ask Mike") }
-
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-    Text(
-        "OR EDIT THE RULE DIRECTLY",
-        style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    if (text.isEmpty()) {
-        Explanation("This rule could not be read, so there is nothing to edit here.")
-        return
-    }
-    OutlinedTextField(
-        value = text,
-        onValueChange = {
-            text = it
-            error = null
-        },
-        textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = MaterialTheme.typography.bodySmall.fontSize),
-        isError = error != null,
-        supportingText = error?.let { reason -> { Text(reason) } },
-        modifier = Modifier.fillMaxWidth(),
-        minLines = 8,
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedButton(onClick = onDone, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Cancel") }
-        Button(
-            onClick = {
-                val refused = actions.onSaveRule(rule.id, text)
-                if (refused == null) onDone() else error = refused
-            },
-            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-        ) { Text("Save") }
-    }
-    Explanation(
-        "The id cannot change here. A rule saved after its time today waits for its next time " +
-            "rather than running at once.",
-    )
 }
+
+/** One value on the edit form, drawn the way its type is easiest to change. */
+@Composable
+private fun EditFieldRow(field: AutomationEditField, value: String, error: String?, onChange: (String) -> Unit) {
+    when (field.type) {
+        AutomationEditor.FieldType.TIME -> TimeField(field, value, error, onChange)
+        AutomationEditor.FieldType.DAYS -> DaysField(field, value, error, onChange)
+        AutomationEditor.FieldType.SWITCH -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(field.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Switch(checked = value == "true", onCheckedChange = { onChange(it.toString()) })
+        }
+        AutomationEditor.FieldType.TEXT,
+        AutomationEditor.FieldType.LONG_TEXT,
+        AutomationEditor.FieldType.NUMBER -> OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            label = { Text(field.label) },
+            isError = error != null,
+            supportingText = (error ?: field.hint)?.let { note -> { Text(note) } },
+            singleLine = field.type != AutomationEditor.FieldType.LONG_TEXT,
+            minLines = if (field.type == AutomationEditor.FieldType.LONG_TEXT) 2 else 1,
+            keyboardOptions = if (field.type == AutomationEditor.FieldType.NUMBER) {
+                KeyboardOptions(keyboardType = KeyboardType.Number)
+            } else {
+                KeyboardOptions.Default
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** A time, shown large and picked from a clock rather than typed. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimeField(field: AutomationEditField, value: String, error: String?, onChange: (String) -> Unit) {
+    var picking by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(field.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { picking = true }, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(
+                    value.ifEmpty { "Any time" },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            if (field.optional && value.isNotEmpty()) {
+                TextButton(onClick = { onChange("") }) { Text("Clear") }
+            }
+        }
+        (error ?: field.hint)?.let { note ->
+            Text(
+                note,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    if (picking) {
+        val start = AutomationEditor.normalizeTime(value) ?: "09:00"
+        val state = rememberTimePickerState(
+            initialHour = start.substringBefore(':').toInt(),
+            initialMinute = start.substringAfter(':').toInt(),
+            is24Hour = true,
+        )
+        AlertDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    onChange("%02d:%02d".format(state.hour, state.minute))
+                    picking = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { picking = false }) { Text("Cancel") } },
+            text = { TimePicker(state = state) },
+        )
+    }
+}
+
+/** Seven round toggles, Sunday first. None picked is shown for what it means. */
+@Composable
+private fun DaysField(field: AutomationEditField, value: String, error: String?, onChange: (String) -> Unit) {
+    val picked = AutomationEditor.parseDays(value).orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(field.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            WEEK.forEach { (day, letter) ->
+                val on = day in picked
+                Surface(
+                    onClick = {
+                        val next = if (on) picked - day else picked + day
+                        onChange(DayOfWeek.entries.filter { it in next }.joinToString(",") { it.name.take(3).lowercase() })
+                    },
+                    shape = CircleShape,
+                    color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .weight(1f)
+                        .aspectRatio(1f)
+                        .semantics { contentDescription = day.name.lowercase().replaceFirstChar { it.uppercase() } + if (on) ", on" else ", off" },
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            letter,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        val note = error ?: if (picked.isEmpty() && field.optional) "Every day" else field.hint
+        note?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private val WEEK = listOf(
+    DayOfWeek.SUNDAY to "S",
+    DayOfWeek.MONDAY to "M",
+    DayOfWeek.TUESDAY to "T",
+    DayOfWeek.WEDNESDAY to "W",
+    DayOfWeek.THURSDAY to "T",
+    DayOfWeek.FRIDAY to "F",
+    DayOfWeek.SATURDAY to "S",
+)
 
 /** One link in the when/and/then chain, with the rail that joins it to the next. */
 @Composable
