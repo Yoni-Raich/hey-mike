@@ -8,6 +8,7 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -92,11 +93,33 @@ class JevToolGatewayTest {
     }
 
     @Test
-    fun `failed mutation is reported once and never retried`() = runBlocking {
+    fun `refusal on an unchanged screen is recorded and the run continues`() = runBlocking {
+        val router = FakeRouter(
+            MutableList(4) { screen("ui-1", "Submit", true) },
+            actionResult = ToolResult("Node n1 rejected the text; nothing was typed.", success = false),
+        )
+        val provider = ScriptedProvider(state, mutableListOf("TAP" to "T1", "DONE" to null))
+        val gateway = JevToolGateway(provider) { router }
+        gateway.beginRun("run-1", File("."))
+
+        val result = gateway.invoke("jev_run_ui_task", requestJson("Tap Submit"))
+
+        val json = Json.parseToJsonElement(result.text).jsonObject
+        assertEquals("done_visible", json["status"]?.jsonPrimitive?.content)
+        // The refusal did not end the run, and Jev was asked again.
+        assertEquals(2, provider.calls)
+        assertEquals(1, router.actions.size)
+        val refused = json["history"]?.jsonArray.orEmpty().single().jsonObject
+        assertEquals(true, refused["refused"]?.jsonPrimitive?.content?.toBoolean())
+    }
+
+    @Test
+    fun `refusal that changed the screen stays uncertain and is never retried`() = runBlocking {
         val router = FakeRouter(
             mutableListOf(
                 screen("ui-1", "Submit", true),
                 screen("ui-2", "Submit", true),
+                screen("ui-3", "Submitted", true),
             ),
             actionResult = ToolResult("transport result unknown", success = false),
         )

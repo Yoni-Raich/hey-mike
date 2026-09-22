@@ -810,9 +810,17 @@ class A11yDeviceTools(
      * out of the tree does nothing for it. Move the card, then refuse if the
      * point is still ours.
      */
-    private fun requireNotOurOwnUi(x: Int, y: Int) {
+    private suspend fun requireNotOurOwnUi(x: Int, y: Int) {
         avoidTouch(x, y)
         val service = A11yServiceHandle.service.value ?: return
+        // avoidTouch hops to the main thread and the window manager applies the
+        // move a frame later, so checking immediately refuses points the card is
+        // already leaving. Give the move a few beats before giving up on one.
+        repeat(OWN_UI_SETTLE_ATTEMPTS) {
+            if (!service.ownWindowContains(context.packageName, x, y)) return
+            delay(OWN_UI_SETTLE_MS)
+            avoidTouch(x, y)
+        }
         if (service.ownWindowContains(context.packageName, x, y)) {
             throw IllegalStateException(
                 "($x,$y) is inside Hey Mike's own window. Nothing was tapped; " +
@@ -854,6 +862,8 @@ class A11yDeviceTools(
         private const val PROGRESS_VERIFY_TIMEOUT_MS = 750L
         private const val PROGRESS_VERIFY_POLL_MS = 25L
         private const val MAX_COORDINATE = 20_000
+        private const val OWN_UI_SETTLE_ATTEMPTS = 4
+        private const val OWN_UI_SETTLE_MS = 40L
         private const val RETURN_TIMEOUT_MS = 4_000L
         private const val APP_OPEN_TIMEOUT_MS = 5_000L
 
