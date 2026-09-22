@@ -79,6 +79,15 @@ data class AutomationRule(
     val guard: AutomationGuard = AutomationGuard(),
     /** Set when the rule was read from a file, for the failure report. */
     val source: String? = null,
+    /**
+     * When the file was last written, epoch millis, or null for a rule that
+     * never touched disk.
+     *
+     * Not part of the format. A schedule reads it so a rule saved at 19:05
+     * does not catch up on the 19:00 it was never around for, and so an
+     * interval counts from when it was written rather than from nothing.
+     */
+    val savedAt: Long? = null,
 ) {
 
     /**
@@ -150,7 +159,7 @@ data class AutomationRule(
          * A rule that half-parses is worse than one that does not load: it
          * would fire on a trigger nobody agreed to, at a time nobody chose.
          */
-        fun parse(json: JsonObject, source: String? = null): AutomationRule {
+        fun parse(json: JsonObject, source: String? = null, savedAt: Long? = null): AutomationRule {
             val id = json.str("id")?.lowercase()
                 ?: throw AutomationFormatException("automation_invalid", "\"id\" is required.")
             if (!ID_RE.matches(id)) {
@@ -222,6 +231,7 @@ data class AutomationRule(
                 actions = actions,
                 guard = AutomationGuard.parse(json["guard"], id),
                 source = source,
+                savedAt = savedAt,
             )
 
             // A placeholder the trigger cannot produce would reach the model as
@@ -437,7 +447,9 @@ data class AutomationGuard(
             return null
         }
         return buildJsonObject {
-            put("cooldownMinutes", cooldownMs / 60_000L)
+            // Minutes when they are exact, so a sub-minute cooldown written as
+            // cooldownMs survives an edit instead of rounding down to zero.
+            if (cooldownMs % 60_000L == 0L) put("cooldownMinutes", cooldownMs / 60_000L) else put("cooldownMs", cooldownMs)
             put("maxPerDay", maxPerDay)
             put("validForMinutes", validForMs / 60_000L)
         }

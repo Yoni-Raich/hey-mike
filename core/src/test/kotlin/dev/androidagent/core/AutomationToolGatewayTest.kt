@@ -48,6 +48,8 @@ class AutomationToolGatewayTest {
 
     private val fired = mutableListOf<String>()
 
+    private var changes = 0
+
     private fun gateway(
         supported: Set<AutomationTriggerKind> = AutomationTriggerKind.entries.toSet(),
         canFire: Boolean = true,
@@ -58,6 +60,7 @@ class AutomationToolGatewayTest {
         now = { now },
         supportedTriggers = { supported },
         fireNow = if (canFire) ({ id -> fired += id }) else null,
+        onChanged = { changes++ },
     ).also { it.beginRun("run", temp.root) }
 
     private fun call(gateway: AutomationToolGateway, json: String): JsonObject = runBlocking {
@@ -296,5 +299,73 @@ class AutomationToolGatewayTest {
         assertTrue(line, line.contains("1 on"))
         assertTrue(line, line.contains("1 off"))
         assertTrue(line, line.contains("dormant"))
+    }
+
+    @Test fun createRefusesToOverwriteARuleUnlessAskedTo() {
+        val gateway = gateway()
+        create(gateway)
+        val again = create(gateway)
+        assertFalse(again["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("rule_exists", again["errorType"]!!.jsonPrimitive.content)
+        assertTrue(again["message"]!!.jsonPrimitive.content.contains("update"))
+
+        val replaced = call(gateway, """{"mode":"create","replace":true,"rule":${dadRule.trimIndent()}}""")
+        assertTrue(replaced["replaced"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test fun updateChangesOnlyWhatItNamesAndShowsBeforeAndAfter() {
+        val gateway = gateway()
+        create(gateway)
+        val reply = call(
+            gateway,
+            """{"mode":"update","rule":"dad-after-seven",
+                "changes":{"if":[{"type":"time_between","after":"20:00","before":"07:00"}]}}""",
+        )
+        assertTrue(reply["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("if", reply["changed"]!!.jsonArray.single().jsonPrimitive.content)
+        assertTrue(reply["before"]!!.jsonObject["if"].toString().contains("19:00"))
+        assertTrue(reply["after"]!!.jsonObject["if"].toString().contains("20:00"))
+        // The trigger and the action are untouched.
+        val saved = library().get("dad-after-seven")!!
+        assertEquals("com.whatsapp", saved.trigger.packageName)
+        assertEquals(AutomationActionKind.AGENT_TURN, saved.actions.single().kind)
+    }
+
+    @Test fun anInvalidUpdateIsRefusedAndTheRuleIsUnchanged() {
+        val gateway = gateway()
+        create(gateway)
+        val reply = call(gateway, """{"mode":"update","rule":"dad-after-seven","changes":{"when":{"type":"notification"}}}""")
+        assertFalse(reply["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("com.whatsapp", library().get("dad-after-seven")!!.trigger.packageName)
+    }
+
+    @Test fun updateWithoutChangesSaysWhatItNeeds() {
+        val gateway = gateway()
+        create(gateway)
+        val reply = call(gateway, """{"mode":"update","rule":"dad-after-seven"}""")
+        assertEquals("changes_required", reply["errorType"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aNearMissNameIsNeverDeletedOnlySuggested() {
+        val gateway = gateway()
+        create(gateway)
+        val reply = call(gateway, """{"mode":"delete","rule":"dad"}""")
+        assertFalse(reply["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("rule_id_inexact", reply["errorType"]!!.jsonPrimitive.content)
+        assertTrue(reply["message"]!!.jsonPrimitive.content.contains("dad-after-seven"))
+        assertEquals(1, library().all().size)
+    }
+
+    @Test fun everyChangeTellsTheHostSoItCanReArm() {
+        val gateway = gateway()
+        create(gateway)
+        call(gateway, """{"mode":"update","rule":"dad-after-seven","changes":{"description":"x"}}""")
+        call(gateway, """{"mode":"disable","rule":"dad-after-seven"}""")
+        call(gateway, """{"mode":"enable","rule":"dad-after-seven"}""")
+        call(gateway, """{"mode":"delete","rule":"dad-after-seven"}""")
+        assertEquals(5, changes)
+        // Reading and dry runs change nothing.
+        call(gateway, """{"mode":"list"}""")
+        assertEquals(5, changes)
     }
 }

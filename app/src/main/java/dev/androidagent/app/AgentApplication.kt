@@ -201,6 +201,9 @@ class AgentGraph(private val app: Application) {
         // Naming a rule supplies its trigger, so a scheduled rule can be proved
         // without waiting for its hour. Everything else about it still applies.
         fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
+        // A rule the agent writes, edits or deletes changes when the alarm is
+        // next due; without this it waited for an unrelated firing to be armed.
+        onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
     )
     /** One Jev call owns the bounded observe-decide-act loop and routes every action here. */
     val jev = AndroidJevProvider(app)

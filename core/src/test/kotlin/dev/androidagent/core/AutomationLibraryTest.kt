@@ -150,4 +150,59 @@ class AutomationLibraryTest {
         assertTrue(library().all().isEmpty())
         assertTrue(library().broken().single().reason.contains("larger"))
     }
+
+    @Test fun changingAMutatingRuleNeedsItsExactId() {
+        // "delete morning" must never resolve to "morning-news".
+        write("morning-news")
+        assertNull(library().get("morning"))
+        assertFalse(library().delete("morning"))
+        assertEquals("morning-news", library().get("Morning-News")!!.id)
+    }
+
+    @Test fun deletingIgnoresAnIdThatCouldEscapeTheDirectory() {
+        write("x")
+        assertFalse(library().delete("../automations/x"))
+        assertEquals(1, library().all().size)
+    }
+
+    @Test fun anEditReplacesOnlyTheKeysItNames() {
+        write("x")
+        val updated = library().update("x", obj("""{"when":{"type":"schedule","at":"20:30"},"description":"later"}"""))
+        assertEquals("later", updated.description)
+        assertEquals("every day at 20:30", updated.trigger.schedule!!.describe())
+        // What it does is untouched.
+        assertEquals("notify: hi", library().get("x")!!.actions.single().describe())
+    }
+
+    @Test fun anEditCanRemoveAKeyWithNull() {
+        write("x", """{"id":"x","when":{"type":"schedule","at":"19:00"},
+            "if":[{"type":"day_of_week","days":["mon"]}],"then":[{"type":"notify","text":"hi"}]}""")
+        assertTrue(library().update("x", obj("""{"if":null}""")).conditions.isEmpty())
+    }
+
+    @Test fun anInvalidEditIsRefusedAndTheOldFileSurvives() {
+        write("x")
+        val refused = runCatching { library().update("x", obj("""{"then":[]}""")) }.exceptionOrNull()
+        assertTrue(refused is AutomationFormatException)
+        assertEquals(1, library().get("x")!!.actions.size)
+    }
+
+    @Test fun anEditCannotRenameTheRule() {
+        write("x")
+        val refused = runCatching { library().update("x", obj("""{"id":"y"}""")) }.exceptionOrNull()
+        assertEquals("rule_rename_refused", (refused as AutomationFormatException).errorType)
+        assertNull(library().get("y"))
+    }
+
+    @Test fun editingARuleThatDoesNotExistIsRefused() {
+        val refused = runCatching { library().update("ghost", obj("""{"description":"x"}""")) }.exceptionOrNull()
+        assertEquals("rule_not_found", (refused as AutomationFormatException).errorType)
+    }
+
+    @Test fun aRuleReadFromDiskKnowsWhenItWasSaved() {
+        write("x")
+        assertTrue(library().get("x")!!.savedAt!! > 0)
+    }
+
+    private fun obj(json: String) = Json.parseToJsonElement(json).jsonObject
 }

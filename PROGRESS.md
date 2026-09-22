@@ -158,6 +158,21 @@ not production-ready.
   it even when the action throws, waits for a turn that already holds it rather
   than reporting busy, gives up rather than surfacing long after its moment, and
   a Stop mid-rule revokes the gateways and keeps the teardown.
+- Standing rules, delete/edit and reliability — on 2026-09-22 `:core:test`
+  passes, 516 tests, none failing; 20 of them new across `AutomationLibraryTest`,
+  `AutomationToolGatewayTest` and `AutomationEvaluatorTest`.
+  `:automations:compileDebugKotlin`, `:app:compileDevDebugKotlin` and
+  `:app:lintDevDebug` pass, with 0 lint errors and no warning naming a changed
+  file (the runtime staging step was skipped; it does not affect Kotlin). What
+  they establish: a mutating lookup needs the exact id and a near miss is only
+  suggested; an edit replaces only the keys it names, `null` removes one, an
+  invalid edit leaves the old file intact, and an edit cannot rename; `create`
+  refuses an existing id without `replace:true`; every change tells the host to
+  re-arm and reads do not; a late alarm still runs its slot, a served slot is not
+  run twice, a slot past its window and one before the rule was saved are not
+  run; an interval runs only once its interval has passed and its alarm counts
+  from its last run, never landing in the past. Run in a container without
+  Maven Central (rate limited, 429), through Google's Maven Central mirror.
 - Note (run against this container's toolchain, not a phone): the one
   `:workspace` test failure seen here — `uriParametersArePercentEncoded` — is
   the container's `LC_CTYPE=POSIX` mangling Hebrew in `act.sh`, not a
@@ -504,6 +519,12 @@ not production-ready.
   for a feature that runs unattended. It was left until the checklist above has
   been run, so the screen is built over behaviour that is known rather than
   assumed.
+- **Delete and edit on a rule's screen are unseen.** The buttons, the confirm
+  dialog and the editor compile; nobody has used them on a phone. The raw JSON
+  editor is usable but not friendly on a small screen — asking Mike in words is
+  the path meant for most people. The catch-up on unlock and at start, and
+  evaluation under the run lock, are in `:automations`, which still has no
+  tests of its own.
 - `notify` taps open the app, not the rule's own chat: deep-linking to one chat
   needs a selection path `MainActivity` does not expose.
 

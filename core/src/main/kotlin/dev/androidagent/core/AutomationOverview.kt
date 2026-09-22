@@ -150,7 +150,7 @@ data class AutomationOverview(
                     isWarning = true
                 }
                 on.isNotEmpty() -> {
-                    line = AutomationSummaries.nextLine(rules, now) ?: (on.size.toString() + " watching for their moment")
+                    line = AutomationSummaries.nextLine(rules, now, history) ?: (on.size.toString() + " watching for their moment")
                     isWarning = false
                 }
                 summaries.isEmpty() -> {
@@ -407,7 +407,7 @@ object AutomationSummaries {
             }
         }
         rule.trigger.schedule?.let { schedule ->
-            return "Next run " + relativeFuture(schedule.nextRunAt(now), now)
+            return "Next run " + relativeFuture(schedule.nextRunAt(now, last, rule.savedAt), now)
         }
         if (last == null) return "Waiting for its moment"
         val today = history.firedOn(rule.id, now.toLocalDate())
@@ -416,10 +416,12 @@ object AutomationSummaries {
     }
 
     /** The soonest scheduled run across every enabled rule, as a sentence. */
-    fun nextLine(rules: List<AutomationRule>, now: ZonedDateTime): String? {
+    fun nextLine(rules: List<AutomationRule>, now: ZonedDateTime, history: AutomationHistory? = null): String? {
         val due = rules
             .filter { it.enabled && it.trigger.kind == AutomationTriggerKind.SCHEDULE }
-            .mapNotNull { rule -> rule.trigger.schedule?.nextRunAt(now)?.let { rule to it } }
+            .mapNotNull { rule ->
+                rule.trigger.schedule?.nextRunAt(now, history?.lastFiredAt(rule.id), rule.savedAt)?.let { rule to it }
+            }
             .minByOrNull { it.second }
             ?: return null
         return "Next: " + chipName(due.first.id) + ", " + relativeFuture(due.second, now)

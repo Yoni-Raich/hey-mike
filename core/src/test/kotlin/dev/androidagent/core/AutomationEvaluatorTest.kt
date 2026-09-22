@@ -320,4 +320,73 @@ class AutomationEvaluatorTest {
             skip(evaluate(charging, event, context(now, deviceState = mapOf("wifi" to "cafe")))),
         )
     }
+
+    private val evening = rule(
+        """
+        {"id":"evening-post","when":{"type":"schedule","at":"19:00"},
+         "then":[{"type":"run_workflow","workflow":"post-to-facebook"}]}
+        """,
+    )
+
+    @Test fun aLateAlarmStillRunsTheSlotItWasFor() {
+        // Doze, an inexact alarm, a phone that booted at 19:08: all late, none
+        // of them a reason to skip the day.
+        val late = at("2026-09-15T19:08:40")
+        assertTrue(evaluate(evening, AutomationEvent.Clock(late), context(late)) is AutomationEvaluator.Outcome.Fired)
+    }
+
+    @Test fun aSlotIsNotRunTwice() {
+        history.record("evening-post", at("2026-09-15T19:00:05"))
+        val again = at("2026-09-15T19:10:00")
+        val outcome = evaluate(evening, AutomationEvent.Clock(again), context(again))
+        assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(outcome))
+        assertTrue((outcome as AutomationEvaluator.Outcome.Skipped).detail.contains("already ran for its 19:00"))
+    }
+
+    @Test fun aSlotLongPastItsWindowIsGoneRatherThanLate() {
+        // Thirty minutes by default: "post at 19:00" at 21:00 is the wrong action.
+        val muchLater = at("2026-09-15T21:00:00")
+        assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(evaluate(evening, AutomationEvent.Clock(muchLater), context(muchLater))))
+    }
+
+    @Test fun aRuleSavedAfterItsTimeWaitsForTheNextOne() {
+        val savedLate = evening.copy(savedAt = at("2026-09-15T19:05:00").toInstant().toEpochMilli())
+        val soon = at("2026-09-15T19:06:00")
+        assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(evaluate(savedLate, AutomationEvent.Clock(soon), context(soon))))
+    }
+
+    @Test fun anIntervalRunsOnlyOnceItsIntervalHasPassed() {
+        // It used to fire on every clock wake-up, whichever rule the alarm was for.
+        val hourly = rule(
+            """
+            {"id":"hourly","when":{"type":"schedule","everyMinutes":60},
+             "then":[{"type":"notify","text":"tick"}]}
+            """,
+        )
+        history.record("hourly", at("2026-09-15T18:00:00"))
+        val early = at("2026-09-15T18:30:00")
+        assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(evaluate(hourly, AutomationEvent.Clock(early), context(early))))
+        val due = at("2026-09-15T19:00:00")
+        assertTrue(evaluate(hourly, AutomationEvent.Clock(due), context(due)) is AutomationEvaluator.Outcome.Fired)
+    }
+
+    @Test fun anIntervalAlarmCountsFromItsLastRunNotFromEveryReArm() {
+        val hourly = rule(
+            """
+            {"id":"hourly","when":{"type":"schedule","everyMinutes":60},
+             "then":[{"type":"notify","text":"tick"}]}
+            """,
+        )
+        history.record("hourly", at("2026-09-15T18:00:00"))
+        // Re-armed at 18:45 because the screen turned on: still 19:00, not 19:45.
+        assertEquals(
+            at("2026-09-15T19:00:00"),
+            AutomationWakeups.nextRunAt(listOf(hourly), at("2026-09-15T18:45:00"), history),
+        )
+        // Overdue and skipped: the next wake-up is the next slot, never the past.
+        assertEquals(
+            at("2026-09-15T21:00:00"),
+            AutomationWakeups.nextRunAt(listOf(hourly), at("2026-09-15T20:10:00"), history),
+        )
+    }
 }

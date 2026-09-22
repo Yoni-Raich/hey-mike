@@ -197,12 +197,84 @@ data class AutomationSchedule(
     val everyMinutes: Int? = null,
 ) {
 
-    /** True when [now] is the minute this schedule names. */
+    /**
+     * True when [now] is the minute this schedule names.
+     *
+     * Stateless, so it cannot tell a late alarm from a missed one or a slot
+     * already served from one still owed. The live path asks [dueSlot], which
+     * can; this stays for callers that only want the shape of the schedule.
+     */
     fun isDue(now: ZonedDateTime): Boolean {
         if (everyMinutes != null) return true
         val at = at ?: return false
         if (days.isNotEmpty() && now.dayOfWeek !in days) return false
         return now.hour == at.hour && now.minute == at.minute
+    }
+
+    /**
+     * The slot this schedule owes a run for at [now], or null when nothing is owed.
+     *
+     * The alarm is a wake-up, and Android delivers wake-ups late: Doze, an
+     * inexact alarm, a phone that was off at 19:00 and booted at 19:08. Matching
+     * the exact minute turned every one of those into a silently missed day.
+     * Instead, an `at` schedule owes its most recent slot until either it has
+     * run for it ([lastFiredAt] is at or after the slot) or [toleranceMs] has
+     * passed — after which the moment is gone and running would be the wrong
+     * action rather than a late one. That is the same line
+     * [AutomationGuard.validForMs] draws for a queued turn, and the evaluator
+     * passes it here.
+     *
+     * A slot from before the rule was written ([savedAt]) is never owed, so a
+     * rule saved at 19:05 does not fire for the 19:00 it did not exist for.
+     *
+     * An interval is owed once [everyMinutes] have passed since it last ran, or
+     * since it was written when it never has. A skipped run records nothing, so
+     * the interval stays owed and is tried again at the next wake-up rather than
+     * pushed a whole interval out.
+     */
+    fun dueSlot(now: ZonedDateTime, lastFiredAt: Long?, savedAt: Long?, toleranceMs: Long): ZonedDateTime? {
+        val nowMs = now.toInstant().toEpochMilli()
+        everyMinutes?.let { interval ->
+            val base = listOfNotNull(lastFiredAt, savedAt).maxOrNull() ?: return now
+            return if (nowMs - base >= interval * 60_000L - SLACK_MS) now else null
+        }
+        val slot = lastSlotAtOrBefore(now) ?: return null
+        val slotMs = slot.toInstant().toEpochMilli()
+        if (nowMs - slotMs > toleranceMs) return null
+        if (lastFiredAt != null && lastFiredAt >= slotMs) return null
+        if (savedAt != null && savedAt > slotMs + SLACK_MS) return null
+        return slot
+    }
+
+    /** The latest moment at or before [now] an `at` schedule names, or null for an interval. */
+    fun lastSlotAtOrBefore(now: ZonedDateTime): ZonedDateTime? {
+        val at = at ?: return null
+        var candidate = now.withHour(at.hour).withMinute(at.minute).withSecond(0).withNano(0)
+        if (candidate.isAfter(now)) candidate = candidate.minusDays(1)
+        if (days.isEmpty()) return candidate
+        repeat(7) {
+            if (candidate.dayOfWeek in days) return candidate
+            candidate = candidate.minusDays(1)
+        }
+        return null
+    }
+
+    /**
+     * [nextRunAt], counting an interval from when the rule last ran or was
+     * written instead of from [after].
+     *
+     * Counting from [after] meant every re-arm pushed an interval out again,
+     * and the host re-arms after every event — a screen turning on every
+     * twenty minutes kept an hourly rule from ever running.
+     */
+    fun nextRunAt(after: ZonedDateTime, lastFiredAt: Long?, savedAt: Long?): ZonedDateTime {
+        val interval = everyMinutes ?: return nextRunAt(after)
+        val base = listOfNotNull(lastFiredAt, savedAt).maxOrNull() ?: return nextRunAt(after)
+        val intervalMs = interval * 60_000L
+        val afterMs = after.toInstant().toEpochMilli()
+        var next = base + intervalMs
+        if (next <= afterMs) next += ((afterMs - next) / intervalMs + 1) * intervalMs
+        return java.time.Instant.ofEpochMilli(next).atZone(after.zone)
     }
 
     /**
@@ -244,6 +316,9 @@ data class AutomationSchedule(
 
     companion object {
         const val MIN_INTERVAL_MINUTES = 15
+
+        /** An alarm a few seconds early still counts; one a whole interval early does not. */
+        private const val SLACK_MS = 60_000L
         const val MAX_INTERVAL_MINUTES = 24 * 60
 
         fun parse(json: JsonObject, ruleId: String): AutomationSchedule {
@@ -287,11 +362,22 @@ data class AutomationSchedule(
  */
 object AutomationWakeups {
 
-    /** The earliest moment any enabled scheduled rule is next due, or null if none is. */
-    fun nextRunAt(rules: List<AutomationRule>, after: ZonedDateTime): ZonedDateTime? =
+    /**
+     * The earliest moment any enabled scheduled rule is next due, or null if none is.
+     *
+     * With [history], an interval counts from its last run, which is what the
+     * host needs; without it, from [after].
+     */
+    fun nextRunAt(
+        rules: List<AutomationRule>,
+        after: ZonedDateTime,
+        history: AutomationHistory? = null,
+    ): ZonedDateTime? =
         rules.asSequence()
             .filter { it.enabled && it.trigger.kind == AutomationTriggerKind.SCHEDULE }
-            .mapNotNull { it.trigger.schedule?.nextRunAt(after) }
+            .mapNotNull { rule ->
+                rule.trigger.schedule?.nextRunAt(after, history?.lastFiredAt(rule.id), rule.savedAt)
+            }
             .minOrNull()
 
     /**

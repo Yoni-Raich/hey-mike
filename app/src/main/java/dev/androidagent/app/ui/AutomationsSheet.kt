@@ -49,10 +49,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -60,9 +64,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalBottomSheetProperties
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -72,6 +79,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.androidagent.core.AutomationAttention
@@ -91,8 +100,18 @@ internal fun AutomationsSheet(state: AgentUiState, actions: AgentUiActions) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scrollState = rememberScrollState()
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    var editing by rememberSaveable { mutableStateOf(false) }
     val overview = state.automations.overview
     val selected = selectedId?.let { id -> overview.summaries.firstOrNull { it.id == id } }
+    // A rule deleted out from under the editor leaves nothing to edit.
+    val isEditing = editing && selected != null
+    val back: () -> Unit = {
+        when {
+            isEditing -> { editing = false }
+            selected != null -> { selectedId = null }
+            else -> actions.onCloseAutomations()
+        }
+    }
     val animate = animationsEnabled()
 
     ModalBottomSheet(
@@ -103,7 +122,7 @@ internal fun AutomationsSheet(state: AgentUiState, actions: AgentUiActions) {
         properties = ModalBottomSheetProperties(shouldDismissOnBackPress = false),
         modifier = Modifier.fillMaxHeight(0.94f),
     ) {
-        BackHandler { if (selected != null) selectedId = null else actions.onCloseAutomations() }
+        BackHandler { back() }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -113,21 +132,25 @@ internal fun AutomationsSheet(state: AgentUiState, actions: AgentUiActions) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { if (selected == null) actions.onCloseAutomations() else selectedId = null }) {
+                IconButton(onClick = back) {
                     Icon(
                         Icons.Outlined.ArrowBack,
-                        contentDescription = if (selected == null) "Close rules" else "Back to rules",
+                        contentDescription = when {
+                            isEditing -> "Back to the rule"
+                            selected != null -> "Back to rules"
+                            else -> "Close rules"
+                        },
                     )
                 }
                 Text(
-                    selected?.name ?: "Standing rules",
+                    if (isEditing && selected != null) "Edit " + selected.name else selected?.name ?: "Standing rules",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                 )
             }
 
             AnimatedContent(
-                targetState = selected?.id,
+                targetState = selected?.id?.let { if (isEditing) "$it#edit" else it },
                 transitionSpec = {
                     if (!animate) {
                         fadeIn(tween(0)) togetherWith fadeOut(tween(0))
@@ -140,8 +163,17 @@ internal fun AutomationsSheet(state: AgentUiState, actions: AgentUiActions) {
                 label = "automation-route",
             ) { target ->
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    val rule = target?.let { id -> overview.summaries.firstOrNull { it.id == id } }
-                    if (rule == null) RuleList(state, actions) { selectedId = it } else RuleDetail(rule, state, actions)
+                    val editTarget = target?.endsWith("#edit") == true
+                    val id = target?.removeSuffix("#edit")
+                    val rule = id?.let { wanted -> overview.summaries.firstOrNull { it.id == wanted } }
+                    when {
+                        rule == null -> RuleList(state, actions) {
+                            selectedId = it
+                            editing = false
+                        }
+                        editTarget -> RuleEditor(rule, actions, onDone = { editing = false })
+                        else -> RuleDetail(rule, state, actions, onEdit = { editing = true })
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -285,7 +317,12 @@ private fun AttentionBadge(attention: AutomationAttention) {
  * format already knows it exactly, so there is no reason to make anyone guess.
  */
 @Composable
-private fun ColumnScope.RuleDetail(rule: AutomationSummary, state: AgentUiState, actions: AgentUiActions) {
+private fun ColumnScope.RuleDetail(
+    rule: AutomationSummary,
+    state: AgentUiState,
+    actions: AgentUiActions,
+    onEdit: () -> Unit,
+) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -385,6 +422,141 @@ private fun ColumnScope.RuleDetail(rule: AutomationSummary, state: AgentUiState,
     Explanation(
         "Running it now stands in for its trigger. Everything else still applies — the hours it is " +
             "allowed, how often it may run — so it may decide not to.",
+    )
+
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+    var confirmDelete by rememberSaveable(rule.id) { mutableStateOf(false) }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedButton(
+            onClick = onEdit,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp),
+        ) {
+            Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Edit")
+        }
+        OutlinedButton(
+            onClick = { confirmDelete = true },
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp),
+        ) {
+            Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Delete")
+        }
+    }
+    if (confirmDelete) {
+        // Deleting a standing rule is the one change here that cannot be
+        // switched back, so it is the one that asks.
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete \u201c" + rule.name + "\u201d?") },
+            text = {
+                Text(
+                    "It will stop running and cannot be brought back. To pause it instead, turn it off.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        actions.onDeleteRule(rule.id)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/**
+ * Change a rule: in words, or directly.
+ *
+ * In words is the first choice, because Mike already knows the format and
+ * dry-runs the result; the request goes to the chat like anything else the
+ * person types. The direct editor is for the exact change — a time, a limit —
+ * and saves through the same validation as the agent's `update`, so a rule
+ * that would be refused there is refused here, with the reason, and nothing
+ * is written.
+ */
+@Composable
+private fun ColumnScope.RuleEditor(rule: AutomationSummary, actions: AgentUiActions, onDone: () -> Unit) {
+    var request by rememberSaveable(rule.id) { mutableStateOf("") }
+    var text by rememberSaveable(rule.id) { mutableStateOf(actions.ruleDefinition(rule.id).orEmpty()) }
+    var error by rememberSaveable(rule.id) { mutableStateOf<String?>(null) }
+
+    Text(
+        "TELL MIKE WHAT TO CHANGE",
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlinedTextField(
+        value = request,
+        onValueChange = { request = it },
+        placeholder = { Text("e.g. make it 20:00, and only on weekdays") },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 2,
+    )
+    Button(
+        onClick = {
+            actions.onSend(
+                "Change my standing rule \"" + rule.id + "\": " + request.trim() +
+                    "\nUse automation_rule mode:\"update\" on that exact id, dry-run it with mode:\"test\", " +
+                    "and tell me what is different.",
+                emptyList(),
+            )
+            actions.onCloseAutomations()
+        },
+        enabled = request.isNotBlank(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp),
+    ) { Text("Ask Mike") }
+
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+    Text(
+        "OR EDIT THE RULE DIRECTLY",
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (text.isEmpty()) {
+        Explanation("This rule could not be read, so there is nothing to edit here.")
+        return
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            error = null
+        },
+        textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = MaterialTheme.typography.bodySmall.fontSize),
+        isError = error != null,
+        supportingText = error?.let { reason -> { Text(reason) } },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 8,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedButton(onClick = onDone, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Cancel") }
+        Button(
+            onClick = {
+                val refused = actions.onSaveRule(rule.id, text)
+                if (refused == null) onDone() else error = refused
+            },
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+        ) { Text("Save") }
+    }
+    Explanation(
+        "The id cannot change here. A rule saved after its time today waits for its next time " +
+            "rather than running at once.",
     )
 }
 

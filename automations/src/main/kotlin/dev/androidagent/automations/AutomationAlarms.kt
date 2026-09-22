@@ -119,6 +119,8 @@ class AutomationBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         val action = intent?.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
-        context?.automationHost()?.rearm()
+        // Catch up rather than only re-arm: a slot that passed while the phone
+        // was off is still owed if it is inside its window.
+        context?.automationHost()?.catchUp()
     }
 }

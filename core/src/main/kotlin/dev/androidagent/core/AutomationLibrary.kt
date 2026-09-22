@@ -21,6 +21,7 @@
 package dev.androidagent.core
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.util.Locale
@@ -96,11 +97,66 @@ class AutomationLibrary(private val root: File) {
         return file
     }
 
-    fun delete(id: String): Boolean = File(root, id.lowercase(Locale.ROOT) + SUFFIX).delete()
+    /**
+     * The rule with exactly this id, or null.
+     *
+     * What every mode that changes a rule uses. [find] is forgiving on purpose
+     * for reading, but "delete morning" must never resolve to "morning-news"
+     * because it happened to be the only near match.
+     */
+    fun get(id: String): AutomationRule? {
+        val wanted = id.trim().lowercase(Locale.ROOT)
+        if (!AutomationRule.ID_RE.matches(wanted)) return null
+        val file = File(root, wanted + SUFFIX)
+        return if (file.isFile) read(file).getOrNull() else null
+    }
+
+    /** Remove a rule. Only an exact, well-formed id reaches the file system. */
+    fun delete(id: String): Boolean {
+        val wanted = id.trim().lowercase(Locale.ROOT)
+        if (!AutomationRule.ID_RE.matches(wanted)) return false
+        return File(root, wanted + SUFFIX).delete()
+    }
+
+    /**
+     * Change part of a rule and save it.
+     *
+     * [changes] is merged onto the saved definition key by key: a key replaces
+     * the old value whole, and `null` removes it. The result is parsed exactly
+     * like a new rule, so an edit cannot save what `create` would refuse, and a
+     * failed edit leaves the old file untouched.
+     *
+     * The id cannot change here. Renaming is delete plus create, said out loud,
+     * because the journal - and so the cooldown and the daily count - is keyed
+     * by id.
+     */
+    fun update(id: String, changes: JsonObject): AutomationRule {
+        val existing = get(id) ?: throw AutomationFormatException(
+            "rule_not_found",
+            "There is no rule with the id \"$id\".",
+        )
+        changes.str("id")?.let { newId ->
+            if (newId.lowercase(Locale.ROOT) != existing.id) {
+                throw AutomationFormatException(
+                    "rule_rename_refused",
+                    "An edit cannot change a rule's id (\"${existing.id}\" to \"$newId\"). " +
+                        "Create the new rule, then delete the old one.",
+                )
+            }
+        }
+        val merged = existing.toJson().toMutableMap()
+        for ((key, value) in changes) {
+            if (key == "id") continue
+            if (value is JsonNull) merged.remove(key) else merged[key] = value
+        }
+        val updated = AutomationRule.parse(JsonObject(merged))
+        save(updated)
+        return updated
+    }
 
     /** Turn a rule on or off without rewriting it. Returns null when there is no such rule. */
     fun setEnabled(id: String, enabled: Boolean): AutomationRule? {
-        val rule = (find(id) as? Lookup.Found)?.definition ?: return null
+        val rule = get(id) ?: return null
         if (rule.enabled == enabled) return rule
         val updated = rule.copy(enabled = enabled)
         save(updated)
@@ -119,7 +175,7 @@ class AutomationLibrary(private val root: File) {
         }
         val json = Json.parseToJsonElement(file.readText(Charsets.UTF_8)) as? JsonObject
             ?: throw AutomationFormatException("automation_invalid", "${file.name} is not a JSON object.")
-        AutomationRule.parse(json, source = file.name)
+        AutomationRule.parse(json, source = file.name, savedAt = file.lastModified())
     }
 
     private fun normalize(value: String): String =

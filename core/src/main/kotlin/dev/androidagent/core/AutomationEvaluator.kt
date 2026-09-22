@@ -112,7 +112,18 @@ class AutomationEvaluator(private val history: AutomationHistory) {
         if (event is AutomationEvent.Manual && !manualForThisRule) {
             return skip(Skip.TRIGGER, "This run was for \"${event.ruleId}\".")
         }
-        if (!manualForThisRule && !rule.trigger.matches(event)) {
+        if (!manualForThisRule && event is AutomationEvent.Clock && rule.trigger.kind == AutomationTriggerKind.SCHEDULE) {
+            // Due-ness needs the history: a late alarm still owes its slot, and
+            // a slot already served is not owed twice. See [AutomationSchedule.dueSlot].
+            val schedule = rule.trigger.schedule
+            val slot = schedule?.dueSlot(
+                now = event.at,
+                lastFiredAt = history.lastFiredAt(rule.id),
+                savedAt = rule.savedAt,
+                toleranceMs = rule.guard.validForMs,
+            )
+            if (slot == null) return skip(Skip.TRIGGER, notDue(rule, event.at))
+        } else if (!manualForThisRule && !rule.trigger.matches(event)) {
             return skip(
                 Skip.TRIGGER,
                 "A \"${event.kind.wire}\" event does not match ${rule.trigger.describe().content}.",
@@ -174,6 +185,23 @@ class AutomationEvaluator(private val history: AutomationHistory) {
             actions = rule.actions.map { it.bind(exported) },
             exported = exported,
         )
+    }
+
+    /** Why a schedule owes nothing right now, in the terms [AutomationSchedule.dueSlot] decided it. */
+    private fun notDue(rule: AutomationRule, now: java.time.ZonedDateTime): String {
+        val schedule = rule.trigger.schedule ?: return "It has no schedule."
+        val lastFired = history.lastFiredAt(rule.id)
+        if (schedule.everyMinutes != null) {
+            return "It runs ${schedule.describe()}, and that long has not passed since it last ran or was saved."
+        }
+        val slot = schedule.lastSlotAtOrBefore(now) ?: return "It is not one of its days."
+        val slotMs = slot.toInstant().toEpochMilli()
+        val time = "%02d:%02d".format(slot.hour, slot.minute)
+        return when {
+            lastFired != null && lastFired >= slotMs -> "It already ran for its $time slot."
+            rule.savedAt != null && rule.savedAt > slotMs -> "It was saved after its $time slot; it waits for the next one."
+            else -> "Its $time slot passed more than ${rule.guard.validForMs / 60_000L} minutes ago, so it waits for the next one."
+        }
     }
 
     companion object {
