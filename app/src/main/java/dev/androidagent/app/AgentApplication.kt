@@ -27,6 +27,8 @@ import dev.androidagent.adb.AndroidAdbTransport
 import dev.androidagent.automations.AndroidAutomationActions
 import dev.androidagent.automations.AutomationHost
 import dev.androidagent.automations.AutomationHostOwner
+import dev.androidagent.core.AutomationActionResult
+import dev.androidagent.core.AutomationPlaceStore
 import dev.androidagent.core.AgentCoordinator
 import dev.androidagent.core.AutomationJournal
 import dev.androidagent.core.AutomationLibrary
@@ -147,6 +149,11 @@ class AgentGraph(private val app: Application) {
                 name = "apps_settings",
                 readOnlyOperations = setOf("list_apps", "app_info", "permission_status"),
             ),
+            WorkflowCallMetadata(
+                name = "location",
+                // Reading where the phone is changes nothing about it.
+                readOnlyOperations = setOf("permission_status", "current"),
+            ),
         ).associateBy { it.name },
     )
     // Accessibility first: it needs no ADB, keeps the phone's own settings
@@ -175,6 +182,8 @@ class AgentGraph(private val app: Application) {
     )
     /** Standing rules, beside the workflows they name. */
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
+    /** Where "home" is. Beside the rules, so one name means the same to every rule. */
+    val automationPlaces = AutomationPlaceStore(AutomationPlaceStore.fileIn(runtime.homeDirectory))
     /** Read by the panel to say when each rule last ran; written only by the host. */
     val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
     private val automationActions = AndroidAutomationActions(
@@ -201,6 +210,20 @@ class AgentGraph(private val app: Application) {
         // Naming a rule supplies its trigger, so a scheduled rule can be proved
         // without waiting for its hour. Everything else about it still applies.
         fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
+        // The six things a rule can do were never rule-only by design, just by
+        // where the code sat. This is the same action path with no rule around
+        // it: nothing is saved, no guard applies, and the user is right here.
+        places = automationPlaces,
+        // Naming a place can make a dormant rule live, and forgetting one can
+        // stop the only thing that was being watched for.
+        onPlacesChanged = { if (::automationHost.isInitialized) automationHost.syncPlaceWatch() },
+        performNow = { action ->
+            if (::automationHost.isInitialized) {
+                automationHost.performNow(action)
+            } else {
+                AutomationActionResult.failed("automations are not running yet")
+            }
+        },
     )
     /** One Jev call owns the bounded observe-decide-act loop and routes every action here. */
     val jev = AndroidJevProvider(app)
@@ -260,6 +283,7 @@ class AgentGraph(private val app: Application) {
             library = automations,
             history = automationJournal,
             actions = automationActions,
+            places = automationPlaces,
             scope = scope,
             agentAvailable = { runCoordinator.available.value },
         )

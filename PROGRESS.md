@@ -112,6 +112,29 @@ not production-ready.
   settle timing between steps and a send approval landing mid-plan are unproven
   on hardware. The UI label and pulse mappings for `act_plan` were not compiled
   or seen on a screen.
+- **`:a11y:test` is red on `dev`, and CI does not look.** On 2026-09-16,
+  `A11yToolSchemaTest`'s two cases fail at `0ff770a` with an
+  `ExceptionInInitializerError` / NPE initialising
+  `A11yDeviceTools.TOOL_DEFINITIONS` — a local JVM test reaching a static
+  initialiser that touches Android classes the stub jar answers with null. It
+  reproduces on `dev` with no local changes, so it is not from the location or
+  places work, which touches no file under `a11y/`. CI runs only
+  `:core:test :app:assembleDevDebug :app:lintDevDebug`, which is why it is red
+  and unnoticed; `:device-tools:test` has the same blind spot. Someone should
+  either fix the initialiser or widen the CI command, and until then a green
+  PR does not mean a green `./gradlew test`.
+- Location, places and one-off actions — on 2026-09-16,
+  `:core:test :device-tools:test :automations:testDebugUnitTest
+  :app:assembleDevDebug :app:lintDevDebug` passed together on a forced rerun:
+  634 tests across `:core` and `:device-tools` with zero failures, 0 lint
+  errors and 11 warnings, none in a file this change touches. New coverage is
+  17 cases for the place circle, its hysteresis and its store, 12 for the
+  `location` tool's grants, freshness and the off-versus-no-fix split, 11 for
+  one-off actions and 8 for the place modes. **Nothing here has run on a
+  phone:** no permission dialog has been seen, no fix has been read from a real
+  radio, no arrival has been detected, and no one-off action has been performed
+  on hardware. The settings copy for background location was not compiled onto
+  a screen.
 - Native capability APIs and API-capable workflows — on 2026-09-15,
   `:core:test :device-tools:test :workspace:testDebugUnitTest
   :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` passed
@@ -478,14 +501,16 @@ not production-ready.
   similar builds, decide whether a 19:00 alarm actually lands on a sideloaded
   app. The existing foreground service helps; nothing here proves it is enough,
   on any phone.
-- `place` triggers are served by nothing and are reported dormant. One of the two
-  reasons is now gone: `RuntimePermissionBroker`, merged with the capability
-  tools, is the machinery for requesting `ACCESS_BACKGROUND_LOCATION`. The other
-  stands — nothing provides a geofence, and adding one means either a Google Play
-  Services dependency in a project that ships outside Play, or
-  `LocationManager.addProximityAlert`, which is unreliable enough that shipping
-  it quietly would be worse than the gap. That is a decision for the owner, not
-  a task.
+- **`place` triggers now have a path, and none of it has run on hardware.**
+  `AutomationPlaceWatcher` subscribes to the coarse network provider and
+  `AutomationPlaceWatch` decides arriving and leaving; the decision half is unit
+  tested, the subscription half is not testable off a phone and has never seen
+  one. Unproven: whether `NETWORK_PROVIDER` updates arrive at all under Doze on
+  a sideloaded app, what the real battery cost is over a day, whether the 80m
+  radius floor is generous enough to stop flapping in practice, and whether the
+  background-location grant survives on OEM builds that revoke permissions for
+  unused apps. The 80m floor and the two-minute interval were reasoned from
+  typical network-fix accuracy, not measured.
 - **The whole side panel is unseen.** The strip, the rules sheet, the chain on a
   rule's screen and the amber dot on the hamburger compile and are driven by
   unit-tested logic, but no one has looked at them on a phone or in an emulator,

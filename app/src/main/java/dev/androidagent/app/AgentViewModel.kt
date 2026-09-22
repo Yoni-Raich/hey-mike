@@ -391,6 +391,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         dev.androidagent.automations.AutomationNotificationListener.isEnabled(getApplication())
                     }.getOrDefault(false),
                     exactAlarms = runCatching { host.canFireOnTime() }.getOrDefault(true),
+                    placeWatch = runCatching { host.canWatchPlaces() }.getOrDefault(false),
+                    namedPlaces = runCatching { host.places.all().size }.getOrDefault(0),
                 ),
             )
         }

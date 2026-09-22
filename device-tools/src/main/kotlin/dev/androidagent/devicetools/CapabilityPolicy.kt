@@ -53,6 +53,7 @@ object CapabilityPolicy {
     const val TOOL_FILES_MEDIA = "files_media"
     const val TOOL_COMMUNICATIONS = "communications"
     const val TOOL_APPS_SETTINGS = "apps_settings"
+    const val TOOL_LOCATION = "location"
 
     val TOOLS: List<String> = listOf(
         TOOL_CONTACTS,
@@ -60,6 +61,7 @@ object CapabilityPolicy {
         TOOL_FILES_MEDIA,
         TOOL_COMMUNICATIONS,
         TOOL_APPS_SETTINGS,
+        TOOL_LOCATION,
     )
 
     val CONTACT_OPS: Set<String> = setOf("permission_status", "search", "list", "get", "create_draft")
@@ -78,12 +80,20 @@ object CapabilityPolicy {
         "open_special_access", "open_system_setting",
     )
 
+    /**
+     * Foreground only, and there is no "watch" here on purpose: a tool that
+     * could subscribe would be a background tracker wearing a read's clothes.
+     * Standing rules do the watching, under their own permission.
+     */
+    val LOCATION_OPS: Set<String> = setOf("permission_status", "current")
+
     fun operationsFor(tool: String): Set<String> = when (tool) {
         TOOL_CONTACTS -> CONTACT_OPS
         TOOL_CALENDAR -> CALENDAR_OPS
         TOOL_FILES_MEDIA -> FILES_OPS
         TOOL_COMMUNICATIONS -> COMM_OPS
         TOOL_APPS_SETTINGS -> APPS_OPS
+        TOOL_LOCATION -> LOCATION_OPS
         else -> emptySet()
     }
 
@@ -133,6 +143,10 @@ object CapabilityPolicy {
             "open_special_access" to setOf("kind", "package"),
             "open_system_setting" to setOf("setting"),
         ),
+        TOOL_LOCATION to mapOf(
+            "permission_status" to emptySet(),
+            "current" to setOf("max_age_ms", "precise"),
+        ),
     )
 
     const val DEFAULT_LIMIT = 20
@@ -163,6 +177,16 @@ object CapabilityPolicy {
     const val PERM_MEDIA_SELECTED = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
     /** Pre-33 storage grant (API 30-32 gate media behind this, not READ_MEDIA_*). */
     const val PERM_STORAGE = "android.permission.READ_EXTERNAL_STORAGE"
+    const val PERM_LOCATION_COARSE = "android.permission.ACCESS_COARSE_LOCATION"
+    const val PERM_LOCATION_FINE = "android.permission.ACCESS_FINE_LOCATION"
+
+    /**
+     * How stale a cached fix may be before it is thrown away rather than
+     * reported. A position from this morning is not an answer to "where am I",
+     * and reporting one without saying so would be worse than saying nothing.
+     */
+    const val DEFAULT_LOCATION_MAX_AGE_MS = 5L * 60 * 1000
+    const val MAX_LOCATION_MAX_AGE_MS = 24L * 60 * 60 * 1000
 
     /** Runtime permissions this gateway may ever ask about. Nothing else is requested or reported. */
     val REQUESTABLE_PERMISSIONS: Set<String> = setOf(
@@ -173,7 +197,49 @@ object CapabilityPolicy {
         PERM_MEDIA_AUDIO,
         PERM_MEDIA_SELECTED,
         PERM_STORAGE,
+        PERM_LOCATION_COARSE,
+        PERM_LOCATION_FINE,
     )
+
+    /**
+     * Never requestable, never reported by this gateway. Background location
+     * belongs to standing rules, which ask for it on their own screen where
+     * the user can see what keeps watching and why. A tool that could obtain
+     * it in the middle of a turn would turn one answered question into a
+     * permanent subscription.
+     */
+    const val PERM_LOCATION_BACKGROUND = "android.permission.ACCESS_BACKGROUND_LOCATION"
+
+    /**
+     * Which location grant covers a request. Coarse alone answers "which
+     * neighbourhood"; precise needs fine. Asking for fine also offers the user
+     * the coarse-only answer on API 31+, so a precise request never dead-ends.
+     */
+    /**
+     * How fresh the caller insists on. Clamped rather than refused at the top
+     * end: a model asking for a week-old fix means "anything you have", and
+     * the age travels with the answer anyway. Zero or negative is a mistake,
+     * not a request for a live fix, so it is refused.
+     */
+    fun parseLocationMaxAge(args: JsonObject): Long {
+        val raw = args["max_age_ms"] ?: return DEFAULT_LOCATION_MAX_AGE_MS
+        val value = (raw as? JsonPrimitive)?.longOrNull
+            ?: throw PolicyException("invalid_argument", "\"max_age_ms\" must be a whole number of milliseconds.")
+        if (value <= 0) {
+            throw PolicyException(
+                "invalid_argument",
+                "\"max_age_ms\" must be positive. This never waits for a new fix; it only reports one that exists.",
+            )
+        }
+        return value.coerceAtMost(MAX_LOCATION_MAX_AGE_MS)
+    }
+
+    fun locationMissingFor(precise: Boolean, granted: (String) -> Boolean): List<String> = when {
+        precise && granted(PERM_LOCATION_FINE) -> emptyList()
+        precise -> listOf(PERM_LOCATION_FINE, PERM_LOCATION_COARSE)
+        granted(PERM_LOCATION_FINE) || granted(PERM_LOCATION_COARSE) -> emptyList()
+        else -> listOf(PERM_LOCATION_COARSE, PERM_LOCATION_FINE)
+    }
 
     /**
      * Media classes the caller may actually read (API 33+ selected-photo

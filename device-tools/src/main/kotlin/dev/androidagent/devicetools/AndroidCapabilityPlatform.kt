@@ -28,6 +28,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.CalendarContract
@@ -478,6 +480,61 @@ class AndroidCapabilityPlatform(
         if (action !in CapabilityPolicy.SYSTEM_SETTINGS.values) return false
         return startVisible(Intent(action))
     }
+
+    // ---- location ----
+
+    private val locationManager: LocationManager?
+        get() = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+
+    override fun locationEnabled(): Boolean {
+        val manager = locationManager ?: return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            manager.isLocationEnabled
+        } else {
+            @Suppress("DEPRECATION")
+            manager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        }
+    }
+
+    /**
+     * The best cached fix across the providers this request may use, never a
+     * new one. `getLastKnownLocation` returns immediately; requesting a fix
+     * would hold the run's tool lock for as long as the sky takes, which is
+     * the wrong trade for a question the model asked mid-sentence.
+     *
+     * "Best" is newest, not most accurate: an old precise fix is a worse
+     * answer to "where am I" than a recent rough one, and the accuracy travels
+     * with the row either way.
+     */
+    override suspend fun lastLocation(maxAgeMs: Long, precise: Boolean): LocationFix? =
+        withContext(Dispatchers.IO) {
+            val manager = locationManager ?: return@withContext null
+            val providers = buildList {
+                if (precise) add(LocationManager.GPS_PROVIDER)
+                add(LocationManager.NETWORK_PROVIDER)
+                add(LocationManager.PASSIVE_PROVIDER)
+            }
+            val now = System.currentTimeMillis()
+            val best: Location? = providers
+                .mapNotNull { provider ->
+                    // A provider this build has no grant for throws rather
+                    // than returning null; the dispatcher checked the grant,
+                    // but a revoke between the two is still possible.
+                    runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
+                }
+                .filter { now - it.time in 0..maxAgeMs }
+                .maxByOrNull { it.time }
+            best?.let { fix ->
+                LocationFix(
+                    latitude = fix.latitude,
+                    longitude = fix.longitude,
+                    accuracyMeters = if (fix.hasAccuracy()) fix.accuracy else null,
+                    ageMs = (now - fix.time).coerceAtLeast(0L),
+                    provider = fix.provider,
+                )
+            }
+        }
 
     // ---- intent plumbing ----
 

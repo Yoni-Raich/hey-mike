@@ -20,6 +20,7 @@ a chat starts, so start a fresh chat after an app update if these names are miss
 - `apps_settings`: `list_apps`, `app_info`, `open_app`, `open_app_settings`,
   `permission_status`, `request_permissions`, `open_special_access`,
   `open_system_setting`.
+- `location`: `permission_status`, `current`.
 
 Every call needs `operation`. Unknown operations and fields are refused. Results
 are typed JSON with `ok`, `tool` and `operation`. Lists are capped; narrow the
@@ -32,7 +33,31 @@ contacts(operation="search", query="Dana", limit=5)
 calendar(operation="list", startMs=..., endMs=..., limit=20)
 files_media(operation="search", kind="image", name="receipt", limit=10)
 apps_settings(operation="list_apps", query="maps", limit=10)
+location(operation="current")
 ```
+
+## Where the phone is
+
+`location(operation="current")` reports the newest fix the phone already has.
+It never waits for a new one, so a phone whose radio has been idle answers
+`errorType:"no_fix"` rather than stalling the turn — say so and offer to try
+again, or widen `max_age_ms`. Every answer carries `age_ms`: a ten-minute-old
+fix is not where the user is standing, and saying "you are at X" from one is
+wrong.
+
+Coarse accuracy is the default and is enough for a town, a neighbourhood or
+"which city am I in". Pass `precise=true` only when the task actually needs the
+street — it asks for a stronger permission the user may refuse. `precise` comes
+back in the answer, and a coarse grant always reports `precise:false` even when
+you asked for true.
+
+`errorType:"location_off"` means the whole phone has location switched off. That
+is not a permission problem and requesting permissions will not fix it; use
+`apps_settings(operation="open_system_setting", ...)`.
+
+There is no background or repeating form of this tool. A task that means "tell
+me when I get home" is a standing rule — see `device-automation` — not a loop
+around `location`.
 
 Workspace operations only see the current run workspace. Paths must be relative.
 They cannot delete, escape with `..`, or use `file://`. Media open/share accepts

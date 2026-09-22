@@ -114,7 +114,7 @@ class AutomationOverviewTest {
         val summary = AutomationSummaries.of(homeLights, history, noPlaces, now)
         assertEquals(AutomationSummary.Status.BLOCKED, summary.status)
         assertTrue(summary.detail, summary.detail.contains("never run"))
-        assertEquals("Mike can’t track location yet", summary.blockedReason)
+        assertEquals("Mike can’t check where you are yet", summary.blockedReason)
     }
 
     @Test fun aBlockedRuleThatUsedToRunSaysItStopped() {
@@ -164,7 +164,7 @@ class AutomationOverviewTest {
 
     @Test fun theSentenceNamesTheRuleThatCannotRun() {
         val view = overview(listOf(evening, homeLights), noPlaces)
-        assertEquals("Home lights can’t run — Mike can’t track location yet", view.line)
+        assertEquals("Home lights can’t run — Mike can’t check where you are yet", view.line)
         assertTrue(view.lineIsWarning)
         assertTrue(view.needsAttention)
     }

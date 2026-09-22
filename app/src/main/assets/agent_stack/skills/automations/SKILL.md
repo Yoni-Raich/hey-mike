@@ -16,7 +16,58 @@ automation_rule(mode="create", rule={...})
 automation_rule(mode="test", rule="evening-post", event={...}, now="...")
 automation_rule(mode="run", rule="evening-post")   -> fire it now, for real
 automation_rule(mode="enable"|"disable"|"delete", rule="evening-post")
+automation_rule(mode="do", action={...})           -> do one action now, no rule
+automation_rule(mode="places")                     -> the named places
+automation_rule(mode="save_place", place={...})    -> name where the phone is
+automation_rule(mode="forget_place", place="home")
 ```
+
+## Places
+
+A `place` trigger names a place; it does not say where it is. Until the name is
+saved, the rule is dormant. Name one from where the user actually is:
+
+```text
+location(operation="current")                      -> latitude, longitude, age_ms
+automation_rule(mode="save_place", place={"id":"home","label":"Home",
+                                          "latitude":32.0853,"longitude":34.7818})
+```
+
+Check `age_ms` before you save: a ten-minute-old fix is where they were, not
+where they are standing. If it is stale, say so and try again rather than
+naming the wrong spot — a wrong "home" is a rule that fires at the supermarket.
+
+The radius defaults to 150m and cannot go below 80m. That is not caution, it is
+the resolution: arriving is worked out from the coarse network position, so a
+rule fires within a minute or two of crossing, never at the instant. Do not
+promise the user otherwise.
+
+Watching needs location "all the time", which no tool can request. If
+`save_place` or a `place` rule reports the trigger dormant, tell the user to
+turn it on in Settings > Standing rules; do not try to request it yourself.
+
+## Once is not a rule
+
+`mode="do"` performs a single action right now with nothing saved: no trigger,
+no conditions, no cooldown, and no entry in the rules list.
+
+```text
+automation_rule(mode="do", action={"type":"notify","text":"The rice is done"})
+automation_rule(mode="do", action={"type":"open_intent","action":"android.intent.action.VIEW","uri":"geo:0,0?q=pharmacy"})
+```
+
+Use it whenever the user asked for the **thing**, not for it to keep happening.
+"Put a reminder on my shade" is `do`. "Remind me every evening" is a rule. Do
+not create a rule, run it once and delete it — that leaves a rule behind if
+anything goes wrong in the middle, and the user sees it.
+
+Three things `do` refuses, all on purpose:
+
+- **`{{placeholders}}`** — there is no event to fill them from. Write the final
+  text.
+- **`agent_turn`** — you already are the turn. Do the thing yourself.
+- **`requiresApproval`** — that exists so an unattended rule can put a person in
+  the loop. The person is in the loop; ask them in the conversation.
 
 ## The shape
 

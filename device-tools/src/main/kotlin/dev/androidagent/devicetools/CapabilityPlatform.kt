@@ -55,6 +55,19 @@ data class AppRow(
     val system: Boolean = false,
 )
 
+/**
+ * One position fix. [ageMs] travels with it because a fix is only an answer
+ * while it is fresh, and the model cannot tell a cached one from a live one
+ * unless the row says so.
+ */
+data class LocationFix(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Float?,
+    val ageMs: Long,
+    val provider: String?,
+)
+
 /** Whether a media read is allowed, and what to ask for when it is not. */
 data class MediaReadState(
     val granted: Boolean,
@@ -118,4 +131,20 @@ interface CapabilityPlatform {
     suspend fun openAppSettings(packageName: String): Boolean
     suspend fun openSpecialAccess(kind: String, packageName: String?): Boolean
     suspend fun openSystemSetting(action: String): Boolean
+
+    /**
+     * Whether this phone can produce a position at all — location switched on
+     * at the OS level, independently of whether this app is allowed to ask.
+     * Separating the two is what lets the failure say which one is wrong.
+     */
+    fun locationEnabled(): Boolean
+
+    /**
+     * A position no older than [maxAgeMs]. Null when nothing has a fix that
+     * fresh: this never blocks waiting for one, because a tool call that sits
+     * for thirty seconds waiting on GPS holds the run's tool lock the whole
+     * time. [precise] asks for the fine-grained providers; without it the
+     * coarse answer is enough.
+     */
+    suspend fun lastLocation(maxAgeMs: Long, precise: Boolean): LocationFix?
 }
