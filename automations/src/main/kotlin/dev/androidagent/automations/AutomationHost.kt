@@ -107,7 +107,7 @@ class AutomationHost(
         started = true
         context.registerReceiver(deviceStateReceiver, deviceStateFilter)
         lastDeviceState = readDeviceState()
-        rearm()
+        catchUp()
     }
 
     fun stop() {
@@ -141,22 +141,42 @@ class AutomationHost(
      */
     fun watchedNotificationPackages(): Set<String> = AutomationWakeups.watchedPackages(library.all())
 
-    /** Deliver an event. Evaluation and any run happen off the caller's thread. */
+    /**
+     * Deliver an event. Evaluation and any run happen off the caller's thread.
+     *
+     * Evaluation happens inside [runLock], not before it. Deciding outside the
+     * lock let two events that landed together — the alarm and a catch-up, a
+     * charger bouncing — both read the history before either run recorded, and
+     * both fire the same rule. Under the lock the second decision sees the
+     * first run's record and its cooldown.
+     */
     fun onEvent(event: AutomationEvent) {
         scope.launch {
-            val context = snapshot(event.at)
-            val outcomes = evaluator.evaluate(library.all(), event, context)
-            for (outcome in outcomes.filterIsInstance<AutomationEvaluator.Outcome.Fired>()) {
-                val report = runLock.withLock { runner.run(outcome) }
-                onReport(report)
-                if (!report.ok) {
-                    Log.w(TAG, "Rule ${report.ruleId} stopped: ${report.errorType} ${report.message.orEmpty()}")
+            runLock.withLock {
+                val context = snapshot(event.at)
+                val outcomes = evaluator.evaluate(library.all(), event, context)
+                for (outcome in outcomes.filterIsInstance<AutomationEvaluator.Outcome.Fired>()) {
+                    val report = runner.run(outcome)
+                    onReport(report)
+                    if (!report.ok) {
+                        Log.w(TAG, "Rule ${report.ruleId} stopped: ${report.errorType} ${report.message.orEmpty()}")
+                    }
                 }
             }
             // A rule that just fired has a new cooldown and a new next run.
             rearm()
         }
     }
+
+    /**
+     * Check the clock now, then re-arm.
+     *
+     * A schedule owes its slot for a while after the moment passes (see
+     * `AutomationSchedule.dueSlot`), so a phone that was off, asleep past an
+     * inexact alarm, or locked when a rule needed you still runs it when it
+     * next can — and never twice, because a served slot is in the journal.
+     */
+    fun catchUp() = onEvent(AutomationEvent.Clock(ZonedDateTime.now(zone())))
 
     /** Run one rule by name, as if a person had asked for it. */
     fun runNow(ruleId: String) = onEvent(AutomationEvent.Manual(ruleId, ZonedDateTime.now(zone())))
@@ -168,7 +188,7 @@ class AutomationHost(
      * and at boot — the alarm itself does not survive a restart.
      */
     fun rearm() {
-        val next = AutomationWakeups.nextRunAt(library.all(), ZonedDateTime.now(zone()))
+        val next = AutomationWakeups.nextRunAt(library.all(), ZonedDateTime.now(zone()), history)
         if (next == null) alarms.cancel() else alarms.armFor(next)
     }
 
@@ -229,6 +249,9 @@ class AutomationHost(
                 else -> return
             }
             onEvent(change)
+            // Unlocking is the moment a rule held for "needs you" can finally
+            // run, so a schedule still inside its window gets its chance now.
+            if (action == Intent.ACTION_USER_PRESENT) catchUp()
         }
     }
 

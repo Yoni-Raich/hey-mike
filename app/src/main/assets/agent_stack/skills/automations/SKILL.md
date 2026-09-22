@@ -13,6 +13,7 @@ contains one.
 automation_rule(mode="list")                       -> every rule, on and off
 automation_rule(mode="describe", rule="evening-post")
 automation_rule(mode="create", rule={...})
+automation_rule(mode="update", rule="evening-post", changes={"when": {...}})
 automation_rule(mode="test", rule="evening-post", event={...}, now="...")
 automation_rule(mode="run", rule="evening-post")   -> fire it now, for real
 automation_rule(mode="enable"|"disable"|"delete", rule="evening-post")
@@ -37,6 +38,33 @@ minimum 15), `place` (`place` + `enter`/`exit`), `notification` (a named
 **if** — `time_between` (wraps past midnight, so 19:00→07:00 works),
 `day_of_week`, `at_place`, `text` (on a field such as `notification.text`),
 `device_state`. Any of them takes `"not": true`.
+
+## Changing and deleting a rule
+
+**Change a rule with `mode:"update"`**, never by creating it again. `changes`
+holds only the keys that change, and each one replaces the old value whole —
+a new `then` is the whole new action list, not one action added to it. `null`
+removes a key (`{"if": null}` drops every condition).
+
+```text
+automation_rule(mode="update", rule="evening-post",
+                changes={"when": {"type": "schedule", "at": "20:00", "days": ["sun","mon","tue","wed","thu"]}})
+```
+
+The reply shows the rule `before` and `after`. Read both, dry-run the new one,
+and tell the user in one sentence what is different. The id cannot change; to
+rename, create the new rule and then delete the old one.
+
+`create` refuses an id that already exists (`rule_exists`), so a second rule
+never silently replaces a working one. Pass `replace:true` only when the user
+really wants the old rule gone and a new one in its place.
+
+**Update, enable, disable, delete and run need the rule's exact id.** A near
+miss comes back as `rule_id_inexact` with the id it probably meant — confirm it
+with the user before you retry, especially for a delete. A deleted rule is gone
+for good; to pause one, disable it.
+
+The user can also delete or edit a rule themselves from the rules panel.
 
 ## Pick the cheapest action that does the job
 
@@ -119,8 +147,13 @@ say so rather than reporting it as stuck.
 - **A rule cannot run away.** Each has a cooldown (default 1 minute) and a daily
   limit (default 20). For a busy app set them deliberately.
 - **A rule's moment can pass.** A queued turn expires after `validForMinutes`
-  (default 30) rather than running late.
+  (default 30) rather than running late. The same window is how late a
+  scheduled rule may still run: an alarm that lands at 19:08, a phone that was
+  off at 19:00, or a `ask` rule held until the phone is unlocked all still run
+  the 19:00 slot, once. After the window it is skipped until its next time.
 - **Your own `notify` cannot trigger your own rule** — Mike's own notifications
   are dropped before anything reads them.
 - **The clock is checked, not trusted.** An alarm Android delivers early fires
-  nothing, so `at:"19:00"` means that minute.
+  nothing, and each slot runs at most once. A rule written at 19:05 does not
+  run for 19:00 — it waits for tomorrow. An `everyMinutes` rule counts from its
+  last run (or from when it was saved), not from whenever the phone woke.

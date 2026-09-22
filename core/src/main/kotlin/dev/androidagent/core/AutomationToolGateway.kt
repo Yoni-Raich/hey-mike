@@ -71,6 +71,13 @@ class AutomationToolGateway(
      * here would hold the coordinator's tool lock for the whole rule.
      */
     private val fireNow: ((String) -> Unit)? = null,
+    /**
+     * Called after every change to the saved rules: create, update, enable,
+     * disable, delete. The host re-arms its one alarm here. Without it a rule
+     * written by the agent was on disk and never scheduled — it waited for the
+     * next unrelated firing or restart to be noticed at all.
+     */
+    private val onChanged: () -> Unit = {},
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -118,6 +125,7 @@ class AutomationToolGateway(
         return try {
             when (mode) {
                 "create" -> create(arguments)
+                "update" -> update(arguments)
                 "list" -> list()
                 "describe" -> describe(arguments)
                 "enable" -> setEnabled(arguments, true)
@@ -149,8 +157,24 @@ class AutomationToolGateway(
         val json = arguments["rule"] as? JsonObject
             ?: return refusal("rule_required", "\"rule\" must be the rule object itself.")
         val rule = AutomationRule.parse(json)
-        val existing = library.all().firstOrNull { it.id == rule.id }
-        library.save(rule)
+        val existing = library.get(rule.id)
+        // Silently replacing a standing rule because a new one happened to get
+        // the same id is how a working rule disappears. Replacing is allowed,
+        // but it has to be asked for.
+        if (existing != null && arguments.bool("replace") != true) {
+            return refusal(
+                "rule_exists",
+                "A rule called \"${rule.id}\" already exists (${existing.description.ifEmpty { "no description" }}). " +
+                    "Use mode:\"update\" to change it, pass replace:true to overwrite it whole, " +
+                    "or pick another id.",
+            )
+        }
+        try {
+            library.save(rule)
+        } catch (full: IllegalArgumentException) {
+            return refusal("rule_limit", full.message ?: "No room for another rule.")
+        }
+        runCatching { onChanged() }
         val supported = rule.trigger.kind in supportedTriggers()
         return ToolResult(
             buildJsonObject {
@@ -224,14 +248,15 @@ class AutomationToolGateway(
                 put("maxPerDay", rule.guard.maxPerDay)
                 put("cooldownMinutes", rule.guard.cooldownMs / 60_000L)
                 last?.let { put("lastFiredAt", it) }
-                rule.trigger.schedule?.let { put("nextRunAt", it.nextRunAt(now()).toString()) }
+                rule.trigger.schedule?.let { put("nextRunAt", it.nextRunAt(now(), last, rule.savedAt).toString()) }
             }.toString(),
         )
     }
 
     private fun setEnabled(arguments: JsonObject, enabled: Boolean): ToolResult {
-        val rule = lookup(arguments) ?: return notFound(arguments)
+        val rule = exact(arguments) ?: return notFound(arguments)
         val updated = library.setEnabled(rule.id, enabled) ?: return notFound(arguments)
+        runCatching { onChanged() }
         return ToolResult(
             buildJsonObject {
                 put("ok", true)
@@ -243,13 +268,62 @@ class AutomationToolGateway(
     }
 
     private fun delete(arguments: JsonObject): ToolResult {
-        val rule = lookup(arguments) ?: return notFound(arguments)
+        val rule = exact(arguments) ?: return notFound(arguments)
         val removed = library.delete(rule.id)
+        if (removed) runCatching { onChanged() }
         return ToolResult(
             buildJsonObject {
                 put("ok", removed)
                 put("rule", rule.id)
-                if (!removed) put("message", "\"${rule.id}\" could not be deleted; it may already be gone.")
+                if (removed) {
+                    put("deleted", rule.outline())
+                    put("note", "Deleted. It will not run again. Tell the user which rule is gone.")
+                } else {
+                    put("message", "\"${rule.id}\" could not be deleted; it may already be gone.")
+                }
+            }.toString(),
+            success = removed,
+        )
+    }
+
+    /**
+     * Change part of a saved rule.
+     *
+     * `changes` carries only what changes, keyed like the rule itself — `when`,
+     * `if`, `then`, `guard`, `description`, `enabled`. Each key replaces the old
+     * value whole (a new `then` is the whole new action list), and `null`
+     * removes a key. The merged rule is validated exactly like a new one, and
+     * nothing is written when it fails.
+     *
+     * The reply shows the rule before and after, so a change the model did not
+     * mean is visible in the same turn rather than at 19:00.
+     */
+    private fun update(arguments: JsonObject): ToolResult {
+        val rule = exact(arguments) ?: return notFound(arguments)
+        val changes = arguments["changes"] as? JsonObject
+            ?: return refusal(
+                "changes_required",
+                "\"changes\" is the part of the rule to change, e.g. " +
+                    "{\"when\":{\"type\":\"schedule\",\"at\":\"20:00\"}}. Each key replaces the old value; " +
+                    "null removes it.",
+            )
+        if (changes.isEmpty()) return refusal("changes_required", "\"changes\" is empty: there is nothing to change.")
+        val updated = library.update(rule.id, changes)
+        runCatching { onChanged() }
+        val supported = updated.trigger.kind in supportedTriggers()
+        return ToolResult(
+            buildJsonObject {
+                put("ok", true)
+                put("rule", updated.id)
+                put("changed", JsonArray(changes.keys.sorted().map { JsonPrimitive(it) }))
+                put("before", rule.outline())
+                put("after", updated.outline())
+                put("dormant", !supported)
+                put(
+                    "note",
+                    "Saved. Check the change with mode:\"test\", and tell the user in one sentence what " +
+                        "is different now.",
+                )
             }.toString(),
         )
     }
@@ -291,8 +365,12 @@ class AutomationToolGateway(
             agentAvailable = arguments.bool("agentAvailable") ?: true,
         )
         val named = arguments.str("rule")
-        val rules = if (named == null) library.all() else {
-            listOf(lookup(arguments) ?: return notFound(arguments))
+        val rules = (
+            if (named == null) library.all() else listOf(lookup(arguments) ?: return notFound(arguments))
+        ).map {
+            // A dry run asks about a described moment, which may well be before
+            // the rule was written. When it was saved is a live-path concern.
+            it.copy(savedAt = null)
         }
         val outcomes = evaluator.evaluate(rules, event, context)
         val firing = outcomes.filterIsInstance<AutomationEvaluator.Outcome.Fired>()
@@ -327,7 +405,7 @@ class AutomationToolGateway(
             "run_unavailable",
             "This host cannot fire a rule on demand. Rules still run from their own triggers.",
         )
-        val rule = lookup(arguments) ?: return notFound(arguments)
+        val rule = exact(arguments) ?: return notFound(arguments)
         if (!rule.enabled) {
             return refusal(
                 "rule_disabled",
@@ -358,15 +436,29 @@ class AutomationToolGateway(
         return (library.find(name) as? AutomationLibrary.Lookup.Found)?.definition
     }
 
+    /**
+     * The rule named by its exact id, for every mode that changes something.
+     * A near miss is answered by [notFound] with the candidates, never acted on.
+     */
+    private fun exact(arguments: JsonObject): AutomationRule? {
+        val name = arguments.str("rule") ?: arguments.str("id") ?: arguments.str("name") ?: return null
+        return library.get(name)
+    }
+
     private fun notFound(arguments: JsonObject): ToolResult {
         val name = arguments.str("rule") ?: arguments.str("id") ?: arguments.str("name")
         if (name == null) {
-            return refusal("rule_required", "\"rule\" is required: name the rule. " + known())
+            return refusal("rule_required", "\"rule\" is required: name the rule by its id. " + known())
         }
         return when (val lookup = library.find(name)) {
             is AutomationLibrary.Lookup.Ambiguous -> refusal(
                 "rule_ambiguous",
                 "\"$name\" matches ${lookup.candidates.joinToString(", ")}. Name one of them exactly.",
+            )
+            is AutomationLibrary.Lookup.Found -> refusal(
+                "rule_id_inexact",
+                "\"$name\" is not an exact rule id. Did you mean \"${lookup.definition.id}\"? " +
+                    "Changing a rule needs its exact id.",
             )
             else -> refusal("rule_not_found", "There is no rule called \"$name\". " + known())
         }
@@ -387,7 +479,7 @@ class AutomationToolGateway(
     )
 
     private companion object {
-        val MODES = listOf("create", "list", "describe", "enable", "disable", "delete", "test", "run")
+        val MODES = listOf("create", "update", "list", "describe", "enable", "disable", "delete", "test", "run")
 
         private fun enumOf(values: List<String>): JsonArray = JsonArray(values.map { JsonPrimitive(it) })
 
@@ -405,7 +497,7 @@ class AutomationToolGateway(
             put(
                 "description",
                 "For create: the whole rule, {id, when, if?, then, description?, guard?}. " +
-                    "For list, describe, enable, disable, delete, test and run: the rule's id as a string.",
+                    "For update, describe, enable, disable, delete, test and run: the rule's exact id as a string.",
             )
             put(
                 "properties",
@@ -469,7 +561,11 @@ class AutomationToolGateway(
                     })
                     put("guard", buildJsonObject {
                         put("type", "object")
-                        put("description", "How often it may fire: cooldownMs, maxPerDay, validForMs.")
+                        put(
+                            "description",
+                            "How often it may fire: cooldownMinutes, maxPerDay, and validForMinutes " +
+                                "(how late a run is still the right run).",
+                        )
                         put("additionalProperties", true)
                     })
                 },
@@ -493,12 +589,35 @@ class AutomationToolGateway(
                                     put("enum", JsonArray(MODES.map { JsonPrimitive(it) }))
                                     put(
                                         "description",
-                                        "create, list, describe, enable, disable, delete, test (decide without doing) " +
-                                            "or run (fire it now for real). Defaults to list.",
+                                        "create, update (change part of a rule), list, describe, enable, disable, " +
+                                            "delete, test (decide without doing) or run (fire it now for real). " +
+                                            "Defaults to list.",
                                     )
                                 },
                             )
                             put("rule", RULE_SCHEMA)
+                            put(
+                                "changes",
+                                buildJsonObject {
+                                    put("type", "object")
+                                    put(
+                                        "description",
+                                        "update only: the keys of the rule to change (when, if, then, guard, " +
+                                            "description, enabled). Each replaces the old value whole; null removes it.",
+                                    )
+                                    put("additionalProperties", true)
+                                },
+                            )
+                            put(
+                                "replace",
+                                buildJsonObject {
+                                    put("type", "boolean")
+                                    put(
+                                        "description",
+                                        "create only: overwrite a rule with the same id. Without it, create refuses.",
+                                    )
+                                },
+                            )
                             put(
                                 "event",
                                 buildJsonObject {
@@ -569,7 +688,9 @@ class AutomationToolGateway(
                 "present and are held when they are not. Prefer the cheapest kind that does the " +
                 "job — a fixed sequence belongs in a workflow the rule names, not in an " +
                 "agent_turn that re-derives it every night. Always dry-run a new rule with " +
-                "mode:\"test\" before telling the user it works, and use mode:\"run\" to fire one " +
+                "mode:\"test\" before telling the user it works. To change a rule use mode:\"update\" " +
+                "with only the keys that change; create refuses an id that exists unless replace:true. " +
+                "Update, enable, disable, delete and run need the rule's exact id. Use mode:\"run\" to fire one " +
                 "now for real — naming a rule supplies its trigger, so a scheduled rule can be " +
                 "proved without waiting for its hour, while its conditions and limits still apply."
     }

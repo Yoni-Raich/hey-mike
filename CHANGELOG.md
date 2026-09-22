@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- You can now delete and edit a standing rule from its own screen in the rules
+  panel. Delete asks first. Edit lets you tell Mike what to change in plain
+  words, or change the rule directly; a direct edit is checked exactly like a
+  new rule and nothing is saved if it is wrong. Mike can change a rule in place
+  too (`automation_rule` `mode:"update"`), and it can no longer replace a working
+  rule by accident by creating another with the same name.
+- Standing rules are more dependable on a real phone:
+  - A rule Mike creates, edits, turns on or off, or deletes is scheduled at
+    once. Before, a new "every day at 19:00" rule waited for the next unrelated
+    firing or a restart before its alarm was set.
+  - A scheduled rule whose alarm lands late — Doze, no exact-alarm permission,
+    a phone that was off at 19:00 — still runs, once, within its window
+    (`validForMinutes`, 30 by default). Before, anything but the exact minute was
+    a silently missed day. A rule that needs you and was held while the phone was
+    locked now runs when you unlock it, inside the same window.
+  - An `everyMinutes` rule runs on its interval. Before, it ran whenever any
+    alarm woke the phone, and every screen-on pushed its next run further out,
+    so an hourly rule could run far too often or never.
+  - Two events arriving together can no longer run the same rule twice.
+  - Deleting, disabling, editing or running a rule needs its exact id, so
+    "delete morning" can never remove "morning-news".
+
 - Mike no longer spends a thinking turn per tap when it can already see what to
   do. Reading the screen once shows it the message box *and* the Send button, so
   "tap the box, type this, send it" is now a single `act_plan` call instead of

@@ -1230,10 +1230,47 @@ notification on the phone, which is never what was meant and is the widest
 possible read of a person.
 
 **The clock is verified, not trusted.** Android coalesces, delays and batches
-alarms. `AutomationSchedule.isDue` is re-checked against the event's own
+alarms. Whether a schedule is due is re-checked against the event's own
 timestamp, so a process woken early for something else cannot post to Facebook
 at 18:52. `nextRunAt` is what the host sets the alarm for, seconds dropped so a
 rule rescheduled from its own firing does not drift.
+
+**A slot is owed, not a minute.** The first version matched the exact minute
+(`isDue`), which made every late alarm a silently missed day: Doze, an inexact
+alarm without the exact-alarm grant, a phone off at 19:00 and booted at 19:08.
+`AutomationSchedule.dueSlot` replaces it on the live path and needs the history,
+which is why the evaluator decides it rather than `AutomationTrigger.matches`:
+an `at` schedule owes its latest slot until it has run for it or
+`guard.validForMs` (30 minutes by default) has passed — the same line a queued
+turn is dropped at, because running after it is the wrong action rather than a
+late one. A slot before the rule's file was written is never owed. An interval
+is owed once `everyMinutes` have passed since its last run (or since it was
+written), and `nextRunAt(after, lastFiredAt, savedAt)` counts from there too.
+Counting from "now" had two bugs at once: every re-arm — and the host re-arms
+after every event, screen-on included — pushed an interval out again, and any
+clock wake-up for any rule fired every interval rule.
+
+Because a served slot is in the journal, catching up is safe to do often: the
+host checks the clock at start (which is also boot) and when the phone is
+unlocked, so a rule held for "needs you" runs when you can answer, still inside
+its window, and never twice. Evaluation happens inside the host's run lock for
+the same reason: two events landing together used to both read the history
+before either run recorded it.
+
+**Changing a rule is `update`, not a second `create`.** `create` refuses an id
+that exists unless `replace:true`, because a rule silently overwritten by a new
+one with the same id is a working rule gone. `update` merges only the named
+keys onto the saved definition (each replaces the old value whole, `null`
+removes it) and re-parses the result like a new rule, so an edit can never save
+what `create` would refuse, and a failed edit leaves the file untouched. The id
+cannot change — the journal, and so the cooldown and daily count, is keyed by
+it. Every mode that changes a rule (update, enable, disable, delete, run) takes
+the exact id: the forgiving lookup that is right for `describe` resolved
+"delete morning" to "morning-news" when that was the only near match. A near
+miss is answered with `rule_id_inexact` and the likely id, never acted on.
+Every change calls the gateway's `onChanged`, which the app wires to
+`AutomationHost.rearm()`; without it a rule the agent wrote was on disk but its
+alarm was not set until some unrelated firing or restart.
 
 **Every rule is reported, fired or not.** A rule that silently does nothing is
 this feature's characteristic failure — the person wrote it, it looks right,
@@ -1452,3 +1489,12 @@ The list and one rule are two levels of one `ModalBottomSheet`, the way Settings
 already works, so back walks the rule and then the sheet rather than
 introducing a second navigation idea. Turning a rule off re-arms the alarm set,
 because the earliest due rule may have changed.
+
+A rule's screen also deletes and edits it. Delete asks first — it is the one
+change here that cannot be switched back, and the dialog points at the switch
+for pausing instead. Edit is a third level of the same sheet with two paths:
+tell Mike in words, which goes to the chat and through `mode:"update"` and a dry
+run like any request, or edit the saved JSON directly. The direct path is
+`AutomationLibrary.update` with every key the editor dropped removed, so it
+passes the same validation as the tool, shows the refusal in place, and writes
+nothing when it fails.

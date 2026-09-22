@@ -211,6 +211,12 @@ data class AgentUiActions(
     val onToggleRule: (id: String, enabled: Boolean) -> Unit = { _, _ -> },
     /** Fire one rule now: naming it supplies its trigger, nothing else is waived. */
     val onRunRule: (String) -> Unit = {},
+    /** Delete one rule for good. The screen asks first. */
+    val onDeleteRule: (String) -> Unit = {},
+    /** The saved rule as editable JSON, or null when it cannot be read. */
+    val ruleDefinition: (String) -> String? = { null },
+    /** Save an edited rule. Null on success, else the reason it was refused. */
+    val onSaveRule: (id: String, json: String) -> String? = { _, _ -> null },
     val onOpenAppInfo: () -> Unit = {},
     val onOpenOverlayPermission: () -> Unit = {},
     val onDisconnect: () -> Unit = {},
