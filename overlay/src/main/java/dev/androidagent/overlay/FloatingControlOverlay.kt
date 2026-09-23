@@ -59,7 +59,15 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import dev.androidagent.core.ControlOverlay
 import dev.androidagent.core.OverlayState
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.BlockHandlerDef
+import io.noties.markwon.Markwon
+import io.noties.markwon.MarkwonVisitor
+import io.noties.markwon.core.MarkwonTheme
+import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
+import io.noties.markwon.movement.MovementMethodPlugin
 import kotlinx.coroutines.Dispatchers
+import org.commonmark.node.Node
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -94,6 +102,39 @@ class FloatingControlOverlay(
     private var body: LinearLayout? = null
     private var headlineView: TextView? = null
     private var commentaryView: TextView? = null
+
+    // No movement method: the card is a drag handle, so its text never takes taps or opens links.
+    private val markdown: Markwon by lazy {
+        Markwon.builder(appContext)
+            .usePlugin(StrikethroughPlugin.create())
+            .usePlugin(MovementMethodPlugin.none())
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder.codeTextColor(INK)
+                        .codeBackgroundColor(CODE_SURFACE)
+                        .codeBlockTextColor(INK)
+                        .codeBlockBackgroundColor(CODE_SURFACE)
+                        .codeBlockMargin(dp(6))
+                        .linkColor(INK)
+                        .blockQuoteColor(INK_DIM)
+                        .blockQuoteWidth(dp(2))
+                        .bulletWidth(dp(4))
+                        .listItemColor(INK_DIM)
+                        .headingBreakHeight(0)
+                        .headingTextSizeMultipliers(floatArrayOf(1f, 1f, 1f, 1f, 1f, 1f))
+                }
+
+                // One line break between blocks, not a blank line: the card has four lines.
+                override fun configureVisitor(builder: MarkwonVisitor.Builder) {
+                    builder.blockHandler(object : BlockHandlerDef() {
+                        override fun blockEnd(visitor: MarkwonVisitor, node: Node) {
+                            if (visitor.hasNext(node)) visitor.ensureNewLine()
+                        }
+                    })
+                }
+            })
+            .build()
+    }
     private var steerRow: View? = null
     private var approveButton: View? = null
     private var orbView: OverlayOrbView? = null
@@ -362,9 +403,11 @@ class FloatingControlOverlay(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setLineSpacing(0f, 1.3f)
             includeFontPadding = false
-            maxLines = 2
+            // Room for the agent's own message, not just a status line.
+            maxLines = 4
             ellipsize = TextUtils.TruncateAt.END
-            textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+            // Per paragraph, like the chat: any Hebrew or Arabic letter makes it right-to-left.
+            textDirection = View.TEXT_DIRECTION_ANY_RTL
             setPaddingRelative(dp(16), dp(2), dp(16), 0)
             visibility = View.GONE
         }
@@ -919,13 +962,32 @@ class FloatingControlOverlay(
         if (Looper.myLooper() == Looper.getMainLooper()) action() else mainHandler.post(action)
     }
 
+    /**
+     * The agent's own latest words, as the chat shows them. They outlive the
+     * status label: a tool call changes the headline and leaves these on the
+     * card until the agent says something new.
+     */
+    override fun say(text: String) {
+        runOnMain {
+            val line = cardMarkdown(text)
+            if (line.isEmpty() || content?.commentary == line) return@runOnMain
+            // Speech wins over whatever the current label carried, including
+            // the empty commentary a fresh run starts with.
+            applyContent(overlayContent(currentStatus, line).copy(commentary = line))
+        }
+    }
+
     private fun applyStatus(status: String) {
-        val next = overlayContent(status.ifBlank { "Ready" }, content?.commentary)
+        applyContent(overlayContent(status.ifBlank { "Ready" }, content?.commentary))
+    }
+
+    private fun applyContent(next: OverlayContent) {
         val headlineChanged = next.headline != content?.headline
         content = next
         headlineView?.text = next.headline
         commentaryView?.apply {
-            text = next.commentary.orEmpty()
+            markdown.setMarkdown(this, next.commentary.orEmpty())
+            contentDescription = next.commentary?.let(::oneLine)
             visibility = if (next.commentary.isNullOrBlank()) View.GONE else View.VISIBLE
         }
         steerRow?.visibility = if (next.needsApproval) View.GONE else View.VISIBLE
@@ -1002,6 +1064,7 @@ class FloatingControlOverlay(
         val GLASS_EDGE = Color.argb(23, 255, 255, 255)
         val INK = Color.parseColor("#F2F2F2")
         val INK_DIM = Color.parseColor("#BDBDBD")
+        val CODE_SURFACE = Color.parseColor("#33FFFFFF")
         val ON_LIGHT = Color.parseColor("#111111")
         val FIELD = Color.parseColor("#202020")
         val OUTLINE = Color.parseColor("#383838")

@@ -281,6 +281,25 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun whatTheAgentSaysAlsoReachesTheFloatingCard() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TextDelta("I will read the screen.", "thread", "turn", "commentary"))
+        rig.engine.emit(EngineEvent.MessageCompleted("I will read the screen.", "thread", "turn", "commentary", "commentary"))
+        rig.engine.emit(EngineEvent.ToolCall("tool", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        // Said once, not again when the tool call flushes the same segment.
+        assertEquals(listOf("I will read the screen."), rig.overlay.spoken)
+
+        rig.engine.emit(EngineEvent.TextDelta("The screen is ready.", "thread", "turn", "final"))
+        rig.engine.emit(EngineEvent.MessageCompleted("The screen is ready.", "thread", "turn", "final", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertEquals(listOf("I will read the screen.", "The screen is ready."), rig.overlay.spoken)
+        rig.close()
+    }
+
     @Test fun emptyFinalReportsMissingReplyWithoutClaimingSuccess() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Do it")
@@ -749,12 +768,14 @@ class AgentCoordinatorTest {
         val captureHistory = mutableListOf<Boolean>()
         val states = mutableListOf<OverlayState>()
         val finished = mutableListOf<OverlayState>()
+        val spoken = mutableListOf<String>()
         override suspend fun show(status: String) { if (fail) error("Overlay permission required"); waitForShow?.await(); shown++; visible = true }
         override fun update(status: String) = Unit
         override suspend fun showState(state: OverlayState) { states += state; show(state.label) }
         override fun updateState(state: OverlayState) { states += state; update(state.label) }
         override fun finish(state: OverlayState) { finished += state; updateState(state); hide() }
         override fun hide() { visible = false }
+        override fun say(text: String) { spoken += text }
         override suspend fun setCaptureHidden(hidden: Boolean) { captureHidden = hidden; captureHistory += hidden }
     }
 }

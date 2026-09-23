@@ -61,6 +61,7 @@ internal fun overlayContent(label: String, previousCommentary: String?): Overlay
             when {
                 detail == null -> OverlayContent(tone, if (controlling) "On your screen" else "Working", previousCommentary)
                 isApproval(detail) -> OverlayContent(OverlayTone.WAITING, detail, previousCommentary, needsApproval = true)
+                detail in ENGINE_ACTIVITY -> OverlayContent(tone, detail, previousCommentary)
                 action != null -> OverlayContent(tone, action, previousCommentary)
                 // Anything that is not a tool name is the agent talking.
                 else -> OverlayContent(OverlayTone.ACTIVE, "Working", oneLine(detail))
@@ -69,6 +70,13 @@ internal fun overlayContent(label: String, previousCommentary: String?): Overlay
         else -> OverlayContent(OverlayTone.ACTIVE, label.trim().ifEmpty { "Working" }, previousCommentary)
     }
 }
+
+/**
+ * Engine activity lines, which say which kind of work started, not what the
+ * agent thinks. They belong on the headline; treating them as speech would
+ * wipe the agent's own words on every reasoning step.
+ */
+private val ENGINE_ACTIVITY = setOf("Working", "Working in session files", "Updating session files")
 
 private fun isApproval(detail: String): Boolean =
     detail.equals("Waiting for approval", ignoreCase = true) || detail.startsWith("Approve", ignoreCase = true)
@@ -102,6 +110,24 @@ private fun toolHeadline(detail: String): String? {
     val name = detail.replace('_', ' ').trim()
     TOOL_HEADLINES[name]?.let { return it }
     return if (TOOL_NAME.matches(name)) name.replaceFirstChar { it.uppercase() } else null
+}
+
+private val HEADING = Regex("^\\s{0,3}#{1,6}\\s+(.+?)\\s*#*\\s*$")
+
+/**
+ * The agent's text for the card, still Markdown: blank lines dropped so four
+ * lines hold as much as they can, headings turned into bold lines, cut at a
+ * line break where one fits in [limit].
+ */
+internal fun cardMarkdown(text: String, limit: Int = 600): String {
+    val markdown = text.lineSequence()
+        .map { it.trimEnd() }
+        .filter { it.isNotBlank() }
+        .map { line -> HEADING.matchEntire(line)?.let { "**${it.groupValues[1]}**" } ?: line }
+        .joinToString("\n")
+    if (markdown.length <= limit) return markdown
+    val lineEnd = markdown.lastIndexOf('\n', limit)
+    return if (lineEnd > 0) markdown.take(lineEnd) else markdown.take(limit).trimEnd() + "…"
 }
 
 /** The agent's text as one plain line: no Markdown marks, no line breaks. */
