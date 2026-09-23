@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Side panel</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#000000;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #000000;">
+<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55);"></div>
+<div style="position: absolute; top: 0; left: 0; bottom: 0; width: 330px; box-sizing: border-box; padding: 24px 16px 16px; border-radius: 0 28px 28px 0; background: #1E1E21; display: flex; flex-direction: column; gap: 16px;">
+<a href="Settings.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px; margin: -8px; border-radius: 20px; color: #F2F2F2; text-decoration: none;">
+<dc-import name="Orb" size="56" level="0.1" color="#83D9CA" hint-size="56px,56px"></dc-import>
+<div style="display: flex; flex-direction: column; gap: 2px; flex-grow: 1;">
+<span style="font-size: 22px; font-weight: 600;">Hey Mike</span>
+<span style="font-size: 13px; color: {{statusColor}};">{{statusText}}</span>
+</div>
+</a>
+<a href="Ready.dc.html" style="height: 48px; border-radius: 24px; background: #F2F2F2; color: #1B1B1B; font-size: 16px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1B1B1B" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>New chat</a>
+<div style="display: flex; align-items: center; gap: 10px; padding: 0 14px; height: 44px; border-radius: 22px; background: #2A2A2D;">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8F8F8F" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+<label for="find" style="position: absolute; width: 1px; height: 1px; overflow: hidden;">Search chats</label>
+<input id="find" type="text" placeholder="Search chats" style="flex-grow: 1; min-width: 0; border: none; background: transparent; color: #F2F2F2; font-family: inherit; font-size: 15px; outline: none;">
+</div>
+<button type="button" style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 18px; border: 1px solid #333336; background: transparent; color: #F2F2F2; font-family: inherit; text-align: left;">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px;">
+<span style="font-size: 15px; font-weight: 600;">Running for you</span>
+<span style="font-size: 13px; color: #8F8F8F;">2 rules · next at 07:00</span>
+</div>
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8F8F8F" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</button>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px; overflow: hidden;">
+<sc-for list="{{groups}}" as="g" hint-placeholder-count="2">
+<div style="font-size: 13px; color: #8F8F8F; padding: 12px 8px 6px;">{{g.label}}</div>
+<sc-for list="{{g.chats}}" as="c" hint-placeholder-count="3">
+<button type="button" style="display: flex; align-items: center; gap: 10px; padding: 10px 8px; border-radius: 14px; border: none; background: {{c.bg}}; color: #F2F2F2; font-family: inherit; text-align: left;">
+<span style="width: 8px; height: 8px; border-radius: 4px; flex-shrink: 0; background: {{c.dot}};"></span>
+<span style="flex-grow: 1; min-width: 0; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.title}}</span>
+<span style="font-size: 12px; color: #8F8F8F; flex-shrink: 0;">{{c.time}}</span>
+</button>
+</sc-for>
+</sc-for>
+</div>
+<div style="height: 1px; background: #333336;"></div>
+<div style="display: flex; gap: 8px;">
+<button type="button" style="flex-grow: 1; height: 48px; border-radius: 16px; border: none; background: transparent; color: #D0D0D0; font-family: inherit; font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 8px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D0D0D0" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>Files</button>
+<a href="Settings.dc.html" style="flex-grow: 1; height: 48px; border-radius: 16px; color: #D0D0D0; font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; position: relative;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D0D0D0" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"></path></svg>Settings<sc-if value="{{attention}}" hint-placeholder-val="{{attention}}"><span style="width: 8px; height: 8px; border-radius: 4px; background: #FFB4AB; margin-left: 2px;"></span></sc-if></a>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"state":{"editor":"enum","options":["ready","needs attention"],"default":"ready"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+const attention = (this.props.state ?? 'ready') === 'needs attention';
+const chat = (title, time, running) => ({ title, time, dot: running ? '#69A7FF' : 'transparent', bg: running ? '#2A2A2D' : 'transparent' });
+return {
+attention,
+statusText: attention ? 'Can’t reach the screen · tap to fix' : 'Ready · can see and tap the screen',
+statusColor: attention ? '#FFB4AB' : '#83D9CA',
+groups: [
+{ label: 'Today', chats: [chat('Open AndroidGym and visit the store', '23:59', true), chat('Set an alarm for 7:00', '21:14'), chat('Turn on dark mode', '20:28')] },
+{ label: 'Yesterday', chats: [chat('Reply when Mom texts', 'Tue'), chat('Clean up my downloads', 'Tue')] }
+]
+};
+}
+}
+</script>
+</body>
+</html>

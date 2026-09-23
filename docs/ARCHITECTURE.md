@@ -1426,3 +1426,45 @@ event field a text test reads). Typing over a workflow's name would point the
 rule at one that may not exist. Those go through "Want a bigger change?" at the
 bottom, which sends the request to Mike, who uses `mode:"update"` and a dry run
 like any other request.
+
+## First launch: two things by hand, the rest offered
+
+The old first launch was the settings checklist: eight items, four required,
+all at once. Now `OnboardingFlow` shows one screen at a time and the user does
+by hand only what no app may do for them: sign in, and turn on the
+accessibility service. The full proposal is `docs/design/NEW_USER_EXPERIENCE.md`.
+
+**The order is a function in `:core`.** `Onboarding.step` picks the screen from
+what is stored (`OnboardingProgress`: welcomed, consent version and time,
+finished) and the live `SetupSignals`, so a test pins it: welcome, consent,
+sign-in, screen access, handover, done. Steps already done are skipped, so a
+phone that was set up before this version sees only the consent and the
+handover. The runtime prepares in the background and shows as one thin bar
+with a retry, never a step.
+
+**Consent is versioned.** `Onboarding.CONSENT_VERSION` is stored with the
+time the user agreed. Raising it asks everyone again; withdrawing (Settings →
+Privacy and consent) stops Mike, signs out and forgets the consent, and the
+first-launch consent screen comes back. Screen access is a system switch the
+app cannot turn off, so withdrawing opens its screen instead of pretending.
+All of it lives in the app's own `ui` preferences and never leaves the phone.
+
+**The handover offers, it does not require.** The floating Stop button and
+progress notifications are one tap each on Android's own screens. Wireless
+debugging is handed to Mike: after one in-app confirmation, the app arms the
+pairing reader while no run is active, then starts a chat in which Mike opens
+Developer options, turns on Wireless debugging and opens the pairing dialog.
+The reader takes the code from that dialog; the model never sees it. The
+floating control stays a separate grant for now because device control refuses
+to start without it; drawing it as an accessibility overlay instead would
+remove that step and is still to be verified.
+
+**Finished stays finished.** A switch Android turns off later is a settings
+problem, not a reason to replay first launch. The side panel's header and the
+Settings dot say so instead.
+
+Settings are regrouped the same way: *What Mike can do* lists abilities with
+On / Set up / Fix (screen control and the floating control are one row, since
+neither works alone), then *How Mike works*, *Account and privacy*, and
+*Advanced* (runtime, Jev, app updates). The side panel gained the orb with a
+one-line status, chat search, and chats grouped by day (`ChatDayGroups`).
