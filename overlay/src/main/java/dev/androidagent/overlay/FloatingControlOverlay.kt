@@ -362,8 +362,7 @@ class FloatingControlOverlay(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setLineSpacing(0f, 1.3f)
             includeFontPadding = false
-            // Room for the agent's own message, not just a status line.
-            maxLines = 4
+            maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             textDirection = View.TEXT_DIRECTION_FIRST_STRONG
             setPaddingRelative(dp(16), dp(2), dp(16), 0)
@@ -920,26 +919,8 @@ class FloatingControlOverlay(
         if (Looper.myLooper() == Looper.getMainLooper()) action() else mainHandler.post(action)
     }
 
-    /**
-     * The agent's own latest words, as the chat shows them. They outlive the
-     * status label: a tool call changes the headline and leaves these on the
-     * card until the agent says something new.
-     */
-    override fun say(text: String) {
-        runOnMain {
-            val line = oneLine(text)
-            if (line.isEmpty() || content?.commentary == line) return@runOnMain
-            // Speech wins over whatever the current label carried, including
-            // the empty commentary a fresh run starts with.
-            applyContent(overlayContent(currentStatus, line).copy(commentary = line))
-        }
-    }
-
     private fun applyStatus(status: String) {
-        applyContent(overlayContent(status.ifBlank { "Ready" }, content?.commentary))
-    }
-
-    private fun applyContent(next: OverlayContent) {
+        val next = overlayContent(status.ifBlank { "Ready" }, content?.commentary)
         val headlineChanged = next.headline != content?.headline
         content = next
         headlineView?.text = next.headline

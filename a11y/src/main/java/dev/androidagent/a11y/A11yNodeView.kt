@@ -46,12 +46,6 @@ interface A11yNodeView {
     val isVisibleToUser: Boolean
     val isPassword: Boolean
     val isEditable: Boolean
-    val isSelected: Boolean get() = false
-    val rangeMin: Float? get() = null
-    val rangeMax: Float? get() = null
-    val rangeCurrent: Float? get() = null
-    val rangeType: String? get() = null
-    val supportsSetProgress: Boolean get() = false
 
     /** True for a switch, checkbox or radio. [isChecked] means nothing without it. */
     val isCheckable: Boolean
@@ -85,21 +79,6 @@ class RealNodeView(val node: AccessibilityNodeInfo) : A11yNodeView {
     override val isVisibleToUser: Boolean get() = node.isVisibleToUser
     override val isPassword: Boolean get() = node.isPassword
     override val isEditable: Boolean get() = node.isEditable
-    override val isSelected: Boolean get() = node.isSelected
-    override val rangeMin: Float? get() = node.rangeInfo?.min
-    override val rangeMax: Float? get() = node.rangeInfo?.max
-    override val rangeCurrent: Float? get() = node.rangeInfo?.current
-    override val rangeType: String?
-        get() = when (node.rangeInfo?.type) {
-            AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT -> "int"
-            AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT -> "float"
-            AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_PERCENT -> "percent"
-            else -> null
-        }
-    override val supportsSetProgress: Boolean
-        get() = node.actionList.any {
-            it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id
-        }
     override val isCheckable: Boolean get() = node.isCheckable
     override val isChecked: Boolean get() = node.isChecked
 
