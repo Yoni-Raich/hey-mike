@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import kotlinx.serialization.json.Json
@@ -209,5 +229,15 @@ class WorkflowDefinitionTest {
         ).steps.single()
         assertEquals(WorkflowStep.MAX_STEP_MS, step.timeoutMs)
         assertEquals(WorkflowVerification.MAX_TIMEOUT_MS, step.verify!!.timeoutMs)
+    }
+
+    @Test fun anEstimateForSomethingSlowerThanATransitionIsKept() {
+        // The author named the condition, so the author knows whether it is a
+        // screen opening or a video importing. 45s used to be clamped to 20.
+        val step = parse(
+            """{"id":"w","package":"com.example.app","steps":[
+                 {"id":"s","action":"observe","verify":{"text":"Video attached","timeoutMs":45000}}]}""",
+        ).steps.single()
+        assertEquals(45_000L, step.verify!!.timeoutMs)
     }
 }

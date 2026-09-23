@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app
 
 import android.Manifest
@@ -28,6 +48,10 @@ class MainActivity : ComponentActivity() {
     private var askedForNotifications = false
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::addAttachment) }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPermissions() }
+    private val capabilityPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        model.graph.runtimePermissions.complete(result)
+        model.refreshPermissions()
+    }
     // Set while the permission dialog is up for an assistant press, so the
     // grant starts voice the assistant way rather than toggling it.
     private var voiceForAssistant = false
@@ -39,6 +63,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        model.graph.runtimePermissions.attach(this, capabilityPermissions)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK))
         setContent {
@@ -65,7 +90,12 @@ class MainActivity : ComponentActivity() {
         // Not on recreation: a rotation must not reopen a conversation the
         // user already ended.
         val fromAssistant = savedInstanceState == null && handleAssistantPress(intent)
-        if (!fromAssistant && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        val fromCapabilityRequest = intent.getBooleanExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST, false)
+        intent.removeExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST)
+        // First launch asks for this on its own screen, with a reason; asking
+        // at launch put a system dialog in front of the welcome.
+        val onboarded = model.ui.value.onboarding.finished
+        if (onboarded && !fromAssistant && !fromCapabilityRequest && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askedForNotifications = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -109,12 +139,18 @@ class MainActivity : ComponentActivity() {
     // so the app is always stopped and resumed around the change.
     override fun onResume() {
         super.onResume()
+        model.graph.runtimePermissions.resumed(this)
         model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
-        model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole()
+        model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole(); model.refreshAutomations()
     }
     override fun onPause() {
+        model.graph.runtimePermissions.paused(this)
         if (model.graph.foregroundActivity?.get() === this) model.graph.foregroundActivity = null
         super.onPause()
+    }
+    override fun onDestroy() {
+        model.graph.runtimePermissions.detach(this)
+        super.onDestroy()
     }
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
@@ -132,9 +168,24 @@ class MainActivity : ComponentActivity() {
         onVoiceMuteToggle = model::toggleVoiceMute,
         onOpenSettings = { model.editUi { it.copy(isSettingsOpen = true) } },
         onCloseSettings = { model.editUi { it.copy(isSettingsOpen = false) } },
+        onOpenAutomations = {
+            // The strip is a snapshot from the last resume; re-read before
+            // showing the list, so a rule turned on elsewhere is already there.
+            model.refreshAutomations()
+            model.editUi { it.copy(isAutomationsOpen = true) }
+        },
+        onCloseAutomations = { model.editUi { it.copy(isAutomationsOpen = false) } },
+        onToggleRule = { id, enabled -> model.setRuleEnabled(id, enabled) },
+        onRunRule = { id -> ensureService(); model.runRule(id) },
+        onDeleteRule = { id -> model.deleteRule(id) },
+        ruleEditFields = { id -> model.ruleEditFields(id) },
+        onSaveRule = { id, values -> model.saveRuleEdits(id, values) },
         onPrepareRuntime = { ensureService(); model.prepare() },
         onLogin = { ensureService(); model.login() },
         onLogout = { model.logout() },
+        onAddAccount = { ensureService(); model.addAccount() },
+        onSwitchAccount = { id -> ensureService(); model.switchAccount(id) },
+        onRemoveAccount = { id -> model.removeAccount(id) },
         onRefreshAccount = { model.refreshAccount() },
         onOpenWirelessSettings = ::openWirelessDebugging,
         onOpenAccessibilitySettings = { openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
@@ -144,6 +195,21 @@ class MainActivity : ComponentActivity() {
             }
         },
         onOpenAppInfo = { openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
+        // Notification access has no per-app screen on most builds: the list is
+        // the only way in, and no app can grant it to itself.
+        onOpenNotificationAccess = {
+            openSettings(dev.androidagent.automations.AutomationNotificationListener.settingsIntent())
+        },
+        onOpenExactAlarmSettings = {
+            val exact = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName"))
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            }
+            if (!openSettings(exact, report = false)) {
+                openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+        },
         onOpenOverlayPermission = { openSettings(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) },
         onDisconnect = { model.disconnect() },
         onForgetPairing = { model.forgetPairing() },
@@ -185,6 +251,20 @@ class MainActivity : ComponentActivity() {
             openWirelessDebugging()
         },
         onDismissInfo = { model.editUi { it.copy(infoMessage = null) } },
+        onOnboardingWelcomed = model::markWelcomed,
+        onAcceptConsent = model::acceptConsent,
+        onFinishOnboarding = model::finishOnboarding,
+        onWithdrawConsent = {
+            model.editUi { it.copy(isSettingsOpen = false) }
+            model.withdrawConsent()
+            // The switch is the user's to turn off; the app cannot.
+            openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        },
+        onLetMikeSetUpWireless = {
+            ensureService()
+            model.editUi { it.copy(isSettingsOpen = false) }
+            model.letMikeSetUpWireless()
+        },
     )
 
     /**

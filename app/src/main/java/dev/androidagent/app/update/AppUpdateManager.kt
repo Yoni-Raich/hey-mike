@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app.update
 
 import android.content.Context
@@ -27,6 +47,8 @@ data class AppUpdateInfo(
     val apkName: String,
     val apkSize: Long,
     val isUpdateAvailable: Boolean,
+    val latestVersionCode: Long? = null,
+    val commitSha: String? = null,
 )
 
 sealed interface UpdateStatus {
@@ -42,11 +64,18 @@ sealed interface UpdateStatus {
 class AppUpdateManager(
     private val context: Context,
     private val currentVersion: String = BuildConfig.VERSION_NAME,
+    private val currentVersionCode: Long = BuildConfig.VERSION_CODE.toLong(),
+    private val currentPackageName: String = BuildConfig.APPLICATION_ID,
+    private val flavor: String = BuildConfig.FLAVOR,
     private val repoOwner: String = "Yoni-Raich",
     private val repoName: String = "hey-mike",
 ) {
     suspend fun checkForUpdates(): AppUpdateInfo = withContext(Dispatchers.IO) {
-        val endpoint = "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
+        val endpoint = if (flavor == "dev") {
+            "https://api.github.com/repos/$repoOwner/$repoName/releases/tags/dev-nightly"
+        } else {
+            "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
+        }
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 15_000
@@ -60,7 +89,11 @@ class AppUpdateManager(
                 error("GitHub API returned HTTP $responseCode: $err")
             }
             val jsonString = connection.inputStream.bufferedReader().use { it.readText() }
-            parseReleaseJson(jsonString, currentVersion)
+            if (flavor == "dev") {
+                parseNightlyReleaseJson(jsonString, currentVersionCode, currentPackageName)
+            } else {
+                parseReleaseJson(jsonString, currentVersion)
+            }
                 ?: error("No compatible APK asset found in latest GitHub release")
         } finally {
             connection.disconnect()
@@ -216,6 +249,54 @@ class AppUpdateManager(
                 apkSize = apkSize,
                 isUpdateAvailable = isAvailable,
             )
+        }
+
+        fun parseNightlyReleaseJson(
+            jsonString: String,
+            currentVersionCode: Long,
+            currentPackageName: String,
+        ): AppUpdateInfo? {
+            val root = json.parseToJsonElement(jsonString).jsonObject
+            val tagName = root["tag_name"]?.jsonPrimitive?.content.orEmpty().trim()
+            if (tagName != "dev-nightly") return null
+
+            val body = root["body"]?.jsonPrimitive?.content.orEmpty()
+            val versionCode = body.metadataValue("Version code")?.toLongOrNull() ?: return null
+            val versionName = body.metadataValue("Version name") ?: return null
+            val packageName = body.metadataValue("Package") ?: return null
+            if (packageName != currentPackageName) return null
+            val commitSha = body.metadataValue("Commit")
+
+            val apkAsset = root["assets"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject }
+                .firstOrNull { asset ->
+                    asset["name"]?.jsonPrimitive?.content.orEmpty()
+                        .equals("hey-mike-dev-nightly.apk", ignoreCase = true)
+                } ?: return null
+            val apkName = apkAsset["name"]?.jsonPrimitive?.content.orEmpty()
+            val downloadUrl = apkAsset["browser_download_url"]?.jsonPrimitive?.content.orEmpty()
+            val apkSize = apkAsset["size"]?.jsonPrimitive?.longOrNull ?: 0L
+            if (downloadUrl.isBlank()) return null
+
+            return AppUpdateInfo(
+                latestVersionName = versionName,
+                latestTag = tagName,
+                releaseNotes = body.substringBefore("Commit:").trim(),
+                apkDownloadUrl = downloadUrl,
+                apkName = apkName,
+                apkSize = apkSize,
+                isUpdateAvailable = versionCode > currentVersionCode,
+                latestVersionCode = versionCode,
+                commitSha = commitSha,
+            )
+        }
+
+        private fun String.metadataValue(label: String): String? {
+            val prefix = "$label:"
+            return lineSequence()
+                .firstOrNull { it.trimStart().startsWith(prefix) }
+                ?.substringAfter(prefix)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
         }
 
         /**

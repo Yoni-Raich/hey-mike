@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ask when needed</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#000000;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 16px 12px 16px; display: flex; flex-direction: column; gap: 14px; background: #000000;">
+<div style="display: flex; align-items: center; gap: 8px; height: 56px;">
+<button type="button" aria-label="Menu" style="width: 44px; height: 44px; border: none; background: transparent; display: flex; align-items: center; justify-content: center;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>
+<span style="flex-grow: 1; font-size: 20px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">Reply when Mom texts</span>
+<dc-import name="Orb" size="48" level="0.26" color="#83D9CA" hint-size="48px,48px"></dc-import>
+</div>
+<div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 16px; padding: 0 8px;">
+<div style="align-self: flex-end; max-width: 80%; padding: 12px 16px; border-radius: 22px 22px 6px 22px; background: #262626; font-size: 16px; line-height: 1.45;">When my mom texts on WhatsApp, reply that I'm driving.</div>
+<div style="font-size: 17px; line-height: 1.55;">I can do that. To see incoming messages, I need one more permission first.</div>
+<div style="border-radius: 20px; background: #141414; border: 1px solid #2A2A2A; padding: 18px; display: flex; flex-direction: column; gap: 12px;">
+<div style="display: flex; align-items: center; gap: 10px;">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10 21a2 2 0 0 0 4 0"></path></svg>
+<span style="font-size: 16px; font-weight: 600;">Read notifications</span>
+</div>
+<div style="font-size: 14px; line-height: 1.5; color: #B9B9B9;">I'll open the setting and turn on Hey Mike. Android then shows its own warning, and you tap <b style="color: #F2F2F2;">Allow</b>.</div>
+<div style="display: flex; gap: 10px;">
+<button type="button" style="flex-grow: 1; height: 48px; border-radius: 24px; border: 1px solid #333333; background: transparent; color: #F2F2F2; font-family: inherit; font-size: 15px; font-weight: 500;">Not now</button>
+<button type="button" style="flex-grow: 1; height: 48px; border-radius: 24px; border: none; background: #2F7CF6; color: #FFFFFF; font-family: inherit; font-size: 15px; font-weight: 500;">Do it for me</button>
+</div>
+</div>
+</div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 32px; background: #1B1B1B; border: 1px solid #333333;">
+<button type="button" aria-label="Attach" style="width: 44px; height: 44px; border: none; background: transparent; display: flex; align-items: center; justify-content: center;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+<label for="ask2" style="position: absolute; width: 1px; height: 1px; overflow: hidden;">Message</label>
+<input id="ask2" type="text" placeholder="Message, or type / for skills" style="flex-grow: 1; min-width: 0; border: none; background: transparent; color: #F2F2F2; font-family: inherit; font-size: 16px; outline: none;">
+<button type="button" aria-label="Talk to Mike" style="width: 52px; height: 52px; border-radius: 26px; border: none; background: #2F7CF6; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11v2M8 8v8M12 5v14M16 8v8M20 11v2"></path></svg></button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

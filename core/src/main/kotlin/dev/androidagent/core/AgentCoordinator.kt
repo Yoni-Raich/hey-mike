@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import kotlinx.coroutines.*
@@ -36,6 +56,15 @@ class AgentCoordinator(
      * existing caller uses keeps binding to the parameter it always did.
      */
     private val bringToForeground: () -> Unit = {},
+    /**
+     * The monotonic clock every duration in [RunMetrics] is measured against.
+     *
+     * Injected for the same reason the runner's is: a summary that says where a
+     * run's time went is only worth what it can be tested against, and a test
+     * driving a virtual clock cannot verify a real one. Declared before
+     * [adbStatus] so that stays the trailing parameter.
+     */
+    private val nowNanos: () -> Long = System::nanoTime,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) {
     private val mutableState = MutableStateFlow(RunState())
@@ -58,6 +87,16 @@ class AgentCoordinator(
     private var firstResponseMs: Long? = null
     private var toolCalls = 0
     private var toolMs = 0L
+
+    /**
+     * Time a person was being waited on, kept apart from [toolMs].
+     *
+     * A send approval happens inside the tool call that asks for it, so without
+     * this the summary would report 20 seconds of "the phone" for 20 seconds of
+     * someone deciding whether to send a message. Atomic because the wait is
+     * counted where it happens and read where the run ends.
+     */
+    private val approvalNanos = java.util.concurrent.atomic.AtomicLong(0)
     private val metricsState = MutableStateFlow<Map<String, RunMetrics>>(emptyMap())
     val metrics = metricsState.asStateFlow()
     private var assistantId: String? = null
@@ -107,10 +146,11 @@ class AgentCoordinator(
             assistantId = null
             assistantItemId = null
             lastMessageWasFinal = false
-            runStartedNanos = System.nanoTime()
+            runStartedNanos = nowNanos()
             firstResponseMs = null
             toolCalls = 0
             toolMs = 0L
+            approvalNanos.set(0)
             assistantText.clear()
             assistantOutcome = "complete"
             controlTakeover = false
@@ -147,6 +187,69 @@ class AgentCoordinator(
             completion = null
             runJob = null
             mutableState.value = RunState(RunPhase.THINKING, sessionId, "Voice ready")
+        }
+    }
+
+    /**
+     * Take the phone for a standing rule's own actions, run [block], release it.
+     *
+     * A rule that drives the screen needs the same exclusive ownership a turn
+     * has — one phone screen cannot be shared, and an automation firing
+     * underneath a person's run would fight them for it. It claims that
+     * ownership the way [beginVoice] does, and waits at most [waitMs] for it:
+     * `null` means the device stayed busy, and a rule whose moment has passed
+     * is better reported than run half an hour later behind someone else's
+     * work.
+     *
+     * The wait exists because the common case is not a collision at all — it is
+     * the agent firing a rule from inside a turn, which by definition already
+     * owns the device. Refusing there would make "run my evening rule now"
+     * always answer "the phone is busy", with the busy run being the one that
+     * asked. A short wait covers that and the ordinary case of a trigger
+     * landing mid-task; anything longer is the staleness `validUntil` is for.
+     *
+     * No model is involved. This arms the gateways and shows the control card;
+     * what runs inside is a workflow or an intent the rule named, decided
+     * before anything was claimed.
+     *
+     * Stop still works throughout: [stop] sees an active state, revokes the
+     * tools — which is what aborts a workflow between steps — and owns the
+     * teardown from there, so the epoch is re-checked here before releasing
+     * anything a stop has already released.
+     */
+    suspend fun <T> runAutomation(
+        label: String,
+        workspace: File,
+        waitMs: Long = DEFAULT_AUTOMATION_WAIT_MS,
+        block: suspend () -> T,
+    ): T? {
+        if (waitMs > 0 && !availableState.value) {
+            // Losing the race after the wait is fine: the claim below is what
+            // decides, and it refuses rather than double-claiming.
+            withTimeoutOrNull(waitMs) { availableState.first { it } }
+        }
+        val token = synchronized(lifecycleLock) {
+            if (!availableState.value || state.value.active) return null
+            availableState.value = false
+            val claimed = epoch.incrementAndGet()
+            tools.beginRun(claimed.toString(), workspace)
+            mutableState.value = RunState(RunPhase.CONTROLLING, null, label, controlling = true)
+            claimed
+        }
+        runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
+        return try {
+            block()
+        } finally {
+            val stillOurs = synchronized(lifecycleLock) {
+                val ours = epoch.get() == token
+                if (ours) {
+                    tools.revoke()
+                    mutableState.value = RunState(status = "Ready")
+                    availableState.value = true
+                }
+                ours
+            }
+            if (stillOurs) runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, label)) }
         }
     }
 
@@ -644,12 +747,15 @@ class AgentCoordinator(
     private suspend fun awaitLocalApproval(pending: PendingLocalApproval): LocalOutcome {
         // null means nobody answered; false means the user said no. They are
         // different outcomes and the model has to be able to tell them apart.
+        val askedAt = nowNanos()
         val decision = try {
             withTimeoutOrNull(LOCAL_APPROVAL_TIMEOUT_MS) { pending.decision.await() }
         } catch (cancelled: CancellationException) {
+            approvalNanos.addAndGet(nowNanos() - askedAt)
             clearLocalApproval(pending)
             throw cancelled
         }
+        approvalNanos.addAndGet(nowNanos() - askedAt)
         return synchronized(lifecycleLock) {
             val stillCurrent = pendingLocalApproval === pending &&
                 isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)
@@ -881,10 +987,16 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 mutableState.value = state.value.copy(phase = if (visible) RunPhase.CONTROLLING else RunPhase.TOOL, controlling = visible, status = status, toolName = toolName)
                             }
-                            val toolStart = System.nanoTime()
+                            val toolStart = nowNanos()
+                            // Any approval this call raises is subtracted below,
+                            // so tool time stays device time.
+                            val approvalsBefore = approvalNanos.get()
                             toolCalls++
                             try { result = tools.invoke(event.name, event.arguments) }
-                            finally { toolMs += (System.nanoTime() - toolStart) / 1_000_000 }
+                            finally {
+                                val waited = approvalNanos.get() - approvalsBefore
+                                toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
+                            }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (error: Exception) {
@@ -1005,7 +1117,7 @@ class AgentCoordinator(
         }
         synchronized(lifecycleLock) {
             ensureCurrentLocked(token)
-            if (firstResponseMs == null) firstResponseMs = (System.nanoTime() - runStartedNanos) / 1_000_000
+            if (firstResponseMs == null) firstResponseMs = (nowNanos() - runStartedNanos) / 1_000_000
             assistantText.append(text)
             textRevision++
         }
@@ -1126,7 +1238,19 @@ class AgentCoordinator(
             }
         }
         runCatching { overlay.finish(terminalOverlay) }
-        metricsState.value = metricsState.value + (sessionId to RunMetrics(firstResponseMs, (System.nanoTime() - runStartedNanos) / 1_000_000, toolCalls, toolMs))
+        val metrics = RunMetrics(
+            firstResponseMs = firstResponseMs,
+            totalMs = (nowNanos() - runStartedNanos) / 1_000_000,
+            toolCalls = toolCalls,
+            toolMs = toolMs,
+            approvalMs = approvalNanos.get() / 1_000_000,
+        )
+        metricsState.value = metricsState.value + (sessionId to metrics)
+        // Into the chat, not a log: the run that felt slow is the one someone
+        // will ask about, and the answer belongs where they are already looking.
+        RunSummary.line(metrics)?.let { summary ->
+            runCatching { sessions.append(message(sessionId, "system", summary)) }
+        }
         availableState.value = true
     }
 
@@ -1213,5 +1337,14 @@ class AgentCoordinator(
     /** Internal rather than private so tests can advance to the real deadline. */
     internal companion object {
         const val LOCAL_APPROVAL_TIMEOUT_MS = 120_000L
+
+        /**
+         * How long a firing rule waits for the phone before giving up.
+         *
+         * Long enough to outlast the turn that fired it and a short task in
+         * front of it, short enough that a rule never surfaces long after its
+         * moment — which is what `validUntil` covers properly.
+         */
+        const val DEFAULT_AUTOMATION_WAIT_MS = 90_000L
     }
 }

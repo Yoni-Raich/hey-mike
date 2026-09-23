@@ -13,7 +13,8 @@ at any moment.
 [![Latest release](https://img.shields.io/github/v/release/Yoni-Raich/hey-mike?label=release)](https://github.com/Yoni-Raich/hey-mike/releases/latest)
 ![Android 11+](https://img.shields.io/badge/Android-11%2B-3DDC84?logo=android&logoColor=white)
 ![Status](https://img.shields.io/badge/status-developer%20preview-orange)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![Commercial license](https://img.shields.io/badge/commercial%20license-available-green)](LICENSE-COMMERCIAL.md)
 
 <p align="center">
   <img src="docs/images/demo-youtube.gif" width="280" alt="Mike receives the task &quot;Open YouTube, search for Android 16 features and play the first video&quot;, opens YouTube, types the search and opens the first result, with its floating status pill and Stop button on screen">
@@ -202,10 +203,21 @@ Pull requests and device reports are welcome. Read
 
 ### License
 
-The code in this repository is licensed under the [Apache License 2.0](LICENSE).
-Bundled and downloaded third-party components keep their own licenses; see
-[NOTICE](NOTICE) and the
-[Codex app-server license](third_party/licenses/openai-codex-app-server-0.153.4-Apache-2.0.txt).
+Hey Mike is dual-licensed.
+
+- **[GNU AGPL v3.0](LICENSE)** — free for personal use, study, research, and any
+  project willing to release its own complete source under the same license. If
+  you distribute a modified build, or offer it over a network, you must publish
+  your corresponding source (AGPL section 13).
+- **[Commercial license](LICENSE-COMMERCIAL.md)** — required to ship Hey Mike or
+  a derivative inside a closed-source or proprietary product, or to obtain
+  support, a warranty, or an indemnity. Contact yoniraich@gmail.com.
+
+Contributions are accepted under the [CLA](CLA.md).
+
+Bundled and downloaded third-party components keep their own licenses and are
+not covered by either option; see [NOTICE](NOTICE) and the
+[Codex app-server license](third_party/licenses/openai-codex-app-server-0.156.0-Apache-2.0.txt).
 
 Hey Mike is an independent project and is not affiliated with or endorsed
 by OpenAI or Google. All docs: [docs/INDEX.md](docs/INDEX.md).

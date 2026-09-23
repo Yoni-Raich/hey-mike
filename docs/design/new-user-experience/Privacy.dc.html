@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Privacy and consent</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#1E1E20;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 16px 16px 24px; display: flex; flex-direction: column; gap: 14px; background: #1E1E20;">
+<div style="display: flex; align-items: center; gap: 4px; height: 56px;">
+<a href="Settings.dc.html" aria-label="Back" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"></path></svg></a>
+<h1 style="margin: 0; font-size: 24px; font-weight: 600;">Privacy and consent</h1>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 24px; background: #262628;">
+<span style="font-size: 14px; color: #8F8F8F;">Where your data goes</span>
+<div style="display: flex; align-items: center; gap: 10px; font-size: 14px;">
+<div style="flex: 1; padding: 10px; border-radius: 14px; background: #1E1E20; text-align: center;">This phone</div>
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+<div style="flex: 1; padding: 10px; border-radius: 14px; background: #1E1E20; text-align: center;">Codex (OpenAI)</div>
+</div>
+<span style="font-size: 14px; line-height: 1.5; color: #B9B9B9;">Hey Mike has no servers and collects nothing. Chats, files and your sign-in stay on this phone. What Mike sends to answer you follows only the Codex policies.</span>
+<a href="https://openai.com/policies/" style="font-size: 14px; text-decoration: none;">Read the Codex and OpenAI policies</a>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 24px; background: #262628;">
+<span style="font-size: 14px; color: #8F8F8F;">You agreed on [DATE]</span>
+<div style="display: flex; gap: 10px; font-size: 15px; line-height: 1.45;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 2px;"><path d="M5 12l5 5 9-10"></path></svg>Full control of this phone is a real risk</div>
+<div style="display: flex; gap: 10px; font-size: 15px; line-height: 1.45;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 2px;"><path d="M5 12l5 5 9-10"></path></svg>Mike can make mistakes</div>
+<div style="display: flex; gap: 10px; font-size: 15px; line-height: 1.45;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 2px;"><path d="M5 12l5 5 9-10"></path></svg>Your data goes only to Codex</div>
+<a href="Consent.dc.html" style="font-size: 14px; text-decoration: none;">Read the full text again</a>
+</div>
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: 24px; border: 1px solid #4A2A28;">
+<span style="font-size: 15px; font-weight: 600;">Withdraw consent</span>
+<span style="font-size: 13px; line-height: 1.5; color: #B9B9B9;">Mike stops, signs out and opens Settings so you can turn off screen access. Your chats stay on the phone until you delete them.</span>
+<button type="button" style="height: 44px; margin-top: 4px; border-radius: 22px; border: 1px solid #6B3530; background: transparent; color: #FFB4AB; font-family: inherit; font-size: 15px; font-weight: 500;">Withdraw and stop Mike</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

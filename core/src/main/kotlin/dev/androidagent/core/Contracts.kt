@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import kotlinx.coroutines.flow.Flow
@@ -93,7 +113,24 @@ data class AgentSkill(
 }
 data class TokenUsage(val total: Long, val input: Long, val output: Long, val cachedInput: Long = 0, val contextWindow: Long? = null)
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
-data class RunMetrics(val firstResponseMs: Long?, val totalMs: Long, val toolCalls: Int, val toolMs: Long)
+/**
+ * Where one run's wall clock went.
+ *
+ * [toolMs] is device time only and [approvalMs] is a person deciding, so the
+ * two are never the same number: a send that waited 20 seconds for Allow is not
+ * 20 seconds of the phone being slow. [thinkingMs] is what is left, which is
+ * model turns and engine overhead.
+ */
+data class RunMetrics(
+    val firstResponseMs: Long?,
+    val totalMs: Long,
+    val toolCalls: Int,
+    val toolMs: Long,
+    /** Time a person was being waited on: a send approval, a sensitive step. */
+    val approvalMs: Long = 0,
+) {
+    val thinkingMs: Long get() = (totalMs - toolMs - approvalMs).coerceAtLeast(0)
+}
 
 sealed interface EngineEvent {
     data class TurnStarted(val threadId: String, val turnId: String) : EngineEvent

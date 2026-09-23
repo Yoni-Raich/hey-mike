@@ -2,6 +2,153 @@
 
 ## Unreleased
 
+- First launch is now two steps you do by hand, sign-in and screen access,
+  instead of an eight-item checklist. Before them, a welcome screen and a
+  consent screen: full control of the phone is a risk, Mike can make mistakes,
+  and your data goes only to Codex. After them, Mike offers the rest — the
+  floating Stop button, progress notifications, and wireless debugging, which
+  Mike turns on and pairs itself after you allow it. The microphone, update
+  installs and notification access are asked for when a task needs them.
+- Settings are grouped by what Mike can do, how Mike works, account and
+  privacy, and advanced. A new Privacy and consent page shows where data goes
+  and what you agreed to, and lets you withdraw.
+- The side panel shows Mike's orb with whether it can act right now, a chat
+  search, and chats grouped by day.
+- A home screen widget shows the quota left on every saved Codex account, each
+  as its own small Mike orb: green to red as the window fills, with a ring that
+  fills like the top-bar meter. The account in use is read live; the others
+  show their last reading and how old it is, and count as empty again once
+  their window has reset. Tap it to open the app.
+
+- Editing a rule is now a form instead of raw JSON. The time is picked from a
+  clock, the days are seven taps, and the numbers and the text inside a
+  condition or an action — a caption, a notification message, what Mike should
+  say — each have their own field, grouped under the step they belong to. A
+  value that cannot work says why under that field, and nothing is saved until
+  it can. Anything bigger than a value (another trigger, a new condition, a
+  different workflow) goes to Mike from the bottom of the same screen.
+
+- You can now delete and edit a standing rule from its own screen in the rules
+  panel. Delete asks first. Edit lets you tell Mike what to change in plain
+  words, or change the rule directly; a direct edit is checked exactly like a
+  new rule and nothing is saved if it is wrong. Mike can change a rule in place
+  too (`automation_rule` `mode:"update"`), and it can no longer replace a working
+  rule by accident by creating another with the same name.
+- Standing rules are more dependable on a real phone:
+  - A rule Mike creates, edits, turns on or off, or deletes is scheduled at
+    once. Before, a new "every day at 19:00" rule waited for the next unrelated
+    firing or a restart before its alarm was set.
+  - A scheduled rule whose alarm lands late — Doze, no exact-alarm permission,
+    a phone that was off at 19:00 — still runs, once, within its window
+    (`validForMinutes`, 30 by default). Before, anything but the exact minute was
+    a silently missed day. A rule that needs you and was held while the phone was
+    locked now runs when you unlock it, inside the same window.
+  - An `everyMinutes` rule runs on its interval. Before, it ran whenever any
+    alarm woke the phone, and every screen-on pushed its next run further out,
+    so an hourly rule could run far too often or never.
+  - Two events arriving together can no longer run the same rule twice.
+  - Deleting, disabling, editing or running a rule needs its exact id, so
+    "delete morning" can never remove "morning-news".
+
+- Mike no longer spends a thinking turn per tap when it can already see what to
+  do. Reading the screen once shows it the message box *and* the Send button, so
+  "tap the box, type this, send it" is now a single `act_plan` call instead of
+  three turns. Each step is still found on the screen in front of it, so the
+  keyboard opening or a list shifting between steps does not throw it off, and
+  a step that does not land stops the sequence and reports what already
+  happened. Sending still asks you first, wherever it sits in the sequence.
+- A chat you started before updating the app can now use the abilities the
+  update added. Until now those only worked in chats opened afterwards, while
+  Mike was told it had them - so it would try one and fail.
+- After Mike does something on your phone, the chat now ends with one line
+  saying where the time went: how long in total, how much of it was Mike
+  thinking, how much was the phone, and how much was waiting for you to answer.
+  Waiting for you is counted separately, so approving a message is never
+  reported as the phone being slow.
+- Fixed a tool definition that described its own input wrongly, which made Mike
+  send a sequence in a form it then refused, costing a wasted round trip before
+  anything ran.
+- When Mike waits for something on the phone, it now says how long it expects
+  that to take instead of being held to a fixed few seconds. A video attaching
+  to a post, an upload or an install is no longer reported as "it did not
+  happen" while it was still on its way, and Mike stops waiting the moment it is
+  done.
+- Every step of a sequence now reports where its time went — finding the
+  element, the action itself, the screen settling, or waiting for the result —
+  so a slow run says which part was slow instead of just being slow.
+- Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
+  **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
+  anyone who wants to ship it inside a closed-source product. Personal use,
+  study, research and contributions stay free; a proprietary fork now needs an
+  agreement. Releases made before this change keep the license they shipped
+  under. See `LICENSE`, `LICENSE-COMMERCIAL.md` and `NOTICE`.
+- Contributions are now accepted under a Contributor License Agreement
+  (`CLA.md`), signed once in your first pull request.
+- Mike can hold standing rules: when something happens, and the conditions are
+  true, do this. A rule is woken by the clock ("every day at 19:00", "weekdays
+  at 07:30"), by arriving at or leaving a place, by a notification from one
+  named app, by a device signal such as charging, or by name. It can then run a
+  saved workflow, open an app screen, tell you something, work out what to do
+  in a thinking turn, ask you a yes/no question, or start a voice conversation.
+- Every rule says who has to be awake for it, and Mike works that out from what
+  the rule does rather than taking its word for it. A rule that only runs a
+  workflow runs at a locked phone; one that wants to talk to you waits until
+  you can answer instead of talking to a pocket.
+- A rule sends on only the parts of an event it actually writes into what it
+  does. A rule that reads a message to decide, but whose reply only uses the
+  sender's name, never sends the message itself anywhere — and Mike says which
+  fields those are when it saves the rule. A notification rule has to name the
+  app it listens to; there is no "every notification".
+- A new rule can be dry-run against any moment — "pretend Dad messaged at
+  21:40" — and a rule that would not fire says which of its own clauses stopped
+  it, so "nothing happened at 19:00" has an answer. A dry run changes nothing.
+- A rule cannot run away: it has a cooldown and a daily limit, and an alarm
+  that fires at the wrong minute does not fire the rule.
+- Rules now actually run. Mike keeps one alarm pointed at whichever rule is due
+  next and re-arms it after every firing and after a restart, watches for
+  charging, unplugging and the screen, and — once you grant it in Settings —
+  watches notifications from the apps your rules name.
+- A rule that drives the phone takes it the same way a task does: the same
+  control card, the same Stop. If you are already using the phone the rule says
+  so instead of fighting you for the screen.
+- A rule that needs a thinking turn writes into its own chat, one per rule, so
+  something firing at 3am does not appear in the middle of your conversation and
+  there is a record of what each rule has been doing.
+- A rule that wants a yes/no puts a notification up with two buttons. No answer
+  in five minutes is a no — a question you never saw never becomes a yes.
+- A rule Mike cannot serve on this phone is saved and reported as dormant with
+  the reason, instead of looking live and doing nothing. Place rules are dormant
+  on every phone for now: nothing tracks location yet.
+- You can ask Mike to run a rule now, so a new rule can be shown working
+  straight away instead of waiting until tonight. Naming it stands in for its
+  trigger; everything else about it — the hours it is allowed, its cooldown, its
+  daily limit — still applies.
+- A rule you ask Mike to run while it is already busy now waits for it to finish
+  instead of answering "the phone is busy".
+- Settings > Standing rules shows how many rules are on, how many cannot run on
+  this phone and why, when the next one is due, and has the buttons for the two
+  permissions rules need: notification access and exact alarms.
+- The side panel now opens on your rules, not just your chats. A strip above the
+  chat list says what is running, what needs you, and the one thing worth
+  knowing right now — "Home lights can't run, Mike can't track location yet", or
+  "Next: Evening post, in 6 hours".
+- Tap the strip for every rule, grouped by what needs you: the ones that cannot
+  run, the ones that are running, and the ones you turned off. Tap a rule to see
+  what it does as a chain — when, and, then — what it costs, and exactly which
+  parts of an event leave your phone. Turn it off there, or run it now.
+- The panel opens from a menu button at the top left instead of from the chat's
+  name, so the name is just the name of what you are reading.
+- Opening it makes room instead of covering: the chat steps back and aside and
+  rounds into a card while the panel takes the space, so you can still see where
+  you were. Closing hands the screen back the same way. Turning off animations
+  in Android's developer settings leaves the chat still.
+- That button takes a small amber dot when a rule is switched on and cannot run.
+  That was invisible before: you would find out by the thing never happening. No
+  dot when everything is fine.
+- Rules now describe themselves in words rather than in their own format:
+  "WhatsApp from Dad, after 19:00 and before 07:00", "Mon, Tue, Wed, Thu and Fri
+  at 07:00", "Ran yesterday at 21:40 - twice today".
+
 - Mike can run a whole saved sequence in one go. `workflow_runner` takes the
   name of a workflow and does every step itself — open the app, find the
   search box, type, open the result, flip the switch — with no thinking turn

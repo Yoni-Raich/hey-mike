@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.a11y
 
 import android.accessibilityservice.AccessibilityService
@@ -780,14 +800,17 @@ class A11yDeviceTools(
 
         private const val MAX_WAIT_MS = 30_000L
 
-        private val SCROLL_ACTIONS = mapOf(
-            "forward" to AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
-            "backward" to AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
-            "up" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id,
-            "down" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id,
-            "left" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id,
-            "right" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id,
-        )
+        // Android's host-side stub leaves AccessibilityAction fields null. Read
+        // them only when a device actually needs to scroll, not during class init.
+        private val SCROLL_ACTIONS: Map<String, Int>
+            get() = mapOf(
+                "forward" to AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+                "backward" to AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+                "up" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id,
+                "down" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id,
+                "left" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id,
+                "right" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id,
+            )
 
         private val PACKAGE_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
 
@@ -803,7 +826,8 @@ class A11yDeviceTools(
             "LOCK" to AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN,
         )
 
-        private val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
+        /** Internal rather than private so this module's tests can audit it. */
+        internal val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ACT_AND_OBSERVE_DEFINITION,
             tool(
                 "read_ui",

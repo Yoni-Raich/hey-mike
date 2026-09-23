@@ -1,0 +1,138 @@
+name: Dev nightly
+
+on:
+  push:
+    branches:
+      - dev
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dev-nightly
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check whether dev changed
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          release_json="$(gh api repos/${{ github.repository }}/releases/tags/dev-nightly 2>/dev/null || printf '{}')"
+          previous_sha="$(jq -r '.body // ""' <<<"$release_json" | sed -n 's/^Commit: *//p' | head -n 1)"
+          previous_code="$(jq -r '.body // ""' <<<"$release_json" | sed -n 's/^Version code: *//p' | head -n 1)"
+          base_code="$(sed -n 's/^versionCode=//p' version.properties)"
+          if [[ "$previous_sha" == "$head_sha" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ ! "$previous_code" =~ ^[0-9]+$ ]]; then previous_code=999; fi
+          if [[ ! "$base_code" =~ ^[0-9]+$ ]]; then base_code=0; fi
+          next_code=$(( previous_code + 1 ))
+          if (( next_code < base_code + 1 )); then next_code=$(( base_code + 1 )); fi
+          if (( next_code < 1000 )); then next_code=1000; fi
+          version_name="$(sed -n 's/^versionName=//p' version.properties)-dev.${head_sha:0:12}"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "version_code=$next_code" >> "$GITHUB_OUTPUT"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when dev has no new commit
+        if: steps.state.outputs.should_build != 'true'
+        run: echo "dev-nightly already contains this commit"
+
+      - name: Prepare the stable dev signing key
+        if: steps.state.outputs.should_build == 'true'
+        env:
+          DEV_KEYSTORE_BASE64: ${{ secrets.DEV_KEYSTORE_BASE64 }}
+          DEV_KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+          DEV_KEY_ALIAS: ${{ secrets.DEV_KEY_ALIAS }}
+          DEV_KEY_PASSWORD: ${{ secrets.DEV_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$DEV_KEYSTORE_BASE64" ]] || { echo "Missing DEV_KEYSTORE_BASE64 repository secret" >&2; exit 1; }
+          printf '%s' "$DEV_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/dev-nightly.jks"
+          {
+            echo "DEV_NIGHTLY_KEYSTORE=$RUNNER_TEMP/dev-nightly.jks"
+            echo "DEV_NIGHTLY_KEYSTORE_PASSWORD=$DEV_KEYSTORE_PASSWORD"
+            echo "DEV_NIGHTLY_KEY_ALIAS=$DEV_KEY_ALIAS"
+            echo "DEV_NIGHTLY_KEY_PASSWORD=$DEV_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed dev APK
+        if: steps.state.outputs.should_build == 'true'
+        run: |
+          chmod +x gradlew
+          ./gradlew :core:test :app:lintDevDebug :app:assembleDevDebug \
+            -PversionCodeOverride=${{ steps.state.outputs.version_code }} \
+            -PversionNameOverride=${{ steps.state.outputs.version_name }} \
+            --no-daemon
+
+      - name: Prepare release files
+        if: steps.state.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/dev/debug/app-dev-debug.apk"
+          test -s "$apk"
+          cp "$apk" "$RUNNER_TEMP/hey-mike-dev-nightly.apk"
+          sha256sum "$RUNNER_TEMP/hey-mike-dev-nightly.apk" > "$RUNNER_TEMP/hey-mike-dev-nightly.apk.sha256"
+          {
+            echo "Automated debug build from the dev branch."
+            echo
+            echo "Commit: ${{ steps.state.outputs.head_sha }}"
+            echo "Version code: ${{ steps.state.outputs.version_code }}"
+            echo "Version name: ${{ steps.state.outputs.version_name }}"
+            echo "Package: dev.androidagent.app.dev"
+          } > "$RUNNER_TEMP/dev-nightly-notes.md"
+
+      - name: Publish the dev-nightly release
+        if: steps.state.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view dev-nightly >/dev/null 2>&1; then
+            gh release edit dev-nightly \
+              --target "${{ steps.state.outputs.head_sha }}" \
+              --title "Dev Nightly" \
+              --notes-file "$RUNNER_TEMP/dev-nightly-notes.md" \
+              --prerelease
+          else
+            gh release create dev-nightly \
+              --target "${{ steps.state.outputs.head_sha }}" \
+              --title "Dev Nightly" \
+              --notes-file "$RUNNER_TEMP/dev-nightly-notes.md" \
+              --prerelease
+          fi
+          gh release upload dev-nightly \
+            "$RUNNER_TEMP/hey-mike-dev-nightly.apk" \
+            "$RUNNER_TEMP/hey-mike-dev-nightly.apk.sha256" \
+            --clobber

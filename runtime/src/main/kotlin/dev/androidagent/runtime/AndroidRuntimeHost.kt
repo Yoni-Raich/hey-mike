@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.runtime
 
 import android.content.Context
@@ -362,13 +382,13 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
                 warnings += "link $linkPath: ${e.message}"
             }
         }
-        copyAssetIfMissing("runtime/codex-package.json", File(packageLinkDirectory, "codex-package.json"))
-        copyAssetIfMissing("runtime/runtime-manifest.json", File(packageLinkDirectory, "runtime-manifest.json"))
+        copyAsset("runtime/codex-package.json", File(packageLinkDirectory, "codex-package.json"))
+        copyAsset("runtime/runtime-manifest.json", File(packageLinkDirectory, "runtime-manifest.json"))
         return warnings
     }
 
-    private fun copyAssetIfMissing(assetPath: String, dest: File) {
-        if (dest.exists()) return
+    /** Overwrite every start, so an app update never leaves the old runtime version on disk. */
+    private fun copyAsset(assetPath: String, dest: File) {
         runCatching {
             appContext.assets.open(assetPath).use { input ->
                 dest.outputStream().use { input.copyTo(it) }

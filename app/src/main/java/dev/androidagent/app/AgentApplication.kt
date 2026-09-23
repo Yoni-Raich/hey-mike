@@ -1,20 +1,51 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app
 
 import android.app.Application
 import android.content.Intent
 import dev.androidagent.a11y.A11yDeviceTools
 import dev.androidagent.adb.AndroidAdbTransport
+import dev.androidagent.automations.AndroidAutomationActions
+import dev.androidagent.automations.AutomationHost
+import dev.androidagent.automations.AutomationHostOwner
+import dev.androidagent.core.AccountUsageBook
 import dev.androidagent.core.AgentCoordinator
+import dev.androidagent.core.AutomationJournal
+import dev.androidagent.core.AutomationLibrary
+import dev.androidagent.core.AutomationToolGateway
+import dev.androidagent.core.CodexAccountVault
 import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.WorkflowConfirmationOutcome
+import dev.androidagent.core.WorkflowCallMetadata
+import dev.androidagent.core.WorkflowCallRegistry
 import dev.androidagent.core.WorkflowLibrary
 import dev.androidagent.core.WorkflowStore
 import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
+import dev.androidagent.devicetools.AndroidCapabilityTools
 import dev.androidagent.enginecodex.CodexEngine
 import dev.androidagent.overlay.FloatingControlOverlay
 import dev.androidagent.runtime.AndroidRuntimeHost
@@ -24,9 +55,17 @@ import dev.androidagent.voice.AndroidRealtimeVoiceController
 import kotlinx.coroutines.*
 import java.io.File
 
-class AgentApplication : Application() {
+class AgentApplication : Application(), AutomationHostOwner {
     lateinit var graph: AgentGraph
         private set
+
+    /**
+     * How an alarm receiver and the notification listener reach the host: the
+     * system constructs those classes, so there is nowhere to inject one.
+     */
+    override val automationHost: AutomationHost?
+        get() = if (::graph.isInitialized) graph.automationHost else null
+
     override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
 }
 
@@ -35,6 +74,10 @@ class AgentGraph(private val app: Application) {
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
     val engine = CodexEngine(runtime)
+    // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
+    val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
+    // The last quota of every saved account, for the home screen widget.
+    val usageBook = AccountUsageBook(java.io.File(runtime.runtimeRoot, "accounts/usage.json"))
     val adb = AndroidAdbTransport(app)
     private lateinit var runCoordinator: AgentCoordinator
     // Declared before the gateways: they take `overlay` as a constructor argument,
@@ -81,6 +124,36 @@ class AgentGraph(private val app: Application) {
     // WorkspaceSeeder does not rewrite on every access.
     val knowledge = KnowledgeStore(KnowledgeStore.directoryIn(runtime.homeDirectory))
     val knowledgeTools = KnowledgeToolGateway(knowledge)
+    val runtimePermissions = RuntimePermissionBroker(app)
+    val capabilityTools = AndroidCapabilityTools(app) { requested ->
+        runtimePermissions.request(requested)
+    }
+    private val workflowCalls = WorkflowCallRegistry(
+        listOf(
+            WorkflowCallMetadata(
+                name = "contacts",
+                readOnlyOperations = setOf("permission_status", "search", "list", "get"),
+            ),
+            WorkflowCallMetadata(
+                name = "calendar",
+                readOnlyOperations = setOf("permission_status", "list", "get"),
+            ),
+            WorkflowCallMetadata(
+                name = "files_media",
+                readOnlyOperations = setOf(
+                    "permission_status", "list", "search", "info", "ws_list", "ws_read_text",
+                ),
+            ),
+            WorkflowCallMetadata(
+                name = "communications",
+                readOnlyOperations = setOf("notification_access_status"),
+            ),
+            WorkflowCallMetadata(
+                name = "apps_settings",
+                readOnlyOperations = setOf("list_apps", "app_info", "permission_status"),
+            ),
+        ).associateBy { it.name },
+    )
     // Accessibility first: it needs no ADB, keeps the phone's own settings
     // untouched, and falls through to ADB for anything it cannot do. The
     // knowledge gateway shares no tool name with either device backend, so its
@@ -103,11 +176,44 @@ class AgentGraph(private val app: Application) {
                 if (outcome == WorkflowConfirmationOutcome.ALLOWED) leaveApprovalScreen()
             }
         },
+        callRegistry = workflowCalls,
+    )
+    /** Standing rules, beside the workflows they name. */
+    val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
+    /** Read by the panel to say when each rule last ran; written only by the host. */
+    val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
+    private val automationActions = AndroidAutomationActions(
+        context = app,
+        coordinator = { runCoordinator },
+        tools = { tools },
+        queue = { queue },
+        sessions = sessions,
+        openAppIntent = {
+            Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        },
+        voiceIntent = { dev.androidagent.app.assist.AssistLaunch.voiceIntent(app) },
+    )
+    lateinit var automationHost: AutomationHost
+        private set
+    // Saved and reported dormant when this phone cannot serve a rule's trigger,
+    // so the point of failure is when it is written rather than the first night
+    // it quietly does not fire.
+    val automationTools = AutomationToolGateway(
+        library = automations,
+        history = automationJournal,
+        supportedTriggers = { if (::automationHost.isInitialized) automationHost.supportedTriggers() else emptySet() },
+        // Naming a rule supplies its trigger, so a scheduled rule can be proved
+        // without waiting for its hour. Everything else about it still applies.
+        fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
+        // A rule the agent writes, edits or deletes changes when the alarm is
+        // next due; without this it waited for an unrelated firing to be armed.
+        onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
     )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator
@@ -132,7 +238,39 @@ class AgentGraph(private val app: Application) {
                 }
             },
         )
-        queue = SessionRunQueue(scope, coordinator, sessions)
+        queue = SessionRunQueue(
+            scope,
+            coordinator,
+            sessions,
+            // A turn a rule queued has a moment; a turn a person sent does not
+            // expire. Dropping a stale one is reported, never silent.
+            onExpired = { turn ->
+                scope.launch {
+                    runCatching {
+                        sessions.append(
+                            dev.androidagent.core.ChatMessage(
+                                id = java.util.UUID.randomUUID().toString(),
+                                sessionId = turn.sessionId,
+                                role = "assistant",
+                                text = "This did not run: the phone was busy until after the moment it was for.",
+                                createdAt = System.currentTimeMillis(),
+                            ),
+                        )
+                    }
+                }
+            },
+        )
+        automationHost = AutomationHost(
+            context = app,
+            library = automations,
+            history = automationJournal,
+            actions = automationActions,
+            scope = scope,
+            agentAvailable = { runCoordinator.available.value },
+        )
+        // Alarms do not survive a restart, and the rules were only read just
+        // now, so the first arming happens here rather than at the first event.
+        runCatching { automationHost.start() }
         runCatching {
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app)
         }

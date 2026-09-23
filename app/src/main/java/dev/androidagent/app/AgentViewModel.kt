@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app
 
 import dev.androidagent.app.ui.statusSummary
@@ -24,6 +44,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         AgentUiState(
             selectedModel = preferences.getString("model", null),
             selectedReasoningEffort = preferences.getString("reasoningEffort", null),
+            onboarding = readOnboarding(),
         )
     )
     val ui: StateFlow<AgentUiState> = mutable.asStateFlow()
@@ -36,6 +57,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try { checkForUpdates(manual = false) } catch (_: Exception) {}
         }
+        viewModelScope.launch { refreshSavedAccounts() }
         viewModelScope.launch {
             graph.sessions.sessions.collect { list ->
                 mutable.update { it.copy(sessions = list) }
@@ -83,13 +105,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.engine.voiceEvents.collect(::handleVoiceEvent) }
         viewModelScope.launch { graph.engine.events.collect { event ->
             when (event) {
-                is EngineEvent.AccountChanged -> { mutable.update { it.copy(accountStatus = event.status, infoMessage = if (event.status.signedIn) "Signed in. You can start chatting." else null) }; if (event.status.signedIn) loadModels() }
+                is EngineEvent.AccountChanged -> {
+                    mutable.update { it.copy(accountStatus = event.status, infoMessage = if (event.status.signedIn) "Signed in. You can start chatting." else null) }
+                    if (event.status.signedIn) { rememberAccount(event.status); loadModels(); runCatching { graph.engine.refreshUsage() } }
+                }
                 is EngineEvent.UsageChanged -> {
                     val eventThread = event.threadId
                     val eventUsage = event.usage
                     if (eventThread != null && eventUsage != null) usageByThread[eventThread] = eventUsage
                     val threadId = mutable.value.sessions.firstOrNull { it.id == current.value }?.engineThreadId
                     mutable.update { it.copy(tokenUsage = usageByThread[threadId], usageLimits = event.limits ?: it.usageLimits) }
+                    event.limits?.let(::recordUsage)
                 }
                 EngineEvent.SkillsChanged -> runCatching { loadSkills(forceReload = false) }
                 is EngineEvent.Failure -> if (!graph.coordinator.state.value.active) error(event.message)
@@ -100,6 +126,66 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
     fun newChat() = task { current.value = graph.sessions.createSession().id }
+
+    // First launch and consent live in the same "ui" preferences as the model
+    // choice: on this phone only, never sent anywhere.
+    private fun readOnboarding() = OnboardingProgress(
+        welcomed = preferences.getBoolean(KEY_WELCOMED, false),
+        consentVersion = preferences.getInt(KEY_CONSENT_VERSION, 0).takeIf { it > 0 },
+        consentAt = preferences.getLong(KEY_CONSENT_AT, 0L).takeIf { it > 0L },
+        finished = preferences.getBoolean(KEY_ONBOARDED, false),
+    )
+
+    private fun saveOnboarding(change: (OnboardingProgress) -> OnboardingProgress) {
+        val next = change(mutable.value.onboarding)
+        preferences.edit()
+            .putBoolean(KEY_WELCOMED, next.welcomed)
+            .putInt(KEY_CONSENT_VERSION, next.consentVersion ?: 0)
+            .putLong(KEY_CONSENT_AT, next.consentAt ?: 0L)
+            .putBoolean(KEY_ONBOARDED, next.finished)
+            .apply()
+        mutable.update { it.copy(onboarding = next) }
+    }
+
+    fun markWelcomed() = saveOnboarding { it.copy(welcomed = true) }
+
+    fun acceptConsent() = saveOnboarding {
+        it.copy(welcomed = true, consentVersion = Onboarding.CONSENT_VERSION, consentAt = System.currentTimeMillis())
+    }
+
+    fun finishOnboarding() = saveOnboarding { it.copy(finished = true) }
+
+    /**
+     * Forget the consent and stop acting. Signing out needs the run and voice
+     * to be over, so stop first. Screen access is a system switch the app
+     * cannot turn off; the caller opens its screen.
+     */
+    fun withdrawConsent() {
+        stop()
+        saveOnboarding { it.copy(consentVersion = null, consentAt = null, finished = false) }
+        task {
+            withTimeoutOrNull(10_000L) {
+                graph.coordinator.state.first { !it.active }
+                graph.voice.state.first { !it.active }
+            }
+            if (mutable.value.accountStatus?.signedIn == true) logout()
+        }
+    }
+
+    /**
+     * Hand wireless debugging to Mike. The pairing reader is armed first, while
+     * no run is active, so it can read the code once Mike opens the dialog;
+     * the code itself never reaches the model.
+     */
+    fun letMikeSetUpWireless() = task {
+        check(!graph.coordinator.state.value.active) { "Stop the current run first." }
+        check(dev.androidagent.a11y.PairingWatcher.available) { "Turn on screen access first." }
+        finishOnboarding()
+        current.value = graph.sessions.createSession().id
+        // Its own job: it waits for the dialog while Mike's run is active.
+        task { pairFromDialog(timeoutMs = WIRELESS_SETUP_TIMEOUT_MS) }
+        send(WIRELESS_SETUP_PROMPT, emptyList())
+    }
     fun select(id: String) { current.value = id }
     fun rename(id: String, title: String) = task { graph.sessions.rename(id, title) }
     fun delete(id: String) {
@@ -272,6 +358,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 graph.runtime.prepare(); graph.engine.connect()
                 val account = graph.engine.account()
                 mutable.update { it.copy(accountStatus = account) }
+                rememberAccount(account)
                 loadModels()
                 loadSkills()
                 runCatching { graph.engine.refreshUsage() }
@@ -282,13 +369,115 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val status = graph.engine.login()
         mutable.update { it.copy(accountStatus = status, isSettingsOpen = true, errorMessage = null) }
     }
-    fun logout() = task { check(!graph.coordinator.state.value.active && !graph.voice.state.value.active) { "Stop the current run or voice conversation before signing out." }; graph.engine.logout(); mutable.update { it.copy(accountStatus = AccountStatus(false, "Sign in to Codex")) } }
+    fun logout() = task {
+        check(!graph.coordinator.state.value.active && !graph.voice.state.value.active) { "Stop the current run or voice conversation before signing out." }
+        graph.engine.logout()
+        // Signing out ends this sign-in for good, so it leaves the saved list;
+        // the other saved accounts stay one tap away.
+        withContext(Dispatchers.IO) { graph.accounts.state().activeId?.let(graph.accounts::remove) }
+        refreshSavedAccounts()
+        mutable.update { it.copy(accountStatus = AccountStatus(false, "Sign in to Codex"), usageLimits = emptyList()) }
+    }
+
+    private val accountChange = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Sign in to one more account. The live one is saved and taken off
+     * Codex first, so the device-code sign-in lands in an empty slot instead
+     * of replacing it.
+     */
+    fun addAccount() = changeAccount("adding an account") {
+        withContext(Dispatchers.IO) { graph.accounts.detach() }
+        val status = graph.engine.login()
+        mutable.update { it.copy(accountStatus = status, isSettingsOpen = true) }
+    }
+
+    /**
+     * Make a saved account the live one. Only Codex's credentials file is
+     * swapped: every chat, its thread and its history stay as they are and
+     * resume under this account on the next turn. The quota shown is read
+     * again, because quota is the one thing that belongs to the account.
+     */
+    fun switchAccount(id: String) {
+        if (mutable.value.savedAccounts.activeId == id && mutable.value.accountStatus?.signedIn == true) return
+        changeAccount("switching account") { activate(id) }
+    }
+
+    private suspend fun activate(id: String) {
+        val target = withContext(Dispatchers.IO) { graph.accounts.activate(id) }
+        val account = graph.engine.account()
+        mutable.update { it.copy(accountStatus = account, infoMessage = "Switched to ${target.label}. Your chats are unchanged.") }
+        runCatching { graph.engine.refreshUsage() }
+        runCatching { loadModels() }
+    }
+
+    fun removeAccount(id: String) = task {
+        check(mutable.value.savedAccounts.activeId != id) { "Switch to another account first, or log out of this one." }
+        withContext(Dispatchers.IO) { graph.accounts.remove(id) }
+        refreshSavedAccounts()
+    }
+
+    /**
+     * Codex writes auth.json while it runs, so the swap happens with the
+     * app-server stopped and nothing queued able to start it again.
+     */
+    private fun changeAccount(what: String, block: suspend () -> Unit) = task {
+        check(!graph.coordinator.state.value.active && !graph.voice.state.value.active) { "Stop the current run or voice conversation before $what." }
+        if (!accountChange.tryLock()) return@task
+        val wasPaused = graph.queue.paused.value
+        graph.queue.pause()
+        mutable.update { it.copy(isSwitchingAccount = true, usageLimits = emptyList(), errorMessage = null) }
+        try {
+            graph.engine.close()
+            block()
+        } finally {
+            refreshSavedAccounts()
+            mutable.update { it.copy(isSwitchingAccount = false) }
+            accountChange.unlock()
+            if (!wasPaused) graph.queue.resume()
+        }
+    }
+
+    /** Keep the live sign-in in the saved list, under the email Codex reports. */
+    private suspend fun rememberAccount(status: AccountStatus) {
+        if (!status.signedIn) return
+        runCatching { withContext(Dispatchers.IO) { graph.accounts.captureActive(status.label) } }
+        refreshSavedAccounts()
+    }
+
+    private suspend fun refreshSavedAccounts() {
+        val saved = runCatching { withContext(Dispatchers.IO) { graph.accounts.state() } }.getOrNull() ?: return
+        val changed = saved != mutable.value.savedAccounts
+        mutable.update { it.copy(savedAccounts = saved) }
+        // Which account is in use, and which are saved, is on the widget too.
+        if (changed) dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+    }
+
+    /**
+     * Keep a quota reading under the account it belongs to, for the widget.
+     * The vault on disk names the live account, not the UI state: during a
+     * switch the new account's quota arrives before the UI has caught up.
+     */
+    private fun recordUsage(limits: List<UsageLimit>) {
+        if (limits.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val vault = graph.accounts.state()
+                val live = vault.activeId ?: return@runCatching
+                graph.usageBook.record(live, limits, vault.accounts.map { it.id })
+                dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+            }
+        }
+    }
     fun refreshAccount() = task {
         if (graph.runtime.status.value.phase !in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) return@task
+        // A switch has Codex stopped on purpose; reading now would restart it mid-swap.
+        if (accountChange.isLocked) return@task
         mutable.update { it.copy(isRefreshingAccount = true) }
         try {
             val account = graph.engine.account()
             mutable.update { it.copy(accountStatus = account) }
+            rememberAccount(account)
             runCatching { graph.engine.refreshUsage() }
         } finally {
             mutable.update { it.copy(isRefreshingAccount = false) }
@@ -321,6 +510,112 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(permissions = permissions, a11yStatus = a11y ?: state.a11yStatus)
         }
     }
+    /**
+     * Re-read the rules and the two permissions they depend on.
+     *
+     * Both permissions are changed in system Settings and neither is
+     * observable, so this runs on every resume beside [refreshPermissions] —
+     * a rule that quietly stopped working because notification access was
+     * revoked is exactly the state this screen exists to show.
+     */
+    fun refreshAutomations() {
+        val host = graph.automationHost
+        val rules = runCatching { graph.automations.all() }.getOrDefault(emptyList())
+        val supported = runCatching { host.supportedTriggers() }.getOrDefault(emptySet())
+        val overview = runCatching {
+            dev.androidagent.core.AutomationOverview.of(
+                rules = rules,
+                history = graph.automationJournal,
+                supported = supported,
+                now = java.time.ZonedDateTime.now(),
+                appLabel = ::appLabel,
+            )
+        }.getOrDefault(dev.androidagent.core.AutomationOverview.EMPTY)
+        mutable.update { state ->
+            state.copy(
+                automations = dev.androidagent.app.ui.AutomationsStatus(
+                    overview = overview,
+                    notificationAccess = runCatching {
+                        dev.androidagent.automations.AutomationNotificationListener.isEnabled(getApplication())
+                    }.getOrDefault(false),
+                    exactAlarms = runCatching { host.canFireOnTime() }.getOrDefault(true),
+                ),
+            )
+        }
+    }
+
+    /**
+     * "com.whatsapp" as the user knows it. Null when the app is not installed,
+     * which is worth showing as the bare package rather than hiding: a rule
+     * watching an app that is gone is a rule that will never fire.
+     */
+    private fun appLabel(packageName: String): String? = runCatching {
+        val packages = getApplication<Application>().packageManager
+        packages.getApplicationLabel(packages.getApplicationInfo(packageName, 0)).toString()
+    }.getOrNull()
+
+    /** Turn a rule on or off, then re-arm: the alarm set may have changed. */
+    fun setRuleEnabled(id: String, enabled: Boolean) {
+        runCatching { graph.automations.setEnabled(id, enabled) }
+        runCatching { graph.automationHost.rearm() }
+        refreshAutomations()
+    }
+
+    /** Delete a rule for good, then re-arm: it may have been the next one due. */
+    fun deleteRule(id: String) {
+        val removed = runCatching { graph.automations.delete(id) }.getOrDefault(false)
+        runCatching { graph.automationHost.rearm() }
+        val name = dev.androidagent.core.AutomationSummaries.chipName(id)
+        mutable.update {
+            it.copy(infoMessage = if (removed) "Deleted \"" + name + "\"" else "Could not delete \"" + name + "\"")
+        }
+        refreshAutomations()
+    }
+
+    /** The rule's editable values, for the edit form. Empty when it is gone or unreadable. */
+    fun ruleEditFields(id: String): List<AutomationEditField> =
+        runCatching { graph.automations.get(id)?.let(AutomationEditor::fields) }.getOrNull().orEmpty()
+
+    /**
+     * Save the edit form.
+     *
+     * The form's values become the same `changes` the agent's `mode:"update"`
+     * takes, and go through the same merge and validation, so the screen cannot
+     * save what the tool would refuse. Returns null on success, or the reason
+     * in words for the form to show; nothing is written when it fails.
+     */
+    fun saveRuleEdits(id: String, values: Map<String, String>): String? {
+        val rule = graph.automations.get(id) ?: return "This rule no longer exists."
+        val changes = AutomationEditor.changes(rule, values)
+        if (changes.isEmpty()) return null
+        return try {
+            graph.automations.update(id, changes)
+            runCatching { graph.automationHost.rearm() }
+            mutable.update { it.copy(infoMessage = "Saved \"" + AutomationSummaries.chipName(id) + "\"") }
+            refreshAutomations()
+            null
+        } catch (invalid: AutomationFormatException) {
+            invalid.message
+        } catch (failure: Exception) {
+            failure.message ?: "The rule could not be saved."
+        }
+    }
+
+    /**
+     * Fire a rule now. Naming it supplies its trigger; its conditions, cooldown
+     * and daily limit still apply, so this may decide not to run — which is why
+     * the list is re-read rather than assumed.
+     */
+    fun runRule(id: String) {
+        runCatching { graph.automationHost.runNow(id) }
+        val name = dev.androidagent.core.AutomationSummaries.chipName(id)
+        mutable.update { it.copy(infoMessage = "Running \"" + name + "\"") }
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1_500)
+            refreshAutomations()
+        }
+    }
+
     private suspend fun loadModels() {
         mutable.update { it.copy(isLoadingModels = true) }
         try {
@@ -419,19 +714,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun capturePairing() = task {
         check(!graph.coordinator.state.value.active) { "Stop the current run before changing the connection." }
+        pairFromDialog(timeoutMs = 120_000L)
+    }
+
+    private suspend fun pairFromDialog(timeoutMs: Long) {
         if (!dev.androidagent.a11y.PairingWatcher.available) {
             mutable.update {
                 it.copy(infoMessage = "Turn on Screen control to read the code automatically, or type it below.")
             }
-            return@task
+            return
         }
         mutable.update {
             it.copy(infoMessage = "Tap \"Pair device with pairing code\" — the code is read from the dialog.", errorMessage = null)
         }
-        val details = dev.androidagent.a11y.PairingWatcher.await()
+        val details = dev.androidagent.a11y.PairingWatcher.await(timeoutMs = timeoutMs)
         if (details == null) {
             mutable.update { it.copy(infoMessage = "No pairing dialog was found. Type the code below instead.") }
-            return@task
+            return
         }
         pairAndConnect(details.code, details.port)
     }
@@ -516,8 +815,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val info = updateManager.checkForUpdates()
             if (info.isUpdateAvailable) {
-                val dismissedTag = preferences.getString("dismissed_update_tag", null)
-                val isDismissed = dismissedTag == info.latestTag
+                val dismissedKey = preferences.getString("dismissed_update_key", null)
+                    ?: preferences.getString("dismissed_update_tag", null)
+                val isDismissed = dismissedKey == (info.commitSha ?: info.latestTag)
                 mutable.update { it.copy(updateStatus = UpdateStatus.Available(info), updateInfo = info, isUpdateBannerVisible = !isDismissed) }
             } else {
                 mutable.update { it.copy(updateStatus = UpdateStatus.UpToDate(info.latestVersionName), updateInfo = info) }
@@ -568,8 +868,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { error("Could not open install settings: ${it.message}") }
     }
     fun dismissUpdateBanner() {
-        val tag = mutable.value.updateInfo?.latestTag
-        if (tag != null) preferences.edit().putString("dismissed_update_tag", tag).apply()
+        val info = mutable.value.updateInfo
+        if (info != null) {
+            preferences.edit().putString("dismissed_update_key", info.commitSha ?: info.latestTag).apply()
+        }
         mutable.update { it.copy(isUpdateBannerVisible = false) }
     }
     private fun parsePort(value: String): Int = value.trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: kotlin.error("Enter a port from 1 to 65535.")
@@ -631,3 +933,25 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         catch (failure: Exception) { error(failure.message ?: "Something went wrong.") }
     }
 }
+
+private const val KEY_WELCOMED = "onboardingWelcomed"
+private const val KEY_CONSENT_VERSION = "consentVersion"
+private const val KEY_CONSENT_AT = "consentAt"
+private const val KEY_ONBOARDED = "onboardingFinished"
+
+/** Long enough for Mike to reach Developer options, including turning them on. */
+private const val WIRELESS_SETUP_TIMEOUT_MS = 300_000L
+
+// The user approved this in the app before the run starts, so the prompt says
+// so rather than asking Mike to ask again, which would end the turn and let
+// the pairing reader time out.
+private const val WIRELESS_SETUP_PROMPT =
+    "Set up wireless debugging on this phone so you can run commands, move files and install apps. " +
+        "I already approved turning on Developer options and Wireless debugging for this.\n" +
+        "1. Open Settings > Developer options. If Developer options is hidden, open About phone and tap " +
+        "Build number seven times. If the phone asks for a PIN, stop and tell me.\n" +
+        "2. Turn on Wireless debugging and accept Android's confirmation.\n" +
+        "3. Open Wireless debugging and tap \"Pair device with pairing code\". Leave that dialog open: " +
+        "Hey Mike reads the code from it and pairs by itself. Never read the code aloud or type it anywhere.\n" +
+        "4. Wait until the dialog closes, then go back to Hey Mike and tell me in one sentence whether it worked. " +
+        "Change no other setting."

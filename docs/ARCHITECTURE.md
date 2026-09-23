@@ -73,11 +73,18 @@ DNS, TLS and connection failures remain diagnosable without exposing tokens or
 device codes. Proxy lifecycle follows the supervised app-server and closes on
 stop or failed startup.
 
-The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.153.4,
+The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.156.0,
 ChatGPT account sessions use `https://chatgpt.com/backend-api/codex` for
 models and responses. Allowing only auth.openai.com and api.openai.com lets
 device-code login succeed while blocking signed-in chat. The runtime sets
 NO_COLOR and strips terminal formatting from redacted diagnostics.
+
+The model list is never hard-coded. `model/list` returns what the OpenAI
+backend sends the app-server, and the backend filters by the client version
+the app-server reports. New models therefore appear only after the pinned
+package is bumped in `tools/prepare_runtime.py` (0.153.4 -> 0.156.0 on
+2026-09-22 for the GPT-6 models). Cached archives are named with the version,
+so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
 
@@ -361,6 +368,40 @@ The setup hub already separates the two as their own checklist rows,
 `SetupItem.SCREEN_CONTROL` and `SetupItem.WIRELESS_ADB`, each with its own state
 and remedy, so the UI half of the distinction needed no change.
 
+## Native capability API gateway
+
+Common phone data and system entry points do not need to be rebuilt from taps.
+`AndroidCapabilityTools` exposes five stable, operation-based tools —
+`contacts`, `calendar`, `files_media`, `communications` and `apps_settings` —
+with a rich JSON object per call. This keeps the advertised surface small while
+letting one policy and one platform seam cover many use cases. The exact
+operation and argument keys are allowlisted, strings, rows and serialized
+results are bounded, and every reply is a typed JSON envelope whose `ok` value
+also controls `ToolResult.success`.
+
+Reads go through Android providers and `PackageManager`. Contact and event
+creation, SMS and email, phone dialing, sharing and settings changes only open
+the relevant visible system editor or screen; they never save, send, call or
+change a setting directly. Media access uses `MediaStore` and the permission
+model for the running Android version, including selected-photo access on
+Android 14+. File reads and writes outside MediaStore are limited to the
+current run workspace. Paths are relative, real-path checked and atomically
+replaced; there is no general filesystem or recursive delete operation.
+
+`apps_settings.request_permissions` accepts only the permissions declared for
+these capabilities. `RuntimePermissionBroker` asks only for grants that are
+still missing and makes one Android `RequestMultiplePermissions` request. The
+system dialog is the approval: Hey Mike does not put a second confirmation card
+in front of it. Other special access operations only open a setup screen and do
+not report the access as granted. Notification support is deliberately status
+and setup only — there is no `NotificationListenerService`, so the gateway
+cannot read notification content.
+
+The gateway shares the normal run revoke boundary and the visible control
+state. Its Android calls live behind `CapabilityPlatform`, while policy and
+dispatch are JVM-testable without a phone. Provider behavior, OEM intent
+handlers and the permission dialog still need physical-device proof.
+
 ## Session queue and exclusive device ownership
 
 The MVP still allows one active run per phone, because one phone screen cannot
@@ -393,6 +434,44 @@ demand at sign-in and refresh. Token usage is kept per engine thread and shown
 for the visible chat only. A missing `usedPercent` is surfaced as unknown and
 never rendered as zero. `RunMetrics` records first-response latency, total run
 time, and tool count/time per session.
+
+## Several Codex accounts
+
+Codex keeps an account in exactly one file, `CODEX_HOME/auth.json`; chats,
+rollouts, skills and config in CODEX_HOME belong to no account. So switching
+account is a file swap, done by `CodexAccountVault` (`:core`) while the
+app-server is stopped:
+
+- Saved sign-ins live in `<files>/runtime/accounts/<id>.auth.json` with an
+  `accounts.json` index, beside CODEX_HOME and never in it, so Codex only
+  ever sees the live one. Files are owner-only and written atomically.
+- The live account is captured under the label Codex reports (the email) at
+  sign-in, prepare and refresh; the same email is updated, not duplicated.
+- Before any swap the live file is copied back into its slot, because Codex
+  rewrites it when it refreshes a token.
+- *Switch*: stop the app-server, copy the chosen slot to `auth.json`, restart,
+  re-read account, quota and models. *Add*: save the live one, remove
+  `auth.json`, start the normal device-code sign-in. *Log out* removes the
+  live one from the list; *remove* forgets a saved one that is not live.
+- A switch refuses while a run or voice is active and pauses the turn queue
+  for its duration, so nothing restarts Codex half-way.
+
+Chats are untouched: the app's sessions keep their engine thread IDs and the
+next turn resumes that thread from its local rollout under the new account.
+Token usage stays per thread; the quota bars are cleared and read again,
+because quota is the only thing that follows the account.
+
+### Usage widget
+
+The home screen widget (`app/.../widget/UsageWidget.kt`) shows every saved
+account's quota as a still frame of the agent orb. Only the live account's
+quota can be read, so each reading is kept by `AccountUsageBook` (`:core`,
+`<files>/runtime/accounts/usage.json`, percentages and reset times only)
+under the account the vault names as live when it arrives; the vault, not the
+UI state, decides, because during a switch the new quota arrives before the UI
+catches up. Other accounts show their last reading and its age, and a window
+whose reset time has passed since then is drawn empty. The widget is redrawn on
+every reading and account change, and by the platform every 30 minutes.
 
 ## Rich chat presentation
 
@@ -755,7 +834,7 @@ of it:
 live (`<homeDirectory>/workflows/definitions/<id>.json`, beside `WorkflowStore`'s
 per-package step lists), and `WorkflowRunner` is the execution engine.
 
-Five decisions carry the design.
+Seven decisions carry the design.
 
 **Selector criteria are scored, not ANDed.** A target naming both
 `resourceId` and the visible label still resolves after the app renames the id,
@@ -786,6 +865,24 @@ its condition *before* acting: re-running "turn it on" on something already on
 turns it off. Running out of the time budget is therefore a recoverable outcome
 rather than a lost run, which is why the ceiling can stay short.
 
+**API calls are allowed explicitly, not opened generally.** A declarative step
+may use `action: "call"` with one registered tool and a JSON `arguments` object.
+The app registers only the five native capability tools. Shell, package install
+and every workflow tool are blocked even if wiring tries to register them, so a
+workflow cannot recurse or become a weaker agent loop. The called tool still
+owns its normal Android permission or approval path; the runner does not add a
+duplicate confirmation. An author can still mark the whole step
+`requiresConfirmation` when the product flow needs an extra explicit user gate.
+
+**Call outputs are typed, bounded resume state.** `output` captures a successful
+tool reply and later JSON may refer to it as `{{outputs.name}}` or a nested
+object/array path. A whole-value reference keeps its JSON type. Missing paths,
+oversized values and too many bindings fail before another call is dispatched.
+Failure replies carry the captured outputs in the resume arguments, so a
+completed call is not repeated merely to rebuild context. Whether a failed call
+may have committed is classified from its resolved `operation`; known reads are
+reported as read-only and unknown operations stay conservative.
+
 **A sensitive step stops and asks, and refuses when nothing can ask.**
 `requiresConfirmation` routes through `AgentCoordinator.authorizeWorkflowStep`,
 the same card and the same spoken "yes" as a send, and the same reason: the
@@ -804,6 +901,138 @@ at - and a passive recorder of the user's own taps would reverse that decision
 to build a feature. A workflow is written instead: worked out once with the
 device tools, then saved as a definition, which is also the only form that can
 carry verification conditions and confirmation flags at all.
+
+## `act_plan`: one observation, one call
+
+`read_ui` answers more than the question that was asked. A chat screen returns
+the message field, the Send button and the row that names the recipient in the
+same reply - everything a send needs. The loop then spent a model turn per
+action anyway: focus, turn, type, turn, press. Three turns, all of them
+re-deriving what the first observation already said.
+
+`act_plan` takes that sequence as one call. It is `run_workflow`'s ergonomics -
+inline steps, nothing to save first - with `workflow_runner`'s execution: the
+same `WorkflowRunner`, so each step is resolved against the screen in front of
+*that* step, settled, and checked against its own `verify` before the next one
+runs. `WorkflowDefinition.adHoc` parses the inline steps through the same
+`parse` a definition file goes through, so a plan cannot express a step a file
+could not, and inherits its limits and refusals.
+
+Four decisions make it safe to plan ahead at all.
+
+**A plan carries labels, never ids.** A `nodeId` belongs to one observation and
+the runner re-reads the screen before every step, so ids would be stale by the
+second one - the reason a definition file cannot store them either. A plan that
+names a target by `nodeId`, `observationId` or `bounds` is refused with the
+fields to use instead (`plan_positional`), rather than having them dropped
+quietly: a silently ignored id leaves the model believing it named the target.
+Resolving by label is also what makes planning ahead sound - the keyboard
+opening between step one and step two moves every coordinate and changes no
+label.
+
+**Eight steps.** Enough for focus-type-send, a dialog, a search and its result;
+short of a sequence whose later steps are about screens the model has not read.
+Past that the refusal points at a workflow definition, which can be read, fixed
+and reused instead of re-derived in each chat.
+
+**The reply ends on the screen it landed on.** The runner's own reads never
+reach the model, so a plan that saved three round trips would cost one back to
+find out where it ended up. That final read is forced: unchanged-suppression
+answers "the same as revision N", and N is a node list the model never saw.
+
+**A failure resumes by the caller's own steps.** There is no library entry to
+name, so `Options.adHocTool` makes the resume block name `act_plan` and a
+`startAt`: the model resends the same steps and the committed prefix is skipped.
+Everything else is the workflow contract unchanged - the failing step, what
+already ran, whether it may have half-happened.
+
+## A resumed thread gets the tools this version has
+
+`thread/start` sends `dynamicTools`; `thread/resume` did not. A thread binds the
+tool list it was created with, so a chat opened before an app update could never
+call a tool that update added - while the per-turn runtime snapshot, built from
+the live gateway, told the model it could. The model then called a tool its own
+thread had never been given. That reached a phone with `act_plan`, and the
+device-automation skill's warning that some tools "exist only in chats started
+after they shipped" was the symptom being documented rather than fixed.
+
+`resumeSessionParams` now takes the tool list, and `openSession` resumes with it
+first and retries the plain resume before falling back to a fresh thread. The
+order matters: a server that will not accept the parameter costs one extra round
+trip, while the fallback it would otherwise hit - starting a new thread - costs
+the user the conversation they were in. Null omits the key rather than sending
+an empty array, because an empty array reads as "this thread has no tools".
+
+## Where a run's time went
+
+`RunMetrics` existed and only an instrumented test ever read it. A run that felt
+slow is the one someone asks about, so at the end of every run that touched the
+phone the coordinator writes one system line into the chat: total, thinking, time
+on the phone across how many calls, and time waiting for a person.
+
+Two decisions make the numbers honest.
+
+**Waiting for a person is its own bucket.** A send approval is raised *inside*
+the tool call that asks for it, so counting it as tool time reported twenty
+seconds of "the phone" for twenty seconds of somebody deciding whether to send a
+message. `awaitLocalApproval` accumulates that wait, and the tool dispatch
+subtracts the part of it that happened inside its own call - so tool time is
+device time, approval time is human time, and thinking is what is left (model
+turns and engine overhead). Three buckets, three different fixes: fewer turns, a
+faster path on screen, or nothing at all.
+
+**The clock is injected.** `AgentCoordinator` takes `nowNanos`, for the same
+reason `WorkflowRunner` does: a summary claiming to say where time went is worth
+what it can be tested against, and a test driving a virtual clock cannot verify a
+real one. The tests advance virtual time and assert the split exactly.
+
+A run that called no tool gets no line. One bucket is not a breakdown, and a
+line under every short answer teaches the user to skip it.
+
+**A tool schema that says `array` says nothing.** The first device run failed
+before touching the phone: `steps` was advertised as a bare
+`{"type":"array"}`, a client with no `items` renders that as an array of
+strings, and the agent reasonably sent each step as quoted JSON - which the
+validator refused. `steps.items` now spells the step object out, including the
+`action` enum and the target fields a `read_ui` reply carries, and the same is
+done for `run_workflow` and `save_workflow`. The sweep that followed found the
+same defect in three more places: `remember_capability`'s `fallbacks`, and
+`automation_rule`'s `places`, `deviceState` and `rule` - the last of which
+described a whole rule with no `type` and no fields at all. `ToolSchemaAudit`
+is now the shared definition of that defect and every gateway's tests run it
+over everything they advertise, so the next tool cannot reintroduce it: an
+array with no `items`, an object that neither names its keys nor declares them
+open, a property with no type and nothing else that says what it takes, or a
+`required` name that is not a property. Two things back that up: a quoted
+step is parsed rather than refused, the way a quoted number is already accepted
+as a number, and the example in the refusal, the tool description and the test
+is one shared constant that the test executes - an example that drifts from the
+validator is how a caller writes a call that cannot run.
+
+**A step says where its time went.** One `elapsedMs` per step reports that a
+step was slow; it cannot say whether the element took finding, the app took
+acting, or the screen never settled - and those have different fixes. Each
+record carries `timing` split into `resolve`, `act`, `settle` and `verify`
+(phases under 50ms are left out, so a fast step stays one line), and a failure
+carries `failedStepTiming` for the step the ledger does not otherwise hold. This
+came from a real post-with-media run on X that took minutes: the report could
+say it was slow, not which part was.
+
+**A `verify` timeout is the caller's estimate of the work.** It was capped at
+20s, a screen transition with room to spare, and `millis()` clamps rather than
+refuses - so a step that said "this import takes about 45 seconds" waited 20 and
+reported the condition false while it was still on its way. The ceiling is now
+60s, inside `MAX_TOTAL_MS` with room for the rest of the run, and Stop stays
+responsive because the poll loop checks revoke every cycle. Polling stops the
+moment the condition holds, so a generous estimate costs nothing when the work
+is quick; that is what makes an estimate the right thing to ask the model for.
+
+Nothing about approvals changes. A tap that lands on Send inside a plan reaches
+`tap_node` on the accessibility backend and hits `SendGuard` there, so it asks
+with the same card and the same spoken "yes" as a send the model dispatched on
+its own. A plan is not a way around a gate, because the plan never replaces the
+tool that owns it.
+
 
 ## Connected Apps: the surface exists, the answer does not
 
@@ -881,3 +1110,375 @@ and opens the system picker.
   draws it as a connecting call until the real call is active. The sphere then
   flies in from the right edge, where the power button usually is, behind a glow
   and two rings. End voice during setup cancels the press.
+
+## Standing rules: when this happens, and that is true, do this
+
+A workflow answers "how do I do this on this phone". A rule answers "when
+should it happen, and who has to be awake for it". They are separate files
+because a rule that inlined its steps would be a workflow with a clock bolted
+on, and every later improvement to `WorkflowRunner` would stop at the
+automation boundary. A rule *names* a workflow; it never contains one.
+
+The format is `when` / `if` / `then`, one JSON file per rule under
+`<homeDirectory>/automations/<id>.json`, beside the workflow definitions and
+surviving `WorkspaceSeeder` for the same reason `KnowledgeStore` does.
+
+```json
+{"id": "dad-after-seven",
+ "when": {"type": "notification", "package": "com.whatsapp", "from": "Dad"},
+ "if":   [{"type": "time_between", "after": "19:00", "before": "07:00"}],
+ "then": [{"type": "agent_turn", "prompt": "Tell {{notification.title}} I can't talk."}]}
+```
+
+`AutomationRule` is the format, `AutomationLibrary` is where rules live,
+`AutomationEvaluator` decides, `AutomationJournal` remembers what already fired
+and `AutomationToolGateway` exposes all of it to the model as one tool,
+`automation_rule`, with modes create/list/describe/enable/disable/delete/test.
+
+Six decisions carry the design.
+
+**A rule says who has to be awake, and does not get to lie about it.**
+`AutomationAttention` is `none`, `model` or `user`, and it is *derived* from
+the actions rather than declared: `run_workflow`, `open_intent` and `notify`
+need nobody, `agent_turn` spends a thinking turn, and `voice_call` and `ask`
+need the person. The host reads this before it fires anything, so "post at
+19:00" never wakes a voice call, and a rule that wants to talk is held while
+the phone is locked instead of talking to a pocket. Held, not dropped — the
+trigger really did happen, and `Skip.retryable` separates "not now" from
+"not this".
+
+**What a rule may read is what it says it reads.** `AgentAccessibilityService`
+deliberately reads none of the events it receives, and a notification trigger
+cannot keep that promise whole — so it is narrowed instead of abandoned. The
+whole event is matched *here, on the phone*. What leaves is only the fields the
+rule's own actions interpolate (`AutomationRule.exportedFields`). A rule that
+matches on the body of a message and writes only `{{notification.title}}` never
+sends that body anywhere, and the `create` reply lists the exported fields back
+so the model can tell the user exactly what will be transmitted. A
+`notification` trigger must also name its package: no package would mean every
+notification on the phone, which is never what was meant and is the widest
+possible read of a person.
+
+**The clock is verified, not trusted.** Android coalesces, delays and batches
+alarms. Whether a schedule is due is re-checked against the event's own
+timestamp, so a process woken early for something else cannot post to Facebook
+at 18:52. `nextRunAt` is what the host sets the alarm for, seconds dropped so a
+rule rescheduled from its own firing does not drift.
+
+**A slot is owed, not a minute.** The first version matched the exact minute
+(`isDue`), which made every late alarm a silently missed day: Doze, an inexact
+alarm without the exact-alarm grant, a phone off at 19:00 and booted at 19:08.
+`AutomationSchedule.dueSlot` replaces it on the live path and needs the history,
+which is why the evaluator decides it rather than `AutomationTrigger.matches`:
+an `at` schedule owes its latest slot until it has run for it or
+`guard.validForMs` (30 minutes by default) has passed — the same line a queued
+turn is dropped at, because running after it is the wrong action rather than a
+late one. A slot before the rule's file was written is never owed. An interval
+is owed once `everyMinutes` have passed since its last run (or since it was
+written), and `nextRunAt(after, lastFiredAt, savedAt)` counts from there too.
+Counting from "now" had two bugs at once: every re-arm — and the host re-arms
+after every event, screen-on included — pushed an interval out again, and any
+clock wake-up for any rule fired every interval rule.
+
+Because a served slot is in the journal, catching up is safe to do often: the
+host checks the clock at start (which is also boot) and when the phone is
+unlocked, so a rule held for "needs you" runs when you can answer, still inside
+its window, and never twice. Evaluation happens inside the host's run lock for
+the same reason: two events landing together used to both read the history
+before either run recorded it.
+
+**Changing a rule is `update`, not a second `create`.** `create` refuses an id
+that exists unless `replace:true`, because a rule silently overwritten by a new
+one with the same id is a working rule gone. `update` merges only the named
+keys onto the saved definition (each replaces the old value whole, `null`
+removes it) and re-parses the result like a new rule, so an edit can never save
+what `create` would refuse, and a failed edit leaves the file untouched. The id
+cannot change — the journal, and so the cooldown and daily count, is keyed by
+it. Every mode that changes a rule (update, enable, disable, delete, run) takes
+the exact id: the forgiving lookup that is right for `describe` resolved
+"delete morning" to "morning-news" when that was the only near match. A near
+miss is answered with `rule_id_inexact` and the likely id, never acted on.
+Every change calls the gateway's `onChanged`, which the app wires to
+`AutomationHost.rearm()`; without it a rule the agent wrote was on disk but its
+alarm was not set until some unrelated firing or restart.
+
+**Every rule is reported, fired or not.** A rule that silently does nothing is
+this feature's characteristic failure — the person wrote it, it looks right,
+and nothing happens at 19:00. So `evaluate` returns an outcome per rule, and a
+skip names the clause: `condition_failed` with "the rule needs the time to be
+between 19:00 and 07:00", not a debug log. The guard is checked *after* the
+conditions so the explanation names the real reason: a cooldown passes on its
+own, an hour does not.
+
+**Deciding and doing are separate, and deciding writes nothing.**
+`AutomationEvaluator` touches no file and records no fire, which is what makes
+`mode:"test"` a real dry run that can be called as often as the model likes
+without consuming a rule's daily quota — and what makes the live path and the
+dry run give the same answer. `AutomationRunner` owns the doing, and it records
+the fire **before the first action, not after**: the same rule `SessionRunQueue`
+already follows when it dequeues a turn before starting it. A crash between
+acting and recording would let the rule post the same thing again on the next
+trigger, and for a standing rule a double post is worse than a missed one. The
+cooldown exists to stop runaway repeats, so it is armed by the attempt rather
+than by its success. `AutomationGuard` (a cooldown, a daily ceiling and a
+deadline, all clamped on parse) exists because the triggers that matter most are
+the noisy ones: one busy group chat is otherwise a hundred unattended turns.
+
+**What a rule may do is a closed set**, for the same reason `WorkflowEngine`'s
+step set is closed: no shell, no arbitrary tool, no inline steps, at most four
+actions. A rule that could run anything would be a second agent loop with none
+of the coordinator's approval routing or revoke semantics.
+
+That set stayed closed when the native capability tools landed, and it did not
+need to widen: a workflow's own `call` step reaches them, so a rule that names
+a workflow reaches contacts, the calendar and a drafted message without any
+change to the rule format. This is the split paying off — "every weekday at
+07:00, tell me my first meeting" is a `run_workflow` with no screen, no
+accessibility and no thinking turn, and `AutomationActionKind` learned nothing
+new. Whether a rule should also be able to `call` a capability *directly*,
+skipping the one-step workflow wrapper, is open: `WorkflowDefinition` still
+requires a `package`, which a capability call has no use for.
+
+Nothing in `:core` fires a rule; the `:automations` module below does.
+
+## Firing a rule: the `:automations` module
+
+The Android half is deliberately thin, because everything worth getting right
+is on the other side of `AutomationEvaluator` and `AutomationRunner`, where it
+can be tested. `AutomationHost` builds the context, hands events to `:core` and
+serialises the runs; the rest is `AutomationAlarms`,
+`AutomationNotificationListener` and a runtime-registered receiver for device
+state. System-created components reach the host through `AutomationHostOwner`,
+implemented by `AgentApplication` — the same shape as `A11yServiceHandle`, and
+for the same reason: the system constructs them, so there is nowhere to inject.
+
+**One alarm, not one per rule.** `AutomationWakeups.nextRunAt` returns the
+earliest moment any enabled scheduled rule is due, and that is the only alarm
+held. Android caps how many exact alarms an app may keep and charges a wake-up
+for each; the landing alarm re-checks every rule anyway. It is a wake-up, not a
+decision, which is why an alarm the OS coalesced, delivered early, or held over
+from a deleted rule fires nothing. It is re-armed after every firing and at
+`BOOT_COMPLETED`, because an alarm does not survive a restart and a feature
+that silently stops at the first reboot is one nobody trusts again.
+
+Exactness is asked for, never assumed: `canScheduleExactAlarms` is false until
+the user grants it on Android 12+, and the fallback is an inexact alarm Doze can
+land an hour late. `AutomationHost.canFireOnTime()` reports which, because
+"19:00" arriving at 20:10 is a different action rather than a slow one.
+
+**The notification listener enforces the privacy contract in the order its
+checks are written.** Our own notifications are dropped first, so a rule's
+`notify` can never trigger the rule that posted it; ongoing and group-summary
+notifications are dropped as status rather than events; then **the package is
+checked before the title or body is touched**, against
+`AutomationWakeups.watchedPackages` — the union over enabled notification
+rules. An app no rule names is never read, and with no notification rule at all
+the service reads nothing. Only then are title and text extracted, and they go
+no further than the evaluator unless the rule's own actions interpolate them.
+Nothing is stored: there is no notification log and no tool that can ask for one.
+
+**A rule takes the device the way a turn does.** `run_workflow` and
+`open_intent` go through `AgentCoordinator.runAutomation`, which claims the same
+exclusive ownership a person's run claims, shows the same control card and
+answers the same Stop — Stop sees an active state, revokes the tools (which is
+what aborts a workflow between steps) and owns the teardown, so `runAutomation`
+re-checks the epoch before releasing anything. It waits a bounded 90 seconds for
+a busy phone and then gives up, because the common collision is not a collision
+at all: it is the agent firing a rule from inside a turn that already owns the
+device, where refusing would make "run my evening rule now" always answer "the
+phone is busy" with the busy run being the one that asked. Anything longer is
+the staleness `validUntil` covers. The intent goes out through the same
+composite gateway the model calls, so a rule is not a way around the intent
+policy or the approval card.
+
+**A queued turn expires.** `agent_turn` lands in the rule's own chat — not the
+one in front of you, so a rule firing at 3am does not appear in the middle of
+your conversation, and a chat per rule is the readable record of what it has
+been doing — carrying `validUntil` from `AutomationGuard.validForMs`.
+`SessionRunQueue` drops a stale turn before choosing the next one, so an expired
+turn at the head does not hold up the one behind it, and the drop is written
+into that chat rather than being silent.
+
+**Asking is a notification with two buttons, and no answer is a no.** A rule
+fires when the app is not in front, so `ask` puts a high-priority notification
+up and waits five minutes. A question nobody saw must not become a yes by
+default. `canAsk()` is false when notifications are blocked, and the runner then
+refuses the action outright — the same rule `WorkflowRunner` applies with
+`confirmation_unavailable`: a gate that disappears when unwired is not a gate.
+
+**Naming a rule is its trigger.** `mode:"run"` fires one now, through the same
+`Manual` event the `manual` trigger kind uses, and the evaluator treats a manual
+run that names *this* rule as satisfying its trigger whatever that trigger is.
+Without it a scheduled rule could only ever be proved by waiting until 19:00,
+which is not a feedback loop anyone checks a standing rule with — and the
+`manual` trigger kind itself was unreachable, since nothing called
+`AutomationHost.runNow`. Nothing else is waived: the conditions, the cooldown,
+the daily limit and the attention gate all apply, and the run counts against the
+quota. That is the whole difference from `mode:"test"`, which decides the same
+way and does nothing. A host that wired no firing path leaves `mode:"run"`
+refusing rather than silently doing nothing.
+
+`AutomationToolGateway` carries `supportedTriggers`, which this host answers
+with what it can actually serve: `schedule`, `device_state` and `manual`
+always, `notification` once the user has granted the listener by hand. **`place`
+is served by nothing yet**, so a geofence rule is saved and reported **dormant**
+rather than accepted as live. That is a dependency decision, not an oversight:
+`GeofencingClient` means adding Google Play Services to a project that
+deliberately ships outside Play, and the AOSP alternative
+(`LocationManager.addProximityAlert`) is unreliable enough that shipping it
+quietly would be worse than reporting the gap.
+
+Settings > Standing rules is where the feature says whether it actually works:
+how many rules are on, how many are **dormant**, when the next one is due, and
+the two permissions — notification access and exact alarms — with a button to
+each. Both are granted in system Settings and neither is observable, so the
+status is re-read on every resume beside the other permissions. A rule that
+looks on and cannot run is the failure the user would otherwise only notice by
+the thing not happening, so it is counted on the hub row rather than buried.
+
+## The side panel: two kinds of thing Mike holds
+
+A chat is something you did. A rule is something that keeps happening. The
+panel shows both, but not as equals: the rules sit **above** the chats as a
+strip, and the chats keep the rest of the panel.
+
+That ordering is the design. The question people open this panel with is often
+not "which chat was that" but "is the standing stuff still working", and a
+strip answers it before anyone reads a list. The cost is that a strip has room
+for almost nothing, which is what the two constraints below are for.
+
+**The strip may not grow.** At most `AutomationOverview.MAX_CHIPS` chips and
+exactly one sentence, however many rules exist. What overflows goes behind it,
+and the chips are sorted so that what needs you is what you see: blocked first,
+then running, then off.
+
+**The sentence is chosen, not listed.** `AutomationOverview` picks the most
+useful true thing in priority order — a rule that cannot run, then the next run
+that is due, then the honest nothing — and marks it as a warning or not. A
+strip that listed everything would fit nothing and help less.
+
+Both decisions live in `:core` (`AutomationOverview`, `AutomationSummaries`)
+rather than in a Composable, because they are the design and a Composable is
+not somewhere a test can reach. The same layer turns the rule format into
+sentences: the format is written for the model — ids, packages, 24-hour clocks,
+a closed vocabulary — and none of that belongs on a panel. `AutomationStrip`,
+`AutomationsSheet` and the top bar render strings and choose nothing.
+
+**Three states, not two.** `AutomationSummary.Status` is ON, OFF or **BLOCKED**
+— on, and this phone cannot serve its trigger. Blocked looks identical to
+working until the day nobody notices anything happened, so it gets its own
+colour (the amber the status orb already uses for a blocked backend), its own
+group in the list, and the reason spelled out in words.
+
+**The door carries the dot.** The panel is the only place a rule's state
+lives, so the way in has to carry the one urgent fact: `ChatTopBar`'s
+`PanelButton` adds a 6dp dot on the hamburger when any rule is blocked, and
+shows nothing when nothing is wrong. The dot is deliberately not folded into
+the status orb on the right: the orb answers "can Mike act right now"
+(backends, run phase, quota), the button answers "what is inside the panel".
+Different questions, different sides, different shapes.
+
+The button itself is the second half of that. The chat name used to be the
+door, which made it mean two things at once — what you are reading, and where
+you go — and left the dot sitting on a chevron that read as "rename this chat".
+A hamburger in the navigation slot is the door; the title is only a title.
+
+**Opening it makes room rather than covering.** `rememberDrawerPush` and
+`Modifier.drawerPushed` step the chat back and aside as the panel arrives: it
+slides towards the far edge, shrinks to 0.88 and rounds to a 28dp card, so what
+is left showing beside the panel reads as the screen you were on rather than a
+screen that got cut off. Three directions were drawn (unfolding out of the
+button, pushing the chat aside, cascading the contents in) and this is the one
+the owner picked; the other two are on the canvas.
+
+Progress is read at draw time inside `graphicsLayer`, so the push never
+recomposes the chat, and at zero the layer sets nothing at all — the chat is
+byte-for-byte what it was before any of this existed. It rides on the drawer's
+`targetValue`, not the sheet's live offset: the target is what the menu button
+sets the moment it is tapped, so the push starts *with* the sheet rather than
+after it, and a drag carries the chat along once it crosses the anchor. The
+price, stated rather than hidden, is that mid-drag the chat animates towards
+where the drag is going instead of tracking the finger — invisible on a tap,
+slight on a drag. Closing is quicker than opening (260ms against 340ms),
+because the sheet is already leaving and a chat still settling reads as lag.
+It shares voice mode's easing (`Emphasized`) literally, not by copying the
+numbers, signs its shift for the layout direction, and `animationsEnabled()`
+leaves the chat still when the system says no motion.
+
+No shadow under the sheet: the scrim already sits between the two on a black
+background, where a drop shadow would be invisible. The separation is carried
+by the chat's own corners and scale instead.
+
+**What leaves the phone is stated, not implied.** A rule's own screen names the
+exported fields in the user's terms — "Only the sender's name", with the note
+that the message itself was read on the phone to decide and never sent. The
+format already knows this exactly (`AutomationRule.exportedFields`), so there
+is no reason to make anyone take it on trust.
+
+The list and one rule are two levels of one `ModalBottomSheet`, the way Settings
+already works, so back walks the rule and then the sheet rather than
+introducing a second navigation idea. Turning a rule off re-arms the alarm set,
+because the earliest due rule may have changed.
+
+A rule's screen also deletes and edits it. Delete asks first — it is the one
+change here that cannot be switched back, and the dialog points at the switch
+for pausing instead. Edit is a third level of the same sheet: a form, never the
+rule's JSON. `AutomationEditor` in `:core` turns a rule into the plain values a
+person changes — the time (picked from a clock), the days (seven toggles,
+Sunday first), numbers, and the text inside a condition or an action, grouped
+under the condition or action they belong to — and turns the edited values back
+into the `changes` that `AutomationLibrary.update` takes. So the form saves
+through exactly the validation the agent's `mode:"update"` does: a bad value is
+named under its own field, a rule refused as a whole shows the reason above
+Save, and nothing is written when it fails. Only values that differ from what
+the form opened with are written, so opening and saving changes nothing.
+
+What the form leaves out is what changes a rule's *shape* rather than a value
+in it: another kind of trigger or action, adding or removing a condition, and
+the identifiers underneath (which workflow runs, an intent's action, which
+event field a text test reads). Typing over a workflow's name would point the
+rule at one that may not exist. Those go through "Want a bigger change?" at the
+bottom, which sends the request to Mike, who uses `mode:"update"` and a dry run
+like any other request.
+
+## First launch: two things by hand, the rest offered
+
+The old first launch was the settings checklist: eight items, four required,
+all at once. Now `OnboardingFlow` shows one screen at a time and the user does
+by hand only what no app may do for them: sign in, and turn on the
+accessibility service. The full proposal is `docs/design/NEW_USER_EXPERIENCE.md`.
+
+**The order is a function in `:core`.** `Onboarding.step` picks the screen from
+what is stored (`OnboardingProgress`: welcomed, consent version and time,
+finished) and the live `SetupSignals`, so a test pins it: welcome, consent,
+sign-in, screen access, handover, done. Steps already done are skipped, so a
+phone that was set up before this version sees only the consent and the
+handover. The runtime prepares in the background and shows as one thin bar
+with a retry, never a step.
+
+**Consent is versioned.** `Onboarding.CONSENT_VERSION` is stored with the
+time the user agreed. Raising it asks everyone again; withdrawing (Settings →
+Privacy and consent) stops Mike, signs out and forgets the consent, and the
+first-launch consent screen comes back. Screen access is a system switch the
+app cannot turn off, so withdrawing opens its screen instead of pretending.
+All of it lives in the app's own `ui` preferences and never leaves the phone.
+
+**The handover offers, it does not require.** The floating Stop button and
+progress notifications are one tap each on Android's own screens. Wireless
+debugging is handed to Mike: after one in-app confirmation, the app arms the
+pairing reader while no run is active, then starts a chat in which Mike opens
+Developer options, turns on Wireless debugging and opens the pairing dialog.
+The reader takes the code from that dialog; the model never sees it. The
+floating control stays a separate grant for now because device control refuses
+to start without it; drawing it as an accessibility overlay instead would
+remove that step and is still to be verified.
+
+**Finished stays finished.** A switch Android turns off later is a settings
+problem, not a reason to replay first launch. The side panel's header and the
+Settings dot say so instead.
+
+Settings are regrouped the same way: *What Mike can do* lists abilities with
+On / Set up / Fix (screen control and the floating control are one row, since
+neither works alone), then *How Mike works*, *Account and privacy*, and
+*Advanced* (runtime, Jev, app updates). The side panel gained the orb with a
+one-line status, chat search, and chats grouped by day (`ChatDayGroups`).

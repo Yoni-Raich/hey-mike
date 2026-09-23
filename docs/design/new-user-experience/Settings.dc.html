@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#1E1E20;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 1240px; box-sizing: border-box; padding: 16px 16px 32px; display: flex; flex-direction: column; gap: 16px; background: #1E1E20;">
+<div style="display: flex; align-items: center; gap: 4px; height: 56px;">
+<a href="Drawer.dc.html" aria-label="Back" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"></path></svg></a>
+<h1 style="margin: 0; font-size: 26px; font-weight: 600;">Settings</h1>
+</div>
+<div style="display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 24px; background: #262628;">
+<dc-import name="Orb" size="72" level="{{orbLevel}}" color="{{orbColor}}" hint-size="72px,72px"></dc-import>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px;">
+<span style="font-size: 18px; font-weight: 600; color: {{headColor}};">{{head}}</span>
+<span style="font-size: 14px; line-height: 1.45; color: #B9B9B9;">{{sub}}</span>
+</div>
+</div>
+<sc-if value="{{attention}}" hint-placeholder-val="{{attention}}">
+<div style="display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 20px; background: #3A1F1D; border: 1px solid #6B3530;">
+<span style="font-size: 16px; font-weight: 600;">Screen access turned off</span>
+<span style="font-size: 14px; line-height: 1.5; color: #E6C4C0;">Android turned it off, often after an update or a battery saver. Only you can turn it back on.</span>
+<a href="ScreenAccess.dc.html" style="height: 44px; border-radius: 22px; background: #FFB4AB; color: #3A1F1D; font-size: 15px; font-weight: 600; display: flex; align-items: center; justify-content: center; text-decoration: none;">Turn it back on</a>
+</div>
+</sc-if>
+<div style="font-size: 14px; color: #8F8F8F; padding: 4px 8px 0;">What Mike can do</div>
+<div style="display: flex; flex-direction: column; padding: 4px 0; border-radius: 24px; background: #262628;">
+<sc-for list="{{abilities}}" as="a" hint-placeholder-count="5">
+<a href="{{a.href}}" style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; color: #F2F2F2; text-decoration: none;">
+<span style="width: 10px; height: 10px; border-radius: 5px; flex-shrink: 0; background: {{a.dot}};"></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px;">
+<span style="font-size: 16px;">{{a.title}}</span>
+<span style="font-size: 13px; line-height: 1.4; color: #A0A0A0;">{{a.note}}</span>
+</div>
+<span style="font-size: 13px; font-weight: 600; color: {{a.actionColor}}; flex-shrink: 0;">{{a.action}}</span>
+</a>
+</sc-for>
+</div>
+<div style="font-size: 14px; color: #8F8F8F; padding: 4px 8px 0;">How Mike works</div>
+<div style="display: flex; flex-direction: column; padding: 4px 0; border-radius: 24px; background: #262628;">
+<sc-for list="{{prefs}}" as="p" hint-placeholder-count="4">
+<a href="{{p.href}}" style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; color: #F2F2F2; text-decoration: none;">
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px;">
+<span style="font-size: 16px;">{{p.title}}</span>
+<span style="font-size: 13px; color: #A0A0A0;">{{p.note}}</span>
+</div>
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8F8F8F" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</a>
+</sc-for>
+</div>
+<div style="font-size: 14px; color: #8F8F8F; padding: 4px 8px 0;">Account and privacy</div>
+<div style="display: flex; flex-direction: column; padding: 4px 0; border-radius: 24px; background: #262628;">
+<sc-for list="{{account}}" as="p" hint-placeholder-count="4">
+<a href="{{p.href}}" style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; color: #F2F2F2; text-decoration: none;">
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px;">
+<span style="font-size: 16px;">{{p.title}}</span>
+<span style="font-size: 13px; color: #A0A0A0;">{{p.note}}</span>
+</div>
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8F8F8F" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</a>
+</sc-for>
+</div>
+<button type="button" style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-radius: 20px; border: none; background: transparent; color: #A0A0A0; font-family: inherit; font-size: 14px;">
+<span>Version 0.12.0 · Advanced and diagnostics</span>
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8F8F8F" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+</button>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"state":{"editor":"enum","options":["ready","needs attention"],"default":"ready"},"$preview":{"width":390,"height":1240}}'>
+class Component extends DCLogic {
+renderVals() {
+const attention = (this.props.state ?? 'ready') === 'needs attention';
+const on = '#83D9CA', off = '#5A5A5E', bad = '#FFB4AB';
+const row = (title, note, state, href) => ({
+title, note, href: href || 'Settings.dc.html',
+dot: state === 'on' ? on : state === 'bad' ? bad : off,
+action: state === 'on' ? 'On' : state === 'bad' ? 'Fix' : 'Set up',
+actionColor: state === 'on' ? '#A0A0A0' : state === 'bad' ? bad : '#8AB4F8'
+});
+return {
+attention,
+head: attention ? 'Mike needs your help' : 'Mike is ready',
+headColor: attention ? bad : on,
+sub: attention ? 'One thing stopped working. Everything else is fine.' : 'Everything needed is on. Mike asks before adding more.',
+orbColor: attention ? '#8F8F8F' : on,
+orbLevel: attention ? 0.06 : 0.2,
+abilities: [
+row('See and tap the screen', attention ? 'Off · Mike can’t act for you' : 'Includes the floating Stop button', attention ? 'bad' : 'on', 'ScreenAccess.dc.html'),
+row('Show progress', 'In the notification shade', 'on'),
+row('Run commands and install apps', 'Mike turns on wireless debugging and pairs', 'off', 'Ability.dc.html'),
+row('Read notifications', 'Needed for rules that react to messages', 'off'),
+row('Hear you', 'Voice chat and dictation', 'on'),
+row('Install app updates', 'Asked when an update is ready', 'off')
+],
+prefs: [
+{ title: 'Standing rules', note: '2 rules · next at 07:00', href: 'Settings.dc.html' },
+{ title: 'Ask before sending', note: 'Messages and emails · 4 always allowed', href: 'Settings.dc.html' },
+{ title: 'Model', note: 'gpt-5.6-luna · low effort', href: 'Settings.dc.html' },
+{ title: 'Power button assistant', note: 'Gemini still answers it', href: 'Settings.dc.html' }
+],
+account: [
+{ title: 'Codex account', note: 'Signed in · 18% of quota left', href: 'Settings.dc.html' },
+{ title: 'Privacy and consent', note: 'What you agreed to · where data goes', href: 'Privacy.dc.html' },
+{ title: 'Workspace files', note: 'No files yet', href: 'Settings.dc.html' }
+]
+};
+}
+}
+</script>
+</body>
+</html>

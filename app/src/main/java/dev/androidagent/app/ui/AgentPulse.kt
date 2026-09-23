@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app.ui
 
 import android.provider.Settings
@@ -134,8 +154,8 @@ private fun toolMotion(tool: String?): ToolMotion? =
         "type_text", "key" -> ToolMotion.TYPE
         "read_ui", "screenshot", "device_status" -> ToolMotion.LOOK
         "open_app", "open_intent", "resolve_intent" -> ToolMotion.LAUNCH
-        // A workflow drives the screen through taps; it reads as tapping.
-        "run_workflow", "workflow_runner" -> ToolMotion.TAP
+        // A workflow or a plan drives the screen through taps; it reads as tapping.
+        "run_workflow", "workflow_runner", "act_plan" -> ToolMotion.TAP
         "push_file", "install_apk" -> ToolMotion.PUSH
         "pull_file" -> ToolMotion.PULL
         "shell" -> ToolMotion.SHELL

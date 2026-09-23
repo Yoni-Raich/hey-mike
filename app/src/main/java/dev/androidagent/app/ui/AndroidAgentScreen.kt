@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.app.ui
 
 
@@ -51,6 +71,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.boundsInRoot
@@ -102,6 +123,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -119,6 +141,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
+import dev.androidagent.core.ChatDayGroups
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineEvent
@@ -200,6 +223,8 @@ fun AndroidAgentScreen(
         }
 
         val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()))
+        val drawerPush = rememberDrawerPush(drawerState)
+        val layoutDirection = LocalLayoutDirection.current
 
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -230,6 +255,7 @@ fun AndroidAgentScreen(
             Scaffold(
                 modifier = Modifier
                     .fillMaxSize()
+                    .drawerPushed(drawerPush, layoutDirection)
                     .imePadding()
                     // The chat stays composed under voice mode; keep it out
                     // of touch exploration while it is off screen.
@@ -281,12 +307,18 @@ fun AndroidAgentScreen(
             VoiceModeLayer(motion = voiceMode, state = state, actions = actions, voiceLevel = voiceLevel)
         }
 
-        if (state.isSettingsOpen) {
+        // Sheets are windows of their own and would sit above first launch.
+        val onboarding = state.onboardingStep() != dev.androidagent.core.OnboardingStep.DONE
+        if (state.isSettingsOpen && !onboarding) {
             AgentSettingsSheet(state = state, actions = actions)
         }
-        if (state.isWorkspaceOpen) {
+        if (state.isAutomationsOpen && !onboarding) {
+            AutomationsSheet(state = state, actions = actions)
+        }
+        if (state.isWorkspaceOpen && !onboarding) {
             WorkspaceFilesSheet(state = state, actions = actions)
         }
+        OnboardingFlow(state = state, actions = actions)
     }
 }
 
@@ -296,26 +328,48 @@ private fun AgentDrawer(
     actions: AgentUiActions,
     close: () -> Unit,
 ) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val running = state.runState.active
+    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, running)
+    // A dot on Settings means something there needs the user, not that
+    // something optional is off.
+    val attention = SetupChecklist.outstanding(state.setupRows()) > 0
     Column(
         modifier = Modifier
             .fillMaxHeight()
             .padding(horizontal = 16.dp, vertical = 20.dp),
     ) {
-        Row(
+        // The orb and one plain sentence answer "can Mike act right now"
+        // before anything else; tapping it opens where to fix it.
+        Surface(
+            onClick = { close(); actions.onOpenSettings() },
+            shape = RoundedCornerShape(20.dp),
+            color = Color.Transparent,
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Hey Mike", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Local Codex workspace", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = close) {
-                Icon(Icons.Outlined.Close, contentDescription = "Close sessions")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(4.dp)) {
+                AgentOrb(
+                    modifier = Modifier.size(56.dp),
+                    phase = if (running) state.runState.phase else RunPhase.IDLE,
+                    controlling = state.runState.controlling,
+                    idleColor = if (control.state == ControlState.BLOCKED) DrawerAmber else DrawerTeal,
+                )
+                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text("Hey Mike", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        when (control.state) {
+                            ControlState.WORKING -> "Working on your phone"
+                            ControlState.READY -> "Ready · can see and tap the screen"
+                            ControlState.BLOCKED -> "Can't reach the screen · tap to fix"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (control.state == ControlState.BLOCKED) DrawerAmber else DrawerTeal,
+                    )
+                }
             }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(14.dp))
         Button(
             onClick = {
                 close()
@@ -330,10 +384,44 @@ private fun AgentDrawer(
             Text("New chat")
         }
 
-        Spacer(Modifier.height(22.dp))
-        Text("Sessions", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+        TextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("Search chats") },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+            trailingIcon = if (query.isNotEmpty()) ({
+                IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, contentDescription = "Clear search") }
+            }) else null,
+            singleLine = true,
+            shape = RoundedCornerShape(24.dp),
+            colors = TextFieldDefaults.colors(
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                focusedContainerColor = DrawerField,
+                unfocusedContainerColor = DrawerField,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        // Above the chats, because the question this panel is opened with is
+        // often "is the standing stuff still working", and that has to be
+        // answered before anyone reads a list.
+        Spacer(Modifier.height(14.dp))
+        AutomationStrip(
+            overview = state.automations.overview,
+            onOpen = {
+                close()
+                actions.onOpenAutomations()
+            },
+            onOpenRule = {
+                close()
+                actions.onOpenAutomations()
+            },
+        )
         Spacer(Modifier.height(8.dp))
 
+        val shown = ChatDayGroups.filter(state.sessions, query)
         when {
             state.isLoadingSessions -> Box(
                 modifier = Modifier
@@ -344,14 +432,14 @@ private fun AgentDrawer(
                 CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
             }
 
-            state.sessions.isEmpty() -> Box(
+            shown.isEmpty() -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 contentAlignment = Alignment.TopStart,
             ) {
                 Text(
-                    "No sessions yet. Start a new chat to create one.",
+                    if (query.isBlank()) "No chats yet. Start a new chat to create one." else "No chat matches \"${query.trim()}\".",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 12.dp),
@@ -360,51 +448,75 @@ private fun AgentDrawer(
 
             else -> LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
-                items(state.sessions, key = { it.id }) { session ->
-                    SessionRow(
-                        session = session,
-                        selected = session.id == state.activeSessionId,
-                        onSelect = {
-                            close()
-                            actions.onSelectSession(session.id)
-                        },
-                        onRename = { title -> actions.onRenameSession(session.id, title) },
-                        onDelete = { actions.onDeleteSession(session.id) },
-                    )
+                ChatDayGroups.group(shown, System.currentTimeMillis()).forEach { group ->
+                    item(key = "day-${group.label}") {
+                        Text(
+                            group.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
+                        )
+                    }
+                    items(group.sessions, key = { it.id }) { session ->
+                        SessionRow(
+                            session = session,
+                            selected = session.id == state.activeSessionId,
+                            running = running && session.id == state.runState.sessionId,
+                            onSelect = {
+                                close()
+                                actions.onSelectSession(session.id)
+                            },
+                            onRename = { title -> actions.onRenameSession(session.id, title) },
+                            onDelete = { actions.onDeleteSession(session.id) },
+                        )
+                    }
                 }
             }
         }
 
         HorizontalDivider(color = DividerDefaults.color)
         Spacer(Modifier.height(8.dp))
-        NavigationDrawerItem(
-            label = { Text("Workspace files") },
-            selected = false,
-            onClick = {
-                close()
-                actions.onOpenWorkspaceFiles()
-            },
-            icon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
-        )
-        NavigationDrawerItem(
-            label = { Text("Settings") },
-            selected = false,
-            onClick = {
-                close()
-                actions.onOpenSettings()
-            },
-            icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            TextButton(
+                onClick = { close(); actions.onOpenWorkspaceFiles() },
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Outlined.Folder, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Files")
+            }
+            TextButton(
+                onClick = { close(); actions.onOpenSettings() },
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .semantics { if (attention) contentDescription = "Settings, needs attention" },
+            ) {
+                Icon(Icons.Outlined.Settings, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Settings")
+                if (attention) {
+                    Spacer(Modifier.width(6.dp))
+                    StatusDot(color = MaterialTheme.colorScheme.error, size = 8.dp)
+                }
+            }
+        }
     }
 }
+
+private val DrawerTeal = Color(0xFF83D9CA)
+private val DrawerAmber = Color(0xFFF6B86A)
+private val DrawerField = Color(0xFF2A2A2D)
+private val DrawerRunning = Color(0xFF69A7FF)
 
 @Composable
 private fun SessionRow(
     session: dev.androidagent.core.ChatSession,
     selected: Boolean,
+    running: Boolean,
     onSelect: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
@@ -426,6 +538,9 @@ private fun SessionRow(
                 .padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (running) {
+                StatusDot(color = DrawerRunning, size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     session.title.ifBlank { "Untitled chat" },
@@ -543,16 +658,38 @@ private fun AgentChatContent(
         if (followLatest && listState.layoutInfo.totalItemsCount > 0) {
             automaticScroll = true
             try {
-                listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1)
+                // Int.MAX_VALUE is clamped to the end of the list, so a long
+                // reply shows its last line, not the top of its bubble.
+                listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
             } finally {
                 automaticScroll = false
             }
         }
     }
 
+    // Streamed text and markdown views grow after composition, without a new
+    // item. Watch the laid-out end of the list and keep it pinned to the bottom.
+    LaunchedEffect(listState, state.activeSessionId) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            Triple(info.totalItemsCount, last?.index, last?.let { it.offset + it.size })
+        }.collect {
+            if (followLatest && !automaticScroll && !listState.isScrollInProgress && listState.canScrollForward) {
+                automaticScroll = true
+                try {
+                    listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
+                } finally {
+                    automaticScroll = false
+                }
+            }
+        }
+    }
+
+    Box(modifier = modifier) {
     LazyColumn(
         state = listState,
-        modifier = modifier,
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(22.dp),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 24.dp),
     ) {
@@ -616,6 +753,34 @@ private fun AgentChatContent(
                 }
             }
         }
+    }
+    // Shown once the user scrolls up; tapping it resumes following the reply.
+    val coroutineScope = rememberCoroutineScope()
+    androidx.compose.animation.AnimatedVisibility(
+        visible = !followLatest && listState.canScrollForward,
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+        enter = androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.fadeOut(),
+    ) {
+        androidx.compose.material3.SmallFloatingActionButton(
+            onClick = {
+                followLatest = true
+                coroutineScope.launch {
+                    automaticScroll = true
+                    try {
+                        listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
+                    } finally {
+                        automaticScroll = false
+                    }
+                }
+            },
+            shape = CircleShape,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Icon(Icons.Outlined.ExpandMore, contentDescription = "Jump to latest")
+        }
+    }
     }
 }
 

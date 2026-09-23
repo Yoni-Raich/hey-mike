@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import kotlinx.coroutines.*
@@ -135,6 +155,72 @@ class AgentCoordinatorTest {
         assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.THINKING })
         assertEquals(OverlayPhase.DONE, rig.overlay.finished.last().phase)
         assertFalse(rig.overlay.visible)
+        rig.close()
+    }
+
+    @Test fun aRunThatUsedThePhoneEndsWithWhereItsTimeWent() = runTest {
+        // The run that felt slow is the one someone will ask about, so the
+        // answer belongs in the transcript they are reading.
+        val rig = Rig(this)
+        rig.tools.workMs = 3_000
+        rig.coordinator.send("one", "Open settings")
+        runCurrent()
+        advanceTimeBy(2_000)
+        rig.engine.emit(EngineEvent.ToolCall("1", "tap", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        advanceTimeBy(3_001)
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        val summary = rig.store.messages.last { it.role == "system" }
+        assertTrue(summary.text, summary.text.startsWith("Run summary:"))
+        assertTrue(summary.text, summary.text.contains("1 call"))
+        val metrics = rig.coordinator.metrics.value["one"]!!
+        assertEquals(1, metrics.toolCalls)
+        assertEquals(0L, metrics.approvalMs)
+        // The three seconds on the phone are the phone's, and the two before
+        // the tool call are the model's.
+        assertTrue("toolMs=${metrics.toolMs}", metrics.toolMs >= 3_000)
+        assertTrue("thinkingMs=${metrics.thinkingMs}", metrics.thinkingMs >= 2_000)
+        rig.close()
+    }
+
+    @Test fun aRunThatOnlyTalkedGetsNoSummaryLine() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "What time is it")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        assertTrue(rig.store.messages.none { it.text.startsWith("Run summary:") })
+        rig.close()
+    }
+
+    @Test fun timeSpentWaitingForTheUserIsNotReportedAsTimeOnThePhone() = runTest {
+        // A send approval happens inside the tool call that asks for it. Counted
+        // as device time it would read as 20 seconds of a slow phone.
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Send it")
+        runCurrent()
+        val approved = async {
+            rig.coordinator.authorizeSend(
+                SendRequest(packageName = "com.whatsapp", appLabel = "WhatsApp", recipient = "Amir", message = "on my way"),
+            ) { ToolResult("sent") }
+        }
+        runCurrent()
+        val request = rig.coordinator.state.value.approval!!.requestId
+        advanceTimeBy(20_000)
+        runCurrent()
+        rig.coordinator.approve(request, true)
+        runCurrent()
+        assertTrue(approved.await().success)
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        val metrics = rig.coordinator.metrics.value["one"]!!
+        assertTrue("approvalMs=${metrics.approvalMs}", metrics.approvalMs >= 20_000)
+        assertTrue("toolMs=${metrics.toolMs}", metrics.toolMs < 20_000)
         rig.close()
     }
 
@@ -563,6 +649,9 @@ class AgentCoordinatorTest {
             scope, engine, store, tools, overlay,
             sendGrants = grants,
             bringToForeground = { foregroundRequests++ },
+            // The test's own clock, so a reported duration is exactly the time
+            // the test advanced rather than how fast the machine ran.
+            nowNanos = { test.testScheduler.currentTime * 1_000_000 },
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }
@@ -659,10 +748,13 @@ class AgentCoordinatorTest {
         override fun revoke() { revoked = true }
         override fun needsControl(name: String) = name == "tap"
         override fun hidesOverlayDuringCapture(name: String) = name == "read_ui"
+        /** How long a call takes on this fake phone, on the test's clock. */
+        var workMs = 0L
         override suspend fun invoke(name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
             check(!revoked)
             if (needsControl(name)) controlWasVisible = overlay.visible
             executions++; names.add(name)
+            if (workMs > 0) delay(workMs)
             return ToolResult("Done")
         }
         override suspend fun cancel() = Unit

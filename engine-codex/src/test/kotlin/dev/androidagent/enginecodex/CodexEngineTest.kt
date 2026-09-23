@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.enginecodex
 
 import dev.androidagent.core.AgentModel
@@ -449,6 +469,8 @@ class CodexEngineTest {
         val resumeParams = CodexEngine.resumeSessionParams(work, "existing-thread-123", "custom-model")
         assertEquals("existing-thread-123", resumeParams["threadId"]?.jsonPrimitive?.content)
         assertEquals("custom-model", resumeParams["model"]?.jsonPrimitive?.content)
+        // No tools means the key is absent, not an empty array: an empty array
+        // would take every tool away from the thread being resumed.
         assertFalse(resumeParams.containsKey("dynamicTools"))
         assertEquals("never", resumeParams["approvalPolicy"]?.jsonPrimitive?.content)
         assertEquals("danger-full-access", resumeParams["sandbox"]?.jsonPrimitive?.content)
@@ -458,6 +480,31 @@ class CodexEngineTest {
         assertFalse(startParams.containsKey("model"))
         assertTrue(startParams.containsKey("dynamicTools"))
         assertEquals(1, startParams["dynamicTools"]?.jsonArray?.size)
+    }
+
+    @Test fun aResumedThreadIsOfferedTheToolsThisVersionHas() {
+        // A thread binds the tool list it was started with, so a chat opened
+        // before an app update could never call a tool that update added -
+        // while the turn snapshot, built from the live gateway, said it could.
+        val work = File("/tmp/workspace")
+        val tools = listOf(
+            dev.androidagent.core.ToolDefinition("act_plan", "Run a seen sequence", kotlinx.serialization.json.buildJsonObject {}),
+        )
+
+        val carried = CodexEngine.resumeSessionParams(work, "old-thread", null, tools)
+        assertEquals(1, carried["dynamicTools"]?.jsonArray?.size)
+        assertEquals(
+            "act_plan",
+            carried["dynamicTools"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content,
+        )
+        // The same wire shape a fresh thread is given, so a resumed chat and a
+        // new one advertise the same thing.
+        assertEquals(
+            CodexEngine.startSessionParams(work, null, tools)["dynamicTools"],
+            carried["dynamicTools"],
+        )
+        // And the fallback attempt, for a server that will not take them.
+        assertFalse(CodexEngine.resumeSessionParams(work, "old-thread", null, null).containsKey("dynamicTools"))
     }
 
     @Test fun developerInstructionsHoldIdentityAndRulesAndLeaveOperationToAgentsMd() {

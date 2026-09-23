@@ -1,3 +1,23 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package dev.androidagent.core
 
 import kotlinx.serialization.json.Json
@@ -287,7 +307,8 @@ class KnowledgeStore(
         const val MAX_RECORDS_PER_PACKAGE = 60
         const val DEFAULT_SUMMARY_LIMIT = 12
         private const val MAX_FIELD_CHARS = 400
-        private const val MAX_FALLBACKS = 8
+        /** Also the schema's `maxItems`, so the tool advertises the limit it enforces. */
+        internal const val MAX_FALLBACKS = 8
         private const val MAX_FILE_CHARS = 512 * 1024
 
         private val PACKAGE_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")

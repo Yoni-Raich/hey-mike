@@ -1,15 +1,37 @@
 Hey Mike
+Copyright 2025-2026 Yoni Raich
 
-Repository-owned code is offered under the Apache License 2.0 in LICENSE,
-subject to the authority of the copyright owner.
+This product includes software developed by Yoni Raich and the Hey Mike
+contributors.
+
+Repository-owned code is dual-licensed:
+
+  1. Under the GNU Affero General Public License, version 3 only
+     (SPDX: AGPL-3.0-only), in LICENSE. This is the default and applies unless
+     you hold a separate agreement.
+  2. Under a commercial license from the copyright holder, for proprietary or
+     closed-source use. See LICENSE-COMMERCIAL.md.
+
+Contributions are accepted under the Contributor License Agreement in CLA.md,
+which is what makes the dual-licensing above possible.
+
+"Hey Mike" and the Hey Mike name and logo are marks of the copyright holder.
+Neither license grants any right to use them to brand a derived product.
+
+Third-party components
+----------------------
 
 The build preparation script fetches and stages the pinned OpenAI Codex
-app-server package version 0.153.4 for generated APKs. The tracked project
+app-server package version 0.156.0 for generated APKs. The tracked project
 research identifies that package as Apache-2.0 licensed. A copy of that license
 text is kept at
-third_party/licenses/openai-codex-app-server-0.153.4-Apache-2.0.txt.
+third_party/licenses/openai-codex-app-server-0.156.0-Apache-2.0.txt.
 
 Other dependencies and runtime components keep their own upstream licenses.
-This notice does not relicense them. No additional attribution is listed here
-because the tracked project sources do not provide enough verified information
-to make a safe ownership or attribution claim.
+This notice does not relicense them, and the licenses above do not apply to
+them. No additional attribution is listed here because the tracked project
+sources do not provide enough verified information to make a safe ownership or
+attribution claim.
+
+The Gradle wrapper files (gradlew, gradlew.bat, gradle/wrapper) are distributed
+by the Gradle project under the Apache License 2.0 and keep that license.

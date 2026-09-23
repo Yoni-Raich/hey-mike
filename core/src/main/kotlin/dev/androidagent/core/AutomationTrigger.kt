@@ -1,0 +1,396 @@
+/*
+ * Hey Mike - an on-device Android AI agent.
+ * Copyright (C) 2025-2026 Yoni Raich
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * This file is part of Hey Mike, which is dual-licensed. You may use it under
+ * the terms of the GNU Affero General Public License, version 3, as published
+ * by the Free Software Foundation, or under a commercial license from the
+ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package dev.androidagent.core
+
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.put
+import java.time.DayOfWeek
+import java.time.LocalTime
+import java.time.ZonedDateTime
+
+/**
+ * What wakes a rule.
+ *
+ * Closed, and each kind declares the fields it provides, so a rule that
+ * interpolates `{{notification.text}}` under a `schedule` trigger is refused
+ * when it is written rather than firing with an empty prompt at 19:00.
+ */
+enum class AutomationTriggerKind(val wire: String, val fields: Set<String>) {
+    /** The clock. The host sets an alarm for [AutomationSchedule.nextRunAt]. */
+    SCHEDULE("schedule", emptySet()),
+
+    /** Entering or leaving a named place. The place is resolved by the host, not here. */
+    PLACE("place", setOf("place.id", "place.transition")),
+
+    /** A notification was posted. The one trigger that reads content, and the one that is fenced. */
+    NOTIFICATION("notification", setOf("notification.package", "notification.title", "notification.text")),
+
+    /** Charging, unplugged, connected to a Wi-Fi network, screen on. */
+    DEVICE_STATE("device_state", setOf("state.name", "state.value")),
+
+    /** Nothing wakes it: the rule exists so a person or another rule can run it by name. */
+    MANUAL("manual", emptySet());
+
+    companion object {
+        fun from(wire: String): AutomationTriggerKind? = entries.firstOrNull { it.wire == wire }
+        val WIRE_NAMES: List<String> = entries.map { it.wire }
+    }
+}
+
+/**
+ * The trigger half of a rule: which events may wake it, and which of those are
+ * actually about it.
+ *
+ * Matching is re-checked here even for events the host only delivers because it
+ * thinks the rule wants them. An alarm that fires a minute early, a geofence
+ * that reports the wrong place, a notification listener that widens its filter
+ * in a later version — none of them can fire a rule whose own trigger does not
+ * agree, which is why [matches] takes the whole event rather than a promise.
+ */
+data class AutomationTrigger(
+    val kind: AutomationTriggerKind,
+    val schedule: AutomationSchedule? = null,
+    /** PLACE: which place, and whether entering or leaving. */
+    val place: String? = null,
+    val transition: PlaceTransition = PlaceTransition.ENTER,
+    /** NOTIFICATION: which app, and optionally which sender. */
+    val packageName: String? = null,
+    val from: String? = null,
+    /** DEVICE_STATE: which signal, and the value that wakes the rule. */
+    val stateName: String? = null,
+    val stateValue: String? = null,
+) {
+
+    enum class PlaceTransition(val wire: String) {
+        ENTER("enter"), EXIT("exit");
+
+        companion object {
+            fun from(wire: String): PlaceTransition? = entries.firstOrNull { it.wire == wire }
+        }
+    }
+
+    fun matches(event: AutomationEvent): Boolean = when (kind) {
+        AutomationTriggerKind.SCHEDULE ->
+            event is AutomationEvent.Clock && schedule?.isDue(event.at) == true
+
+        AutomationTriggerKind.PLACE ->
+            event is AutomationEvent.Place &&
+                event.place.equals(place, ignoreCase = true) &&
+                event.transition == transition
+
+        AutomationTriggerKind.NOTIFICATION ->
+            event is AutomationEvent.Notification &&
+                (packageName == null || event.packageName.equals(packageName, ignoreCase = true)) &&
+                (from == null || event.title.contains(from, ignoreCase = true))
+
+        AutomationTriggerKind.DEVICE_STATE ->
+            event is AutomationEvent.DeviceState &&
+                event.name.equals(stateName, ignoreCase = true) &&
+                (stateValue == null || event.value.equals(stateValue, ignoreCase = true))
+
+        AutomationTriggerKind.MANUAL ->
+            event is AutomationEvent.Manual
+    }
+
+    fun toJson(): JsonObject = buildJsonObject {
+        put("type", kind.wire)
+        schedule?.let { schedule -> schedule.toJson().forEach { (key, value) -> put(key, value) } }
+        place?.let { put("place", it) }
+        if (kind == AutomationTriggerKind.PLACE) put("transition", transition.wire)
+        packageName?.let { put("package", it) }
+        from?.let { put("from", it) }
+        stateName?.let { put("state", it) }
+        stateValue?.let { put("is", it) }
+    }
+
+    fun describe(): JsonPrimitive = JsonPrimitive(
+        when (kind) {
+            AutomationTriggerKind.SCHEDULE -> schedule?.describe() ?: "on a schedule"
+            AutomationTriggerKind.PLACE -> "${transition.wire}ing \"$place\""
+            AutomationTriggerKind.NOTIFICATION ->
+                "a notification from " + (packageName ?: "any app") + (from?.let { " by \"$it\"" } ?: "")
+            AutomationTriggerKind.DEVICE_STATE -> "$stateName becomes ${stateValue ?: "anything"}"
+            AutomationTriggerKind.MANUAL -> "only when run by name"
+        },
+    )
+
+    companion object {
+        fun parse(json: JsonObject, ruleId: String): AutomationTrigger {
+            fun bad(reason: String): Nothing =
+                throw AutomationFormatException("automation_invalid", "Rule \"$ruleId\": $reason")
+
+            val wire = json.str("type") ?: bad("the trigger needs a \"type\".")
+            val kind = AutomationTriggerKind.from(wire)
+                ?: bad(
+                    "\"$wire\" is not a trigger. Use one of " +
+                        AutomationTriggerKind.WIRE_NAMES.joinToString(", ") + ".",
+                )
+            return when (kind) {
+                AutomationTriggerKind.SCHEDULE ->
+                    AutomationTrigger(kind, schedule = AutomationSchedule.parse(json, ruleId))
+
+                AutomationTriggerKind.PLACE -> {
+                    val place = json.str("place") ?: bad("a \"place\" trigger needs \"place\".")
+                    val transitionWire = json.str("transition") ?: "enter"
+                    val transition = PlaceTransition.from(transitionWire.lowercase())
+                        ?: bad("\"$transitionWire\" is not a transition. Use enter or exit.")
+                    AutomationTrigger(kind, place = place, transition = transition)
+                }
+
+                AutomationTriggerKind.NOTIFICATION -> {
+                    // No package means every app on the phone, which is almost
+                    // never what was meant and always the widest possible read
+                    // of the user's notifications. Named explicitly or refused.
+                    val pkg = json.str("package")
+                        ?: bad("a \"notification\" trigger needs \"package\": name the app it listens to.")
+                    AutomationTrigger(kind, packageName = pkg, from = json.str("from"))
+                }
+
+                AutomationTriggerKind.DEVICE_STATE -> {
+                    val name = json.str("state") ?: bad("a \"device_state\" trigger needs \"state\".")
+                    AutomationTrigger(kind, stateName = name, stateValue = json.str("is"))
+                }
+
+                AutomationTriggerKind.MANUAL -> AutomationTrigger(kind)
+            }
+        }
+    }
+}
+
+/**
+ * When a scheduled rule is due.
+ *
+ * Two shapes, because two things are meant by "every day at seven" and "every
+ * half hour", and collapsing them into a cron string would make both harder to
+ * read and neither easier to write.
+ *
+ * The due check is re-run against the event's own clock rather than trusting
+ * that an alarm fired for the right reason. Android coalesces, delays and
+ * batches alarms, and a rule that posts to Facebook must not post because the
+ * OS woke the process early for something else.
+ */
+data class AutomationSchedule(
+    val at: LocalTime? = null,
+    val days: Set<DayOfWeek> = emptySet(),
+    val everyMinutes: Int? = null,
+) {
+
+    /**
+     * True when [now] is the minute this schedule names.
+     *
+     * Stateless, so it cannot tell a late alarm from a missed one or a slot
+     * already served from one still owed. The live path asks [dueSlot], which
+     * can; this stays for callers that only want the shape of the schedule.
+     */
+    fun isDue(now: ZonedDateTime): Boolean {
+        if (everyMinutes != null) return true
+        val at = at ?: return false
+        if (days.isNotEmpty() && now.dayOfWeek !in days) return false
+        return now.hour == at.hour && now.minute == at.minute
+    }
+
+    /**
+     * The slot this schedule owes a run for at [now], or null when nothing is owed.
+     *
+     * The alarm is a wake-up, and Android delivers wake-ups late: Doze, an
+     * inexact alarm, a phone that was off at 19:00 and booted at 19:08. Matching
+     * the exact minute turned every one of those into a silently missed day.
+     * Instead, an `at` schedule owes its most recent slot until either it has
+     * run for it ([lastFiredAt] is at or after the slot) or [toleranceMs] has
+     * passed — after which the moment is gone and running would be the wrong
+     * action rather than a late one. That is the same line
+     * [AutomationGuard.validForMs] draws for a queued turn, and the evaluator
+     * passes it here.
+     *
+     * A slot from before the rule was written ([savedAt]) is never owed, so a
+     * rule saved at 19:05 does not fire for the 19:00 it did not exist for.
+     *
+     * An interval is owed once [everyMinutes] have passed since it last ran, or
+     * since it was written when it never has. A skipped run records nothing, so
+     * the interval stays owed and is tried again at the next wake-up rather than
+     * pushed a whole interval out.
+     */
+    fun dueSlot(now: ZonedDateTime, lastFiredAt: Long?, savedAt: Long?, toleranceMs: Long): ZonedDateTime? {
+        val nowMs = now.toInstant().toEpochMilli()
+        everyMinutes?.let { interval ->
+            val base = listOfNotNull(lastFiredAt, savedAt).maxOrNull() ?: return now
+            return if (nowMs - base >= interval * 60_000L - SLACK_MS) now else null
+        }
+        val slot = lastSlotAtOrBefore(now) ?: return null
+        val slotMs = slot.toInstant().toEpochMilli()
+        if (nowMs - slotMs > toleranceMs) return null
+        if (lastFiredAt != null && lastFiredAt >= slotMs) return null
+        if (savedAt != null && savedAt > slotMs + SLACK_MS) return null
+        return slot
+    }
+
+    /** The latest moment at or before [now] an `at` schedule names, or null for an interval. */
+    fun lastSlotAtOrBefore(now: ZonedDateTime): ZonedDateTime? {
+        val at = at ?: return null
+        var candidate = now.withHour(at.hour).withMinute(at.minute).withSecond(0).withNano(0)
+        if (candidate.isAfter(now)) candidate = candidate.minusDays(1)
+        if (days.isEmpty()) return candidate
+        repeat(7) {
+            if (candidate.dayOfWeek in days) return candidate
+            candidate = candidate.minusDays(1)
+        }
+        return null
+    }
+
+    /**
+     * [nextRunAt], counting an interval from when the rule last ran or was
+     * written instead of from [after].
+     *
+     * Counting from [after] meant every re-arm pushed an interval out again,
+     * and the host re-arms after every event — a screen turning on every
+     * twenty minutes kept an hourly rule from ever running.
+     */
+    fun nextRunAt(after: ZonedDateTime, lastFiredAt: Long?, savedAt: Long?): ZonedDateTime {
+        val interval = everyMinutes ?: return nextRunAt(after)
+        val base = listOfNotNull(lastFiredAt, savedAt).maxOrNull() ?: return nextRunAt(after)
+        val intervalMs = interval * 60_000L
+        val afterMs = after.toInstant().toEpochMilli()
+        var next = base + intervalMs
+        if (next <= afterMs) next += ((afterMs - next) / intervalMs + 1) * intervalMs
+        return java.time.Instant.ofEpochMilli(next).atZone(after.zone)
+    }
+
+    /**
+     * The next instant the host should set an alarm for, strictly after [after].
+     *
+     * Seconds and nanos are dropped: a rule says 19:00, not 19:00:37, and an
+     * alarm that keeps its seconds drifts a little further from the stated time
+     * every time it is rescheduled from its own firing.
+     */
+    fun nextRunAt(after: ZonedDateTime): ZonedDateTime {
+        everyMinutes?.let { return after.plusMinutes(it.toLong()).withSecond(0).withNano(0) }
+        val at = at ?: return after.plusDays(1)
+        var candidate = after.withHour(at.hour).withMinute(at.minute).withSecond(0).withNano(0)
+        if (!candidate.isAfter(after)) candidate = candidate.plusDays(1)
+        if (days.isEmpty()) return candidate
+        // At most seven hops: some day of the week is always in the set.
+        repeat(7) {
+            if (candidate.dayOfWeek in days) return candidate
+            candidate = candidate.plusDays(1)
+        }
+        return candidate
+    }
+
+    fun toJson(): JsonObject = buildJsonObject {
+        at?.let { put("at", "%02d:%02d".format(it.hour, it.minute)) }
+        everyMinutes?.let { put("everyMinutes", it) }
+        if (days.isNotEmpty()) {
+            put("days", JsonArray(DayOfWeek.entries.filter { it in days }.map { JsonPrimitive(it.wire()) }))
+        }
+    }
+
+    fun describe(): String = when {
+        everyMinutes != null -> "every $everyMinutes minutes"
+        at == null -> "on a schedule"
+        days.isEmpty() -> "every day at %02d:%02d".format(at.hour, at.minute)
+        else -> DayOfWeek.entries.filter { it in days }.joinToString(", ") { it.wire() } +
+            " at %02d:%02d".format(at.hour, at.minute)
+    }
+
+    companion object {
+        const val MIN_INTERVAL_MINUTES = 15
+
+        /** An alarm a few seconds early still counts; one a whole interval early does not. */
+        private const val SLACK_MS = 60_000L
+        const val MAX_INTERVAL_MINUTES = 24 * 60
+
+        fun parse(json: JsonObject, ruleId: String): AutomationSchedule {
+            fun bad(reason: String): Nothing =
+                throw AutomationFormatException("automation_invalid", "Rule \"$ruleId\": $reason")
+
+            val everyMinutes = (json["everyMinutes"] as? JsonPrimitive)?.intOrNull
+            val atText = json.str("at")
+            if (everyMinutes == null && atText == null) {
+                bad("a \"schedule\" trigger needs \"at\" (\"19:00\") or \"everyMinutes\".")
+            }
+            if (everyMinutes != null && atText != null) {
+                bad("a \"schedule\" trigger takes \"at\" or \"everyMinutes\", not both.")
+            }
+            if (everyMinutes != null && everyMinutes < MIN_INTERVAL_MINUTES) {
+                // Below this Android's own alarm batching makes the stated
+                // interval a fiction, and the battery cost stops being invisible.
+                bad("\"everyMinutes\" is $everyMinutes; the shortest interval is $MIN_INTERVAL_MINUTES minutes.")
+            }
+            if (everyMinutes != null && everyMinutes > MAX_INTERVAL_MINUTES) {
+                bad("\"everyMinutes\" is $everyMinutes; use \"at\" for anything longer than a day.")
+            }
+            return AutomationSchedule(
+                at = atText?.let { parseClock(it, ruleId, "at") },
+                days = parseDays(json["days"], ruleId),
+                everyMinutes = everyMinutes,
+            )
+        }
+    }
+}
+
+/**
+ * When the host should next wake for the clock.
+ *
+ * One alarm serves every scheduled rule: the earliest next run across all of
+ * them. Android caps how many exact alarms an app may hold and charges for
+ * each wake-up, and a phone with twelve daily rules does not want twelve
+ * alarms when one plus a re-check does the same job — the re-check being
+ * [AutomationSchedule.isDue], which runs against every rule when the alarm
+ * lands and is the reason an early or coalesced wake fires nothing.
+ */
+object AutomationWakeups {
+
+    /**
+     * The earliest moment any enabled scheduled rule is next due, or null if none is.
+     *
+     * With [history], an interval counts from its last run, which is what the
+     * host needs; without it, from [after].
+     */
+    fun nextRunAt(
+        rules: List<AutomationRule>,
+        after: ZonedDateTime,
+        history: AutomationHistory? = null,
+    ): ZonedDateTime? =
+        rules.asSequence()
+            .filter { it.enabled && it.trigger.kind == AutomationTriggerKind.SCHEDULE }
+            .mapNotNull { rule ->
+                rule.trigger.schedule?.nextRunAt(after, history?.lastFiredAt(rule.id), rule.savedAt)
+            }
+            .minOrNull()
+
+    /**
+     * Packages the notification listener may look at: the union over enabled
+     * notification rules.
+     *
+     * The listener checks this before it reads a title or a body, so a
+     * notification from an app no rule names is dropped without being looked
+     * at. An empty set means the listener has nothing to do at all.
+     */
+    fun watchedPackages(rules: List<AutomationRule>): Set<String> =
+        rules.asSequence()
+            .filter { it.enabled && it.trigger.kind == AutomationTriggerKind.NOTIFICATION }
+            .mapNotNull { it.trigger.packageName?.lowercase() }
+            .toSet()
+}
