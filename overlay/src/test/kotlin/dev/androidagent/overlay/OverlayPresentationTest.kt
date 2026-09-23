@@ -92,4 +92,15 @@ class OverlayPresentationTest {
         // Cut at 220 characters, the trailing space dropped, then the ellipsis.
         assertEquals("word ".repeat(44).trimEnd() + "…", oneLine("word ".repeat(100)))
     }
+
+    @Test fun cardKeepsTheMarkdownOfWhatTheAgentSaid() {
+        assertEquals(
+            "**Plan**\n- Open the **chat**\n- and send `it`.",
+            cardMarkdown("## Plan\n\n- Open the **chat**\n- and send `it`.\n\n"),
+        )
+        // Cut at the last line break that fits, so no line ends half-marked.
+        assertEquals("- one\n- two", cardMarkdown("- one\n- two\n- three", limit = 15))
+        // One line longer than the limit is cut on it and says so.
+        assertEquals("word ".repeat(4).trimEnd() + "…", cardMarkdown("word ".repeat(10), limit = 20))
+    }
 }

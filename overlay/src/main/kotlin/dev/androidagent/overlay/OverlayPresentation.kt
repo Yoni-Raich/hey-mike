@@ -112,6 +112,24 @@ private fun toolHeadline(detail: String): String? {
     return if (TOOL_NAME.matches(name)) name.replaceFirstChar { it.uppercase() } else null
 }
 
+private val HEADING = Regex("^\\s{0,3}#{1,6}\\s+(.+?)\\s*#*\\s*$")
+
+/**
+ * The agent's text for the card, still Markdown: blank lines dropped so four
+ * lines hold as much as they can, headings turned into bold lines, cut at a
+ * line break where one fits in [limit].
+ */
+internal fun cardMarkdown(text: String, limit: Int = 600): String {
+    val markdown = text.lineSequence()
+        .map { it.trimEnd() }
+        .filter { it.isNotBlank() }
+        .map { line -> HEADING.matchEntire(line)?.let { "**${it.groupValues[1]}**" } ?: line }
+        .joinToString("\n")
+    if (markdown.length <= limit) return markdown
+    val lineEnd = markdown.lastIndexOf('\n', limit)
+    return if (lineEnd > 0) markdown.take(lineEnd) else markdown.take(limit).trimEnd() + "…"
+}
+
 /** The agent's text as one plain line: no Markdown marks, no line breaks. */
 internal fun oneLine(text: String, limit: Int = 220): String {
     val plain = text.lineSequence()

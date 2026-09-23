@@ -144,6 +144,12 @@ class FloatingControlOverlayTest {
             waitForIdle(instrumentation)
             assertTrue(device.hasObject(By.text("Working in session files")))
             assertTrue(device.hasObject(By.text(said)))
+
+            // Markdown is drawn, not shown as marks.
+            overlay.say("## Plan\n\n- Turn **Wi-Fi** on\n- Check `Settings`")
+            waitForIdle(instrumentation)
+            assertTrue(device.hasObject(By.textContains("Turn Wi-Fi on")))
+            assertFalse(device.hasObject(By.textContains("**")))
             saveScreenshot(device, targetContext, "overlay-agent-words")
         } finally {
             overlay.hide()

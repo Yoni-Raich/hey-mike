@@ -256,6 +256,13 @@ not production-ready.
   on hardware; no device was available in this environment. The full gate
   (`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug`)
   was not run.
+  On 2026-09-23 the card draws those words as Markdown (Markwon core, no
+  links or taps, one line break between blocks, headings as bold lines)
+  instead of flattening them to one plain line. After merging `dev`:
+  `:overlay:test` (9, with the new `cardKeepsTheMarkdownOfWhatTheAgentSaid`),
+  `:overlay:lintDebug`, `:core:test`, `:app:assembleDevDebug`,
+  `:app:lintDevDebug` and `:app:assembleDevDebugAndroidTest` pass. Still not
+  run on a phone, including the new Markdown check in the instrumented test.
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
   (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`
