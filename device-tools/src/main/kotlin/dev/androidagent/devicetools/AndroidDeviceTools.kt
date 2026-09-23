@@ -391,6 +391,12 @@ class AndroidDeviceTools(
                             scrollable = parser.attribute("scrollable")?.toBooleanStrictOrNull() ?: false,
                             focused = parser.attribute("focused")?.toBooleanStrictOrNull() ?: false,
                             packageName = parser.attribute("package").compactUiText(),
+                            editable = parser.attribute("class")?.let { className ->
+                                className.endsWith("EditText") ||
+                                    className.endsWith("AutoCompleteTextView") ||
+                                    className.endsWith("MultiAutoCompleteTextView")
+                            } ?: false,
+                            selected = parser.attribute("selected")?.toBooleanStrictOrNull() ?: false,
                             password = parser.attribute("password")?.toBooleanStrictOrNull() ?: false,
                             checkable = parser.attribute("checkable")?.toBooleanStrictOrNull() ?: false,
                             checked = parser.attribute("checked")?.toBooleanStrictOrNull() ?: false,

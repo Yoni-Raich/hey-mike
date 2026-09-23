@@ -138,6 +138,9 @@ data class AgentUiState(
     val voiceSummon: String? = null,
     /** Sends the user chose to always allow, for review in Settings. */
     val sendGrants: List<dev.androidagent.core.SendGrant> = emptyList(),
+    /** Jev status never contains the token itself. */
+    val jevEnabled: Boolean = false,
+    val jevTokenConfigured: Boolean = false,
     val isDrawerOpen: Boolean = false,
     val isSettingsOpen: Boolean = false,
     /** The standing-rules sheet, opened from the panel's strip. */
@@ -256,6 +259,9 @@ data class AgentUiActions(
     val onWithdrawConsent: () -> Unit = {},
     /** Start a chat in which Mike turns on wireless debugging and pairs, asking first. */
     val onLetMikeSetUpWireless: () -> Unit = {},
+    val onJevEnabledChanged: (Boolean) -> Unit = {},
+    val onSaveJevToken: (String) -> Unit = {},
+    val onClearJevToken: () -> Unit = {},
 )
 
 /** The setup checklist for this state, so no screen assembles the signals itself. */

@@ -41,12 +41,12 @@ tool and answered the battery level.
 Not verified: realtime voice, a turn on a GPT-6 model, code-mode, the release
 APK, and the full gate (`:app:lintDevDebug`, `assembleDevRelease`).
 
-## Jev isolation cleanup — 2026-09-23
+## Jev isolation — 2026-09-24
 
-This branch reverts the five Jev implementation commits that landed on `dev`
-before PR #78. The unrelated Dev launcher icon commit `d2dfc2b` remains.
-Jev work continues in PR #78 after this cleanup is merged; this revert does
-not remove the original commits from Git history.
+PR #86 removes the five Jev implementation commits that had landed on `dev`
+before PR #78. The unrelated Dev launcher icon commit `d2dfc2b` remains. PR #78
+keeps the Jev work on an isolated branch, now rebased on current `dev`; the
+cleanup does not remove the original commits from Git history.
 
 Verified locally: `:core:test`, `:a11y:testDebugUnitTest`,
 `:device-tools:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
@@ -54,7 +54,6 @@ Verified locally: `:core:test`, `:a11y:testDebugUnitTest`,
 accessibility schema tests required
 lazy initialization of Android scroll constants after the revert. No phone
 run or release build was performed for this cleanup.
-
 ## Usage widget for every account — 2026-09-23
 
 On branch `claude/account-usage-widget-8vccz5`, a home screen widget shows the
@@ -87,6 +86,42 @@ nothing ran on a phone. Still to check on a device: a device-code sign-in for
 a second account, a switch followed by a turn in an existing chat (the resumed
 thread carries reasoning items created under the other account), and that the
 quota bars change.
+
+## Jev UI engine experiment — 2026-09-22
+
+On branch `experiment/jev-ui-tool`, Jev now runs the full bounded UI loop behind
+one static `jev_run_ui_task` call. Codex supplies the complete goal once; the
+gateway pages through a fresh UI observation, asks Jev one multi-question
+operation/target request, strictly validates only the selected branch, executes
+through the existing composite device gateway, observes the result, and repeats.
+This removes one Codex/model turn per UI step while preserving visible control,
+Stop/revoke, stale node checks, message-send approval, and backend fallback.
+
+The code-owned action space includes installed-app launch, tap, four semantic
+scroll directions, exact text replacement for a focused non-password field,
+Back, Home, Wait, Done, and semantic `SET_PROGRESS`. Accessibility UI
+observations now expose editable/selected state, typed range min/max/current and
+`ACTION_SET_PROGRESS`; `set_progress` polls and verifies the resulting value. Jev sees
+only opaque candidate keys and cannot invent a selector, package, coordinate,
+text value, or progress value. Exact text comes from the tool's `texts` input or
+bounded verbatim spans of the goal. Failed/uncertain mutations are never retried;
+only a changed pre-action observation causes a fresh Jev decision.
+Raw Enter is not offered because it can route through ADB around the existing
+send-approval guard; Jev can use a visible submit control instead. `DONE`
+returns `done_visible` with `verified:false`: it is Jev's judgment over a stable
+fresh screen, not a task-specific deterministic verifier.
+
+Verified on 2026-09-22: `:core:test`, `:a11y:testDebugUnitTest`,
+`:device-tools:test`, `:app:testDevDebugUnitTest`, `:app:lintDevDebug`, and
+`:app:assembleDevDebug` passed. The resulting APK was verified as package
+`dev.androidagent.app.dev`, version `0.12.0`/code `26`, and installed with
+`pm install -r` on the designated Nothing A059; `MainActivity` launched and
+the existing Accessibility service entries remained enabled. Unit coverage
+includes a multi-step task completed by one public tool call, selected-head-only
+validation, semantic 75% slider control, and no retry after a failed mutation.
+No real Jev token or Jev task was run on the phone, so live TypeSafe latency and
+response compatibility, real AndroidGym five-task behavior, and end-to-end Stop
+of an in-flight network request remain unverified.
 
 ## Status — 2026-09-15
 

@@ -265,6 +265,9 @@ class MainActivity : ComponentActivity() {
             model.editUi { it.copy(isSettingsOpen = false) }
             model.letMikeSetUpWireless()
         },
+        onJevEnabledChanged = model::setJevEnabled,
+        onSaveJevToken = model::saveJevToken,
+        onClearJevToken = model::clearJevToken,
     )
 
     /**

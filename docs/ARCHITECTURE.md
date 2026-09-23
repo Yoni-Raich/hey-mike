@@ -752,6 +752,95 @@ tool name reaches the model without new plumbing, not because remembering is a
 device action — it touches no device, and `needsControl` is false for both
 tools.
 
+## Experimental Jev UI engine
+
+The `experiment/jev-ui-tool` branch adds `JevToolGateway` beside the local
+knowledge and workflow gateways. It exposes one static `jev_run_ui_task` tool,
+because Codex binds tool definitions at `thread/start`. One call owns a bounded
+local loop:
+
+```text
+read fresh UI -> build code-owned action space -> one Jev request over one flat
+set of concrete actions -> validate the choice -> re-read for freshness -> route
+one action through CompositeDeviceToolGateway -> observe and repeat
+```
+
+The action space is flat: "Tap Wi-Fi", "Scroll down in the settings list" and
+"Set Volume from 20.0 to 75.0" are all choices in one question. It was once two
+questions — pick an operation, then pick a target "assuming the operation is
+TAP" — but Jev answers every question in one request, so the operation was
+chosen without knowing which target it would get and each target was chosen for
+an operation that might not be taken. `TAP` and `SCROLL_DOWN` are not comparable
+options; the concrete actions are, and that is the shape Jev's probabilities
+mean something over.
+
+One flat question means one 255-choice ceiling shared by everything on screen,
+so the space is budgeted rather than filled first-come: five slots are reserved
+for Back, Home, Wait, Done and Blocked; scrolling, progress and app launches are
+each capped; and what is left goes to taps, which is what a screen is actually
+navigated with. Over budget, a named control outranks an anonymous container,
+because the name is the only thing Jev can reason about. Scrollable regions are
+offered on their own axis only — a region taller than it is wide does not scroll
+sideways. The one decision still asked separately is which exact string to type:
+a goal yields hundreds of candidate spans, and folding them in would crowd out
+every control on the screen.
+
+This is the fast path: Codex supplies one complete goal and does not spend a
+model turn between UI steps. Jev selects only opaque candidate keys. Local code
+maps those keys to installed-app launch, observed node taps, semantic scrolling,
+exact focused-field text, semantic progress, Back or Home. Jev cannot
+invent selectors, node ids, packages, coordinates, text or range values. Text
+is drawn only from explicit `texts` or bounded verbatim goal spans; password
+fields never receive a text candidate. Progress values are numeric values or
+percentages already present in the goal.
+
+Every mutation still goes through the existing composite device gateway, so
+Accessibility/ADB fallback, send approval, visible control and Stop remain in
+one place. The loop re-observes immediately before input and discards a stale
+decision. A refused action is never retried, but it does not end the run either:
+the accessibility backend refuses plenty it definitively did not perform — a
+node that rejects the text or the progress value, a coordinate our own overlay
+covers — so the screen is re-read, and an unchanged screen proves nothing was
+mutated. The refusal is then recorded, marked `refused` in the history Jev sees,
+and Jev chooses again. Only a screen that did change stays `uncertain_mutation`,
+because that one may already have committed. Repeated action/screen signatures,
+stale screens, waits, steps, decisions and wall time are bounded. `DONE` completes
+only after one more fresh observation matches the state Jev judged, and returns
+`done_visible` with `verified:false`; this is not a task-specific verifier. Raw
+Enter is not in Jev's action space because its ADB fallback could bypass the
+existing send-approval guard; a visible submit control remains available.
+
+Large UI observations are consumed through the existing `read_ui` paging
+contract and merged with the newest observation id. Accessibility observations
+also carry editable/selected state and range min/max/current plus supported
+semantic actions. `set_progress` uses Android `ACTION_SET_PROGRESS` and reports
+the typed range and polls for the requested value rather than simulating a
+coordinate swipe. A dispatched but unverified change is reported as uncertain
+and is never retried.
+
+A step, wall or decision limit is out of budget, not out of options, so those
+three replies carry a `continuation` token: calling `jev_run_ui_task` again with
+`resume` set to it continues the same goal with its history and its repeat
+detector intact, instead of starting blind and spending a fresh budget getting
+back to where the last call stopped. The token carries the goal, so it cannot be
+pointed at a different intent; it is single-use, the suspended set is bounded
+and cleared when a run begins or control is revoked, and a goal may be spread
+over at most five segments before it has to be decomposed. The orchestrator
+still re-enters the loop deliberately between segments — the ceiling became a
+pacing device, not an unbounded run.
+
+The app keeps the feature flag and Jev token in `JevTokenStore`. The token is
+encrypted with an Android Keystore AES/GCM key and is read only by the app's
+`AndroidJevProvider` for the fixed TypeSafe endpoint. It is not part of UI
+state, tool arguments, session files, or diagnostics. The HTTP adapter sends
+one request per cycle carrying the flat action question, plus the text question
+when a focused field can receive a value. Probability maps must contain exactly
+the offered choices, be finite, sum to one within tolerance, and make the chosen
+entry maximal. The text answer is validated and consumed only when the chosen
+action types text, so an answer to a question that was not asked cannot block a
+decision. Requests, responses and timeouts are bounded, and redirects carrying
+the token are disabled.
+
 ## Why a 502 from the tunnel is now explained
 
 The proxy the app-server talks through is ours, injected deliberately because
