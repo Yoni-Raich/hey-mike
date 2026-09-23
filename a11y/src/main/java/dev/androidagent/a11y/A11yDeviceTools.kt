@@ -50,13 +50,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
-import kotlin.math.absoluteValue
-import kotlin.math.round
 
 /**
  * Device gateway backed by the accessibility service, so observation and
@@ -205,7 +202,6 @@ class A11yDeviceTools(
             "open_app" -> openApp(arguments)
             "tap_node" -> tapNode(arguments)
             "set_text" -> setText(arguments)
-            "set_progress" -> setProgress(arguments)
             "scroll_node" -> scrollNode(arguments)
             "wait_for_change" -> waitForChange(arguments)
             "resolve_intent" -> intents.resolve(arguments)
@@ -575,66 +571,6 @@ class A11yDeviceTools(
         )
     }
 
-    private suspend fun setProgress(arguments: JsonObject): ToolResult {
-        val requested = arguments["value"]?.jsonPrimitive?.doubleOrNull
-            ?: throw IllegalArgumentException("value is required")
-        require(requested.isFinite()) { "value must be finite" }
-        val (node, view) = resolveNode(arguments)
-        val min = view.rangeMin?.toDouble()
-        val max = view.rangeMax?.toDouble()
-        val previous = view.rangeCurrent?.toDouble()
-        if (min == null || max == null || previous == null || !view.supportsSetProgress) {
-            return ToolResult("Node $node does not expose semantic progress control.", success = false)
-        }
-        val rangeType = view.rangeType
-        val target = if (rangeType == "int") round(requested) else requested
-        require(target in min..max) { "value must be between $min and $max" }
-        val extras = Bundle().apply {
-            putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target.toFloat())
-        }
-        val committed = view.node.performAction(
-            AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
-            extras,
-        )
-        if (!committed) {
-            return ToolResult("Node $node rejected progress $target.", success = false)
-        }
-        var current: Double? = null
-        val verificationStarted = System.nanoTime()
-        var verified = false
-        while (!verified && (System.nanoTime() - verificationStarted) / 1_000_000L < PROGRESS_VERIFY_TIMEOUT_MS) {
-            currentCoroutineContext().ensureActive()
-            current = runCatching {
-                view.node.refresh()
-                view.node.rangeInfo?.current?.toDouble()
-            }.getOrNull()
-            verified = current != null && progressMatches(current!!, target, rangeType)
-            if (!verified) delay(PROGRESS_VERIFY_POLL_MS)
-        }
-        return ToolResult(
-            buildJsonObject {
-                put("nodeId", node)
-                put("previous", previous)
-                put("requested", requested)
-                put("target", target)
-                rangeType?.let { put("rangeType", it) }
-                put("dispatched", true)
-                current?.let { put("current", it) }
-                put("verified", verified)
-            }.toString(),
-            success = verified,
-        )
-    }
-
-    private fun progressMatches(current: Double, target: Double, rangeType: String?): Boolean {
-        val tolerance = when (rangeType) {
-            "int" -> 0.0001
-            "percent" -> 0.01
-            else -> maxOf(0.0001, target.absoluteValue * 0.0001)
-        }
-        return (current - target).absoluteValue <= tolerance
-    }
-
     private suspend fun waitForChange(arguments: JsonObject): ToolResult {
         val timeout = (arguments["timeoutMs"]?.jsonPrimitive?.intOrNull?.toLong() ?: QUIESCENCE_TIMEOUT_MS)
             .coerceIn(100L, MAX_WAIT_MS)
@@ -810,17 +746,9 @@ class A11yDeviceTools(
      * out of the tree does nothing for it. Move the card, then refuse if the
      * point is still ours.
      */
-    private suspend fun requireNotOurOwnUi(x: Int, y: Int) {
+    private fun requireNotOurOwnUi(x: Int, y: Int) {
         avoidTouch(x, y)
         val service = A11yServiceHandle.service.value ?: return
-        // avoidTouch hops to the main thread and the window manager applies the
-        // move a frame later, so checking immediately refuses points the card is
-        // already leaving. Give the move a few beats before giving up on one.
-        repeat(OWN_UI_SETTLE_ATTEMPTS) {
-            if (!service.ownWindowContains(context.packageName, x, y)) return
-            delay(OWN_UI_SETTLE_MS)
-            avoidTouch(x, y)
-        }
         if (service.ownWindowContains(context.packageName, x, y)) {
             throw IllegalStateException(
                 "($x,$y) is inside Hey Mike's own window. Nothing was tapped; " +
@@ -859,11 +787,7 @@ class A11yDeviceTools(
         private const val QUIESCENCE_IDLE_MS = 350L
         private const val QUIESCENCE_TIMEOUT_MS = 3_000L
         private const val QUIESCENCE_POLL_MS = 50L
-        private const val PROGRESS_VERIFY_TIMEOUT_MS = 750L
-        private const val PROGRESS_VERIFY_POLL_MS = 25L
         private const val MAX_COORDINATE = 20_000
-        private const val OWN_UI_SETTLE_ATTEMPTS = 4
-        private const val OWN_UI_SETTLE_MS = 40L
         private const val RETURN_TIMEOUT_MS = 4_000L
         private const val APP_OPEN_TIMEOUT_MS = 5_000L
 
@@ -876,8 +800,8 @@ class A11yDeviceTools(
 
         private const val MAX_WAIT_MS = 30_000L
 
-        // A getter avoids resolving AccessibilityAction singleton objects when
-        // host-side schema tests load this class against the Android stub jar.
+        // Android's host-side stub leaves AccessibilityAction fields null. Read
+        // them only when a device actually needs to scroll, not during class init.
         private val SCROLL_ACTIONS: Map<String, Int>
             get() = mapOf(
                 "forward" to AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
@@ -946,13 +870,6 @@ class A11yDeviceTools(
                     "when the field did not take the value, which some chat and Compose inputs do not.",
                 mapOf("nodeId" to "string", "observationId" to "string", "text" to "string", "submit" to "boolean"),
                 listOf("nodeId", "observationId", "text"),
-            ),
-            tool(
-                "set_progress",
-                "Set the absolute value of a ranged control from the most recent read_ui. " +
-                    "Use the min, max and current range values exposed on that node.",
-                mapOf("nodeId" to "string", "observationId" to "string", "value" to "number"),
-                listOf("nodeId", "observationId", "value"),
             ),
             tool(
                 "scroll_node",

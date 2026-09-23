@@ -138,9 +138,6 @@ data class AgentUiState(
     val voiceSummon: String? = null,
     /** Sends the user chose to always allow, for review in Settings. */
     val sendGrants: List<dev.androidagent.core.SendGrant> = emptyList(),
-    /** Jev status never contains the token itself. */
-    val jevEnabled: Boolean = false,
-    val jevTokenConfigured: Boolean = false,
     val isDrawerOpen: Boolean = false,
     val isSettingsOpen: Boolean = false,
     /** The standing-rules sheet, opened from the panel's strip. */
@@ -247,9 +244,6 @@ data class AgentUiActions(
     /** Open the pairing dialog and read the code from it instead of asking for it. */
     val onCapturePairing: () -> Unit = {},
     val onDismissInfo: () -> Unit = {},
-    val onJevEnabledChanged: (Boolean) -> Unit = {},
-    val onSaveJevToken: (String) -> Unit = {},
-    val onClearJevToken: () -> Unit = {},
 )
 
 /** The setup checklist for this state, so no screen assembles the signals itself. */

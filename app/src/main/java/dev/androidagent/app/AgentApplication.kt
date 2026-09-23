@@ -43,7 +43,6 @@ import dev.androidagent.core.WorkflowCallRegistry
 import dev.androidagent.core.WorkflowLibrary
 import dev.androidagent.core.WorkflowStore
 import dev.androidagent.core.WorkflowToolGateway
-import dev.androidagent.core.JevToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
 import dev.androidagent.devicetools.AndroidCapabilityTools
@@ -211,13 +210,10 @@ class AgentGraph(private val app: Application) {
         // next due; without this it waited for an unrelated firing to be armed.
         onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
     )
-    /** One Jev call owns the bounded observe-decide-act loop and routes every action here. */
-    val jev = AndroidJevProvider(app)
-    val jevTools = JevToolGateway(jev) { tools }
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, jevTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator
