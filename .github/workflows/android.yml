@@ -4,8 +4,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -14,9 +14,9 @@ jobs:
       # anything else runs. An empty list skips that: the runner image already
       # ships platform-tools, and AGP fetches the platform and build-tools the
       # build asks for.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: ''
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       - run: chmod +x gradlew
       - run: ./gradlew :core:test :app:assembleDevDebug :app:lintDevDebug
