@@ -122,6 +122,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     if (eventThread != null && eventUsage != null) usageByThread[eventThread] = eventUsage
                     val threadId = mutable.value.sessions.firstOrNull { it.id == current.value }?.engineThreadId
                     mutable.update { it.copy(tokenUsage = usageByThread[threadId], usageLimits = event.limits ?: it.usageLimits) }
+                    event.limits?.let(::recordUsage)
                 }
                 EngineEvent.SkillsChanged -> runCatching { loadSkills(forceReload = false) }
                 is EngineEvent.Failure -> if (!graph.coordinator.state.value.active) error(event.message)
@@ -406,7 +407,27 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun refreshSavedAccounts() {
         val saved = runCatching { withContext(Dispatchers.IO) { graph.accounts.state() } }.getOrNull() ?: return
+        val changed = saved != mutable.value.savedAccounts
         mutable.update { it.copy(savedAccounts = saved) }
+        // Which account is in use, and which are saved, is on the widget too.
+        if (changed) dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+    }
+
+    /**
+     * Keep a quota reading under the account it belongs to, for the widget.
+     * The vault on disk names the live account, not the UI state: during a
+     * switch the new account's quota arrives before the UI has caught up.
+     */
+    private fun recordUsage(limits: List<UsageLimit>) {
+        if (limits.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val vault = graph.accounts.state()
+                val live = vault.activeId ?: return@runCatching
+                graph.usageBook.record(live, limits, vault.accounts.map { it.id })
+                dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+            }
+        }
     }
     fun refreshAccount() = task {
         if (graph.runtime.status.value.phase !in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) return@task

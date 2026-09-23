@@ -1,5 +1,21 @@
 # Progress
 
+## Usage widget for every account — 2026-09-23
+
+On branch `claude/account-usage-widget-8vccz5`, a home screen widget shows the
+quota left on every saved Codex account, each as a still frame of the agent
+orb (see `docs/ARCHITECTURE.md`, "Usage widget"). The live account is read
+live; the others show their last reading and its age, kept by the new
+`AccountUsageBook` in `:core`.
+
+Verified: `./gradlew :core:test :app:assembleDevDebug :app:lintDevDebug`
+passed (the CI set), including eleven new `AccountUsageBookTest` cases, with
+no lint findings in the new files. The design was checked only as a browser
+render of the same orb drawing, not on a launcher. Not verified on a phone:
+placing the widget, its size on a real launcher grid, that a switch moves
+"In use" and records the new account's quota under the right account, and the
+30-minute refresh.
+
 ## Multiple Codex accounts — 2026-09-22
 
 On branch `claude/multiple-accounts-branch-i6emwt`, the app keeps several
