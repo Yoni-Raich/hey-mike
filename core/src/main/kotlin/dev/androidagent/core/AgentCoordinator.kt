@@ -108,8 +108,6 @@ class AgentCoordinator(
     private val startupEvents = ArrayDeque<EngineEvent>()
     private var textRevision = 0L
     private var textFlushJob: Job? = null
-    /** The agent's words already mirrored onto the overlay, so the same line is not resent. */
-    private var overlaySpeech: String? = null
     private var pendingLocalApproval: PendingLocalApproval? = null
 
     init { scope.launch { engine.events.collect { event ->
@@ -157,7 +155,6 @@ class AgentCoordinator(
             awaitingTurn = false
             startupEvents.clear()
             textRevision = 0L
-            overlaySpeech = null
             runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode) }
         }
     }
@@ -183,7 +180,6 @@ class AgentCoordinator(
             controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
-            overlaySpeech = null
             completion = null
             runJob = null
             mutableState.value = RunState(RunPhase.THINKING, sessionId, "Voice ready")
@@ -1124,29 +1120,11 @@ class AgentCoordinator(
         scheduleAssistantFlush()
     }
 
-    /**
-     * Mirror the agent's own words onto the floating card, so what it says on
-     * its way to an action is visible outside the app too. Same text as the
-     * chat message; the overlay decides how much of it fits.
-     */
-    private fun speakOnOverlay(text: String) {
-        val line = text.trim()
-        if (line.isEmpty()) return
-        val fresh = synchronized(lifecycleLock) {
-            if (overlaySpeech == line) false else { overlaySpeech = line; true }
-        }
-        if (fresh) runCatching { overlay.say(line) }
-    }
-
     private suspend fun flushAssistantSegment(clear: Boolean = true) {
         val flush = synchronized(lifecycleLock) { textFlushJob.also { it?.cancel(); textFlushJob = null } }
         flush?.join()
         val id = assistantId
-        if (id != null) {
-            val text = assistantText.toString()
-            assistantFlushLock.withLock { sessions.updateMessage(id, text, "complete") }
-            speakOnOverlay(text)
-        }
+        if (id != null) assistantFlushLock.withLock { sessions.updateMessage(id, assistantText.toString(), "complete") }
         if (clear) synchronized(lifecycleLock) {
             assistantId = null; assistantItemId = null; assistantText.clear(); textRevision = 0
         }
@@ -1167,7 +1145,6 @@ class AgentCoordinator(
                     runCatching {
                         assistantFlushLock.withLock { sessions.updateMessage(id, snapshot.text, "streaming") }
                     }
-                    speakOnOverlay(snapshot.text)
                     val settled = synchronized(lifecycleLock) {
                         epoch.get() == token && assistantId == id && textRevision == snapshot.revision
                     }

@@ -1,5 +1,19 @@
 # Progress
 
+## Jev isolation cleanup — 2026-09-23
+
+This branch reverts the five Jev implementation commits that landed on `dev`
+before PR #78. The unrelated Dev launcher icon commit `d2dfc2b` remains.
+Jev work continues in PR #78 after this cleanup is merged; this revert does
+not remove the original commits from Git history.
+
+Verified locally: `:core:test`, `:a11y:testDebugUnitTest`,
+`:device-tools:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
+`:app:assembleDevDebug`, and `:app:lintDevDebug` passed. The host-side
+accessibility schema tests required
+lazy initialization of Android scroll constants after the revert. No phone
+run or release build was performed for this cleanup.
+
 ## Usage widget for every account — 2026-09-23
 
 On branch `claude/account-usage-widget-8vccz5`, a home screen widget shows the
@@ -32,42 +46,6 @@ nothing ran on a phone. Still to check on a device: a device-code sign-in for
 a second account, a switch followed by a turn in an existing chat (the resumed
 thread carries reasoning items created under the other account), and that the
 quota bars change.
-
-## Jev UI engine experiment — 2026-09-22
-
-On branch `experiment/jev-ui-tool`, Jev now runs the full bounded UI loop behind
-one static `jev_run_ui_task` call. Codex supplies the complete goal once; the
-gateway pages through a fresh UI observation, asks Jev one multi-question
-operation/target request, strictly validates only the selected branch, executes
-through the existing composite device gateway, observes the result, and repeats.
-This removes one Codex/model turn per UI step while preserving visible control,
-Stop/revoke, stale node checks, message-send approval, and backend fallback.
-
-The code-owned action space includes installed-app launch, tap, four semantic
-scroll directions, exact text replacement for a focused non-password field,
-Back, Home, Wait, Done, and semantic `SET_PROGRESS`. Accessibility UI
-observations now expose editable/selected state, typed range min/max/current and
-`ACTION_SET_PROGRESS`; `set_progress` polls and verifies the resulting value. Jev sees
-only opaque candidate keys and cannot invent a selector, package, coordinate,
-text value, or progress value. Exact text comes from the tool's `texts` input or
-bounded verbatim spans of the goal. Failed/uncertain mutations are never retried;
-only a changed pre-action observation causes a fresh Jev decision.
-Raw Enter is not offered because it can route through ADB around the existing
-send-approval guard; Jev can use a visible submit control instead. `DONE`
-returns `done_visible` with `verified:false`: it is Jev's judgment over a stable
-fresh screen, not a task-specific deterministic verifier.
-
-Verified on 2026-09-22: `:core:test`, `:a11y:testDebugUnitTest`,
-`:device-tools:test`, `:app:testDevDebugUnitTest`, `:app:lintDevDebug`, and
-`:app:assembleDevDebug` passed. The resulting APK was verified as package
-`dev.androidagent.app.dev`, version `0.12.0`/code `26`, and installed with
-`pm install -r` on the designated Nothing A059; `MainActivity` launched and
-the existing Accessibility service entries remained enabled. Unit coverage
-includes a multi-step task completed by one public tool call, selected-head-only
-validation, semantic 75% slider control, and no retry after a failed mutation.
-No real Jev token or Jev task was run on the phone, so live TypeSafe latency and
-response compatibility, real AndroidGym five-task behavior, and end-to-end Stop
-of an in-flight network request remain unverified.
 
 ## Status — 2026-09-15
 
@@ -223,20 +201,6 @@ not production-ready.
   regression. It passes under `LANG=C.UTF-8`, and nothing in this change
   touches `quick-actions`.
 
-- The agent's own messages now reach the floating card, not only the chat.
-  `ControlOverlay.say` is a separate channel from the status label;
-  `AgentCoordinator` mirrors every assistant segment to it as it is stored,
-  and the card keeps the last line through the tool calls that follow. On
-  2026-09-15 on Linux/JDK 21: `:core:test`, `:overlay:test`,
-  `:app:assembleDevDebug`, `:app:lintDevDebug` (0 errors, 18 warnings) and
-  `:app:assembleDevDebugAndroidTest` all pass. That proves the mapping, the
-  coordinator wiring and that everything compiles — nothing more. Not tested:
-  any phone. The card itself, the new
-  `FloatingControlOverlayTest.theAgentsOwnWordsStayOnTheCardAcrossToolCalls`,
-  and how a long message reads in the four lines it now gets have not been run
-  on hardware; no device was available in this environment. The full gate
-  (`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug`)
-  was not run.
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
   (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`

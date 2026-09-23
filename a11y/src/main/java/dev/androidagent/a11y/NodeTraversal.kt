@@ -23,7 +23,6 @@ package dev.androidagent.a11y
 import dev.androidagent.core.UiNode
 import dev.androidagent.core.UiObservation
 import dev.androidagent.core.UiObservationSerializer
-import dev.androidagent.core.UiRange
 
 /**
  * One window handed to the traversal, in front-to-back order.
@@ -97,19 +96,6 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
                 scrollable = view.isScrollable,
                 focused = view.isFocused,
                 packageName = UiObservationSerializer.compactField(view.packageName),
-                editable = view.isEditable,
-                selected = view.isSelected,
-                range = if (view.rangeMin != null && view.rangeMax != null && view.rangeCurrent != null) {
-                    UiRange(
-                        min = view.rangeMin!!.toDouble(),
-                        max = view.rangeMax!!.toDouble(),
-                        current = view.rangeCurrent!!.toDouble(),
-                        type = view.rangeType,
-                    )
-                } else {
-                    null
-                },
-                supportsSetProgress = view.supportsSetProgress,
                 password = view.isPassword,
                 checkable = view.isCheckable,
                 checked = view.isChecked,

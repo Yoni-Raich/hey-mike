@@ -248,9 +248,6 @@ class MainActivity : ComponentActivity() {
             openWirelessDebugging()
         },
         onDismissInfo = { model.editUi { it.copy(infoMessage = null) } },
-        onJevEnabledChanged = model::setJevEnabled,
-        onSaveJevToken = model::saveJevToken,
-        onClearJevToken = model::clearJevToken,
     )
 
     /**

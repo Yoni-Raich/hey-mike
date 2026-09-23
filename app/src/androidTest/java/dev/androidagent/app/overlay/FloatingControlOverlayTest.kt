@@ -114,42 +114,6 @@ class FloatingControlOverlayTest {
         }
     }
 
-    @Test fun theAgentsOwnWordsStayOnTheCardAcrossToolCalls() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val targetContext = instrumentation.targetContext
-        assumeTrue(Settings.canDrawOverlays(targetContext))
-        val device = UiDevice.getInstance(instrumentation)
-        val overlay = FloatingControlOverlay(targetContext, {}, {}, {})
-        val said = "I'll open Settings and turn Wi-Fi on."
-        try {
-            runBlocking { overlay.show("Thinking") }
-            waitForIdle(instrumentation)
-            device.findObject(By.descStartsWith("Expand agent controls")).click()
-            SystemClock.sleep(450L)
-            waitForIdle(instrumentation)
-
-            // What the agent says in the chat is also on the card.
-            overlay.say(said)
-            waitForIdle(instrumentation)
-            assertTrue(device.hasObject(By.text(said)))
-
-            // A tool call renames the headline and leaves those words in place.
-            overlay.updateState(OverlayState(OverlayPhase.CONTROLLING, "tap"))
-            waitForIdle(instrumentation)
-            assertTrue(device.hasObject(By.text("Tapping")))
-            assertTrue(device.hasObject(By.text(said)))
-
-            // An engine activity line is a headline, not something the agent said.
-            overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Working in session files"))
-            waitForIdle(instrumentation)
-            assertTrue(device.hasObject(By.text("Working in session files")))
-            assertTrue(device.hasObject(By.text(said)))
-            saveScreenshot(device, targetContext, "overlay-agent-words")
-        } finally {
-            overlay.hide()
-        }
-    }
-
     @Test fun manualExitDuringThinkingDoesNotShowOverlayOrReopenApp() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val device = UiDevice.getInstance(instrumentation)
