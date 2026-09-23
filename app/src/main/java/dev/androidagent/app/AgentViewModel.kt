@@ -101,14 +101,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.voice.state.collect { state -> mutable.update { it.copy(voiceState = state) } } }
         viewModelScope.launch { graph.voice.muted.collect { muted -> mutable.update { it.copy(voiceMuted = muted) } } }
         viewModelScope.launch { graph.sendGrants.grants.collect { grants -> mutable.update { it.copy(sendGrants = grants) } } }
-        viewModelScope.launch { graph.jev.state.collect { jev ->
-            mutable.update {
-                it.copy(
-                    jevEnabled = jev.enabled,
-                    jevTokenConfigured = jev.tokenConfigured,
-                )
-            }
-        } }
         viewModelScope.launch { graph.engine.voiceEvents.collect(::handleVoiceEvent) }
         viewModelScope.launch { graph.engine.events.collect { event ->
             when (event) {
@@ -122,6 +114,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     if (eventThread != null && eventUsage != null) usageByThread[eventThread] = eventUsage
                     val threadId = mutable.value.sessions.firstOrNull { it.id == current.value }?.engineThreadId
                     mutable.update { it.copy(tokenUsage = usageByThread[threadId], usageLimits = event.limits ?: it.usageLimits) }
+                    event.limits?.let(::recordUsage)
                 }
                 EngineEvent.SkillsChanged -> runCatching { loadSkills(forceReload = false) }
                 is EngineEvent.Failure -> if (!graph.coordinator.state.value.active) error(event.message)
@@ -131,19 +124,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
-    fun setJevEnabled(enabled: Boolean) {
-        graph.jev.setEnabled(enabled)
-        mutable.update { it.copy(infoMessage = if (enabled) "Jev enabled for future tool calls." else "Jev disabled.") }
-    }
-    fun saveJevToken(token: String) {
-        runCatching { graph.jev.saveToken(token) }
-            .onSuccess { mutable.update { it.copy(infoMessage = "Jev token saved securely on this phone.") } }
-            .onFailure { error("Could not save the Jev token securely.") }
-    }
-    fun clearJevToken() {
-        graph.jev.clearToken()
-        mutable.update { it.copy(infoMessage = "Jev token removed.") }
-    }
     fun newChat() = task { current.value = graph.sessions.createSession().id }
     fun select(id: String) { current.value = id }
     fun rename(id: String, title: String) = task { graph.sessions.rename(id, title) }
@@ -406,7 +386,27 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun refreshSavedAccounts() {
         val saved = runCatching { withContext(Dispatchers.IO) { graph.accounts.state() } }.getOrNull() ?: return
+        val changed = saved != mutable.value.savedAccounts
         mutable.update { it.copy(savedAccounts = saved) }
+        // Which account is in use, and which are saved, is on the widget too.
+        if (changed) dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+    }
+
+    /**
+     * Keep a quota reading under the account it belongs to, for the widget.
+     * The vault on disk names the live account, not the UI state: during a
+     * switch the new account's quota arrives before the UI has caught up.
+     */
+    private fun recordUsage(limits: List<UsageLimit>) {
+        if (limits.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val vault = graph.accounts.state()
+                val live = vault.activeId ?: return@runCatching
+                graph.usageBook.record(live, limits, vault.accounts.map { it.id })
+                dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+            }
+        }
     }
     fun refreshAccount() = task {
         if (graph.runtime.status.value.phase !in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) return@task
