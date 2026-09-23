@@ -1,5 +1,26 @@
 # Progress
 
+## Codex runtime 0.156.0 — 2026-09-23
+
+The pinned Codex app-server moved from 0.153.4 to 0.156.0 so the GPT-6 models
+show up: the backend only lists them to newer clients. Both package hashes
+match the GitHub release digests, the package layout is unchanged, and the
+`codex-code-mode-host` string still appears twice with the constant last, so
+the helper patch applies as before. The APK's runtime metadata files are now
+overwritten on every start, so an updated phone no longer shows the old version.
+
+Verified: `python -m unittest tools.test_prepare_runtime`,
+`python tools/prepare_runtime.py`, and
+`gradlew :core:test :engine-codex:test :runtime:test :app:assembleDevDebug` passed.
+On the Nothing A059 (`install -r`, `versionCodeOverride=43` over the nightly
+build): the 0.156.0 app-server started, `models_cache.json` reports
+`client_version 0.156.0`, and the model picker lists 6-astra, 6-sol, 6-luna,
+5.6-sol, 5.6-terra, 5.6-luna and 5.5. One turn on 5.6-luna ran one device
+tool and answered the battery level.
+
+Not verified: realtime voice, a turn on a GPT-6 model, code-mode, the release
+APK, and the full gate (`:app:lintDevDebug`, `assembleDevRelease`).
+
 ## Jev isolation cleanup — 2026-09-23
 
 This branch reverts the five Jev implementation commits that landed on `dev`

@@ -217,7 +217,7 @@ Contributions are accepted under the [CLA](CLA.md).
 
 Bundled and downloaded third-party components keep their own licenses and are
 not covered by either option; see [NOTICE](NOTICE) and the
-[Codex app-server license](third_party/licenses/openai-codex-app-server-0.153.4-Apache-2.0.txt).
+[Codex app-server license](third_party/licenses/openai-codex-app-server-0.156.0-Apache-2.0.txt).
 
 Hey Mike is an independent project and is not affiliated with or endorsed
 by OpenAI or Google. All docs: [docs/INDEX.md](docs/INDEX.md).
