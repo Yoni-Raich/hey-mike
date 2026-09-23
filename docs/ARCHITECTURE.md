@@ -73,11 +73,18 @@ DNS, TLS and connection failures remain diagnosable without exposing tokens or
 device codes. Proxy lifecycle follows the supervised app-server and closes on
 stop or failed startup.
 
-The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.153.4,
+The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.156.0,
 ChatGPT account sessions use `https://chatgpt.com/backend-api/codex` for
 models and responses. Allowing only auth.openai.com and api.openai.com lets
 device-code login succeed while blocking signed-in chat. The runtime sets
 NO_COLOR and strips terminal formatting from redacted diagnostics.
+
+The model list is never hard-coded. `model/list` returns what the OpenAI
+backend sends the app-server, and the backend filters by the client version
+the app-server reports. New models therefore appear only after the pinned
+package is bumped in `tools/prepare_runtime.py` (0.153.4 -> 0.156.0 on
+2026-09-22 for the GPT-6 models). Cached archives are named with the version,
+so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
 

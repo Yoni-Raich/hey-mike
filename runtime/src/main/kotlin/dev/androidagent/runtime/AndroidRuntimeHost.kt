@@ -382,13 +382,13 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
                 warnings += "link $linkPath: ${e.message}"
             }
         }
-        copyAssetIfMissing("runtime/codex-package.json", File(packageLinkDirectory, "codex-package.json"))
-        copyAssetIfMissing("runtime/runtime-manifest.json", File(packageLinkDirectory, "runtime-manifest.json"))
+        copyAsset("runtime/codex-package.json", File(packageLinkDirectory, "codex-package.json"))
+        copyAsset("runtime/runtime-manifest.json", File(packageLinkDirectory, "runtime-manifest.json"))
         return warnings
     }
 
-    private fun copyAssetIfMissing(assetPath: String, dest: File) {
-        if (dest.exists()) return
+    /** Overwrite every start, so an app update never leaves the old runtime version on disk. */
+    private fun copyAsset(assetPath: String, dest: File) {
         runCatching {
             appContext.assets.open(assetPath).use { input ->
                 dest.outputStream().use { input.copyTo(it) }
