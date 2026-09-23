@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A home screen widget shows the quota left on every saved Codex account, each
+  as its own small Mike orb: green to red as the window fills, with a ring that
+  fills like the top-bar meter. The account in use is read live; the others
+  show their last reading and how old it is, and count as empty again once
+  their window has reset. Tap it to open the app.
+
 - Editing a rule is now a form instead of raw JSON. The time is picked from a
   clock, the days are seven taps, and the numbers and the text inside a
   condition or an action — a caption, a notification message, what Mike should

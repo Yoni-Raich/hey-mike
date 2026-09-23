@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="usage_widget_title">Mike · Usage</string>
+    <string name="usage_widget_empty">Open Hey Mike and sign in to see your quota here.</string>
+    <string name="usage_widget_description">Quota left on every saved Codex account</string>
+</resources>

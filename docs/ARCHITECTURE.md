@@ -454,6 +454,18 @@ next turn resumes that thread from its local rollout under the new account.
 Token usage stays per thread; the quota bars are cleared and read again,
 because quota is the only thing that follows the account.
 
+### Usage widget
+
+The home screen widget (`app/.../widget/UsageWidget.kt`) shows every saved
+account's quota as a still frame of the agent orb. Only the live account's
+quota can be read, so each reading is kept by `AccountUsageBook` (`:core`,
+`<files>/runtime/accounts/usage.json`, percentages and reset times only)
+under the account the vault names as live when it arrives; the vault, not the
+UI state, decides, because during a switch the new quota arrives before the UI
+catches up. Other accounts show their last reading and its age, and a window
+whose reset time has passed since then is drawn empty. The widget is redrawn on
+every reading and account change, and by the platform every 30 minutes.
+
 ## Rich chat presentation
 
 Assistant markdown is rendered with Markwon (tables, strikethrough, prism4j

@@ -27,6 +27,7 @@ import dev.androidagent.adb.AndroidAdbTransport
 import dev.androidagent.automations.AndroidAutomationActions
 import dev.androidagent.automations.AutomationHost
 import dev.androidagent.automations.AutomationHostOwner
+import dev.androidagent.core.AccountUsageBook
 import dev.androidagent.core.AgentCoordinator
 import dev.androidagent.core.AutomationJournal
 import dev.androidagent.core.AutomationLibrary
@@ -76,6 +77,8 @@ class AgentGraph(private val app: Application) {
     val engine = CodexEngine(runtime)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
+    // The last quota of every saved account, for the home screen widget.
+    val usageBook = AccountUsageBook(java.io.File(runtime.runtimeRoot, "accounts/usage.json"))
     val adb = AndroidAdbTransport(app)
     private lateinit var runCoordinator: AgentCoordinator
     // Declared before the gateways: they take `overlay` as a constructor argument,
