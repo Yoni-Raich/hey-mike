@@ -162,12 +162,25 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
     TopAppBar(
         navigationIcon = { PanelButton(state, onOpenDrawer) },
         title = {
-            Text(
-                title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
-            )
+            Column {
+                Text(
+                    title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+                )
+                // Which machine this chat acts on, so a command is never sent
+                // to the computer by someone who thought it was the phone.
+                state.activeSessionId?.let(state.remoteChats::get)?.let { where ->
+                    Text(
+                        where,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         },
         actions = {
             AgentStatusButton(state) { showStatus = true }

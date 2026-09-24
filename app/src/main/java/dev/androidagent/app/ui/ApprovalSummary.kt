@@ -69,6 +69,29 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
             },
         )
     }
+    // Codex on a computer asks through its own protocol; say what it wants
+    // to do there in words, with the command itself when there is one.
+    when (method) {
+        "item/commandExecution/requestApproval", "execCommandApproval" -> return ApprovalSummary(
+            headline = "Run this on the computer?",
+            lines = buildList {
+                commandText()?.let { add("Command" to it) }
+                detail("cwd")?.let { add("In" to it) }
+                detail("reason")?.let { add("Why" to it) }
+            },
+        )
+        "item/fileChange/requestApproval", "applyPatchApproval" -> return ApprovalSummary(
+            headline = "Change files on the computer?",
+            lines = buildList {
+                detail("reason")?.let { add("Why" to it) }
+                detail("grantRoot")?.let { add("Folder" to it) }
+            },
+        )
+        "item/permissions/requestApproval" -> return ApprovalSummary(
+            headline = "Give Mike more access on the computer?",
+            lines = listOfNotNull(detail("reason")?.let { "Why" to it }),
+        )
+    }
     val uri = detail("uri")
     val parsed = uri?.let { runCatching { URI(it) }.getOrNull() }
     // An opaque uri such as smsto:+972…?body=… has no rawQuery of its own.
@@ -117,6 +140,13 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
     }
     return ApprovalSummary(headline, lines)
 }
+
+/** The command as one line, whether it came as a string or as argv. */
+private fun EngineEvent.Approval.commandText(): String? = when (val command = details["command"]) {
+    is JsonPrimitive -> command.contentOrNull
+    is kotlinx.serialization.json.JsonArray -> command.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.joinToString(" ")
+    else -> null
+}?.takeIf { it.isNotBlank() }
 
 private fun decode(value: String): String =
     runCatching { URLDecoder.decode(value.replace("+", "%2B"), "UTF-8") }.getOrDefault(value)

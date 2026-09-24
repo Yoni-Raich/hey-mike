@@ -34,7 +34,25 @@ import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoiceEngine {
+/**
+ * What one app-server connection is for.
+ *
+ * The phone's own Codex runs with the phone profile. A Codex started on a
+ * computer over SSH gets its own instructions and the access the user picked
+ * for that computer, and cannot read a picture by a path on this phone.
+ */
+data class EngineProfile(
+    val developerInstructions: String,
+    val sandbox: String = "danger-full-access",
+    val approvalPolicy: String = "never",
+    /** Send attached pictures as data URLs rather than phone paths. */
+    val inlineImages: Boolean = false,
+)
+
+class CodexEngine(
+    private val runtime: RuntimeHost,
+    private val profile: EngineProfile = PHONE_PROFILE,
+) : AgentEngine, RealtimeVoiceEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectLock = Mutex()
     private val writeLock = Mutex()
@@ -152,7 +170,25 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
         return parseSkillCatalog(result, workspace)
     }
 
-    override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
+    /**
+     * The skills Codex finds from [cwd] on the machine it runs on. The path
+     * is that machine's, so it stays a string: a Windows path is not a
+     * [File] on this phone.
+     */
+    suspend fun skillCatalogAt(cwd: String, forceReload: Boolean): List<AgentSkill> {
+        connect()
+        val result = request("skills/list", buildJsonObject {
+            put("cwds", buildJsonArray { add(cwd) })
+            put("forceReload", forceReload)
+        })
+        return parseSkillCatalogAt(result, cwd)
+    }
+
+    override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
+        openSessionAt(workspace.absolutePath, threadId, model, tools)
+
+    /** [openSession] for a working directory on the machine Codex runs on. */
+    suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
         connect()
         if (!threadId.isNullOrBlank()) {
             // Tools first. A thread binds the tool list it was started with, so
@@ -164,7 +200,7 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             // extra round trip instead of the user's conversation.
             for (attempt in listOf(tools, null)) {
                 try {
-                    val result = request("thread/resume", resumeSessionParams(workspace, threadId, model, attempt))
+                    val result = request("thread/resume", resumeSessionParams(cwd, threadId, model, attempt, profile))
                     val resumedId = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() }
                     if (resumedId != null) return resumedId
                 } catch (error: Exception) {
@@ -179,7 +215,7 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                 }
             }
         }
-        val startParams = startSessionParams(workspace, model, tools)
+        val startParams = startSessionParams(cwd, model, tools, profile)
         val result = request("thread/start", startParams)
         return result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread ID")
     }
@@ -229,7 +265,10 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
         capabilities: DeviceCapabilities,
         planModel: String?,
     ): String {
-        val result = request("turn/start", turnStartParams(threadId, prompt, images, reasoningEffort, skill, capabilities, planModel))
+        val result = request(
+            "turn/start",
+            turnStartParams(threadId, prompt, images, reasoningEffort, skill, capabilities, planModel, profile.inlineImages),
+        )
         return result["turn"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no turn ID")
     }
 
@@ -611,11 +650,19 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             threadId: String,
             model: String?,
             tools: List<ToolDefinition>? = null,
+        ): JsonObject = resumeSessionParams(workspace.absolutePath, threadId, model, tools, PHONE_PROFILE)
+
+        internal fun resumeSessionParams(
+            cwd: String,
+            threadId: String,
+            model: String?,
+            tools: List<ToolDefinition>?,
+            profile: EngineProfile,
         ): JsonObject = buildJsonObject {
-            put("cwd", workspace.absolutePath)
-            put("approvalPolicy", "never")
-            put("sandbox", "danger-full-access")
-            put("developerInstructions", AGENT_INSTRUCTIONS)
+            put("cwd", cwd)
+            put("approvalPolicy", profile.approvalPolicy)
+            put("sandbox", profile.sandbox)
+            put("developerInstructions", profile.developerInstructions)
             put("config", buildJsonObject { put("features.image_generation", true) })
             if (!model.isNullOrBlank()) put("model", model)
             put("threadId", threadId)
@@ -627,11 +674,18 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             workspace: File,
             model: String?,
             tools: List<ToolDefinition>,
+        ): JsonObject = startSessionParams(workspace.absolutePath, model, tools, PHONE_PROFILE)
+
+        internal fun startSessionParams(
+            cwd: String,
+            model: String?,
+            tools: List<ToolDefinition>,
+            profile: EngineProfile,
         ): JsonObject = buildJsonObject {
-            put("cwd", workspace.absolutePath)
-            put("approvalPolicy", "never")
-            put("sandbox", "danger-full-access")
-            put("developerInstructions", AGENT_INSTRUCTIONS)
+            put("cwd", cwd)
+            put("approvalPolicy", profile.approvalPolicy)
+            put("sandbox", profile.sandbox)
+            put("developerInstructions", profile.developerInstructions)
             put("config", buildJsonObject { put("features.image_generation", true) })
             if (!model.isNullOrBlank()) put("model", model)
             put("dynamicTools", dynamicTools(tools))
@@ -658,6 +712,7 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             skill: AgentSkill? = null,
             capabilities: DeviceCapabilities? = null,
             planModel: String? = null,
+            inlineImages: Boolean = false,
         ): JsonObject = buildJsonObject {
             put("threadId", threadId)
             put("input", buildJsonArray {
@@ -673,7 +728,17 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                     put("name", skill.name)
                     put("path", skill.path)
                 })
-                images.forEach { file -> add(buildJsonObject { put("type", "localImage"); put("path", file.absolutePath) }) }
+                images.forEach { file ->
+                    add(buildJsonObject {
+                        if (inlineImages) {
+                            put("type", "image")
+                            put("url", imageDataUrl(file))
+                        } else {
+                            put("type", "localImage")
+                            put("path", file.absolutePath)
+                        }
+                    })
+                }
             })
             // Omitting effort keeps the app-server's model default in control.
             if (!reasoningEffort.isNullOrBlank()) put("effort", reasoningEffort)
@@ -804,6 +869,31 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             if (!model.isNullOrBlank()) put("model", model)
         }
 
+        /** A picture the app-server cannot open by path, carried in the request. */
+        internal fun imageDataUrl(file: File): String {
+            val mime = when (file.extension.lowercase()) {
+                "jpg", "jpeg" -> "image/jpeg"
+                "webp" -> "image/webp"
+                "gif" -> "image/gif"
+                else -> "image/png"
+            }
+            return "data:$mime;base64," + Base64.getEncoder().encodeToString(file.readBytes())
+        }
+
+        /**
+         * [parseSkillCatalog] for a path on another machine. Paths are compared
+         * as text with either slash and any case, which is how Windows reads
+         * them; one entry is the answer to the one cwd asked for.
+         */
+        internal fun parseSkillCatalogAt(result: JsonObject, cwd: String): List<AgentSkill> {
+            val entries = (result["data"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            fun norm(path: String) = path.replace('\\', '/').trimEnd('/').lowercase()
+            val entry = entries.firstOrNull { norm(it.string("cwd")) == norm(cwd) }
+                ?: entries.singleOrNull()
+                ?: return emptyList()
+            return skillsOf(entry)
+        }
+
         internal fun parseSkillCatalog(result: JsonObject, workspace: File): List<AgentSkill> {
             val entries = result["data"] as? JsonArray ?: return emptyList()
             val expectedPath = workspace.absoluteFile.normalize().path
@@ -812,7 +902,11 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                     path.isNotBlank() && File(path).absoluteFile.normalize().path == expectedPath
                 }
             } ?: return emptyList()
-            return (entry["skills"] as? JsonArray).orEmpty()
+            return skillsOf(entry)
+        }
+
+        private fun skillsOf(entry: JsonObject): List<AgentSkill> =
+            (entry["skills"] as? JsonArray).orEmpty()
                 .mapNotNull { it as? JsonObject }
                 .mapNotNull { skill ->
                     val name = skill.string("name").trim()
@@ -834,7 +928,6 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                 }
                 .filter { it.enabled }
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
-        }
 
         /** Map the pinned thread/realtime/sdp notification without retaining SDP. */
         internal fun parseRealtimeSdp(params: JsonObject): VoiceEvent.SdpAnswer {
@@ -926,6 +1019,9 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
          * skills, never here. Two copies of the same guidance is how a stale
          * one kept telling the agent that device control needed ADB.
          */
+        /** The phone's own Codex: full access on the phone, no approval prompts. */
+        val PHONE_PROFILE: EngineProfile by lazy { EngineProfile(AGENT_INSTRUCTIONS) }
+
         private const val AGENT_INSTRUCTIONS = """You are Mike, the AI agent inside the Hey Mike app, running directly on the user's Android phone and using it for them.
 
 Identity: Your name is Mike. Write it as מייק only when you reply in Hebrew; in any other language write just Mike, with no Hebrew spelling beside it. The user may call you "Mike" or "Hey Mike", typed or spoken; that is them talking to you, not a task. When asked who you are, introduce yourself as Mike, an AI agent that runs on their phone and uses it for them. You are software, not a person: never claim to be human. If asked what powers you, say you run on OpenAI's Codex models through the Codex app-server on the phone. Always answer in the language of the user's latest message; your name does not change that.

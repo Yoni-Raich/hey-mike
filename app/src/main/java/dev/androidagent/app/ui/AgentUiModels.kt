@@ -162,6 +162,36 @@ data class AgentUiState(
     val isUpdateBannerVisible: Boolean = true,
     /** First-launch progress and the consent the user gave. Stored on the phone only. */
     val onboarding: dev.androidagent.core.OnboardingProgress = dev.androidagent.core.OnboardingProgress(),
+    /** Computers Mike can work on over SSH. */
+    val computers: List<dev.androidagent.remote.RemoteComputer> = emptyList(),
+    /** The saved computers could not be opened: changed outside the app, so none is trusted. */
+    val computersUnreadable: Boolean = false,
+    /** The latest connect step per computer. */
+    val computerSetup: Map<String, dev.androidagent.remote.RemoteSetup> = emptyMap(),
+    val isComputersOpen: Boolean = false,
+    /** Picking the folder a computer chat opens in. */
+    val folderBrowser: FolderBrowserState? = null,
+    /** Chats that run on a computer: chat id to "Desk · C:\src\app". */
+    val remoteChats: Map<String, String> = emptyMap(),
+)
+
+/** A computer as the add or edit form holds it, before it is saved. */
+data class ComputerDraft(
+    val id: String? = null,
+    val label: String = "",
+    val host: String = "",
+    val port: String = "22",
+    val user: String = "",
+    /** Blank on an edit keeps the saved password. */
+    val password: String = "",
+    val access: dev.androidagent.remote.RemoteAccess = dev.androidagent.remote.RemoteAccess.ASK,
+)
+
+data class FolderBrowserState(
+    val computerId: String,
+    val listing: dev.androidagent.remote.FolderListing? = null,
+    val loading: Boolean = true,
+    val error: String? = null,
 )
 
 /**
@@ -256,6 +286,21 @@ data class AgentUiActions(
     val onWithdrawConsent: () -> Unit = {},
     /** Start a chat in which Mike turns on wireless debugging and pairs, asking first. */
     val onLetMikeSetUpWireless: () -> Unit = {},
+    val onOpenComputers: () -> Unit = {},
+    val onCloseComputers: () -> Unit = {},
+    /** Save a new or edited computer, then connect to it. */
+    val onSaveComputer: (ComputerDraft) -> Unit = {},
+    val onRemoveComputer: (String) -> Unit = {},
+    /** Connect, install Codex if needed, and check its sign-in. */
+    val onConnectComputer: (String) -> Unit = {},
+    /** The user says they finished signing in to Codex on the computer. */
+    val onCheckComputerSignIn: (String) -> Unit = {},
+    val onOpenUrl: (String) -> Unit = {},
+    /** Show the folders in one folder of a computer; blank is its home folder. */
+    val onBrowseFolder: (computerId: String, path: String) -> Unit = { _, _ -> },
+    val onCloseFolderBrowser: () -> Unit = {},
+    /** Start a chat that runs on the computer, in this folder. */
+    val onOpenFolderChat: (computerId: String, path: String) -> Unit = { _, _ -> },
 )
 
 /** The setup checklist for this state, so no screen assembles the signals itself. */
