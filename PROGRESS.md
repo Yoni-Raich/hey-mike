@@ -1,5 +1,18 @@
 # Progress
 
+## Chat streaming scroll — 2026-09-24
+
+On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one
+writer. It follows measured row growth and viewport changes with pixel scrolls,
+and scrolls to the end once when a new row appears below the viewport. Manual
+scrolling up pauses follow mode; the jump-to-latest button resumes it.
+
+Verified: `:app:compileDevDebugKotlin`, `:app:assembleDevDebug`,
+`:app:lintDevDebug`, and `git diff --check` passed. No phone visual run was
+done. The attached emulator has the user's running Hey Mike Dev app, so it
+was left untouched. Streaming behavior, keyboard resize behavior, and the jump
+button still need visual validation on a device.
+
 ## New user experience — 2026-09-23
 
 On branch `claude/new-user-experience-design-b75114` (PR #84), first launch is

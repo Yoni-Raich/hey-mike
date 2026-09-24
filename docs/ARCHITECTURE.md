@@ -485,6 +485,13 @@ under a size cap. Image generation is enabled through the app-server
 `features.image_generation` config, and the agent is instructed never to
 present a screenshot as generated artwork.
 
+The chat follows the measured end of the latest row while a reply grows or
+the keyboard changes the viewport. One coroutine owns programmatic scrolling:
+it moves by the pixels added to a visible row and jumps to the end only when a
+new last row appears below the viewport. Scrolling up pauses following, and
+the jump-to-latest button resumes it. Streaming text does not restart a scroll
+animation on each update.
+
 ## What the agent says on the floating card
 
 The agent's own words reach the card, not only the chat. `ControlOverlay.say`
