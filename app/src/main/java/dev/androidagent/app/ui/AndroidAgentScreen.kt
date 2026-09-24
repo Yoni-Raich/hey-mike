@@ -61,6 +61,7 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
@@ -319,6 +320,9 @@ fun AndroidAgentScreen(
         if (state.isWorkspaceOpen && !onboarding) {
             WorkspaceFilesSheet(state = state, actions = actions)
         }
+        if (state.isComputersOpen && !onboarding) {
+            ComputersSheet(state = state, actions = actions)
+        }
         OnboardingFlow(state = state, actions = actions)
     }
 }
@@ -371,18 +375,32 @@ private fun AgentDrawer(
         }
 
         Spacer(Modifier.height(14.dp))
-        Button(
-            onClick = {
-                close()
-                actions.onNewChat()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp),
-        ) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("New chat")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = {
+                    close()
+                    actions.onNewChat()
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Outlined.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("New chat")
+            }
+            // A chat on a computer starts from its folder, so it has its own way in.
+            OutlinedButton(
+                onClick = {
+                    close()
+                    actions.onOpenComputers()
+                },
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Outlined.Computer, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Computer")
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -464,6 +482,7 @@ private fun AgentDrawer(
                     items(group.sessions, key = { it.id }) { session ->
                         SessionRow(
                             session = session,
+                            onComputer = session.id in state.remoteChats,
                             selected = session.id == state.activeSessionId,
                             running = running && session.id == state.runState.sessionId,
                             onSelect = {
@@ -516,6 +535,7 @@ private val DrawerRunning = Color(0xFF69A7FF)
 @Composable
 private fun SessionRow(
     session: dev.androidagent.core.ChatSession,
+    onComputer: Boolean,
     selected: Boolean,
     running: Boolean,
     onSelect: () -> Unit,
@@ -541,6 +561,14 @@ private fun SessionRow(
         ) {
             if (running) {
                 StatusDot(color = DrawerRunning, size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
+            }
+            if (onComputer) {
+                Icon(
+                    Icons.Outlined.Computer,
+                    contentDescription = "Runs on a computer",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 10.dp).size(18.dp),
+                )
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(

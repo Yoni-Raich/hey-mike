@@ -48,6 +48,23 @@ class ApprovalSummaryTest {
         assertEquals(listOf("To" to "+972587160002", "Message" to "היי"), summary.lines)
     }
 
+    @Test fun aComputerCommandShowsTheCommandAndWhere() {
+        val summary = EngineEvent.Approval(
+            requestId = "remote|pc|4",
+            method = "item/commandExecution/requestApproval",
+            details = buildJsonObject {
+                put("command", "npm install")
+                put("cwd", "C:\\src\\app")
+                put("reason", "Install the project's packages")
+            },
+        ).summary()
+        assertEquals("Run this on the computer?", summary.headline)
+        assertEquals(
+            listOf("Command" to "npm install", "In" to "C:\\src\\app", "Why" to "Install the project's packages"),
+            summary.lines,
+        )
+    }
+
     @Test fun anIntentWithNoUriNamesItsAction() {
         val summary = EngineEvent.Approval(
             requestId = "p",

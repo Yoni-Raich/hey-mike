@@ -64,6 +64,45 @@ positive paths still lack new physical coverage. After the package lookup fix, t
 --no-daemon`) passed, as did all five `tools.test_prepare_runtime` tests and
 `git diff --check`. These build checks do not establish the untested physical
 paths. The package-filtered read did not exercise keyboard/IME context.
+## Computers over SSH (Windows) — 2026-09-24
+
+On `claude/model-ssh-capability-ifuz1p`, a chat can run on the user's Windows
+PC. The side panel's *Computer* button opens a sheet: add a PC (IP, user,
+password, and *Ask me first* or *Full access*), connect, and pick a project
+folder. The app installs the pinned Codex 0.156.0 app-server on the PC
+(sha256-checked), runs it over SSH, and the chat talks to it. Codex then has
+its own tools, the project's AGENTS.md and the PC's skills. See
+`docs/ARCHITECTURE.md`, "Computers".
+
+Verified here, on Linux with a new SDK install (no phone, no Windows PC):
+- `:remote:testDebugUnitTest` 13/13. Includes an in-process SSH server
+  (Apache MINA): password login, host-key pinning, a wrong key refused, a
+  wrong password named. Also the **real Linux Codex 0.156.0 app-server
+  started over an SSH channel**: `account/read` answered, and `skills/list`
+  found a skill placed in the remote project's `.agents/skills`.
+- `:core:test` 547/547, `:app:testDevDebugUnitTest` 48/48 (new approval-card
+  case), new `CodexEngineTest` cases (Windows cwd and access in
+  `thread/start`, inline pictures, skill paths with backslashes).
+- `:app:assembleDevDebug`, `:app:assembleDevRelease` (JSch present in the
+  dex), `:app:lintDevDebug` with 0 errors.
+- The Windows package sha256 values were computed from the downloaded
+  release assets (x86_64 and aarch64).
+
+Pre-existing, not from this change: `CodexEngineTest.openSessionFallsBackToThreadStartOnResumeFailure`
+fails on `dev` too (expects one `thread/resume`; the engine tries with tools,
+then without).
+
+Not verified (needs a phone and a Windows PC):
+- JSch on Android (it uses the Java 8 classes; ed25519/curve25519 may be
+  dropped for ECDSA/ECDH) against Windows OpenSSH Server.
+- The PowerShell probe, install and folder scripts on real Windows, the cmd
+  quoting of a user folder with spaces, and a PowerShell `DefaultShell`.
+- `codex-app-server.exe` over a Windows OpenSSH exec channel, the device-code
+  sign-in on the PC, a full turn with edits, an approval answered on the
+  phone, Stop, and whether Windows OpenSSH ends the process when the
+  channel closes.
+- What *Ask me first* enforces without the Codex Windows sandbox set up.
+- The Computers sheet and folder picker on a real screen.
 
 ## Chat streaming scroll — 2026-09-24
 

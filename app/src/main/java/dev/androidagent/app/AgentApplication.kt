@@ -73,7 +73,16 @@ class AgentGraph(private val app: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
-    val engine = CodexEngine(runtime)
+    /** The phone's own Codex. */
+    val phoneEngine = CodexEngine(runtime)
+    /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
+    val computers = dev.androidagent.remote.RemoteStore(
+        java.io.File(app.filesDir, "remote/computers.bin"),
+        dev.androidagent.remote.KeystoreSecretBox(),
+    )
+    val remote = dev.androidagent.remote.RemoteHub(computers)
+    /** What chats talk to: the phone's Codex, or a computer's for a chat opened on one. */
+    val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     // The last quota of every saved account, for the home screen widget.

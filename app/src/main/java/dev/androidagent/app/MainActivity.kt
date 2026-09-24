@@ -155,6 +155,19 @@ class MainActivity : ComponentActivity() {
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
         onDrawerChanged = { open -> model.editUi { it.copy(isDrawerOpen = open) } },
+        onOpenComputers = { model.editUi { it.copy(isComputersOpen = true) } },
+        onCloseComputers = { model.editUi { it.copy(isComputersOpen = false, folderBrowser = null) } },
+        onSaveComputer = { draft -> ensureService(); model.saveComputer(draft) },
+        onRemoveComputer = { id -> model.removeComputer(id) },
+        onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
+        onCheckComputerSignIn = { id -> model.checkComputerSignIn(id) },
+        onOpenUrl = { url ->
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { model.error("No app on this phone can open $url") }
+        },
+        onBrowseFolder = { id, path -> model.browseFolder(id, path) },
+        onCloseFolderBrowser = { model.editUi { it.copy(folderBrowser = null) } },
+        onOpenFolderChat = { id, path -> model.openFolderChat(id, path) },
         onNewChat = { model.newChat() },
         onSelectSession = model::select,
         onAttach = { filePicker.launch(arrayOf("*/*")) },

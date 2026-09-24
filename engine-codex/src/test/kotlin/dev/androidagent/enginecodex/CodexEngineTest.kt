@@ -482,6 +482,36 @@ class CodexEngineTest {
         assertEquals(1, startParams["dynamicTools"]?.jsonArray?.size)
     }
 
+    @Test fun aComputersThreadCarriesItsOwnPathAccessAndInstructions() {
+        // A Windows path is not a File on the phone: it must reach Codex as typed.
+        val profile = EngineProfile("computer rules", sandbox = "workspace-write", approvalPolicy = "on-request", inlineImages = true)
+        val start = CodexEngine.startSessionParams("C:\\Users\\Yoni Raich\\src\\app", null, emptyList(), profile)
+        assertEquals("C:\\Users\\Yoni Raich\\src\\app", start["cwd"]?.jsonPrimitive?.content)
+        assertEquals("workspace-write", start["sandbox"]?.jsonPrimitive?.content)
+        assertEquals("on-request", start["approvalPolicy"]?.jsonPrimitive?.content)
+        assertEquals("computer rules", start["developerInstructions"]?.jsonPrimitive?.content)
+        val resume = CodexEngine.resumeSessionParams("D:\\work", "t1", null, null, profile)
+        assertEquals("D:\\work", resume["cwd"]?.jsonPrimitive?.content)
+        assertEquals("on-request", resume["approvalPolicy"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun aPictureForAnotherMachineTravelsInsideTheRequest() {
+        val picture = File.createTempFile("shot", ".png").apply { writeBytes(byteArrayOf(1, 2, 3)); deleteOnExit() }
+        val inline = CodexEngine.turnStartParams("t", "look", listOf(picture), null, inlineImages = true)
+        val item = inline["input"]!!.jsonArray.last().jsonObject
+        assertEquals("image", item["type"]?.jsonPrimitive?.content)
+        assertEquals("data:image/png;base64,AQID", item["url"]?.jsonPrimitive?.content)
+        val local = CodexEngine.turnStartParams("t", "look", listOf(picture), null)
+        assertEquals("localImage", local["input"]!!.jsonArray.last().jsonObject["type"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun skillsOnAWindowsComputerMatchTheirFolderWhateverTheSlashes() {
+        val result = Json.parseToJsonElement(
+            """{"data":[{"cwd":"C:\\src\\App","skills":[{"name":"deploy","description":"d","path":"C:\\src\\App\\.agents\\skills\\deploy\\SKILL.md","scope":"repo"}]}]}""",
+        ).jsonObject
+        assertEquals(listOf("deploy"), CodexEngine.parseSkillCatalogAt(result, "c:/src/app/").map { it.name })
+    }
+
     @Test fun aResumedThreadIsOfferedTheToolsThisVersionHas() {
         // A thread binds the tool list it was started with, so a chat opened
         // before an app update could never call a tool that update added -

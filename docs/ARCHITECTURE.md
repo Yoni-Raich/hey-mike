@@ -14,6 +14,7 @@ One Android project, with replaceable modules and small core contracts.
 | device-tools | Sole agent-facing device gateway, reads/control/shell/files |
 | a11y | Optional in-process accessibility screen observation and control |
 | overlay | Floating steering card, status and direct local stop |
+| remote | Computers over SSH: sealed profiles, Codex on Windows, chat routing |
 
 A model change is configuration. An engine change replaces the engine adapter. Runtime packaging must not affect chat or ADB APIs. The UI observes app events, never raw Codex JSON.
 
@@ -1540,3 +1541,59 @@ On / Set up / Fix (screen control and the floating control are one row, since
 neither works alone), then *How Mike works*, *Account and privacy*, and
 *Advanced* (runtime, Jev, app updates). The side panel gained the orb with a
 one-line status, chat search, and chats grouped by day (`ChatDayGroups`).
+
+## Computers: Codex on the user's Windows PC, driven from the phone
+
+A chat can run on one of the user's computers instead of on the phone. The
+phone does not get an SSH tool; it runs **Codex itself on the computer** and
+talks to it over SSH with the same app-server protocol it already speaks to
+the phone's own Codex. `CodexEngine` only needs a `Process`, so the new
+`:remote` module hands it an SSH exec channel (`SshProcess`) instead of a local
+child. Everything Codex does there is native to that computer: its shell,
+`apply_patch`, git, the project's `AGENTS.md`, the user's `~/.codex` config,
+sign-in, MCP servers, and skills from `~/.agents/skills` and the repo's
+`.agents/skills`, which also appear in the composer's skill picker.
+
+Why not a `remote_shell` tool for the phone's Codex: file edits, reads,
+skills and project instructions would all stay on the phone, and every step
+would be a mobile round trip wrapped in `cat` and heredocs.
+
+- **Routing.** `RoutingAgentEngine` is the one engine the coordinator sees. A
+  chat bound to a computer opens its thread there; later calls about that
+  thread go to the same place. Sign-in, models, usage and voice stay the
+  phone's. Both app-servers number requests from zero, so a computer's tool
+  and approval requests are tagged `remote|<computer>|<id>` before the
+  coordinator sees them. An unscoped failure from a computer that is not
+  running the current turn is dropped, because the coordinator ends any
+  active run on one.
+- **The phone is still reachable.** The phone's device tools are advertised to
+  the computer's thread as well, so a task on the PC can still act on the
+  phone. The computer's thread instructions (`RemoteInstructions`) say which
+  is which.
+- **SSH.** JSch (pure Java, Android networking and DNS, no native binary).
+  Password login; the host key is trusted on first connect, shown as a
+  `SHA256:` fingerprint, and pinned. A different key later refuses the
+  connection before the password is sent. A changed address clears the pin.
+- **Codex on Windows.** Setup runs short PowerShell scripts through
+  `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
+  and PowerShell default shells. The computer downloads the official
+  `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
+  pinned on the phone (0.156.0), checks its sha256 against hashes compiled
+  into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
+  The phone and computer therefore speak one protocol version.
+- **Access is the user's choice per computer.** *Ask me first*:
+  `workspace-write` with `on-request` approvals, answered on the phone's
+  approval card. *Full access*: `danger-full-access` with no approvals, as on
+  the phone. What *Ask* can enforce depends on the Codex Windows sandbox on
+  that PC; it is not set up by Hey Mike.
+- **Secrets and bindings are sealed.** The agent's shell on the phone runs as
+  the app's own user and can rewrite any app file. Computers, their passwords
+  and which chat runs where are one AES-GCM blob under a non-exportable
+  Keystore key (`KeystoreSecretBox`). An edited file does not open, so it
+  cannot point a saved password at another host or move a chat onto a
+  computer; the app then trusts none of it and asks for the computers again.
+- **Pictures** are sent inline as data URLs; other attachments are refused in
+  a computer chat because their paths are on the phone.
+- **Stop** interrupts the turn on the computer. If that fails, the engines
+  are closed, which closes the SSH channel. A command Codex already started
+  there may keep running; the run summary must not claim it was undone.
