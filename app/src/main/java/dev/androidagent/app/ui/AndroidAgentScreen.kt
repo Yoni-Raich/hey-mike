@@ -24,6 +24,7 @@ package dev.androidagent.app.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -630,6 +631,16 @@ private fun SessionRow(
     }
 }
 
+private data class ChatScrollSnapshot(
+    val totalItemsCount: Int,
+    val lastVisibleIndex: Int,
+    val lastVisibleEnd: Int,
+    val viewportEndOffset: Int,
+    val canScrollForward: Boolean,
+    val isScrollInProgress: Boolean,
+    val followLatest: Boolean,
+)
+
 @Composable
 private fun AgentChatContent(
     state: AgentUiState,
@@ -637,9 +648,8 @@ private fun AgentChatContent(
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
-    val lastMessage = state.messages.lastOrNull()
     var followLatest by remember(state.activeSessionId) { mutableStateOf(true) }
-    var automaticScroll by remember { mutableStateOf(false) }
+    var automaticScroll by remember(state.activeSessionId) { mutableStateOf(false) }
     LaunchedEffect(listState, state.activeSessionId) {
         snapshotFlow { Triple(listState.isScrollInProgress, listState.canScrollForward, automaticScroll) }
             .collect { (scrolling, hasMore, automatic) ->
@@ -647,41 +657,37 @@ private fun AgentChatContent(
             }
     }
 
-    LaunchedEffect(
-        state.activeSessionId,
-        lastMessage?.id,
-        lastMessage?.text,
-        state.toolCards.size,
-        state.statusCards.size,
-        state.runState.phase,
-    ) {
-        if (followLatest && listState.layoutInfo.totalItemsCount > 0) {
-            automaticScroll = true
-            try {
-                // Int.MAX_VALUE is clamped to the end of the list, so a long
-                // reply shows its last line, not the top of its bubble.
-                listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
-            } finally {
-                automaticScroll = false
-            }
-        }
-    }
-
-    // Streamed text and markdown views grow after composition, without a new
-    // item. Watch the laid-out end of the list and keep it pinned to the bottom.
+    // Markdown can grow after composition. Follow its measured end with one
+    // scroll writer instead of restarting an animation on every text update.
     LaunchedEffect(listState, state.activeSessionId) {
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()
-            Triple(info.totalItemsCount, last?.index, last?.let { it.offset + it.size })
-        }.collect {
-            if (followLatest && !automaticScroll && !listState.isScrollInProgress && listState.canScrollForward) {
-                automaticScroll = true
-                try {
-                    listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
-                } finally {
-                    automaticScroll = false
+            ChatScrollSnapshot(
+                totalItemsCount = info.totalItemsCount,
+                lastVisibleIndex = last?.index ?: -1,
+                lastVisibleEnd = last?.let { it.offset + it.size } ?: 0,
+                viewportEndOffset = info.viewportEndOffset,
+                canScrollForward = listState.canScrollForward,
+                isScrollInProgress = listState.isScrollInProgress,
+                followLatest = followLatest,
+            )
+        }.collect { position ->
+            if (!position.followLatest || position.isScrollInProgress ||
+                !position.canScrollForward || position.totalItemsCount == 0
+            ) return@collect
+
+            automaticScroll = true
+            try {
+                if (position.lastVisibleIndex == position.totalItemsCount - 1) {
+                    val remaining = position.lastVisibleEnd - position.viewportEndOffset
+                    if (remaining > 0) listState.scrollBy(remaining.toFloat())
+                } else {
+                    // A new item is below the viewport. Move to its true end once.
+                    listState.scrollToItem(position.totalItemsCount - 1, Int.MAX_VALUE)
                 }
+            } finally {
+                automaticScroll = false
             }
         }
     }
@@ -755,7 +761,6 @@ private fun AgentChatContent(
         }
     }
     // Shown once the user scrolls up; tapping it resumes following the reply.
-    val coroutineScope = rememberCoroutineScope()
     androidx.compose.animation.AnimatedVisibility(
         visible = !followLatest && listState.canScrollForward,
         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
@@ -765,14 +770,6 @@ private fun AgentChatContent(
         androidx.compose.material3.SmallFloatingActionButton(
             onClick = {
                 followLatest = true
-                coroutineScope.launch {
-                    automaticScroll = true
-                    try {
-                        listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1, Int.MAX_VALUE)
-                    } finally {
-                        automaticScroll = false
-                    }
-                }
             },
             shape = CircleShape,
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
