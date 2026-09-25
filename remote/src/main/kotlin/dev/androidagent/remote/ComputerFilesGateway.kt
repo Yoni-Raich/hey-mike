@@ -62,10 +62,12 @@ class ComputerFilesGateway(
     companion object {
         private const val FROM_COMPUTER = "from-computer"
 
-        /** A Windows path as given, or one relative to the chat's project folder. */
+        /** An absolute path as given, or one relative to the chat's project folder, in the computer's own style. */
         internal fun onComputer(cwd: String, path: String): String {
-            val absolute = path.matches(Regex("^[A-Za-z]:[\\\\/].*")) || path.startsWith("\\\\")
-            return if (absolute) path else cwd.trimEnd('\\', '/') + "\\" + path.replace('/', '\\').trimStart('\\')
+            val absolute = path.matches(Regex("^[A-Za-z]:[\\\\/].*")) || path.startsWith("\\\\") || path.startsWith("/")
+            if (absolute) return path
+            if (cwd.startsWith("/")) return cwd.trimEnd('/') + "/" + path.trimStart('/')
+            return cwd.trimEnd('\\', '/') + "\\" + path.replace('/', '\\').trimStart('\\')
         }
 
         internal fun fileName(path: String): String =

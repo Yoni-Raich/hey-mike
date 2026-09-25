@@ -112,6 +112,7 @@ class ComputerToolGateway(
                         put("name", c.label)
                         put("default", c.id == state.defaultComputerId)
                         put("status", describe(setup))
+                        put("system", c.os?.label ?: "not known yet")
                         put("access", if (c.access == RemoteAccess.ASK) "asks before commands outside the project" else "full access")
                         put("projects", buildJsonArray { projects(c.id).forEach { add(it) } })
                         put("recentConversations", buildJsonArray {
@@ -237,9 +238,11 @@ class ComputerToolGateway(
         const val NAME = "computers"
         private const val RECENT = 8
         private val MODES = listOf("status", "browse", "new_project", "open_chat", "add")
-        private val ABSOLUTE = Regex("^[A-Za-z]:[\\\\/].*")
+        private val ABSOLUTE = Regex("^([A-Za-z]:[\\\\/]|/).*")
 
-        internal fun pathKey(path: String) = path.replace('/', '\\').trimEnd('\\').lowercase()
+        /** Windows paths ignore case and may use either slash; Linux paths are kept as they are. */
+        internal fun pathKey(path: String) =
+            if (path.startsWith("/")) path.trimEnd('/') else path.replace('/', '\\').trimEnd('\\').lowercase()
         private fun samePath(a: String, b: String) = pathKey(a) == pathKey(b)
         internal fun folderName(path: String) =
             path.trimEnd('\\', '/').substringAfterLast('\\').substringAfterLast('/').ifBlank { path }
@@ -249,7 +252,7 @@ class ComputerToolGateway(
         private fun prop(type: String, description: String) = buildJsonObject { put("type", type); put("description", description) }
 
         private const val DESCRIPTION =
-            "The user's Windows computers, which Mike reaches over SSH with Codex running there. " +
+            "The user's computers (Windows or Linux), which Mike reaches over SSH with Codex running there. " +
                 "status: each computer, whether it is connected, its projects and recent conversations. " +
                 "browse: the folders at a path on a computer. " +
                 "new_project: make a folder on a computer a project (create: true makes the folder). " +
@@ -269,7 +272,7 @@ class ComputerToolGateway(
                         put("description", "Defaults to status.")
                     })
                     put("computer", prop("string", "Computer name or id. Leave out for the default computer."))
-                    put("path", prop("string", "browse, new_project: a Windows path such as C:\\Users\\me\\src. browse: blank is the home folder."))
+                    put("path", prop("string", "browse, new_project: a path on the computer, such as C:\\Users\\me\\src or /home/me/src. browse: blank is the home folder."))
                     put("create", prop("boolean", "new_project: make the folder if it does not exist."))
                     put("project", prop("string", "open_chat: a project's name or its folder's full path."))
                     put("message", prop("string", "open_chat: the task for the new chat, written for the user to send."))

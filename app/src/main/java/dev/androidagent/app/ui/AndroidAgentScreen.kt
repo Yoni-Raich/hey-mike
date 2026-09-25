@@ -509,7 +509,7 @@ private fun AgentDrawer(
                 }
                 if (state.computers.isEmpty() && query.isBlank()) {
                     item(key = "connect-computer") {
-                        QuietRow("Work on your Windows PC", icon = Icons.Outlined.Computer) {
+                        QuietRow("Work on your computer", icon = Icons.Outlined.Computer) {
                             close()
                             actions.onOpenComputers()
                         }

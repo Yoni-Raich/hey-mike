@@ -181,6 +181,25 @@ unknown computer/project name what exists, nothing after Stop),
 voice in a computer chat, a 310 MB push, the tool's modes against the real
 PC, the filled-in form and the composer draft.
 
+### Linux (Ubuntu) computers — 2026-09-25
+
+The system is found on the first connection (`uname -s`) and kept. Linux
+computers use POSIX `sh` scripts (`LinuxHost`) and the phone's own pinned
+Linux Codex package, installed under `~/.local/share/heymike`. The add
+screen's setup step has Windows and Ubuntu guides (`apt install
+openssh-server`, `hostname -I`, `whoami`). Paths, the folder picker, file
+transfer and project grouping handle `/` paths.
+
+Verified: the generated probe, folder list (a quote in a name, hidden
+folders skipped, git detection), create-folder and missing-folder scripts
+ran in a real Linux `sh` (busybox, WSL) and gave the expected `HEYMIKE`
+answers; `LinuxHostTest` (uname reading, Linux paths, quoted app-server
+path; the script test runs only where a Linux `sh` exists and was skipped
+on Windows); full remote/core/device-tools/app unit tests, lint, build. Not
+verified: the install script's download and sha256 check and the app-server
+start on Linux (running a downloaded binary was not allowed here), a real
+Ubuntu machine over SSH, the Linux desktop recipe.
+
 ## Chat streaming scroll — 2026-09-24
 
 On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one

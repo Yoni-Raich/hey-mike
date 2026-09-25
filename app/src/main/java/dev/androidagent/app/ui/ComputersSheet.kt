@@ -44,6 +44,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -95,7 +96,10 @@ private val WaitInk = Color(0xFFF6B86A)
 private const val INSTALL_SSH_COMMAND =
     "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Start-Service sshd; Set-Service sshd -StartupType Automatic"
 
-/** The same steps as the guide, as plain text to send to the PC. */
+/** Turns on the SSH server on Ubuntu and starts it now and at every boot. */
+private const val UBUNTU_SSH_COMMAND = "sudo apt install -y openssh-server && sudo systemctl enable --now ssh"
+
+/** The same steps as the Windows guide, as plain text to send to the PC. */
 private val SETUP_STEPS_TEXT = """
 Hey Mike: let Mike work on this Windows PC
 
@@ -120,6 +124,34 @@ Hey Mike: let Mike work on this Windows PC
 5. On the phone: Hey Mike > side panel > Computer > Add a computer.
 """.trimIndent()
 
+/** The Ubuntu guide as plain text to send to the computer. */
+private val UBUNTU_STEPS_TEXT = """
+Hey Mike: let Mike work on this Ubuntu computer
+
+1. Turn on the SSH server. In a terminal:
+   $UBUNTU_SSH_COMMAND
+   If the firewall is on: sudo ufw allow ssh
+
+2. Check that it runs:
+   systemctl is-active ssh
+   It should say active.
+
+3. Find the addresses:
+   hostname -I
+   The first address (like 192.168.1.20) is the home network address.
+   With Tailscale on the computer and the phone, its 100.x.x.x address also works away from home.
+
+4. Find the user name:
+   whoami
+   The password is your Ubuntu login password.
+   Password sign-in over SSH must be on; it is on Ubuntu desktop by default.
+
+5. On the phone: Hey Mike > side panel > Computer > Add a computer.
+""".trimIndent()
+
+private fun stepsText(os: dev.androidagent.remote.HostOs) =
+    if (os == dev.androidagent.remote.HostOs.LINUX) UBUNTU_STEPS_TEXT else SETUP_STEPS_TEXT
+
 /**
  * Computers Mike can work on, on a screen of its own: the list, adding or
  * editing one (the PC's setup first, then the sign-in), and the folder picker
@@ -131,6 +163,7 @@ internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
     var draft by remember { mutableStateOf<ComputerDraft?>(null) }
     // A new computer starts on the PC's setup steps; an edit skips them.
     var onSetupStep by remember { mutableStateOf(false) }
+    var guideOs by remember { mutableStateOf(dev.androidagent.remote.HostOs.WINDOWS) }
     val back: () -> Unit = {
         when {
             state.folderBrowser != null -> actions.onCloseFolderBrowser()
@@ -154,7 +187,9 @@ internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
                 when {
                     browser != null -> FolderPicker(state, browser, actions)
                     editing != null && onSetupStep -> SetupStep(
-                        onShare = { actions.onShareText(SETUP_STEPS_TEXT) },
+                        os = guideOs,
+                        onOs = { guideOs = it },
+                        onShare = { actions.onShareText(stepsText(guideOs)) },
                         onBack = back,
                         onDone = { onSetupStep = false },
                     )
@@ -204,7 +239,7 @@ private fun ColumnScope.ComputerList(
     onAdd: () -> Unit,
     onEdit: (RemoteComputer) -> Unit,
 ) {
-    SheetHeader("Computers", "Mike runs Codex on your Windows PC and works in a folder you pick.", onBack = onClose)
+    SheetHeader("Computers", "Mike runs Codex on your Windows or Ubuntu computer and works in a folder you pick.", onBack = onClose)
     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         if (state.computersUnreadable) {
             Text(
@@ -245,8 +280,8 @@ private fun EmptyComputers(onAdd: () -> Unit) {
         Icon(Icons.Outlined.Computer, contentDescription = null, tint = ReadyInk, modifier = Modifier.size(36.dp))
         Text("No computers yet", fontSize = 17.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp))
         Text(
-            "Add your Windows PC and Mike can read, edit and run code there, in chats organized by project. " +
-                "You need a few minutes at the PC once, to turn on SSH. The next screen shows how.",
+            "Add your Windows or Ubuntu computer and Mike can read, edit and run code there, in chats organized by project. " +
+                "You need a few minutes at the computer once, to turn on SSH. The next screen shows how.",
             fontSize = 14.sp, lineHeight = 20.sp, color = Muted,
             modifier = Modifier.padding(top = 6.dp, bottom = 14.dp),
         )
@@ -373,8 +408,9 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
         is RemoteSetup.Failed -> Column(Modifier.padding(top = 12.dp)) {
             Text(setup.message, fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.error)
             var help by rememberSaveable(computer.id) { mutableStateOf(false) }
-            TextButton(onClick = { help = !help }) { Text(if (help) "Hide the PC checklist" else "What to check on the PC") }
-            if (help) PcChecklist(onShare = { actions.onShareText(SETUP_STEPS_TEXT) })
+            TextButton(onClick = { help = !help }) { Text(if (help) "Hide the checklist" else "What to check on the computer") }
+            val os = computer.os ?: dev.androidagent.remote.HostOs.WINDOWS
+            if (help) PcChecklist(os, onShare = { actions.onShareText(stepsText(os)) })
         }
         is RemoteSetup.NeedsSignIn -> Column(Modifier.padding(top = 12.dp)) {
             Text("Sign in to Codex on this computer", fontSize = 14.sp, color = WaitInk, fontWeight = FontWeight.Medium)
@@ -388,20 +424,63 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
     }
 }
 
-/** Step one of adding a computer: what has to be true on the PC first. */
+/** Step one of adding a computer: what has to be true on it first, for Windows or Ubuntu. */
 @Composable
-private fun ColumnScope.SetupStep(onShare: () -> Unit, onBack: () -> Unit, onDone: () -> Unit) {
-    SheetHeader("Get the PC ready", "Step 1 of 2 · once per computer, a few minutes at the PC", onBack = onBack)
+private fun ColumnScope.SetupStep(
+    os: dev.androidagent.remote.HostOs,
+    onOs: (dev.androidagent.remote.HostOs) -> Unit,
+    onShare: () -> Unit,
+    onBack: () -> Unit,
+    onDone: () -> Unit,
+) {
+    SheetHeader("Get the computer ready", "Step 1 of 2 · once per computer, a few minutes at it", onBack = onBack)
     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-        PcChecklist(onShare)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+            listOf(dev.androidagent.remote.HostOs.WINDOWS to "Windows", dev.androidagent.remote.HostOs.LINUX to "Ubuntu").forEach { (value, label) ->
+                FilterChip(selected = os == value, onClick = { onOs(value) }, label = { Text(label) })
+            }
+        }
+        PcChecklist(os, onShare)
     }
     Button(onClick = onDone, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp).heightIn(min = 48.dp)) {
-        Text("The PC is ready")
+        Text("The computer is ready")
     }
 }
 
 @Composable
-private fun PcChecklist(onShare: () -> Unit) {
+private fun PcChecklist(os: dev.androidagent.remote.HostOs, onShare: () -> Unit) {
+    if (os == dev.androidagent.remote.HostOs.LINUX) UbuntuChecklist(onShare) else WindowsChecklist(onShare)
+}
+
+@Composable
+private fun UbuntuChecklist(onShare: () -> Unit) {
+    SetupStep(1, "Turn on the SSH server", "In a terminal. If the firewall is on, also run: sudo ufw allow ssh") {
+        CodeLine(UBUNTU_SSH_COMMAND)
+    }
+    SetupStep(2, "Check that it runs", "It should say active.") { CodeLine("systemctl is-active ssh") }
+    SetupStep(
+        3, "Find the addresses",
+        "The first address (like 192.168.1.20) is the home network address. With Tailscale on the computer and the phone, " +
+            "its 100.x.x.x address also works away from home.",
+    ) { CodeLine("hostname -I") }
+    SetupStep(
+        4, "Find the user name",
+        "The password is your Ubuntu login password. Password sign-in over SSH must be on; it is on Ubuntu desktop by default.",
+    ) { CodeLine("whoami") }
+    SetupStep(
+        5, "Nothing else to install",
+        "Mike installs Codex on the computer the first time it connects and uses your Codex sign-in there, " +
+            "or shows a code to sign in.",
+    )
+    OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 44.dp)) {
+        Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Send these steps to the computer")
+    }
+}
+
+@Composable
+private fun WindowsChecklist(onShare: () -> Unit) {
     SetupStep(1, "Turn on OpenSSH Server", "Settings › System › Optional features › View features › OpenSSH Server › Install. Or, in PowerShell as administrator:") {
         CodeLine(INSTALL_SSH_COMMAND)
     }
@@ -482,14 +561,14 @@ private fun ColumnScope.ComputerForm(
                 modifier = Modifier.fillMaxWidth().background(WaitInk.copy(alpha = 0.12f), RoundedCornerShape(12.dp)).padding(12.dp),
             )
         }
-        TextButton(onClick = onSetupSteps, modifier = Modifier.padding(start = 0.dp)) { Text("How to set up the PC") }
+        TextButton(onClick = onSetupSteps, modifier = Modifier.padding(start = 0.dp)) { Text("How to set up the computer") }
 
         FormSection("Where to reach it")
         Text("Fill in one address or both.", fontSize = 12.5.sp, color = Muted, modifier = Modifier.padding(bottom = 4.dp))
         OutlinedTextField(
             value = draft.host, onValueChange = { draft = draft.copy(host = it.trim()) },
             label = { Text("Home network address") }, placeholder = { Text("192.168.1.20") }, singleLine = true,
-            supportingText = { Text("From ipconfig on the PC. Works on the same Wi-Fi.") },
+            supportingText = { Text("From ipconfig (Windows) or hostname -I (Ubuntu). Works on the same Wi-Fi.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
@@ -499,18 +578,18 @@ private fun ColumnScope.ComputerForm(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
 
-        FormSection("Windows sign-in")
+        FormSection("Sign-in on the computer")
         OutlinedTextField(
             value = draft.user, onValueChange = { draft = draft.copy(user = it) },
             label = { Text("User name") }, singleLine = true,
-            supportingText = { Text("From whoami on the PC: the part after the \\.") },
+            supportingText = { Text("From whoami. On Windows, the part after the \\.") },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = draft.password, onValueChange = { draft = draft.copy(password = it) },
             label = { Text("Password") }, singleLine = true,
             supportingText = {
-                Text(if (editing) "Leave empty to keep the saved password." else "Your Windows password. With a Microsoft account, its password, not the PIN.")
+                Text(if (editing) "Leave empty to keep the saved password." else "The computer's login password. On Windows with a Microsoft account, its password, not the PIN.")
             },
             visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
@@ -562,7 +641,7 @@ private fun ColumnScope.ComputerForm(
         AccessOption(
             selected = draft.access == RemoteAccess.FULL,
             title = "Full access",
-            detail = "Mike runs any command as your Windows user without asking.",
+            detail = "Mike runs any command as your user on the computer without asking.",
         ) { draft = draft.copy(access = RemoteAccess.FULL) }
 
         val missing = buildList {
@@ -661,9 +740,11 @@ private fun FolderRow(name: String, icon: ImageVector, enabled: Boolean, onClick
     }
 }
 
-/** A Windows child path: `C:\` + `src` is `C:\src`, `C:\src` + `app` is `C:\src\app`. */
-internal fun childPath(parent: String, name: String): String =
-    if (parent.endsWith("\\") || parent.endsWith("/")) parent + name else "$parent\\$name"
+/** A child path in the computer's style: `C:\src` + `app` is `C:\src\app`, `/home/me` + `app` is `/home/me/app`. */
+internal fun childPath(parent: String, name: String): String {
+    val separator = if (parent.startsWith("/")) "/" else "\\"
+    return if (parent.endsWith("\\") || parent.endsWith("/")) parent + name else "$parent$separator$name"
+}
 
 internal fun folderName(path: String): String =
     path.trimEnd('\\', '/').substringAfterLast('\\').substringAfterLast('/').ifBlank { path }

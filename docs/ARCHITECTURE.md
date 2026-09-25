@@ -1622,6 +1622,17 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   once per app run, but never installs Codex on its own. A conversation that
   is running in the PC's Codex app right now can be read, but continuing it
   from both places at once is not guarded against.
+- **Linux computers.** The first connection runs `uname -s` (Windows has no
+  `uname`; Git's says MINGW, still Windows; macOS is refused for now) and the
+  answer is kept with the computer. `LinuxHost` is the Linux side of the same
+  `HostScripts`: POSIX `sh` scripts sent base64 encoded (so the login shell
+  does not matter), the same `HEYMIKE {json}` answers, and the same pinned
+  `codex-app-server-package-<arch>-unknown-linux-musl` the phone runs,
+  checked against the phone build's sha256 pins and unpacked under
+  `~/.local/share/heymike`. Paths keep the computer's style everywhere:
+  Linux paths keep their case and use `/`. The thread instructions say
+  Linux, and for the desktop they point at the user's graphical session
+  (XDG_RUNTIME_DIR, DBus, Wayland or X11) instead of a scheduled task.
 - **Voice follows the thread.** `RoutingAgentEngine` starts realtime on the
   app-server that owns the chat's thread, so voice in a computer chat runs on
   the computer's Codex (and its sign-in). Audio does not cross SSH: the

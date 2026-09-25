@@ -9,16 +9,16 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import java.util.Base64
 
-/** What a probe learned about a Windows computer. */
-data class WindowsProbe(
+/** What a probe learned about a computer. */
+data class HostProbe(
     val computerName: String,
     val home: String,
     val arch: String,
     /** Where the pinned app-server lives, installed or not. */
     val appServer: String,
     val installed: Boolean,
-    /** OpenSSH's DefaultShell is PowerShell rather than cmd. */
-    val powerShellDefault: Boolean,
+    /** Windows: OpenSSH's DefaultShell is PowerShell rather than cmd. */
+    val powerShellDefault: Boolean = false,
 )
 
 /** One folder level, for the picker. */
@@ -44,7 +44,7 @@ data class FolderListing(
  * is unpacked. It runs as the signed-in user with their own `~/.codex`, so
  * their sign-in, config, skills and MCP servers are the ones Codex uses.
  */
-object WindowsHost {
+object WindowsHost : HostScripts {
     const val CODEX_VERSION = "0.156.0"
 
     /** sha256 of `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz`, rust-v0.156.0. */
@@ -93,8 +93,12 @@ object WindowsHost {
         '$MARKER' + (ConvertTo-Json -Compress -InputObject ([ordered]@{exe=${'$'}exe; installed=(Test-Path -LiteralPath ${'$'}exe)}))
     """.trimIndent()
 
-    /** List the folders in [path], or in the user's home folder when it is blank. */
-    /** List the folders in [path]; with [create], make the folder first. */
+    override fun probe(): String = powershell(probeScript())
+    override fun install(): String = powershell(installScript())
+    override fun list(path: String, create: Boolean): String = powershell(listScript(path, create))
+    override fun appServer(probe: HostProbe): String = appServerCommand(probe)
+
+    /** List the folders in [path] (the home folder when blank); with [create], make the folder first. */
     fun listScript(path: String, create: Boolean = false): String {
         val encoded = Base64.getEncoder().encodeToString(path.toByteArray(Charsets.UTF_8))
         val make = if (create) "New-Item -ItemType Directory -Force -Path ${'$'}p | Out-Null" else ""
@@ -123,16 +127,16 @@ object WindowsHost {
      * name; cmd keeps a quoted executable path as it is, and PowerShell needs
      * the call operator to run a quoted path rather than print it.
      */
-    fun appServerCommand(probe: WindowsProbe): String {
+    fun appServerCommand(probe: HostProbe): String {
         require('"' !in probe.appServer && '\'' !in probe.appServer) { "Unexpected quote in the Codex path" }
         return if (probe.powerShellDefault) "& '${probe.appServer}' --listen stdio://"
         else "\"${probe.appServer}\" --listen stdio://"
     }
 
-    fun parseProbe(result: ExecResult): WindowsProbe {
+    fun parseProbe(result: ExecResult): HostProbe {
         val o = payload(result)
         val shell = o.text("shell").orEmpty().lowercase()
-        return WindowsProbe(
+        return HostProbe(
             computerName = o.text("computer").orEmpty(),
             home = o.text("home").orEmpty(),
             arch = o.text("arch").orEmpty(),

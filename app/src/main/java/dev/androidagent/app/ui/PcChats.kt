@@ -40,8 +40,9 @@ data class PcSection(val computer: RemoteComputer, val projects: List<PcProject>
  */
 object PcChats {
 
-    /** Windows paths are not case sensitive and may end in a separator. */
-    fun pathKey(path: String): String = path.replace('/', '\\').trimEnd('\\').lowercase()
+    /** Windows paths ignore case and may end in a separator; Linux paths keep their case. */
+    fun pathKey(path: String): String =
+        if (path.startsWith("/")) path.trimEnd('/') else path.replace('/', '\\').trimEnd('\\').lowercase()
 
     fun sections(
         computers: List<RemoteComputer>,
