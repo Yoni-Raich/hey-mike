@@ -102,6 +102,35 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
         viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
+        viewModelScope.launch {
+            graph.computerRequests.collect { request ->
+                when (request) {
+                    null -> return@collect
+                    is dev.androidagent.remote.ComputerUiRequest.AddComputer -> mutable.update {
+                        it.copy(
+                            isComputersOpen = true,
+                            folderBrowser = null,
+                            computerProposal = ComputerDraft(
+                                label = request.label, host = request.host, vpnHost = request.vpnHost, user = request.user,
+                                isDefault = it.computers.isEmpty(), proposedByMike = true,
+                            ),
+                        )
+                    }
+                    is dev.androidagent.remote.ComputerUiRequest.OpenChat -> {
+                        current.value = request.sessionId
+                        mutable.update {
+                            it.copy(
+                                composerSeeds = it.composerSeeds + (request.sessionId to request.draft),
+                                isComputersOpen = false,
+                                folderBrowser = null,
+                                isDrawerOpen = false,
+                            )
+                        }
+                    }
+                }
+                graph.computerRequests.value = null
+            }
+        }
         viewModelScope.launch { graph.coordinator.state.collect { state -> mutable.update { it.copy(runState = state) } } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
@@ -509,7 +538,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(!graph.coordinator.state.value.active) { "Stop the current agent run before starting voice." }
         val sessionId = current.value ?: kotlin.error("Choose a chat first.")
         val session = graph.sessions.getSession(sessionId) ?: kotlin.error("Chat no longer exists.")
-        check(graph.computers.binding(sessionId) == null) { "Voice works in phone chats for now. Type to Mike in a computer chat." }
         graph.engine.connect()
         check(graph.engine.account().signedIn) { "Sign in to Codex in Settings first." }
         val snapshot = mutable.value

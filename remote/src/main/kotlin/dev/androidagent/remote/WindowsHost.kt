@@ -94,12 +94,15 @@ object WindowsHost {
     """.trimIndent()
 
     /** List the folders in [path], or in the user's home folder when it is blank. */
-    fun listScript(path: String): String {
+    /** List the folders in [path]; with [create], make the folder first. */
+    fun listScript(path: String, create: Boolean = false): String {
         val encoded = Base64.getEncoder().encodeToString(path.toByteArray(Charsets.UTF_8))
+        val make = if (create) "New-Item -ItemType Directory -Force -Path ${'$'}p | Out-Null" else ""
         return """
             ${'$'}ErrorActionPreference='Stop'
             ${'$'}p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$encoded'))
             if (${'$'}p -eq '') { ${'$'}p=${'$'}env:USERPROFILE }
+            $make
             ${'$'}p=(Resolve-Path -LiteralPath ${'$'}p).ProviderPath
             ${'$'}d=@(Get-ChildItem -LiteralPath ${'$'}p -Directory -Force -ErrorAction SilentlyContinue | Where-Object { -not (${'$'}_.Attributes -band [IO.FileAttributes]::Hidden) } | Sort-Object Name | Select-Object -First 500 | ForEach-Object { ${'$'}_.Name })
             ${'$'}r=@(Get-PSDrive -PSProvider FileSystem | ForEach-Object { ${'$'}_.Root })

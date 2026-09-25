@@ -181,6 +181,10 @@ data class AgentUiState(
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */
     val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
+    /** A computer Mike filled in for the user to check and finish. */
+    val computerProposal: ComputerDraft? = null,
+    /** Text to put in a chat's composer, unsent, once: chat id to text. */
+    val composerSeeds: Map<String, String> = emptyMap(),
 )
 
 /** A computer as the add or edit form holds it, before it is saved. */
@@ -196,6 +200,8 @@ data class ComputerDraft(
     val password: String = "",
     val access: dev.androidagent.remote.RemoteAccess = dev.androidagent.remote.RemoteAccess.ASK,
     val isDefault: Boolean = false,
+    /** Mike filled this in: the address must be checked before a password is typed. */
+    val proposedByMike: Boolean = false,
 )
 
 data class FolderBrowserState(
@@ -315,6 +321,8 @@ data class AgentUiActions(
     val onReconnectComputer: (computerId: String) -> Unit = {},
     /** Before the first message: run this chat on the phone (null) or in a computer folder. */
     val onMoveNewChat: (computerId: String?, path: String?) -> Unit = { _, _ -> },
+    val onComputerProposalShown: () -> Unit = {},
+    val onComposerSeedUsed: (sessionId: String) -> Unit = {},
     /** Hand text to another app, such as the PC setup steps to email to oneself. */
     val onShareText: (String) -> Unit = {},
     /** Connect, install Codex if needed, and check its sign-in. */
