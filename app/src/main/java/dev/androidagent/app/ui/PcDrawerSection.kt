@@ -30,6 +30,8 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -103,6 +105,7 @@ internal fun LazyListScope.pcSections(
                         ).joinToString(" · ")
                         is RemoteSetup.Working -> setup.step
                         is RemoteSetup.NeedsSignIn -> "Codex needs a sign-in"
+                        is RemoteSetup.NeedsTailscaleApproval -> "Waiting for your approval in Tailscale"
                         is RemoteSetup.Failed -> "Not connected"
                         null -> "Not connected"
                     },
@@ -141,6 +144,15 @@ internal fun LazyListScope.pcSections(
                     secondary = "What to check",
                     onSecondary = { close(); actions.onOpenComputers() },
                     modifier = Modifier.animateItem(),
+                )
+            }
+            is RemoteSetup.NeedsTailscaleApproval -> item(key = "pc-${computer.id}-tailscale", contentType = "pc-approval") {
+                TailscaleApprovalCard(
+                    computer = computer.label,
+                    url = setup.url,
+                    onOpen = { url -> actions.onOpenUrl(url) },
+                    onConnect = { actions.onReconnectComputer(computer.id) },
+                    modifier = Modifier.animateItem().padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
             is RemoteSetup.NeedsSignIn -> item(key = "pc-${computer.id}-signin", contentType = "pc-problem") {
@@ -459,6 +471,67 @@ internal fun QuietRow(
                 Spacer(Modifier.width(12.dp))
             }
             Text(text, style = MaterialTheme.typography.labelLarge, color = PcReady)
+        }
+    }
+}
+
+/**
+ * Tailscale SSH answered instead of the computer's own SSH server: not an
+ * error, a step. It signs in with the user's Tailscale account, so the
+ * user approves once in the browser and connects again.
+ */
+@Composable
+internal fun TailscaleApprovalCard(
+    computer: String,
+    url: String?,
+    onOpen: (String) -> Unit,
+    onConnect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = PcReady, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(12.dp))
+                Text("Approve this phone in Tailscale", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+            Text(
+                if (url != null) {
+                    "$computer signs in with your Tailscale account instead of a password. Approve once on the Tailscale page, then connect."
+                } else {
+                    "$computer signs in with your Tailscale account instead of a password, and its Tailscale rules do not let this phone in yet."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp, start = 34.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onConnect) { Text("I approved, connect", color = MaterialTheme.colorScheme.onTertiaryContainer) }
+                if (url != null) {
+                    Button(
+                        onClick = { onOpen(url) },
+                        colors = ButtonDefaults.buttonColors(containerColor = PcReady, contentColor = Color(0xFF003731)),
+                    ) {
+                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Open approval page")
+                    }
+                }
+            }
+            Text(
+                "Rather use a password? On the computer: sudo tailscale set --ssh=false",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f),
+                modifier = Modifier.padding(top = 6.dp, start = 34.dp),
+            )
         }
     }
 }

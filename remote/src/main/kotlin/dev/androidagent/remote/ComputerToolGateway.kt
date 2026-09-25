@@ -220,6 +220,7 @@ class ComputerToolGateway(
         is RemoteSetup.Ready -> "connected"
         is RemoteSetup.Working -> setup.step
         is RemoteSetup.NeedsSignIn -> "Codex on the computer needs a sign-in (shown in the app's side panel)"
+        is RemoteSetup.NeedsTailscaleApproval -> "Tailscale SSH on the computer wants the user to approve this phone (a button in the app's side panel)"
         is RemoteSetup.Failed -> "not connected: ${setup.message}"
         null -> "not connected"
     }

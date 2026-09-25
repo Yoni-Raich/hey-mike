@@ -34,6 +34,8 @@ sealed interface RemoteSetup {
     data class Working(val step: String) : RemoteSetup
     /** Codex on the computer is not signed in; the user opens [url] and enters [code]. */
     data class NeedsSignIn(val url: String?, val code: String?) : RemoteSetup
+    /** Tailscale SSH answered and wants the user to approve at [url] (null: its rule has no browser check). */
+    data class NeedsTailscaleApproval(val url: String?) : RemoteSetup
     /** [route] is the address that answered, for the sheet to name. */
     data class Ready(val probe: HostProbe, val account: String, val route: RemoteRoute? = null) : RemoteSetup
     data class Failed(val message: String) : RemoteSetup
@@ -117,7 +119,7 @@ class RemoteHub(val store: RemoteStore) {
      * missing and check its sign-in. Progress goes to [setup].
      */
     suspend fun setUp(computerId: String, install: Boolean = true): RemoteSetup {
-        val result = runCatching {
+        val result = runCatching<RemoteSetup> {
             report(computerId, RemoteSetup.Working("Connecting"))
             val connection = connection(computerId) { route ->
                 report(computerId, RemoteSetup.Working(if (route.viaVpn) "Trying the VPN address ${route.host}" else "Connecting to ${route.host}"))
@@ -138,7 +140,7 @@ class RemoteHub(val store: RemoteStore) {
                 val login = engine(computerId).login()
                 RemoteSetup.NeedsSignIn(login.loginUrl, login.userCode)
             }
-        }.getOrElse { RemoteSetup.Failed(it.message ?: it.toString()) }
+        }.getOrElse { if (it is TailscaleCheck) RemoteSetup.NeedsTailscaleApproval(it.url) else RemoteSetup.Failed(it.message ?: it.toString()) }
         report(computerId, result)
         if (result is RemoteSetup.Ready) refreshThreads(computerId)
         return result
