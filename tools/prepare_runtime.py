@@ -58,8 +58,9 @@ DEFAULT_ASSETS = os.path.join(
 DEFAULT_CA_BUNDLE = os.path.join(".codex-work", "runtime", "cacert.pem")
 
 # Public Mozilla-derived CA list; the hash makes builds fail closed if the
-# upstream URL changes unexpectedly.
-CA_BUNDLE_URL = "https://curl.se/ca/cacert.pem"
+# upstream file changes. Pin a dated file: the undated URL is replaced with
+# each curl release and breaks every clean build.
+CA_BUNDLE_URL = "https://curl.se/ca/cacert-2026-08-13.pem"
 CA_BUNDLE_SHA256 = "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9"
 
 # Canonical package path -> staged lib name. Upstream tarballs contain
