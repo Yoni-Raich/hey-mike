@@ -32,6 +32,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -101,10 +102,20 @@ class LocalSessionStore(context: Context) : SessionStore {
         refresh()
     }
     override fun workspace(sessionId: String): File {
-        require(runCatching { UUID.fromString(sessionId).toString() == sessionId }.getOrDefault(false)) { "Invalid session ID" }
-        val ws = File(base, "$sessionId/workspace").apply { mkdirs() }
+        val ws = workspaceDirectory(sessionId).apply { mkdirs() }
         WorkspaceSeeder.seed(ws, appContext)
         return ws
+    }
+    private fun workspaceDirectory(sessionId: String): File {
+        require(runCatching { UUID.fromString(sessionId).toString() == sessionId }.getOrDefault(false)) { "Invalid session ID" }
+        return File(base, "$sessionId/workspace")
+    }
+    override suspend fun appendTrace(sessionId: String, entry: JsonObject) = mutate {
+        // The workspace is private to this chat, shown in Files, and can be
+        // shared by the user. One line is one event, so a stopped run remains
+        // readable without needing to close a JSON array.
+        File(workspaceDirectory(sessionId).apply { mkdirs() }, "session-trace.jsonl")
+            .appendText(entry.toString() + "\n", Charsets.UTF_8)
     }
     private suspend fun <T> mutate(block: () -> T): T = withContext(Dispatchers.IO) { lock.withLock { block() } }
     private fun refresh(sessionId: String? = null) { sessionStream.value = loadSessions(); sessionId?.let { streams[it]?.value = loadMessages(it) } }

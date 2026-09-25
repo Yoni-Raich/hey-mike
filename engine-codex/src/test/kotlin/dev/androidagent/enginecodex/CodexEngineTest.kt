@@ -578,7 +578,7 @@ class CodexEngineTest {
         try {
             val opened = engine.openSession(File("/tmp/workspace"), "stale-123", null, emptyList())
             assertEquals("fresh-456", opened)
-            assertEquals(listOf("initialize", "thread/resume", "thread/start"), calledMethods)
+            assertEquals(listOf("initialize", "thread/resume", "thread/resume", "thread/start"), calledMethods)
         } finally {
             engine.close()
             serverJob.cancel()

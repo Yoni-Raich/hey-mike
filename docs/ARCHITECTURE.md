@@ -280,6 +280,16 @@ parsed in `:core` and applied by both backends through the same
   screen therefore terminates and covers every node exactly once.
 - `maxNodes` and `maxChars` only ever lower the caps.
 
+When a package-filtered read matches nothing, the hint also names the active
+package and the number of nodes on screen. This makes a keyboard or another
+foreground app visible in the result instead of suggesting the requested app
+has no controls. A dump failure remains a typed error, not an empty result.
+Every successful read also says whether `nodeActionsAvailable` is true. ADB
+dump ids can identify nodes in that one reply, but they are not accessibility
+handles, so `tap_node`, `set_text` and `scroll_node` cannot use them. The ADB
+reply gives a short action hint; the node tools return a typed service or
+missing-observation error before touching the phone.
+
 A filter narrows what is *emitted*, never what is read. The dump and the
 traversal are unchanged, node ids stay stable, and the accessibility backend
 keeps handles for the whole traversal, so `tap_node`, `set_text` and
@@ -639,7 +649,12 @@ since that reply explicitly tells the model to reuse those nodes.
 `set_text` uses `ACTION_SET_TEXT`, replacing five shell commands and a global
 IME switch with one call that leaves the user's keyboard alone. Some Compose
 and chat composers accept the action and keep their old value, so the result
-reports `verified` from a read-back instead of assuming the write took.
+reports `verified` from a read-back instead of assuming the write took. A
+successful refresh with null node text or a displayed hint counts as empty
+after a clear. If the handle still reads the old value, the gateway waits for
+the UI to settle and finds the same editable field in a fresh tree without
+changing the observation ids available to the model. A missing field does not
+count as verification.
 
 ### What the service does when no run is active
 
@@ -694,6 +709,9 @@ walks there through the UI. Both run in-process, so they need no ADB.
 
 Every intent passes `IntentPolicy` in `:core` first, which is pure JVM so the
 security boundary is covered by unit tests rather than only by running the app.
+The policy lowercases only the URI scheme before resolution and launch, since
+Android intent filters match schemes case-sensitively. The raw scheme still
+goes through the blocked-scheme check first.
 Three rules carry most of the weight:
 
 - **Schemes are blocked structurally, not allowlisted.** A positive allowlist
@@ -840,6 +858,15 @@ of it:
 `WorkflowDefinition` is the file format, `WorkflowLibrary` is where definitions
 live (`<homeDirectory>/workflows/definitions/<id>.json`, beside `WorkflowStore`'s
 per-package step lists), and `WorkflowRunner` is the execution engine.
+`workflow_runner(mode="save", definition={...})` validates and writes that
+definition without running it. `mode="list"` shows the old literal lists in a
+separate `legacyWorkflows` field, and a legacy-only name returns
+`workflow_legacy_format` rather than looking like a missing definition. The
+old `save_workflow` / `run_workflow` path remains readable for existing chats.
+New definitions are size-checked before writing so every saved file can be
+loaded by the library's existing read limit.
+When a caller supplies `package`, lookup stays within that package. An id from
+another app is returned as `workflow_not_found` before any device action.
 
 Seven decisions carry the design.
 
@@ -857,7 +884,9 @@ mechanism brittle. Coordinates exist only as a fallback computed from the
 observation taken moments earlier, for a backend with no node addressing.
 
 **Verification is part of a step, not an afterthought.** A step with no `verify`
-is reported `verified:false`. Without it the runner would be a macro player,
+is reported `verification:"not_requested"` and `verified:false`; the success
+ledger counts those steps separately. An action was dispatched, but its desired
+effect was not checked. Without an explicit condition the runner would be a macro player,
 reporting success for a tap that landed on a disabled control and then running
 every later step against the wrong screen. `checked` is what made adding
 `checkable`/`checked` to `UiNode` worth doing across both backends: "the switch
@@ -925,6 +954,10 @@ runs. `WorkflowDefinition.adHoc` parses the inline steps through the same
 `parse` a definition file goes through, so a plan cannot express a step a file
 could not, and inherits its limits and refusals.
 
+The final screen observation is useful for the next decision, but it does not
+retroactively verify a step that declared no condition. Such steps keep
+`verification:"not_requested"` in the ledger.
+
 Four decisions make it safe to plan ahead at all.
 
 **A plan carries labels, never ids.** A `nodeId` belongs to one observation and
@@ -971,6 +1004,24 @@ the user the conversation they were in. Null omits the key rather than sending
 an empty array, because an empty array reads as "this thread has no tools".
 
 ## Where a run's time went
+
+### Exact visible session trace
+
+`LocalSessionStore` appends `session-trace.jsonl` to each chat workspace. The
+chat's Files sheet can open or share it. Each line has a timestamp and one
+visible event: user prompt, assistant message, tool call with full arguments,
+or tool result with full text, success flag and attachment paths. Call and
+result share a request id, so the order and the assistant's next visible
+message can be reconstructed without hidden reasoning. The chat bubble still
+shows a short tool preview; the trace is the complete local record.
+It starts recording when this app version runs a turn; older turns cannot be
+reconstructed from the shortened chat bubbles.
+
+Screenshot/image results are stored as files under `trace-artifacts/` in the
+same private workspace and linked from the result line. A decode or size
+failure is marked in the line. Trace write failures produce one visible
+system message during a run, while the tool itself can continue. Deleting the
+chat removes its workspace and trace together.
 
 `RunMetrics` existed and only an instrumented test ever read it. A run that felt
 slow is the one someone asks about, so at the end of every run that touched the

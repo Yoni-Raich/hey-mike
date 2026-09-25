@@ -36,6 +36,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.util.Locale
 
 /**
  * A workflow the runner executes, declared by intent rather than by keystroke.
@@ -149,7 +150,7 @@ data class WorkflowDefinition(
          * somewhere nobody planned for.
          */
         fun parse(json: JsonObject, source: String? = null): WorkflowDefinition {
-            val id = json.str("id")?.lowercase()
+            val id = json.str("id")?.lowercase(Locale.ROOT)
                 ?: throw WorkflowFormatException("workflow_invalid", "\"id\" is required.")
             if (!ID_RE.matches(id)) {
                 throw WorkflowFormatException(
@@ -202,9 +203,18 @@ data class WorkflowDefinition(
                     )
                 }
             }
+            val version = json["version"]?.let { value ->
+                (value as? JsonPrimitive)?.intOrNull ?: throw WorkflowFormatException(
+                    "workflow_invalid",
+                    "Workflow \"$id\" has an invalid version; use a positive integer.",
+                )
+            } ?: 1
+            if (version < 1) throw WorkflowFormatException(
+                "workflow_invalid", "Workflow \"$id\" has an invalid version; use a positive integer.",
+            )
             return WorkflowDefinition(
                 id = id,
-                version = json["version"]?.jsonPrimitive?.intOrNull ?: 1,
+                version = version,
                 packageName = pkg,
                 description = json.str("description")?.take(MAX_DESCRIPTION_CHARS).orEmpty(),
                 steps = steps,

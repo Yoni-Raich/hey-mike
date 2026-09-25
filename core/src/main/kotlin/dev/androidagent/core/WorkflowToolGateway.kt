@@ -191,6 +191,7 @@ class WorkflowToolGateway(
         }
         val requested = arguments.str("workflow") ?: arguments.str("id") ?: arguments.str("name")
         val packageName = arguments.str("package")
+        if (mode == "save") return saveDefinition(library, arguments, requested, packageName)
         if (mode == "list" || requested == null) {
             if (mode == "list") return listDefinitions(library, packageName)
             return refusal(
@@ -204,10 +205,22 @@ class WorkflowToolGateway(
                 "workflow_ambiguous",
                 "\"$requested\" matches ${lookup.candidates.joinToString(", ")}. Name one of them exactly.",
             )
-            is WorkflowLibrary.Lookup.NotFound -> return refusal(
-                "workflow_not_found",
-                "There is no workflow called \"$requested\". " + known(library, packageName),
-            )
+            is WorkflowLibrary.Lookup.NotFound -> {
+                val legacy = store.all().firstOrNull {
+                    it.name.equals(requested, ignoreCase = true) &&
+                        (packageName.isNullOrBlank() || it.packageName.equals(packageName, ignoreCase = true))
+                }
+                if (legacy != null) return refusal(
+                    "workflow_legacy_format",
+                    "\"${legacy.name}\" is an older saved step list for ${legacy.packageName}, not a " +
+                        "verified workflow definition. Read it with list_workflows and run its steps with " +
+                        "run_workflow, or save a declarative definition with workflow_runner(mode=\"save\").",
+                )
+                return refusal(
+                    "workflow_not_found",
+                    "There is no workflow called \"$requested\". " + known(library, packageName),
+                )
+            }
         }
         if (mode == "describe") return describe(definition)
 
@@ -263,6 +276,49 @@ class WorkflowToolGateway(
                 outputs = priorOutputs,
             ),
         )
+    }
+
+    /** Store a validated declarative workflow without touching the phone. */
+    private fun saveDefinition(
+        library: WorkflowLibrary,
+        arguments: JsonObject,
+        requested: String?,
+        packageName: String?,
+    ): ToolResult {
+        val raw = arguments["definition"] as? JsonObject
+            ?: return refusal("workflow_definition_required", "mode=\"save\" needs a definition object.")
+        val definition = try {
+            WorkflowDefinition.parse(raw)
+        } catch (invalid: WorkflowFormatException) {
+            return refusal(invalid.errorType, invalid.message ?: "The workflow definition is invalid.")
+        }
+        if (requested != null && !requested.equals(definition.id, ignoreCase = true)) {
+            return refusal("workflow_id_mismatch", "The requested workflow name differs from definition.id.")
+        }
+        if (packageName != null && !packageName.equals(definition.packageName, ignoreCase = true)) {
+            return refusal("workflow_package_mismatch", "The requested package differs from definition.package.")
+        }
+        if (library.all().any { it.id == definition.id && it.packageName != definition.packageName }) {
+            return refusal("workflow_id_taken", "That workflow id belongs to another package. Choose a new id.")
+        }
+        return try {
+            library.save(definition)
+            ToolResult(
+                buildJsonObject {
+                    put("ok", true)
+                    put("saved", true)
+                    put("format", "declarative")
+                    put("workflow", definition.id)
+                    put("package", definition.packageName)
+                    put("version", definition.version)
+                    put("steps", definition.steps.size)
+                    put("nothingRan", true)
+                    put("note", "Saved. Use workflow_runner(mode=\"describe\") to review it before running.")
+                }.toString(),
+            )
+        } catch (error: Exception) {
+            refusal("workflow_save_failed", error.message ?: "The definition could not be saved.")
+        }
     }
 
     /**
@@ -485,6 +541,7 @@ class WorkflowToolGateway(
 
     private fun listDefinitions(library: WorkflowLibrary, packageName: String?): ToolResult {
         val definitions = if (packageName.isNullOrBlank()) library.all() else library.forPackage(packageName)
+        val legacy = if (packageName.isNullOrBlank()) store.all() else store.forPackage(packageName)
         val broken = library.broken()
         return ToolResult(
             buildJsonObject {
@@ -509,6 +566,21 @@ class WorkflowToolGateway(
                         },
                     ),
                 )
+                put("legacyCount", legacy.size)
+                put(
+                    "legacyWorkflows",
+                    JsonArray(
+                        legacy.take(MAX_LEGACY_LIST).map { workflow ->
+                            buildJsonObject {
+                                put("name", workflow.name)
+                                put("package", workflow.packageName)
+                                put("steps", workflow.steps.size)
+                                put("format", "legacy_steps")
+                            }
+                        },
+                    ),
+                )
+                if (legacy.size > MAX_LEGACY_LIST) put("legacyTruncated", true)
                 if (broken.isNotEmpty()) {
                     // Named rather than hidden: a workflow the user wrote and
                     // cannot see in the list looks like it was ignored.
@@ -521,7 +593,14 @@ class WorkflowToolGateway(
                         ),
                     )
                 }
-                if (definitions.isEmpty() && !packageName.isNullOrBlank() && library.all().isNotEmpty()) {
+                if (definitions.isEmpty() && legacy.isNotEmpty()) {
+                    put(
+                        "hint",
+                        "Only older saved step lists match this request. Read them with list_workflows " +
+                            "and replay with run_workflow, or save a verified definition with " +
+                            "workflow_runner(mode=\"save\"). The older format is not loaded as a definition.",
+                    )
+                } else if (definitions.isEmpty() && !packageName.isNullOrBlank() && library.all().isNotEmpty()) {
                     // A phone reported "none installed" for a package filter
                     // while four definitions existed, and the model believed it.
                     put(
@@ -533,9 +612,8 @@ class WorkflowToolGateway(
                     put(
                         "hint",
                         "No workflow definitions are installed. Work the sequence out with the device " +
-                            "tools, then write it as a definition file (see the workflows skill) so the " +
-                            "next chat does not rebuild it. save_workflow stores a different, older format " +
-                            "that workflow_runner does not load.",
+                            "tools, then save a declarative definition with workflow_runner(mode=\"save\"). " +
+                            "save_workflow stores an older format that workflow_runner does not load.",
                     )
                 }
             }.toString(),
@@ -545,7 +623,12 @@ class WorkflowToolGateway(
     private fun known(library: WorkflowLibrary, packageName: String?): String {
         val ids = (if (packageName.isNullOrBlank()) library.all() else library.forPackage(packageName)).map { it.id }
         return if (ids.isEmpty()) {
-            "No workflow definitions are installed."
+            val legacyCount = if (packageName.isNullOrBlank()) store.all().size else store.forPackage(packageName).size
+            if (!packageName.isNullOrBlank() && library.all().isNotEmpty()) {
+                "No declarative definition matches package $packageName. " +
+                    "Call workflow_runner(mode=\"list\") without a package to see other definitions."
+            } else if (legacyCount == 0) "No workflow definitions are installed." else
+                "No declarative definition matches; $legacyCount older saved step list(s) are available through list_workflows."
         } else {
             "Installed workflows: " + ids.joinToString(", ") + "."
         }
@@ -596,7 +679,8 @@ class WorkflowToolGateway(
     )
 
     private companion object {
-        val MODES = listOf("run", "resume", "describe", "list")
+        val MODES = listOf("run", "resume", "describe", "list", "save")
+        const val MAX_LEGACY_LIST = 40
 
         /**
          * How long an inline plan may be.
@@ -677,6 +761,21 @@ class WorkflowToolGateway(
             put("additionalProperties", true)
         }
 
+        private val DEFINITION_SCHEMA: JsonObject = buildJsonObject {
+            put("type", "object")
+            put("description", "A reusable declarative workflow; no coordinates or observation ids.")
+            put("properties", buildJsonObject {
+                put("id", field("string", "Stable lowercase id, using letters, digits, - or _."))
+                put("package", field("string", "Android package this workflow operates."))
+                put("version", field("integer", "Definition format version; use 1."))
+                put("description", field("string", "What this workflow does."))
+                put("parameters", openObject("Named values supplied when the workflow runs."))
+                put("steps", array(PLAN_STEP_SCHEMA, "Actions resolved against the current screen."))
+            })
+            put("required", JsonArray(listOf("id", "package", "steps").map { JsonPrimitive(it) }))
+            put("additionalProperties", true)
+        }
+
         /** One literal tool call, for the older `run_workflow` and `save_workflow`. */
         private val LITERAL_STEP_SCHEMA: JsonObject = buildJsonObject {
             put("type", "object")
@@ -713,7 +812,9 @@ class WorkflowToolGateway(
                 "\"resourceId\" or \"class\" - NOT by nodeId, which belongs to one observation. The " +
                 "steps are resolved against the screen in front of each one, not replayed, so the plan " +
                 "still lands after the keyboard opens or a row moves. Add \"verify\" to a step to say " +
-                "what must be true afterwards, \"optional\":true for a dialog that may not appear. " +
+                "what must be true afterwards; without it that step is reported as " +
+                "verification=not_requested even when the action ran. Use \"optional\":true for a " +
+                "dialog that may not appear. " +
                 "When a step waits on something slower than a screen opening - a video attaching, an " +
                 "upload, an install - say how long you expect it to take: " +
                 "\"verify\":{\"present\":{...},\"timeoutMs\":45000} waits up to 45s and stops the " +
@@ -748,7 +849,10 @@ class WorkflowToolGateway(
          */
         val RUNNER_DEFINITION: ToolDefinition = tool(
             "workflow_runner",
-            "Run a saved workflow end to end in ONE call, with no model turn per step. Name the " +
+            "Save, list, describe, or run a declarative workflow. mode=\"save\" takes a " +
+                "definition object with id, package, and steps; it validates and stores it without " +
+                "running it. mode=\"list\" shows definitions and older saved step lists separately. " +
+                "Run a saved definition end to end in ONE call, with no model turn per step. Name the " +
                 "workflow and it reads the screen, finds each element by id or label, acts, waits and " +
                 "checks the result before moving on, so it keeps working when a row moves or an app " +
                 "updates. mode=\"list\" names the installed workflows, mode=\"describe\" prints the " +
@@ -764,6 +868,7 @@ class WorkflowToolGateway(
                 "workflow" to "string",
                 "package" to "string",
                 "mode" to "string",
+                "definition" to "object",
                 "params" to "object",
                 "outputs" to "object",
                 "startAt" to "string",
@@ -771,6 +876,7 @@ class WorkflowToolGateway(
                 "screenshotOnFailure" to "boolean",
             ),
             emptyList(),
+            structured = mapOf("definition" to DEFINITION_SCHEMA),
         )
 
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
@@ -789,8 +895,9 @@ class WorkflowToolGateway(
             ),
             tool(
                 "save_workflow",
-                "Store a sequence that ran cleanly, keyed by package, so a later chat can reuse it " +
-                    "instead of rebuilding it step by step.",
+                "Legacy format: store literal tool calls for run_workflow. These calls are not " +
+                    "loaded by workflow_runner. For a new reusable sequence, prefer " +
+                    "workflow_runner(mode=\"save\") with a declarative definition.",
                 mapOf(
                     "name" to "string",
                     "package" to "string",
@@ -804,8 +911,8 @@ class WorkflowToolGateway(
             ),
             tool(
                 "list_workflows",
-                "List saved workflows, optionally for one package. Check here before working a " +
-                    "sequence out from scratch. Read-only.",
+                "List older saved literal step sequences, optionally for one package. " +
+                    "workflow_runner(mode=\"list\") shows these separately from declarative definitions. Read-only.",
                 mapOf("package" to "string"),
                 emptyList(),
             ),

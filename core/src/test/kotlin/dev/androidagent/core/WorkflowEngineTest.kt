@@ -300,7 +300,9 @@ class WorkflowEngineTest {
     @Test fun anEmptyListingTellsTheModelWhatToDoInstead() {
         val listed = parse(engine().list(buildJsonObject { }))
         assertEquals(0, listed["count"]!!.jsonPrimitive.intOrNull)
-        assertTrue(listed["hint"]!!.jsonPrimitive.content.contains("save_workflow"))
+        val hint = listed["hint"]!!.jsonPrimitive.content
+        assertTrue(hint, hint.contains("workflow_runner(mode=\"list\")"))
+        assertTrue(hint, hint.contains("mode=\"save\""))
     }
 
     @Test fun resavingUnderTheSameNameRefinesRatherThanDuplicates() {

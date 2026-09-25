@@ -69,6 +69,11 @@ class WorkspaceFilesTest {
         assertEquals(FileKind.OTHER, kindOf("blob"))
     }
 
+    @Test fun sessionTraceIsShownAsPlainText() {
+        assertEquals(FileKind.TEXT, kindOf("session-trace.jsonl"))
+        assertEquals("text/plain", mimeTypeFor("session-trace.jsonl") { null })
+    }
+
     @Test fun notesGoOutAsPlainTextAndUnknownFilesToAnyApp() {
         assertEquals("text/plain", mimeTypeFor("notes.md") { null })
         assertEquals("application/pdf", mimeTypeFor("bill.pdf") { if (it == "pdf") "application/pdf" else null })

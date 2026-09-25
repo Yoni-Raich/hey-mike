@@ -301,7 +301,7 @@ data class UiPage(
     /** Where to continue, or null when this reply carries the last match. */
     val nextOffset: Int? = (offset + returnedNodes).takeIf { it < matchedNodes }
 
-    fun hint(): String? = when {
+    fun hint(activePackage: String? = null): String? = when {
         nextOffset != null ->
             "Nodes ${offset + 1}-${offset + returnedNodes} of $matchedNodes matching. Call " +
                 "read_ui again with offset=$nextOffset for the next page, or narrow it with " +
@@ -309,6 +309,10 @@ data class UiPage(
         returnedNodes == 0 && matchedNodes > 0 ->
             "offset $offset is past the last of $matchedNodes matching nodes. Call read_ui " +
                 "with a smaller offset."
+        matchedNodes == 0 && query.packageName != null && activePackage != null ->
+            "No node matched package \"${query.packageName}\"; the active package is " +
+                "\"$activePackage\" and $totalNodes nodes are on screen. Call read_ui without " +
+                "filters, or open the requested app and retry once."
         matchedNodes == 0 && !query.isEmpty ->
             "No node matched this query; $totalNodes nodes are on screen. Call read_ui " +
                 "without filters to see what is there."
@@ -397,6 +401,11 @@ object UiObservationSerializer {
         put("revision", revision)
         put("elapsedMs", elapsedMs)
         put("source", source)
+        put("nodeActionsAvailable", source == "accessibility")
+        if (source != "accessibility") put(
+            "nodeActionHint",
+            "ADB node ids need accessibility. Use tap/type_text or enable Hey Mike accessibility.",
+        )
         put("stable", stable)
         observation.activePackage?.let { put("activePackage", it) }
         put("truncated", truncated)
@@ -411,7 +420,7 @@ object UiObservationSerializer {
             }
             if (window.offset > 0) put("offset", window.offset)
             window.nextOffset?.let { put("nextOffset", it) }
-            window.hint()?.let { put("hint", it) }
+            window.hint(observation.activePackage)?.let { put("hint", it) }
         }
         put("nodes", buildJsonArray { observation.nodes.forEach { add(it.toJson()) } })
     }.toString()
@@ -430,6 +439,7 @@ object UiObservationSerializer {
         put("revision", revision)
         put("elapsedMs", elapsedMs)
         put("source", source)
+        put("nodeActionsAvailable", source == "accessibility")
         put("stable", true)
         activePackage?.let { put("activePackage", it) }
         put("unchanged", true)
@@ -437,9 +447,13 @@ object UiObservationSerializer {
         put("nodeCount", nodeCount)
         put(
             "hint",
-            "Screen is identical to revision $unchangedSinceRevision. Reuse those nodes; " +
-                "if the previous action was meant to change the screen it did not take effect. " +
-                "Call read_ui with force=true to resend the full node list.",
+            if (source == "accessibility") {
+                "Screen unchanged since revision $unchangedSinceRevision. Reuse these node ids; " +
+                    "if an action did not work, call read_ui(force=true)."
+            } else {
+                "Screen unchanged since revision $unchangedSinceRevision. ADB node ids cannot be used by node " +
+                    "actions; use tap/type_text. Call read_ui(force=true) to refresh."
+            },
         )
     }.toString()
 

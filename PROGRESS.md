@@ -1,5 +1,70 @@
 # Progress
 
+## Xiaomi QA stability fixes — 2026-09-25
+
+The adversarial Dev Nightly run on Xiaomi 23053RN02Y found five concrete gaps:
+mixed-case HTTPS intent resolution, empty `set_text` read-back, ambiguous
+`act_plan` verification, separate legacy and declarative workflow formats,
+and a package-filtered `read_ui` reply with no foreground context. The fixes
+normalize URI schemes, check the refreshed or newly observed editable field
+and treat its displayed hint as an empty value after clearing, mark completed steps without a condition as
+`verification:"not_requested"`, add `workflow_runner(mode="save")` and a
+separate legacy listing, and show the active package in zero-match hints.
+New chat turns are recorded in `session-trace.jsonl`, with timestamps, exact
+tool arguments and results, assistant messages, and links to image artifacts.
+Only new turns can be traced; older runs cannot be reconstructed. On-device
+workflow guidance uses the declarative save path. The old literal workflow API
+remains available for saved sequences and is not silently converted into a
+verified definition.
+Package-scoped `workflow_runner` lookup now refuses a definition belonging to
+another app instead of falling back to all definitions. A focused gateway test
+confirms this refusal happens before any device tool is called.
+
+Verified in an isolated worktree based on `dev` commit `2309e9f0dad9`: the full
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug` gate,
+five `tools.test_prepare_runtime` tests, and `git diff --check` passed. The
+gate exposed one old `:engine-codex` test with a stale resume-count assertion;
+it now matches the existing tools-first, plain-resume, then fresh-thread
+behavior. DevDebug QA build 1014 (`0.12.0-dev.qa-stability3`) was signed with
+the installed Dev app certificate and installed with `adb install -r`, which
+kept app data. The unsigned lower-version release artifact was not installed.
+
+Physical Xiaomi run on build 1014, package `dev.androidagent.app.dev`, using
+Gym Test (`dev.androidagent.jevgym`): `open_app` succeeded; `read_ui` returned
+`source:"accessibility"` and `nodeActionsAvailable:true`; the empty Search
+exercises field was set to `QA_CLEAR_20260925` and verified; then `set_text`
+cleared it and a fresh read confirmed its empty hint. Both `set_text` results
+reported `verified:true`. The fresh session trace records the exact calls,
+arguments, results, and final assistant response. No Gym Test form was
+submitted.
+
+Physical follow-up on the same Xiaomi: DevDebug QA build 1015
+(`0.12.0-dev.qa-stability4`) was built from the current tree. `aapt` reported
+`dev.androidagent.app.dev`, code 1015, and that version name. Its signing
+certificate SHA-256 matched the installed build 1014, then `adb install -r`
+succeeded. The package reports code 1015 and the same first install time;
+Accessibility stayed enabled and bound. The model picker showed `6-luna`.
+In a fresh QA chat, `workflow_runner(mode="save")` stored an observe-only Gym
+definition with `nothingRan:true`; `mode="list"` returned it. Running its id
+with package `com.android.chrome` returned `workflow_not_found` and
+`nothingRan:true`, with no nested device action. An `act_plan` observe step in
+Gym returned `status:"done"`, `verified:false`, and
+`verification:"not_requested"`. `resolve_intent` alone resolved
+`Https://example.com` as `https://example.com` to Chrome; no URL was opened.
+A Gym `read_ui` filtered to a nonexistent package returned zero matches,
+`activePackage:"dev.androidagent.jevgym"`, `source:"accessibility"`,
+`nodeActionsAvailable:true`, and a hint naming the active package. The fresh
+session trace records the exact calls and results. No Gym form was submitted.
+
+Still open: rerun the broader adversarial matrix across every agent tool on
+the updated Xiaomi. The two focused phone runs directly cover the tools and
+paths named above, plus the earlier `set_text` read-back; other tools and
+positive paths still lack new physical coverage. After the package lookup fix, the current-tree full gate
+(`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+--no-daemon`) passed, as did all five `tools.test_prepare_runtime` tests and
+`git diff --check`. These build checks do not establish the untested physical
+paths. The package-filtered read did not exercise keyboard/IME context.
+
 ## Chat streaming scroll — 2026-09-24
 
 On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one

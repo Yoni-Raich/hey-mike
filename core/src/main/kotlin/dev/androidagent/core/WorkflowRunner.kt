@@ -1130,7 +1130,10 @@ class WorkflowRunner(
             put("id", step.id)
             put("action", step.action.wire)
             put("status", status)
-            if (status == "done") put("verified", verified)
+            if (status == "done") {
+                put("verified", verified)
+                put("verification", if (step.verify == null) "not_requested" else "verified")
+            }
             note?.let { put("note", it) }
             if (elapsedMs > 0) put("elapsedMs", elapsedMs)
             timing?.let { put("timing", it) }
@@ -1220,11 +1223,20 @@ class WorkflowRunner(
             put("steps", JsonArray(records.map { it.toJson() }))
             put("ranSteps", records.count { it.status == "done" })
             put("skippedSteps", records.count { it.status == "skipped" })
+            val unverifiedSteps = records.count { it.status == "done" && !it.verified }
+            put("unverifiedSteps", unverifiedSteps)
             put("elapsedMs", elapsedMs)
             if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
             put(
                 "note",
-                "Every step ran and every condition that was declared held. Nothing here needs to be repeated.",
+                if (unverifiedSteps == 0) {
+                    "Workflow finished. Every step that ran passed its declared verification. " +
+                        "Skipped steps are listed separately; do not repeat completed steps."
+                } else {
+                    "Workflow finished, but $unverifiedSteps completed step(s) had no verify condition. " +
+                        "Those actions were dispatched but their intended result was not checked. " +
+                        "Inspect the final screen before deciding what to do next; do not repeat completed steps blindly."
+                },
             )
         }.toString(),
     )

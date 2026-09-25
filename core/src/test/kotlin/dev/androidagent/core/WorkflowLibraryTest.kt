@@ -22,6 +22,7 @@ package dev.androidagent.core
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -86,6 +87,13 @@ class WorkflowLibraryTest {
         assertEquals(1, library().forPackage("com.android.chrome").size)
     }
 
+    @Test fun aPackageWithNoDefinitionsNeverFallsBackToAnotherApp() {
+        write("settings-toggle")
+        val found = library().find("settings-toggle", "com.android.chrome")
+        assertTrue(found is WorkflowLibrary.Lookup.NotFound)
+        assertEquals(listOf("settings-toggle"), (found as WorkflowLibrary.Lookup.NotFound).known)
+    }
+
     @Test fun aFileThatDoesNotParseIsNamedRatherThanHidden() {
         // A definition the user wrote that simply never appears looks ignored.
         write("good")
@@ -104,6 +112,25 @@ class WorkflowLibraryTest {
         library.save(first.copy(description = "second time"))
         assertEquals(1, library.all().size)
         assertEquals("second time", library.all().single().description)
+    }
+
+    @Test fun oversizedReplacementLeavesThePreviousDefinitionLoadable() {
+        val library = library()
+        val original = WorkflowDefinition.parse(
+            Json.parseToJsonElement(String(definition("flow", step = "safe"))).jsonObject,
+        )
+        val file = library.save(original)
+        val savedBytes = file.readBytes()
+
+        val error = runCatching {
+            library.save(original.copy(description = "x".repeat(300 * 1024)))
+        }.exceptionOrNull()
+
+        assertTrue("expected oversized replacement to be refused, got $error", error is IllegalArgumentException)
+        assertArrayEquals(savedBytes, file.readBytes())
+        val loaded = library.find("flow") as WorkflowLibrary.Lookup.Found
+        assertEquals(original.steps, loaded.definition.steps)
+        assertEquals(original.description, loaded.definition.description)
     }
 
     @Test fun theDefinitionsDirectorySitsUnderTheWorkflowsDirectory() {
