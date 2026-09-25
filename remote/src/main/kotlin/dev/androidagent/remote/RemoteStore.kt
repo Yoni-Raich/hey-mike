@@ -49,6 +49,8 @@ data class RemoteComputer(
      * tried when [host] does not answer. The pinned [hostKey] holds for both.
      */
     val vpnHost: String? = null,
+    /** Windows or Linux, learned on the first connection; null until then. */
+    val os: HostOs? = null,
 ) {
     /** Every address to try, home network first. */
     val hosts: List<String> get() = listOf(host, vpnHost.orEmpty()).filter { it.isNotBlank() }.distinct()
@@ -227,6 +229,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                         c.fingerprint?.let { put("fingerprint", it) }
                         c.lastFolder?.let { put("lastFolder", it) }
                         c.vpnHost?.let { put("vpnHost", it) }
+                        c.os?.let { put("os", it.name) }
                         stored.passwords[c.id]?.let { put("password", it) }
                     })
                 }
@@ -262,6 +265,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     fingerprint = c.text("fingerprint"),
                     lastFolder = c.text("lastFolder"),
                     vpnHost = c.text("vpnHost"),
+                    os = c.text("os")?.let { name -> HostOs.entries.firstOrNull { it.name == name } },
                 )
             }
             val ids = computers.map { it.id }.toSet()

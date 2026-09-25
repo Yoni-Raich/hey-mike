@@ -64,7 +64,7 @@ internal fun LazyListScope.pcSections(
                 status = when (setup) {
                     is RemoteSetup.Ready -> "Connected · ${section.projects.size} projects"
                     is RemoteSetup.Working -> setup.step
-                    is RemoteSetup.NeedsSignIn -> "Sign in to Codex on the PC"
+                    is RemoteSetup.NeedsSignIn -> "Sign in to Codex on the computer"
                     is RemoteSetup.Failed -> "Not connected"
                     null -> "Not connected"
                 },
@@ -78,7 +78,7 @@ internal fun LazyListScope.pcSections(
         if (setup is RemoteSetup.Failed || setup is RemoteSetup.NeedsSignIn) {
             item(key = "pc-${computer.id}-problem") {
                 Text(
-                    (setup as? RemoteSetup.Failed)?.message ?: "Codex on the PC needs a sign-in.",
+                    (setup as? RemoteSetup.Failed)?.message ?: "Codex on the computer needs a sign-in.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error,
                     maxLines = 3, overflow = TextOverflow.Ellipsis,
@@ -230,7 +230,7 @@ private fun PcChatRow(entry: PcChatEntry, selected: Boolean, running: Boolean, o
                         Icon(Icons.Outlined.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
                     }
                     Text(
-                        (if (entry is PcChatEntry.OnComputer) "From Codex on the PC · " else "") + formatSessionTime(entry.updatedAt),
+                        (if (entry is PcChatEntry.OnComputer) "From Codex on the computer · " else "") + formatSessionTime(entry.updatedAt),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

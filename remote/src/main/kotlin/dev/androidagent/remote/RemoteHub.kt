@@ -35,7 +35,7 @@ sealed interface RemoteSetup {
     /** Codex on the computer is not signed in; the user opens [url] and enters [code]. */
     data class NeedsSignIn(val url: String?, val code: String?) : RemoteSetup
     /** [route] is the address that answered, for the sheet to name. */
-    data class Ready(val probe: WindowsProbe, val account: String, val route: RemoteRoute? = null) : RemoteSetup
+    data class Ready(val probe: HostProbe, val account: String, val route: RemoteRoute? = null) : RemoteSetup
     data class Failed(val message: String) : RemoteSetup
 }
 
@@ -162,7 +162,7 @@ class RemoteHub(val store: RemoteStore) {
     /** The folders in [path] on the computer; with [create], the folder is made first. */
     suspend fun listFolders(computerId: String, path: String, create: Boolean = false): FolderListing = withContext(Dispatchers.IO) {
         val connection = connection(computerId)
-        WindowsHost.parseListing(connection.link.run(WindowsHost.powershell(WindowsHost.listScript(path, create)), 30_000))
+        WindowsHost.parseListing(connection.link.run(connection.scripts.list(path, create), 30_000))
     }
 
     /** Close the computer's Codex and its connection. Chats on it stay bound. */
@@ -221,8 +221,17 @@ class RemoteHub(val store: RemoteStore) {
                 // First contact: this key is the computer from now on.
                 store.update(computerId) { it.copy(hostKey = seen.key, fingerprint = seen.fingerprint) }
             }
+            // Which system it runs decides every script; asked once, then kept.
+            val os = computer.os ?: try {
+                HostOs.fromUname(link.run("uname -s", 15_000))
+                    ?: error("This computer runs macOS, which Hey Mike does not support yet. Windows and Linux work.")
+            } catch (error: Exception) {
+                link.close()
+                throw error
+            }
+            if (computer.os == null) store.update(computerId) { it.copy(os = os) }
             lastHost[computerId] = host
-            return@withContext Connection(link, route).also { links[computerId] = it }
+            return@withContext Connection(link, route, os).also { links[computerId] = it }
         }
         error(
             if (missed.size == 1) missed.single().substringAfter(": ")
@@ -230,18 +239,20 @@ class RemoteHub(val store: RemoteStore) {
         )
     }
 
-    private class Connection(val link: SshLink, val route: RemoteRoute) {
-        @Volatile private var cached: WindowsProbe? = null
+    private class Connection(val link: SshLink, val route: RemoteRoute, val os: HostOs) {
+        val scripts: HostScripts = if (os == HostOs.LINUX) LinuxHost else WindowsHost
 
-        fun probe(refresh: Boolean): WindowsProbe {
+        @Volatile private var cached: HostProbe? = null
+
+        fun probe(refresh: Boolean): HostProbe {
             if (!refresh) cached?.let { return it }
-            return WindowsHost.parseProbe(link.run(WindowsHost.powershell(WindowsHost.probeScript()), 60_000))
+            return WindowsHost.parseProbe(link.run(scripts.probe(), 60_000))
                 .also { cached = it }
         }
 
         fun install() {
             // Downloading about 120 MB on the computer's own connection.
-            val installed = WindowsHost.parseInstall(link.run(WindowsHost.powershell(WindowsHost.installScript()), 15 * 60_000))
+            val installed = WindowsHost.parseInstall(link.run(scripts.install(), 15 * 60_000))
             check(installed) { "Codex did not install on the computer." }
             cached = null
         }
@@ -280,7 +291,7 @@ class RemoteHub(val store: RemoteStore) {
 
         private suspend fun launchOnce(): Process {
             val connection = connection(computerId)
-            return connection.link.start(WindowsHost.appServerCommand(connection.probe(refresh = false)))
+            return connection.link.start(connection.scripts.appServer(connection.probe(refresh = false)))
         }
 
         override suspend fun stop() {
