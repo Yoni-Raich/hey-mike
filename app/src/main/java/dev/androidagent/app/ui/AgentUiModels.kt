@@ -181,6 +181,10 @@ data class AgentUiState(
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */
     val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
+    /** Computer chats whose conversation another Codex on the computer holds open. */
+    val pcBusyChats: Set<String> = emptySet(),
+    /** Computer chats being copied so Mike can continue them. */
+    val pcForking: Set<String> = emptySet(),
     /** Computers whose conversations are being listed right now. */
     val pcRefreshing: Set<String> = emptySet(),
     /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
@@ -328,6 +332,10 @@ data class AgentUiActions(
     /** Before the first message: run this chat on the phone (null) or in a computer folder. */
     val onMoveNewChat: (computerId: String?, path: String?) -> Unit = { _, _ -> },
     val onComputerProposalShown: () -> Unit = {},
+    /** Continue a computer conversation that is held open elsewhere in a copy with its history. */
+    val onForkPcChat: (sessionId: String) -> Unit = {},
+    /** Look again whether the computer still holds this chat's conversation open. */
+    val onCheckPcChatBusy: (sessionId: String) -> Unit = {},
     val onComposerSeedUsed: (sessionId: String) -> Unit = {},
     /** Hand text to another app, such as the PC setup steps to email to oneself. */
     val onShareText: (String) -> Unit = {},

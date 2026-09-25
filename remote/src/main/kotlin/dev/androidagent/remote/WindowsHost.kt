@@ -94,6 +94,20 @@ object WindowsHost : HostScripts {
     """.trimIndent()
 
     override fun probe(): String = powershell(probeScript())
+
+    /** A Codex lock is a file another process has open without sharing. */
+    override fun threadBusy(threadId: String): String {
+        require(threadId.matches(LinuxHost.THREAD_ID)) { "Unexpected thread id" }
+        return powershell(
+            """
+            ${'$'}h=if (${'$'}env:CODEX_HOME) { ${'$'}env:CODEX_HOME } else { Join-Path ${'$'}env:USERPROFILE '.codex' }
+            ${'$'}f=Join-Path ${'$'}h 'thread-writer-locks\$threadId.lock'
+            ${'$'}busy=${'$'}false
+            if (Test-Path -LiteralPath ${'$'}f) { try { ${'$'}s=[IO.File]::Open(${'$'}f,'Open','Read','None'); ${'$'}s.Close() } catch { ${'$'}busy=${'$'}true } }
+            '$MARKER' + (ConvertTo-Json -Compress -InputObject ([ordered]@{busy=${'$'}busy}))
+            """.trimIndent(),
+        )
+    }
     override fun install(): String = powershell(installScript())
     override fun list(path: String, create: Boolean): String = powershell(listScript(path, create))
     override fun appServer(probe: HostProbe): String = appServerCommand(probe)
@@ -145,6 +159,9 @@ object WindowsHost : HostScripts {
             powerShellDefault = shell.endsWith("powershell.exe") || shell.endsWith("pwsh.exe"),
         )
     }
+
+    fun parseBusy(result: ExecResult): Boolean =
+        (payload(result)["busy"] as? JsonPrimitive)?.booleanOrNull == true
 
     fun parseInstall(result: ExecResult): Boolean =
         (payload(result)["installed"] as? JsonPrimitive)?.booleanOrNull == true

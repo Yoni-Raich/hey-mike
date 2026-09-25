@@ -104,7 +104,7 @@ class RoutingAgentEngine(
             engine.openSessionAt(binding.cwd, resumable, model, tools, freshIfLost = resumable == null)
         } catch (error: IllegalStateException) {
             throw IllegalStateException(
-                "${error.message}. If it is open in Codex on the computer, close it there and send again.",
+                "${error.message}. If it is open in Codex on the computer, close it there, or continue in a copy from the banner above the message box.",
                 error,
             )
         }

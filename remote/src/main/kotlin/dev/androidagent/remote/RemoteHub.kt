@@ -100,6 +100,16 @@ class RemoteHub(val store: RemoteStore) {
         setUp(computerId, install = false)
     }
 
+    /** Another Codex on the computer (its desktop app) holds [threadId] open for writing. */
+    suspend fun isThreadBusy(computerId: String, threadId: String): Boolean = withContext(Dispatchers.IO) {
+        val connection = connection(computerId)
+        WindowsHost.parseBusy(connection.link.run(connection.scripts.threadBusy(threadId), 30_000))
+    }
+
+    /** A copy of [threadId] with its whole history, which this app's Codex can continue. */
+    suspend fun forkThread(computerId: String, cwd: String, threadId: String): String =
+        engine(computerId).forkThreadAt(cwd, threadId)
+
     /** One conversation's messages, read from the computer. */
     suspend fun readThread(computerId: String, threadId: String): List<CodexThreadMessage> =
         engine(computerId).readThreadMessages(threadId)

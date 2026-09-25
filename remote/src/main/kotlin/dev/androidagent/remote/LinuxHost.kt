@@ -28,6 +28,8 @@ enum class HostOs(val label: String) {
 
 /** The commands Hey Mike runs on one kind of computer. Their answers read the same. */
 interface HostScripts {
+    /** Prints `HEYMIKE {"busy":true|false}`: another Codex holds [threadId]'s writer lock. */
+    fun threadBusy(threadId: String): String
     fun probe(): String
     fun install(): String
     fun list(path: String, create: Boolean): String
@@ -47,6 +49,8 @@ interface HostScripts {
  * `~/.local/share/heymike`. It runs as that user with their own `~/.codex`.
  */
 object LinuxHost : HostScripts {
+    internal val THREAD_ID = Regex("[A-Za-z0-9-]{1,80}")
+
 
     /** sha256 of `codex-app-server-package-<arch>-unknown-linux-musl.tar.gz`, rust-v0.156.0; the same pins as `tools/prepare_runtime.py`. */
     val PACKAGE_SHA256 = mapOf(
@@ -62,6 +66,18 @@ object LinuxHost : HostScripts {
         exe="${'$'}root/bin/codex-app-server"
         esc() { printf '%s' "${'$'}1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
     """.trimIndent()
+
+    override fun threadBusy(threadId: String): String {
+        require(threadId.matches(THREAD_ID)) { "Unexpected thread id" }
+        return wrap(
+            """
+            f="${'$'}{CODEX_HOME:-${'$'}HOME/.codex}/thread-writer-locks/$threadId.lock"
+            busy=false
+            if [ -e "${'$'}f" ] && command -v flock >/dev/null 2>&1; then flock -n "${'$'}f" true || busy=true; fi
+            printf 'HEYMIKE {"busy":%s}\n' "${'$'}busy"
+            """.trimIndent(),
+        )
+    }
 
     override fun probe(): String = wrap(
         """

@@ -74,6 +74,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { current.filterNotNull().collectLatest { id ->
+            // A computer conversation may be held open by Codex on the computer.
+            checkPcChatBusy(id)
             preferences.edit().putString("session", id).apply()
             mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false) }
             updateTitle()
@@ -232,6 +234,40 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Connect to a computer from the side panel, without opening the computers screen. */
     fun reconnectComputer(id: String) = task { graph.remote.reload(id); graph.remote.setUp(id, install = false) }
 
+    /**
+     * Whether Codex on the computer (its desktop app) holds this chat's
+     * conversation open, so Mike cannot write to it. Quiet on failure: the
+     * send itself then says what went wrong.
+     */
+    fun checkPcChatBusy(sessionId: String) {
+        val binding = graph.computers.binding(sessionId) ?: return
+        val thread = binding.threadId ?: return
+        viewModelScope.launch {
+            val busy = runCatching { graph.remote.isThreadBusy(binding.computerId, thread) }.getOrDefault(false)
+            mutable.update { it.copy(pcBusyChats = if (busy) it.pcBusyChats + sessionId else it.pcBusyChats - sessionId) }
+        }
+    }
+
+    /**
+     * Continue in a copy: fork the conversation on the computer and move this
+     * chat onto the copy. The history comes along; the original stays with
+     * whoever holds it.
+     */
+    fun forkPcChat(sessionId: String) = task {
+        val binding = graph.computers.binding(sessionId) ?: kotlin.error("This chat does not run on a computer.")
+        val thread = binding.threadId ?: kotlin.error("This chat has no conversation on the computer yet.")
+        mutable.update { it.copy(pcForking = it.pcForking + sessionId) }
+        try {
+            val copy = graph.remote.forkThread(binding.computerId, binding.cwd, thread)
+            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.copy(threadId = copy)) }
+            graph.sessions.setThread(sessionId, copy)
+            mutable.update { it.copy(pcBusyChats = it.pcBusyChats - sessionId) }
+            note(sessionId, "Mike continues here in a copy of the conversation, with its whole history. The original stays in Codex on the computer.")
+        } finally {
+            mutable.update { it.copy(pcForking = it.pcForking - sessionId) }
+        }
+    }
+
     /** Computers whose Tailscale approval page the user opened and has not come back from. */
     private val awaitingApproval = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
@@ -276,6 +312,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 note(session.id, "The earlier messages could not be read from the computer: ${it.message}. Mike still continues this conversation there.")
             }
         mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
+        checkPcChatBusy(session.id)
     }
 
     /**
