@@ -155,10 +155,16 @@ class MainActivity : ComponentActivity() {
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
         onDrawerChanged = { open -> model.editUi { it.copy(isDrawerOpen = open) } },
-        onOpenComputers = { model.editUi { it.copy(isComputersOpen = true) } },
+        onOpenComputers = { ensureService(); model.openComputers() },
         onCloseComputers = { model.editUi { it.copy(isComputersOpen = false, folderBrowser = null) } },
         onSaveComputer = { draft -> ensureService(); model.saveComputer(draft) },
         onRemoveComputer = { id -> model.removeComputer(id) },
+        onSetDefaultComputer = { id -> model.setDefaultComputer(id) },
+        onShareText = { text ->
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+            runCatching { startActivity(Intent.createChooser(send, "Send the setup steps")) }
+                .onFailure { model.error("No app on this phone can share text.") }
+        },
         onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
         onCheckComputerSignIn = { id -> model.checkComputerSignIn(id) },
         onOpenUrl = { url ->

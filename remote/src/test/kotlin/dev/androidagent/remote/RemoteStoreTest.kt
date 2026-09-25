@@ -74,6 +74,31 @@ class RemoteStoreTest {
         assertNull(store.password("pc"))
     }
 
+    @Test fun theFirstComputerIsTheDefaultAndRemovingItPassesItOn() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "d.bin")
+        val store = RemoteStore(file, box)
+        store.save(computer, "secret")
+        store.save(computer.copy(id = "laptop", label = "Laptop"), "other")
+        assertEquals("pc", store.state.value.defaultComputerId)
+        store.setDefault("laptop")
+        assertEquals("laptop", RemoteStore(file, box).state.value.defaultComputerId)
+        store.remove("laptop")
+        assertEquals("pc", store.state.value.defaultComputerId)
+    }
+
+    @Test fun aVpnAddressIsKeptAndTriedAfterTheHomeOne() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "v.bin")
+        val store = RemoteStore(file, box)
+        store.save(computer.copy(hostKey = "KEY", fingerprint = "SHA256:x"), "secret")
+        // A new VPN address is the same machine: the pinned key must still match.
+        val saved = store.save(store.computer("pc")!!.copy(vpnHost = "100.64.0.5"), null)
+        assertEquals("KEY", saved.hostKey)
+        assertEquals(listOf("192.168.1.20", "100.64.0.5"), RemoteStore(file, box).computer("pc")!!.hosts)
+        assertEquals(listOf("192.168.1.20"), computer.copy(vpnHost = " ").hosts)
+    }
+
     @Test fun requestIdsFromTwoAppServersStayApart() {
         val tagged = RoutingAgentEngine.tag("pc", "7")
         assertEquals("pc" to "7", RoutingAgentEngine.untag(tagged))

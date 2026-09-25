@@ -27,6 +27,7 @@ data class SshTarget(
     val password: String,
     /** The trusted host key (base64 blob), or null to trust the first one seen. */
     val pinnedHostKey: String?,
+    val connectTimeoutMs: Int = SshLink.CONNECT_TIMEOUT_MS,
 )
 
 /** The host key a server presented. */
@@ -39,6 +40,9 @@ class HostKeyChanged(val seen: HostKeySeen) : Exception(
     "This computer's identity changed (now ${seen.fingerprint}). " +
         "If you reinstalled it or changed its address on purpose, remove it and add it again.",
 )
+
+/** Nothing answered on the address: another address of the same computer may. */
+class SshUnreachable(message: String, cause: Throwable) : Exception(message, cause)
 
 /**
  * One SSH connection to a computer, shared by setup commands and the app-server.
@@ -68,9 +72,10 @@ class SshLink(private val target: SshTarget) : Closeable {
             setServerAliveCountMax(KEEPALIVE_MISSES)
         }
         try {
-            next.connect(CONNECT_TIMEOUT_MS)
+            next.connect(target.connectTimeoutMs)
         } catch (error: JSchException) {
             keys.changed?.let { throw HostKeyChanged(it) }
+            if (unreachable(error)) throw SshUnreachable(describe(error), error)
             throw IllegalStateException(describe(error), error)
         }
         val presented = keys.presented ?: run {
@@ -190,6 +195,14 @@ class SshLink(private val target: SshTarget) : Closeable {
             )
         }
 
+        /** The address did not answer at all, as opposed to answering and refusing. */
+        internal fun unreachable(error: JSchException): Boolean {
+            val cause = error.cause
+            return cause is java.net.UnknownHostException || cause is java.net.ConnectException ||
+                cause is java.net.NoRouteToHostException || cause is java.net.SocketTimeoutException ||
+                error.message.orEmpty().contains("timeout", ignoreCase = true)
+        }
+
         /** One plain sentence for the reasons a connection usually fails. */
         internal fun describe(error: JSchException): String {
             val message = error.message.orEmpty()
@@ -198,9 +211,9 @@ class SshLink(private val target: SshTarget) : Closeable {
                 message.contains("Auth fail", ignoreCase = true) || message.contains("Auth cancel", ignoreCase = true) ->
                     "The computer refused the user name or password."
                 cause is java.net.UnknownHostException -> "The phone could not find that computer name. Try its IP address."
-                cause is java.net.ConnectException -> "Nothing answered on that address and port. Is OpenSSH Server running on the computer?"
+                cause is java.net.ConnectException -> "The computer is there, but nothing answered on that port. Is OpenSSH Server running on it?"
                 cause is java.net.SocketTimeoutException || message.contains("timeout", ignoreCase = true) ->
-                    "The computer did not answer. Check that the phone and the computer are on the same network."
+                    "The computer did not answer. It may be asleep, or on another network than the phone."
                 else -> "SSH failed: ${message.ifBlank { error.toString() }}"
             }
         }
