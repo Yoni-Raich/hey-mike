@@ -420,6 +420,13 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
             val os = computer.os ?: dev.androidagent.remote.HostOs.WINDOWS
             if (help) PcChecklist(os, onShare = { actions.onShareText(stepsText(os)) })
         }
+        is RemoteSetup.NeedsTailscaleApproval -> TailscaleApprovalCard(
+            computer = computer.label,
+            url = setup.url,
+            onOpen = { url -> actions.onOpenUrl(url) },
+            onConnect = { actions.onConnectComputer(computer.id) },
+            modifier = Modifier.padding(top = 12.dp),
+        )
         is RemoteSetup.NeedsSignIn -> Column(Modifier.padding(top = 12.dp)) {
             Text("Sign in to Codex on this computer", fontSize = 14.sp, color = WaitInk, fontWeight = FontWeight.Medium)
             Text("Open the page, sign in, and enter this code:", fontSize = 13.sp, color = Muted)

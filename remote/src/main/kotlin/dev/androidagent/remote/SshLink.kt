@@ -38,6 +38,14 @@ data class HostKeySeen(val type: String, val key: String, val fingerprint: Strin
 data class ExecResult(val stdout: String, val stderr: String, val exitCode: Int)
 
 /** The computer answered with a different host key than the one trusted. */
+/**
+ * Tailscale SSH answered in place of the computer's own SSH server. It signs
+ * in by Tailscale identity, not password; with a "check" rule it first wants
+ * the user to approve in a browser at [url]. Once approved, connecting again
+ * gets in for the rule's check period.
+ */
+class TailscaleCheck(val url: String?, message: String) : Exception(message)
+
 class HostKeyChanged(val seen: HostKeySeen) : Exception(
     "This computer's identity changed (now ${seen.fingerprint}). " +
         "If you reinstalled it or changed its address on purpose, remove it and add it again.",
@@ -81,8 +89,11 @@ class SshLink(private val target: SshTarget) : Closeable {
             // Tailscale SSH answers on the tailnet address in place of the
             // computer's own SSH server. It takes no password and may wait for
             // a browser check, which reads as a timeout; say what it is.
-            if (isTailscaleSsh(next.serverVersion, prompts.banner)) {
-                throw IllegalStateException(tailscaleSshMessage(prompts.banner), error)
+            // Reading the version of a server that never sent one throws
+            // inside JSch; an address that did not answer has none.
+            val version = runCatching { next.serverVersion }.getOrNull()
+            if (isTailscaleSsh(version, prompts.banner)) {
+                throw TailscaleCheck(approvalLink(prompts.banner), tailscaleSshMessage(prompts.banner))
             }
             if (unreachable(error)) throw SshUnreachable(describe(error), error)
             throw IllegalStateException(describe(error), error)
@@ -242,8 +253,11 @@ class SshLink(private val target: SshTarget) : Closeable {
             serverVersion.orEmpty().contains("Tailscale", ignoreCase = true) ||
                 banner.orEmpty().contains("Tailscale SSH", ignoreCase = true)
 
+        internal fun approvalLink(banner: String?): String? =
+            banner?.let { Regex("https://\\S+").find(it)?.value?.trimEnd('.', ',', ')') }
+
         internal fun tailscaleSshMessage(banner: String?): String {
-            val link = banner?.let { Regex("https://\\S+").find(it)?.value }
+            val link = approvalLink(banner)
             return buildString {
                 append("This address is answered by Tailscale SSH, not the computer's own SSH server. ")
                 append("Tailscale SSH does not take a password")

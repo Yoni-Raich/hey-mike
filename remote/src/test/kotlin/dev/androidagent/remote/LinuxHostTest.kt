@@ -35,6 +35,8 @@ class LinuxHostTest {
         val message = SshLink.tailscaleSshMessage("# To authenticate, visit: https://login.tailscale.com/a/abc123\n")
         assertTrue(message.contains("https://login.tailscale.com/a/abc123"))
         assertTrue(message.contains("sudo tailscale set --ssh=false"))
+        assertEquals("https://login.tailscale.com/a/l1d84", SshLink.approvalLink("visit: https://login.tailscale.com/a/l1d84.\n"))
+        assertNull(SshLink.approvalLink("# Tailscale SSH requires an additional check."))
     }
 
     @Test fun theAppServerPathIsQuotedForSpaces() {
