@@ -24,7 +24,7 @@ This is how the next chat gets faster:
 - **`quick-actions save-intent`** — after a deep link reached a destination a later request could reuse. This is what makes the next request one step.
 - **`quick-actions save-contact`** — after you found a person's phone number.
 - **`remember_capability`** — after you find a selector or deep link that works, especially one missing from or contradicting a card. Use a `resourceId` or `contentDescription`, never a coordinate pair.
-- **`save_workflow`** — after a multi-step UI sequence with no deep link ran cleanly and is likely to be repeated. Better still, write it as a workflow definition (see the `workflows` skill): a definition finds its elements live, so it keeps working after the app changes.
+- **`workflow_runner(mode="save", definition={...})`** — after a multi-step UI sequence with no deep link ran cleanly and is likely to be repeated. The definition finds its elements live and checks declared results. See the `workflows` skill. `save_workflow` stores only the older literal step format.
 
 When an app offers a deep link, `open_intent` usually beats a long tap sequence (see the `device-automation` skill).
 

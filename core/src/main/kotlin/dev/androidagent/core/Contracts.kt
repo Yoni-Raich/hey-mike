@@ -57,6 +57,8 @@ interface SessionStore {
     suspend fun rename(sessionId: String, title: String)
     suspend fun deleteSession(sessionId: String)
     fun workspace(sessionId: String): File
+    /** Append one visible, ordered session event to the user's private workspace. */
+    suspend fun appendTrace(sessionId: String, entry: JsonObject) {}
     suspend fun loadQueuedTurns(): List<QueuedTurn> = emptyList()
     suspend fun saveQueuedTurns(turns: List<QueuedTurn>) {}
 }

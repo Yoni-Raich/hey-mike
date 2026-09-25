@@ -23,8 +23,11 @@ package dev.androidagent.core
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -194,6 +197,55 @@ class AgentCoordinatorTest {
         runCurrent()
 
         assertTrue(rig.store.messages.none { it.text.startsWith("Run summary:") })
+        rig.close()
+    }
+
+    @Test fun sessionTraceKeepsOrderedToolPayloadsResultsAndFollowingAssistantText() = runTest {
+        val rig = Rig(this)
+        val prompt = "Read the screen and explain what you found"
+        val largeArgument = "argument-value-".repeat(500)
+        val largeResult = "result-value-".repeat(500)
+        val assistantText = "The screen shows the requested page. ".repeat(100)
+        val arguments = buildJsonObject {
+            put("package", "com.example.gym")
+            put("payload", largeArgument)
+        }
+        rig.tools.nextResult = ToolResult(largeResult)
+
+        rig.coordinator.send("one", prompt)
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("trace-request", "read_ui", arguments, "thread", "turn"))
+        runCurrent()
+        rig.engine.emit(EngineEvent.TextDelta(assistantText, "thread", "turn", "assistant-item"))
+        rig.engine.emit(
+            EngineEvent.MessageCompleted(
+                assistantText, "thread", "turn", "assistant-item", phase = "final_answer",
+            ),
+        )
+        runCurrent()
+
+        val entries = rig.store.traces
+        assertEquals(listOf("user", "tool_call", "tool_result", "assistant"), entries.map {
+            it["type"]!!.jsonPrimitive.content
+        })
+        assertTrue("trace timestamps are missing", entries.all { it["timestampMs"] != null })
+        val user = entries[0]
+        assertEquals(prompt, user["text"]!!.jsonPrimitive.content)
+
+        val call = entries[1]
+        assertEquals("trace-request", call["requestId"]!!.jsonPrimitive.content)
+        assertEquals("read_ui", call["name"]!!.jsonPrimitive.content)
+        assertEquals(arguments, call["arguments"]!!.jsonObject)
+        assertEquals(largeArgument, call["arguments"]!!.jsonObject["payload"]!!.jsonPrimitive.content)
+
+        val result = entries[2]
+        assertEquals("trace-request", result["requestId"]!!.jsonPrimitive.content)
+        assertEquals("read_ui", result["name"]!!.jsonPrimitive.content)
+        assertEquals(largeResult, result["text"]!!.jsonPrimitive.content)
+
+        val assistant = entries[3]
+        assertEquals(assistantText, assistant["text"]!!.jsonPrimitive.content)
+        assertEquals("final_answer", assistant["phase"]!!.jsonPrimitive.content)
         rig.close()
     }
 
@@ -728,10 +780,12 @@ class AgentCoordinatorTest {
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
         override val sessions = MutableStateFlow(listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0)))
         val messages = mutableListOf<ChatMessage>()
+        val traces = mutableListOf<JsonObject>()
         override suspend fun createSession() = sessions.value.first()
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }
+        override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
         override suspend fun setThread(sessionId: String, threadId: String) = Unit
         override suspend fun rename(sessionId: String, title: String) = Unit
@@ -750,12 +804,13 @@ class AgentCoordinatorTest {
         override fun hidesOverlayDuringCapture(name: String) = name == "read_ui"
         /** How long a call takes on this fake phone, on the test's clock. */
         var workMs = 0L
+        var nextResult = ToolResult("Done")
         override suspend fun invoke(name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
             check(!revoked)
             if (needsControl(name)) controlWasVisible = overlay.visible
             executions++; names.add(name)
             if (workMs > 0) delay(workMs)
-            return ToolResult("Done")
+            return nextResult
         }
         override suspend fun cancel() = Unit
     }

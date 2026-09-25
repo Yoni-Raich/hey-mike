@@ -100,6 +100,16 @@ class WorkflowDefinitionTest {
         assertNull(definition.stepIndex("nope"))
     }
 
+    @Test fun malformedAndNonpositiveVersionsAreTypedRefusals() {
+        for (version in listOf("\"one\"", "0", "-1", "1.5")) {
+            val error = runCatching {
+                parse("""{"id":"w","version":$version,"package":"com.example.app","steps":[{"id":"s","action":"observe"}]}""")
+            }.exceptionOrNull()
+            assertTrue("version=$version should be a typed refusal, got $error", error is WorkflowFormatException)
+            assertEquals("version=$version", "workflow_invalid", (error as WorkflowFormatException).errorType)
+        }
+    }
+
     @Test fun nothingPositionalCanBeWrittenIntoADefinition() {
         // Coordinates and node handles are what made the old mechanism break
         // on any screen but the one it was recorded on, so there is no field

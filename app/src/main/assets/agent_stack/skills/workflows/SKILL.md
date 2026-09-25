@@ -11,7 +11,7 @@ coordinates, and a step that does not land stops the run.
 
 | | `act_plan` | `workflow_runner` |
 |---|---|---|
-| The steps come from | you, now, from the `read_ui` you just did | a saved definition file |
+| The steps come from | you, now, from the `read_ui` you just did | a saved definition |
 | Use it when | you can already see the whole sequence on this screen | the task is one someone has worked out before |
 | Lives for | this one call | months, across chats and phones |
 | Limit | 8 steps | 24 steps, parameters, `skipIfVerified` |
@@ -98,19 +98,21 @@ continue, send the **same steps** again with `startAt` set to the step named in
 `resume` — everything before it is skipped. If the screen has moved on, read it
 and write a new plan instead.
 
-Worth keeping? A sequence you have now run twice belongs in a definition file
-(section 6), where the next chat gets it for free.
+Worth keeping? Save it as a definition (section 6), where the next chat gets it
+for free.
 ---
 
 ## 2. Find the workflow
 
 ```text
-workflow_runner(mode="list")                      -> every installed workflow
+workflow_runner(mode="list")                      -> definitions and older step lists
 workflow_runner(mode="list", package="com.android.settings")
 ```
 
-Each entry names the workflow, its package, what it does, how many steps it has,
-and whether any step stops to ask the user.
+Definitions name the workflow, its package, what it does, how many steps it has,
+and whether any step stops to ask the user. `legacyWorkflows` is a separate
+list of older literal step sequences. The runner cannot execute those entries;
+use `list_workflows` and `run_workflow` for them.
 
 To see the steps before committing to them:
 
@@ -204,8 +206,9 @@ about to happen, then make the call.
 ## 6. Writing a new workflow
 
 Work the sequence out once with the ordinary device tools. When it runs cleanly,
-write it as `<id>.json` in `{{WORKFLOW_DEFINITIONS_DIR}}` so the next chat costs
-one call instead of ten turns. `save_workflow` does **not** write there.
+save a declarative definition with `workflow_runner(mode="save",
+definition={...})`. The runner validates and stores it without running it.
+`save_workflow` stores an older literal step list that the runner cannot load.
 
 Build the selectors from what `read_ui` actually returned **on this phone**, on
 the run that worked — not from what the screen looks like, from another phone,
@@ -243,6 +246,12 @@ or from these examples:
   ]
 }
 ```
+
+Call `workflow_runner` with `mode="save"` and the whole JSON object above as
+`definition`. Then review it with
+`workflow_runner(workflow="silence-for-an-hour", mode="describe")`.
+The optional top-level `workflow` and `package` fields must agree with the
+definition.
 
 ### Actions
 
@@ -356,9 +365,10 @@ but the one it was recorded on.
 
 ### Verification
 
-A step with no `verify` is reported as `verified:false`. Give every step that
-changes something a condition, or the run will report success for a tap that
-landed on nothing.
+A step with no `verify` is reported as `verification:"not_requested"` and
+`verified:false`. This means the action ran but its intended result was not
+checked. A final screen observation does not verify every prior step. Give
+every step that changes something a condition when the result is observable.
 
 - `{"package": "com.android.settings"}` — that app is in front
 - `{"present": {"text": "Wireless debugging"}}` — a matching node is on screen
@@ -380,9 +390,10 @@ landed on nothing.
 
 ### Where definitions live
 
-One file per workflow, named `<id>.json`, in `{{WORKFLOW_DEFINITIONS_DIR}}`. `workflow_runner(mode="list")` reports any file
-that is present but does not parse, with the reason — so a definition you wrote
-that does not show up in the list is a file to fix, not a file to write again.
+The runner stores one file per definition, named `<id>.json`, in
+`{{WORKFLOW_DEFINITIONS_DIR}}`. `workflow_runner(mode="list")` reports any file
+that is present but does not parse, with the reason. A valid saved definition
+can be reviewed with `mode="describe"` before running it.
 
 For a sequence you do not want to write a definition for, `save_workflow` still
 stores a literal list of tool calls that `run_workflow` replays. It is the older,

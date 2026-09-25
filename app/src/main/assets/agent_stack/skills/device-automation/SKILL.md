@@ -104,12 +104,17 @@ bounds-centre maths in section 1 instead. Never call a tool you were not given.
 
 When they are available, prefer them over coordinates: they act on the node
 itself, so they cannot miss because the screen scrolled a few pixels.
+Check `nodeActionsAvailable` in `read_ui`. If it is false (`source:file`),
+the ids came from an ADB dump and cannot be used by `tap_node`, `set_text` or
+`scroll_node`. Use the bounds with `tap` and a focused `type_text`, or enable
+Hey Mike's accessibility service and read the screen again.
 
 - `tap_node(nodeId, observationId)` — both ids are required. `observationId`
   comes from the `read_ui` reply the node was listed in. A node from a stale
   observation is refused with an explanation rather than tapped blindly.
   After an `"unchanged":true` reply, the `observationId` you already hold is
-  still accepted.
+  still accepted within this run. A new user turn starts a new run and drops
+  all old node handles; call `read_ui` again before `tap_node` or `set_text`.
 - `set_text(nodeId, observationId, text, submit?)` — replaces the field's whole
   contents. Check `verified` in the reply: some chat and Compose inputs accept
   the action and keep their old value. If `verified` is false, fall back to

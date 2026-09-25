@@ -42,6 +42,20 @@ class IntentPolicyTest {
         assertEquals("scheme_blocked", (decision as IntentPolicy.Decision.Deny).reason)
     }
 
+    @Test fun equivalentHttpsSchemeCapitalizationProducesTheSameCanonicalUri() {
+        val lower = IntentPolicy.evaluate(view, "https://example.com") as IntentPolicy.Decision.Allow
+        val mixed = IntentPolicy.evaluate(view, "Https://example.com") as IntentPolicy.Decision.Allow
+
+        assertEquals("https://example.com", lower.uri)
+        assertEquals(lower.uri, mixed.uri)
+    }
+
+    @Test fun mixedCaseJavascriptRemainsBlocked() {
+        val decision = IntentPolicy.evaluate(view, "JaVaScRiPt:alert(1)")
+
+        assertEquals("scheme_blocked", (decision as IntentPolicy.Decision.Deny).reason)
+    }
+
     @Test fun aPrivateAppDeepLinkIsAllowed() {
         // This is the case the layer exists for. A positive scheme allowlist
         // would break it, which is why the rule is structural instead.

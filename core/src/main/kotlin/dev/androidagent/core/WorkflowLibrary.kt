@@ -24,6 +24,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 
 /**
@@ -60,7 +63,7 @@ class WorkflowLibrary(private val root: File) {
         if (wanted.isEmpty()) return Lookup.NotFound(name, emptyList())
         val all = all()
         val scoped = if (packageName.isNullOrBlank()) all else {
-            all.filter { it.packageName.equals(packageName.trim(), ignoreCase = true) }.ifEmpty { all }
+            all.filter { it.packageName.equals(packageName.trim(), ignoreCase = true) }
         }
         scoped.firstOrNull { normalize(it.id) == wanted }?.let { return Lookup.Found(it) }
         val near = scoped.filter { normalize(it.id).contains(wanted) || wanted.contains(normalize(it.id)) }
@@ -91,12 +94,21 @@ class WorkflowLibrary(private val root: File) {
      */
     fun save(definition: WorkflowDefinition): File {
         require(WorkflowDefinition.ID_RE.matches(definition.id)) { "\"${definition.id}\" is not a usable workflow id" }
+        val payload = definition.toJson().toString().toByteArray(Charsets.UTF_8)
+        require(payload.size <= MAX_FILE_BYTES) {
+            "\"${definition.id}\" is larger than $MAX_FILE_BYTES bytes and could not be loaded later"
+        }
         root.mkdirs()
         val file = File(root, definition.id + SUFFIX)
         val temp = File(root, "." + definition.id + SUFFIX + ".tmp")
-        temp.writeText(definition.toJson().toString(), Charsets.UTF_8)
-        if (!temp.renameTo(file)) {
-            file.writeText(definition.toJson().toString(), Charsets.UTF_8)
+        try {
+            temp.writeBytes(payload)
+            try {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
             temp.delete()
         }
         return file

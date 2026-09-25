@@ -24,6 +24,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -31,6 +34,7 @@ import kotlinx.serialization.json.put
 import java.io.File
 import java.util.ArrayDeque
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class AgentCoordinator(
@@ -100,6 +104,9 @@ class AgentCoordinator(
     private val metricsState = MutableStateFlow<Map<String, RunMetrics>>(emptyMap())
     val metrics = metricsState.asStateFlow()
     private var assistantId: String? = null
+    private var tracedAssistantId: String? = null
+    private var tracedAssistantText: String? = null
+    private val traceFailureReported = AtomicBoolean(false)
     private val assistantText = StringBuilder()
     private var assistantOutcome = "complete"
     private var controlTakeover = false
@@ -331,10 +338,15 @@ class AgentCoordinator(
         planMode: Boolean,
     ) {
         try {
+            traceFailureReported.set(false)
             // Read-only chat does not take over the user's screen. The first
             // device action checks and shows the overlay before dispatch.
             overlay.updateState(OverlayState(OverlayPhase.STARTING))
             sessions.append(message(sessionId, "user", prompt, attachments = images.map { it.absolutePath }))
+            trace(sessionId, "user", buildJsonObject {
+                put("text", prompt)
+                put("attachments", buildJsonArray { images.forEach { add(it.absolutePath) } })
+            })
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
             if (session.title == "New chat") sessions.rename(sessionId, prompt.take(48).ifBlank { "Image chat" })
             val work = sessions.workspace(sessionId)
@@ -399,7 +411,12 @@ class AgentCoordinator(
         }
         if (approval == null) return false
         if (record && sessionId != null) {
-            scope.launch { runCatching { sessions.append(message(sessionId, "user", reply.trim())) } }
+            scope.launch {
+                runCatching {
+                    sessions.append(message(sessionId, "user", reply.trim()))
+                    trace(sessionId, "user", buildJsonObject { put("text", reply.trim()); put("source", "approval_reply") })
+                }
+            }
         }
         approve(approval.requestId, allow)
         return true
@@ -426,7 +443,10 @@ class AgentCoordinator(
                 if (!isCurrentTurn(request.token, request.threadId, request.turnId)) return@launchControl
                 engine.steer(request.threadId, request.turnId, request.prompt)
                 if (isCurrentTurn(request.token, request.threadId, request.turnId)) {
-                    request.sessionId?.let { sessions.append(message(it, "user", request.prompt)) }
+                    request.sessionId?.let {
+                        sessions.append(message(it, "user", request.prompt))
+                        trace(it, "user", buildJsonObject { put("text", request.prompt); put("source", "steer") })
+                    }
                 }
             } catch (error: Exception) {
                 if (error !is CancellationException && isCurrent(request.token)) {
@@ -934,6 +954,12 @@ class AgentCoordinator(
                 }
                 ensureCurrent(token)
                 sessions.append(message(sessionId, "assistant", "Generated image", listOf(image.absolutePath)))
+                trace(sessionId, "assistant", buildJsonObject {
+                    put("text", "Generated image")
+                    put("attachment", image.absolutePath)
+                    put("threadId", event.threadId)
+                    put("turnId", event.turnId)
+                })
             }
             is EngineEvent.ToolCall -> {
                 if (!matches(event.threadId, event.turnId)) {
@@ -987,6 +1013,13 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 mutableState.value = state.value.copy(phase = if (visible) RunPhase.CONTROLLING else RunPhase.TOOL, controlling = visible, status = status, toolName = toolName)
                             }
+                            trace(sessionId, "tool_call", buildJsonObject {
+                                put("threadId", event.threadId.orEmpty())
+                                put("turnId", event.turnId.orEmpty())
+                                put("requestId", event.requestId)
+                                put("name", event.name)
+                                put("arguments", event.arguments)
+                            })
                             val toolStart = nowNanos()
                             // Any approval this call raises is subtracted below,
                             // so tool time stays device time.
@@ -1011,6 +1044,18 @@ class AgentCoordinator(
                             }
                         }
                         if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
+                            val imagePath = result.imageBase64?.let { persistTraceImage(sessionId, it) }
+                            trace(sessionId, "tool_result", buildJsonObject {
+                                put("threadId", event.threadId.orEmpty())
+                                put("turnId", event.turnId.orEmpty())
+                                put("requestId", event.requestId)
+                                put("name", event.name)
+                                put("success", result.success)
+                                put("text", result.text)
+                                put("attachments", buildJsonArray { result.attachmentPaths.forEach { add(it) } })
+                                imagePath?.let { put("imageArtifact", it) }
+                                if (result.imageBase64 != null && imagePath == null) put("imageArtifactError", "Image could not be saved")
+                            })
                             sessions.append(message(sessionId, "tool", "${event.name}: ${result.text.take(4_000)}", attachments = result.attachmentPaths))
                             engine.answerTool(event.requestId, result)
                         }
@@ -1104,6 +1149,44 @@ class AgentCoordinator(
 
     private fun isVoiceMode(): Boolean = synchronized(lifecycleLock) { voiceMode }
 
+    private suspend fun trace(sessionId: String, type: String, details: JsonObject) {
+        val entry = buildJsonObject {
+            put("timestampMs", System.currentTimeMillis())
+            put("type", type)
+            details.forEach { (key, value) -> put(key, value) }
+        }
+        try {
+            sessions.appendTrace(sessionId, entry)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (traceFailureReported.compareAndSet(false, true)) {
+                runCatching {
+                    sessions.append(message(sessionId, "system", "Session trace could not be saved: ${error.message}"))
+                }
+            }
+        }
+    }
+
+    private suspend fun persistTraceImage(sessionId: String, encoded: String): String? = try {
+        withContext(Dispatchers.IO) {
+            require(encoded.length <= 28 * 1024 * 1024) { "Image exceeds the trace limit" }
+            val bytes = java.util.Base64.getDecoder().decode(encoded)
+            require(bytes.isNotEmpty()) { "Image is empty" }
+            val extension = if (bytes.size > 2 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte()) "jpg" else "png"
+            val relative = "trace-artifacts/${UUID.randomUUID()}.$extension"
+            File(sessions.workspace(sessionId), relative).apply {
+                parentFile!!.mkdirs()
+                writeBytes(bytes)
+            }
+            relative
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
     private suspend fun appendAssistant(text: String, itemId: String?) {
         if (text.isEmpty()) return
         val token = epoch.get()
@@ -1113,6 +1196,8 @@ class AgentCoordinator(
             val session = state.value.sessionId ?: return
             val id = UUID.randomUUID().toString()
             synchronized(lifecycleLock) { assistantId = id; assistantItemId = itemId }
+            tracedAssistantId = null
+            tracedAssistantText = null
             sessions.append(ChatMessage(id, session, "assistant", "", System.currentTimeMillis(), "streaming"))
         }
         synchronized(lifecycleLock) {
@@ -1145,6 +1230,19 @@ class AgentCoordinator(
         if (id != null) {
             val text = assistantText.toString()
             assistantFlushLock.withLock { sessions.updateMessage(id, text, "complete") }
+            if ((id != tracedAssistantId || text != tracedAssistantText) && text.isNotBlank()) {
+                state.value.sessionId?.let { sessionId ->
+                    trace(sessionId, if (id == tracedAssistantId) "assistant_revision" else "assistant", buildJsonObject {
+                        put("messageId", id)
+                        put("threadId", thread.orEmpty())
+                        put("turnId", turn.orEmpty())
+                        put("text", text)
+                        put("phase", if (lastMessageWasFinal) "final_answer" else "message")
+                    })
+                }
+                tracedAssistantId = id
+                tracedAssistantText = text
+            }
             speakOnOverlay(text)
         }
         if (clear) synchronized(lifecycleLock) {
@@ -1203,6 +1301,15 @@ class AgentCoordinator(
             runCatching {
                 assistantFlushLock.withLock { sessions.updateMessage(id, final.text, final.outcome) }
             }
+            if ((id != tracedAssistantId || final.text != tracedAssistantText) && final.text.isNotBlank()) {
+                trace(sessionId, if (id == tracedAssistantId) "assistant_revision" else "assistant", buildJsonObject {
+                    put("messageId", id)
+                    put("text", final.text)
+                    put("phase", if (final.outcome == "complete" && lastMessageWasFinal) "final_answer" else final.outcome)
+                })
+                tracedAssistantId = id
+                tracedAssistantText = final.text
+            }
         }
         if (final.text.isBlank()) {
             val text = when (final.outcome) {
@@ -1211,6 +1318,7 @@ class AgentCoordinator(
                 else -> "The run ended without a final reply. Check the activity details for the actions that completed."
             }
             sessions.append(message(sessionId, "assistant", text))
+            trace(sessionId, "assistant", buildJsonObject { put("text", text); put("phase", final.outcome) })
         }
         val terminalOverlay = synchronized(lifecycleLock) {
             when {

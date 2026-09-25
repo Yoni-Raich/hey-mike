@@ -23,6 +23,7 @@ package dev.androidagent.core
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -86,6 +87,23 @@ class WorkflowToolGatewayTest {
         }
 
     private fun parse(result: ToolResult): JsonObject = Json.parseToJsonElement(result.text).jsonObject
+
+    @Test fun aWorkflowForAnotherPackageIsRefusedBeforeDeviceAccess() {
+        val result = runBlocking {
+            gateway().invoke(
+                "workflow_runner",
+                buildJsonObject {
+                    put("workflow", "wireless-debugging")
+                    put("package", "com.android.chrome")
+                    put("mode", "run")
+                },
+            )
+        }
+        assertFalse(result.success)
+        assertEquals("workflow_not_found", parse(result)["errorType"]!!.jsonPrimitive.content)
+        assertTrue(result.text, result.text.contains("com.android.chrome"))
+        assertTrue(calls.isEmpty())
+    }
 
     // ---- parameters ----
 
@@ -264,5 +282,104 @@ class WorkflowToolGatewayTest {
         }
         assertFalse(result.success)
         assertEquals("confirmation_unavailable", parse(result)["errorType"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun actPlanDistinguishesCompletedStepsFromVerificationThatWasNotRequested() {
+        val json = parse(
+            runBlocking {
+                gateway(library = null).invoke(
+                    "act_plan",
+                    buildJsonObject {
+                        put("steps", buildJsonArray {
+                            add(buildJsonObject {
+                                put("id", "inspect")
+                                put("action", "observe")
+                            })
+                        })
+                    },
+                )
+            },
+        )
+
+        val step = json["steps"]!!.jsonArray.single().jsonObject
+        assertEquals("done", step["status"]!!.jsonPrimitive.content)
+        assertEquals("not_requested", step["verification"]!!.jsonPrimitive.content)
+        assertEquals(false, step["verified"]!!.jsonPrimitive.booleanOrNull)
+        // The final screen is useful evidence for the caller, but does not
+        // silently change the per-step verification state.
+        assertEquals("com.android.settings", json["observation"]!!.jsonObject["activePackage"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun workflowRunnerCanSaveAndListOneCanonicalDefinition() {
+        val gateway = gateway()
+        val saved = runBlocking {
+            gateway.invoke(
+                "workflow_runner",
+                buildJsonObject {
+                    put("mode", "save")
+                    put("definition", Json.parseToJsonElement(
+                        """{"id":"saved-settings","package":"com.android.settings","steps":[{"id":"read","action":"observe"}]}""",
+                    ))
+                },
+            )
+        }
+        assertTrue(saved.text, saved.success)
+
+        val listed = parse(runBlocking {
+            gateway.invoke("workflow_runner", buildJsonObject { put("mode", "list") })
+        })
+        assertTrue(
+            listed["workflows"]!!.jsonArray.any {
+                it.jsonObject["workflow"]!!.jsonPrimitive.content == "saved-settings"
+            },
+        )
+
+        val run = runBlocking {
+            gateway.invoke(
+                "workflow_runner",
+                buildJsonObject { put("workflow", "saved-settings"); put("mode", "run") },
+            )
+        }
+        assertTrue(run.text, run.success)
+        assertTrue("saved definition did not reach the device router", calls.contains("read_ui"))
+    }
+
+    @Test fun legacySavedSequenceIsVisibleAndCannotBeMistakenForARunnableDefinition() {
+        val gateway = gateway()
+        val saved = runBlocking {
+            gateway.invoke(
+                "save_workflow",
+                buildJsonObject {
+                    put("name", "legacy-settings")
+                    put("package", "com.android.settings")
+                    put("steps", buildJsonArray {
+                        add(buildJsonObject { put("tool", "read_ui") })
+                    })
+                },
+            )
+        }
+        assertTrue(saved.text, saved.success)
+        assertEquals("legacy_steps", parse(saved)["format"]!!.jsonPrimitive.content)
+
+        val listing = parse(runBlocking {
+            gateway.invoke("workflow_runner", buildJsonObject { put("mode", "list") })
+        })
+        assertTrue(
+            listing["legacyWorkflows"]!!.jsonArray.any {
+                it.jsonObject["name"]!!.jsonPrimitive.content == "legacy-settings" &&
+                    it.jsonObject["format"]!!.jsonPrimitive.content == "legacy_steps"
+            },
+        )
+        assertEquals(1, listing["legacyCount"]!!.jsonPrimitive.content.toInt())
+
+        val attemptedRun = runBlocking {
+            gateway.invoke(
+                "workflow_runner",
+                buildJsonObject { put("workflow", "legacy-settings"); put("mode", "run") },
+            )
+        }
+        assertFalse(attemptedRun.success)
+        assertEquals("workflow_legacy_format", parse(attemptedRun)["errorType"]!!.jsonPrimitive.content)
+        assertTrue("no device action should run", calls.isEmpty())
     }
 }
