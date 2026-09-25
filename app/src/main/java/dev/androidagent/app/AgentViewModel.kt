@@ -86,7 +86,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             graph.computers.state.collect { remote ->
                 val labels = remote.bindings.mapNotNull { (chat, binding) ->
                     val computer = remote.computers.firstOrNull { it.id == binding.computerId } ?: return@mapNotNull null
-                    chat to "${computer.label} · ${binding.cwd}"
+                    chat to "${computer.label} · ${folderName(binding.cwd)}"
                 }.toMap()
                 mutable.update {
                     it.copy(
@@ -94,11 +94,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         computersUnreadable = remote.unreadable,
                         defaultComputerId = remote.defaultComputerId,
                         remoteChats = labels,
+                        remoteBindings = remote.bindings,
+                        computerProjects = remote.projects,
                     )
                 }
             }
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
+        viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
         viewModelScope.launch { graph.coordinator.state.collect { state -> mutable.update { it.copy(runState = state) } } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
@@ -153,7 +156,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val host = draft.host.trim()
         val vpnHost = draft.vpnHost.trim().takeIf { it.isNotEmpty() && it != host }
         val user = draft.user.trim()
-        check(host.isNotEmpty()) { "Enter the computer's address on your home network." }
+        check(host.isNotEmpty() || vpnHost != null) { "Enter the computer's home network or VPN address." }
         check(user.isNotEmpty()) { "Enter the Windows user name." }
         val port = draft.port.trim().ifEmpty { "22" }.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: kotlin.error("The port is a number from 1 to 65535.")
@@ -161,7 +164,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(existing != null || draft.password.isNotEmpty()) { "Enter the password." }
         val base = existing ?: RemoteComputer(id = RemoteStore.newId(), label = host, host = host, user = user)
         val computer = base.copy(
-            label = draft.label.trim().ifEmpty { host }, host = host, vpnHost = vpnHost, port = port, user = user, access = draft.access,
+            label = draft.label.trim().ifEmpty { host.ifEmpty { vpnHost.orEmpty() } }, host = host, vpnHost = vpnHost, port = port, user = user, access = draft.access,
         )
         val saved = withContext(Dispatchers.IO) {
             graph.computers.save(computer, draft.password.takeIf { it.isNotEmpty() }, makeDefault = draft.isDefault)
@@ -173,16 +176,79 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connectComputer(id: String) = task { setUpComputer(id) }
 
-    /**
-     * Open the computers. With a default computer, go straight on to it: the
-     * user did not pick one, so the default is the one meant. Back leads to
-     * the full list.
-     */
-    fun openComputers() {
+    fun openComputers() = mutable.update { it.copy(isComputersOpen = true) }
+
+    /** Connect to the computer, then pick the folder of a new project. */
+    fun newProject(id: String) {
         mutable.update { it.copy(isComputersOpen = true) }
-        val default = graph.computers.state.value.defaultComputer ?: return
-        if (graph.remote.setup.value[default.id] is RemoteSetup.Working) return
-        connectComputer(default.id)
+        if (graph.remote.setup.value[id] is RemoteSetup.Working) return
+        connectComputer(id)
+    }
+
+    /**
+     * List every computer's conversations again, connecting in the
+     * background to one not tried yet in this app run. Quiet: a failure only
+     * shows on the computer's own row.
+     */
+    fun refreshPcThreads() {
+        graph.computers.state.value.computers.forEach { computer ->
+            viewModelScope.launch {
+                if (graph.remote.setup.value[computer.id] == null) graph.remote.connectQuietly(computer.id)
+                else graph.remote.refreshThreads(computer.id)
+            }
+        }
+    }
+
+    /** Connect to a computer from the side panel, without opening the computers screen. */
+    fun reconnectComputer(id: String) = task { graph.remote.reload(id); graph.remote.setUp(id, install = false) }
+
+    /**
+     * Open a conversation Codex keeps on the computer. A chat here that
+     * already follows it is reused; otherwise a new chat is bound to the
+     * thread and its earlier messages are copied in.
+     */
+    fun openPcThread(id: String, threadId: String) = task {
+        graph.computers.state.value.bindings.entries.firstOrNull { it.value.threadId == threadId }?.let {
+            current.value = it.key
+            return@task
+        }
+        val thread = graph.remote.threads.value[id]?.firstOrNull { it.id == threadId }
+            ?: kotlin.error("That conversation is no longer on the computer.")
+        val session = graph.sessions.createSession()
+        withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId)) }
+        graph.sessions.setThread(session.id, threadId)
+        graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
+        current.value = session.id
+        runCatching { graph.remote.readThread(id, threadId) }
+            .onSuccess { messages ->
+                // Oldest first, a millisecond apart, so the order survives sorting.
+                val start = System.currentTimeMillis() - messages.size
+                messages.forEachIndexed { index, message ->
+                    graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), session.id, message.role, message.text, start + index))
+                }
+            }
+            .onFailure {
+                note(session.id, "The earlier messages could not be read from the computer: ${it.message}. Mike still continues this conversation there.")
+            }
+    }
+
+    /**
+     * Before its first message, a chat can move between the phone and a
+     * computer folder. After that its conversation lives where it started.
+     */
+    fun moveNewChat(computerId: String?, path: String?) = task {
+        val id = current.value ?: kotlin.error("Choose a chat first.")
+        check(mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.engineThreadId == null) {
+            "This chat has started. Start a new chat to work somewhere else."
+        }
+        withContext(Dispatchers.IO) {
+            if (computerId == null || path == null) {
+                graph.computers.unbind(id)
+            } else {
+                graph.computers.bind(id, RemoteBinding(computerId, path))
+                graph.computers.addProject(computerId, path)
+            }
+        }
     }
 
     fun setDefaultComputer(id: String) = task { withContext(Dispatchers.IO) { graph.computers.setDefault(id) } }
@@ -239,13 +305,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val folder = folderName(path)
         withContext(Dispatchers.IO) {
             graph.computers.bind(session.id, RemoteBinding(id, path))
+            graph.computers.addProject(id, path)
             graph.computers.update(id) { it.copy(lastFolder = path) }
         }
         // A title of its own, so the first message does not rename it.
         graph.sessions.rename(session.id, folder)
         current.value = session.id
         mutable.update { it.copy(folderBrowser = null, isComputersOpen = false) }
-        note(session.id, "This chat runs on ${computer.label}, in $path. Mike uses Codex on that computer: its shell, files, git and skills.")
+        note(session.id, "This chat runs on ${computer.label}, in $path. Mike works there with Codex (shell, files, git, skills) and can still use this phone.")
     }
 
     // First launch and consent live in the same "ui" preferences as the model

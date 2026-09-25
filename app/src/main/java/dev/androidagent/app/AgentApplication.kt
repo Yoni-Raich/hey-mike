@@ -230,7 +230,8 @@ class AgentGraph(private val app: Application) {
     val queue: SessionRunQueue
     init {
         runCoordinator = AgentCoordinator(
-            scope, engine, sessions, tools, overlay,
+            // A computer chat names files by their path on the computer.
+            scope, engine, sessions, dev.androidagent.remote.ComputerFilesGateway(tools, remote), overlay,
             sendGrants = sendGrants,
             adbStatus = { adb.status.value },
             // An approval card lives only in the app, and device control means

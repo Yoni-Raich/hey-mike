@@ -1573,7 +1573,11 @@ would be a mobile round trip wrapped in `cat` and heredocs.
 - **SSH.** JSch (pure Java, Android networking and DNS, no native binary).
   Password login; the host key is trusted on first connect, shown as a
   `SHA256:` fingerprint, and pinned. A different key later refuses the
-  connection before the password is sent. A changed address clears the pin.
+  connection before the password is sent. A changed home address clears the
+  pin. A computer may have a home address, a VPN address (such as Tailscale),
+  or both. Connect tries the one that answered last first and moves on only
+  when an address does not answer at all; a refused password or a changed
+  key stops there. The pin holds for both addresses.
 - **Codex on Windows.** Setup runs short PowerShell scripts through
   `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
   and PowerShell default shells. The computer downloads the official
@@ -1594,6 +1598,35 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   computer; the app then trusts none of it and asks for the computers again.
 - **Pictures** are sent inline as data URLs; other attachments are refused in
   a computer chat because their paths are on the phone.
+- **Files between the computer and the phone.** The phone's file tools read
+  the chat's workspace on the phone. `ComputerFilesGateway` wraps the device
+  tool gateway: in a computer chat, `push_file` and `install_apk` take a path
+  on the computer (absolute, or relative to the chat's folder), which is
+  copied to the phone over the chat's SSH link (SFTP) first, and `pull_file`
+  also copies the phone's file into the project folder. No new model tool;
+  phone chats are untouched. The thread instructions forbid using adb on the
+  computer to reach the phone: it can see other devices and skips the app's
+  controls.
+- **The desktop.** Commands over SSH run in a Windows session with no screen.
+  For screenshots, windows and the clipboard, the instructions teach a
+  one-off scheduled task that runs as the signed-in user, interactively. It
+  works only while someone is signed in to Windows.
+- **Projects and the PC's own conversations.** A project is a folder on a
+  computer: one the user picked (sealed in the same store), one a chat here
+  runs in, or one Codex on the computer worked in. The side panel lists each
+  computer, its projects and their chats, folding each level. Codex's own
+  `thread/list` (sources `cli`, `vscode`, `appServer`) supplies the
+  conversations the PC started; summaries only, up to 200, refreshed when the
+  panel opens. Opening one binds a new chat to that thread and copies its
+  messages in once from `thread/read`. The panel connects in the background
+  once per app run, but never installs Codex on its own. A conversation that
+  is running in the PC's Codex app right now can be read, but continuing it
+  from both places at once is not guarded against.
+- **Where a new chat runs.** A new chat starts on the phone. Until its first
+  message it can be moved to a recent project on a computer, or to another
+  folder; after that its thread lives where it started. A computer chat's
+  title bar shows the computer and folder and that the phone is still in
+  reach.
 - **Stop** interrupts the turn on the computer. If that fails, the engines
   are closed, which closes the SSH channel. A command Codex already started
   there may keep running; the run summary must not claim it was undone.

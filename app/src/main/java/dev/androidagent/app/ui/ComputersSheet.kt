@@ -6,13 +6,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,8 +35,6 @@ import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Star
@@ -45,18 +44,16 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,6 +75,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import dev.androidagent.remote.RemoteAccess
 import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteSetup
@@ -121,43 +120,56 @@ Hey Mike: let Mike work on this Windows PC
 """.trimIndent()
 
 /**
- * Computers Mike can work on. Three views in one sheet: the list, the add or
- * edit form, and the folder picker a chat is opened from.
+ * Computers Mike can work on, on a screen of its own: the list, adding or
+ * editing one (the PC's setup first, then the sign-in), and the folder picker
+ * a project is started from. A full screen, so scrolling a long folder list
+ * never closes it; Back steps back one view.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var draft by remember { mutableStateOf<ComputerDraft?>(null) }
-    ModalBottomSheet(
-        onDismissRequest = actions.onCloseComputers,
-        sheetState = sheet,
-        containerColor = SheetFill,
-        contentColor = Ink,
-    ) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = 12.dp)) {
-            val browser = state.folderBrowser
-            val editing = draft
-            when {
-                browser != null -> FolderPicker(state, browser, actions)
-                editing != null -> ComputerForm(
-                    initial = editing,
-                    firstComputer = state.computers.isEmpty(),
-                    onShareSteps = { actions.onShareText(SETUP_STEPS_TEXT) },
-                    onCancel = { draft = null },
-                    onSave = { actions.onSaveComputer(it); draft = null },
-                )
-                else -> ComputerList(
-                    state = state,
-                    actions = actions,
-                    onAdd = { draft = ComputerDraft(isDefault = state.computers.isEmpty()) },
-                    onEdit = { c ->
-                        draft = ComputerDraft(
-                            id = c.id, label = c.label, host = c.host, vpnHost = c.vpnHost.orEmpty(), port = c.port.toString(),
-                            user = c.user, access = c.access, isDefault = c.id == state.defaultComputerId,
-                        )
-                    },
-                )
+    // A new computer starts on the PC's setup steps; an edit skips them.
+    var onSetupStep by remember { mutableStateOf(false) }
+    val back: () -> Unit = {
+        when {
+            state.folderBrowser != null -> actions.onCloseFolderBrowser()
+            draft != null && !onSetupStep && draft?.id == null -> onSetupStep = true
+            draft != null -> draft = null
+            else -> actions.onCloseComputers()
+        }
+    }
+    Dialog(onDismissRequest = back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = SheetFill, contentColor = Ink) {
+            Column(Modifier.fillMaxSize().imePadding().padding(top = 8.dp, bottom = 12.dp)) {
+                val browser = state.folderBrowser
+                val editing = draft
+                when {
+                    browser != null -> FolderPicker(state, browser, actions)
+                    editing != null && onSetupStep -> SetupStep(
+                        onShare = { actions.onShareText(SETUP_STEPS_TEXT) },
+                        onBack = back,
+                        onDone = { onSetupStep = false },
+                    )
+                    editing != null -> ComputerForm(
+                        initial = editing,
+                        onSetupSteps = { onSetupStep = true },
+                        onCancel = back,
+                        onSave = { actions.onSaveComputer(it); draft = null },
+                    )
+                    else -> ComputerList(
+                        state = state,
+                        actions = actions,
+                        onClose = actions.onCloseComputers,
+                        onAdd = { draft = ComputerDraft(isDefault = state.computers.isEmpty()); onSetupStep = true },
+                        onEdit = { c ->
+                            draft = ComputerDraft(
+                                id = c.id, label = c.label, host = c.host, vpnHost = c.vpnHost.orEmpty(), port = c.port.toString(),
+                                user = c.user, access = c.access, isDefault = c.id == state.defaultComputerId,
+                            )
+                            onSetupStep = false
+                        },
+                    )
+                }
             }
         }
     }
@@ -177,9 +189,15 @@ private fun SheetHeader(title: String, subtitle: String, onBack: (() -> Unit)? =
 }
 
 @Composable
-private fun ComputerList(state: AgentUiState, actions: AgentUiActions, onAdd: () -> Unit, onEdit: (RemoteComputer) -> Unit) {
-    SheetHeader("Computers", "Mike runs Codex on your Windows PC and works in a folder you pick.")
-    Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+private fun ColumnScope.ComputerList(
+    state: AgentUiState,
+    actions: AgentUiActions,
+    onClose: () -> Unit,
+    onAdd: () -> Unit,
+    onEdit: (RemoteComputer) -> Unit,
+) {
+    SheetHeader("Computers", "Mike runs Codex on your Windows PC and works in a folder you pick.", onBack = onClose)
+    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         if (state.computersUnreadable) {
             Text(
                 "Saved computers could not be opened on this phone, so none of them is trusted. Add them again.",
@@ -219,7 +237,7 @@ private fun EmptyComputers(onAdd: () -> Unit) {
         Icon(Icons.Outlined.Computer, contentDescription = null, tint = ReadyInk, modifier = Modifier.size(36.dp))
         Text("No computers yet", fontSize = 17.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp))
         Text(
-            "Add your Windows PC and Mike can read, edit and run code there. " +
+            "Add your Windows PC and Mike can read, edit and run code there, in chats organized by project. " +
                 "You need a few minutes at the PC once, to turn on SSH. The next screen shows how.",
             fontSize = 14.sp, lineHeight = 20.sp, color = Muted,
             modifier = Modifier.padding(top = 6.dp, bottom = 14.dp),
@@ -289,7 +307,7 @@ private fun ComputerCard(
         ) {
             Icon(Icons.Outlined.Folder, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Start a chat in a folder")
+            Text("New project")
         }
         if (!isDefault) {
             TextButton(onClick = { actions.onSetDefaultComputer(computer.id) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -362,25 +380,15 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
     }
 }
 
-/**
- * What has to be true on the PC before the phone can connect, step by step.
- * Collapsed to one line once the user has a computer working.
- */
+/** Step one of adding a computer: what has to be true on the PC first. */
 @Composable
-private fun PcSetupGuide(startExpanded: Boolean, onShare: () -> Unit) {
-    var open by rememberSaveable { mutableStateOf(startExpanded) }
-    Column(Modifier.fillMaxWidth().background(CardFill, RoundedCornerShape(16.dp)).border(1.dp, Hairline, RoundedCornerShape(16.dp))) {
-        Row(
-            Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("First, set up the PC", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink)
-                Text("Once per computer, about 5 minutes at the PC", fontSize = 12.5.sp, color = Muted)
-            }
-            Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = if (open) "Hide steps" else "Show steps", tint = Muted)
-        }
-        if (open) Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) { PcChecklist(onShare) }
+private fun ColumnScope.SetupStep(onShare: () -> Unit, onBack: () -> Unit, onDone: () -> Unit) {
+    SheetHeader("Get the PC ready", "Step 1 of 2 · once per computer, a few minutes at the PC", onBack = onBack)
+    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        PcChecklist(onShare)
+    }
+    Button(onClick = onDone, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp).heightIn(min = 48.dp)) {
+        Text("The PC is ready")
     }
 }
 
@@ -443,10 +451,9 @@ private fun CodeLine(command: String) {
 }
 
 @Composable
-private fun ComputerForm(
+private fun ColumnScope.ComputerForm(
     initial: ComputerDraft,
-    firstComputer: Boolean,
-    onShareSteps: () -> Unit,
+    onSetupSteps: () -> Unit,
     onCancel: () -> Unit,
     onSave: (ComputerDraft) -> Unit,
 ) {
@@ -454,24 +461,25 @@ private fun ComputerForm(
     var showPassword by rememberSaveable { mutableStateOf(false) }
     val editing = initial.id != null
     SheetHeader(
-        if (editing) "Edit computer" else "Add a computer",
-        "The sign-in is kept sealed on this phone and sent only to this computer.",
+        if (editing) "Edit computer" else "Connect",
+        if (editing) "The sign-in is kept sealed on this phone." else "Step 2 of 2 · the sign-in is kept sealed on this phone",
         onBack = onCancel,
     )
-    Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-        PcSetupGuide(startExpanded = firstComputer && !editing, onShare = onShareSteps)
+    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        TextButton(onClick = onSetupSteps, modifier = Modifier.padding(start = 0.dp)) { Text("How to set up the PC") }
 
         FormSection("Where to reach it")
+        Text("Fill in one address or both.", fontSize = 12.5.sp, color = Muted, modifier = Modifier.padding(bottom = 4.dp))
         OutlinedTextField(
             value = draft.host, onValueChange = { draft = draft.copy(host = it.trim()) },
             label = { Text("Home network address") }, placeholder = { Text("192.168.1.20") }, singleLine = true,
-            supportingText = { Text("From ipconfig on the PC. Works when the phone is on the same Wi-Fi.") },
+            supportingText = { Text("From ipconfig on the PC. Works on the same Wi-Fi.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = draft.vpnHost, onValueChange = { draft = draft.copy(vpnHost = it.trim()) },
-            label = { Text("VPN address (optional)") }, placeholder = { Text("100.64.0.5") }, singleLine = true,
-            supportingText = { Text("Such as Tailscale, for away from home. Tried when the home address does not answer.") },
+            label = { Text("VPN address") }, placeholder = { Text("100.64.0.5") }, singleLine = true,
+            supportingText = { Text("Such as Tailscale. Works away from home too.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
 
@@ -542,7 +550,7 @@ private fun ComputerForm(
         ) { draft = draft.copy(access = RemoteAccess.FULL) }
 
         val missing = buildList {
-            if (draft.host.isBlank()) add("the home address")
+            if (draft.host.isBlank() && draft.vpnHost.isBlank()) add("an address")
             if (draft.user.isBlank()) add("the user name")
             if (!editing && draft.password.isEmpty()) add("the password")
         }
@@ -578,10 +586,10 @@ private fun AccessOption(selected: Boolean, title: String, detail: String, onSel
 }
 
 @Composable
-private fun FolderPicker(state: AgentUiState, browser: FolderBrowserState, actions: AgentUiActions) {
+private fun ColumnScope.FolderPicker(state: AgentUiState, browser: FolderBrowserState, actions: AgentUiActions) {
     val computer = state.computers.firstOrNull { it.id == browser.computerId }
     val listing = browser.listing
-    SheetHeader(computer?.label ?: "Computer", "Choose the folder Mike works in", onBack = actions.onCloseFolderBrowser)
+    SheetHeader("New project on ${computer?.label ?: "the computer"}", "Pick the project's folder. It stays in the side panel.", onBack = actions.onCloseFolderBrowser)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -601,7 +609,7 @@ private fun FolderPicker(state: AgentUiState, browser: FolderBrowserState, actio
             }
         }
     }
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp).padding(top = 6.dp)) {
+    LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(top = 6.dp)) {
         listing?.parent?.let { parent ->
             item(key = "..") { FolderRow("Up one folder", Icons.Outlined.ArrowUpward, enabled = !browser.loading) { actions.onBrowseFolder(browser.computerId, parent) } }
         }
@@ -619,7 +627,7 @@ private fun FolderPicker(state: AgentUiState, browser: FolderBrowserState, actio
         enabled = listing != null && !browser.loading,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 48.dp),
     ) {
-        Text("Start a chat in ${listing?.path?.let(::folderName) ?: "this folder"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Start ${listing?.path?.let(::folderName) ?: "this folder"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

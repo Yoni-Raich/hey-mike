@@ -99,6 +99,18 @@ class RemoteStoreTest {
         assertEquals(listOf("192.168.1.20"), computer.copy(vpnHost = " ").hosts)
     }
 
+    @Test fun projectsAreKeptOnceAndGoWithTheirComputer() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "p.bin")
+        val store = RemoteStore(file, box)
+        store.save(computer, "secret")
+        store.addProject("pc", "C:\\src\\app")
+        store.addProject("pc", "C:\\src\\app")
+        assertEquals(listOf(RemoteProject("pc", "C:\\src\\app")), RemoteStore(file, box).state.value.projects)
+        store.remove("pc")
+        assertEquals(emptyList<RemoteProject>(), store.state.value.projects)
+    }
+
     @Test fun requestIdsFromTwoAppServersStayApart() {
         val tagged = RoutingAgentEngine.tag("pc", "7")
         assertEquals("pc" to "7", RoutingAgentEngine.untag(tagged))

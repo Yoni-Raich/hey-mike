@@ -30,6 +30,7 @@ import dev.androidagent.core.ReasoningEffortOption
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -827,5 +828,44 @@ class CodexEngineTest {
             runCatching { serverOut.close() }
             runCatching { clientOut.close() }
         }
+    @Test
+    fun threadListKeepsConversationsWithAFolderInMilliseconds() {
+        val result = Json.parseToJsonElement(
+            """{"data":[
+                {"id":"t1","preview":"Fix the picker\nmore","cwd":"C:\\src\\app","updatedAt":1790000000},
+                {"id":"t2","name":"Named","preview":"ignored","cwd":"C:\\web","updatedAt":1790000000000},
+                {"id":"t3","preview":"no folder"}
+            ],"nextCursor":null}""",
+        ).jsonObject
+        val threads = CodexEngine.parseThreadList(result)
+        assertEquals(listOf("t1", "t2"), threads.map { it.id })
+        assertEquals("Fix the picker", threads[0].title)
+        assertEquals("C:\\src\\app", threads[0].cwd)
+        assertEquals(1_790_000_000_000L, threads[0].updatedAt)
+        assertEquals("Named", threads[1].title)
+        assertEquals(
+            listOf("cli", "vscode", "appServer"),
+            CodexEngine.threadListParams(null, 500)["sourceKinds"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(100, CodexEngine.threadListParams("c", 500)["limit"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun threadReadGivesUserAndAgentTextInOrder() {
+        val result = Json.parseToJsonElement(
+            """{"thread":{"id":"t1","turns":[
+                {"items":[
+                    {"type":"userMessage","content":[{"type":"text","text":"Hi"},{"type":"image","url":"x"}]},
+                    {"type":"reasoning","summary":[]},
+                    {"type":"commandExecution","command":"ls"},
+                    {"type":"agentMessage","text":"Hello"}
+                ]},
+                {"items":[{"type":"userMessage","content":[{"type":"text","text":"Again"}]}]}
+            ]}}""",
+        ).jsonObject
+        assertEquals(
+            listOf(CodexThreadMessage("user", "Hi"), CodexThreadMessage("assistant", "Hello"), CodexThreadMessage("user", "Again")),
+            CodexEngine.parseThreadMessages(result),
+        )
     }
 }
