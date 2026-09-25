@@ -55,6 +55,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -137,6 +138,13 @@ internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
             draft != null -> draft = null
             else -> actions.onCloseComputers()
         }
+    }
+    // Mike filled in a computer: straight to the form, for the user to check.
+    LaunchedEffect(state.computerProposal) {
+        val proposal = state.computerProposal ?: return@LaunchedEffect
+        draft = proposal
+        onSetupStep = false
+        actions.onComputerProposalShown()
     }
     Dialog(onDismissRequest = back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = SheetFill, contentColor = Ink) {
@@ -466,6 +474,14 @@ private fun ColumnScope.ComputerForm(
         onBack = onCancel,
     )
     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        if (initial.proposedByMike) {
+            Text(
+                "Mike filled this in. Check that ${initial.host.ifBlank { initial.vpnHost }} is your computer before you type " +
+                    "your password: a password typed here goes to that address.",
+                fontSize = 13.sp, lineHeight = 18.sp, color = WaitInk,
+                modifier = Modifier.fillMaxWidth().background(WaitInk.copy(alpha = 0.12f), RoundedCornerShape(12.dp)).padding(12.dp),
+            )
+        }
         TextButton(onClick = onSetupSteps, modifier = Modifier.padding(start = 0.dp)) { Text("How to set up the PC") }
 
         FormSection("Where to reach it")

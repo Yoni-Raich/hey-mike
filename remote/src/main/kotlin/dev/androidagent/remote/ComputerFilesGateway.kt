@@ -40,7 +40,7 @@ class ComputerFilesGateway(
                 val onComputer = onComputer(binding.cwd, asked)
                 val local = File(ws, "$FROM_COMPUTER/${fileName(onComputer)}")
                 try {
-                    hub.download(binding.computerId, onComputer, local, MAX_COPY_BYTES)
+                    hub.download(binding.computerId, onComputer, local, Long.MAX_VALUE)
                 } catch (error: Exception) {
                     return ToolResult("Could not copy $onComputer from the computer to the phone: ${error.message}", success = false)
                 }
@@ -61,7 +61,6 @@ class ComputerFilesGateway(
 
     companion object {
         private const val FROM_COMPUTER = "from-computer"
-        private const val MAX_COPY_BYTES = 512L * 1024 * 1024
 
         /** A Windows path as given, or one relative to the chat's project folder. */
         internal fun onComputer(cwd: String, path: String): String {

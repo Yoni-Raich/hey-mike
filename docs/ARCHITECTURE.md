@@ -1622,6 +1622,27 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   once per app run, but never installs Codex on its own. A conversation that
   is running in the PC's Codex app right now can be read, but continuing it
   from both places at once is not guarded against.
+- **Voice follows the thread.** `RoutingAgentEngine` starts realtime on the
+  app-server that owns the chat's thread, so voice in a computer chat runs on
+  the computer's Codex (and its sign-in). Audio does not cross SSH: the
+  transport is WebRTC, so only the SDP goes through the computer and the
+  media flows between the phone and OpenAI.
+- **No size cap on sending files to the phone.** `push_file` and
+  `install_apk` take files of any size; the timeout grows with the size
+  (1 MB/s on top of what was asked). The user decides what is sent. The
+  text-only `pull_file` fallback keeps its cap because it holds the file in
+  memory, and screenshots keep theirs because they go to the model.
+- **The `computers` tool, from any chat.** One tool with modes: `status`,
+  `browse`, `new_project`, `open_chat`, `add`. It is a tool and not a skill
+  because it crosses the sealed store's line: the agent's shell has no SSH
+  and must never read a password or rebind a chat. Two modes only prepare
+  what the user finishes: `add` fills in the app's add-computer form, which
+  says Mike suggested the address (an injected address is how a password
+  would be sent to someone else), and the password is typed there, never
+  seen by the model; `open_chat` opens a chat in a project with the task in
+  the composer, unsent, so an instruction picked up elsewhere cannot reach a
+  PC that may have full access. A phone chat does not move to the computer;
+  `open_chat` starts a new chat there with what was decided.
 - **Where a new chat runs.** A new chat starts on the phone. Until its first
   message it can be moved to a recent project on a computer, or to another
   folder; after that its thread lives where it started. A computer chat's

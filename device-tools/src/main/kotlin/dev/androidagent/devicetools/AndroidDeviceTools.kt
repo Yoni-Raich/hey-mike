@@ -767,11 +767,10 @@ class AndroidDeviceTools(
             ?: throw IllegalArgumentException("localName is required")
         val source = ws.resolveSafe(localName)
         check(source.isFile) { "Local file does not exist: $localName" }
-        check(source.length() <= MAX_PUSH_BYTES) { "Local file exceeds size limit" }
         val remote = arguments.get("remotePath")?.jsonPrimitive?.content
             ?: throw IllegalArgumentException("remotePath is required")
         requireValidRemotePath(remote)
-        val timeout = arguments.timeoutMsOrDefault()
+        val timeout = transferTimeout(source.length(), arguments.timeoutMsOrDefault())
         val native = adb as? AdbFileTransport
             ?: throw java.io.IOException("Push requires a native file transport")
         val res = native.pushFile(source, remote, timeout)
@@ -787,9 +786,8 @@ class AndroidDeviceTools(
         require(localName.endsWith(".apk", ignoreCase = true)) { "Not an APK: $localName" }
         val source = ws.resolveSafe(localName)
         check(source.isFile) { "APK does not exist: $localName" }
-        check(source.length() <= MAX_APK_BYTES) { "APK exceeds size limit" }
         val replace = arguments.get("replace")?.jsonPrimitive?.booleanOrNull ?: true
-        val timeout = arguments.timeoutMsOrDefault().coerceAtLeast(60_000L)
+        val timeout = transferTimeout(source.length(), arguments.timeoutMsOrDefault().coerceAtLeast(60_000L))
         val native = adb as? AdbFileTransport
             ?: throw java.io.IOException("Install requires a native file transport")
         val res = native.installApk(source, replace, timeout)
@@ -822,6 +820,13 @@ class AndroidDeviceTools(
         else text.take(MAX_OUTPUT_CHARS) + "\n[output truncated]"
 
     private fun String.prefix(p: String): String = if (isEmpty()) "" else "$p$this"
+
+    /**
+     * No size cap on sending a file to the device: the user decides what is
+     * sent. A big file gets the time it needs instead, at a conservative
+     * 1 MB/s over wireless ADB, on top of what was asked for.
+     */
+    private fun transferTimeout(bytes: Long, requested: Long): Long = requested + bytes / TRANSFER_BYTES_PER_MS
 
     private fun JsonObject.timeoutMsOrDefault(default: Long = DEFAULT_TIMEOUT_MS): Long {
         val raw = get("timeoutMs")?.jsonPrimitive?.longOrNull ?: return default
@@ -864,8 +869,7 @@ class AndroidDeviceTools(
         const val MAX_COORDINATE = 10_000
         const val MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
         const val MAX_PULL_BYTES = 32 * 1024 * 1024
-        const val MAX_PUSH_BYTES = 64 * 1024 * 1024
-        const val MAX_APK_BYTES = 256 * 1024 * 1024
+        private const val TRANSFER_BYTES_PER_MS = 1024L
         const val UI_DUMP_PATH = "/sdcard/window_dump.xml"
         private const val MAX_UI_FIELD_CHARS = UiObservationSerializer.MAX_UI_FIELD_CHARS
         private const val MAX_UI_XML_CHARS = 512 * 1024

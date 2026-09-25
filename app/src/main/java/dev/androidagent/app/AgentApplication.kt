@@ -70,6 +70,17 @@ class AgentApplication : Application(), AutomationHostOwner {
 }
 
 class AgentGraph(private val app: Application) {
+    private fun bringAppForward() {
+        runCatching {
+            app.startActivity(
+                android.content.Intent(app, MainActivity::class.java).addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+                ),
+            )
+        }
+    }
+
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
@@ -219,10 +230,14 @@ class AgentGraph(private val app: Application) {
         // next due; without this it waited for an unrelated firing to be armed.
         onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
     )
+    /** What the computers tool asks the screen to show; the view model clears it. */
+    val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
+    /** The user's computers, from any chat. Passwords and bindings stay with the app. */
+    val computerTools = dev.androidagent.remote.ComputerToolGateway(remote, sessions, computerRequests, ::bringAppForward)
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, computerTools, capabilityTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator
@@ -237,16 +252,7 @@ class AgentGraph(private val app: Application) {
             // An approval card lives only in the app, and device control means
             // the app is not in front. Raising it is what makes the approval
             // answerable at all.
-            bringToForeground = {
-                runCatching {
-                    app.startActivity(
-                        android.content.Intent(app, MainActivity::class.java).addFlags(
-                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
-                        ),
-                    )
-                }
-            },
+            bringToForeground = ::bringAppForward,
         )
         queue = SessionRunQueue(
             scope,

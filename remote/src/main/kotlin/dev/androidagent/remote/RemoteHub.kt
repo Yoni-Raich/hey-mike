@@ -159,9 +159,10 @@ class RemoteHub(val store: RemoteStore) {
         connection(computerId).link.upload(source, remotePath)
     }
 
-    suspend fun listFolders(computerId: String, path: String): FolderListing = withContext(Dispatchers.IO) {
+    /** The folders in [path] on the computer; with [create], the folder is made first. */
+    suspend fun listFolders(computerId: String, path: String, create: Boolean = false): FolderListing = withContext(Dispatchers.IO) {
         val connection = connection(computerId)
-        WindowsHost.parseListing(connection.link.run(WindowsHost.powershell(WindowsHost.listScript(path)), 30_000))
+        WindowsHost.parseListing(connection.link.run(WindowsHost.powershell(WindowsHost.listScript(path, create)), 30_000))
     }
 
     /** Close the computer's Codex and its connection. Chats on it stay bound. */

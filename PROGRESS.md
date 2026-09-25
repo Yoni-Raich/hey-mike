@@ -162,6 +162,25 @@ pass. Not verified: the new side panel and screens on the phone,
 `thread/list` answers from the real PC (parameters taken from the 0.156.0
 binary), SFTP transfer against Windows, the desktop scheduled-task recipe.
 
+### Voice on computers, no send size cap, the `computers` tool — 2026-09-25
+
+- Voice works in a computer chat: realtime starts on the thread's own
+  app-server (the PC's Codex); WebRTC, so only SDP crosses SSH.
+- `push_file`/`install_apk`: no size cap; the timeout grows with the size.
+  Also no cap on the SFTP copy from the PC.
+- New tool `computers` (modes `status`, `browse`, `new_project`,
+  `open_chat`, `add`) in every chat. `add` opens the app's form filled in,
+  with a warning to check the address; the password is typed there only.
+  `open_chat` opens a project chat with the task in the composer, unsent.
+
+Verified: `ComputerToolGatewayTest` (add fills the form and the schema has
+no password field, missing address refused, status with no computer,
+unknown computer/project name what exists, nothing after Stop),
+`:core:test`, `:device-tools:test`, `:app:testDevDebugUnitTest`,
+`:app:lintDevDebug`, `:app:assembleDevDebug`. Not verified on the device:
+voice in a computer chat, a 310 MB push, the tool's modes against the real
+PC, the filled-in form and the composer draft.
+
 ## Chat streaming scroll — 2026-09-24
 
 On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one

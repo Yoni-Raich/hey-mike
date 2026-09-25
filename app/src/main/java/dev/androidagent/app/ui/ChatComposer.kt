@@ -84,6 +84,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -146,6 +147,15 @@ internal fun AgentComposer(
     onVoiceButtonPlaced: (Offset) -> Unit = {},
 ) {
     var draft by rememberSaveable(state.activeSessionId) { mutableStateOf("") }
+    // A task Mike wrote for this chat waits here for the user to send.
+    val seed = state.activeSessionId?.let(state.composerSeeds::get)
+    LaunchedEffect(state.activeSessionId, seed) {
+        val id = state.activeSessionId ?: return@LaunchedEffect
+        if (seed != null) {
+            draft = seed
+            actions.onComposerSeedUsed(id)
+        }
+    }
     var choosingModel by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     // A skill picked from the menu rides as a chip until the message is sent.

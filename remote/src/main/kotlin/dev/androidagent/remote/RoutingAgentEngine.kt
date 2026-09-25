@@ -7,13 +7,26 @@ import dev.androidagent.core.AgentModel
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.RealtimeAudioChunk
+import dev.androidagent.core.RealtimeTransport
 import dev.androidagent.core.RealtimeVoiceEngine
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.VoiceEvent
+import dev.androidagent.core.VoiceState
 import dev.androidagent.enginecodex.CodexEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.stateIn
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -25,11 +38,35 @@ import java.util.concurrent.ConcurrentHashMap
  * place. Sign-in, models, usage and voice stay the phone's. Two app-servers
  * both number their requests from zero, so a computer's tool and approval
  * requests are tagged with the computer before the coordinator sees them.
+ *
+ * Voice follows the thread too: realtime is started by the app-server that
+ * owns the chat's thread, so a computer chat talks to the computer's Codex.
+ * Its audio and events are that engine's until the next voice start.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class RoutingAgentEngine(
     private val local: CodexEngine,
     private val hub: RemoteHub,
-) : AgentEngine, RealtimeVoiceEngine by local {
+) : AgentEngine, RealtimeVoiceEngine {
+
+    private val voiceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** The engine running voice now, or the one that ran it last. */
+    private val voiceEngine = MutableStateFlow<RealtimeVoiceEngine>(local)
+    override val voiceEvents: Flow<VoiceEvent> = voiceEngine.flatMapLatest { it.voiceEvents }
+    override val voiceState: StateFlow<VoiceState> = voiceEngine
+        .flatMapLatest { it.voiceState }
+        .stateIn(voiceScope, SharingStarted.Eagerly, local.voiceState.value)
+
+    override suspend fun startVoice(threadId: String, model: String?, transport: RealtimeTransport, offerSdp: String?) {
+        val owner: RealtimeVoiceEngine = computerOf(threadId)?.let { hub.engine(it) } ?: local
+        voiceEngine.value = owner
+        owner.startVoice(threadId, model, transport, offerSdp)
+    }
+
+    override suspend fun appendAudio(audio: RealtimeAudioChunk) = voiceEngine.value.appendAudio(audio)
+    override suspend fun appendText(text: String, role: String) = voiceEngine.value.appendText(text, role)
+    override suspend fun appendSpeech(text: String) = voiceEngine.value.appendSpeech(text)
+    override suspend fun stopVoice() = voiceEngine.value.stopVoice()
 
     private val store get() = hub.store
     /** Remote thread -> computer. Rebuilt from the store after a restart. */
