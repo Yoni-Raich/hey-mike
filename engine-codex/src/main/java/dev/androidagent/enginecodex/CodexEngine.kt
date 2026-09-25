@@ -211,9 +211,21 @@ class CodexEngine(
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
         openSessionAt(workspace.absolutePath, threadId, model, tools)
 
-    /** [openSession] for a working directory on the machine Codex runs on. */
-    suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
+    /**
+     * [openSession] for a working directory on the machine Codex runs on.
+     * With [freshIfLost] false, a thread that will not resume is an error
+     * rather than a new, empty thread: a conversation brought over from a
+     * computer must continue or say why it cannot.
+     */
+    suspend fun openSessionAt(
+        cwd: String,
+        threadId: String?,
+        model: String?,
+        tools: List<ToolDefinition>,
+        freshIfLost: Boolean = true,
+    ): String {
         connect()
+        var lastError: Exception? = null
         if (!threadId.isNullOrBlank()) {
             // Tools first. A thread binds the tool list it was started with, so
             // a chat opened before an app update could never call a tool that
@@ -234,9 +246,13 @@ class CodexEngine(
                     // fall back to starting a fresh thread so the user is never locked out.
                     // Note: request() withTimeout(60_000) throws TimeoutCancellationException (a CancellationException),
                     // which deliberately propagates to the caller rather than triggering an unwanted fallback.
+                    lastError = error
                     val carrying = if (attempt == null) "" else " with its tool list"
                     System.err.println("CodexEngine: Failed to resume thread $threadId$carrying: ${SecretRedactor.redact(error.message ?: error.toString())}")
                 }
+            }
+            if (!freshIfLost) {
+                error("This conversation could not be continued: ${lastError?.message ?: "Codex did not reopen it"}")
             }
         }
         val startParams = startSessionParams(cwd, model, tools, profile)

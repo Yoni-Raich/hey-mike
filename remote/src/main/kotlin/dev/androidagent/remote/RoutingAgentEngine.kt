@@ -98,7 +98,16 @@ class RoutingAgentEngine(
         val engine = hub.engine(binding.computerId)
         // Only a thread the computer made can be resumed there.
         val resumable = binding.threadId?.takeIf { it == threadId }
-        val opened = engine.openSessionAt(binding.cwd, resumable, model, tools)
+        // A thread the computer already has is continued or reported, never
+        // silently swapped for an empty one.
+        val opened = try {
+            engine.openSessionAt(binding.cwd, resumable, model, tools, freshIfLost = resumable == null)
+        } catch (error: IllegalStateException) {
+            throw IllegalStateException(
+                "${error.message}. If it is open in Codex on the computer, close it there and send again.",
+                error,
+            )
+        }
         threads[opened] = binding.computerId
         if (opened != binding.threadId) store.bind(sessionId, binding.copy(threadId = opened))
         return opened

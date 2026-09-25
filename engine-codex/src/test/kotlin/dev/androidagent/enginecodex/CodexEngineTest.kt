@@ -620,6 +620,60 @@ class CodexEngineTest {
         }
     }
 
+    @Test fun aComputersConversationThatWillNotResumeIsReportedNotReplaced() = runBlocking {
+        val serverIn = java.io.PipedInputStream()
+        val clientOut = java.io.PipedOutputStream(serverIn)
+        val clientIn = java.io.PipedInputStream()
+        val serverOut = java.io.PipedOutputStream(clientIn)
+        val fakeProcess = object : Process() {
+            override fun getOutputStream() = clientOut
+            override fun getInputStream() = clientIn
+            override fun getErrorStream() = java.io.ByteArrayInputStream(ByteArray(0))
+            override fun waitFor() = 0
+            override fun exitValue() = 0
+            override fun destroy() = Unit
+        }
+        val fakeRuntime = object : dev.androidagent.core.RuntimeHost {
+            override val status = kotlinx.coroutines.flow.MutableStateFlow(dev.androidagent.core.RuntimeStatus())
+            override val homeDirectory = File("/tmp/home")
+            override suspend fun prepare() = Unit
+            override suspend fun startAppServer(): Process = fakeProcess
+            override suspend fun stop() = Unit
+        }
+        val serverReader = serverIn.bufferedReader()
+        val serverWriter = serverOut.bufferedWriter()
+        val engine = CodexEngine(fakeRuntime)
+        val calledMethods = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val serverJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            while (isActive) {
+                val line = serverReader.readLine() ?: break
+                val req = Json.parseToJsonElement(line).jsonObject
+                val id = req["id"]?.jsonPrimitive?.content ?: continue
+                val method = req["method"]?.jsonPrimitive?.content ?: continue
+                calledMethods.add(method)
+                val reply = when (method) {
+                    "initialize" -> """{"id":$id,"result":{}}"""
+                    "thread/resume" -> """{"id":$id,"error":{"code":-32600,"message":"thread is locked by another process"}}"""
+                    else -> """{"id":$id,"result":{"thread":{"id":"fresh-456"}}}"""
+                }
+                serverWriter.write(reply + "\n")
+                serverWriter.flush()
+            }
+        }
+        try {
+            val failure = runCatching { engine.openSessionAt("C:\\src\\app", "pc-123", null, emptyList(), freshIfLost = false) }
+            assertTrue(failure.exceptionOrNull()?.message.orEmpty().contains("locked by another process"))
+            assertFalse("thread/start" in calledMethods)
+        } finally {
+            engine.close()
+            serverJob.cancel()
+            runCatching { serverIn.close() }
+            runCatching { clientIn.close() }
+            runCatching { serverOut.close() }
+            runCatching { clientOut.close() }
+        }
+    }
+
     @Test fun openSessionReturnsResumedThreadWithoutCallingStart() = runBlocking {
         val serverIn = java.io.PipedInputStream()
         val clientOut = java.io.PipedOutputStream(serverIn)
