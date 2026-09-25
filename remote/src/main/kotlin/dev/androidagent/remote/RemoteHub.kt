@@ -6,6 +6,8 @@ import dev.androidagent.core.RuntimeHost
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.RuntimeStatus
 import dev.androidagent.enginecodex.CodexEngine
+import dev.androidagent.enginecodex.CodexThread
+import dev.androidagent.enginecodex.CodexThreadMessage
 import dev.androidagent.enginecodex.EngineProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +64,35 @@ class RemoteHub(val store: RemoteStore) {
     /** The latest setup step per computer. */
     val setup: StateFlow<Map<String, RemoteSetup>> = mutableSetup.asStateFlow()
 
+    private val mutableThreads = MutableStateFlow<Map<String, List<CodexThread>>>(emptyMap())
+    /** Per computer, the conversations Codex keeps there, as last listed. */
+    val threads: StateFlow<Map<String, List<CodexThread>>> = mutableThreads.asStateFlow()
+
+    /**
+     * List the computer's conversations again. Only while it is set up: this
+     * never starts a connection the user did not ask for. A failure keeps
+     * the last list.
+     */
+    suspend fun refreshThreads(computerId: String) {
+        if (mutableSetup.value[computerId] !is RemoteSetup.Ready) return
+        runCatching { engine(computerId).listThreads() }
+            .onSuccess { list -> mutableThreads.value = mutableThreads.value + (computerId to list) }
+    }
+
+    /**
+     * Connect in the background, for the side panel, once per app run: a
+     * computer the user added should show its projects without being asked.
+     * Nothing is installed, and a failure only shows on the computer's card.
+     */
+    suspend fun connectQuietly(computerId: String) {
+        if (mutableSetup.value[computerId] != null) return
+        setUp(computerId, install = false)
+    }
+
+    /** One conversation's messages, read from the computer. */
+    suspend fun readThread(computerId: String, threadId: String): List<CodexThreadMessage> =
+        engine(computerId).readThreadMessages(threadId)
+
     /** The Codex for [computerId], started on first use. */
     suspend fun engine(computerId: String): CodexEngine = lock.withLock {
         engines[computerId]?.first?.let { return@withLock it }
@@ -76,7 +107,7 @@ class RemoteHub(val store: RemoteStore) {
      * Connect, trust the host key the first time, install Codex if it is
      * missing and check its sign-in. Progress goes to [setup].
      */
-    suspend fun setUp(computerId: String): RemoteSetup {
+    suspend fun setUp(computerId: String, install: Boolean = true): RemoteSetup {
         val result = runCatching {
             report(computerId, RemoteSetup.Working("Connecting"))
             val connection = connection(computerId) { route ->
@@ -84,6 +115,8 @@ class RemoteHub(val store: RemoteStore) {
             }
             var probe = withContext(Dispatchers.IO) { connection.probe(refresh = true) }
             if (!probe.installed) {
+                // A background connect never downloads 120 MB on its own.
+                check(install) { "Codex is not on this computer yet. Start a new project on it to set it up." }
                 report(computerId, RemoteSetup.Working("Installing Codex on the computer (one time, about 120 MB)"))
                 withContext(Dispatchers.IO) { connection.install() }
                 probe = withContext(Dispatchers.IO) { connection.probe(refresh = true) }
@@ -98,6 +131,7 @@ class RemoteHub(val store: RemoteStore) {
             }
         }.getOrElse { RemoteSetup.Failed(it.message ?: it.toString()) }
         report(computerId, result)
+        if (result is RemoteSetup.Ready) refreshThreads(computerId)
         return result
     }
 
@@ -111,7 +145,18 @@ class RemoteHub(val store: RemoteStore) {
             RemoteSetup.Ready(probe, account.label, connection.route)
         }.getOrElse { RemoteSetup.Failed(it.message ?: it.toString()) }
         result?.let { report(computerId, it) }
+        if (result is RemoteSetup.Ready) refreshThreads(computerId)
         return result ?: mutableSetup.value[computerId] ?: RemoteSetup.Working("Waiting for sign-in")
+    }
+
+    /** Copy a file from the computer to this phone. */
+    suspend fun download(computerId: String, remotePath: String, target: File, maxBytes: Long) = withContext(Dispatchers.IO) {
+        connection(computerId).link.download(remotePath, target, maxBytes)
+    }
+
+    /** Copy a file from this phone to the computer. */
+    suspend fun upload(computerId: String, source: File, remotePath: String) = withContext(Dispatchers.IO) {
+        connection(computerId).link.upload(source, remotePath)
     }
 
     suspend fun listFolders(computerId: String, path: String): FolderListing = withContext(Dispatchers.IO) {
@@ -125,6 +170,7 @@ class RemoteHub(val store: RemoteStore) {
         engine?.let { (codex, job) -> runCatching { codex.close() }; job.cancel() }
         links.remove(computerId)?.let { withContext(Dispatchers.IO) { runCatching { it.link.close() } } }
         mutableSetup.value = mutableSetup.value - computerId
+        if (store.computer(computerId) == null) mutableThreads.value = mutableThreads.value - computerId
     }
 
     /** Settings changed (address, password, access): the next use reconnects with them. */

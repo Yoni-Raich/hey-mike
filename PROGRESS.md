@@ -129,6 +129,39 @@ real PC, `:app:lintDevDebug`. A phone-chat request "do X on the computer"
 is not routed to the default computer: a computer chat is still chosen when
 it is opened.
 
+### Computers: projects, PC conversations, file transfer — 2026-09-25
+
+- Computers screen is a full screen (scrolling a folder list no longer
+  closes it). Adding a computer is two steps: the PC's setup steps, then the
+  sign-in. One address is enough: home, VPN, or both.
+- Side panel: each computer first, with status and folding projects; under
+  each project the chats here plus the conversations Codex on the PC has
+  (`thread/list`), "From Codex on the PC". Opening one binds a chat to that
+  thread and copies its messages from `thread/read`. The phone's chats fold
+  under "On this phone". The panel connects quietly once per app run
+  (never installs Codex).
+- New chat: "Where should Mike work?" chips (this phone, recent projects,
+  another folder) until the first message. Title bar of a computer chat:
+  computer · folder + phone.
+- Files: `push_file`/`install_apk` in a computer chat take a path on the PC
+  and are copied over SFTP; `pull_file` copies into the project folder.
+- Instructions: the Windows desktop is reached through a one-off interactive
+  scheduled task (screenshots etc.); adb on the PC must not be used for the
+  phone.
+
+Verified on Windows with the Nothing A059: the PC's OpenSSH (Win32-OpenSSH
+10.0 via winget) answers on the Tailscale address from the phone
+(`nc -z 100.81.116.55 22` open; the LAN address times out because the
+Ethernet profile is Public and the firewall rule is Private only). A real
+computer chat ran on the PC; before the file bridge, copying a picture to
+the phone failed through `push_file` and only worked through the PC's own
+adb, which is why the bridge exists. Unit tests: new `PcChatsTest`,
+`ComputerFilesGatewayTest`, thread list/read parsing, store projects;
+`:app:lintDevDebug` clean; `:core:test` and `:app:testDevDebugUnitTest`
+pass. Not verified: the new side panel and screens on the phone,
+`thread/list` answers from the real PC (parameters taken from the 0.156.0
+binary), SFTP transfer against Windows, the desktop scheduled-task recipe.
+
 ## Chat streaming scroll — 2026-09-24
 
 On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one

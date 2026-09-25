@@ -160,6 +160,12 @@ class MainActivity : ComponentActivity() {
         onSaveComputer = { draft -> ensureService(); model.saveComputer(draft) },
         onRemoveComputer = { id -> model.removeComputer(id) },
         onSetDefaultComputer = { id -> model.setDefaultComputer(id) },
+        onNewProject = { id -> ensureService(); model.newProject(id) },
+        onNewChatInProject = { id, path -> model.openFolderChat(id, path) },
+        onOpenPcThread = { id, thread -> ensureService(); model.openPcThread(id, thread) },
+        onRefreshPcThreads = { ensureService(); model.refreshPcThreads() },
+        onReconnectComputer = { id -> ensureService(); model.reconnectComputer(id) },
+        onMoveNewChat = { id, path -> model.moveNewChat(id, path) },
         onShareText = { text ->
             val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
             runCatching { startActivity(Intent.createChooser(send, "Send the setup steps")) }

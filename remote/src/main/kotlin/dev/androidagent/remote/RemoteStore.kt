@@ -33,7 +33,7 @@ enum class RemoteAccess(val sandbox: String, val approvalPolicy: String) {
 data class RemoteComputer(
     val id: String,
     val label: String,
-    /** The address on the home network, tried first. */
+    /** The address on the home network, tried first. Blank when only [vpnHost] is known. */
     val host: String,
     val port: Int = 22,
     val user: String,
@@ -50,11 +50,14 @@ data class RemoteComputer(
      */
     val vpnHost: String? = null,
 ) {
-    val address: String get() = if (port == 22) "$user@$host" else "$user@$host:$port"
-
     /** Every address to try, home network first. */
-    val hosts: List<String> get() = listOfNotNull(host, vpnHost?.takeIf { it.isNotBlank() }).distinct()
+    val hosts: List<String> get() = listOf(host, vpnHost.orEmpty()).filter { it.isNotBlank() }.distinct()
+
+    val address: String get() = hosts.first().let { if (port == 22) "$user@$it" else "$user@$it:$port" }
 }
+
+/** A folder on a computer the user works in: chats are started under it. */
+data class RemoteProject(val computerId: String, val path: String)
 
 /** One chat that runs on a computer instead of on the phone. */
 data class RemoteBinding(
@@ -70,6 +73,8 @@ data class RemoteState(
     val bindings: Map<String, RemoteBinding> = emptyMap(),
     /** The computer used when the user does not pick one. Always set while there are computers. */
     val defaultComputerId: String? = null,
+    /** Folders the user picked, in the order they were added. */
+    val projects: List<RemoteProject> = emptyList(),
     /**
      * The saved state could not be opened. It is sealed with a Keystore key,
      * so this means it was changed by something other than this app, or the
@@ -137,6 +142,21 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
         return next
     }
 
+    /** Remember [path] as a project on the computer. Adding it again changes nothing. */
+    @Synchronized fun addProject(computerId: String, path: String) {
+        require(computer(computerId) != null) { "Unknown computer" }
+        val project = RemoteProject(computerId, path)
+        if (project in stored.state.projects) return
+        write(Stored(stored.state.copy(projects = stored.state.projects + project), stored.passwords))
+    }
+
+    /** Forget a project. Its chats stay; the folder on the computer is not touched. */
+    @Synchronized fun removeProject(computerId: String, path: String) {
+        val project = RemoteProject(computerId, path)
+        if (project !in stored.state.projects) return
+        write(Stored(stored.state.copy(projects = stored.state.projects - project), stored.passwords))
+    }
+
     @Synchronized fun setDefault(id: String) {
         if (computer(id) == null) return
         write(Stored(stored.state.copy(defaultComputerId = id), stored.passwords))
@@ -151,6 +171,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     computers = computers,
                     defaultComputerId = default,
                     bindings = stored.state.bindings.filterValues { it.computerId != id },
+                    projects = stored.state.projects.filterNot { it.computerId == id },
                 ),
                 stored.passwords - id,
             ),
@@ -210,6 +231,9 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     })
                 }
             })
+            put("projects", buildJsonArray {
+                stored.state.projects.forEach { p -> add(buildJsonObject { put("computer", p.computerId); put("path", p.path) }) }
+            })
             put("bindings", buildJsonObject {
                 stored.state.bindings.forEach { (session, b) ->
                     put(session, buildJsonObject {
@@ -229,8 +253,8 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                 c.text("password")?.let { passwords[id] = it }
                 RemoteComputer(
                     id = id,
-                    label = c.text("label") ?: c.text("host")!!,
-                    host = c.text("host")!!,
+                    label = c.text("label") ?: c.text("host") ?: c.text("vpnHost")!!,
+                    host = c.text("host").orEmpty(),
                     port = (c["port"] as? JsonPrimitive)?.intOrNull ?: 22,
                     user = c.text("user")!!,
                     access = runCatching { RemoteAccess.valueOf(c.text("access")!!) }.getOrDefault(RemoteAccess.ASK),
@@ -248,7 +272,12 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                 session to RemoteBinding(computer, b.text("cwd") ?: return@mapNotNull null, b.text("thread"))
             }.toMap()
             val default = root.text("default")?.takeIf { it in ids } ?: computers.firstOrNull()?.id
-            return Stored(RemoteState(computers, bindings, default), passwords)
+            val projects = (root["projects"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val p = element as? JsonObject ?: return@mapNotNull null
+                val computer = p.text("computer")?.takeIf { it in ids } ?: return@mapNotNull null
+                RemoteProject(computer, p.text("path") ?: return@mapNotNull null)
+            }.distinct()
+            return Stored(RemoteState(computers, bindings, default, projects), passwords)
         }
 
         private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

@@ -62,6 +62,11 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
@@ -114,6 +119,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -217,7 +223,13 @@ fun AndroidAgentScreen(
         val scope = rememberCoroutineScope()
 
         LaunchedEffect(state.isDrawerOpen) {
-            if (state.isDrawerOpen) drawerState.open() else drawerState.close()
+            if (state.isDrawerOpen) {
+                // The computers' own conversations, fresh for the panel.
+                actions.onRefreshPcThreads()
+                drawerState.open()
+            } else {
+                drawerState.close()
+            }
         }
         LaunchedEffect(drawerState) {
             snapshotFlow { drawerState.currentValue }
@@ -375,32 +387,19 @@ private fun AgentDrawer(
         }
 
         Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = {
-                    close()
-                    actions.onNewChat()
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("New chat")
-            }
-            // A chat on a computer starts from its folder, so it has its own way in.
-            OutlinedButton(
-                onClick = {
-                    close()
-                    actions.onOpenComputers()
-                },
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Outlined.Computer, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Computer")
-            }
+        // One way in: a new chat asks where Mike works, the phone or a computer.
+        Button(
+            onClick = {
+                close()
+                actions.onNewChat()
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp),
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("New chat")
         }
 
         Spacer(Modifier.height(12.dp))
@@ -440,7 +439,13 @@ private fun AgentDrawer(
         )
         Spacer(Modifier.height(8.dp))
 
-        val shown = ChatDayGroups.filter(state.sessions, query)
+        val shown = ChatDayGroups.filter(PcChats.phoneSessions(state.sessions, state.remoteBindings), query)
+        val pcSections = PcChats.sections(
+            state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings,
+            state.sessions, state.pcThreads, query,
+        )
+        val expanded = remember { mutableStateMapOf<String, Boolean>() }
+        val showAll = remember { mutableStateMapOf<String, Boolean>() }
         when {
             state.isLoadingSessions -> Box(
                 modifier = Modifier
@@ -451,7 +456,7 @@ private fun AgentDrawer(
                 CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
             }
 
-            shown.isEmpty() -> Box(
+            shown.isEmpty() && pcSections.isEmpty() -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -470,7 +475,15 @@ private fun AgentDrawer(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
-                ChatDayGroups.group(shown, System.currentTimeMillis()).forEach { group ->
+                // Computers first: their projects are few, the phone's chats many.
+                pcSections(pcSections, state, actions, expanded, showAll, close)
+                val phoneOpen = expanded["phone"] ?: true
+                if (pcSections.isNotEmpty() && shown.isNotEmpty()) {
+                    item(key = "on-phone") {
+                        FoldHeader("On this phone", "${shown.size} chats", phoneOpen, Icons.Outlined.PhoneAndroid, onToggle = { expanded["phone"] = !phoneOpen })
+                    }
+                }
+                if (phoneOpen || pcSections.isEmpty()) ChatDayGroups.group(shown, System.currentTimeMillis()).forEach { group ->
                     item(key = "day-${group.label}") {
                         Text(
                             group.label,
@@ -492,6 +505,14 @@ private fun AgentDrawer(
                             onRename = { title -> actions.onRenameSession(session.id, title) },
                             onDelete = { actions.onDeleteSession(session.id) },
                         )
+                    }
+                }
+                if (state.computers.isEmpty() && query.isBlank()) {
+                    item(key = "connect-computer") {
+                        QuietRow("Work on your Windows PC", icon = Icons.Outlined.Computer) {
+                            close()
+                            actions.onOpenComputers()
+                        }
                     }
                 }
             }
@@ -766,7 +787,7 @@ private fun AgentChatContent(
             }
         } else if (state.messages.isEmpty()) {
             item(key = "empty-chat") {
-                EmptyChatCard(hasSession = state.activeSessionId != null)
+                EmptyChatCard(state, actions)
             }
         } else {
             // Back-to-back device actions fold into one row.
@@ -836,17 +857,70 @@ private fun SetupPrompt(outstanding: Int, onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun EmptyChatCard(hasSession: Boolean) {
+private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
+    val hasSession = state.activeSessionId != null
+    val binding = state.activeSessionId?.let(state.remoteBindings::get)
+    val computer = binding?.let { b -> state.computers.firstOrNull { it.id == b.computerId } }
     Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 96.dp, bottom = 32.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 72.dp, bottom = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("What can I help with?", style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-        Text(if (hasSession) "Ask, plan, or do something on your phone." else "Create a chat to get started.",
+        Text(
+            when {
+                !hasSession -> "Create a chat to get started."
+                computer != null -> "Mike works in ${folderName(binding.cwd)} on ${computer.label}, and can still use this phone."
+                else -> "Ask, plan, or do something on your phone."
+            },
             style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // Where this chat runs can change until its first message.
+        if (hasSession && state.computers.isNotEmpty() && !state.runState.active) {
+            WhereMikeWorks(state, binding, actions)
+        }
+    }
+}
+
+/** The new-chat choice of where Mike works: this phone, or a project on a computer. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WhereMikeWorks(state: AgentUiState, binding: dev.androidagent.remote.RemoteBinding?, actions: AgentUiActions) {
+    val sections = PcChats.sections(
+        state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, state.sessions, state.pcThreads,
+    )
+    val recent = PcChats.recentProjects(sections)
+    val labels = state.computers.associate { it.id to it.label }
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Where should Mike work?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        ) {
+            FilterChip(
+                selected = binding == null,
+                onClick = { actions.onMoveNewChat(null, null) },
+                label = { Text("This phone") },
+                leadingIcon = { Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            )
+            recent.forEach { project ->
+                FilterChip(
+                    selected = binding != null && binding.computerId == project.computerId &&
+                        PcChats.pathKey(binding.cwd) == PcChats.pathKey(project.path),
+                    onClick = { actions.onMoveNewChat(project.computerId, project.path) },
+                    label = { Text("${labels[project.computerId].orEmpty()} · ${project.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingIcon = { Icon(Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                )
+            }
+            val target = state.defaultComputerId ?: state.computers.first().id
+            FilterChip(
+                selected = false,
+                onClick = { actions.onNewProject(target) },
+                label = { Text(if (recent.isEmpty()) "A folder on ${labels[target].orEmpty()}" else "Another folder") },
+                leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            )
+        }
     }
 }
 
@@ -1202,7 +1276,7 @@ internal fun formatBytes(bytes: Long): String = when {
     else -> "${bytes / (1024L * 1024L * 1024L)} GB"
 }
 
-private fun formatSessionTime(timestamp: Long): String {
+internal fun formatSessionTime(timestamp: Long): String {
     if (timestamp <= 0L) return "No activity time"
     return try {
         val formatter = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)

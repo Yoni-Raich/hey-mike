@@ -1,6 +1,7 @@
 package dev.androidagent.remote
 
 import com.jcraft.jsch.ChannelExec
+import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.HostKey
 import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.JSch
@@ -10,6 +11,7 @@ import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.Closeable
 import java.io.InputStream
 import java.io.OutputStream
@@ -123,6 +125,37 @@ class SshLink(private val target: SshTarget) : Closeable {
         return SshProcess(channel, stdin, stdout, stderr)
     }
 
+    /** Copy a file from the computer to [target], refusing one over [maxBytes]. */
+    fun download(remotePath: String, target: File, maxBytes: Long) = withSftp(remotePath) { sftp ->
+        val path = sftpPath(remotePath)
+        val size = sftp.stat(path).size
+        check(size <= maxBytes) { "The file is ${size / (1024 * 1024)} MB; the limit is ${maxBytes / (1024 * 1024)} MB." }
+        target.parentFile?.mkdirs()
+        target.outputStream().use { sftp.get(path, it) }
+    }
+
+    /** Copy [source] to the computer, replacing a file already at [remotePath]. */
+    fun upload(source: File, remotePath: String) = withSftp(remotePath) { sftp ->
+        source.inputStream().use { sftp.put(it, sftpPath(remotePath), ChannelSftp.OVERWRITE) }
+    }
+
+    private fun <T> withSftp(remotePath: String, block: (ChannelSftp) -> T): T {
+        connect()
+        val live = synchronized(this) { session } ?: error("Not connected")
+        val sftp = live.openChannel("sftp") as ChannelSftp
+        sftp.connect(CONNECT_TIMEOUT_MS)
+        return try {
+            block(sftp)
+        } catch (error: com.jcraft.jsch.SftpException) {
+            throw IllegalStateException(
+                if (error.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) "No such file on the computer: $remotePath" else "SFTP failed: ${error.message}",
+                error,
+            )
+        } finally {
+            sftp.disconnect()
+        }
+    }
+
     @Synchronized
     override fun close() {
         session?.disconnect()
@@ -194,6 +227,9 @@ class SshLink(private val target: SshTarget) : Closeable {
                 fingerprint = "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(digest),
             )
         }
+
+        /** Windows OpenSSH's SFTP spells `C:\a\b` as `/C:/a/b`. */
+        internal fun sftpPath(windows: String): String = "/" + windows.replace('\\', '/').trimStart('/')
 
         /** The address did not answer at all, as opposed to answering and refusing. */
         internal fun unreachable(error: JSchException): Boolean {

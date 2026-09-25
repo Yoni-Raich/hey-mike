@@ -173,8 +173,14 @@ data class AgentUiState(
     val isComputersOpen: Boolean = false,
     /** Picking the folder a computer chat opens in. */
     val folderBrowser: FolderBrowserState? = null,
-    /** Chats that run on a computer: chat id to "Desk · C:\src\app". */
+    /** Chats that run on a computer: chat id to "Desk · app". */
     val remoteChats: Map<String, String> = emptyMap(),
+    /** Which computer and folder each computer chat runs in. */
+    val remoteBindings: Map<String, dev.androidagent.remote.RemoteBinding> = emptyMap(),
+    /** Folders the user picked on each computer. */
+    val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
+    /** Per computer, the conversations Codex keeps there, as last listed. */
+    val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
 )
 
 /** A computer as the add or edit form holds it, before it is saved. */
@@ -297,6 +303,18 @@ data class AgentUiActions(
     val onSaveComputer: (ComputerDraft) -> Unit = {},
     val onRemoveComputer: (String) -> Unit = {},
     val onSetDefaultComputer: (String) -> Unit = {},
+    /** Connect to a computer and pick a folder: it becomes a project with a new chat. */
+    val onNewProject: (computerId: String) -> Unit = {},
+    /** A new chat in a project folder on a computer. */
+    val onNewChatInProject: (computerId: String, path: String) -> Unit = { _, _ -> },
+    /** Open a conversation Codex keeps on the computer as a chat here. */
+    val onOpenPcThread: (computerId: String, threadId: String) -> Unit = { _, _ -> },
+    /** List the computers' conversations again. */
+    val onRefreshPcThreads: () -> Unit = {},
+    /** Try the computer's connection again from the side panel. */
+    val onReconnectComputer: (computerId: String) -> Unit = {},
+    /** Before the first message: run this chat on the phone (null) or in a computer folder. */
+    val onMoveNewChat: (computerId: String?, path: String?) -> Unit = { _, _ -> },
     /** Hand text to another app, such as the PC setup steps to email to oneself. */
     val onShareText: (String) -> Unit = {},
     /** Connect, install Codex if needed, and check its sign-in. */

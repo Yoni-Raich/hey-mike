@@ -184,6 +184,30 @@ class CodexEngine(
         return parseSkillCatalogAt(result, cwd)
     }
 
+    /**
+     * The conversations Codex keeps on the machine it runs on, newest first:
+     * the ones its own apps and CLI started, not only this app's. Summaries
+     * only; [readThreadMessages] fetches one conversation's text.
+     */
+    suspend fun listThreads(max: Int = 200): List<CodexThread> {
+        connect()
+        val threads = mutableListOf<CodexThread>()
+        var cursor: String? = null
+        do {
+            val result = request("thread/list", threadListParams(cursor, minOf(100, max - threads.size)))
+            threads += parseThreadList(result)
+            cursor = (result["nextCursor"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        } while (cursor != null && threads.size < max)
+        return threads
+    }
+
+    /** The user and agent messages of one conversation, oldest first. */
+    suspend fun readThreadMessages(threadId: String): List<CodexThreadMessage> {
+        connect()
+        val result = request("thread/read", buildJsonObject { put("threadId", threadId); put("includeTurns", true) })
+        return parseThreadMessages(result)
+    }
+
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
         openSessionAt(workspace.absolutePath, threadId, model, tools)
 
@@ -885,6 +909,45 @@ class CodexEngine(
          * as text with either slash and any case, which is how Windows reads
          * them; one entry is the answer to the one cwd asked for.
          */
+        /** Interactive conversations only: sub-agent threads belong to their parent. */
+        internal fun threadListParams(cursor: String?, limit: Int): JsonObject = buildJsonObject {
+            cursor?.let { put("cursor", it) }
+            put("limit", limit.coerceIn(1, 100))
+            put("sourceKinds", buildJsonArray { add("cli"); add("vscode"); add("appServer") })
+        }
+
+        internal fun parseThreadList(result: JsonObject): List<CodexThread> =
+            (result["data"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val thread = element as? JsonObject ?: return@mapNotNull null
+                val id = thread.string("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val cwd = thread.string("cwd").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val title = thread.string("name").ifBlank { thread.string("preview") }
+                    .lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(120).orEmpty()
+                val updated = (thread["updatedAt"] as? JsonPrimitive)?.longOrNull
+                    ?: (thread["createdAt"] as? JsonPrimitive)?.longOrNull ?: 0L
+                // The protocol counts seconds; the phone counts milliseconds.
+                CodexThread(id, title, cwd, if (updated in 1 until 100_000_000_000L) updated * 1000 else updated)
+            }
+
+        internal fun parseThreadMessages(result: JsonObject): List<CodexThreadMessage> {
+            val turns = (result["thread"] as? JsonObject)?.get("turns") as? JsonArray ?: return emptyList()
+            return turns.flatMap { turn ->
+                ((turn as? JsonObject)?.get("items") as? JsonArray).orEmpty().mapNotNull { element ->
+                    val item = element as? JsonObject ?: return@mapNotNull null
+                    when (item.string("type")) {
+                        "userMessage" -> {
+                            val text = (item["content"] as? JsonArray).orEmpty()
+                                .mapNotNull { part -> (part as? JsonObject)?.takeIf { it.string("type") == "text" }?.string("text") }
+                                .joinToString("\n").trim()
+                            text.takeIf { it.isNotEmpty() }?.let { CodexThreadMessage("user", it) }
+                        }
+                        "agentMessage" -> item.string("text").trim().takeIf { it.isNotEmpty() }?.let { CodexThreadMessage("assistant", it) }
+                        else -> null
+                    }
+                }
+            }
+        }
+
         internal fun parseSkillCatalogAt(result: JsonObject, cwd: String): List<AgentSkill> {
             val entries = (result["data"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
             fun norm(path: String) = path.replace('\\', '/').trimEnd('/').lowercase()
