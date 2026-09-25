@@ -200,6 +200,34 @@ verified: the install script's download and sha256 check and the app-server
 start on Linux (running a downloaded binary was not allowed here), a real
 Ubuntu machine over SSH, the Linux desktop recipe.
 
+### Side panel: Material 3 pass and loading states — 2026-09-25
+
+- Every slow step shows where it happens: an indeterminate line and a
+  spinner under the computer's header while it connects or lists its
+  conversations, placeholder rows until the first projects arrive, an error
+  card with Try again and What to check, a sign-in card, and a loading view
+  (progress line, "Loading the conversation from <computer>", placeholder
+  bubbles) while a PC conversation's messages come in.
+- Material 3 look: 56 dp section headers, 48 dp project rows with a count
+  badge, 52 dp pill chat rows with the secondary-container indicator, a
+  lifted drawer surface with an explicit text color, item animations.
+- Speed: the grouping is remembered per input instead of rebuilt each frame,
+  and rows carry content types.
+- The panel's top scrolls with the list, so a phone on its side still shows
+  chats. "Work on your computer" sits under the search box, not below every
+  phone chat. The computers screen is an in-app layer (Back steps back) that
+  clears the gesture bar.
+
+Verified on the Xiaomi Redmi 12 (`cd4928027d76`, Android 15, dev build with
+a local versionCode 1016): the panel opens with readable text and the pill
+selection; in landscape the fixed top had left no room for chats (fixed);
+the computer entry was last in a long list (fixed); the setup step's bottom
+button sat under the gesture bar in a dialog window (fixed by the in-app
+layer); Back goes form, setup, list, closed; Windows and Ubuntu guides both
+render. Not verified on a device: the connecting, error, sign-in and PC
+conversation loading states (no computer is set up on that phone, and
+entering a password is not something the tester does).
+
 ## Chat streaming scroll — 2026-09-24
 
 On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one

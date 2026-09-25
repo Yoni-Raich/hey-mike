@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -77,8 +81,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import dev.androidagent.remote.RemoteAccess
 import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteSetup
@@ -179,9 +181,13 @@ internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
         onSetupStep = false
         actions.onComputerProposalShown()
     }
-    Dialog(onDismissRequest = back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // A layer over the app rather than a dialog window: it takes the app's
+    // own edge-to-edge insets, so the bottom button clears the gesture bar,
+    // and Back steps back one view.
+    BackHandler(onBack = back)
+    run {
         Surface(Modifier.fillMaxSize(), color = SheetFill, contentColor = Ink) {
-            Column(Modifier.fillMaxSize().imePadding().padding(top = 8.dp, bottom = 12.dp)) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(top = 8.dp, bottom = 12.dp)) {
                 val browser = state.folderBrowser
                 val editing = draft
                 when {
@@ -481,7 +487,7 @@ private fun UbuntuChecklist(onShare: () -> Unit) {
 
 @Composable
 private fun WindowsChecklist(onShare: () -> Unit) {
-    SetupStep(1, "Turn on OpenSSH Server", "Settings › System › Optional features › View features › OpenSSH Server › Install. Or, in PowerShell as administrator:") {
+    SetupStep(1, "Turn on OpenSSH Server", "Run it in PowerShell as administrator. Or: Settings › System › Optional features › View features › OpenSSH Server › Install.") {
         CodeLine(INSTALL_SSH_COMMAND)
     }
     SetupStep(2, "Check that it runs", "It should say Running.") { CodeLine("Get-Service sshd") }
@@ -624,8 +630,11 @@ private fun ColumnScope.ComputerForm(
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                 Text("Default computer", fontSize = 15.sp, color = Ink)
                 Text(
-                    if (initial.isDefault) "This is the default. Make another computer the default to change it."
-                    else "The side panel's Computer button goes straight to it.",
+                    when {
+                        initial.isDefault && !editing -> "Your first computer is the default."
+                        initial.isDefault -> "This is the default. Make another computer the default to change it."
+                        else -> "Used when you ask Mike for a computer without naming one."
+                    },
                     fontSize = 12.5.sp, lineHeight = 17.sp, color = Muted,
                 )
             }

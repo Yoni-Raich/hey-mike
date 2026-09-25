@@ -181,6 +181,10 @@ data class AgentUiState(
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */
     val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
+    /** Computers whose conversations are being listed right now. */
+    val pcRefreshing: Set<String> = emptySet(),
+    /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
+    val pcChatLoading: Map<String, String> = emptyMap(),
     /** A computer Mike filled in for the user to check and finish. */
     val computerProposal: ComputerDraft? = null,
     /** Text to put in a chat's composer, unsent, once: chat id to text. */

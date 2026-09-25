@@ -102,6 +102,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
         viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
+        viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
         viewModelScope.launch {
             graph.computerRequests.collect { request ->
                 when (request) {
@@ -248,6 +249,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.sessions.setThread(session.id, threadId)
         graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
         current.value = session.id
+        val label = graph.computers.computer(id)?.label ?: "the computer"
+        mutable.update { it.copy(pcChatLoading = it.pcChatLoading + (session.id to label)) }
         runCatching { graph.remote.readThread(id, threadId) }
             .onSuccess { messages ->
                 // Oldest first, a millisecond apart, so the order survives sorting.
@@ -259,6 +262,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure {
                 note(session.id, "The earlier messages could not be read from the computer: ${it.message}. Mike still continues this conversation there.")
             }
+        mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
     }
 
     /**
