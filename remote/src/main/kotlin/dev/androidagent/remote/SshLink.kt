@@ -64,9 +64,10 @@ class SshLink(private val target: SshTarget) : Closeable {
     fun connect(): HostKeySeen {
         session?.takeIf { it.isConnected }?.let { return seen!! }
         val keys = PinnedHostKeys(target.pinnedHostKey)
+        val prompts = PasswordOnly(target.password)
         val next = jsch.getSession(target.user, target.host, target.port).apply {
             setPassword(target.password)
-            userInfo = PasswordOnly(target.password)
+            userInfo = prompts
             hostKeyRepository = keys
             setConfig("StrictHostKeyChecking", "yes")
             setConfig("PreferredAuthentications", "password,keyboard-interactive")
@@ -77,6 +78,12 @@ class SshLink(private val target: SshTarget) : Closeable {
             next.connect(target.connectTimeoutMs)
         } catch (error: JSchException) {
             keys.changed?.let { throw HostKeyChanged(it) }
+            // Tailscale SSH answers on the tailnet address in place of the
+            // computer's own SSH server. It takes no password and may wait for
+            // a browser check, which reads as a timeout; say what it is.
+            if (isTailscaleSsh(next.serverVersion, prompts.banner)) {
+                throw IllegalStateException(tailscaleSshMessage(prompts.banner), error)
+            }
             if (unreachable(error)) throw SshUnreachable(describe(error), error)
             throw IllegalStateException(describe(error), error)
         }
@@ -190,14 +197,16 @@ class SshLink(private val target: SshTarget) : Closeable {
         override fun getHostKey(host: String?, type: String?): Array<HostKey> = emptyArray()
     }
 
-    /** Answers password and keyboard-interactive prompts with the one password. */
+    /** Answers password and keyboard-interactive prompts with the one password, and keeps the server's banner. */
     private class PasswordOnly(private val password: String) : UserInfo, UIKeyboardInteractive {
+        /** What the server showed before sign-in, if anything. */
+        @Volatile var banner: String? = null
         override fun getPassphrase(): String? = null
         override fun getPassword(): String = password
         override fun promptPassword(message: String?): Boolean = true
         override fun promptPassphrase(message: String?): Boolean = false
         override fun promptYesNo(message: String?): Boolean = false
-        override fun showMessage(message: String?) = Unit
+        override fun showMessage(message: String?) { if (!message.isNullOrBlank()) banner = (banner.orEmpty() + message).take(2_000) }
         override fun promptKeyboardInteractive(
             destination: String?,
             name: String?,
@@ -226,6 +235,21 @@ class SshLink(private val target: SshTarget) : Closeable {
                 key = Base64.getEncoder().encodeToString(blob),
                 fingerprint = "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(digest),
             )
+        }
+
+        /** Tailscale's own SSH server names itself in its version string and its banner. */
+        internal fun isTailscaleSsh(serverVersion: String?, banner: String?): Boolean =
+            serverVersion.orEmpty().contains("Tailscale", ignoreCase = true) ||
+                banner.orEmpty().contains("Tailscale SSH", ignoreCase = true)
+
+        internal fun tailscaleSshMessage(banner: String?): String {
+            val link = banner?.let { Regex("https://\\S+").find(it)?.value }
+            return buildString {
+                append("This address is answered by Tailscale SSH, not the computer's own SSH server. ")
+                append("Tailscale SSH does not take a password")
+                if (link != null) append(" and is waiting for a check in the browser ($link)")
+                append(". On the computer, run: sudo tailscale set --ssh=false. Its own SSH server then answers on the same address.")
+            }
         }
 
         /** Windows OpenSSH's SFTP spells `C:\a\b` as `/C:/a/b`. */
