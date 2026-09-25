@@ -166,6 +166,8 @@ data class AgentUiState(
     val computers: List<dev.androidagent.remote.RemoteComputer> = emptyList(),
     /** The saved computers could not be opened: changed outside the app, so none is trusted. */
     val computersUnreadable: Boolean = false,
+    /** The computer used when the user does not pick one. */
+    val defaultComputerId: String? = null,
     /** The latest connect step per computer. */
     val computerSetup: Map<String, dev.androidagent.remote.RemoteSetup> = emptyMap(),
     val isComputersOpen: Boolean = false,
@@ -180,11 +182,14 @@ data class ComputerDraft(
     val id: String? = null,
     val label: String = "",
     val host: String = "",
+    /** Optional second address, such as Tailscale, tried when [host] does not answer. */
+    val vpnHost: String = "",
     val port: String = "22",
     val user: String = "",
     /** Blank on an edit keeps the saved password. */
     val password: String = "",
     val access: dev.androidagent.remote.RemoteAccess = dev.androidagent.remote.RemoteAccess.ASK,
+    val isDefault: Boolean = false,
 )
 
 data class FolderBrowserState(
@@ -291,6 +296,9 @@ data class AgentUiActions(
     /** Save a new or edited computer, then connect to it. */
     val onSaveComputer: (ComputerDraft) -> Unit = {},
     val onRemoveComputer: (String) -> Unit = {},
+    val onSetDefaultComputer: (String) -> Unit = {},
+    /** Hand text to another app, such as the PC setup steps to email to oneself. */
+    val onShareText: (String) -> Unit = {},
     /** Connect, install Codex if needed, and check its sign-in. */
     val onConnectComputer: (String) -> Unit = {},
     /** The user says they finished signing in to Codex on the computer. */

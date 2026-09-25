@@ -88,7 +88,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     val computer = remote.computers.firstOrNull { it.id == binding.computerId } ?: return@mapNotNull null
                     chat to "${computer.label} · ${binding.cwd}"
                 }.toMap()
-                mutable.update { it.copy(computers = remote.computers, computersUnreadable = remote.unreadable, remoteChats = labels) }
+                mutable.update {
+                    it.copy(
+                        computers = remote.computers,
+                        computersUnreadable = remote.unreadable,
+                        defaultComputerId = remote.defaultComputerId,
+                        remoteChats = labels,
+                    )
+                }
             }
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
@@ -144,16 +151,21 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Save a new or edited computer, then connect to it straight away. */
     fun saveComputer(draft: ComputerDraft) = task {
         val host = draft.host.trim()
+        val vpnHost = draft.vpnHost.trim().takeIf { it.isNotEmpty() && it != host }
         val user = draft.user.trim()
-        check(host.isNotEmpty()) { "Enter the computer's IP address or name." }
+        check(host.isNotEmpty()) { "Enter the computer's address on your home network." }
         check(user.isNotEmpty()) { "Enter the Windows user name." }
         val port = draft.port.trim().ifEmpty { "22" }.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: kotlin.error("The port is a number from 1 to 65535.")
         val existing = draft.id?.let(graph.computers::computer)
         check(existing != null || draft.password.isNotEmpty()) { "Enter the password." }
         val base = existing ?: RemoteComputer(id = RemoteStore.newId(), label = host, host = host, user = user)
-        val computer = base.copy(label = draft.label.trim().ifEmpty { host }, host = host, port = port, user = user, access = draft.access)
-        val saved = withContext(Dispatchers.IO) { graph.computers.save(computer, draft.password.takeIf { it.isNotEmpty() }) }
+        val computer = base.copy(
+            label = draft.label.trim().ifEmpty { host }, host = host, vpnHost = vpnHost, port = port, user = user, access = draft.access,
+        )
+        val saved = withContext(Dispatchers.IO) {
+            graph.computers.save(computer, draft.password.takeIf { it.isNotEmpty() }, makeDefault = draft.isDefault)
+        }
         // The old connection used the old address, password or access.
         graph.remote.reload(saved.id)
         setUpComputer(saved.id)
@@ -161,9 +173,26 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connectComputer(id: String) = task { setUpComputer(id) }
 
+    /**
+     * Open the computers. With a default computer, go straight on to it: the
+     * user did not pick one, so the default is the one meant. Back leads to
+     * the full list.
+     */
+    fun openComputers() {
+        mutable.update { it.copy(isComputersOpen = true) }
+        val default = graph.computers.state.value.defaultComputer ?: return
+        if (graph.remote.setup.value[default.id] is RemoteSetup.Working) return
+        connectComputer(default.id)
+    }
+
+    fun setDefaultComputer(id: String) = task { withContext(Dispatchers.IO) { graph.computers.setDefault(id) } }
+
     private suspend fun setUpComputer(id: String) {
         val result = graph.remote.setUp(id)
-        if (result is RemoteSetup.Ready) browseFolder(id, graph.computers.computer(id)?.lastFolder.orEmpty())
+        // The user may have closed the sheet while it connected.
+        if (result is RemoteSetup.Ready && mutable.value.isComputersOpen) {
+            browseFolder(id, graph.computers.computer(id)?.lastFolder.orEmpty())
+        }
     }
 
     fun checkComputerSignIn(id: String) = task {

@@ -1,6 +1,7 @@
 package dev.androidagent.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +21,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -28,9 +31,16 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -43,6 +53,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -55,11 +66,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,10 +83,42 @@ import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteSetup
 
 private val SheetFill = Color(0xFF1B1B1B)
-private val Muted = Color(0xFF8F8F8F)
+private val Ink = Color(0xFFEDEDED)
+private val Muted = Color(0xFF9A9A9A)
 private val CardFill = Color(0xFF242424)
+private val CodeFill = Color(0xFF151515)
+private val Hairline = Color(0xFF343434)
 private val ReadyInk = Color(0xFF83D9CA)
 private val WaitInk = Color(0xFFF6B86A)
+
+/** Turns on OpenSSH Server; the capability also opens port 22 in the firewall. */
+private const val INSTALL_SSH_COMMAND =
+    "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Start-Service sshd; Set-Service sshd -StartupType Automatic"
+
+/** The same steps as the guide, as plain text to send to the PC. */
+private val SETUP_STEPS_TEXT = """
+Hey Mike: let Mike work on this Windows PC
+
+1. Turn on OpenSSH Server. Open PowerShell as administrator and run:
+   $INSTALL_SSH_COMMAND
+   (Or: Settings > System > Optional features > View features > OpenSSH Server > Install.)
+
+2. Check that it runs:
+   Get-Service sshd
+   It should say Running.
+
+3. Find the addresses:
+   ipconfig
+   "IPv4 Address" (like 192.168.1.20) is the home network address.
+   With Tailscale on the PC and the phone, the PC's 100.x.x.x address also works away from home.
+
+4. Find the user name:
+   whoami
+   The part after the \ is the user name. The password is your Windows password.
+   With a Microsoft account, use the account password, not the PIN.
+
+5. On the phone: Hey Mike > side panel > Computer > Add a computer.
+""".trimIndent()
 
 /**
  * Computers Mike can work on. Three views in one sheet: the list, the add or
@@ -82,7 +129,12 @@ private val WaitInk = Color(0xFFF6B86A)
 internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var draft by remember { mutableStateOf<ComputerDraft?>(null) }
-    ModalBottomSheet(onDismissRequest = actions.onCloseComputers, sheetState = sheet, containerColor = SheetFill) {
+    ModalBottomSheet(
+        onDismissRequest = actions.onCloseComputers,
+        sheetState = sheet,
+        containerColor = SheetFill,
+        contentColor = Ink,
+    ) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = 12.dp)) {
             val browser = state.folderBrowser
             val editing = draft
@@ -90,15 +142,20 @@ internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
                 browser != null -> FolderPicker(state, browser, actions)
                 editing != null -> ComputerForm(
                     initial = editing,
+                    firstComputer = state.computers.isEmpty(),
+                    onShareSteps = { actions.onShareText(SETUP_STEPS_TEXT) },
                     onCancel = { draft = null },
                     onSave = { actions.onSaveComputer(it); draft = null },
                 )
                 else -> ComputerList(
                     state = state,
                     actions = actions,
-                    onAdd = { draft = ComputerDraft() },
+                    onAdd = { draft = ComputerDraft(isDefault = state.computers.isEmpty()) },
                     onEdit = { c ->
-                        draft = ComputerDraft(c.id, c.label, c.host, c.port.toString(), c.user, "", c.access)
+                        draft = ComputerDraft(
+                            id = c.id, label = c.label, host = c.host, vpnHost = c.vpnHost.orEmpty(), port = c.port.toString(),
+                            user = c.user, access = c.access, isDefault = c.id == state.defaultComputerId,
+                        )
                     },
                 )
             }
@@ -113,7 +170,7 @@ private fun SheetHeader(title: String, subtitle: String, onBack: (() -> Unit)? =
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
         }
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+            Text(title, fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Medium, color = Ink)
             Text(subtitle, fontSize = 13.sp, lineHeight = 18.sp, color = Muted)
         }
     }
@@ -121,7 +178,7 @@ private fun SheetHeader(title: String, subtitle: String, onBack: (() -> Unit)? =
 
 @Composable
 private fun ComputerList(state: AgentUiState, actions: AgentUiActions, onAdd: () -> Unit, onEdit: (RemoteComputer) -> Unit) {
-    SheetHeader("Computers", "Mike works on your Windows PC over SSH, with Codex running there.")
+    SheetHeader("Computers", "Mike runs Codex on your Windows PC and works in a folder you pick.")
     Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         if (state.computersUnreadable) {
             Text(
@@ -131,18 +188,43 @@ private fun ComputerList(state: AgentUiState, actions: AgentUiActions, onAdd: ()
             )
         }
         if (state.computers.isEmpty()) {
-            Text(
-                "On the PC: Settings > System > Optional features > add \"OpenSSH Server\", then start the " +
-                    "\"OpenSSH SSH Server\" service. The phone must reach the PC: the same Wi-Fi, or a VPN such as Tailscale.",
-                fontSize = 14.sp, lineHeight = 20.sp, color = Muted,
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
+            EmptyComputers(onAdd)
+            return@Column
         }
-        state.computers.forEach { computer ->
-            ComputerCard(computer, state.computerSetup[computer.id], actions, onEdit)
+        // The default first: it is the one a chat opens on when none is picked.
+        state.computers.sortedByDescending { it.id == state.defaultComputerId }.forEach { computer ->
+            ComputerCard(
+                computer = computer,
+                isDefault = computer.id == state.defaultComputerId,
+                setup = state.computerSetup[computer.id],
+                actions = actions,
+                onEdit = onEdit,
+            )
             Spacer(Modifier.height(10.dp))
         }
         OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Add another computer")
+        }
+    }
+}
+
+@Composable
+private fun EmptyComputers(onAdd: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().background(CardFill, RoundedCornerShape(16.dp)).padding(18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(Icons.Outlined.Computer, contentDescription = null, tint = ReadyInk, modifier = Modifier.size(36.dp))
+        Text("No computers yet", fontSize = 17.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp))
+        Text(
+            "Add your Windows PC and Mike can read, edit and run code there. " +
+                "You need a few minutes at the PC once, to turn on SSH. The next screen shows how.",
+            fontSize = 14.sp, lineHeight = 20.sp, color = Muted,
+            modifier = Modifier.padding(top = 6.dp, bottom = 14.dp),
+        )
+        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Icon(Icons.Outlined.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("Add a computer")
@@ -153,19 +235,29 @@ private fun ComputerList(state: AgentUiState, actions: AgentUiActions, onAdd: ()
 @Composable
 private fun ComputerCard(
     computer: RemoteComputer,
+    isDefault: Boolean,
     setup: RemoteSetup?,
     actions: AgentUiActions,
     onEdit: (RemoteComputer) -> Unit,
 ) {
     var confirmRemove by rememberSaveable(computer.id) { mutableStateOf(false) }
     val busy = setup is RemoteSetup.Working
-    Column(Modifier.fillMaxWidth().background(CardFill, RoundedCornerShape(16.dp)).padding(14.dp)) {
+    val outline = if (isDefault) ReadyInk.copy(alpha = 0.45f) else Hairline
+    Column(
+        Modifier.fillMaxWidth()
+            .background(CardFill, RoundedCornerShape(16.dp))
+            .border(1.dp, outline, RoundedCornerShape(16.dp))
+            .padding(14.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Computer, contentDescription = null, tint = ReadyInk, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(computer.label, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(computer.address, fontSize = 13.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    computer.label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Ink,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                )
+                if (isDefault) DefaultPill(Modifier.padding(start = 8.dp))
             }
             IconButton(onClick = { onEdit(computer) }, enabled = !busy) {
                 Icon(Icons.Outlined.Edit, contentDescription = "Edit ${computer.label}", tint = Muted)
@@ -174,25 +266,37 @@ private fun ComputerCard(
                 Icon(Icons.Outlined.DeleteOutline, contentDescription = "Remove ${computer.label}", tint = Muted)
             }
         }
-        Text(
-            when (computer.access) {
-                RemoteAccess.ASK -> "Asks before commands outside the project folder"
-                RemoteAccess.FULL -> "Full access, no questions"
-            },
-            fontSize = 12.5.sp, color = Muted, modifier = Modifier.padding(top = 6.dp),
-        )
-        computer.fingerprint?.let {
-            Text("Host key $it", fontSize = 11.sp, color = Muted, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(start = 32.dp)) {
+            DetailLine("Home", if (computer.port == 22) computer.host else "${computer.host}:${computer.port}")
+            computer.vpnHost?.let { DetailLine("VPN", it) }
+            DetailLine("User", computer.user)
+            DetailLine(
+                "Access",
+                when (computer.access) {
+                    RemoteAccess.ASK -> "Asks before anything outside the project folder"
+                    RemoteAccess.FULL -> "Full access, no questions"
+                },
+            )
+            computer.fingerprint?.let {
+                Text("Host key $it", fontSize = 11.sp, color = Muted, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            }
         }
         SetupLine(computer, setup, actions)
         Button(
             onClick = { actions.onConnectComputer(computer.id) },
             enabled = !busy,
-            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp).heightIn(min = 48.dp),
         ) {
             Icon(Icons.Outlined.Folder, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Open a project folder")
+            Text("Start a chat in a folder")
+        }
+        if (!isDefault) {
+            TextButton(onClick = { actions.onSetDefaultComputer(computer.id) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Icon(Icons.Outlined.Star, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Make this the default")
+            }
         }
     }
     if (confirmRemove) {
@@ -207,20 +311,46 @@ private fun ComputerCard(
 }
 
 @Composable
+private fun DefaultPill(modifier: Modifier = Modifier) {
+    Text(
+        "Default",
+        fontSize = 11.sp, fontWeight = FontWeight.Medium, color = ReadyInk,
+        modifier = modifier.background(ReadyInk.copy(alpha = 0.14f), RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+private fun DetailLine(name: String, value: String) {
+    Row(Modifier.padding(top = 2.dp)) {
+        Text(name, fontSize = 12.5.sp, color = Muted, modifier = Modifier.width(52.dp))
+        Text(value, fontSize = 12.5.sp, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
 private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: AgentUiActions) {
     when (setup) {
         null -> Unit
-        is RemoteSetup.Working -> Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        is RemoteSetup.Working -> Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(10.dp))
-            Text(setup.step, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+            Text(setup.step, fontSize = 14.sp, color = Ink)
         }
         is RemoteSetup.Ready -> Text(
-            "Connected to ${setup.probe.computerName.ifBlank { computer.label }} · Codex signed in as ${setup.account}",
-            fontSize = 13.sp, color = ReadyInk, modifier = Modifier.padding(top = 10.dp),
+            buildString {
+                append("Connected to ${setup.probe.computerName.ifBlank { computer.label }}")
+                setup.route?.let { append(if (it.viaVpn) " over the VPN" else " on the home network") }
+                append(" · Codex signed in as ${setup.account}")
+            },
+            fontSize = 13.sp, lineHeight = 18.sp, color = ReadyInk, modifier = Modifier.padding(top = 12.dp),
         )
-        is RemoteSetup.Failed -> Text(setup.message, fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 10.dp))
-        is RemoteSetup.NeedsSignIn -> Column(Modifier.padding(top = 10.dp)) {
+        is RemoteSetup.Failed -> Column(Modifier.padding(top = 12.dp)) {
+            Text(setup.message, fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.error)
+            var help by rememberSaveable(computer.id) { mutableStateOf(false) }
+            TextButton(onClick = { help = !help }) { Text(if (help) "Hide the PC checklist" else "What to check on the PC") }
+            if (help) PcChecklist(onShare = { actions.onShareText(SETUP_STEPS_TEXT) })
+        }
+        is RemoteSetup.NeedsSignIn -> Column(Modifier.padding(top = 12.dp)) {
             Text("Sign in to Codex on this computer", fontSize = 14.sp, color = WaitInk, fontWeight = FontWeight.Medium)
             Text("Open the page, sign in, and enter this code:", fontSize = 13.sp, color = Muted)
             setup.code?.let { Text(it, fontSize = 24.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(vertical = 6.dp)) }
@@ -232,39 +362,174 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
     }
 }
 
+/**
+ * What has to be true on the PC before the phone can connect, step by step.
+ * Collapsed to one line once the user has a computer working.
+ */
 @Composable
-private fun ComputerForm(initial: ComputerDraft, onCancel: () -> Unit, onSave: (ComputerDraft) -> Unit) {
+private fun PcSetupGuide(startExpanded: Boolean, onShare: () -> Unit) {
+    var open by rememberSaveable { mutableStateOf(startExpanded) }
+    Column(Modifier.fillMaxWidth().background(CardFill, RoundedCornerShape(16.dp)).border(1.dp, Hairline, RoundedCornerShape(16.dp))) {
+        Row(
+            Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("First, set up the PC", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink)
+                Text("Once per computer, about 5 minutes at the PC", fontSize = 12.5.sp, color = Muted)
+            }
+            Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = if (open) "Hide steps" else "Show steps", tint = Muted)
+        }
+        if (open) Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) { PcChecklist(onShare) }
+    }
+}
+
+@Composable
+private fun PcChecklist(onShare: () -> Unit) {
+    SetupStep(1, "Turn on OpenSSH Server", "Settings › System › Optional features › View features › OpenSSH Server › Install. Or, in PowerShell as administrator:") {
+        CodeLine(INSTALL_SSH_COMMAND)
+    }
+    SetupStep(2, "Check that it runs", "It should say Running.") { CodeLine("Get-Service sshd") }
+    SetupStep(
+        3, "Find the addresses",
+        "\"IPv4 Address\" (like 192.168.1.20) is the home network address. With Tailscale on the PC and the phone, " +
+            "the PC's 100.x.x.x address also works away from home.",
+    ) { CodeLine("ipconfig") }
+    SetupStep(
+        4, "Find the user name",
+        "The part after the \\ is the user name. The password is your Windows password. " +
+            "With a Microsoft account, use the account password, not the PIN.",
+    ) { CodeLine("whoami") }
+    SetupStep(
+        5, "Nothing else to install",
+        "Mike installs Codex on the PC the first time it connects (about 120 MB) and uses your Codex sign-in there, " +
+            "or shows a code to sign in.",
+    )
+    OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 44.dp)) {
+        Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Send these steps to the PC")
+    }
+}
+
+@Composable
+private fun SetupStep(number: Int, title: String, detail: String, code: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
+        Box(Modifier.size(22.dp).background(ReadyInk.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
+            Text("$number", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = ReadyInk)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Ink)
+            code?.let { Box(Modifier.padding(vertical = 4.dp)) { it() } }
+            Text(detail, fontSize = 12.5.sp, lineHeight = 17.sp, color = Muted)
+        }
+    }
+}
+
+/** A command to type on the PC, with a copy button. */
+@Composable
+private fun CodeLine(command: String) {
+    val clipboard = LocalClipboardManager.current
+    Row(
+        Modifier.fillMaxWidth().background(CodeFill, RoundedCornerShape(10.dp)).padding(start = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(command, fontSize = 12.sp, lineHeight = 16.sp, fontFamily = FontFamily.Monospace, color = Ink, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+        IconButton(onClick = { clipboard.setText(AnnotatedString(command)) }) {
+            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy command", tint = Muted, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun ComputerForm(
+    initial: ComputerDraft,
+    firstComputer: Boolean,
+    onShareSteps: () -> Unit,
+    onCancel: () -> Unit,
+    onSave: (ComputerDraft) -> Unit,
+) {
     var draft by remember(initial) { mutableStateOf(initial) }
+    var showPassword by rememberSaveable { mutableStateOf(false) }
     val editing = initial.id != null
-    SheetHeader(if (editing) "Edit computer" else "Add a computer", "Your Windows sign-in, sent only to this computer over SSH.", onBack = onCancel)
-    Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+    SheetHeader(
+        if (editing) "Edit computer" else "Add a computer",
+        "The sign-in is kept sealed on this phone and sent only to this computer.",
+        onBack = onCancel,
+    )
+    Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        PcSetupGuide(startExpanded = firstComputer && !editing, onShare = onShareSteps)
+
+        FormSection("Where to reach it")
         OutlinedTextField(
             value = draft.host, onValueChange = { draft = draft.copy(host = it.trim()) },
-            label = { Text("IP address or name") }, placeholder = { Text("192.168.1.20") }, singleLine = true,
+            label = { Text("Home network address") }, placeholder = { Text("192.168.1.20") }, singleLine = true,
+            supportingText = { Text("From ipconfig on the PC. Works when the phone is on the same Wi-Fi.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
+            value = draft.vpnHost, onValueChange = { draft = draft.copy(vpnHost = it.trim()) },
+            label = { Text("VPN address (optional)") }, placeholder = { Text("100.64.0.5") }, singleLine = true,
+            supportingText = { Text("Such as Tailscale, for away from home. Tried when the home address does not answer.") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        )
+
+        FormSection("Windows sign-in")
+        OutlinedTextField(
             value = draft.user, onValueChange = { draft = draft.copy(user = it) },
-            label = { Text("Windows user name") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            label = { Text("User name") }, singleLine = true,
+            supportingText = { Text("From whoami on the PC: the part after the \\.") },
+            modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = draft.password, onValueChange = { draft = draft.copy(password = it) },
-            label = { Text(if (editing) "Password (leave empty to keep)" else "Password") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            label = { Text("Password") }, singleLine = true,
+            supportingText = {
+                Text(if (editing) "Leave empty to keep the saved password." else "Your Windows password. With a Microsoft account, its password, not the PIN.")
+            },
+            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { showPassword = !showPassword }) {
+                    Icon(
+                        if (showPassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                        contentDescription = if (showPassword) "Hide password" else "Show password",
+                    )
+                }
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
-        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        FormSection("This computer in Mike")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = draft.label, onValueChange = { draft = draft.copy(label = it) },
-                label = { Text("Name (optional)") }, singleLine = true, modifier = Modifier.weight(1f),
+                label = { Text("Name") }, placeholder = { Text("Desk PC") }, singleLine = true, modifier = Modifier.weight(1f),
             )
             OutlinedTextField(
                 value = draft.port, onValueChange = { draft = draft.copy(port = it.filter(Char::isDigit).take(5)) },
-                label = { Text("Port") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(96.dp),
+                label = { Text("SSH port") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(104.dp),
             )
         }
-        Text("What Mike may do there", fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(top = 10.dp)
+                .toggleable(value = draft.isDefault, enabled = !initial.isDefault, role = Role.Switch) { draft = draft.copy(isDefault = it) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Default computer", fontSize = 15.sp, color = Ink)
+                Text(
+                    if (initial.isDefault) "This is the default. Make another computer the default to change it."
+                    else "The side panel's Computer button goes straight to it.",
+                    fontSize = 12.5.sp, lineHeight = 17.sp, color = Muted,
+                )
+            }
+            Switch(checked = draft.isDefault, onCheckedChange = null, enabled = !initial.isDefault)
+        }
+
+        FormSection("What Mike may do there")
         AccessOption(
             selected = draft.access == RemoteAccess.ASK,
             title = "Ask me first (recommended)",
@@ -275,11 +540,27 @@ private fun ComputerForm(initial: ComputerDraft, onCancel: () -> Unit, onSave: (
             title = "Full access",
             detail = "Mike runs any command as your Windows user without asking.",
         ) { draft = draft.copy(access = RemoteAccess.FULL) }
-        val ready = draft.host.isNotBlank() && draft.user.isNotBlank() && (editing || draft.password.isNotEmpty())
-        Button(onClick = { onSave(draft) }, enabled = ready, modifier = Modifier.fillMaxWidth().padding(top = 16.dp).heightIn(min = 48.dp)) {
+
+        val missing = buildList {
+            if (draft.host.isBlank()) add("the home address")
+            if (draft.user.isBlank()) add("the user name")
+            if (!editing && draft.password.isEmpty()) add("the password")
+        }
+        if (missing.isNotEmpty()) {
+            Text(
+                "Still needed: ${missing.joinToString(", ")}.",
+                fontSize = 12.5.sp, color = Muted, modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+        Button(onClick = { onSave(draft) }, enabled = missing.isEmpty(), modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp)) {
             Text(if (editing) "Save and connect" else "Connect")
         }
     }
+}
+
+@Composable
+private fun FormSection(title: String) {
+    Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Ink, modifier = Modifier.padding(top = 18.dp, bottom = 6.dp))
 }
 
 @Composable
@@ -290,7 +571,7 @@ private fun AccessOption(selected: Boolean, title: String, detail: String, onSel
     ) {
         RadioButton(selected = selected, onClick = null, modifier = Modifier.padding(top = 2.dp, end = 10.dp))
         Column {
-            Text(title, fontSize = 15.sp)
+            Text(title, fontSize = 15.sp, color = Ink)
             Text(detail, fontSize = 12.5.sp, lineHeight = 17.sp, color = Muted)
         }
     }
@@ -305,7 +586,7 @@ private fun FolderPicker(state: AgentUiState, browser: FolderBrowserState, actio
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 listing?.path ?: "Loading…",
-                fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = Ink,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
             if (browser.loading) CircularProgressIndicator(Modifier.padding(start = 8.dp).size(18.dp), strokeWidth = 2.dp)
@@ -343,7 +624,7 @@ private fun FolderPicker(state: AgentUiState, browser: FolderBrowserState, actio
 }
 
 @Composable
-private fun FolderRow(name: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, onClick: () -> Unit) {
+private fun FolderRow(name: String, icon: ImageVector, enabled: Boolean, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -352,7 +633,7 @@ private fun FolderRow(name: String, icon: androidx.compose.ui.graphics.vector.Im
             Icon(icon, contentDescription = null, tint = Muted, modifier = Modifier.size(18.dp))
         }
         Spacer(Modifier.width(12.dp))
-        Text(name, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(name, fontSize = 15.sp, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

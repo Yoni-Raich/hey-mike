@@ -104,6 +104,31 @@ Not verified (needs a phone and a Windows PC):
 - What *Ask me first* enforces without the Codex Windows sandbox set up.
 - The Computers sheet and folder picker on a real screen.
 
+### Computers sheet: setup guide, VPN address, default computer — 2026-09-25
+
+- The add form opens with a 5-step "set up the PC" guide (OpenSSH Server,
+  `Get-Service sshd`, `ipconfig`, `whoami`, Codex installs itself), copy
+  buttons, and a share button that sends the steps to the PC. Fields carry
+  hints; the button says what is still missing. Sheet text colour fixed (it
+  was dark on dark).
+- A computer can have a second, VPN address (e.g. Tailscale). Connect tries
+  the address that answered last first, the home one to begin with (6 s
+  when another is left), and moves on only when an address does not answer
+  at all. A refused password or a changed host key stops. The pinned key
+  holds for both addresses.
+- Several computers, one default (the first added; passes on when removed).
+  The side panel's *Computer* button connects straight to the default and
+  opens its folder picker; Back shows the list.
+
+Verified on Windows: `:remote:testDebugUnitTest --tests *RemoteStoreTest*`
+passes (new default and VPN cases), `:app:assembleDevDebug` builds, the APK
+installs on the Nothing A059 with `install -r`. The two `SshLinkTest` cases
+that run Linux commands and the Linux app-server fail on a Windows host, as
+expected. Not verified: the sheet on screen, the VPN fallback against a
+real PC, `:app:lintDevDebug`. A phone-chat request "do X on the computer"
+is not routed to the default computer: a computer chat is still chosen when
+it is opened.
+
 ## Chat streaming scroll — 2026-09-24
 
 On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one

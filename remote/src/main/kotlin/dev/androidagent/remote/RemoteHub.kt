@@ -32,9 +32,13 @@ sealed interface RemoteSetup {
     data class Working(val step: String) : RemoteSetup
     /** Codex on the computer is not signed in; the user opens [url] and enters [code]. */
     data class NeedsSignIn(val url: String?, val code: String?) : RemoteSetup
-    data class Ready(val probe: WindowsProbe, val account: String) : RemoteSetup
+    /** [route] is the address that answered, for the sheet to name. */
+    data class Ready(val probe: WindowsProbe, val account: String, val route: RemoteRoute? = null) : RemoteSetup
     data class Failed(val message: String) : RemoteSetup
 }
+
+/** Which of a computer's addresses a connection uses. */
+data class RemoteRoute(val host: String, val viaVpn: Boolean)
 
 /**
  * The computers' connections and the Codex running on each.
@@ -49,6 +53,8 @@ class RemoteHub(val store: RemoteStore) {
     private val linkLock = Mutex()
     private val links = ConcurrentHashMap<String, Connection>()
     private val engines = ConcurrentHashMap<String, Pair<CodexEngine, Job>>()
+    /** The address that last answered per computer, tried first next time. */
+    private val lastHost = ConcurrentHashMap<String, String>()
     private val stream = MutableSharedFlow<RemoteEvent>(extraBufferCapacity = 128)
     val events: SharedFlow<RemoteEvent> = stream.asSharedFlow()
 
@@ -73,7 +79,9 @@ class RemoteHub(val store: RemoteStore) {
     suspend fun setUp(computerId: String): RemoteSetup {
         val result = runCatching {
             report(computerId, RemoteSetup.Working("Connecting"))
-            val connection = connection(computerId)
+            val connection = connection(computerId) { route ->
+                report(computerId, RemoteSetup.Working(if (route.viaVpn) "Trying the VPN address ${route.host}" else "Connecting to ${route.host}"))
+            }
             var probe = withContext(Dispatchers.IO) { connection.probe(refresh = true) }
             if (!probe.installed) {
                 report(computerId, RemoteSetup.Working("Installing Codex on the computer (one time, about 120 MB)"))
@@ -83,7 +91,7 @@ class RemoteHub(val store: RemoteStore) {
             }
             report(computerId, RemoteSetup.Working("Starting Codex on ${probe.computerName.ifBlank { "the computer" }}"))
             val account = engine(computerId).account()
-            if (account.signedIn) RemoteSetup.Ready(probe, account.label)
+            if (account.signedIn) RemoteSetup.Ready(probe, account.label, connection.route)
             else {
                 val login = engine(computerId).login()
                 RemoteSetup.NeedsSignIn(login.loginUrl, login.userCode)
@@ -98,8 +106,9 @@ class RemoteHub(val store: RemoteStore) {
         val result = runCatching {
             val account: AccountStatus = engine(computerId).account()
             if (!account.signedIn) return@runCatching null
-            val probe = withContext(Dispatchers.IO) { connection(computerId).probe(refresh = false) }
-            RemoteSetup.Ready(probe, account.label)
+            val connection = connection(computerId)
+            val probe = withContext(Dispatchers.IO) { connection.probe(refresh = false) }
+            RemoteSetup.Ready(probe, account.label, connection.route)
         }.getOrElse { RemoteSetup.Failed(it.message ?: it.toString()) }
         result?.let { report(computerId, it) }
         return result ?: mutableSetup.value[computerId] ?: RemoteSetup.Working("Waiting for sign-in")
@@ -134,24 +143,47 @@ class RemoteHub(val store: RemoteStore) {
         links.remove(computerId)?.let { runCatching { it.link.close() } }
     }
 
-    private suspend fun connection(computerId: String): Connection = linkLock.withLock {
+    private suspend fun connection(computerId: String, onAttempt: (RemoteRoute) -> Unit = {}): Connection = linkLock.withLock {
         links[computerId]?.let { return@withLock it }
-        openConnection(computerId)
+        openConnection(computerId, onAttempt)
     }
 
-    private suspend fun openConnection(computerId: String): Connection = withContext(Dispatchers.IO) {
+    /**
+     * Try each address of the computer, the one that answered last time
+     * first. Only an address that does not answer at all moves on to the
+     * next: a refused password or a changed host key stops here.
+     */
+    private suspend fun openConnection(computerId: String, onAttempt: (RemoteRoute) -> Unit): Connection = withContext(Dispatchers.IO) {
         val computer = store.computer(computerId) ?: error("That computer was removed.")
         val password = store.password(computerId) ?: error("No password saved for ${computer.label}.")
-        val link = SshLink(SshTarget(computer.host, computer.port, computer.user, password, computer.hostKey))
-        val seen = link.connect()
-        if (computer.hostKey == null) {
-            // First contact: this key is the computer from now on.
-            store.update(computerId) { it.copy(hostKey = seen.key, fingerprint = seen.fingerprint) }
+        val hosts = computer.hosts.sortedByDescending { it == lastHost[computerId] }
+        val missed = mutableListOf<String>()
+        for ((index, host) in hosts.withIndex()) {
+            val route = RemoteRoute(host, viaVpn = host != computer.host)
+            onAttempt(route)
+            // With another address still to try, give up on this one sooner.
+            val timeout = if (index < hosts.lastIndex) FALLBACK_TIMEOUT_MS else SshLink.CONNECT_TIMEOUT_MS
+            val link = SshLink(SshTarget(host, computer.port, computer.user, password, computer.hostKey, timeout))
+            val seen = try {
+                link.connect()
+            } catch (error: SshUnreachable) {
+                missed += "$host: ${error.message}"
+                continue
+            }
+            if (computer.hostKey == null) {
+                // First contact: this key is the computer from now on.
+                store.update(computerId) { it.copy(hostKey = seen.key, fingerprint = seen.fingerprint) }
+            }
+            lastHost[computerId] = host
+            return@withContext Connection(link, route).also { links[computerId] = it }
         }
-        Connection(link).also { links[computerId] = it }
+        error(
+            if (missed.size == 1) missed.single().substringAfter(": ")
+            else "No address answered.\n" + missed.joinToString("\n"),
+        )
     }
 
-    private class Connection(val link: SshLink) {
+    private class Connection(val link: SshLink, val route: RemoteRoute) {
         @Volatile private var cached: WindowsProbe? = null
 
         fun probe(refresh: Boolean): WindowsProbe {
@@ -212,6 +244,8 @@ class RemoteHub(val store: RemoteStore) {
     }
 
     companion object {
+        private const val FALLBACK_TIMEOUT_MS = 6_000
+
         fun profileFor(computer: RemoteComputer): EngineProfile = EngineProfile(
             developerInstructions = RemoteInstructions.forComputer(computer),
             sandbox = computer.access.sandbox,

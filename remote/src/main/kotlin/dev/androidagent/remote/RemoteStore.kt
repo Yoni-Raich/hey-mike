@@ -33,6 +33,7 @@ enum class RemoteAccess(val sandbox: String, val approvalPolicy: String) {
 data class RemoteComputer(
     val id: String,
     val label: String,
+    /** The address on the home network, tried first. */
     val host: String,
     val port: Int = 22,
     val user: String,
@@ -43,8 +44,16 @@ data class RemoteComputer(
     val fingerprint: String? = null,
     /** The folder a chat was last opened in, where the folder picker starts. */
     val lastFolder: String? = null,
+    /**
+     * A second address for the same computer, such as its Tailscale address,
+     * tried when [host] does not answer. The pinned [hostKey] holds for both.
+     */
+    val vpnHost: String? = null,
 ) {
     val address: String get() = if (port == 22) "$user@$host" else "$user@$host:$port"
+
+    /** Every address to try, home network first. */
+    val hosts: List<String> get() = listOfNotNull(host, vpnHost?.takeIf { it.isNotBlank() }).distinct()
 }
 
 /** One chat that runs on a computer instead of on the phone. */
@@ -59,13 +68,17 @@ data class RemoteBinding(
 data class RemoteState(
     val computers: List<RemoteComputer> = emptyList(),
     val bindings: Map<String, RemoteBinding> = emptyMap(),
+    /** The computer used when the user does not pick one. Always set while there are computers. */
+    val defaultComputerId: String? = null,
     /**
      * The saved state could not be opened. It is sealed with a Keystore key,
      * so this means it was changed by something other than this app, or the
      * key is gone. Nothing from it is trusted.
      */
     val unreadable: Boolean = false,
-)
+) {
+    val defaultComputer: RemoteComputer? get() = computers.firstOrNull { it.id == defaultComputerId }
+}
 
 /**
  * Seals and opens bytes with a key that never leaves this app.
@@ -106,23 +119,37 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
     @Synchronized fun bindingForThread(threadId: String): Pair<String, RemoteBinding>? =
         stored.state.bindings.entries.firstOrNull { it.value.threadId == threadId }?.toPair()
 
-    /** Add a computer, or change one. A null [password] keeps the saved one. */
-    @Synchronized fun save(computer: RemoteComputer, password: String?): RemoteComputer {
+    /**
+     * Add a computer, or change one. A null [password] keeps the saved one.
+     * The first computer, or one saved with [makeDefault], becomes the default.
+     */
+    @Synchronized fun save(computer: RemoteComputer, password: String?, makeDefault: Boolean = false): RemoteComputer {
         val existing = computer(computer.id)
-        // A changed address is a different machine: its old key proves nothing.
+        // A changed home address is a different machine: its old key proves
+        // nothing. A changed VPN address keeps the pin, so that address must
+        // present the same key or the connection is refused.
         val moved = existing != null && (existing.host != computer.host || existing.port != computer.port)
         val next = if (moved) computer.copy(hostKey = null, fingerprint = null) else computer
         val computers = stored.state.computers.filterNot { it.id == computer.id } + next
         val passwords = if (password == null) stored.passwords else stored.passwords + (computer.id to password)
-        write(Stored(stored.state.copy(computers = computers), passwords))
+        val default = if (makeDefault || stored.state.defaultComputer == null) computer.id else stored.state.defaultComputerId
+        write(Stored(stored.state.copy(computers = computers, defaultComputerId = default), passwords))
         return next
     }
 
+    @Synchronized fun setDefault(id: String) {
+        if (computer(id) == null) return
+        write(Stored(stored.state.copy(defaultComputerId = id), stored.passwords))
+    }
+
     @Synchronized fun remove(id: String) {
+        val computers = stored.state.computers.filterNot { it.id == id }
+        val default = stored.state.defaultComputerId.takeIf { it != id } ?: computers.firstOrNull()?.id
         write(
             Stored(
                 stored.state.copy(
-                    computers = stored.state.computers.filterNot { it.id == id },
+                    computers = computers,
+                    defaultComputerId = default,
                     bindings = stored.state.bindings.filterValues { it.computerId != id },
                 ),
                 stored.passwords - id,
@@ -169,6 +196,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
 
         private fun encode(stored: Stored): String = buildJsonObject {
             put("version", 1)
+            stored.state.defaultComputerId?.let { put("default", it) }
             put("computers", buildJsonArray {
                 stored.state.computers.forEach { c ->
                     add(buildJsonObject {
@@ -177,6 +205,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                         c.hostKey?.let { put("hostKey", it) }
                         c.fingerprint?.let { put("fingerprint", it) }
                         c.lastFolder?.let { put("lastFolder", it) }
+                        c.vpnHost?.let { put("vpnHost", it) }
                         stored.passwords[c.id]?.let { put("password", it) }
                     })
                 }
@@ -208,6 +237,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     hostKey = c.text("hostKey"),
                     fingerprint = c.text("fingerprint"),
                     lastFolder = c.text("lastFolder"),
+                    vpnHost = c.text("vpnHost"),
                 )
             }
             val ids = computers.map { it.id }.toSet()
@@ -217,7 +247,8 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                 if (computer !in ids) return@mapNotNull null
                 session to RemoteBinding(computer, b.text("cwd") ?: return@mapNotNull null, b.text("thread"))
             }.toMap()
-            return Stored(RemoteState(computers, bindings), passwords)
+            val default = root.text("default")?.takeIf { it in ids } ?: computers.firstOrNull()?.id
+            return Stored(RemoteState(computers, bindings, default), passwords)
         }
 
         private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
