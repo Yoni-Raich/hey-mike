@@ -28,6 +28,15 @@ class LinuxHostTest {
         assertEquals("/home/me/App", ComputerToolGateway.pathKey("/home/me/App/"))
     }
 
+    @Test fun tailscaleSshIsNamedInsteadOfATimeout() {
+        assertTrue(SshLink.isTailscaleSsh("SSH-2.0-Tailscale", null))
+        assertTrue(SshLink.isTailscaleSsh(null, "# Tailscale SSH requires an additional check."))
+        assertFalse(SshLink.isTailscaleSsh("SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13", null))
+        val message = SshLink.tailscaleSshMessage("# To authenticate, visit: https://login.tailscale.com/a/abc123\n")
+        assertTrue(message.contains("https://login.tailscale.com/a/abc123"))
+        assertTrue(message.contains("sudo tailscale set --ssh=false"))
+    }
+
     @Test fun theAppServerPathIsQuotedForSpaces() {
         val probe = HostProbe("box", "/home/me", "x86_64", "/home/me/my data/codex-app-server", installed = true)
         assertEquals("'/home/me/my data/codex-app-server' --listen stdio://", LinuxHost.appServer(probe))

@@ -334,8 +334,10 @@ private fun ComputerCard(
             }
         }
         Column(Modifier.padding(start = 32.dp)) {
-            DetailLine("Home", if (computer.port == 22) computer.host else "${computer.host}:${computer.port}")
-            computer.vpnHost?.let { DetailLine("VPN", it) }
+            val port = if (computer.port == 22) "" else ":${computer.port}"
+            if (computer.host.isNotBlank()) DetailLine("Home", computer.host + port)
+            computer.vpnHost?.takeIf { it.isNotBlank() }?.let { DetailLine("VPN", it + port) }
+            computer.os?.let { DetailLine("System", it.label) }
             DetailLine("User", computer.user)
             DetailLine(
                 "Access",
