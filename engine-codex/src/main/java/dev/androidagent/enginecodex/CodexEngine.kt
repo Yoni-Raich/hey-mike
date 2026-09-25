@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import java.io.BufferedWriter
 import java.io.File
+import java.io.IOException
 import java.util.Base64
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
@@ -97,8 +98,13 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             }
         }
         scope.launch {
-            started.errorStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                lines.forEach { if (isActive) recordStderr(it) }
+            // close() destroys the process while this read blocks, so the read fails.
+            // That is the normal end of stderr, not an error: uncaught, it kills the app.
+            try {
+                started.errorStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                    lines.forEach { if (isActive) recordStderr(it) }
+                }
+            } catch (_: IOException) {
             }
         }
         request("initialize", buildJsonObject {
