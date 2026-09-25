@@ -232,6 +232,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Connect to a computer from the side panel, without opening the computers screen. */
     fun reconnectComputer(id: String) = task { graph.remote.reload(id); graph.remote.setUp(id, install = false) }
 
+    /** Computers whose Tailscale approval page the user opened and has not come back from. */
+    private val awaitingApproval = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    fun openedTailscaleApproval(id: String) { awaitingApproval += id }
+
+    /** Back in the app after the approval page: connect again without being asked. */
+    fun appResumed() {
+        val ids = synchronized(awaitingApproval) { awaitingApproval.toList().also { awaitingApproval.clear() } }
+        ids.forEach { id ->
+            if (graph.remote.setup.value[id] is RemoteSetup.NeedsTailscaleApproval) reconnectComputer(id)
+        }
+    }
+
     /**
      * Open a conversation Codex keeps on the computer. A chat here that
      * already follows it is reused; otherwise a new chat is bound to the

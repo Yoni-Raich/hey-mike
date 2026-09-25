@@ -423,7 +423,7 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
         is RemoteSetup.NeedsTailscaleApproval -> TailscaleApprovalCard(
             computer = computer.label,
             url = setup.url,
-            onOpen = { url -> actions.onOpenUrl(url) },
+            onOpen = { url -> actions.onOpenTailscaleApproval(computer.id, url) },
             onConnect = { actions.onConnectComputer(computer.id) },
             modifier = Modifier.padding(top = 12.dp),
         )

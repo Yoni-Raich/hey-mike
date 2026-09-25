@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         model.graph.runtimePermissions.resumed(this)
         model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
+        model.appResumed()
         model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole(); model.refreshAutomations()
     }
     override fun onPause() {
@@ -175,6 +176,11 @@ class MainActivity : ComponentActivity() {
         },
         onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
         onCheckComputerSignIn = { id -> model.checkComputerSignIn(id) },
+        onOpenTailscaleApproval = { id, url ->
+            model.openedTailscaleApproval(id)
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { model.error("No app on this phone can open $url") }
+        },
         onOpenUrl = { url ->
             runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
                 .onFailure { model.error("No app on this phone can open $url") }
