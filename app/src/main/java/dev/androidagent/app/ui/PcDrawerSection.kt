@@ -150,7 +150,7 @@ internal fun LazyListScope.pcSections(
                 TailscaleApprovalCard(
                     computer = computer.label,
                     url = setup.url,
-                    onOpen = { url -> actions.onOpenUrl(url) },
+                    onOpen = { url -> actions.onOpenTailscaleApproval(computer.id, url) },
                     onConnect = { actions.onReconnectComputer(computer.id) },
                     modifier = Modifier.animateItem().padding(horizontal = 8.dp, vertical = 4.dp),
                 )
@@ -502,28 +502,28 @@ internal fun TailscaleApprovalCard(
             }
             Text(
                 if (url != null) {
-                    "$computer signs in with your Tailscale account instead of a password. Approve once on the Tailscale page, then connect."
+                    "$computer signs in with your Tailscale account instead of a password. Approve once on the Tailscale page; coming back here connects."
                 } else {
                     "$computer signs in with your Tailscale account instead of a password, and its Tailscale rules do not let this phone in yet."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp, start = 34.dp),
             )
-            Row(
-                Modifier.fillMaxWidth().padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = onConnect) { Text("I approved, connect", color = MaterialTheme.colorScheme.onTertiaryContainer) }
+            // Stacked, full width: side by side they squeezed each other on a phone.
+            Column(Modifier.fillMaxWidth().padding(top = 12.dp, end = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 if (url != null) {
                     Button(
                         onClick = { onOpen(url) },
                         colors = ButtonDefaults.buttonColors(containerColor = PcReady, contentColor = Color(0xFF003731)),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Open approval page")
+                        Text("Open approval page", maxLines = 1)
                     }
+                }
+                TextButton(onClick = onConnect, modifier = Modifier.heightIn(min = 44.dp)) {
+                    Text(if (url != null) "Already approved? Connect" else "Connect again", color = MaterialTheme.colorScheme.onTertiaryContainer, maxLines = 1)
                 }
             }
             Text(

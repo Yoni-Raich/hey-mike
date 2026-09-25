@@ -323,6 +323,8 @@ data class AgentUiActions(
     val onRefreshPcThreads: () -> Unit = {},
     /** Try the computer's connection again from the side panel. */
     val onReconnectComputer: (computerId: String) -> Unit = {},
+    /** Open a computer's Tailscale approval page; coming back to the app connects again. */
+    val onOpenTailscaleApproval: (computerId: String, url: String) -> Unit = { _, _ -> },
     /** Before the first message: run this chat on the phone (null) or in a computer folder. */
     val onMoveNewChat: (computerId: String?, path: String?) -> Unit = { _, _ -> },
     val onComputerProposalShown: () -> Unit = {},
