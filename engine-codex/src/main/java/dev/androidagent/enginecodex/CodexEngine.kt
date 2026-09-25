@@ -201,6 +201,24 @@ class CodexEngine(
         return threads
     }
 
+    /**
+     * A new thread carrying [threadId]'s whole history, on the machine Codex
+     * runs on. It only reads the original, so it works while another Codex
+     * process holds that one open. Returns the new thread's id.
+     */
+    suspend fun forkThreadAt(cwd: String, threadId: String): String {
+        connect()
+        val result = request("thread/fork", buildJsonObject {
+            put("threadId", threadId)
+            put("cwd", cwd)
+            put("approvalPolicy", profile.approvalPolicy)
+            put("sandbox", profile.sandbox)
+            put("developerInstructions", profile.developerInstructions)
+            put("excludeTurns", true)
+        })
+        return result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread for the copy")
+    }
+
     /** The user and agent messages of one conversation, oldest first. */
     suspend fun readThreadMessages(threadId: String): List<CodexThreadMessage> {
         connect()

@@ -297,6 +297,14 @@ fun AndroidAgentScreen(
                         // Pinned above the composer, never in the chat list: the
                         // list follows the newest message, and a card placed in it
                         // sat above everything, out of sight in any long chat.
+                        state.activeSessionId?.takeIf { it in state.pcBusyChats }?.let { id ->
+                            PcBusyBanner(
+                                forking = id in state.pcForking,
+                                onFork = { actions.onForkPcChat(id) },
+                                onCheck = { actions.onCheckPcChatBusy(id) },
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
                         state.runState.approval?.let { approval ->
                             ApprovalCard(
                                 approval = approval,
@@ -946,6 +954,48 @@ private fun WhereMikeWorks(state: AgentUiState, binding: dev.androidagent.remote
                 label = { Text(if (recent.isEmpty()) "A folder on ${labels[target].orEmpty()}" else "Another folder") },
                 leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
             )
+        }
+    }
+}
+
+/**
+ * The conversation is held open by Codex on the computer, so Mike cannot
+ * write to it. A copy with the whole history can go on right away.
+ */
+@Composable
+private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(12.dp))
+                Text("Open in Codex on the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+            Text(
+                "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 32.dp, top = 6.dp),
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onCheck, enabled = !forking) { Text("Check again", color = MaterialTheme.colorScheme.onTertiaryContainer) }
+                Spacer(Modifier.width(4.dp))
+                Button(
+                    onClick = onFork,
+                    enabled = !forking,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary, contentColor = MaterialTheme.colorScheme.onSecondary),
+                ) {
+                    if (forking) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSecondary)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (forking) "Copying" else "Continue in a copy", maxLines = 1)
+                }
+            }
         }
     }
 }

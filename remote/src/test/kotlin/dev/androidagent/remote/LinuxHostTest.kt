@@ -39,6 +39,16 @@ class LinuxHostTest {
         assertNull(SshLink.approvalLink("# Tailscale SSH requires an additional check."))
     }
 
+    @Test fun aHeldConversationIsReadFromTheBusyAnswer() {
+        assertTrue(WindowsHost.parseBusy(ExecResult("HEYMIKE {\"busy\":true}\n", "", 0)))
+        assertFalse(WindowsHost.parseBusy(ExecResult("noise\nHEYMIKE {\"busy\":false}\n", "", 0)))
+        assertTrue(WindowsHost.threadBusy("01a0d7a8-b54a").isNotBlank())
+        assertTrue(LinuxHost.threadBusy("01a0d7a8-b54a").endsWith("| base64 -d | sh"))
+        // A thread id is put into a script: anything but letters, digits and dashes is refused.
+        assertTrue(runCatching { WindowsHost.threadBusy("x'; rm -rf ~") }.isFailure)
+        assertTrue(runCatching { LinuxHost.threadBusy("../../etc") }.isFailure)
+    }
+
     @Test fun theAppServerPathIsQuotedForSpaces() {
         val probe = HostProbe("box", "/home/me", "x86_64", "/home/me/my data/codex-app-server", installed = true)
         assertEquals("'/home/me/my data/codex-app-server' --listen stdio://", LinuxHost.appServer(probe))

@@ -168,6 +168,8 @@ class MainActivity : ComponentActivity() {
         onReconnectComputer = { id -> ensureService(); model.reconnectComputer(id) },
         onMoveNewChat = { id, path -> model.moveNewChat(id, path) },
         onComputerProposalShown = { model.editUi { it.copy(computerProposal = null) } },
+        onForkPcChat = { id -> model.forkPcChat(id) },
+        onCheckPcChatBusy = { id -> model.checkPcChatBusy(id) },
         onComposerSeedUsed = { id -> model.editUi { it.copy(composerSeeds = it.composerSeeds - id) } },
         onShareText = { text ->
             val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
