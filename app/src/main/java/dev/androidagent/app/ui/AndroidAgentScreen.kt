@@ -116,6 +116,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -128,6 +129,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -248,6 +250,10 @@ fun AndroidAgentScreen(
                     modifier = Modifier
                         .fillMaxHeight()
                         .widthIn(max = 360.dp),
+                    drawerContainerColor = DrawerSurface,
+                    // Named, because the drawer's own color is not in the scheme
+                    // and Compose then cannot tell which text color goes on it.
+                    drawerContentColor = MaterialTheme.colorScheme.onSurface,
                 ) {
                     AgentDrawer(
                         state = state,
@@ -356,6 +362,9 @@ private fun AgentDrawer(
             .fillMaxHeight()
             .padding(horizontal = 16.dp, vertical = 20.dp),
     ) {
+        // The top of the panel scrolls with the list: on a short screen (a
+        // phone on its side) a fixed top left no room for a single chat.
+        val top: @Composable () -> Unit = { Column {
         // The orb and one plain sentence answer "can Mike act right now"
         // before anything else; tapping it opens where to fix it.
         Surface(
@@ -406,7 +415,7 @@ private fun AgentDrawer(
         TextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Search chats") },
+            placeholder = { Text(if (state.computers.isEmpty()) "Search chats" else "Search chats and projects") },
             leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             trailingIcon = if (query.isNotEmpty()) ({
                 IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, contentDescription = "Clear search") }
@@ -438,14 +447,26 @@ private fun AgentDrawer(
             },
         )
         Spacer(Modifier.height(8.dp))
+        } }
 
-        val shown = ChatDayGroups.filter(PcChats.phoneSessions(state.sessions, state.remoteBindings), query)
-        val pcSections = PcChats.sections(
+        // Worked out once per change of what they read, not on every frame of
+        // the drawer's open animation.
+        val shown = remember(state.sessions, state.remoteBindings, query) {
+            ChatDayGroups.filter(PcChats.phoneSessions(state.sessions, state.remoteBindings), query)
+        }
+        val pcSections = remember(
             state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings,
             state.sessions, state.pcThreads, query,
-        )
+        ) {
+            PcChats.sections(
+                state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings,
+                state.sessions, state.pcThreads, query,
+            )
+        }
+        val dayGroups = remember(shown) { ChatDayGroups.group(shown, System.currentTimeMillis()) }
         val expanded = remember { mutableStateMapOf<String, Boolean>() }
         val showAll = remember { mutableStateMapOf<String, Boolean>() }
+        if (state.isLoadingSessions || (shown.isEmpty() && pcSections.isEmpty())) top()
         when {
             state.isLoadingSessions -> Box(
                 modifier = Modifier
@@ -475,25 +496,32 @@ private fun AgentDrawer(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
+                item(key = "drawer-top", contentType = "top") { top() }
+                // Up top while there is no computer: below every phone chat nobody finds it.
+                if (state.computers.isEmpty() && query.isBlank()) {
+                    item(key = "connect-computer", contentType = "quiet") {
+                        QuietRow("Work on your computer", icon = Icons.Outlined.Computer, modifier = Modifier.animateItem()) {
+                            close()
+                            actions.onOpenComputers()
+                        }
+                    }
+                }
                 // Computers first: their projects are few, the phone's chats many.
                 pcSections(pcSections, state, actions, expanded, showAll, close)
                 val phoneOpen = expanded["phone"] ?: true
                 if (pcSections.isNotEmpty() && shown.isNotEmpty()) {
-                    item(key = "on-phone") {
-                        FoldHeader("On this phone", "${shown.size} chats", phoneOpen, Icons.Outlined.PhoneAndroid, onToggle = { expanded["phone"] = !phoneOpen })
+                    item(key = "on-phone", contentType = "header") {
+                        Box(Modifier.animateItem()) {
+                            FoldHeader("On this phone", "${shown.size} chats", phoneOpen, Icons.Outlined.PhoneAndroid, onToggle = { expanded["phone"] = !phoneOpen })
+                        }
                     }
                 }
-                if (phoneOpen || pcSections.isEmpty()) ChatDayGroups.group(shown, System.currentTimeMillis()).forEach { group ->
-                    item(key = "day-${group.label}") {
-                        Text(
-                            group.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
-                        )
+                if (phoneOpen || pcSections.isEmpty()) dayGroups.forEach { group ->
+                    item(key = "day-${group.label}", contentType = "label") {
+                        DrawerSectionLabel(group.label, Modifier.animateItem())
                     }
-                    items(group.sessions, key = { it.id }) { session ->
-                        SessionRow(
+                    items(group.sessions, key = { it.id }, contentType = { "chat" }) { session ->
+                        Box(Modifier.animateItem()) { SessionRow(
                             session = session,
                             onComputer = session.id in state.remoteChats,
                             selected = session.id == state.activeSessionId,
@@ -504,15 +532,7 @@ private fun AgentDrawer(
                             },
                             onRename = { title -> actions.onRenameSession(session.id, title) },
                             onDelete = { actions.onDeleteSession(session.id) },
-                        )
-                    }
-                }
-                if (state.computers.isEmpty() && query.isBlank()) {
-                    item(key = "connect-computer") {
-                        QuietRow("Work on your computer", icon = Icons.Outlined.Computer) {
-                            close()
-                            actions.onOpenComputers()
-                        }
+                        ) }
                     }
                 }
             }
@@ -570,8 +590,9 @@ private fun SessionRow(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(26.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
         onClick = onSelect,
     ) {
         Row(
@@ -781,7 +802,12 @@ private fun AgentChatContent(
             items(state.toolCards, key = { "tool-${it.id}" }) { card -> ToolCard(card) }
         }
 
-        if (state.isLoadingMessages) {
+        // A conversation opened from a computer fills in from there; say so
+        // instead of showing an empty chat that looks finished.
+        val pcLoading = state.activeSessionId?.let(state.pcChatLoading::get)
+        if (pcLoading != null) {
+            item(key = "pc-loading") { PcConversationLoading(pcLoading) }
+        } else if (state.isLoadingMessages) {
             item(key = "loading-messages") {
                 LoadingMessagesCard()
             }
@@ -920,6 +946,44 @@ private fun WhereMikeWorks(state: AgentUiState, binding: dev.androidagent.remote
                 label = { Text(if (recent.isEmpty()) "A folder on ${labels[target].orEmpty()}" else "Another folder") },
                 leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
             )
+        }
+    }
+}
+
+/** The earlier messages of a computer's conversation on their way, with placeholders where they will land. */
+@Composable
+private fun PcConversationLoading(computer: String) {
+    val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "pc-loading").animateFloat(
+        initialValue = 0.45f,
+        targetValue = 0.9f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(700),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "pc-loading-alpha",
+    )
+    val bar = Color(0xFF242427)
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+            color = MaterialTheme.colorScheme.secondary,
+            trackColor = Color(0xFF1A2B28),
+        )
+        Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF1B1B1E), modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
+                Spacer(Modifier.width(10.dp))
+                Text("Loading the conversation from $computer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Column(Modifier.fillMaxWidth().alpha(pulse), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Box(Modifier.align(Alignment.End).width(220.dp).height(44.dp).background(bar, RoundedCornerShape(22.dp)))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.fillMaxWidth(0.9f).height(12.dp).background(bar, RoundedCornerShape(6.dp)))
+                Box(Modifier.fillMaxWidth(0.8f).height(12.dp).background(bar, RoundedCornerShape(6.dp)))
+                Box(Modifier.fillMaxWidth(0.55f).height(12.dp).background(bar, RoundedCornerShape(6.dp)))
+            }
+            Box(Modifier.align(Alignment.End).width(160.dp).height(44.dp).background(bar, RoundedCornerShape(22.dp)))
         }
     }
 }

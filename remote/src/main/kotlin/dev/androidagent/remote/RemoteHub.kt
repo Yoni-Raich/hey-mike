@@ -75,9 +75,18 @@ class RemoteHub(val store: RemoteStore) {
      */
     suspend fun refreshThreads(computerId: String) {
         if (mutableSetup.value[computerId] !is RemoteSetup.Ready) return
-        runCatching { engine(computerId).listThreads() }
-            .onSuccess { list -> mutableThreads.value = mutableThreads.value + (computerId to list) }
+        mutableRefreshing.value = mutableRefreshing.value + computerId
+        try {
+            runCatching { engine(computerId).listThreads() }
+                .onSuccess { list -> mutableThreads.value = mutableThreads.value + (computerId to list) }
+        } finally {
+            mutableRefreshing.value = mutableRefreshing.value - computerId
+        }
     }
+
+    private val mutableRefreshing = MutableStateFlow<Set<String>>(emptySet())
+    /** Computers whose conversations are being listed right now, for a progress line. */
+    val refreshing: StateFlow<Set<String>> = mutableRefreshing.asStateFlow()
 
     /**
      * Connect in the background, for the side panel, once per app run: a
