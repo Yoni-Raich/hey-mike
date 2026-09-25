@@ -7,6 +7,19 @@ description: How every device tool works and how to recover when the phone does 
 
 The exact mechanics of each device tool, and what to do when an action does not land.
 
+If `jev_run_ui_task` is ready, give it the user's complete UI goal in one call,
+including all subtasks and exact values in `texts`. Do not call `read_ui` or
+open an app first, and do not make a separate Jev call for each subtask. Its
+internal controller reads, chooses, acts, checks and recovers without another
+Mike turn. Use the tools below directly when Jev is unavailable or the user
+asked for manual control. A budget continuation resumes the same goal; it is
+not permission to repeat a submission with an unknown outcome.
+
+The user can turn Jev off at any time. Off means Codex uses the normal tools,
+with no Jev calls or resume attempts. A `disabled` result returns its recorded
+progress and any `pendingMutation`. Read the UI before continuing; do not replay
+an action with an unknown outcome or ask the user to enable Jev again.
+
 The accessibility service serves every tool below except `shell`, `push_file`, `pull_file` and `install_apk`, which need the optional Wireless ADB. The `source` field in an observation says which backend answered (`accessibility` or `uiautomator`), and `stable:false` means the screen had not settled when it was read.
 
 ---
@@ -113,7 +126,7 @@ itself, so they cannot miss because the screen scrolled a few pixels.
 - `set_text(nodeId, observationId, text, submit?)` — replaces the field's whole
   contents. Check `verified` in the reply: some chat and Compose inputs accept
   the action and keep their old value. If `verified` is false, fall back to
-  tapping the field and using `type_text`.
+  a fresh read and `type_text(mode="replace")` if that backend can replace it.
 - `scroll_node(nodeId, observationId, direction)` — `forward`, `backward`, `up`,
   `down`, `left`, `right`. More reliable inside a list than a swipe gesture.
   `success:false` usually means the list is already at that end.
@@ -132,11 +145,18 @@ itself, so they cannot miss because the screen scrolled a few pixels.
 
 ## 2. Text Input (`type_text`, `set_text`)
 
-1. **Focus first.** `tap` (or `tap_node`) the text field so it holds input focus. Without focus `type_text` fails with `no_text_focus` and types nothing.
-2. **Send the whole final text in one call.** On the accessibility backend `type_text` **replaces the field's entire content**; it does not append. To add to existing text, include the existing text in your call. Never type a message in pieces.
-3. **Submit** with `submit=true` when Enter should run the search or send. Otherwise tap the on-screen Send or Search button.
-4. **Any language works** — Hebrew, Arabic, emoji — with no escaping.
-5. **Verify** with `read_ui` that the field holds exactly the intended text. `set_text` reports `verified`; when it is false, tap the field and use `type_text` instead.
+1. Target a fresh `nodeId` and `observationId`, or focus the intended field first.
+2. Use `set_text` or `type_text(mode="replace")` for the complete final value.
+   Replacement is the default. `type_text(mode="insert")` replaces only the current selection.
+   Both backends use these same meanings. ADB replacement needs the app IME;
+   it never silently falls back to append-only `adb input text`.
+3. For an unverified write, read fresh UI and call `verify_text(nodeId, observationId, text)`.
+   It compares the full value locally and returns only `matches`. The shortened,
+   redacted `read_ui` preview cannot prove exact text, spacing or a long value.
+4. Submit only after exact verification. `submit=true` refuses to submit an
+   unverified write. For a separate Submit/Send button, verify the related fields first.
+5. Unicode works with accessibility or the configured IME. Do not retry a write
+   whose delivery is unknown. Inspect it first.
 
 ---
 

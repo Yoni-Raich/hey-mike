@@ -271,7 +271,7 @@ parsed in `:core` and applied by both backends through the same
 - `rootNodeId` returns one node and its descendants. `UiNode.parentId` carries
   the nearest ancestor that was **itself emitted**, so a subtree resolves from
   the flat node list in one forward pass over the pre-order traversal; it is
-  never serialized, so it costs the character budget nothing. A `rootNodeId`
+  serialized for semantic context as well as local subtree queries. A `rootNodeId`
   that is not on screen is a typed `ui_unknown_node` failure, because an empty
   node list would read as "that part of the screen is empty".
 - `offset` is the cursor. Every reply reports `totalNodes`, `returnedNodes`,
@@ -758,6 +758,216 @@ free-form file write.
 tool name reaches the model without new plumbing, not because remembering is a
 device action — it touches no device, and `needsControl` is false for both
 tools.
+
+## Experimental Jev UI engine
+
+The Jev navigation branch adds `JevToolGateway` beside the local knowledge and
+workflow gateways. It exposes one static `jev_run_ui_task` tool,
+because Codex binds tool definitions at `thread/start`. One call owns a bounded
+local loop:
+
+```text
+read fresh UI -> build code-owned action space -> one Jev request over one flat
+set of concrete actions -> validate the choice -> re-read for freshness -> route
+one action through CompositeDeviceToolGateway -> observe and repeat
+```
+
+The action space is flat: "Tap Wi-Fi", "Scroll down in the settings list" and
+"Set Volume from 20.0 to 75.0" are all choices in one question. It was once two
+questions — pick an operation, then pick a target "assuming the operation is
+TAP" — but Jev answers every question in one request, so the operation was
+chosen without knowing which target it would get and each target was chosen for
+an operation that might not be taken. `TAP` and `SCROLL_DOWN` are not comparable
+options; the concrete actions are, and that is the shape Jev's probabilities
+mean something over.
+
+One flat question has a 255-choice ceiling shared by everything on screen, so
+the space is paged rather than silently dropping controls. Named controls
+outrank anonymous containers when a page is full. Scrollable regions expose
+both axes; the backend decides whether a direction is supported. When only ADB
+is live, the catalog falls back to coordinate tap, swipe, drag-to-range and
+field-focus-before-type actions. The one decision still asked separately is
+which exact string to type: a goal yields candidate spans, and folding them in
+would crowd out every control on the screen.
+
+This is the fast path: Codex supplies one complete goal and does not spend a
+model turn between UI steps. Jev selects only opaque candidate keys. Local code
+maps those keys to installed-app launch, observed node taps, semantic or
+coordinate scrolling, long press/drag, exact field text, semantic or
+coordinate progress, Back, Home, Recents and system surfaces. Jev cannot
+invent selectors, node ids, packages, coordinates, text or range values. Text
+is drawn only from explicit `texts` or bounded verbatim goal spans; password
+fields never receive a text candidate. Progress values are numeric values or
+percentages already present in the goal.
+
+A field is named by its own subtree. A Compose text field reports as an
+`android.widget.EditText` with empty text and no description, and its name sits
+on a descendant, so the offer read "Replace field android.widget.EditText" —
+indistinguishable from the dropdown beside it, which also reports as an
+`EditText`. Jev answered `NONE` to the text question and the run returned
+`needs_input` with the field on screen. Descendants follow their field in
+traversal order and sit inside its bounds, so the first name found there is the
+field's own and not a neighbour's.
+
+The catalog also offers a small closed table of system deep links — the root
+Settings screen and the Wi-Fi, Bluetooth, display, sound, notification, battery
+and similar screens — as ordinary `open_intent` choices, most specific first.
+Reaching Display used to mean quick settings, a launcher, a tap on a gear and a
+scroll: four transitions before the task began, each of which could be missed or
+misread. The table is code-owned and the goal only decides which entries are
+worth a choice slot, so Jev still composes no intent; the launch goes through
+`IntentPolicy` like every other one, and a destination this phone does not
+declare is refused before dispatch and suppressed like any other unavailable
+action rather than ending the run. The table is offered only when the goal
+mentions settings. "Volume", "dark theme" and "notifications" also name controls
+inside ordinary apps: matched on those words alone, a goal about an app's own
+volume slider was routed into system Sound settings and changed the phone's media
+volume.
+
+An unnamed checkbox or switch is named by its row. In a list the control and its
+label are siblings, so `{checked: true}` read as belonging to nothing; Jev could
+not see a task was already ticked and toggled it back and forth. The control
+borrows the name of the labelled node that shares its vertical extent, and a tap
+offer on a checkable control says whether it is currently on or off. The ledger
+evidence carries the same label.
+
+Launching an app reports success only when the target actually owns the screen.
+`rootInActiveWindow` alone goes stale through quick settings, recents and
+launcher transitions, so a launch that had already landed was still reported as
+"not in front" once the whole timeout had run out, and the agent launched the
+same app a second time. The active window and the front-most application window
+now both count, and an unconfirmed launch is reported as unsuccessful: it was
+dispatched and must not be repeated blindly, which is exactly what the refusal
+path already records and suppresses.
+
+Every mutation still goes through the existing composite device gateway, so
+Accessibility/ADB fallback, send approval, visible control and Stop remain in
+one place. The loop re-observes immediately before input and discards a stale
+decision. Dispatch evidence, not an unchanged screen, decides whether recovery
+is safe. A definite refusal can be suppressed and another route chosen.
+An unknown mutation stops without replay; a screen that looks unchanged is not
+proof that nothing happened. Navigation and exact-write acknowledgements have
+their own recovery paths. Repeated action/screen signatures,
+stale screens, waits, steps, decisions and wall time are bounded. `DONE` completes
+only after one more fresh observation matches the state Jev judged, and returns
+`done_visible` with `verified:false`; this is not a task-specific verifier. Raw
+Enter is not in Jev's action space because its ADB fallback could bypass the
+existing send-approval guard; a visible submit control remains available.
+
+Each history entry carries its own `actionMs` and `observeMs`. The aggregate
+timings say a run was slow; these say which step was, which is the difference
+between guessing at a cause and reading one. `timings.decisions` counts Jev's
+choices by operation, so a run that spent its budget deciding rather than acting
+shows where.
+
+Choices that change nothing are not offered again on the same screen: WAIT after
+two waits that left the screen as it was, DONE after the audit rejected it there,
+while action pages can wrap back to an earlier offer. `JevMenuCursor` tracks
+the catalog version and bounds page hops; exhausting that budget returns a
+continuation, not a false claim that no action exists. Text paging stays with
+one selected field and starts at zero for the next field. A control whose
+screen transition repeats is withdrawn on its second
+repetition, which bounds a toggle that alternates between two screens. When exact
+texts were supplied and Jev answers that none of them fits the chosen field, that
+field is withdrawn on the screen instead of ending the run in `needs_input`; the
+field may already hold the value.
+
+The completion audit separates three judgments: binary satisfaction and time
+scope, selection of the actual evidence source (or an explicit source bundle),
+then validation of that proof against later contradictions. Evidence has an
+explicit order and stays sorted, even when old sources are retained. Historical
+visits are separate from current, persistent, invariant and compound conditions.
+A new observation invalidates the current status of non-historical proofs, not
+their source records. The latest unrelated screen is never pinned as a guess.
+Source retention is bounded to 32 screens plus the recent 12; if a new proof
+cannot fit, it stays pending and reports `proofCapacityReached`. Action history
+reports truncation, which prevents claiming an unbroken prohibition from a
+partial log. Audit questions are batched; ordinary action decisions carry only
+requirement status and four recent summaries.
+
+`jev_run_ui_task` accepts an optional `package`, which scopes the goal to that
+app, and refuses any argument it does not know. An unknown argument used to be
+dropped silently, which once left Jev with "open the app" and no app.
+
+The executor returns typed dispatch evidence (`NOT_DISPATCHED`, `ACKNOWLEDGED`,
+`VERIFIED` or `UNKNOWN`). The task ledger keeps compact evidence from earlier
+screens. `JevUiSemantics` owns stable field names, context and recovery keys;
+snapshot IDs and coordinates remain dispatch addresses. Failure memory ignores
+node renumbering and keyboard layout changes. Back with an open keyboard has
+its own context. Ambiguous fields cannot silently verify each other's writes.
+
+`UiTextContract` separates insert from replace and defines `verify_text`. Replace
+is the default, preserving the accessibility contract of existing Codex sessions;
+append/selection insertion requires explicit `mode=insert`. The
+accessibility backend compares the live full value; ADB compares a private full
+snapshot value or gets exact verification from the IME. Those values are never
+serialized as UI text. The IME selects and checks the complete field before
+replacement, and cannot append while claiming to replace. Workflows request
+replacement explicitly too.
+
+`JevMutationEvidence` keeps exact writes pending until a local comparison
+succeeds. `JevSubmissionGuard` recognizes explicit commit controls and asks a
+separate dependency question for ambiguous controls. Local code withholds a
+dependent or unknown submission while its fields are unresolved. Navigation
+and repair remain available. After an acknowledged commit, clearing the form
+does not undo the earlier exact-write evidence; the ledger still must prove
+the submission outcome. Field labels, current-value previews and context are
+separate inputs to text selection.
+
+The Jev HTTP provider also tags each request with a
+run generation, so Stop or a new run cannot deliver an old response into the
+current controller.
+
+Large UI observations are consumed through the existing `read_ui` paging
+contract. Accessibility and ADB both retain an immutable parsed snapshot behind
+the observation id, so paging does not dump a second screen. Observations carry
+editable/selected state, viewport/window facts, range min/max/current and
+supported semantic actions. `set_progress` uses Android
+`ACTION_SET_PROGRESS` and reports the typed range; the fallback uses grounded
+coordinates from the observed slider. A dispatched but unverified change is
+reported as uncertain and is never retried.
+
+The terminal Jev tool result is a handoff, not another raw `read_ui` response.
+`JevResultProjection` sends a bounded, non-actionable screen summary and the
+last 12 history entries; `JevTaskLedger.resultState` sends requirement status
+and proof ids without screen facts or full action traces. The internal ledger
+still keeps full evidence for audits and resumed segments. A fresh `read_ui`
+is required before Codex acts on the returned screen summary.
+
+A step, wall or decision limit is out of budget, not out of options, so those
+three replies carry a `continuation` token: calling `jev_run_ui_task` again with
+`resume` set to it continues the same goal with its history and its repeat
+detector intact, instead of starting blind and spending a fresh budget getting
+back to where the last call stopped. The token carries the goal, so it cannot be
+pointed at a different intent; it is single-use, the suspended set is bounded
+and cleared when a run begins or control is revoked, and a goal may be spread
+over at most five segments before it has to be decomposed. The orchestrator
+still re-enters the loop deliberately between segments — the ceiling became a
+pacing device, not an unbounded run.
+
+The app keeps the feature flag and Jev token in `JevTokenStore`. The token is
+encrypted with an Android Keystore AES/GCM key and is read only by the app's
+`AndroidJevProvider` for the fixed TypeSafe endpoint. It is not part of UI
+state, tool arguments, session files, or diagnostics. The HTTP adapter sends
+one request per cycle carrying the flat action question, plus the text question
+when a focused field can receive a value. Probability maps must contain exactly
+the offered choices, be finite, sum to one within tolerance, and make the chosen
+entry maximal. The text answer is validated and consumed only when the chosen
+action types text, so an answer to a question that was not asked cannot block a
+decision. Requests, responses and timeouts are bounded, and redirects carrying
+the token are disabled.
+
+Transient transport errors and HTTP 408/429/500/502/503/504/529 get at most three
+decision attempts in 30 seconds, with backoff and `Retry-After`. Protocol, auth,
+validation and TLS failures are not retried. No device action is inside this
+retry scope. Stop and settings changes invalidate queued and active responses.
+
+The toggle is a hard opt-out. Off removes Jev from `readyTools`, rejects direct
+invocations, cancels active decisions and prevents a disabled task from restarting
+after off/on. Codex and the composite device gateway stay active. A mid-task
+`disabled` result returns history, exact-write state and any uncertain mutation
+for Codex to continue with its ordinary tools. Static tool definitions remain
+for existing Codex sessions; they do not grant permission to call Jev while off.
 
 ## Why a 502 from the tunnel is now explained
 

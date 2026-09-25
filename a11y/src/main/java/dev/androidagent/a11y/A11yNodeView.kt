@@ -31,6 +31,7 @@ import android.view.accessibility.AccessibilityNodeInfo
  */
 interface A11yNodeView {
     val text: String?
+    val hintText: String? get() = null
     val contentDescription: String?
     val viewIdResourceName: String?
     val className: String?
@@ -46,6 +47,14 @@ interface A11yNodeView {
     val isVisibleToUser: Boolean
     val isPassword: Boolean
     val isEditable: Boolean
+    val isSelected: Boolean get() = false
+    val rangeMin: Float? get() = null
+    val rangeMax: Float? get() = null
+    val rangeCurrent: Float? get() = null
+    val rangeType: String? get() = null
+    val supportsSetProgress: Boolean get() = false
+    val isLongClickable: Boolean get() = false
+    val actionNames: List<String> get() = emptyList()
 
     /** True for a switch, checkbox or radio. [isChecked] means nothing without it. */
     val isCheckable: Boolean
@@ -60,6 +69,7 @@ interface A11yNodeView {
 /** Wraps a live platform node. Holds no state of its own. */
 class RealNodeView(val node: AccessibilityNodeInfo) : A11yNodeView {
     override val text: String? get() = node.text?.toString()
+    override val hintText: String? get() = node.hintText?.toString()
     override val contentDescription: String? get() = node.contentDescription?.toString()
     override val viewIdResourceName: String? get() = node.viewIdResourceName
     override val className: String? get() = node.className?.toString()
@@ -79,6 +89,37 @@ class RealNodeView(val node: AccessibilityNodeInfo) : A11yNodeView {
     override val isVisibleToUser: Boolean get() = node.isVisibleToUser
     override val isPassword: Boolean get() = node.isPassword
     override val isEditable: Boolean get() = node.isEditable
+    override val isSelected: Boolean get() = node.isSelected
+    override val isLongClickable: Boolean get() = node.isLongClickable
+    override val actionNames: List<String>
+        get() = node.actionList.mapNotNull { action ->
+            when (action.id) {
+                AccessibilityNodeInfo.ACTION_CLICK -> "CLICK"
+                AccessibilityNodeInfo.ACTION_LONG_CLICK -> "LONG_CLICK"
+                AccessibilityNodeInfo.ACTION_SET_TEXT -> "SET_TEXT"
+                AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> "SCROLL_FORWARD"
+                AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> "SCROLL_BACKWARD"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id -> "SCROLL_UP"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id -> "SCROLL_DOWN"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id -> "SCROLL_LEFT"
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id -> "SCROLL_RIGHT"
+                else -> null
+            }
+        }
+    override val rangeMin: Float? get() = node.rangeInfo?.min
+    override val rangeMax: Float? get() = node.rangeInfo?.max
+    override val rangeCurrent: Float? get() = node.rangeInfo?.current
+    override val rangeType: String?
+        get() = when (node.rangeInfo?.type) {
+            AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT -> "int"
+            AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT -> "float"
+            AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_PERCENT -> "percent"
+            else -> null
+        }
+    override val supportsSetProgress: Boolean
+        get() = node.actionList.any {
+            it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id
+        }
     override val isCheckable: Boolean get() = node.isCheckable
     override val isChecked: Boolean get() = node.isChecked
 

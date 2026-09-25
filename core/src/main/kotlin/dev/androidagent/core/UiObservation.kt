@@ -50,6 +50,14 @@ data class UiNode(
     val scrollable: Boolean,
     val focused: Boolean,
     val packageName: String?,
+    /** True when ACTION_SET_TEXT can target this node. */
+    val editable: Boolean = false,
+    /** Selection state for tabs, chips and list choices. */
+    val selected: Boolean = false,
+    /** Semantic range exposed by Accessibility, for example a SeekBar. */
+    val range: UiRange? = null,
+    /** True when Accessibility exposes ACTION_SET_PROGRESS for [range]. */
+    val supportsSetProgress: Boolean = false,
     /** True for password fields. Their text is never emitted, whatever the backend reported. */
     val password: Boolean = false,
     /**
@@ -65,15 +73,21 @@ data class UiNode(
     /**
      * Nearest ancestor that was itself emitted, or null for a root.
      *
-     * Deliberately never serialized: it exists so [UiQuery.rootNodeId] can cut
-     * a subtree out of the flat list, and emitting it on every node would
-     * spend the character budget the subtree query is there to save.
+     * Used for subtree queries and semantic field context. This is a local
+     * snapshot address, not a persistent identity.
      */
     val parentId: String? = null,
+    val longClickable: Boolean = false,
+    val actions: List<String> = emptyList(),
+    val windowType: String? = null,
+    val hintText: String? = null,
+    /** Used only for local equality checks, never serialized or included in a digest. */
+    val textValue: UiTextValue? = null,
 ) {
     fun isMeaningful(): Boolean =
-        text != null || contentDescription != null || resourceId != null ||
-            clickable || scrollable || focused || !enabled || checkable
+        text != null || contentDescription != null || hintText != null || resourceId != null ||
+            clickable || scrollable || focused || editable || selected || range != null ||
+            supportsSetProgress || longClickable || actions.isNotEmpty() || !enabled || checkable
 
     fun toJson(): JsonObject = buildJsonObject {
         put("nodeId", nodeId)
@@ -86,6 +100,11 @@ data class UiNode(
         }
         contentDescription?.let { put("contentDescription", UiObservationSerializer.safeField(it)) }
         resourceId?.let { put("resourceId", it) }
+        packageName?.let { put("package", it) }
+        windowType?.let { put("windowType", it) }
+        parentId?.let { put("parentId", it) }
+        hintText?.let { put("hintText", UiObservationSerializer.safeField(it)) }
+        if (longClickable) put("longClickable", true)
         className?.let { put("class", it) }
         bounds?.let { values ->
             put("bounds", buildJsonArray { values.forEach { add(JsonPrimitive(it)) } })
@@ -94,6 +113,21 @@ data class UiNode(
         put("clickable", clickable)
         put("scrollable", scrollable)
         put("focused", focused)
+        if (editable) put("editable", true)
+        if (selected) put("selected", true)
+        range?.let { value ->
+            put("range", buildJsonObject {
+                put("min", value.min)
+                put("max", value.max)
+                put("current", value.current)
+                value.type?.let { put("type", it) }
+            })
+        }
+        if (supportsSetProgress || actions.isNotEmpty()) {
+            put("actions", buildJsonArray {
+                (actions + if (supportsSetProgress) listOf("SET_PROGRESS") else emptyList()).distinct().forEach { add(it) }
+            })
+        }
         // Only for a node that has a state to report. Emitting "checked":false
         // on every label would cost the character budget for no information.
         if (checkable) {
@@ -117,16 +151,34 @@ data class UiNode(
         contentDescription = null,
         resourceId = null,
         packageName = null,
+        editable = false,
+        selected = false,
+        range = null,
+        supportsSetProgress = false,
         password = false,
         checkable = false,
         checked = false,
         clickableAncestor = null,
         parentId = null,
+        textValue = null,
+        hintText = null,
     )
 }
 
+data class UiRange(
+    val min: Double,
+    val max: Double,
+    val current: Double,
+    val type: String? = null,
+)
+
 /** A parsed screen, before it is rendered for the model. */
-data class UiObservation(val activePackage: String?, val nodes: List<UiNode>)
+data class UiObservation(
+    val activePackage: String?, val nodes: List<UiNode>,
+    val viewport: List<Int>? = null,
+    val windows: List<JsonObject> = emptyList(),
+    val treeTruncated: Boolean = false,
+)
 
 /**
  * The one `read_ui` description, so both backends advertise the same tool.
@@ -142,7 +194,7 @@ const val READ_UI_DESCRIPTION: String =
         "resourceId, class or package (case-insensitive substrings), rootNodeId (that node " +
         "and its descendants), clickableOnly or scrollableOnly; maxNodes and maxChars lower " +
         "the caps. A filter changes only what is listed — every node is still on screen and " +
-        "its id stays valid for tap_node, set_text and scroll_node. When both the screen and " +
+        "its id stays valid for tap_node, set_text, set_progress and scroll_node. When both the screen and " +
         "the query are identical to the previous observation the reply is \"unchanged\":true " +
         "with \"unchangedSinceRevision\" instead of the node list — reuse the nodes from that " +
         "revision, or pass force=true to resend them. Timeout or idle failures are typed and " +
@@ -389,6 +441,8 @@ object UiObservationSerializer {
         elapsedMs: Long,
         truncated: Boolean,
         stable: Boolean,
+        /** Digest of the complete unfiltered screen, shared by every page. */
+        screenDigest: String? = null,
         /** Omitted only by callers that render a node list they never narrowed. */
         page: UiPage? = null,
     ): String = buildJsonObject {
@@ -398,7 +452,11 @@ object UiObservationSerializer {
         put("elapsedMs", elapsedMs)
         put("source", source)
         put("stable", stable)
+        screenDigest?.let { put("screenDigest", it) }
         observation.activePackage?.let { put("activePackage", it) }
+        observation.viewport?.let { put("viewport", buildJsonArray { it.forEach { value -> add(value) } }) }
+        if (observation.windows.isNotEmpty()) put("windows", buildJsonArray { observation.windows.forEach { add(it) } })
+        if (observation.treeTruncated) put("treeTruncated", true)
         put("truncated", truncated)
         // Before the nodes, so a model that stops reading early still learns
         // that there is more and how to ask for it.
@@ -484,10 +542,16 @@ object UiObservationSerializer {
         activePackage: String?,
         nodes: List<UiNode>,
         query: UiQuery = UiQuery.ALL,
+        viewport: List<Int>? = null,
+        windows: List<JsonObject> = emptyList(),
+        treeTruncated: Boolean = false,
     ): String {
         val payload = buildJsonObject {
             activePackage?.let { put("activePackage", it) }
             put("nodes", buildJsonArray { nodes.forEach { add(it.toJson()) } })
+            viewport?.let { put("viewport", buildJsonArray { it.forEach { value -> add(value) } }) }
+            if (windows.isNotEmpty()) put("windows", buildJsonArray { windows.forEach { add(it) } })
+            if (treeTruncated) put("treeTruncated", true)
             // The same screen answers two different queries differently, so a
             // query is part of the identity of a reply. An empty one adds
             // nothing, which keeps every unfiltered digest what it always was.
@@ -557,7 +621,7 @@ object UiObservationSerializer {
         }
         val matched = select(observation.nodes, query)
         val fingerprint = ObservationFingerprint(
-            digest = digest(observation.activePackage, observation.nodes, query),
+            digest = digest(observation.activePackage, observation.nodes, query, observation.viewport, observation.windows, observation.treeTruncated),
             revision = revision,
             backend = backend,
         )
@@ -575,6 +639,8 @@ object UiObservationSerializer {
             )
         }
         val window = matched.drop(query.offset).let { rest -> query.maxNodes?.let(rest::take) ?: rest }
+        val fullScreenDigest = digest(observation.activePackage, observation.nodes,
+            viewport = observation.viewport, windows = observation.windows, treeTruncated = observation.treeTruncated)
         val render = { count: Int ->
             semanticJson(
                 observation = observation.copy(nodes = window.take(count)),
@@ -584,6 +650,7 @@ object UiObservationSerializer {
                 elapsedMs = elapsedMs,
                 truncated = query.offset + count < matched.size,
                 stable = stable,
+                screenDigest = fullScreenDigest,
                 page = UiPage(
                     totalNodes = observation.nodes.size,
                     matchedNodes = matched.size,

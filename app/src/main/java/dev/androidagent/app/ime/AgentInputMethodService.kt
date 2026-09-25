@@ -30,6 +30,9 @@ import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.Process
 import android.util.Base64
+import android.view.inputmethod.ExtractedText
+import android.view.inputmethod.ExtractedTextRequest
+import android.view.inputmethod.InputConnection
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -70,7 +73,8 @@ class AgentInputMethodService : InputMethodService() {
                     return
                 }
                 val encoded = intent.getStringExtra(EXTRA_PAYLOAD)
-                if (encoded.isNullOrBlank() || encoded.length > MAX_BASE64_CHARS ||
+                val replace = intent.getBooleanExtra("replace", false)
+                if (encoded == null || (!replace && encoded.isEmpty()) || encoded.length > MAX_BASE64_CHARS ||
                     encoded.length % 4 != 0 ||
                     !encoded.matches(BASE64_RE)
                 ) {
@@ -87,7 +91,7 @@ class AgentInputMethodService : InputMethodService() {
                     setFailure(RESULT_INVALID_PAYLOAD)
                     return
                 }
-                if (bytes.isEmpty() || bytes.size > MAX_TEXT_BYTES) {
+                if ((!replace && bytes.isEmpty()) || bytes.size > MAX_TEXT_BYTES) {
                     setFailure(RESULT_INVALID_PAYLOAD)
                     return
                 }
@@ -102,13 +106,31 @@ class AgentInputMethodService : InputMethodService() {
                     setFailure(RESULT_NO_INPUT_CONNECTION)
                     return
                 }
+                val targetPackage = intent.getStringExtra("target_package")
+                if (targetPackage != null && currentInputEditorInfo.packageName != targetPackage) {
+                    setFailure(RESULT_REPLACE_UNAVAILABLE)
+                    return
+                }
+                val before = fullText(connection)
+                val expected = if (replace) text else before?.let { value ->
+                    val old = value.text.toString()
+                    val start = value.selectionStart
+                    val end = value.selectionEnd
+                    if (start !in 0..old.length || end !in 0..old.length) null
+                    else old.replaceRange(minOf(start, end), maxOf(start, end), text)
+                }
+                if (replace && !selectEntireField(connection, before)) {
+                    setFailure(RESULT_REPLACE_UNAVAILABLE)
+                    return
+                }
                 val committed = try {
                     connection.commitText(text, 1)
                 } catch (_: RuntimeException) {
                     false
                 }
                 if (committed) {
-                    setResultCode(RESULT_SUCCESS)
+                    val verified = expected != null && fullText(connection)?.text?.toString() == expected
+                    setResultCode(if (verified) RESULT_VERIFIED else RESULT_SUCCESS)
                     setResultData(RESULT_DATA_OK)
                 } else {
                     setFailure(RESULT_COMMIT_FAILED)
@@ -153,6 +175,22 @@ class AgentInputMethodService : InputMethodService() {
         return decoder.decode(ByteBuffer.wrap(bytes)).toString()
     }
 
+    private fun fullText(connection: InputConnection): ExtractedText? = runCatching {
+        connection.getExtractedText(ExtractedTextRequest().apply { hintMaxChars = MAX_FIELD_CHARS }, 0)
+            ?.takeIf { it.startOffset == 0 && it.partialStartOffset < 0 && it.partialEndOffset < 0 &&
+                it.text != null && it.text.length < MAX_FIELD_CHARS }
+    }.getOrNull()
+
+    /** Never advertise replacement while committing at an arbitrary cursor position. */
+    private fun selectEntireField(connection: InputConnection, before: ExtractedText?): Boolean = runCatching {
+        val old = before?.text?.toString() ?: return false
+        if (!connection.setSelection(0, old.length)) return false
+        val selected = fullText(connection) ?: return false
+        selected.text.toString() == old && minOf(selected.selectionStart, selected.selectionEnd) == 0 &&
+            maxOf(selected.selectionStart, selected.selectionEnd) == old.length &&
+            connection.getSelectedText(0)?.toString().orEmpty() == old
+    }.getOrDefault(false)
+
     companion object {
         const val ACTION_SUFFIX = ".INPUT_TEXT"
         const val PROBE_SUFFIX = ".INPUT_PROBE"
@@ -162,9 +200,12 @@ class AgentInputMethodService : InputMethodService() {
         const val RESULT_INVALID_PAYLOAD = 3
         const val RESULT_NO_INPUT_CONNECTION = 4
         const val RESULT_COMMIT_FAILED = 5
+        const val RESULT_REPLACE_UNAVAILABLE = 6
+        const val RESULT_VERIFIED = 7
         const val RESULT_DATA_OK = "ok"
         const val RESULT_DATA_ERROR = "error"
         const val MAX_TEXT_BYTES = 16 * 1024
+        private const val MAX_FIELD_CHARS = 65_536
         const val MAX_BASE64_CHARS = ((MAX_TEXT_BYTES + 2) / 3) * 4 + 4
         private val BASE64_RE = Regex("^[A-Za-z0-9+/]*={0,2}$")
     }

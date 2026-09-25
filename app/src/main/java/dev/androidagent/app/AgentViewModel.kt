@@ -102,6 +102,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.voice.state.collect { state -> mutable.update { it.copy(voiceState = state) } } }
         viewModelScope.launch { graph.voice.muted.collect { muted -> mutable.update { it.copy(voiceMuted = muted) } } }
         viewModelScope.launch { graph.sendGrants.grants.collect { grants -> mutable.update { it.copy(sendGrants = grants) } } }
+        viewModelScope.launch { graph.jev.state.collect { jev ->
+            mutable.update {
+                it.copy(
+                    jevEnabled = jev.enabled,
+                    jevTokenConfigured = jev.tokenConfigured,
+                )
+            }
+        } }
         viewModelScope.launch { graph.engine.voiceEvents.collect(::handleVoiceEvent) }
         viewModelScope.launch { graph.engine.events.collect { event ->
             when (event) {
@@ -125,6 +133,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
+    fun setJevEnabled(enabled: Boolean) {
+        graph.jev.setEnabled(enabled)
+        mutable.update { it.copy(infoMessage = if (enabled) "Jev enabled for new UI tasks." else "Jev disabled. Codex can continue with its own tools.") }
+    }
+    fun saveJevToken(token: String) {
+        runCatching { graph.jev.saveToken(token) }
+            .onSuccess { mutable.update { it.copy(infoMessage = "Jev token saved securely on this phone.") } }
+            .onFailure { error("Could not save the Jev token securely.") }
+    }
+    fun clearJevToken() {
+        graph.jev.clearToken()
+        mutable.update { it.copy(infoMessage = "Jev token removed.") }
+    }
     fun newChat() = task { current.value = graph.sessions.createSession().id }
 
     // First launch and consent live in the same "ui" preferences as the model

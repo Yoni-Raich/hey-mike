@@ -54,12 +54,12 @@ tool and answered the battery level.
 Not verified: realtime voice, a turn on a GPT-6 model, code-mode, the release
 APK, and the full gate (`:app:lintDevDebug`, `assembleDevRelease`).
 
-## Jev isolation cleanup — 2026-09-23
+## Jev isolation — 2026-09-24
 
-This branch reverts the five Jev implementation commits that landed on `dev`
-before PR #78. The unrelated Dev launcher icon commit `d2dfc2b` remains.
-Jev work continues in PR #78 after this cleanup is merged; this revert does
-not remove the original commits from Git history.
+PR #86 removes the five Jev implementation commits that had landed on `dev`
+before PR #78. The unrelated Dev launcher icon commit `d2dfc2b` remains. PR #78
+keeps the Jev work on an isolated branch, now rebased on current `dev`; the
+cleanup does not remove the original commits from Git history.
 
 Verified locally: `:core:test`, `:a11y:testDebugUnitTest`,
 `:device-tools:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
@@ -67,7 +67,6 @@ Verified locally: `:core:test`, `:a11y:testDebugUnitTest`,
 accessibility schema tests required
 lazy initialization of Android scroll constants after the revert. No phone
 run or release build was performed for this cleanup.
-
 ## Usage widget for every account — 2026-09-23
 
 On branch `claude/account-usage-widget-8vccz5`, a home screen widget shows the
@@ -84,6 +83,44 @@ placing the widget, its size on a real launcher grid, that a switch moves
 "In use" and records the new account's quota under the right account, and the
 30-minute refresh.
 
+## Jev dev rebase and bounded result — 2026-09-22
+
+Rebased `fix/jev-navigation-recovery` onto `origin/dev`. The
+working branch includes the earlier PR #78 fixes plus the terminal-result
+projection. `read_ui` already parses and pages the device tree; the large
+payload was the final Jev tool reply, which copied full ledger evidence,
+history and the raw last observation back to Codex. The reply now includes
+requirement status, a bounded screen summary and recent actions. Full evidence
+stays inside Jev for audits and continuation.
+
+Checks: `:core:test` passed (including result-size/privacy cases),
+`:app:assembleDevDebug :app:lintDevDebug -PversionCodeOverride=42` passed, and
+the resulting `dev.androidagent.app.dev` APK was installed with `adb install -r`
+on Nothing A059. On-device Settings -> Display, without
+changing a setting, returned `done_visible` in one device action and five Jev
+decisions. Its tool JSON was 2,590 characters and remained parseable; the
+earlier full AndroidGym reply was about 39,772 characters and was truncated
+by the caller. This is proof of the handoff reduction, not of the full Gym
+workflow. The latest five-task Gym attempt still stopped at `decision_limit`
+after six device actions; Notes + Submit was not completed.
+
+On the rebased APK, a second read-only goal to reach Network & internet first
+hit `decision_limit` (11 actions, 34 Jev decisions, 68.1s): the intent catalog
+had no matching network dashboard, so Jev opened Settings root and searched.
+On the Nothing, `android.settings.WIRELESS_SETTINGS` resolves to
+`Settings$NetworkDashboardActivity`. Added that fixed intent for Network &
+internet goals, with a catalog test. Rebuilt and reinstalled the Dev APK;
+the same goal then returned `done_visible` in one intent action, seven Jev
+decisions and 13.4s. All three requirements were supported, and the returned
+JSON was 2,535 characters. After the last `dev` rebase, the exact APK was
+rebuilt and reinstalled; the same goal again returned `done_visible` in one
+intent action, five Jev decisions and 8.3s (2,534-character JSON). This
+verifies that one route on this device, not
+general navigation success or the full AndroidGym task.
+
+Not yet verified: a fresh full five-task Gym run with this projection, a live
+toggle-off during a request, and release-build/device behavior. The installed
+APK is a Dev Debug build, not a release.
 ## Multiple Codex accounts — 2026-09-22
 
 On branch `claude/multiple-accounts-branch-i6emwt`, the app keeps several
@@ -100,6 +137,207 @@ nothing ran on a phone. Still to check on a device: a device-code sign-in for
 a second account, a switch followed by a turn in an existing chat (the resumed
 thread carries reasoning items created under the other account), and that the
 quota bars change.
+
+## Jev PR #78 review fixes — 2026-09-22 (code only)
+
+Implemented the eight selected review fixes and the user's Jev-off requirement
+in `fix/jev-navigation-recovery`. The main checkout was left unchanged.
+
+- Added semantic target/action memory, field label/value/context separation,
+  catalog-scoped action paging and field-local text paging.
+- Completion proofs now retain their selected source or explicit source bundle,
+  ordered by observation sequence, with separate time scopes. Retention limits
+  leave requirements pending instead of discarding proof silently.
+- Added full local `verify_text` checks, dependent-submit preconditions and
+  separate write/commit evidence. A cleared submitted form is not re-filled just
+  because its earlier text is gone.
+- Unified insert/replace semantics across accessibility and ADB. IME replacement
+  selects and checks the full field; plain ADB text input cannot claim replacement.
+- Added bounded decision-only HTTP retries and cancellable backoff. Off cancels
+  Jev decisions and hands recorded progress back to Codex; ordinary tools remain
+  available. Off/on cannot resurrect an old decision.
+- Updated app text, on-device instructions and architecture notes.
+- Updated existing audit fixtures for the new source-selection protocol and
+  explicit replacement contract. These are source edits only; they were not run.
+
+Evidence: source and diff inspection only. No builds, tests, E2E runs, phone
+operations, release or push were performed in this pass, as requested. This is
+not runtime proof. Compilation, protocol regression fixtures, device behavior,
+latency, custom-editor IME support and live toggle/Stop behavior remain unverified.
+
+## Jev on-device measurement and loop fixes — 2026-09-22 (evening)
+
+Branch `fix/jev-navigation-recovery`, Nothing A059, dev builds 31-40 installed
+with `install -r`; the accessibility service stayed bound throughout. Tasks were
+sent to Mike's chat, and results read from the rollout JSONL.
+
+Settings -> Display, "do not change any settings": `incomplete` (all four
+requirements pending) became `done_visible` in 1 step, 3 Jev calls and 7.0-7.4s
+(handoff baseline 26.7s / 8 calls). The deep link acts in ~20ms; the audit now
+answers with P(PENDING) 0.05-0.2.
+
+Fixed, each with a unit test:
+
+- **The completion audit split its vote.** Each retained screen was its own
+  option, so `PENDING` won the plurality (0.55-0.60) on screens that plainly
+  qualified. One yes/no question per requirement; code attaches the evidence.
+- **Prohibitions were unprovable.** "Do not change any settings" is now judged
+  against a complete `actionsTaken` list kept by the ledger.
+- **Jev could flip action pages until the wall limit.** A Gym Notes run made 3
+  real actions in 4s, then 112 page flips for 286s. Paging stops once every
+  page of a screen has been shown. The same run now ends in 36s as `incomplete`,
+  with exactly one pending requirement: the Gym shows no visible confirmation
+  after Submit, even for a physical tap.
+- **WAIT on an unchanged screen, and DONE after an audit rejection, are
+  withdrawn on that screen.** One Wi-Fi run spent 9 WAITs (~13s) on a stable page.
+- **Settings deep links hijacked app goals.** "Enable Dark Theme, set Volume to
+  75%" in the Gym opened system Sound settings and changed the phone's media
+  volume (16 -> 12, restored by hand). Deep links now need the goal to mention
+  settings.
+- **`package` was silently dropped.** Mike passes it; Jev got "open the app" with
+  no app. It is now accepted, and unknown arguments are refused.
+- **Unnamed checkboxes.** The Tasks row's checkbox precedes its label, so the
+  audit and Jev could not see Task #3 was already ticked, and Jev toggled it seven
+  times. Checkable controls borrow their row's label, and tap offers say on/off.
+- **`max_tokens_exceeded`.** Every decision carried the full ledger evidence.
+  Decisions now get requirement statuses and four screen summaries.
+- **`needs_input` with the value supplied.** When Jev answers that no supplied
+  value fits a field, that field is withdrawn on the screen instead.
+- Diagnostics: `timings.decisions`, `taskLedger.lastAudit`, and the Jev API
+  error body in `model_error` (it named `max_tokens_exceeded`).
+
+Still open, seen in the last full AndroidGym run (timeout, 117 steps):
+
+- BACK at the Gym's root closes it, and the Gym loses its state when it closes;
+  Jev pressed BACK six times and redid the settings each time.
+- A refusal is suppressed per node id, and ids change between observations, so
+  "Replace field Standard" (a read-only dropdown) was refused many times.
+- Jev taps the Gym's checklist text ("2. Select 'Urgent'…") as if it were the
+  control, and it bounces between the Gym's two tabs through different targets.
+- The Gym grades Notes (item 4) on keyboard text-change events: a verified
+  accessibility text write plus Submit left it unchecked, while real key presses
+  checked it. That is the benchmark's grading, not a failed write.
+- The "Accessibility - Off" mismatch did not reproduce after `install -r`; the
+  settings sheet showed On with the service bound.
+
+`:core:test :a11y:testDebugUnitTest :device-tools:test :app:testDevDebugUnitTest
+:app:lintDevDebug :app:assembleDevDebug` and `git diff --check` pass.
+
+## Jev physical-device debugging — 2026-09-22
+
+Branch `fix/jev-navigation-recovery`, on the Nothing A059 with a real Jev token.
+Jev does execute real multi-step navigation on the phone; the failures were slow
+and false-negative, not structural.
+
+Five causes were found and fixed.
+
+**Completion evidence was too weak.** `JevTaskLedger` sorted interactive nodes
+first and kept ~1200 bytes, so a screen's switch values survived while the labels
+that said which setting each belonged to did not. The audit then could not prove
+a result the device had actually reached, and the run returned `incomplete` with
+`steps: 0`. The ledger now drops resource-only layout wrappers, keeps screen
+order so a label stays next to its control, prefers app nodes over system
+windows, retains bounds, and has a 2400-byte budget.
+
+**Post-action reads happened before Android had reacted.** `read_ui` waits for
+quiescence, but pre-action idle time already satisfied it, so the first read
+after an action could return the previous screen. `AgentAccessibilityService`
+gained `expectUiChange()`, and `A11yDeviceTools` calls it before every mutating
+dispatch.
+
+**App-open confirmation was slow and unreliable.** `rootInActiveWindow` is stale
+through quick settings, recents and launcher transitions, so a landed launch was
+still reported "not in front" after the full five seconds, and the agent launched
+the same app again. The active window and the front-most application window now
+both count, the timeout is 3s, and an unconfirmed launch is reported as
+unsuccessful so the caller suppresses the repeat instead of trusting a screen it
+has not seen.
+
+**There was no direct route to a system screen.** The catalog offered
+`open_app`, quick settings and recents but no intent, so reaching Display meant
+four transitions before the task began. A closed, code-owned table of
+`android.settings.*` destinations is now offered as ordinary choices, most
+specific first, with the root Settings screen as the fallback. A refused deep
+link costs one step, not the run.
+
+**An unnamed field could not be chosen for.** The AndroidGym `needs_input`
+failure was not the keyboard. The Agent Notes field is a Compose
+`android.widget.EditText` with empty text whose name is on a descendant
+(`content-desc="Agent Notes Field"`), confirmed by `uiautomator dump` on the
+phone. The offer therefore read "Replace field android.widget.EditText", which
+is indistinguishable from the Priority dropdown beside it — also an `EditText`.
+Jev answered `NONE` to the text question, which is the correct answer to an
+ambiguous one, and the gateway returned `needs_input`. A field with no name of
+its own now borrows the first name from its own subtree.
+
+Each history entry now carries `actionMs` and `observeMs`, so the next
+investigation can read which step was slow instead of inferring it.
+
+Measured on the phone, Settings → Display, before and after the first two fixes:
+17 model calls / `incomplete` / 3 stale retries became 8 model calls /
+`done_visible` / 0 stale retries. The app-open and deep-link fixes are covered by
+unit tests but have not yet been re-measured on the phone.
+
+Still open: a UI/state mismatch where Hey Mike shows "Accessibility — Off" while
+`dumpsys accessibility` shows the Dev service enabled and bound (reproduce after
+cold start, process restart, and returning from Android Settings, against
+`A11yServiceHandle`/`A11yAvailability`); end-to-end Stop during a live Jev HTTP
+request; and re-measuring the full five-task AndroidGym run and Settings →
+Display on the phone against this build.
+
+## Jev engine completion follow-up — 2026-09-22
+
+Checkpoint `019370c` preserves the Astra implementation. The Luna follow-up
+completed the backend-independent action catalog, immutable ADB observation
+paging, provider request-generation cancellation, typed text-write evidence,
+ADB field focusing, and the matching regression coverage. The architecture
+review is recorded in `docs/JEV_ARCHITECTURE_REVIEW.md`.
+
+Passed locally with the Android SDK configured:
+
+`:core:test :a11y:testDebugUnitTest :device-tools:testDebugUnitTest
+:app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug`
+
+The Dev APK builds as package `dev.androidagent.app.dev`. This does not prove a
+real Jev token, AndroidGym, keyboard behavior on the Nothing phone, visual
+canvas targeting, or end-to-end cancellation during live HTTP I/O. Those are
+the remaining physical/runtime checks.
+
+## Jev UI engine experiment — 2026-09-22
+
+On branch `experiment/jev-ui-tool`, Jev now runs the full bounded UI loop behind
+one static `jev_run_ui_task` call. Codex supplies the complete goal once; the
+gateway pages through a fresh UI observation, asks Jev one multi-question
+operation/target request, strictly validates only the selected branch, executes
+through the existing composite device gateway, observes the result, and repeats.
+This removes one Codex/model turn per UI step while preserving visible control,
+Stop/revoke, stale node checks, message-send approval, and backend fallback.
+
+The code-owned action space includes installed-app launch, tap, four semantic
+scroll directions, exact text replacement for a focused non-password field,
+Back, Home, Wait, Done, and semantic `SET_PROGRESS`. Accessibility UI
+observations now expose editable/selected state, typed range min/max/current and
+`ACTION_SET_PROGRESS`; `set_progress` polls and verifies the resulting value. Jev sees
+only opaque candidate keys and cannot invent a selector, package, coordinate,
+text value, or progress value. Exact text comes from the tool's `texts` input or
+bounded verbatim spans of the goal. Failed/uncertain mutations are never retried;
+only a changed pre-action observation causes a fresh Jev decision.
+Raw Enter is not offered because it can route through ADB around the existing
+send-approval guard; Jev can use a visible submit control instead. `DONE`
+returns `done_visible` with `verified:false`: it is Jev's judgment over a stable
+fresh screen, not a task-specific deterministic verifier.
+
+Verified on 2026-09-22: `:core:test`, `:a11y:testDebugUnitTest`,
+`:device-tools:test`, `:app:testDevDebugUnitTest`, `:app:lintDevDebug`, and
+`:app:assembleDevDebug` passed. The resulting APK was verified as package
+`dev.androidagent.app.dev`, version `0.12.0`/code `26`, and installed with
+`pm install -r` on the designated Nothing A059; `MainActivity` launched and
+the existing Accessibility service entries remained enabled. Unit coverage
+includes a multi-step task completed by one public tool call, selected-head-only
+validation, semantic 75% slider control, and no retry after a failed mutation.
+No real Jev token or Jev task was run on the phone, so live TypeSafe latency and
+response compatibility, real AndroidGym five-task behavior, and end-to-end Stop
+of an in-flight network request remain unverified.
 
 ## Status — 2026-09-15
 

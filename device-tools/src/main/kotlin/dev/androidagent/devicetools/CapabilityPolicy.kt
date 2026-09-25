@@ -124,7 +124,7 @@ object CapabilityPolicy {
             "open_notification_access_settings" to emptySet(),
         ),
         TOOL_APPS_SETTINGS to mapOf(
-            "list_apps" to setOf("query", "limit", "include_system"),
+            "list_apps" to setOf("query", "limit", "include_system", "offset"),
             "app_info" to setOf("package"),
             "open_app" to setOf("package"),
             "open_app_settings" to setOf("package"),

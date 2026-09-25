@@ -23,6 +23,7 @@ package dev.androidagent.a11y
 import dev.androidagent.core.UiNode
 import dev.androidagent.core.UiObservation
 import dev.androidagent.core.UiObservationSerializer
+import dev.androidagent.core.UiRange
 
 /**
  * One window handed to the traversal, in front-to-back order.
@@ -30,7 +31,7 @@ import dev.androidagent.core.UiObservationSerializer
  * @param active the window the user is interacting with, used for
  *   `activePackage`. More reliable than counting package occurrences.
  */
-data class A11yWindow(val root: A11yNodeView?, val active: Boolean)
+data class A11yWindow(val root: A11yNodeView?, val active: Boolean, val type: String = "application")
 
 /** The traversal result plus the node handles the gateway needs to act on. */
 class TraversalResult(
@@ -56,6 +57,7 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
     val packages = mutableMapOf<String, Int>()
     var activePackage: String? = null
     var visited = 0
+    var treeTruncated = false
     // Ids come from a counter over every visited node, not from the emitted
     // list, so two different nodes can never share one and a clickableAncestor
     // always names the node it was taken from.
@@ -76,9 +78,9 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
         stack.addLast(Frame(root, null, null, 0))
 
         while (stack.isNotEmpty()) {
-            if (visited >= UiObservationSerializer.MAX_UI_NODES) break
+            if (visited >= UiObservationSerializer.MAX_UI_NODES) { treeTruncated = true; break }
             val (view, clickableAncestor, parentId, depth) = stack.removeLast()
-            if (depth > MAX_DEPTH) continue
+            if (depth > MAX_DEPTH) { treeTruncated = true; continue }
             visited++
 
             if (!view.isVisibleToUser) continue
@@ -87,6 +89,7 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
             val node = UiNode(
                 nodeId = "n${nextId++}",
                 text = UiObservationSerializer.compactField(view.text),
+                hintText = UiObservationSerializer.compactField(view.hintText),
                 contentDescription = UiObservationSerializer.compactField(view.contentDescription),
                 resourceId = UiObservationSerializer.compactField(view.viewIdResourceName),
                 className = UiObservationSerializer.compactField(view.className),
@@ -96,6 +99,22 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
                 scrollable = view.isScrollable,
                 focused = view.isFocused,
                 packageName = UiObservationSerializer.compactField(view.packageName),
+                editable = view.isEditable,
+                selected = view.isSelected,
+                range = if (view.rangeMin != null && view.rangeMax != null && view.rangeCurrent != null) {
+                    UiRange(
+                        min = view.rangeMin!!.toDouble(),
+                        max = view.rangeMax!!.toDouble(),
+                        current = view.rangeCurrent!!.toDouble(),
+                        type = view.rangeType,
+                    )
+                } else {
+                    null
+                },
+                supportsSetProgress = view.supportsSetProgress,
+                longClickable = view.isLongClickable,
+                actions = view.actionNames,
+                windowType = window.type,
                 password = view.isPassword,
                 checkable = view.isCheckable,
                 checked = view.isChecked,
@@ -125,6 +144,7 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
         observation = UiObservation(
             activePackage = activePackage ?: packages.maxByOrNull { it.value }?.key,
             nodes = nodes,
+            treeTruncated = treeTruncated,
         ),
         handles = handles,
     )

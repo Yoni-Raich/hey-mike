@@ -91,6 +91,7 @@ import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -109,6 +110,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -131,7 +133,7 @@ private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
     MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
-    PRIVACY,
+    PRIVACY, JEV,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -162,6 +164,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.ASSISTANT -> "Power button assistant"
     SettingsRoute.AUTOMATIONS -> "Standing rules"
     SettingsRoute.PRIVACY -> "Privacy and consent"
+    SettingsRoute.JEV -> "Jev"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -181,6 +184,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.ASSISTANT -> Icons.Outlined.Assistant
     SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
     SettingsRoute.PRIVACY -> Icons.Outlined.Shield
+    SettingsRoute.JEV -> Icons.Outlined.Tune
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -387,6 +391,16 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
             onClick = { onOpen(SettingsRoute.RUNTIME) },
         )
         SettingsHubRow(
+            icon = SettingsRoute.JEV.icon(),
+            title = SettingsRoute.JEV.title(),
+            summary = when {
+                !state.jevEnabled -> "Off"
+                !state.jevTokenConfigured -> "Enabled · token missing"
+                else -> "Enabled · ready for the agent"
+            },
+            onClick = { onOpen(SettingsRoute.JEV) },
+        )
+        SettingsHubRow(
             icon = SettingsRoute.UPDATES.icon(),
             title = SettingsRoute.UPDATES.title(),
             summary = "Version ${dev.androidagent.app.BuildConfig.VERSION_NAME}",
@@ -506,6 +520,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
             SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
             SettingsRoute.PRIVACY -> PrivacySettings(state, actions)
+            SettingsRoute.JEV -> JevSettings(state, actions)
         }
     }
 }
@@ -1096,6 +1111,63 @@ private fun ColumnScope.ModelSettings(state: AgentUiState, actions: AgentUiActio
         }
         Explanation("Reasoning effort is chosen per message, next to the model name in the composer.")
     }
+}
+
+@Composable
+private fun ColumnScope.JevSettings(state: AgentUiState, actions: AgentUiActions) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Use Jev as the UI engine", fontWeight = FontWeight.Medium)
+            Text(
+                when {
+                    !state.jevEnabled -> "Off. Codex controls the device with its own tools. No requests go to Jev."
+                    !state.jevTokenConfigured -> "On, but a token is still needed."
+                    else -> "On. Jev can run complete UI tasks through Hey Mike's device controls."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = state.jevEnabled, onCheckedChange = actions.onJevEnabledChanged)
+    }
+    Explanation(
+        "One agent call gives Jev the complete goal. Jev then observes, chooses and checks the next screen " +
+            "without waiting for the main model between taps. It can use every supported UI action, including " +
+            "exact text and sliders; Hey Mike still executes the actions, handles approvals, and stops locally.",
+    )
+    var token by rememberSaveable { mutableStateOf("") }
+    OutlinedTextField(
+        value = token,
+        onValueChange = { token = it },
+        label = { Text(if (state.jevTokenConfigured) "Replace Jev API token" else "Jev API token") },
+        placeholder = if (state.jevTokenConfigured) ({ Text("Token saved securely") }) else null,
+        visualTransformation = PasswordVisualTransformation(),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = { actions.onSaveJevToken(token); token = "" },
+            enabled = token.isNotBlank(),
+            modifier = Modifier.weight(1f),
+        ) { Text("Save token") }
+        OutlinedButton(
+            onClick = { token = ""; actions.onClearJevToken() },
+            enabled = state.jevTokenConfigured,
+            modifier = Modifier.weight(1f),
+        ) { Text("Clear token") }
+    }
+    Text(
+        "The goal and current on-screen labels are sent to api.typesafe.ai while Jev runs. The token is " +
+            "encrypted with Android Keystore, is not shown to the agent, and is not stored in chat history.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

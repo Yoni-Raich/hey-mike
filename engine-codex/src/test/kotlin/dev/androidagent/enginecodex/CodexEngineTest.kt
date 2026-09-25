@@ -578,7 +578,13 @@ class CodexEngineTest {
         try {
             val opened = engine.openSession(File("/tmp/workspace"), "stale-123", null, emptyList())
             assertEquals("fresh-456", opened)
-            assertEquals(listOf("initialize", "thread/resume", "thread/start"), calledMethods)
+            // Resume is attempted twice: once carrying this version's tool list,
+            // then once plain, for a server that will not take dynamicTools on a
+            // resume. Only then is a fresh thread started.
+            assertEquals(
+                listOf("initialize", "thread/resume", "thread/resume", "thread/start"),
+                calledMethods,
+            )
         } finally {
             engine.close()
             serverJob.cancel()
