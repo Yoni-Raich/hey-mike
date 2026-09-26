@@ -1,10 +1,27 @@
 # Progress
 
-## Dev release preparation — 2026-09-26
+## 0.14.0 release preparation — 2026-09-27
 
-The next planned version is 0.14.0 (base versionCode 28). The physical QA
-evidence below is from the earlier 0.13.0 Dev Release candidate; the 0.14.0
-candidate has not been built or run on a phone.
+Release candidate: versionName `0.14.0`, versionCode `1019`, Dev flavor and
+package `dev.androidagent.app.dev`, following the v0.13.0 release path from
+`main`. Code 1019 is above the local 0.14.0-dev QA build (1018) already on
+Xiaomi 23053RN02Y, so the exact release APK can update that install in place
+without removing app data. This is a test-only, debug-key-signed Developer
+Preview, like v0.13.0; it is not production-key signed.
+
+The 0.14.0 code from `dev` passed the full local gate on 2026-09-27:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:app:lintDevDebug --no-daemon` (905 tasks); all five runtime staging Python
+tests passed; `git diff --check` passed. The exact release APK still needs to
+be built from the final `main` commit, inspected, installed on the Xiaomi, and
+used for one physical device-tool run before tagging.
+
+The 0.14.0-dev build from the same source commit was installed on Xiaomi
+23053RN02Y on 2026-09-26 and exercised through Gym Test and selected tools;
+the temporary QA report is under the host Temp directory, not in this repo.
+That was a local devDebug build with versionCode 1018, not proof of the exact
+nondebuggable release APK. The 0.14.0 release candidate uses versionCode 1019
+to permit an in-place update on this test phone and preserve its app data.
 
 The preparation branch merges the v0.13.0 `main` history into current `dev`
 without changing `main`. The stable updater now requires matching `Package:`
