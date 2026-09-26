@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-09-15
 
 - First launch is now two steps you do by hand, sign-in and screen access,
   instead of an eight-item checklist. Before them, a welcome screen and a
