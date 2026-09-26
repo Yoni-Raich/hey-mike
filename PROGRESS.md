@@ -26,6 +26,12 @@ display was OFF. Exact alarms were allowed. This proves one screen-off alarm
 delivery on this phone; it does not prove deep Doze or reboot recovery. Both
 QA rules were then deleted; a final rule listing reported `count: 0`.
 
+On the same installed APK, a further Gym Test turn checked device status,
+opened the app, read its UI, set the exercise search field to `RELEASEQA`,
+verified it, cleared it, and verified the original placeholder. A direct
+`shell("uiautomator dump")` was refused with the `read_ui` guidance, and
+`accelerometer_rotation` remained `0`. Nothing was submitted.
+
 Still open: production signing/package and migration choice, phone updater
 flow, first-launch and account switching, broad device tools, scheduled and
 background automation edge cases, voice, and Wireless ADB. These are not established by

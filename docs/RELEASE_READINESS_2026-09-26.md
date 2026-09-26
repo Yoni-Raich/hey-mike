@@ -15,6 +15,7 @@ into `main`, tagged, or published by this work.
 | In-place install | PASS | `adb -s cd4928027d76 install -r` succeeded. `firstInstallTime` remained 2026-09-23 16:24:36; versionCode became 1017. Accessibility remained enabled and bound. |
 | Release runtime extraction | PASS | Five `libcodex_*.so` files are present in the installed app's `lib/arm64` directory. |
 | Signed-in agent tool smoke | PASS | Existing chat on installed nondebuggable APK called `open_app` for Gym Test and `read_ui`; result reported `dev.androidagent.jevgym` in front and `source: accessibility`. No Gym data changed. |
+| Gym field and guarded shell | PASS | On the same APK, a fresh agent turn called `device_status`, `open_app`, `read_ui`, set the Gym exercise search field to `RELEASEQA`, read it back, cleared it, and read back the empty placeholder. `shell("uiautomator dump")` returned the expected `Use read_ui instead` refusal. The phone's `accelerometer_rotation` remained `0`; nothing was submitted. |
 | Manual standing rule | PASS | On the same APK, `automation_rule` created `qa-release-20260926`, dry-tested and ran it. `describe` reported `firedToday: 1`; Android notification contained `QA-rule-ran`. |
 | Scheduled rule with screen off | PASS | Exact-alarm app-op was allowed. A Saturday 21:52 rule was saved and dry-tested; Android's alarm list showed an `RTC_WAKEUP` for Hey Mike. At 21:52:17, notification `QA-timer-ran` was present while display state remained OFF. Deep Doze and reboot were not exercised. |
 | QA rule cleanup | PASS | After unlocking, Mike deleted both `qa-timer-20260926` and `qa-release-20260926`; a final rules list reported `count: 0`. |
@@ -44,7 +45,7 @@ into `main`, tagged, or published by this work.
 | --- | --- | --- |
 | First launch and upgrade onboarding | NOT TESTED | Fresh install, consent, sign-in, Xiaomi restricted Accessibility settings, overlay and notification handover, then upgrade with data retained. |
 | Account lifecycle | NOT TESTED | Add second account, switch, continue an old thread, switch back, sign out and sign in. |
-| Device tools | PARTIAL | Gym Test `open_app` and `read_ui` passed. Run full tool list with safe inputs, blocked inputs, verification, Stop, keyboard/IME and rotation lock. |
+| Device tools | PARTIAL | Gym Test `device_status`, `open_app`, `read_ui`, `set_text` with clear/read-back, and direct shell dump refusal passed. Run the remaining tool list with safe and blocked inputs, Stop, keyboard/IME, and rotation under alternate backends. |
 | Standing rules | PARTIAL | Manual notify and a scheduled alarm with screen off passed. Deep Doze, reboot re-arm and dedupe, allowed-package notification trigger, device-state trigger, approval refusal and Stop remain. |
 | Voice and wireless ADB | NOT TESTED | Realtime voice turn; pair, reconnect and run a Wireless ADB-only tool. |
 | Update installation | NOT TESTED | Matching signed asset, downgrade and signer rejection, data preservation. |
