@@ -3,6 +3,8 @@
 This is a preparation record, not a release. The source is the `dev` history
 with `main` v0.13.0 merged into a preparation branch. No change was merged
 into `main`, tagged, or published by this work.
+The next planned version is 0.14.0 (base versionCode 28). The checks below
+were completed on an earlier 0.13.0 Dev Release QA APK, not a 0.14.0 build.
 
 ## Checks completed
 

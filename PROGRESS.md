@@ -2,6 +2,10 @@
 
 ## Dev release preparation — 2026-09-26
 
+The next planned version is 0.14.0 (base versionCode 28). The physical QA
+evidence below is from the earlier 0.13.0 Dev Release candidate; the 0.14.0
+candidate has not been built or run on a phone.
+
 The preparation branch merges the v0.13.0 `main` history into current `dev`
 without changing `main`. The stable updater now requires matching `Package:`
 release metadata and verifies the downloaded APK package, newer versionCode,
