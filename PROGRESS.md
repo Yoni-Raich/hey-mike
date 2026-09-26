@@ -1,5 +1,47 @@
 # Progress
 
+## Dev release preparation — 2026-09-26
+
+The next planned version is 0.14.0 (base versionCode 28). The physical QA
+evidence below is from the earlier 0.13.0 Dev Release candidate; the 0.14.0
+candidate has not been built or run on a phone.
+
+The preparation branch merges the v0.13.0 `main` history into current `dev`
+without changing `main`. The stable updater now requires matching `Package:`
+release metadata and verifies the downloaded APK package, newer versionCode,
+and installed signing certificate before installation. Direct
+`shell uiautomator dump` is refused in favor of guarded `read_ui`. Android CI
+now runs the `app` and `device-tools` unit tests that cover these fixes.
+
+Local gate passed: `test assembleDevRelease assembleDevDebugAndroidTest
+:voice:lintDebug :app:lintDevDebug --no-daemon` (905 tasks); all five runtime
+staging Python tests passed. A nondebuggable Dev Release QA APK (code 1017,
+`0.13.0-dev.release-qa`) was zip-aligned, debug-key signed with APK Signature
+Scheme v3, and installed in place on Xiaomi 23053RN02Y. The installed signer
+matched before replacement; `firstInstallTime` remained unchanged, Accessibility
+stayed bound, and the five runtime native libraries were extracted. On this
+exact APK, a signed-in chat opened Gym Test and read its UI through
+Accessibility. A manual standing rule created and fired a local notification;
+`describe` reported `firedToday: 1`. Full evidence and remaining hardware
+matrix: `docs/RELEASE_READINESS_2026-09-26.md`.
+
+A Saturday 21:52 scheduled rule also delivered `QA-timer-ran` while the
+display was OFF. Exact alarms were allowed. This proves one screen-off alarm
+delivery on this phone; it does not prove deep Doze or reboot recovery. Both
+QA rules were then deleted; a final rule listing reported `count: 0`.
+
+On the same installed APK, a further Gym Test turn checked device status,
+opened the app, read its UI, set the exercise search field to `RELEASEQA`,
+verified it, cleared it, and verified the original placeholder. A direct
+`shell("uiautomator dump")` was refused with the `read_ui` guidance, and
+`accelerometer_rotation` remained `0`. Nothing was submitted.
+
+Still open: production signing/package and migration choice, phone updater
+flow, first-launch and account switching, broad device tools, scheduled and
+background automation edge cases, voice, and Wireless ADB. These are not established by
+the passing build or these phone smoke runs. No release or `main` merge was
+performed.
+
 ## Xiaomi QA stability fixes — 2026-09-25
 
 The adversarial Dev Nightly run on Xiaomi 23053RN02Y found five concrete gaps:
@@ -341,6 +383,22 @@ not production-ready.
   `:overlay:lintDebug`, `:core:test`, `:app:assembleDevDebug`,
   `:app:lintDevDebug` and `:app:assembleDevDebugAndroidTest` pass. Still not
   run on a phone, including the new Markdown check in the instrumented test.
+
+- The v0.13.0 dev release candidate was built from `origin/main` on 2026-09-15.
+  `./gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+  :voice:lintDebug :overlay:lintDebug :app:lintDevDebug --no-daemon` passed
+  (832 actionable tasks), `python -m unittest tools.test_prepare_runtime`
+  passed (5 tests), and `git diff --check` is clean. `aapt2` reports package
+  `dev.androidagent.app.dev`, versionCode 27, versionName 0.13.0, label
+  "Hey Mike Dev" and not debuggable. The exact APK was zip-aligned and passed
+  APK Signature Scheme v3 verification with the local debug key. SHA-256:
+  `B965F9EC93A16873DB2E95B433006DD05BF9A9A7264C09ADB027A91D7C5BBDD7`.
+  It was installed with `adb -s Q8G64TD6ZTB6H6ZL install -r` on the Xiaomi
+  2201116TG (Android 13); all staged `lib*.so` files were present in the
+  arm64 native library directory. A task typed into the exact APK opened
+  Settings and reached About phone showing Android 13. Not tested: WhatsApp,
+  voice, Accessibility control, or a production-signed build.
+
 - `workflow_runner`, intents with extras, workflow parameters and "Suggest
   workflows" — on 2026-09-14: `:core:test` (274), `:a11y:testDebugUnitTest`
   (35), `:app:testDevDebugUnitTest` (45) and `:workspace:testDebugUnitTest`
