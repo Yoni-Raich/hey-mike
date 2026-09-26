@@ -9,22 +9,32 @@ Xiaomi 23053RN02Y, so the exact release APK can update that install in place
 without removing app data. This is a test-only, debug-key-signed Developer
 Preview, like v0.13.0; it is not production-key signed.
 
-The 0.14.0 code from `dev` passed the full local gate on 2026-09-27:
+The 0.14.0 release candidate on merged `main` commit `69e6db82c94d` passed
+the full local gate on 2026-09-27:
 `test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
 :app:lintDevDebug --no-daemon` (905 tasks); all five runtime staging Python
-tests passed; `git diff --check` passed. The exact release APK still needs to
-be built from the final `main` commit, inspected, installed on the Xiaomi, and
-used for one physical device-tool run before tagging.
+tests passed; `git diff --check` passed. The exact APK was built, zip-aligned,
+debug-key signed with APK Signature Scheme v3, and verified as package
+`dev.androidagent.app.dev`, version `0.14.0`, code 1019; SHA-256
+`9E8EFCCA50BE051B4F44D6A0A5E23EEFCB3B1E5A2C7FDE9CD9F160D6B58D9FE9`.
 
-The 0.14.0-dev build from the same source commit was installed on Xiaomi
-23053RN02Y on 2026-09-26 and exercised through Gym Test and selected tools;
-the temporary QA report is under the host Temp directory, not in this repo.
-That was a local devDebug build with versionCode 1018, not proof of the exact
-nondebuggable release APK. The 0.14.0 release candidate uses versionCode 1019
-to permit an in-place update on this test phone and preserve its app data.
+The exact APK installed on Xiaomi `23053RN02Y` with `adb install -r` over the
+0.14.0-dev QA build (code 1018). `firstInstallTime` stayed unchanged, and the
+Accessibility service stayed connected. With 6-luna, one physical run used
+`open_app` and `read_ui` to open Jev Gym Lab and report its screen title and
+visible controls; no Gym data was changed. This verifies the Dev Release APK
+on this Xiaomi only; voice, updater, broad tool coverage, and other hardware
+remain open.
 
-The preparation branch merges the v0.13.0 `main` history into current `dev`
-without changing `main`. The stable updater now requires matching `Package:`
+The 0.14.0-dev QA build used for broader selected-tool checks was local
+devDebug code 1018; those results are separate from the exact Dev Release APK
+validation above. Its temporary detailed report is under the host Temp
+directory, not in this repo. VersionCode 1019 permits the release APK to
+update this test phone in place and preserve its app data.
+
+The preparation branch merged the v0.13.0 `main` history into `dev`; PR #93
+then merged the 0.14.0 release candidate into `main`. The stable updater now
+requires matching `Package:`
 release metadata and verifies the downloaded APK package, newer versionCode,
 and installed signing certificate before installation. Direct
 `shell uiautomator dump` is refused in favor of guarded `read_ui`. Android CI
