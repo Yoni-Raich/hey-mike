@@ -30,6 +30,10 @@ import androidx.lifecycle.viewModelScope
 import dev.androidagent.app.ui.*
 import dev.androidagent.app.update.*
 import dev.androidagent.core.*
+import dev.androidagent.remote.RemoteBinding
+import dev.androidagent.remote.RemoteComputer
+import dev.androidagent.remote.RemoteSetup
+import dev.androidagent.remote.RemoteStore
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.io.File
@@ -70,6 +74,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { current.filterNotNull().collectLatest { id ->
+            // A computer conversation may be held open by Codex on the computer.
+            checkPcChatBusy(id)
             preferences.edit().putString("session", id).apply()
             mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false) }
             updateTitle()
@@ -78,6 +84,56 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
             graph.sessions.messages(id).collect { items -> mutable.update { it.copy(messages = items) } }
         } }
+        viewModelScope.launch {
+            graph.computers.state.collect { remote ->
+                val labels = remote.bindings.mapNotNull { (chat, binding) ->
+                    val computer = remote.computers.firstOrNull { it.id == binding.computerId } ?: return@mapNotNull null
+                    chat to "${computer.label} · ${folderName(binding.cwd)}"
+                }.toMap()
+                mutable.update {
+                    it.copy(
+                        computers = remote.computers,
+                        computersUnreadable = remote.unreadable,
+                        defaultComputerId = remote.defaultComputerId,
+                        remoteChats = labels,
+                        remoteBindings = remote.bindings,
+                        computerProjects = remote.projects,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
+        viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
+        viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
+        viewModelScope.launch {
+            graph.computerRequests.collect { request ->
+                when (request) {
+                    null -> return@collect
+                    is dev.androidagent.remote.ComputerUiRequest.AddComputer -> mutable.update {
+                        it.copy(
+                            isComputersOpen = true,
+                            folderBrowser = null,
+                            computerProposal = ComputerDraft(
+                                label = request.label, host = request.host, vpnHost = request.vpnHost, user = request.user,
+                                isDefault = it.computers.isEmpty(), proposedByMike = true,
+                            ),
+                        )
+                    }
+                    is dev.androidagent.remote.ComputerUiRequest.OpenChat -> {
+                        current.value = request.sessionId
+                        mutable.update {
+                            it.copy(
+                                composerSeeds = it.composerSeeds + (request.sessionId to request.draft),
+                                isComputersOpen = false,
+                                folderBrowser = null,
+                                isDrawerOpen = false,
+                            )
+                        }
+                    }
+                }
+                graph.computerRequests.value = null
+            }
+        }
         viewModelScope.launch { graph.coordinator.state.collect { state -> mutable.update { it.copy(runState = state) } } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
@@ -126,6 +182,221 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
     fun newChat() = task { current.value = graph.sessions.createSession().id }
+
+    /** Save a new or edited computer, then connect to it straight away. */
+    fun saveComputer(draft: ComputerDraft) = task {
+        val host = draft.host.trim()
+        val vpnHost = draft.vpnHost.trim().takeIf { it.isNotEmpty() && it != host }
+        val user = draft.user.trim()
+        check(host.isNotEmpty() || vpnHost != null) { "Enter the computer's home network or VPN address." }
+        check(user.isNotEmpty()) { "Enter the Windows user name." }
+        val port = draft.port.trim().ifEmpty { "22" }.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: kotlin.error("The port is a number from 1 to 65535.")
+        val existing = draft.id?.let(graph.computers::computer)
+        check(existing != null || draft.password.isNotEmpty()) { "Enter the password." }
+        val base = existing ?: RemoteComputer(id = RemoteStore.newId(), label = host, host = host, user = user)
+        val computer = base.copy(
+            label = draft.label.trim().ifEmpty { host.ifEmpty { vpnHost.orEmpty() } }, host = host, vpnHost = vpnHost, port = port, user = user, access = draft.access,
+        )
+        val saved = withContext(Dispatchers.IO) {
+            graph.computers.save(computer, draft.password.takeIf { it.isNotEmpty() }, makeDefault = draft.isDefault)
+        }
+        // The old connection used the old address, password or access.
+        graph.remote.reload(saved.id)
+        setUpComputer(saved.id)
+    }
+
+    fun connectComputer(id: String) = task { setUpComputer(id) }
+
+    fun openComputers() = mutable.update { it.copy(isComputersOpen = true) }
+
+    /** Connect to the computer, then pick the folder of a new project. */
+    fun newProject(id: String) {
+        mutable.update { it.copy(isComputersOpen = true) }
+        if (graph.remote.setup.value[id] is RemoteSetup.Working) return
+        connectComputer(id)
+    }
+
+    /**
+     * List every computer's conversations again, connecting in the
+     * background to one not tried yet in this app run. Quiet: a failure only
+     * shows on the computer's own row.
+     */
+    fun refreshPcThreads() {
+        graph.computers.state.value.computers.forEach { computer ->
+            viewModelScope.launch {
+                if (graph.remote.setup.value[computer.id] == null) graph.remote.connectQuietly(computer.id)
+                else graph.remote.refreshThreads(computer.id)
+            }
+        }
+    }
+
+    /** Connect to a computer from the side panel, without opening the computers screen. */
+    fun reconnectComputer(id: String) = task { graph.remote.reload(id); graph.remote.setUp(id, install = false) }
+
+    /**
+     * Whether Codex on the computer (its desktop app) holds this chat's
+     * conversation open, so Mike cannot write to it. Quiet on failure: the
+     * send itself then says what went wrong.
+     */
+    fun checkPcChatBusy(sessionId: String) {
+        val binding = graph.computers.binding(sessionId) ?: return
+        val thread = binding.threadId ?: return
+        viewModelScope.launch {
+            val busy = runCatching { graph.remote.isThreadBusy(binding.computerId, thread) }.getOrDefault(false)
+            mutable.update { it.copy(pcBusyChats = if (busy) it.pcBusyChats + sessionId else it.pcBusyChats - sessionId) }
+        }
+    }
+
+    /**
+     * Continue in a copy: fork the conversation on the computer and move this
+     * chat onto the copy. The history comes along; the original stays with
+     * whoever holds it.
+     */
+    fun forkPcChat(sessionId: String) = task {
+        val binding = graph.computers.binding(sessionId) ?: kotlin.error("This chat does not run on a computer.")
+        val thread = binding.threadId ?: kotlin.error("This chat has no conversation on the computer yet.")
+        mutable.update { it.copy(pcForking = it.pcForking + sessionId) }
+        try {
+            val copy = graph.remote.forkThread(binding.computerId, binding.cwd, thread)
+            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.copy(threadId = copy)) }
+            graph.sessions.setThread(sessionId, copy)
+            mutable.update { it.copy(pcBusyChats = it.pcBusyChats - sessionId) }
+            note(sessionId, "Mike continues here in a copy of the conversation, with its whole history. The original stays in Codex on the computer.")
+        } finally {
+            mutable.update { it.copy(pcForking = it.pcForking - sessionId) }
+        }
+    }
+
+    /** Computers whose Tailscale approval page the user opened and has not come back from. */
+    private val awaitingApproval = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    fun openedTailscaleApproval(id: String) { awaitingApproval += id }
+
+    /** Back in the app after the approval page: connect again without being asked. */
+    fun appResumed() {
+        val ids = synchronized(awaitingApproval) { awaitingApproval.toList().also { awaitingApproval.clear() } }
+        ids.forEach { id ->
+            if (graph.remote.setup.value[id] is RemoteSetup.NeedsTailscaleApproval) reconnectComputer(id)
+        }
+    }
+
+    /**
+     * Open a conversation Codex keeps on the computer. A chat here that
+     * already follows it is reused; otherwise a new chat is bound to the
+     * thread and its earlier messages are copied in.
+     */
+    fun openPcThread(id: String, threadId: String) = task {
+        graph.computers.state.value.bindings.entries.firstOrNull { it.value.threadId == threadId }?.let {
+            current.value = it.key
+            return@task
+        }
+        val thread = graph.remote.threads.value[id]?.firstOrNull { it.id == threadId }
+            ?: kotlin.error("That conversation is no longer on the computer.")
+        val session = graph.sessions.createSession()
+        withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId)) }
+        graph.sessions.setThread(session.id, threadId)
+        graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
+        current.value = session.id
+        val label = graph.computers.computer(id)?.label ?: "the computer"
+        mutable.update { it.copy(pcChatLoading = it.pcChatLoading + (session.id to label)) }
+        runCatching { graph.remote.readThread(id, threadId) }
+            .onSuccess { messages ->
+                // Oldest first, a millisecond apart, so the order survives sorting.
+                val start = System.currentTimeMillis() - messages.size
+                messages.forEachIndexed { index, message ->
+                    graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), session.id, message.role, message.text, start + index))
+                }
+            }
+            .onFailure {
+                note(session.id, "The earlier messages could not be read from the computer: ${it.message}. Mike still continues this conversation there.")
+            }
+        mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
+        checkPcChatBusy(session.id)
+    }
+
+    /**
+     * Before its first message, a chat can move between the phone and a
+     * computer folder. After that its conversation lives where it started.
+     */
+    fun moveNewChat(computerId: String?, path: String?) = task {
+        val id = current.value ?: kotlin.error("Choose a chat first.")
+        check(mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.engineThreadId == null) {
+            "This chat has started. Start a new chat to work somewhere else."
+        }
+        withContext(Dispatchers.IO) {
+            if (computerId == null || path == null) {
+                graph.computers.unbind(id)
+            } else {
+                graph.computers.bind(id, RemoteBinding(computerId, path))
+                graph.computers.addProject(computerId, path)
+            }
+        }
+    }
+
+    fun setDefaultComputer(id: String) = task { withContext(Dispatchers.IO) { graph.computers.setDefault(id) } }
+
+    private suspend fun setUpComputer(id: String) {
+        val result = graph.remote.setUp(id)
+        // The user may have closed the sheet while it connected.
+        if (result is RemoteSetup.Ready && mutable.value.isComputersOpen) {
+            browseFolder(id, graph.computers.computer(id)?.lastFolder.orEmpty())
+        }
+    }
+
+    fun checkComputerSignIn(id: String) = task {
+        when (graph.remote.checkSignIn(id)) {
+            is RemoteSetup.Ready -> browseFolder(id, graph.computers.computer(id)?.lastFolder.orEmpty())
+            else -> mutable.update { it.copy(infoMessage = "Codex on the computer is not signed in yet.") }
+        }
+    }
+
+    /** Remove a computer and the chats that run on it. Nothing on the computer changes. */
+    fun removeComputer(id: String) = task {
+        val chats = graph.computers.state.value.bindings.filterValues { it.computerId == id }.keys
+        val running = graph.coordinator.state.value
+        check(!(running.active && running.sessionId in chats)) { "Stop the chat running on this computer first." }
+        graph.remote.disconnect(id)
+        chats.forEach { chat -> graph.queue.cancelSession(chat); graph.sessions.deleteSession(chat) }
+        withContext(Dispatchers.IO) { graph.computers.remove(id) }
+        mutable.update { state -> state.copy(folderBrowser = state.folderBrowser?.takeIf { it.computerId != id }) }
+    }
+
+    fun browseFolder(id: String, path: String) = task { listFolder(id, path) }
+
+    private suspend fun listFolder(id: String, path: String) {
+        mutable.update { state ->
+            val previous = state.folderBrowser?.takeIf { it.computerId == id }
+            state.copy(folderBrowser = FolderBrowserState(id, previous?.listing, loading = true))
+        }
+        val listing = runCatching { graph.remote.listFolders(id, path) }
+        mutable.update { state ->
+            val browser = state.folderBrowser?.takeIf { it.computerId == id } ?: return@update state
+            state.copy(
+                folderBrowser = listing.fold(
+                    { browser.copy(listing = it, loading = false, error = null) },
+                    { browser.copy(loading = false, error = it.message ?: "Could not list that folder.") },
+                ),
+            )
+        }
+    }
+
+    /** A new chat whose Codex runs on the computer, in [path]. */
+    fun openFolderChat(id: String, path: String) = task {
+        val computer = graph.computers.computer(id) ?: kotlin.error("That computer was removed.")
+        val session = graph.sessions.createSession()
+        val folder = folderName(path)
+        withContext(Dispatchers.IO) {
+            graph.computers.bind(session.id, RemoteBinding(id, path))
+            graph.computers.addProject(id, path)
+            graph.computers.update(id) { it.copy(lastFolder = path) }
+        }
+        // A title of its own, so the first message does not rename it.
+        graph.sessions.rename(session.id, folder)
+        current.value = session.id
+        mutable.update { it.copy(folderBrowser = null, isComputersOpen = false) }
+        note(session.id, "This chat runs on ${computer.label}, in $path. Mike works there with Codex (shell, files, git, skills) and can still use this phone.")
+    }
 
     // First launch and consent live in the same "ui" preferences as the model
     // choice: on this phone only, never sent anywhere.
@@ -212,6 +483,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val active = graph.coordinator.state.value
+        if (graph.computers.binding(id) != null && attachments.any { it.mimeType?.startsWith("image/") != true }) {
+            error("A computer chat can take pictures only. Copy other files to the computer first.")
+            return
+        }
         val paths = attachments.mapNotNull { it.path?.let(::File) }
         val images = attachments.filter { it.mimeType?.startsWith("image/") == true }.mapNotNull { it.path?.let(::File) }
         val otherFiles = paths.filter { it !in images }

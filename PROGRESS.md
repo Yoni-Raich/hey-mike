@@ -64,6 +64,169 @@ positive paths still lack new physical coverage. After the package lookup fix, t
 --no-daemon`) passed, as did all five `tools.test_prepare_runtime` tests and
 `git diff --check`. These build checks do not establish the untested physical
 paths. The package-filtered read did not exercise keyboard/IME context.
+## Computers over SSH (Windows) — 2026-09-24
+
+On `claude/model-ssh-capability-ifuz1p`, a chat can run on the user's Windows
+PC. The side panel's *Computer* button opens a sheet: add a PC (IP, user,
+password, and *Ask me first* or *Full access*), connect, and pick a project
+folder. The app installs the pinned Codex 0.156.0 app-server on the PC
+(sha256-checked), runs it over SSH, and the chat talks to it. Codex then has
+its own tools, the project's AGENTS.md and the PC's skills. See
+`docs/ARCHITECTURE.md`, "Computers".
+
+Verified here, on Linux with a new SDK install (no phone, no Windows PC):
+- `:remote:testDebugUnitTest` 13/13. Includes an in-process SSH server
+  (Apache MINA): password login, host-key pinning, a wrong key refused, a
+  wrong password named. Also the **real Linux Codex 0.156.0 app-server
+  started over an SSH channel**: `account/read` answered, and `skills/list`
+  found a skill placed in the remote project's `.agents/skills`.
+- `:core:test` 547/547, `:app:testDevDebugUnitTest` 48/48 (new approval-card
+  case), new `CodexEngineTest` cases (Windows cwd and access in
+  `thread/start`, inline pictures, skill paths with backslashes).
+- `:app:assembleDevDebug`, `:app:assembleDevRelease` (JSch present in the
+  dex), `:app:lintDevDebug` with 0 errors.
+- The Windows package sha256 values were computed from the downloaded
+  release assets (x86_64 and aarch64).
+
+Pre-existing, not from this change: `CodexEngineTest.openSessionFallsBackToThreadStartOnResumeFailure`
+fails on `dev` too (expects one `thread/resume`; the engine tries with tools,
+then without).
+
+Not verified (needs a phone and a Windows PC):
+- JSch on Android (it uses the Java 8 classes; ed25519/curve25519 may be
+  dropped for ECDSA/ECDH) against Windows OpenSSH Server.
+- The PowerShell probe, install and folder scripts on real Windows, the cmd
+  quoting of a user folder with spaces, and a PowerShell `DefaultShell`.
+- `codex-app-server.exe` over a Windows OpenSSH exec channel, the device-code
+  sign-in on the PC, a full turn with edits, an approval answered on the
+  phone, Stop, and whether Windows OpenSSH ends the process when the
+  channel closes.
+- What *Ask me first* enforces without the Codex Windows sandbox set up.
+- The Computers sheet and folder picker on a real screen.
+
+### Computers sheet: setup guide, VPN address, default computer — 2026-09-25
+
+- The add form opens with a 5-step "set up the PC" guide (OpenSSH Server,
+  `Get-Service sshd`, `ipconfig`, `whoami`, Codex installs itself), copy
+  buttons, and a share button that sends the steps to the PC. Fields carry
+  hints; the button says what is still missing. Sheet text colour fixed (it
+  was dark on dark).
+- A computer can have a second, VPN address (e.g. Tailscale). Connect tries
+  the address that answered last first, the home one to begin with (6 s
+  when another is left), and moves on only when an address does not answer
+  at all. A refused password or a changed host key stops. The pinned key
+  holds for both addresses.
+- Several computers, one default (the first added; passes on when removed).
+  The side panel's *Computer* button connects straight to the default and
+  opens its folder picker; Back shows the list.
+
+Verified on Windows: `:remote:testDebugUnitTest --tests *RemoteStoreTest*`
+passes (new default and VPN cases), `:app:assembleDevDebug` builds, the APK
+installs on the Nothing A059 with `install -r`. The two `SshLinkTest` cases
+that run Linux commands and the Linux app-server fail on a Windows host, as
+expected. Not verified: the sheet on screen, the VPN fallback against a
+real PC, `:app:lintDevDebug`. A phone-chat request "do X on the computer"
+is not routed to the default computer: a computer chat is still chosen when
+it is opened.
+
+### Computers: projects, PC conversations, file transfer — 2026-09-25
+
+- Computers screen is a full screen (scrolling a folder list no longer
+  closes it). Adding a computer is two steps: the PC's setup steps, then the
+  sign-in. One address is enough: home, VPN, or both.
+- Side panel: each computer first, with status and folding projects; under
+  each project the chats here plus the conversations Codex on the PC has
+  (`thread/list`), "From Codex on the PC". Opening one binds a chat to that
+  thread and copies its messages from `thread/read`. The phone's chats fold
+  under "On this phone". The panel connects quietly once per app run
+  (never installs Codex).
+- New chat: "Where should Mike work?" chips (this phone, recent projects,
+  another folder) until the first message. Title bar of a computer chat:
+  computer · folder + phone.
+- Files: `push_file`/`install_apk` in a computer chat take a path on the PC
+  and are copied over SFTP; `pull_file` copies into the project folder.
+- Instructions: the Windows desktop is reached through a one-off interactive
+  scheduled task (screenshots etc.); adb on the PC must not be used for the
+  phone.
+
+Verified on Windows with the Nothing A059: the PC's OpenSSH (Win32-OpenSSH
+10.0 via winget) answers on the Tailscale address from the phone
+(`nc -z 100.81.116.55 22` open; the LAN address times out because the
+Ethernet profile is Public and the firewall rule is Private only). A real
+computer chat ran on the PC; before the file bridge, copying a picture to
+the phone failed through `push_file` and only worked through the PC's own
+adb, which is why the bridge exists. Unit tests: new `PcChatsTest`,
+`ComputerFilesGatewayTest`, thread list/read parsing, store projects;
+`:app:lintDevDebug` clean; `:core:test` and `:app:testDevDebugUnitTest`
+pass. Not verified: the new side panel and screens on the phone,
+`thread/list` answers from the real PC (parameters taken from the 0.156.0
+binary), SFTP transfer against Windows, the desktop scheduled-task recipe.
+
+### Voice on computers, no send size cap, the `computers` tool — 2026-09-25
+
+- Voice works in a computer chat: realtime starts on the thread's own
+  app-server (the PC's Codex); WebRTC, so only SDP crosses SSH.
+- `push_file`/`install_apk`: no size cap; the timeout grows with the size.
+  Also no cap on the SFTP copy from the PC.
+- New tool `computers` (modes `status`, `browse`, `new_project`,
+  `open_chat`, `add`) in every chat. `add` opens the app's form filled in,
+  with a warning to check the address; the password is typed there only.
+  `open_chat` opens a project chat with the task in the composer, unsent.
+
+Verified: `ComputerToolGatewayTest` (add fills the form and the schema has
+no password field, missing address refused, status with no computer,
+unknown computer/project name what exists, nothing after Stop),
+`:core:test`, `:device-tools:test`, `:app:testDevDebugUnitTest`,
+`:app:lintDevDebug`, `:app:assembleDevDebug`. Not verified on the device:
+voice in a computer chat, a 310 MB push, the tool's modes against the real
+PC, the filled-in form and the composer draft.
+
+### Linux (Ubuntu) computers — 2026-09-25
+
+The system is found on the first connection (`uname -s`) and kept. Linux
+computers use POSIX `sh` scripts (`LinuxHost`) and the phone's own pinned
+Linux Codex package, installed under `~/.local/share/heymike`. The add
+screen's setup step has Windows and Ubuntu guides (`apt install
+openssh-server`, `hostname -I`, `whoami`). Paths, the folder picker, file
+transfer and project grouping handle `/` paths.
+
+Verified: the generated probe, folder list (a quote in a name, hidden
+folders skipped, git detection), create-folder and missing-folder scripts
+ran in a real Linux `sh` (busybox, WSL) and gave the expected `HEYMIKE`
+answers; `LinuxHostTest` (uname reading, Linux paths, quoted app-server
+path; the script test runs only where a Linux `sh` exists and was skipped
+on Windows); full remote/core/device-tools/app unit tests, lint, build. Not
+verified: the install script's download and sha256 check and the app-server
+start on Linux (running a downloaded binary was not allowed here), a real
+Ubuntu machine over SSH, the Linux desktop recipe.
+
+### Side panel: Material 3 pass and loading states — 2026-09-25
+
+- Every slow step shows where it happens: an indeterminate line and a
+  spinner under the computer's header while it connects or lists its
+  conversations, placeholder rows until the first projects arrive, an error
+  card with Try again and What to check, a sign-in card, and a loading view
+  (progress line, "Loading the conversation from <computer>", placeholder
+  bubbles) while a PC conversation's messages come in.
+- Material 3 look: 56 dp section headers, 48 dp project rows with a count
+  badge, 52 dp pill chat rows with the secondary-container indicator, a
+  lifted drawer surface with an explicit text color, item animations.
+- Speed: the grouping is remembered per input instead of rebuilt each frame,
+  and rows carry content types.
+- The panel's top scrolls with the list, so a phone on its side still shows
+  chats. "Work on your computer" sits under the search box, not below every
+  phone chat. The computers screen is an in-app layer (Back steps back) that
+  clears the gesture bar.
+
+Verified on the Xiaomi Redmi 12 (`cd4928027d76`, Android 15, dev build with
+a local versionCode 1016): the panel opens with readable text and the pill
+selection; in landscape the fixed top had left no room for chats (fixed);
+the computer entry was last in a long list (fixed); the setup step's bottom
+button sat under the gesture bar in a dialog window (fixed by the in-app
+layer); Back goes form, setup, list, closed; Windows and Ubuntu guides both
+render. Not verified on a device: the connecting, error, sign-in and PC
+conversation loading states (no computer is set up on that phone, and
+entering a password is not something the tester does).
 
 ## Chat streaming scroll — 2026-09-24
 

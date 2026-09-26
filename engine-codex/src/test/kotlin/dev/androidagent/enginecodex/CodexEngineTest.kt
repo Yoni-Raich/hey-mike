@@ -30,6 +30,7 @@ import dev.androidagent.core.ReasoningEffortOption
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -482,6 +483,36 @@ class CodexEngineTest {
         assertEquals(1, startParams["dynamicTools"]?.jsonArray?.size)
     }
 
+    @Test fun aComputersThreadCarriesItsOwnPathAccessAndInstructions() {
+        // A Windows path is not a File on the phone: it must reach Codex as typed.
+        val profile = EngineProfile("computer rules", sandbox = "workspace-write", approvalPolicy = "on-request", inlineImages = true)
+        val start = CodexEngine.startSessionParams("C:\\Users\\Yoni Raich\\src\\app", null, emptyList(), profile)
+        assertEquals("C:\\Users\\Yoni Raich\\src\\app", start["cwd"]?.jsonPrimitive?.content)
+        assertEquals("workspace-write", start["sandbox"]?.jsonPrimitive?.content)
+        assertEquals("on-request", start["approvalPolicy"]?.jsonPrimitive?.content)
+        assertEquals("computer rules", start["developerInstructions"]?.jsonPrimitive?.content)
+        val resume = CodexEngine.resumeSessionParams("D:\\work", "t1", null, null, profile)
+        assertEquals("D:\\work", resume["cwd"]?.jsonPrimitive?.content)
+        assertEquals("on-request", resume["approvalPolicy"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun aPictureForAnotherMachineTravelsInsideTheRequest() {
+        val picture = File.createTempFile("shot", ".png").apply { writeBytes(byteArrayOf(1, 2, 3)); deleteOnExit() }
+        val inline = CodexEngine.turnStartParams("t", "look", listOf(picture), null, inlineImages = true)
+        val item = inline["input"]!!.jsonArray.last().jsonObject
+        assertEquals("image", item["type"]?.jsonPrimitive?.content)
+        assertEquals("data:image/png;base64,AQID", item["url"]?.jsonPrimitive?.content)
+        val local = CodexEngine.turnStartParams("t", "look", listOf(picture), null)
+        assertEquals("localImage", local["input"]!!.jsonArray.last().jsonObject["type"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun skillsOnAWindowsComputerMatchTheirFolderWhateverTheSlashes() {
+        val result = Json.parseToJsonElement(
+            """{"data":[{"cwd":"C:\\src\\App","skills":[{"name":"deploy","description":"d","path":"C:\\src\\App\\.agents\\skills\\deploy\\SKILL.md","scope":"repo"}]}]}""",
+        ).jsonObject
+        assertEquals(listOf("deploy"), CodexEngine.parseSkillCatalogAt(result, "c:/src/app/").map { it.name })
+    }
+
     @Test fun aResumedThreadIsOfferedTheToolsThisVersionHas() {
         // A thread binds the tool list it was started with, so a chat opened
         // before an app update could never call a tool that update added -
@@ -579,6 +610,60 @@ class CodexEngineTest {
             val opened = engine.openSession(File("/tmp/workspace"), "stale-123", null, emptyList())
             assertEquals("fresh-456", opened)
             assertEquals(listOf("initialize", "thread/resume", "thread/resume", "thread/start"), calledMethods)
+        } finally {
+            engine.close()
+            serverJob.cancel()
+            runCatching { serverIn.close() }
+            runCatching { clientIn.close() }
+            runCatching { serverOut.close() }
+            runCatching { clientOut.close() }
+        }
+    }
+
+    @Test fun aComputersConversationThatWillNotResumeIsReportedNotReplaced() = runBlocking {
+        val serverIn = java.io.PipedInputStream()
+        val clientOut = java.io.PipedOutputStream(serverIn)
+        val clientIn = java.io.PipedInputStream()
+        val serverOut = java.io.PipedOutputStream(clientIn)
+        val fakeProcess = object : Process() {
+            override fun getOutputStream() = clientOut
+            override fun getInputStream() = clientIn
+            override fun getErrorStream() = java.io.ByteArrayInputStream(ByteArray(0))
+            override fun waitFor() = 0
+            override fun exitValue() = 0
+            override fun destroy() = Unit
+        }
+        val fakeRuntime = object : dev.androidagent.core.RuntimeHost {
+            override val status = kotlinx.coroutines.flow.MutableStateFlow(dev.androidagent.core.RuntimeStatus())
+            override val homeDirectory = File("/tmp/home")
+            override suspend fun prepare() = Unit
+            override suspend fun startAppServer(): Process = fakeProcess
+            override suspend fun stop() = Unit
+        }
+        val serverReader = serverIn.bufferedReader()
+        val serverWriter = serverOut.bufferedWriter()
+        val engine = CodexEngine(fakeRuntime)
+        val calledMethods = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val serverJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            while (isActive) {
+                val line = serverReader.readLine() ?: break
+                val req = Json.parseToJsonElement(line).jsonObject
+                val id = req["id"]?.jsonPrimitive?.content ?: continue
+                val method = req["method"]?.jsonPrimitive?.content ?: continue
+                calledMethods.add(method)
+                val reply = when (method) {
+                    "initialize" -> """{"id":$id,"result":{}}"""
+                    "thread/resume" -> """{"id":$id,"error":{"code":-32600,"message":"thread is locked by another process"}}"""
+                    else -> """{"id":$id,"result":{"thread":{"id":"fresh-456"}}}"""
+                }
+                serverWriter.write(reply + "\n")
+                serverWriter.flush()
+            }
+        }
+        try {
+            val failure = runCatching { engine.openSessionAt("C:\\src\\app", "pc-123", null, emptyList(), freshIfLost = false) }
+            assertTrue(failure.exceptionOrNull()?.message.orEmpty().contains("locked by another process"))
+            assertFalse("thread/start" in calledMethods)
         } finally {
             engine.close()
             serverJob.cancel()
@@ -797,5 +882,44 @@ class CodexEngineTest {
             runCatching { serverOut.close() }
             runCatching { clientOut.close() }
         }
+    @Test
+    fun threadListKeepsConversationsWithAFolderInMilliseconds() {
+        val result = Json.parseToJsonElement(
+            """{"data":[
+                {"id":"t1","preview":"Fix the picker\nmore","cwd":"C:\\src\\app","updatedAt":1790000000},
+                {"id":"t2","name":"Named","preview":"ignored","cwd":"C:\\web","updatedAt":1790000000000},
+                {"id":"t3","preview":"no folder"}
+            ],"nextCursor":null}""",
+        ).jsonObject
+        val threads = CodexEngine.parseThreadList(result)
+        assertEquals(listOf("t1", "t2"), threads.map { it.id })
+        assertEquals("Fix the picker", threads[0].title)
+        assertEquals("C:\\src\\app", threads[0].cwd)
+        assertEquals(1_790_000_000_000L, threads[0].updatedAt)
+        assertEquals("Named", threads[1].title)
+        assertEquals(
+            listOf("cli", "vscode", "appServer"),
+            CodexEngine.threadListParams(null, 500)["sourceKinds"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(100, CodexEngine.threadListParams("c", 500)["limit"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun threadReadGivesUserAndAgentTextInOrder() {
+        val result = Json.parseToJsonElement(
+            """{"thread":{"id":"t1","turns":[
+                {"items":[
+                    {"type":"userMessage","content":[{"type":"text","text":"Hi"},{"type":"image","url":"x"}]},
+                    {"type":"reasoning","summary":[]},
+                    {"type":"commandExecution","command":"ls"},
+                    {"type":"agentMessage","text":"Hello"}
+                ]},
+                {"items":[{"type":"userMessage","content":[{"type":"text","text":"Again"}]}]}
+            ]}}""",
+        ).jsonObject
+        assertEquals(
+            listOf(CodexThreadMessage("user", "Hi"), CodexThreadMessage("assistant", "Hello"), CodexThreadMessage("user", "Again")),
+            CodexEngine.parseThreadMessages(result),
+        )
     }
 }

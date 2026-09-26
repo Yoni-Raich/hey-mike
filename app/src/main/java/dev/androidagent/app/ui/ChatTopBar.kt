@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -162,12 +164,42 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
     TopAppBar(
         navigationIcon = { PanelButton(state, onOpenDrawer) },
         title = {
-            Text(
-                title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
-            )
+            Column {
+                Text(
+                    title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+                )
+                // Which machine this chat acts on, so a command is never sent
+                // to the computer by someone who thought it was the phone.
+                // It also says the phone is still in reach from there.
+                state.activeSessionId?.let(state.remoteChats::get)?.let { where ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Outlined.Computer, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp),
+                        )
+                        Text(
+                            " $where",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Text(
+                            "  +  ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Icon(
+                            Icons.Outlined.PhoneAndroid, contentDescription = "and this phone",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp),
+                        )
+                    }
+                }
+            }
         },
         actions = {
             AgentStatusButton(state) { showStatus = true }

@@ -162,6 +162,61 @@ data class AgentUiState(
     val isUpdateBannerVisible: Boolean = true,
     /** First-launch progress and the consent the user gave. Stored on the phone only. */
     val onboarding: dev.androidagent.core.OnboardingProgress = dev.androidagent.core.OnboardingProgress(),
+    /** Computers Mike can work on over SSH. */
+    val computers: List<dev.androidagent.remote.RemoteComputer> = emptyList(),
+    /** The saved computers could not be opened: changed outside the app, so none is trusted. */
+    val computersUnreadable: Boolean = false,
+    /** The computer used when the user does not pick one. */
+    val defaultComputerId: String? = null,
+    /** The latest connect step per computer. */
+    val computerSetup: Map<String, dev.androidagent.remote.RemoteSetup> = emptyMap(),
+    val isComputersOpen: Boolean = false,
+    /** Picking the folder a computer chat opens in. */
+    val folderBrowser: FolderBrowserState? = null,
+    /** Chats that run on a computer: chat id to "Desk · app". */
+    val remoteChats: Map<String, String> = emptyMap(),
+    /** Which computer and folder each computer chat runs in. */
+    val remoteBindings: Map<String, dev.androidagent.remote.RemoteBinding> = emptyMap(),
+    /** Folders the user picked on each computer. */
+    val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
+    /** Per computer, the conversations Codex keeps there, as last listed. */
+    val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
+    /** Computer chats whose conversation another Codex on the computer holds open. */
+    val pcBusyChats: Set<String> = emptySet(),
+    /** Computer chats being copied so Mike can continue them. */
+    val pcForking: Set<String> = emptySet(),
+    /** Computers whose conversations are being listed right now. */
+    val pcRefreshing: Set<String> = emptySet(),
+    /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
+    val pcChatLoading: Map<String, String> = emptyMap(),
+    /** A computer Mike filled in for the user to check and finish. */
+    val computerProposal: ComputerDraft? = null,
+    /** Text to put in a chat's composer, unsent, once: chat id to text. */
+    val composerSeeds: Map<String, String> = emptyMap(),
+)
+
+/** A computer as the add or edit form holds it, before it is saved. */
+data class ComputerDraft(
+    val id: String? = null,
+    val label: String = "",
+    val host: String = "",
+    /** Optional second address, such as Tailscale, tried when [host] does not answer. */
+    val vpnHost: String = "",
+    val port: String = "22",
+    val user: String = "",
+    /** Blank on an edit keeps the saved password. */
+    val password: String = "",
+    val access: dev.androidagent.remote.RemoteAccess = dev.androidagent.remote.RemoteAccess.ASK,
+    val isDefault: Boolean = false,
+    /** Mike filled this in: the address must be checked before a password is typed. */
+    val proposedByMike: Boolean = false,
+)
+
+data class FolderBrowserState(
+    val computerId: String,
+    val listing: dev.androidagent.remote.FolderListing? = null,
+    val loading: Boolean = true,
+    val error: String? = null,
 )
 
 /**
@@ -256,6 +311,44 @@ data class AgentUiActions(
     val onWithdrawConsent: () -> Unit = {},
     /** Start a chat in which Mike turns on wireless debugging and pairs, asking first. */
     val onLetMikeSetUpWireless: () -> Unit = {},
+    val onOpenComputers: () -> Unit = {},
+    val onCloseComputers: () -> Unit = {},
+    /** Save a new or edited computer, then connect to it. */
+    val onSaveComputer: (ComputerDraft) -> Unit = {},
+    val onRemoveComputer: (String) -> Unit = {},
+    val onSetDefaultComputer: (String) -> Unit = {},
+    /** Connect to a computer and pick a folder: it becomes a project with a new chat. */
+    val onNewProject: (computerId: String) -> Unit = {},
+    /** A new chat in a project folder on a computer. */
+    val onNewChatInProject: (computerId: String, path: String) -> Unit = { _, _ -> },
+    /** Open a conversation Codex keeps on the computer as a chat here. */
+    val onOpenPcThread: (computerId: String, threadId: String) -> Unit = { _, _ -> },
+    /** List the computers' conversations again. */
+    val onRefreshPcThreads: () -> Unit = {},
+    /** Try the computer's connection again from the side panel. */
+    val onReconnectComputer: (computerId: String) -> Unit = {},
+    /** Open a computer's Tailscale approval page; coming back to the app connects again. */
+    val onOpenTailscaleApproval: (computerId: String, url: String) -> Unit = { _, _ -> },
+    /** Before the first message: run this chat on the phone (null) or in a computer folder. */
+    val onMoveNewChat: (computerId: String?, path: String?) -> Unit = { _, _ -> },
+    val onComputerProposalShown: () -> Unit = {},
+    /** Continue a computer conversation that is held open elsewhere in a copy with its history. */
+    val onForkPcChat: (sessionId: String) -> Unit = {},
+    /** Look again whether the computer still holds this chat's conversation open. */
+    val onCheckPcChatBusy: (sessionId: String) -> Unit = {},
+    val onComposerSeedUsed: (sessionId: String) -> Unit = {},
+    /** Hand text to another app, such as the PC setup steps to email to oneself. */
+    val onShareText: (String) -> Unit = {},
+    /** Connect, install Codex if needed, and check its sign-in. */
+    val onConnectComputer: (String) -> Unit = {},
+    /** The user says they finished signing in to Codex on the computer. */
+    val onCheckComputerSignIn: (String) -> Unit = {},
+    val onOpenUrl: (String) -> Unit = {},
+    /** Show the folders in one folder of a computer; blank is its home folder. */
+    val onBrowseFolder: (computerId: String, path: String) -> Unit = { _, _ -> },
+    val onCloseFolderBrowser: () -> Unit = {},
+    /** Start a chat that runs on the computer, in this folder. */
+    val onOpenFolderChat: (computerId: String, path: String) -> Unit = { _, _ -> },
 )
 
 /** The setup checklist for this state, so no screen assembles the signals itself. */

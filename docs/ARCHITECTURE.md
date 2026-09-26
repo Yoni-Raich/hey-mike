@@ -14,6 +14,7 @@ One Android project, with replaceable modules and small core contracts.
 | device-tools | Sole agent-facing device gateway, reads/control/shell/files |
 | a11y | Optional in-process accessibility screen observation and control |
 | overlay | Floating steering card, status and direct local stop |
+| remote | Computers over SSH: sealed profiles, Codex on Windows, chat routing |
 
 A model change is configuration. An engine change replaces the engine adapter. Runtime packaging must not affect chat or ADB APIs. The UI observes app events, never raw Codex JSON.
 
@@ -1540,3 +1541,124 @@ On / Set up / Fix (screen control and the floating control are one row, since
 neither works alone), then *How Mike works*, *Account and privacy*, and
 *Advanced* (runtime, Jev, app updates). The side panel gained the orb with a
 one-line status, chat search, and chats grouped by day (`ChatDayGroups`).
+
+## Computers: Codex on the user's Windows PC, driven from the phone
+
+A chat can run on one of the user's computers instead of on the phone. The
+phone does not get an SSH tool; it runs **Codex itself on the computer** and
+talks to it over SSH with the same app-server protocol it already speaks to
+the phone's own Codex. `CodexEngine` only needs a `Process`, so the new
+`:remote` module hands it an SSH exec channel (`SshProcess`) instead of a local
+child. Everything Codex does there is native to that computer: its shell,
+`apply_patch`, git, the project's `AGENTS.md`, the user's `~/.codex` config,
+sign-in, MCP servers, and skills from `~/.agents/skills` and the repo's
+`.agents/skills`, which also appear in the composer's skill picker.
+
+Why not a `remote_shell` tool for the phone's Codex: file edits, reads,
+skills and project instructions would all stay on the phone, and every step
+would be a mobile round trip wrapped in `cat` and heredocs.
+
+- **Routing.** `RoutingAgentEngine` is the one engine the coordinator sees. A
+  chat bound to a computer opens its thread there; later calls about that
+  thread go to the same place. Sign-in, models, usage and voice stay the
+  phone's. Both app-servers number requests from zero, so a computer's tool
+  and approval requests are tagged `remote|<computer>|<id>` before the
+  coordinator sees them. An unscoped failure from a computer that is not
+  running the current turn is dropped, because the coordinator ends any
+  active run on one.
+- **The phone is still reachable.** The phone's device tools are advertised to
+  the computer's thread as well, so a task on the PC can still act on the
+  phone. The computer's thread instructions (`RemoteInstructions`) say which
+  is which.
+- **SSH.** JSch (pure Java, Android networking and DNS, no native binary).
+  Password login; the host key is trusted on first connect, shown as a
+  `SHA256:` fingerprint, and pinned. A different key later refuses the
+  connection before the password is sent. A changed home address clears the
+  pin. A computer may have a home address, a VPN address (such as Tailscale),
+  or both. Connect tries the one that answered last first and moves on only
+  when an address does not answer at all; a refused password or a changed
+  key stops there. The pin holds for both addresses.
+- **Codex on Windows.** Setup runs short PowerShell scripts through
+  `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
+  and PowerShell default shells. The computer downloads the official
+  `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
+  pinned on the phone (0.156.0), checks its sha256 against hashes compiled
+  into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
+  The phone and computer therefore speak one protocol version.
+- **Access is the user's choice per computer.** *Ask me first*:
+  `workspace-write` with `on-request` approvals, answered on the phone's
+  approval card. *Full access*: `danger-full-access` with no approvals, as on
+  the phone. What *Ask* can enforce depends on the Codex Windows sandbox on
+  that PC; it is not set up by Hey Mike.
+- **Secrets and bindings are sealed.** The agent's shell on the phone runs as
+  the app's own user and can rewrite any app file. Computers, their passwords
+  and which chat runs where are one AES-GCM blob under a non-exportable
+  Keystore key (`KeystoreSecretBox`). An edited file does not open, so it
+  cannot point a saved password at another host or move a chat onto a
+  computer; the app then trusts none of it and asks for the computers again.
+- **Pictures** are sent inline as data URLs; other attachments are refused in
+  a computer chat because their paths are on the phone.
+- **Files between the computer and the phone.** The phone's file tools read
+  the chat's workspace on the phone. `ComputerFilesGateway` wraps the device
+  tool gateway: in a computer chat, `push_file` and `install_apk` take a path
+  on the computer (absolute, or relative to the chat's folder), which is
+  copied to the phone over the chat's SSH link (SFTP) first, and `pull_file`
+  also copies the phone's file into the project folder. No new model tool;
+  phone chats are untouched. The thread instructions forbid using adb on the
+  computer to reach the phone: it can see other devices and skips the app's
+  controls.
+- **The desktop.** Commands over SSH run in a Windows session with no screen.
+  For screenshots, windows and the clipboard, the instructions teach a
+  one-off scheduled task that runs as the signed-in user, interactively. It
+  works only while someone is signed in to Windows.
+- **Projects and the PC's own conversations.** A project is a folder on a
+  computer: one the user picked (sealed in the same store), one a chat here
+  runs in, or one Codex on the computer worked in. The side panel lists each
+  computer, its projects and their chats, folding each level. Codex's own
+  `thread/list` (sources `cli`, `vscode`, `appServer`) supplies the
+  conversations the PC started; summaries only, up to 200, refreshed when the
+  panel opens. Opening one binds a new chat to that thread and copies its
+  messages in once from `thread/read`. The panel connects in the background
+  once per app run, but never installs Codex on its own. A conversation that
+  is running in the PC's Codex app right now can be read, but continuing it
+  from both places at once is not guarded against.
+- **Linux computers.** The first connection runs `uname -s` (Windows has no
+  `uname`; Git's says MINGW, still Windows; macOS is refused for now) and the
+  answer is kept with the computer. `LinuxHost` is the Linux side of the same
+  `HostScripts`: POSIX `sh` scripts sent base64 encoded (so the login shell
+  does not matter), the same `HEYMIKE {json}` answers, and the same pinned
+  `codex-app-server-package-<arch>-unknown-linux-musl` the phone runs,
+  checked against the phone build's sha256 pins and unpacked under
+  `~/.local/share/heymike`. Paths keep the computer's style everywhere:
+  Linux paths keep their case and use `/`. The thread instructions say
+  Linux, and for the desktop they point at the user's graphical session
+  (XDG_RUNTIME_DIR, DBus, Wayland or X11) instead of a scheduled task.
+- **Voice follows the thread.** `RoutingAgentEngine` starts realtime on the
+  app-server that owns the chat's thread, so voice in a computer chat runs on
+  the computer's Codex (and its sign-in). Audio does not cross SSH: the
+  transport is WebRTC, so only the SDP goes through the computer and the
+  media flows between the phone and OpenAI.
+- **No size cap on sending files to the phone.** `push_file` and
+  `install_apk` take files of any size; the timeout grows with the size
+  (1 MB/s on top of what was asked). The user decides what is sent. The
+  text-only `pull_file` fallback keeps its cap because it holds the file in
+  memory, and screenshots keep theirs because they go to the model.
+- **The `computers` tool, from any chat.** One tool with modes: `status`,
+  `browse`, `new_project`, `open_chat`, `add`. It is a tool and not a skill
+  because it crosses the sealed store's line: the agent's shell has no SSH
+  and must never read a password or rebind a chat. Two modes only prepare
+  what the user finishes: `add` fills in the app's add-computer form, which
+  says Mike suggested the address (an injected address is how a password
+  would be sent to someone else), and the password is typed there, never
+  seen by the model; `open_chat` opens a chat in a project with the task in
+  the composer, unsent, so an instruction picked up elsewhere cannot reach a
+  PC that may have full access. A phone chat does not move to the computer;
+  `open_chat` starts a new chat there with what was decided.
+- **Where a new chat runs.** A new chat starts on the phone. Until its first
+  message it can be moved to a recent project on a computer, or to another
+  folder; after that its thread lives where it started. A computer chat's
+  title bar shows the computer and folder and that the phone is still in
+  reach.
+- **Stop** interrupts the turn on the computer. If that fails, the engines
+  are closed, which closes the SSH channel. A command Codex already started
+  there may keep running; the run summary must not claim it was undone.
