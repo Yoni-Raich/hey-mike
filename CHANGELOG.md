@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.13.0 — 2026-09-15
+## Unreleased
+
+- The updater checks the release package before offering it and checks the APK
+  package, version code and signing certificate before installation.
+- Direct `shell uiautomator dump` is refused; use `read_ui` so a screen
+  observation does not change the phone rotation lock.
 
 - First launch is now two steps you do by hand, sign-in and screen access,
   instead of an eight-item checklist. Before them, a welcome screen and a
@@ -76,14 +81,6 @@
 - Every step of a sequence now reports where its time went — finding the
   element, the action itself, the screen settling, or waiting for the result —
   so a slow run says which part was slow instead of just being slow.
-- Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
-  **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
-  anyone who wants to ship it inside a closed-source product. Personal use,
-  study, research and contributions stay free; a proprietary fork now needs an
-  agreement. Releases made before this change keep the license they shipped
-  under. See `LICENSE`, `LICENSE-COMMERCIAL.md` and `NOTICE`.
-- Contributions are now accepted under a Contributor License Agreement
-  (`CLA.md`), signed once in your first pull request.
 - Mike can hold standing rules: when something happens, and the conditions are
   true, do this. A rule is woken by the clock ("every day at 19:00", "weekdays
   at 07:30"), by arriving at or leaving a place, by a notification from one
@@ -149,6 +146,17 @@
   "WhatsApp from Dad, after 19:00 and before 07:00", "Mon, Tue, Wed, Thu and Fri
   at 07:00", "Ran yesterday at 21:40 - twice today".
 
+
+## 0.13.0 — 2026-09-15
+
+- Hey Mike is now dual-licensed. The project moves from Apache-2.0 to the
+  **GNU AGPL v3.0** for everyone, plus a separate **commercial license** for
+  anyone who wants to ship it inside a closed-source product. Personal use,
+  study, research and contributions stay free; a proprietary fork now needs an
+  agreement. Releases made before this change keep the license they shipped
+  under. See `LICENSE`, `LICENSE-COMMERCIAL.md` and `NOTICE`.
+- Contributions are now accepted under a Contributor License Agreement
+  (`CLA.md`), signed once in your first pull request.
 - Mike can run a whole saved sequence in one go. `workflow_runner` takes the
   name of a workflow and does every step itself — open the app, find the
   search box, type, open the result, flip the switch — with no thinking turn

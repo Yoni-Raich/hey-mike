@@ -722,6 +722,11 @@ class AndroidDeviceTools(
         require(command.isNotBlank()) { "command cannot be empty" }
         require(!command.contains('\u0000')) { "command contains NUL" }
         require(command.length <= MAX_SHELL_CHARS) { "command exceeds length limit" }
+        // The direct command changes the phone's rotation setting on teardown.
+        // read_ui uses a guarded dump and can use Accessibility when available.
+        if (Regex("\\buiautomator\\s+dump\\b", RegexOption.IGNORE_CASE).containsMatchIn(command)) {
+            return ToolResult("Use read_ui instead of shell uiautomator dump to preserve screen rotation.", success = false)
+        }
         val timeout = arguments.timeoutMsOrDefault()
         val out = userExecute(command, timeout)
         val text = bound(out.output)

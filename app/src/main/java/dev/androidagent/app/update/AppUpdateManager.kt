@@ -22,6 +22,7 @@ package dev.androidagent.app.update
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -38,6 +39,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 data class AppUpdateInfo(
     val latestVersionName: String,
@@ -92,7 +94,7 @@ class AppUpdateManager(
             if (flavor == "dev") {
                 parseNightlyReleaseJson(jsonString, currentVersionCode, currentPackageName)
             } else {
-                parseReleaseJson(jsonString, currentVersion)
+                parseReleaseJson(jsonString, currentVersion, currentPackageName)
             }
                 ?: error("No compatible APK asset found in latest GitHub release")
         } finally {
@@ -174,6 +176,7 @@ class AppUpdateManager(
                         }
                     }
                     require(apkFile.length() > 0) { "Downloaded APK file is empty" }
+                    validateUpdateApk(apkFile)
                     return@withContext apkFile
                 } finally {
                     connection.disconnect()
@@ -196,11 +199,33 @@ class AppUpdateManager(
 
     fun createInstallIntent(apkFile: File): Intent {
         require(apkFile.exists() && apkFile.length() > 0) { "APK file does not exist or is empty" }
+        validateUpdateApk(apkFile)
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", apkFile)
         return Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
+    private fun validateUpdateApk(apkFile: File) {
+        val pm = context.packageManager
+        val flags = PackageManager.GET_SIGNING_CERTIFICATES
+        @Suppress("DEPRECATION")
+        val archive = pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
+            ?: error("Downloaded file is not a valid APK")
+        require(archive.packageName == currentPackageName) { "Update APK belongs to another app" }
+        require(archive.longVersionCode > currentVersionCode) { "Update APK version code is not newer" }
+        @Suppress("DEPRECATION")
+        val installed = pm.getPackageInfo(currentPackageName, flags)
+        fun signerDigests(info: android.content.pm.PackageInfo): Set<String> =
+            info.signingInfo?.apkContentsSigners?.map { signature ->
+                MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                    .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+            }?.toSet().orEmpty()
+        val installedSigners = signerDigests(installed)
+        require(installedSigners.isNotEmpty() && signerDigests(archive) == installedSigners) {
+            "Update APK signing certificate does not match the installed app"
         }
     }
 
@@ -220,12 +245,19 @@ class AppUpdateManager(
     companion object {
         internal val json = Json { ignoreUnknownKeys = true }
 
-        fun parseReleaseJson(jsonString: String, currentVersion: String): AppUpdateInfo? {
+        fun parseReleaseJson(
+            jsonString: String,
+            currentVersion: String,
+            currentPackageName: String,
+        ): AppUpdateInfo? {
             val root = json.parseToJsonElement(jsonString).jsonObject
             val tagName = root["tag_name"]?.jsonPrimitive?.content.orEmpty().trim()
             if (tagName.isBlank()) return null
             val rawVersionName = tagName.removePrefix("v").removePrefix("V")
             val releaseNotes = root["body"]?.jsonPrimitive?.content.orEmpty().trim()
+            // A release may contain a Dev APK. Require explicit package metadata
+            // before offering it as an update to a different installed flavor.
+            if (releaseNotes.metadataValue("Package") != currentPackageName) return null
 
             val assets = root["assets"]?.jsonArray.orEmpty()
             val apkAsset = assets.mapNotNull { it.jsonObject }.firstOrNull { asset ->

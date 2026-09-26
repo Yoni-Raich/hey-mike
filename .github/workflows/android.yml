@@ -19,4 +19,4 @@ jobs:
           packages: ''
       - uses: gradle/actions/setup-gradle@v5
       - run: chmod +x gradlew
-      - run: ./gradlew :core:test :app:assembleDevDebug :app:lintDevDebug
+      - run: ./gradlew :core:test :device-tools:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug

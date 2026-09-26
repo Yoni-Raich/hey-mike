@@ -1,5 +1,37 @@
 # Progress
 
+## Dev release preparation — 2026-09-26
+
+The preparation branch merges the v0.13.0 `main` history into current `dev`
+without changing `main`. The stable updater now requires matching `Package:`
+release metadata and verifies the downloaded APK package, newer versionCode,
+and installed signing certificate before installation. Direct
+`shell uiautomator dump` is refused in favor of guarded `read_ui`. Android CI
+now runs the `app` and `device-tools` unit tests that cover these fixes.
+
+Local gate passed: `test assembleDevRelease assembleDevDebugAndroidTest
+:voice:lintDebug :app:lintDevDebug --no-daemon` (905 tasks); all five runtime
+staging Python tests passed. A nondebuggable Dev Release QA APK (code 1017,
+`0.13.0-dev.release-qa`) was zip-aligned, debug-key signed with APK Signature
+Scheme v3, and installed in place on Xiaomi 23053RN02Y. The installed signer
+matched before replacement; `firstInstallTime` remained unchanged, Accessibility
+stayed bound, and the five runtime native libraries were extracted. On this
+exact APK, a signed-in chat opened Gym Test and read its UI through
+Accessibility. A manual standing rule created and fired a local notification;
+`describe` reported `firedToday: 1`. Full evidence and remaining hardware
+matrix: `docs/RELEASE_READINESS_2026-09-26.md`.
+
+A Saturday 21:52 scheduled rule also delivered `QA-timer-ran` while the
+display was OFF. Exact alarms were allowed. This proves one screen-off alarm
+delivery on this phone; it does not prove deep Doze or reboot recovery. The
+weekly QA rule needs removal after the phone is unlocked.
+
+Still open: production signing/package and migration choice, phone updater
+flow, first-launch and account switching, broad device tools, scheduled and
+background automation edge cases, voice, and Wireless ADB. These are not established by
+the passing build or these phone smoke runs. No release or `main` merge was
+performed.
+
 ## Xiaomi QA stability fixes — 2026-09-25
 
 The adversarial Dev Nightly run on Xiaomi 23053RN02Y found five concrete gaps:
