@@ -23,8 +23,8 @@ matrix: `docs/RELEASE_READINESS_2026-09-26.md`.
 
 A Saturday 21:52 scheduled rule also delivered `QA-timer-ran` while the
 display was OFF. Exact alarms were allowed. This proves one screen-off alarm
-delivery on this phone; it does not prove deep Doze or reboot recovery. The
-weekly QA rule needs removal after the phone is unlocked.
+delivery on this phone; it does not prove deep Doze or reboot recovery. Both
+QA rules were then deleted; a final rule listing reported `count: 0`.
 
 Still open: production signing/package and migration choice, phone updater
 flow, first-launch and account switching, broad device tools, scheduled and

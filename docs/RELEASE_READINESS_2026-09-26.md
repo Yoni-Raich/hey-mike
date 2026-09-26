@@ -16,7 +16,8 @@ into `main`, tagged, or published by this work.
 | Release runtime extraction | PASS | Five `libcodex_*.so` files are present in the installed app's `lib/arm64` directory. |
 | Signed-in agent tool smoke | PASS | Existing chat on installed nondebuggable APK called `open_app` for Gym Test and `read_ui`; result reported `dev.androidagent.jevgym` in front and `source: accessibility`. No Gym data changed. |
 | Manual standing rule | PASS | On the same APK, `automation_rule` created `qa-release-20260926`, dry-tested and ran it. `describe` reported `firedToday: 1`; Android notification contained `QA-rule-ran`. |
-| Scheduled rule with screen off | PASS | Exact-alarm app-op was allowed. A Saturday 21:52 rule was saved and dry-tested; Android's alarm list showed an `RTC_WAKEUP` for Hey Mike. At 21:52:17, notification `QA-timer-ran` was present while display state remained OFF. Deep Doze and reboot were not exercised. The test rule repeats weekly and must be deleted after the phone is unlocked. |
+| Scheduled rule with screen off | PASS | Exact-alarm app-op was allowed. A Saturday 21:52 rule was saved and dry-tested; Android's alarm list showed an `RTC_WAKEUP` for Hey Mike. At 21:52:17, notification `QA-timer-ran` was present while display state remained OFF. Deep Doze and reboot were not exercised. |
+| QA rule cleanup | PASS | After unlocking, Mike deleted both `qa-timer-20260926` and `qa-release-20260926`; a final rules list reported `count: 0`. |
 | Stable updater channel | UNIT PASS | Parser rejects a Dev or missing `Package:` metadata for the prod package. Download and installer paths check the actual APK package, newer versionCode, and matching signing certificate. On-phone updater flow remains untested. |
 | Direct shell UI dump | UNIT PASS | `shell` refuses a direct `uiautomator dump` before device execution and points the agent to `read_ui`. Obfuscated shell commands are outside this guard. |
 
