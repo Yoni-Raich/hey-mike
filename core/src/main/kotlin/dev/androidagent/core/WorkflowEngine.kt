@@ -209,11 +209,13 @@ class WorkflowEngine(
                 put("name", saved.name)
                 put("package", saved.packageName)
                 put("steps", saved.steps.size)
+                put("format", "legacy_steps")
                 put(
                     "note",
-                    "Saved. A later chat can list it with list_workflows and run it with " +
-                        "run_workflow. Verify it still works before trusting it: app updates " +
-                        "move selectors.",
+                    "Saved in the older literal-step format. A later chat can list it with " +
+                        "list_workflows and replay its steps with run_workflow. workflow_runner " +
+                        "does not load this format; use workflow_runner(mode=\"save\") for a " +
+                        "new declarative workflow that verifies its steps.",
                 )
             }.toString(),
         )
@@ -225,6 +227,7 @@ class WorkflowEngine(
         return ToolResult(
             buildJsonObject {
                 put("count", workflows.size)
+                put("format", "legacy_steps")
                 put(
                     "workflows",
                     JsonArray(
@@ -234,6 +237,7 @@ class WorkflowEngine(
                                 put("package", workflow.packageName)
                                 put("description", workflow.description)
                                 put("steps", workflow.steps)
+                                put("format", "legacy_steps")
                             }
                         },
                     ),
@@ -241,8 +245,8 @@ class WorkflowEngine(
                 if (workflows.isEmpty()) {
                     put(
                         "hint",
-                        "Nothing saved yet. Once you work out a sequence that runs cleanly, " +
-                            "store it with save_workflow so the next chat does not rebuild it.",
+                        "No older literal step lists are saved. Use workflow_runner(mode=\"list\") " +
+                            "for declarative definitions, and mode=\"save\" to create one.",
                     )
                 }
             }.toString(),

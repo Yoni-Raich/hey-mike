@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Run commands and install apps</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#1E1E20;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 16px 16px 24px; display: flex; flex-direction: column; gap: 16px; background: #1E1E20;">
+<div style="display: flex; align-items: center; gap: 4px; height: 56px;">
+<a href="Settings.dc.html" aria-label="Back" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"></path></svg></a>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 0 8px;">
+<h1 style="margin: 0; font-size: 26px; font-weight: 600; line-height: 1.2;">Run commands and install apps</h1>
+<div style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: #A0A0A0;"><span style="width: 10px; height: 10px; border-radius: 5px; background: #5A5A5E;"></span>Not set up · optional</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: 24px; background: #262628;">
+<span style="font-size: 14px; color: #8F8F8F;">With this, Mike can also</span>
+<div style="display: flex; gap: 12px; align-items: center; font-size: 15px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"></path></svg>Run system commands for faster, exact changes</div>
+<div style="display: flex; gap: 12px; align-items: center; font-size: 15px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>Move and organize files</div>
+<div style="display: flex; gap: 12px; align-items: center; font-size: 15px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#83D9CA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>Install and remove apps</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 18px; border-radius: 24px; background: #262628;">
+<span style="font-size: 14px; color: #8F8F8F;">How Mike sets it up</span>
+<span style="font-size: 15px; line-height: 1.55; color: #D0D0D0;">Mike opens Developer options, turns on Wireless debugging and pairs with this phone. You'll approve each change. It works only on your Wi-Fi.</span>
+</div>
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<a href="Approval.dc.html" style="height: 56px; border-radius: 28px; background: #2F7CF6; color: #FFFFFF; font-size: 17px; font-weight: 500; display: flex; align-items: center; justify-content: center; text-decoration: none;">Let Mike set it up</a>
+<button type="button" style="height: 44px; border: none; background: transparent; color: #B9B9B9; font-family: inherit; font-size: 15px;">I'll do it myself</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

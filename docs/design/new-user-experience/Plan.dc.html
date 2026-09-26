@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>תוכנית הכניסה</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Rubik',sans-serif;background:#000000;color:#F2F2F2}
+</style>
+</helmet>
+<div dir="rtl" style="width: 1360px; height: 900px; box-sizing: border-box; padding: 56px 64px; display: flex; flex-direction: column; gap: 32px; background: #000000;">
+<div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 32px;">
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div style="font-size: 15px; color: #83D9CA; font-weight: 500;">Hey Mike · כניסה ראשונה</div>
+<h1 style="margin: 0; font-size: 44px; font-weight: 700; line-height: 1.15;">רק שני דברים המשתמש חייב לעשות בעצמו</h1>
+<p style="margin: 0; font-size: 18px; color: #B9B9B9; max-width: 760px; line-height: 1.5;">מהרגע שיש גישה לנגישות, Mike יכול להגדיר את השאר בעצמו, והמשתמש רק מאשר. כל שאר ההרשאות מתבקשות רק כשבאמת צריך אותן.</p>
+</div>
+<div style="display: flex; gap: 12px;">
+<div style="padding: 16px 20px; border-radius: 16px; background: #1B1B1B; border: 1px solid #262626; display: flex; flex-direction: column; gap: 4px; min-width: 150px;">
+<div style="font-size: 13px; color: #8F8F8F;">היום</div>
+<div style="font-size: 30px; font-weight: 700;">8 פריטים</div>
+<div style="font-size: 13px; color: #B9B9B9;">4 מסומנים כחובה</div>
+</div>
+<div style="padding: 16px 20px; border-radius: 16px; background: #16302C; border: 1px solid #2E5E56; display: flex; flex-direction: column; gap: 4px; min-width: 150px;">
+<div style="font-size: 13px; color: #83D9CA;">אחרי</div>
+<div style="font-size: 30px; font-weight: 700;">2 פעולות</div>
+<div style="font-size: 13px; color: #B9E9E0;">כל השאר אוטומטי או מאוחר יותר</div>
+</div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; flex-grow: 1;">
+<div style="border-radius: 20px; background: #1B1B1B; border: 1px solid #262626; padding: 24px; display: flex; flex-direction: column; gap: 14px;">
+<div style="font-size: 13px; color: #8F8F8F; font-weight: 500;">רץ ברקע · בלי לשאול</div>
+<div style="font-size: 22px; font-weight: 700;">הכנת המנוע</div>
+<p style="margin: 0; font-size: 15px; color: #B9B9B9; line-height: 1.55;">מתחיל ברגע שהאפליקציה נפתחת. שורת התקדמות קטנה בתחתית המסך, בלי שלב משלו.</p>
+<div style="height: 1px; background: #262626;"></div>
+<div style="font-size: 14px; color: #B9B9B9; line-height: 1.6;">נכשל? מופיע כרטיס עם "נסה שוב". לא חוסם את ההתחברות.</div>
+</div>
+<div style="border-radius: 20px; background: #1E2A3A; border: 1px solid #34506F; padding: 24px; display: flex; flex-direction: column; gap: 14px;">
+<div style="font-size: 13px; color: #69A7FF; font-weight: 500;">המשתמש חייב · 2 שלבים</div>
+<div style="font-size: 22px; font-weight: 700;">1. התחברות לחשבון</div>
+<p style="margin: 0; font-size: 15px; color: #C9D8EA; line-height: 1.55;">רק המשתמש יכול לתת סיסמה. כפתור אחד, ממשיכים בדפדפן וחוזרים.</p>
+<div style="font-size: 22px; font-weight: 700;">2. גישה לנגישות</div>
+<p style="margin: 0; font-size: 15px; color: #C9D8EA; line-height: 1.55;">אנדרואיד לא נותן לאפליקציה להדליק את זה לעצמה. אנחנו מראים בדיוק איפה ללחוץ, ויש מסלול עזרה כשהגדרות מוגבלות חוסמות את זה (Android 13+).</p>
+</div>
+<div style="border-radius: 20px; background: #16302C; border: 1px solid #2E5E56; padding: 24px; display: flex; flex-direction: column; gap: 12px;">
+<div style="font-size: 13px; color: #83D9CA; font-weight: 500;">Mike עושה לבד · המשתמש מאשר</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>כפתור עצירה צף</b> · מצויר כשכבת נגישות, בלי הרשאת "הצגה מעל אפליקציות"</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>Wireless debugging</b> · Mike פותח את אפשרויות המפתחים, מדליק, קורא את קוד הצימוד ומתחבר</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>התראות</b> · Mike פותח את חלון ההרשאה של אנדרואיד, והמשתמש לוחץ Allow</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>גישה להתראות</b> · רק כשחוק צריך אותה</div>
+</div>
+<div style="border-radius: 20px; background: #33291A; border: 1px solid #6B5530; padding: 24px; display: flex; flex-direction: column; gap: 12px;">
+<div style="font-size: 13px; color: #F6B86A; font-weight: 500;">רק כשצריך · בתוך הצ'אט</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>מיקרופון</b> · בלחיצה הראשונה על כפתור הקול</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>התקנת עדכונים</b> · כשיש עדכון מוכן</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>גישה להתראות</b> · כשיוצרים חוק שקורא התראות</div>
+<div style="font-size: 16px; line-height: 1.5;"><b>Wireless debugging</b> · אם דילגו עליו, בפעם הראשונה שמשימה צריכה shell או קבצים</div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px;">
+<div style="font-size: 15px; color: #B9B9B9; line-height: 1.55;"><b style="color: #F6B86A;">מסך הסכמה לפני הכל:</b> שליטה מלאה היא סיכון, הסוכן יכול לטעות, והמידע עובר רק ל־Codex ולפי המדיניות שלו. ממשיכים רק אחרי 3 סימונים.</div>
+<div style="font-size: 15px; color: #B9B9B9; line-height: 1.55;"><b style="color: #F2F2F2;">כלל אחד:</b> כל מסך מבקש דבר אחד בלבד, עם כפתור ראשי אחד. אין רשימת בדיקה בכניסה הראשונה.</div>
+<div style="font-size: 15px; color: #B9B9B9; line-height: 1.55;"><b style="color: #F2F2F2;">אישור לפני כל פעולה:</b> Mike מציג מה הוא עומד לשנות לפני שהוא משנה, עם "אשר" ו"לא עכשיו". כפתור העצירה תמיד על המסך.</div>
+<div style="font-size: 15px; color: #B9B9B9; line-height: 1.55;"><b style="color: #F2F2F2;">לבדוק בקוד:</b> שכבת נגישות במקום SYSTEM_ALERT_WINDOW, ושהקלקה בנגישות עובדת בחלון אפשרויות המפתחים במכשיר הבדיקה.</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1360,"height":900}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

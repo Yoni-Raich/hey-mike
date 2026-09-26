@@ -60,11 +60,13 @@ object WorkspaceSeeder {
     private const val QUICK_ACTIONS_DIR = "quick-actions"
 
     private val DEFAULT_SKILL_NAMES = listOf(
+        "device-capabilities",
         "device-automation",
         "user-preferences",
         "app-cards",
         "quick-actions",
         "workflows",
+        "automations",
     )
 
     /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */

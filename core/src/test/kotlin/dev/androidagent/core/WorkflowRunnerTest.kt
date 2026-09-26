@@ -149,6 +149,25 @@ class WorkflowRunnerTest {
         confirm = { request -> confirmations += request; confirmAnswer },
     )
 
+    /** Milliseconds each device call costs [timedRunner]'s clock. */
+    private var costs: Map<String, Long> = emptyMap()
+
+    private var clock = 0L
+
+    /**
+     * A runner whose clock moves only when the phone is touched.
+     *
+     * The real clock would make a reported duration a machine-speed
+     * measurement; here every phase is exactly the calls it made, which is
+     * what a timing report claims to be. Not the default: a frozen clock would
+     * make any condition that never holds poll forever.
+     */
+    private fun timedRunner() = WorkflowRunner(
+        invokeTool = { name, args -> clock += costs[name] ?: 0L; invoke(name, args) },
+        isRevoked = { revoked },
+        nowMs = { clock },
+    )
+
     private fun invoke(name: String, args: JsonObject): ToolResult {
         calls += name to args
         if (name !in serviceable) {
@@ -227,6 +246,75 @@ class WorkflowRunnerTest {
             val step = element.jsonObject
             step["id"]!!.jsonPrimitive.content to step["status"]!!.jsonPrimitive.content
         }
+
+    // ---- where the time went ----
+
+    @Test fun eachStepReportsWhichPhaseSpentTheTime() {
+        // "The step took 14 seconds" and "finding the element took 12 of them"
+        // have different fixes, and one elapsedMs cannot tell them apart.
+        val listing = Page("com.example.app", listOf(Node("n1", text = "Attach")))
+        val attached = Page("com.example.app", listOf(Node("n2", text = "Video attached")))
+        phone = FakeScreen(listing, mapOf("n1" to attached))
+        costs = mapOf("read_ui" to 300L, "tap_node" to 100L, "wait_for_change" to 4_000L)
+
+        val result = runBlocking {
+            timedRunner().run(
+                definition(
+                    """{"id":"attach","action":"tap","target":{"text":"Attach"},"verify":{"present":{"text":"Video attached"}}}""",
+                    pkg = "com.example.app",
+                ),
+                WorkflowRunner.Options(),
+            )
+        }
+
+        assertTrue(result.text, result.success)
+        val timing = parse(result)["steps"]!!.jsonArray.single().jsonObject["timing"]!!.jsonObject
+        assertEquals(300L, timing["resolve"]!!.jsonPrimitive.content.toLong())
+        assertEquals(100L, timing["act"]!!.jsonPrimitive.content.toLong())
+        assertEquals(4_000L, timing["settle"]!!.jsonPrimitive.content.toLong())
+        assertEquals(300L, timing["verify"]!!.jsonPrimitive.content.toLong())
+    }
+
+    @Test fun aStepThatCostsNothingMeasurableReportsNoTiming() {
+        phone = FakeScreen(Page("com.example.app", listOf(Node("n1", text = "Attach"))))
+        costs = emptyMap()
+
+        val result = runBlocking {
+            timedRunner().run(
+                definition("""{"id":"back","action":"key","arguments":{"keycode":"BACK"}}""", pkg = "com.example.app"),
+                WorkflowRunner.Options(),
+            )
+        }
+
+        assertNull(parse(result)["steps"]!!.jsonArray.single().jsonObject["timing"])
+    }
+
+    @Test fun aConditionMayBeGivenLongerThanAScreenTransition() {
+        // A video coming back into a composer is not a transition. The caller
+        // named the condition, so the caller's estimate is what is waited -
+        // 20s used to be the silent ceiling, and the step reported the
+        // condition false while it was still on its way.
+        phone = FakeScreen(Page("com.example.app", listOf(Node("n1", text = "Attach"))))
+        costs = mapOf("read_ui" to 15_000L)
+
+        val result = runBlocking {
+            timedRunner().run(
+                definition(
+                    """{"id":"await","action":"observe","verify":{"present":{"text":"Video attached"},"timeoutMs":45000}}""",
+                    pkg = "com.example.app",
+                ),
+                WorkflowRunner.Options(),
+            )
+        }
+
+        val json = parse(result)
+        assertFalse(result.text, result.success)
+        assertEquals("verification_failed", json["errorType"]!!.jsonPrimitive.content)
+        assertTrue(json["message"]!!.jsonPrimitive.content.contains("45000ms"))
+        // It really waited that long rather than being clamped to 20s.
+        val waited = json["failedStepTiming"]!!.jsonObject["verify"]!!.jsonPrimitive.content.toLong()
+        assertTrue("waited ${waited}ms", waited >= 45_000L)
+    }
 
     // ---- the acceptance case ----
 

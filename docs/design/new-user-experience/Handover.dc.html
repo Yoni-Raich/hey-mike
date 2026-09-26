@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mike sets up the rest</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#000000;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 28px 24px 24px; display: flex; flex-direction: column; gap: 16px; background: #000000;">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;">
+<dc-import name="Orb" size="150" level="0.42" color="#83D9CA" hint-size="150px,150px"></dc-import>
+<h1 style="margin: 0; font-size: 28px; font-weight: 500; line-height: 1.2;">You're done. I'll set up the rest.</h1>
+<p style="margin: 0; font-size: 15px; line-height: 1.5; color: #B9B9B9;">I'll do each one while you watch and ask before I change anything.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<sc-for list="{{items}}" as="item" hint-placeholder-count="3">
+<label style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 18px; background: #141414; border: 1px solid #2A2A2A; cursor: pointer;">
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px;">
+<span style="font-size: 16px; font-weight: 600;">{{item.title}}</span>
+<span style="font-size: 14px; line-height: 1.4; color: #8F8F8F;">{{item.note}}</span>
+</div>
+<input type="checkbox" checked="{{item.on}}" onChange="{{item.toggle}}" style="width: 22px; height: 22px; flex-shrink: 0; accent-color: #2F7CF6;">
+</label>
+</sc-for>
+</div>
+<div style="font-size: 14px; line-height: 1.5; color: #8F8F8F; text-align: center;">Microphone and updates wait until you need them.</div>
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<a href="Approval.dc.html" style="height: 56px; border-radius: 28px; background: #2F7CF6; color: #FFFFFF; font-size: 17px; font-weight: 500; display: flex; align-items: center; justify-content: center; text-decoration: none;">Set up {{count}} things</a>
+<a href="Ready.dc.html" style="height: 44px; display: flex; align-items: center; justify-content: center; color: #B9B9B9; font-size: 15px; text-decoration: none;">Skip. Let's chat now</a>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+constructor(p) { super(p); this.state = { off: {} }; }
+renderVals() {
+const base = [
+{ id: 'n', title: 'Progress notifications', note: 'See what I’m doing from the notification shade. You tap Allow once.' },
+{ id: 'w', title: 'Wireless debugging', note: 'Lets me run commands, move files and install apps. I turn it on and pair it myself.' },
+{ id: 'r', title: 'Read notifications', note: 'Only for rules like “reply when Mom texts”.', def: false }
+];
+const off = this.state.off;
+const items = base.map((b) => {
+const on = off[b.id] === undefined ? b.def !== false : !off[b.id];
+return { ...b, on, toggle: () => this.setState({ off: { ...off, [b.id]: on } }) };
+});
+return { items, count: items.filter((i) => i.on).length };
+}
+}
+</script>
+</body>
+</html>

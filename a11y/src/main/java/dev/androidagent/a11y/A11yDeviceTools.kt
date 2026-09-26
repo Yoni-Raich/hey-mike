@@ -396,6 +396,7 @@ class A11yDeviceTools(
                 "no_text_focus",
                 "No editable field has input focus. Tap the centre of the text field first, then retry.",
             )
+        val identity = EditableIdentity(RealNodeView(target))
         val arguments1 = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
@@ -413,8 +414,7 @@ class A11yDeviceTools(
         // ACTION_SET_TEXT replaces the whole field, and some Compose and chat
         // composers do not propagate it. Report what the field actually holds
         // rather than assuming the write took.
-        val verified = runCatching { service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.text?.toString() }
-            .getOrNull() == text
+        val verified = verifyTextApplied(service, target, identity, text)
         var submitted = false
         if (submit) {
             submitted = target.performAction(
@@ -491,11 +491,11 @@ class A11yDeviceTools(
     // ---- node addressing ----
 
     private suspend fun tapNode(arguments: JsonObject): ToolResult {
+        val service = requireService()
         val (node, view) = resolveNode(arguments)
         val ancestors = generateSequence(runCatching { view.node.parent }.getOrNull()) { runCatching { it.parent }.getOrNull() }
             .take(3).map(::RealNodeView).toList()
         if (SendGuard.isSendTap(view, ancestors)) {
-            val service = requireService()
             val root = service.rootInActiveWindow?.let(::RealNodeView) ?: view
             return gatedSend(service, root) { pressSend(it) }
         }
@@ -508,7 +508,7 @@ class A11yDeviceTools(
         val x = (bounds[0] + bounds[2]) / 2
         val y = (bounds[1] + bounds[3]) / 2
         requireNotOurOwnUi(x, y)
-        val landed = requireService().dispatchTap(x, y)
+        val landed = service.dispatchTap(x, y)
         return ToolResult(
             "Node $node did not accept a click; tapped its centre $x,$y instead",
             success = landed,
@@ -520,10 +520,12 @@ class A11yDeviceTools(
             ?: throw IllegalArgumentException("text is required")
         require(text.length <= MAX_TEXT_CHARS) { "text must be at most $MAX_TEXT_CHARS characters" }
         val submit = arguments["submit"]?.jsonPrimitive?.booleanOrNull ?: false
+        val service = requireService()
         val (node, view) = resolveNode(arguments)
         if (!view.isEditable) {
             return ToolResult("Node $node is not an editable field; nothing was typed.", success = false)
         }
+        val identity = EditableIdentity(view)
         val extras = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
@@ -531,13 +533,12 @@ class A11yDeviceTools(
             return ToolResult("Node $node rejected the text; nothing was typed.", success = false)
         }
         if (submit && SendGuard.isMessagingApp(view.packageName)) {
-            val service = requireService()
             val root = service.rootInActiveWindow?.let(::RealNodeView) ?: view
             return gatedSend(service, root) { submitDraft(it) }
         }
         // ACTION_SET_TEXT replaces the whole field and some composers drop it,
         // so report what the field holds instead of assuming the write took.
-        val verified = runCatching { view.node.refresh(); view.node.text?.toString() }.getOrNull() == text
+        val verified = verifyTextApplied(service, view.node, identity, text)
         var submitted = false
         if (submit) {
             submitted = view.node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
@@ -552,7 +553,51 @@ class A11yDeviceTools(
         )
     }
 
+    /** An action may replace its editable node or show its hint after clearing. */
+    private suspend fun verifyTextApplied(
+        service: AgentAccessibilityService,
+        original: AccessibilityNodeInfo,
+        identity: EditableIdentity,
+        expected: String,
+    ): Boolean {
+        val refreshed = runCatching { original.refresh() }.getOrDefault(false)
+        if (refreshed && textMatches(original, expected)) return true
+
+        // A stale handle can still return its old text after ACTION_SET_TEXT.
+        // Read a new tree without replacing the observation ids the model has.
+        awaitQuiescence(service)
+        checkActive()
+        val current = traverse(service.visibleWindows(), context.packageName).handles.values
+            .filterIsInstance<RealNodeView>()
+            .filter(identity::matches)
+            .minByOrNull(identity::distance)
+        return current?.node?.let { textMatches(it, expected) } ?: false
+    }
+
+    private fun textMatches(node: AccessibilityNodeInfo, expected: String): Boolean = runCatching {
+        TextValueVerification.matches(
+            expected = expected,
+            actual = node.text?.toString(),
+            showingHint = node.isShowingHintText,
+        )
+    }.getOrDefault(false)
+
+    private data class EditableIdentity(val id: String?, val pkg: String?, val className: String?, val bounds: List<Int>) {
+        constructor(view: RealNodeView) : this(view.viewIdResourceName, view.packageName, view.className, view.boundsInScreen)
+
+        fun matches(view: RealNodeView): Boolean = view.isEditable && view.packageName == pkg &&
+            (if (id != null) view.viewIdResourceName == id
+            else view.className == className && view.boundsInScreen == bounds)
+
+        fun distance(view: RealNodeView): Int {
+            val other = view.boundsInScreen
+            return kotlin.math.abs(bounds[0] + bounds[2] - other[0] - other[2]) +
+                kotlin.math.abs(bounds[1] + bounds[3] - other[1] - other[3])
+        }
+    }
+
     private suspend fun scrollNode(arguments: JsonObject): ToolResult {
+        requireService()
         val direction = arguments["direction"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
             ?: throw IllegalArgumentException("direction is required")
         val action = SCROLL_ACTIONS[direction]
@@ -608,7 +653,12 @@ class A11yDeviceTools(
             ?: throw IllegalArgumentException("observationId is required")
         val accepted = handleObservationIds
         if (accepted.isEmpty()) {
-            throw IllegalStateException("No observation is held. Call read_ui before addressing a node.")
+            throw ToolNotServiceable(
+                "node_observation_missing",
+                "No accessibility observation. read_ui source=file uses ADB node ids, which this " +
+                    "tool cannot use. Enable Hey Mike accessibility and read_ui again, or tap " +
+                    "the field and use type_text.",
+            )
         }
         if (observationId !in accepted) {
             throw IllegalStateException(
@@ -800,14 +850,17 @@ class A11yDeviceTools(
 
         private const val MAX_WAIT_MS = 30_000L
 
-        private val SCROLL_ACTIONS = mapOf(
-            "forward" to AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
-            "backward" to AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
-            "up" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id,
-            "down" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id,
-            "left" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id,
-            "right" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id,
-        )
+        // Android's host-side stub leaves AccessibilityAction fields null. Read
+        // them only when a device actually needs to scroll, not during class init.
+        private val SCROLL_ACTIONS: Map<String, Int>
+            get() = mapOf(
+                "forward" to AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+                "backward" to AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+                "up" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id,
+                "down" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id,
+                "left" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id,
+                "right" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id,
+            )
 
         private val PACKAGE_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
 
@@ -823,7 +876,8 @@ class A11yDeviceTools(
             "LOCK" to AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN,
         )
 
-        private val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
+        /** Internal rather than private so this module's tests can audit it. */
+        internal val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ACT_AND_OBSERVE_DEFINITION,
             tool(
                 "read_ui",

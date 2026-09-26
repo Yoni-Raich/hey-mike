@@ -43,6 +43,24 @@ import java.nio.charset.StandardCharsets
 import java.util.Base64
 
 class AndroidDeviceToolsTest {
+    @Test fun shellRefusesDirectUiDumpBeforeDeviceExecution() = runBlocking {
+        val adb = FakeAdb()
+        val workspace = Files.createTempDirectory("shell-ui-dump").toFile()
+        try {
+            val tools = AndroidDeviceTools(adb)
+            tools.beginRun("ui", workspace)
+            val blocked = tools.invoke("shell", buildJsonObject {
+                put("command", "uiautomator dump --compressed /sdcard/window.xml")
+            })
+            assertFalse(blocked.success)
+            assertTrue(blocked.text.contains("read_ui"))
+            assertEquals(0, adb.calls)
+            val harmless = tools.invoke("shell", buildJsonObject { put("command", "echo ok") })
+            assertTrue(harmless.success)
+            assertEquals(1, adb.calls)
+        } finally { workspace.deleteRecursively() }
+    }
+
     @Test fun combinedActionReportsCompletedSideEffectWhenObservationFails() = runBlocking {
         val adb = FakeAdb()
         val visibility = mutableListOf<Boolean>()

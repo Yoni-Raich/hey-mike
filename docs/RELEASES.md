@@ -37,6 +37,22 @@ Before a release, update both `versionCode` and `versionName` in
 `version.properties`. The tag, APK asset name, and embedded APK version must
 match. Never replace a published asset with a different file.
 
+The in-app updater uses separate channels. The `dev` package
+(`dev.androidagent.app.dev`) reads the `dev-nightly` prerelease and requires a
+higher versionCode. The `prod` package (`dev.androidagent.app`) reads the latest
+normal release. Its release notes must contain a standalone
+`Package: dev.androidagent.app` line; otherwise the updater refuses the asset.
+The downloaded APK must also have that package, a higher versionCode, and the
+installed app's signing certificate before the installer opens. Keep the
+metadata, APK manifest, and actual signing certificate aligned.
+
+The current public v0.13.0 APK uses the **dev** package, while the latest Dev
+Nightly also uses it with version codes above 1000. Before another public dev
+preview, pick a versionCode higher than the latest Nightly and the target
+phones. A first `prod` package release installs beside the existing dev app;
+it will not upgrade that package or move its private account and chat data.
+Choose the package and migration plan before cutting the next artifact.
+
 Release candidates should be built from the validated `main` history. Keep
 `dev` builds for integration and testing. A flavor named `prod` does not by
 itself provide production signing or production readiness.

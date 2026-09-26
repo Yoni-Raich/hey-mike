@@ -19,11 +19,31 @@ the phone. Read this page before granting optional permissions.
 | `MODIFY_AUDIO_SETTINGS` | Select the voice audio route | Changes audio routing during a voice session. |
 | `REQUEST_INSTALL_PACKAGES` | User-started installation of a downloaded update APK | Opens the Android package installer; it does not silently install. |
 | `QUERY_ALL_PACKAGES` | Resolve installed apps for approved intent actions | Lets the app see more installed-package metadata. |
+| `SCHEDULE_EXACT_ALARM` | Fire a standing rule at the minute it names | One alarm is held, for whichever rule is next due. Without it a rule may run up to an hour late. |
+| `RECEIVE_BOOT_COMPLETED` | Re-arm that alarm after a restart | The app is started briefly at boot to reschedule; it does not begin a run. |
 
 The Accessibility service is a separate user-enabled Android capability. It is
 used for screen observation, taps, typing, scrolling, and screenshots when
 available. The input method is another user-selected Android service used for
 Unicode input and is restored after the operation.
+
+**Notification access** is a third user-enabled capability, used only by
+standing rules, and it is the one that reads other apps' content. It is off
+until granted by hand in Settings, and no app can grant it to itself. What it
+does with a posted notification, in this order:
+
+1. notifications from Hey Mike itself are dropped, so a rule cannot trigger
+   itself;
+2. ongoing and group-summary notifications are dropped;
+3. **the package is checked before the title or the body is read**, against the
+   apps named by the rules that are currently on. A notification from any other
+   app is never looked at, and with no notification rule saved the service reads
+   nothing at all;
+4. only then are the title and text extracted, matched **on the phone**, and
+   discarded.
+
+Nothing is kept. There is no notification log, no history of what arrived, and
+no tool that can ask for one. The rule journal stores timestamps only.
 
 ## What can leave the phone
 
@@ -33,6 +53,11 @@ While a task is active, the agent may send the model:
 - semantic screen nodes, visible text, and tool results;
 - screenshots when the observation path needs vision;
 - finalized voice transcripts when realtime voice is used.
+
+A standing rule sends on **only the fields its own actions write into**. A rule
+that matches on the body of a message but whose prompt uses only the sender's
+name never transmits that body; the reply when the rule is saved lists exactly
+which fields it will send. Matching itself happens on the phone.
 
 The model service is not local. Review the account and service terms that apply
 to your Codex account before using the app with private data.

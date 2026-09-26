@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Approve a change</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Google Sans',Roboto,system-ui,sans-serif;background:#000000;color:#F2F2F2}
+a{color:#8AB4F8}a:hover{color:#AECBFA}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; position: relative; background: #F4F4F4; overflow: hidden;">
+<div style="padding: 96px 20px 0; display: flex; flex-direction: column; gap: 4px; color: #1B1B1B;">
+<div style="font-size: 26px; font-weight: 500; padding-bottom: 16px;">Developer options</div>
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #E6E6E6;"><span style="font-size: 16px;">USB debugging</span><span style="font-size: 14px; color: #6B6B6B;">Off</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 12px; margin: 0 -12px; border-radius: 12px; background: #DDE8FB; outline: 2px solid #69A7FF;"><div style="display: flex; flex-direction: column; gap: 2px;"><span style="font-size: 16px;">Wireless debugging</span><span style="font-size: 13px; color: #6B6B6B;">Debug mode when Wi-Fi is connected</span></div><div style="width: 46px; height: 26px; border-radius: 13px; background: #B9B9B9; padding: 3px; box-sizing: border-box;"><div style="width: 20px; height: 20px; border-radius: 10px; background: #FFFFFF;"></div></div></div>
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #E6E6E6;"><span style="font-size: 16px;">Stay awake</span><span style="font-size: 14px; color: #6B6B6B;">Off</span></div>
+</div>
+<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4);"></div>
+<div style="position: absolute; top: 20px; left: 16px; right: 16px; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 6px; border-radius: 28px; background: #141414; border: 1px solid #2A2A2A; box-shadow: 0 6px 20px rgba(0,0,0,0.35);">
+<dc-import name="Orb" size="44" level="0.42" color="#69A7FF" hint-size="44px,44px"></dc-import>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px;">
+<span style="font-size: 14px; font-weight: 500;">Waiting for you</span>
+<span style="font-size: 12px; color: #8F8F8F;">Setting up · 2 of 3</span>
+</div>
+<button type="button" style="height: 40px; padding: 0 18px; border-radius: 20px; border: none; background: #5A2320; color: #FFB4AB; font-family: inherit; font-size: 14px; font-weight: 600;">Stop</button>
+</div>
+<div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 24px 28px; border-radius: 28px 28px 0 0; background: #141414; display: flex; flex-direction: column; gap: 14px;">
+<div style="align-self: center; width: 40px; height: 4px; border-radius: 2px; background: #333333;"></div>
+<div style="font-size: 13px; color: #69A7FF; font-weight: 600;">Mike is asking</div>
+<h2 style="margin: 0; font-size: 22px; font-weight: 500; line-height: 1.25;">Turn on Wireless debugging?</h2>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B9B9B9;">Then I'll pair with this phone so I can run commands, move files and install apps. It works only on your Wi-Fi, and you can turn it off in Settings anytime.</p>
+<div style="display: flex; gap: 10px;">
+<button type="button" style="flex-grow: 1; height: 52px; border-radius: 26px; border: 1px solid #333333; background: transparent; color: #F2F2F2; font-family: inherit; font-size: 16px; font-weight: 500;">Not now</button>
+<a href="Ready.dc.html" style="flex-grow: 1; height: 52px; border-radius: 26px; background: #2F7CF6; color: #FFFFFF; font-size: 16px; font-weight: 500; display: flex; align-items: center; justify-content: center; text-decoration: none;">Allow</a>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

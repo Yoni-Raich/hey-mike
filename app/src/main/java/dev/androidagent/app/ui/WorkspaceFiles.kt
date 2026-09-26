@@ -87,7 +87,7 @@ private val AGENT_ROOTS = setOf("AGENTS.md", "preferences.json")
 // Attachments are stored as "<uuid>-name" so two files with one name can coexist.
 private val STORED_PREFIX = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}-")
 
-private val TEXT_TYPES = setOf("md", "markdown", "txt", "log", "json", "yaml", "yml", "csv", "xml", "kt", "py", "js", "ts", "sh")
+private val TEXT_TYPES = setOf("md", "markdown", "txt", "log", "json", "jsonl", "yaml", "yml", "csv", "xml", "kt", "py", "js", "ts", "sh")
 
 internal fun workspaceListing(items: List<WorkspaceFileItem>): WorkspaceListing {
     val entries = items.filterNot { it.isDirectory }.map { item ->

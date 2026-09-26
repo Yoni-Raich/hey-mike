@@ -1,11 +1,405 @@
 # Progress
 
+## 0.14.0 release preparation — 2026-09-27
+
+Release candidate: versionName `0.14.0`, versionCode `1019`, Dev flavor and
+package `dev.androidagent.app.dev`, following the v0.13.0 release path from
+`main`. Code 1019 is above the local 0.14.0-dev QA build (1018) already on
+Xiaomi 23053RN02Y, so the exact release APK can update that install in place
+without removing app data. This is a test-only, debug-key-signed Developer
+Preview, like v0.13.0; it is not production-key signed.
+
+The 0.14.0 code from `dev` passed the full local gate on 2026-09-27:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:app:lintDevDebug --no-daemon` (905 tasks); all five runtime staging Python
+tests passed; `git diff --check` passed. The exact release APK still needs to
+be built from the final `main` commit, inspected, installed on the Xiaomi, and
+used for one physical device-tool run before tagging.
+
+The 0.14.0-dev build from the same source commit was installed on Xiaomi
+23053RN02Y on 2026-09-26 and exercised through Gym Test and selected tools;
+the temporary QA report is under the host Temp directory, not in this repo.
+That was a local devDebug build with versionCode 1018, not proof of the exact
+nondebuggable release APK. The 0.14.0 release candidate uses versionCode 1019
+to permit an in-place update on this test phone and preserve its app data.
+
+The preparation branch merges the v0.13.0 `main` history into current `dev`
+without changing `main`. The stable updater now requires matching `Package:`
+release metadata and verifies the downloaded APK package, newer versionCode,
+and installed signing certificate before installation. Direct
+`shell uiautomator dump` is refused in favor of guarded `read_ui`. Android CI
+now runs the `app` and `device-tools` unit tests that cover these fixes.
+
+Local gate passed: `test assembleDevRelease assembleDevDebugAndroidTest
+:voice:lintDebug :app:lintDevDebug --no-daemon` (905 tasks); all five runtime
+staging Python tests passed. A nondebuggable Dev Release QA APK (code 1017,
+`0.13.0-dev.release-qa`) was zip-aligned, debug-key signed with APK Signature
+Scheme v3, and installed in place on Xiaomi 23053RN02Y. The installed signer
+matched before replacement; `firstInstallTime` remained unchanged, Accessibility
+stayed bound, and the five runtime native libraries were extracted. On this
+exact APK, a signed-in chat opened Gym Test and read its UI through
+Accessibility. A manual standing rule created and fired a local notification;
+`describe` reported `firedToday: 1`. Full evidence and remaining hardware
+matrix: `docs/RELEASE_READINESS_2026-09-26.md`.
+
+A Saturday 21:52 scheduled rule also delivered `QA-timer-ran` while the
+display was OFF. Exact alarms were allowed. This proves one screen-off alarm
+delivery on this phone; it does not prove deep Doze or reboot recovery. Both
+QA rules were then deleted; a final rule listing reported `count: 0`.
+
+On the same installed APK, a further Gym Test turn checked device status,
+opened the app, read its UI, set the exercise search field to `RELEASEQA`,
+verified it, cleared it, and verified the original placeholder. A direct
+`shell("uiautomator dump")` was refused with the `read_ui` guidance, and
+`accelerometer_rotation` remained `0`. Nothing was submitted.
+
+Still open: production signing/package and migration choice, phone updater
+flow, first-launch and account switching, broad device tools, scheduled and
+background automation edge cases, voice, and Wireless ADB. These are not established by
+the passing build or these phone smoke runs. No release or `main` merge was
+performed.
+
+## Xiaomi QA stability fixes — 2026-09-25
+
+The adversarial Dev Nightly run on Xiaomi 23053RN02Y found five concrete gaps:
+mixed-case HTTPS intent resolution, empty `set_text` read-back, ambiguous
+`act_plan` verification, separate legacy and declarative workflow formats,
+and a package-filtered `read_ui` reply with no foreground context. The fixes
+normalize URI schemes, check the refreshed or newly observed editable field
+and treat its displayed hint as an empty value after clearing, mark completed steps without a condition as
+`verification:"not_requested"`, add `workflow_runner(mode="save")` and a
+separate legacy listing, and show the active package in zero-match hints.
+New chat turns are recorded in `session-trace.jsonl`, with timestamps, exact
+tool arguments and results, assistant messages, and links to image artifacts.
+Only new turns can be traced; older runs cannot be reconstructed. On-device
+workflow guidance uses the declarative save path. The old literal workflow API
+remains available for saved sequences and is not silently converted into a
+verified definition.
+Package-scoped `workflow_runner` lookup now refuses a definition belonging to
+another app instead of falling back to all definitions. A focused gateway test
+confirms this refusal happens before any device tool is called.
+
+Verified in an isolated worktree based on `dev` commit `2309e9f0dad9`: the full
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug` gate,
+five `tools.test_prepare_runtime` tests, and `git diff --check` passed. The
+gate exposed one old `:engine-codex` test with a stale resume-count assertion;
+it now matches the existing tools-first, plain-resume, then fresh-thread
+behavior. DevDebug QA build 1014 (`0.12.0-dev.qa-stability3`) was signed with
+the installed Dev app certificate and installed with `adb install -r`, which
+kept app data. The unsigned lower-version release artifact was not installed.
+
+Physical Xiaomi run on build 1014, package `dev.androidagent.app.dev`, using
+Gym Test (`dev.androidagent.jevgym`): `open_app` succeeded; `read_ui` returned
+`source:"accessibility"` and `nodeActionsAvailable:true`; the empty Search
+exercises field was set to `QA_CLEAR_20260925` and verified; then `set_text`
+cleared it and a fresh read confirmed its empty hint. Both `set_text` results
+reported `verified:true`. The fresh session trace records the exact calls,
+arguments, results, and final assistant response. No Gym Test form was
+submitted.
+
+Physical follow-up on the same Xiaomi: DevDebug QA build 1015
+(`0.12.0-dev.qa-stability4`) was built from the current tree. `aapt` reported
+`dev.androidagent.app.dev`, code 1015, and that version name. Its signing
+certificate SHA-256 matched the installed build 1014, then `adb install -r`
+succeeded. The package reports code 1015 and the same first install time;
+Accessibility stayed enabled and bound. The model picker showed `6-luna`.
+In a fresh QA chat, `workflow_runner(mode="save")` stored an observe-only Gym
+definition with `nothingRan:true`; `mode="list"` returned it. Running its id
+with package `com.android.chrome` returned `workflow_not_found` and
+`nothingRan:true`, with no nested device action. An `act_plan` observe step in
+Gym returned `status:"done"`, `verified:false`, and
+`verification:"not_requested"`. `resolve_intent` alone resolved
+`Https://example.com` as `https://example.com` to Chrome; no URL was opened.
+A Gym `read_ui` filtered to a nonexistent package returned zero matches,
+`activePackage:"dev.androidagent.jevgym"`, `source:"accessibility"`,
+`nodeActionsAvailable:true`, and a hint naming the active package. The fresh
+session trace records the exact calls and results. No Gym form was submitted.
+
+Still open: rerun the broader adversarial matrix across every agent tool on
+the updated Xiaomi. The two focused phone runs directly cover the tools and
+paths named above, plus the earlier `set_text` read-back; other tools and
+positive paths still lack new physical coverage. After the package lookup fix, the current-tree full gate
+(`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+--no-daemon`) passed, as did all five `tools.test_prepare_runtime` tests and
+`git diff --check`. These build checks do not establish the untested physical
+paths. The package-filtered read did not exercise keyboard/IME context.
+
+## Chat streaming scroll — 2026-09-24
+
+On `fix/chat-stream-scroll-jank`, programmatic chat scrolling now has one
+writer. It follows measured row growth and viewport changes with pixel scrolls,
+and scrolls to the end once when a new row appears below the viewport. Manual
+scrolling up pauses follow mode; the jump-to-latest button resumes it.
+
+Verified: `:app:compileDevDebugKotlin`, `:app:assembleDevDebug`,
+`:app:lintDevDebug`, and `git diff --check` passed. No phone visual run was
+done. The attached emulator has the user's running Hey Mike Dev app, so it
+was left untouched. Streaming behavior, keyboard resize behavior, and the jump
+button still need visual validation on a device.
+
+## New user experience — 2026-09-23
+
+On branch `claude/new-user-experience-design-b75114` (PR #84), first launch is
+a step-by-step flow (`OnboardingFlow`): welcome, consent, sign-in, screen
+access (with the restricted-settings rescue), and a handover where the
+floating Stop button and notifications are one tap each and Mike sets up
+wireless debugging after an in-app confirmation. Settings are regrouped by
+ability with a Privacy and consent page that can withdraw; the side panel has
+the orb status, chat search and day groups. See `docs/ARCHITECTURE.md`,
+"First launch: two things by hand, the rest offered".
+
+Verified: `./gradlew.bat :core:test :app:assembleDevDebug :app:lintDevDebug`
+passed (lint 0 errors, no warnings in the changed files), including nine new
+`OnboardingTest` and three `ChatDayGroupsTest` cases; `git diff --check` clean.
+Not verified: nothing ran on a phone. Still to check on a device: the whole
+first launch from a fresh install, the restricted-settings path, an upgrade
+from 0.12.0 (should show only consent and handover), "Let Mike set it up" for
+wireless debugging end to end (Mike reaching Developer options and the pairing
+reader catching the code within five minutes), and withdraw consent.
+
+## Codex runtime 0.156.0 — 2026-09-23
+
+The pinned Codex app-server moved from 0.153.4 to 0.156.0 so the GPT-6 models
+show up: the backend only lists them to newer clients. Both package hashes
+match the GitHub release digests, the package layout is unchanged, and the
+`codex-code-mode-host` string still appears twice with the constant last, so
+the helper patch applies as before. The APK's runtime metadata files are now
+overwritten on every start, so an updated phone no longer shows the old version.
+
+Verified: `python -m unittest tools.test_prepare_runtime`,
+`python tools/prepare_runtime.py`, and
+`gradlew :core:test :engine-codex:test :runtime:test :app:assembleDevDebug` passed.
+On the Nothing A059 (`install -r`, `versionCodeOverride=43` over the nightly
+build): the 0.156.0 app-server started, `models_cache.json` reports
+`client_version 0.156.0`, and the model picker lists 6-astra, 6-sol, 6-luna,
+5.6-sol, 5.6-terra, 5.6-luna and 5.5. One turn on 5.6-luna ran one device
+tool and answered the battery level.
+
+Not verified: realtime voice, a turn on a GPT-6 model, code-mode, the release
+APK, and the full gate (`:app:lintDevDebug`, `assembleDevRelease`).
+
+## Jev isolation cleanup — 2026-09-23
+
+This branch reverts the five Jev implementation commits that landed on `dev`
+before PR #78. The unrelated Dev launcher icon commit `d2dfc2b` remains.
+Jev work continues in PR #78 after this cleanup is merged; this revert does
+not remove the original commits from Git history.
+
+Verified locally: `:core:test`, `:a11y:testDebugUnitTest`,
+`:device-tools:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
+`:app:assembleDevDebug`, and `:app:lintDevDebug` passed. The host-side
+accessibility schema tests required
+lazy initialization of Android scroll constants after the revert. No phone
+run or release build was performed for this cleanup.
+
+## Usage widget for every account — 2026-09-23
+
+On branch `claude/account-usage-widget-8vccz5`, a home screen widget shows the
+quota left on every saved Codex account, each as a still frame of the agent
+orb (see `docs/ARCHITECTURE.md`, "Usage widget"). The live account is read
+live; the others show their last reading and its age, kept by the new
+`AccountUsageBook` in `:core`.
+
+Verified: `./gradlew :core:test :app:assembleDevDebug :app:lintDevDebug`
+passed (the CI set), including eleven new `AccountUsageBookTest` cases, with
+no lint findings in the new files. The design was checked only as a browser
+render of the same orb drawing, not on a launcher. Not verified on a phone:
+placing the widget, its size on a real launcher grid, that a switch moves
+"In use" and records the new account's quota under the right account, and the
+30-minute refresh.
+
+## Multiple Codex accounts — 2026-09-22
+
+On branch `claude/multiple-accounts-branch-i6emwt`, the app keeps several
+Codex sign-ins and switches between them in one tap from Settings → Account or
+the usage sheet in the top bar. Only `CODEX_HOME/auth.json` is swapped (see
+`docs/ARCHITECTURE.md`, "Several Codex accounts"); chats and threads stay, and
+the quota is read again for the new account.
+
+Verified: `./gradlew :core:test` passed, including six new
+`CodexAccountVaultTest` cases (dedupe by email, detach/add, swap keeps chat
+files, refreshed tokens survive a round trip, remove). Not verified: the
+`:app` changes were not compiled (no Android SDK in that environment), and
+nothing ran on a phone. Still to check on a device: a device-code sign-in for
+a second account, a switch followed by a turn in an existing chat (the resumed
+thread carries reasoning items created under the other account), and that the
+quota bars change.
+
 ## Status — 2026-09-15
 
 Android Agent is a Developer Preview. It is useful for local testing, but it is
 not production-ready.
 
+- 2026-09-21: Prepared the separate `dev-nightly` update channel. The `dev`
+  flavor checks the prerelease by package and monotonic `versionCode`, and the
+  workflow builds only for a new `dev` commit. The workflow uses the existing
+  dev debug keystore from repository secrets; no physical install was performed.
+
 ### Verified
+
+- Run summaries and the tool-schema sweep — on 2026-09-16, `:core:test` passed
+  (483 tests). Every run that touched the phone now ends with one system line in
+  the chat naming total, thinking, phone time across N calls, and time waiting
+  for the user; `AgentCoordinator` takes an injected `nowNanos` so the split is
+  asserted against a virtual clock rather than machine speed, and
+  `RunSummaryTest` plus three `AgentCoordinatorTest` cases cover the line, its
+  absence on a run that called no tool, and a 20-second send approval landing in
+  the approval bucket rather than in tool time. The schema sweep fixed
+  `remember_capability.fallbacks`, `automation_rule.places`, `.deviceState` and
+  `.rule`, and `ToolSchemaAudit` now runs over every tool this module advertises.
+  The audit also runs in `:a11y` (`A11yToolSchemaTest`) and `:device-tools`
+  (`DeviceToolSchemaTest`), over the accessibility backend, the ADB backend and
+  the native capability tools, and `thread/resume` re-binds the tool list so a
+  chat opened before an app update can call what the update added.
+  **Not verified on a phone:** no summary line has been seen in the app's chat UI
+  (a `system` message renders as text, but that was not run), and the buckets
+  have not been checked against a real slow run.
+  **Written without an Android SDK here**, so nothing outside `:core` was
+  compiled locally. CI on `5e71235` (`:core:test :app:assembleDevDebug
+  :app:lintDevDebug`) is green, which does compile the *main* sources it depends
+  on - so the `CodexEngine` resume change and the `A11yDeviceTools` visibility
+  change build and lint clean. **Still never compiled:** the three test files,
+  `A11yToolSchemaTest`, `DeviceToolSchemaTest` and the new `CodexEngineTest`
+  case, because CI does not build non-`:core` test sources. Their schemas were
+  checked by hand first - every parameter is string, integer, boolean, or the one
+  `object` the accessibility helper marks open, and no `required` name is missing
+  from its properties - so the audits are expected to pass, but `./gradlew test`
+  on a machine with the SDK is the first thing that proves it. Whether the
+  app-server accepts `dynamicTools` on `thread/resume` is unverified too; if it
+  refuses, the retry keeps the thread and the old behaviour.
+- `act_plan`, one call for a sequence already on screen — on 2026-09-16,
+  `:core:test` passed (471 tests once dev was merged in, 23 of them the new
+  `ActPlanTest`), covering:
+  a three-step focus/type/send plan dispatching `tap_node`, `set_text`,
+  `tap_node` in order for one call; the trailing forced observation and
+  `observe=false`; refusal of a target named by `nodeId` and of an
+  `observationId` on the call, with nothing dispatched; the 8-step ceiling
+  pointing at `workflow_runner`; a malformed plan refused before the phone is
+  touched; a failing step reporting the prefix that ran, and a `resume` block
+  naming `act_plan` with `startAt`; a resume skipping the committed steps; and
+  the app in front being read rather than asked for; Stop mid-plan reporting the
+  step that had run and going back to the phone for nothing; and a closing read
+  that fails not unreporting the step that did run.
+  The advertised schema was wrong on the first device run: `steps` was a bare
+  `{"type":"array"}`, which a client renders as an array of strings, and the
+  agent sent each step as quoted JSON and was refused. `steps.items` now spells
+  out the step object with the action enum and the target fields (and so do
+  `run_workflow` and `save_workflow`), a quoted step is parsed rather than
+  refused, and the example in the refusal, the tool description and the test is
+  one shared constant that the test executes.
+  Per-step phase timing (`resolve`/`act`/`settle`/`verify`) and the 60s `verify`
+  ceiling are covered by three `WorkflowRunnerTest` cases against a clock that
+  moves only when the phone is touched, plus one parse case. Both came from a
+  real post-with-media run on X; **neither has been re-run on a phone**, so
+  whether 60s is enough for a video import, and whether the phase split points
+  at the right culprit on real hardware, is unproven.
+  **Not run in this environment:** no Android SDK, so `:device-tools:test`,
+  `:a11y:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
+  `:app:assembleDevDebug` and `:app:lintDevDebug` were not executed here — CI
+  runs `:core:test :app:assembleDevDebug :app:lintDevDebug`. **Not verified on
+  a phone at all:** no plan has run against a real app, so the step budget, the
+  settle timing between steps and a send approval landing mid-plan are unproven
+  on hardware. The UI label and pulse mappings for `act_plan` were not compiled
+  or seen on a screen.
+- Native capability APIs and API-capable workflows — on 2026-09-15,
+  `:core:test :device-tools:test :workspace:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` passed
+  together (405 actionable tasks). A forced `:device-tools:test` rerun passed
+  200 test executions across debug and release variants with zero failures;
+  the current `:core:test` results contain 301 passing tests. The five native
+  tools cover contacts, calendar, MediaStore and run-workspace files,
+  communication drafts/dialer, and apps/settings. Declarative workflows can
+  call those tools with JSON, capture typed output, use it in later steps and
+  carry it through resume without re-running completed calls. The callable set
+  is explicit; shell, install and workflow recursion are blocked. Runtime
+  grants use one Android permission request for only the missing allowlisted
+  permissions, with no second Hey Mike approval. `python -m unittest
+  tools.test_prepare_runtime` passed (5 tests) and `git diff --check` is clean.
+  Not verified on a physical phone: provider rows, selected-photo behavior,
+  OEM editor/settings intent handling, the runtime permission dialog, or a
+  complete workflow that carries one real API result into another call.
+- Standing rules (`automation_rule`) — on 2026-09-15 the full CI gate passes:
+  `gradlew test :app:assembleDevDebug :app:lintDevDebug`, with 0 lint errors and
+  no lint warning naming an automations file. `:core` carries 390 tests, 116 of
+  them new. `AutomationOverview`/`AutomationSummaries` — the layer that turns a
+  rule into the sentences the panel shows and decides which three chips and
+  which one sentence the strip carries — is covered by 28 of those: trigger and
+  conditions as one line, named days, intervals in hours, the three states, what
+  sorts first, the strip never growing past three chips, the sentence choosing a
+  blocked rule over a schedule, and the exported fields named field by field.
+  Across `CoordinatorAutomationTest`, `AutomationRuleTest`, `AutomationEvaluatorTest`, `AutomationLibraryTest`,
+  `AutomationToolGatewayTest`, `AutomationJournalTest`, `AutomationRunnerTest`,
+  `AutomationWakeupsTest` and `SessionRunQueueExpiryTest`. What the
+  tests actually establish: the when/if/then format round-trips through its own
+  parser; a placeholder the trigger cannot provide is refused where it is
+  written rather than reaching the model as literal braces; only the fields an
+  action interpolates are exported, so matching on a message body does not send
+  that body; a `time_between` window that crosses midnight is not an empty
+  window; an alarm at the wrong minute does not fire a scheduled rule; the
+  cooldown, the daily limit and the attention gate each hold and each say which
+  one held; and evaluating records nothing, so a dry run cannot consume the
+  quota it reports on. On the run side: actions run in order, the fire is
+  recorded *before* the first action so a crash cannot replay a side effect, a
+  failure never claims the earlier actions were undone, a host that cannot ask
+  refuses an approval-gated action rather than running it, and a queued turn
+  past its deadline is dropped by `SessionRunQueue` without holding up the turn
+  behind it. On device ownership: a rule claims the phone exclusively, releases
+  it even when the action throws, waits for a turn that already holds it rather
+  than reporting busy, gives up rather than surfacing long after its moment, and
+  a Stop mid-rule revokes the gateways and keeps the teardown.
+- Standing rules, the edit form — on 2026-09-22 `:core:test` passes, 536 tests,
+  none failing; `AutomationEditorTest` is new (14). It establishes: a rule
+  becomes plain values with no braces on screen, grouped under their condition
+  or action; saving an untouched form changes nothing; moving the time changes
+  only `when`; a loose "7:5" saves as 07:05; clearing the days means every day;
+  text inside a workflow parameter, a notification and a condition is edited in
+  place; an emptied optional value is removed; the ask-first switch round-trips;
+  limits are written as one guard and keep an untouched sub-minute cooldown; the
+  workflow's own name is not offered for typing over; and each bad value is
+  named on its own field. `:app:compileDevDebugKotlin` and `:app:lintDevDebug`
+  pass, 0 lint errors and no warning in a changed file.
+- Standing rules, delete/edit and reliability — on 2026-09-22 `:core:test`
+  passes, 516 tests, none failing; 20 of them new across `AutomationLibraryTest`,
+  `AutomationToolGatewayTest` and `AutomationEvaluatorTest`.
+  `:automations:compileDebugKotlin`, `:app:compileDevDebugKotlin` and
+  `:app:lintDevDebug` pass, with 0 lint errors and no warning naming a changed
+  file (the runtime staging step was skipped; it does not affect Kotlin). What
+  they establish: a mutating lookup needs the exact id and a near miss is only
+  suggested; an edit replaces only the keys it names, `null` removes one, an
+  invalid edit leaves the old file intact, and an edit cannot rename; `create`
+  refuses an existing id without `replace:true`; every change tells the host to
+  re-arm and reads do not; a late alarm still runs its slot, a served slot is not
+  run twice, a slot past its window and one before the rule was saved are not
+  run; an interval runs only once its interval has passed and its alarm counts
+  from its last run, never landing in the past. Run in a container without
+  Maven Central (rate limited, 429), through Google's Maven Central mirror.
+- Note (run against this container's toolchain, not a phone): the one
+  `:workspace` test failure seen here — `uriParametersArePercentEncoded` — is
+  the container's `LC_CTYPE=POSIX` mangling Hebrew in `act.sh`, not a
+  regression. It passes under `LANG=C.UTF-8`, and nothing in this change
+  touches `quick-actions`.
+
+- The agent's own messages now reach the floating card, not only the chat.
+  `ControlOverlay.say` is a separate channel from the status label;
+  `AgentCoordinator` mirrors every assistant segment to it as it is stored,
+  and the card keeps the last line through the tool calls that follow. On
+  2026-09-15 on Linux/JDK 21: `:core:test`, `:overlay:test`,
+  `:app:assembleDevDebug`, `:app:lintDevDebug` (0 errors, 18 warnings) and
+  `:app:assembleDevDebugAndroidTest` all pass. That proves the mapping, the
+  coordinator wiring and that everything compiles — nothing more. Not tested:
+  any phone. The card itself, the new
+  `FloatingControlOverlayTest.theAgentsOwnWordsStayOnTheCardAcrossToolCalls`,
+  and how a long message reads in the four lines it now gets have not been run
+  on hardware; no device was available in this environment. The full gate
+  (`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug`)
+  was not run.
+  On 2026-09-23 the card draws those words as Markdown (Markwon core, no
+  links or taps, one line break between blocks, headings as bold lines)
+  instead of flattening them to one plain line. After merging `dev`:
+  `:overlay:test` (9, with the new `cardKeepsTheMarkdownOfWhatTheAgentSaid`),
+  `:overlay:lintDebug`, `:core:test`, `:app:assembleDevDebug`,
+  `:app:lintDevDebug` and `:app:assembleDevDebugAndroidTest` pass. Still not
+  run on a phone, including the new Markdown check in the instrumented test.
 
 - The v0.13.0 dev release candidate was built from `origin/main` on 2026-09-15.
   `./gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
@@ -304,6 +698,59 @@ not production-ready.
   was re-verified on the phone.
 
 ### Not proven yet
+
+- **No rule has ever fired on hardware.** The `:automations` module compiles,
+  its components merge into the app manifest, and `automation_rule` is in the
+  composite — but an alarm landing at 19:00, a notification listener the user
+  granted, a rule taking the screen from a real run, and Stop interrupting a
+  firing rule have all only been reasoned about. Everything decided in `:core`
+  is unit-tested; nothing about the wake-ups is. This is the single largest gap
+  in the feature, and **the checklist for closing it is now written**: see
+  "Verifying standing rules on a phone" in `docs/TESTING.md`. It has not been
+  run.
+- `:automations` has no unit tests of its own. It is alarms, broadcasts and a
+  notification listener, which need Robolectric or an instrumented run, and
+  neither was added. That is why the module was kept thin, but it is still
+  untested code.
+- OEM behaviour. Doze, and the aggressive background killing on HyperOS and
+  similar builds, decide whether a 19:00 alarm actually lands on a sideloaded
+  app. The existing foreground service helps; nothing here proves it is enough,
+  on any phone.
+- `place` triggers are served by nothing and are reported dormant. One of the two
+  reasons is now gone: `RuntimePermissionBroker`, merged with the capability
+  tools, is the machinery for requesting `ACCESS_BACKGROUND_LOCATION`. The other
+  stands — nothing provides a geofence, and adding one means either a Google Play
+  Services dependency in a project that ships outside Play, or
+  `LocationManager.addProximityAlert`, which is unreliable enough that shipping
+  it quietly would be worse than the gap. That is a decision for the owner, not
+  a task.
+- **The whole side panel is unseen.** The strip, the rules sheet, the chain on a
+  rule's screen and the amber dot on the hamburger compile and are driven by
+  unit-tested logic, but no one has looked at them on a phone or in an emulator,
+  and no screenshot exists. Spacing, truncation at a long rule name, the sheet's
+  height on a short screen, and whether the dot reads at 22dp are all unproven.
+  The opening push is unseen too: the shift, the 0.88 scale and the 28dp
+  corner were chosen against the mockup, not against a phone, so whether the
+  chat reads as a card set aside or as a glitch is the one thing only a device
+  can answer — as is how it behaves mid-drag, where the chat animates towards
+  the drag's target rather than tracking the finger.
+  `AGENTS.md` asks for UI evidence on visual changes; there is none for this.
+- The settings screen is partial. Settings > Standing rules now counts the rules,
+  names the dormant ones, shows the next run and grants both permissions — but
+  it does not **list** the rules, show when each last fired or why it did not,
+  or turn one off. That still goes through the agent, which is not good enough
+  for a feature that runs unattended. It was left until the checklist above has
+  been run, so the screen is built over behaviour that is known rather than
+  assumed.
+- **Delete and edit on a rule's screen are unseen.** The buttons, the confirm
+  dialog and the edit form compile, and the form was rendered once off-device
+  (Robolectric, native graphics, 400dp wide, dark theme) from a scratch test
+  that was not kept; nobody has used any of it on a phone, and the clock
+  dialog has not been seen at all. The catch-up on unlock and at start, and
+  evaluation under the run lock, are in `:automations`, which still has no
+  tests of its own.
+- `notify` taps open the app, not the rule's own chat: deep-linking to one chat
+  needs a selection path `MainActivity` does not expose.
 
 - A complete signed-in Codex chat and device-control flow on a supported phone.
 - Reliable same-phone Wireless ADB pairing, reconnect, and app-UID self-ADB.

@@ -469,6 +469,8 @@ class CodexEngineTest {
         val resumeParams = CodexEngine.resumeSessionParams(work, "existing-thread-123", "custom-model")
         assertEquals("existing-thread-123", resumeParams["threadId"]?.jsonPrimitive?.content)
         assertEquals("custom-model", resumeParams["model"]?.jsonPrimitive?.content)
+        // No tools means the key is absent, not an empty array: an empty array
+        // would take every tool away from the thread being resumed.
         assertFalse(resumeParams.containsKey("dynamicTools"))
         assertEquals("never", resumeParams["approvalPolicy"]?.jsonPrimitive?.content)
         assertEquals("danger-full-access", resumeParams["sandbox"]?.jsonPrimitive?.content)
@@ -478,6 +480,31 @@ class CodexEngineTest {
         assertFalse(startParams.containsKey("model"))
         assertTrue(startParams.containsKey("dynamicTools"))
         assertEquals(1, startParams["dynamicTools"]?.jsonArray?.size)
+    }
+
+    @Test fun aResumedThreadIsOfferedTheToolsThisVersionHas() {
+        // A thread binds the tool list it was started with, so a chat opened
+        // before an app update could never call a tool that update added -
+        // while the turn snapshot, built from the live gateway, said it could.
+        val work = File("/tmp/workspace")
+        val tools = listOf(
+            dev.androidagent.core.ToolDefinition("act_plan", "Run a seen sequence", kotlinx.serialization.json.buildJsonObject {}),
+        )
+
+        val carried = CodexEngine.resumeSessionParams(work, "old-thread", null, tools)
+        assertEquals(1, carried["dynamicTools"]?.jsonArray?.size)
+        assertEquals(
+            "act_plan",
+            carried["dynamicTools"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content,
+        )
+        // The same wire shape a fresh thread is given, so a resumed chat and a
+        // new one advertise the same thing.
+        assertEquals(
+            CodexEngine.startSessionParams(work, null, tools)["dynamicTools"],
+            carried["dynamicTools"],
+        )
+        // And the fallback attempt, for a server that will not take them.
+        assertFalse(CodexEngine.resumeSessionParams(work, "old-thread", null, null).containsKey("dynamicTools"))
     }
 
     @Test fun developerInstructionsHoldIdentityAndRulesAndLeaveOperationToAgentsMd() {
@@ -551,7 +578,7 @@ class CodexEngineTest {
         try {
             val opened = engine.openSession(File("/tmp/workspace"), "stale-123", null, emptyList())
             assertEquals("fresh-456", opened)
-            assertEquals(listOf("initialize", "thread/resume", "thread/start"), calledMethods)
+            assertEquals(listOf("initialize", "thread/resume", "thread/resume", "thread/start"), calledMethods)
         } finally {
             engine.close()
             serverJob.cancel()
@@ -695,6 +722,75 @@ class CodexEngineTest {
             assertFalse(calledMethods.contains("thread/start"))
         } finally {
             engine.close()
+            serverJob.cancel()
+            runCatching { serverIn.close() }
+            runCatching { clientIn.close() }
+            runCatching { serverOut.close() }
+            runCatching { clientOut.close() }
+        }
+    }
+
+    // Switching accounts closes the engine while the stderr read blocks. On a
+    // phone that read then throws, and the app crashed with nobody catching it.
+    @Test fun closeWhileStderrReadBlocksDoesNotCrash() = runBlocking {
+        val serverIn = java.io.PipedInputStream()
+        val clientOut = java.io.PipedOutputStream(serverIn)
+        val clientIn = java.io.PipedInputStream()
+        val serverOut = java.io.PipedOutputStream(clientIn)
+        val destroyed = java.util.concurrent.CountDownLatch(1)
+        val stderrFailed = java.util.concurrent.CountDownLatch(1)
+        val stderr = object : java.io.InputStream() {
+            override fun read(): Int {
+                destroyed.await()
+                stderrFailed.countDown()
+                throw java.io.InterruptedIOException("read interrupted by close() on another thread")
+            }
+        }
+
+        val fakeProcess = object : Process() {
+            override fun getOutputStream() = clientOut
+            override fun getInputStream() = clientIn
+            override fun getErrorStream() = stderr
+            override fun waitFor() = 0
+            override fun exitValue() = 0
+            override fun destroy() = destroyed.countDown()
+        }
+
+        val fakeRuntime = object : dev.androidagent.core.RuntimeHost {
+            override val status = kotlinx.coroutines.flow.MutableStateFlow(dev.androidagent.core.RuntimeStatus())
+            override val homeDirectory = File("/tmp/home")
+            override suspend fun prepare() = Unit
+            override suspend fun startAppServer(): Process = fakeProcess
+            override suspend fun stop() = fakeProcess.destroy()
+        }
+
+        val serverReader = serverIn.bufferedReader()
+        val serverWriter = serverOut.bufferedWriter()
+        val engine = CodexEngine(fakeRuntime)
+        val uncaught = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, error -> uncaught.set(error) }
+
+        val serverJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            while (isActive) {
+                val line = serverReader.readLine() ?: break
+                val req = Json.parseToJsonElement(line).jsonObject
+                val id = req["id"]?.jsonPrimitive?.content ?: continue
+                if (req["method"]?.jsonPrimitive?.content == "initialize") {
+                    serverWriter.write("""{"id":$id,"result":{}}""" + "\n")
+                    serverWriter.flush()
+                }
+            }
+        }
+
+        try {
+            engine.connect()
+            engine.close()
+            assertTrue(stderrFailed.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            delay(200)
+            assertNull(uncaught.get())
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previousHandler)
             serverJob.cancel()
             runCatching { serverIn.close() }
             runCatching { clientIn.close() }

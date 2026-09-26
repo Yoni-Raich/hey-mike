@@ -24,6 +24,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -31,6 +34,7 @@ import kotlinx.serialization.json.put
 import java.io.File
 import java.util.ArrayDeque
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class AgentCoordinator(
@@ -56,6 +60,15 @@ class AgentCoordinator(
      * existing caller uses keeps binding to the parameter it always did.
      */
     private val bringToForeground: () -> Unit = {},
+    /**
+     * The monotonic clock every duration in [RunMetrics] is measured against.
+     *
+     * Injected for the same reason the runner's is: a summary that says where a
+     * run's time went is only worth what it can be tested against, and a test
+     * driving a virtual clock cannot verify a real one. Declared before
+     * [adbStatus] so that stays the trailing parameter.
+     */
+    private val nowNanos: () -> Long = System::nanoTime,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) {
     private val mutableState = MutableStateFlow(RunState())
@@ -78,9 +91,22 @@ class AgentCoordinator(
     private var firstResponseMs: Long? = null
     private var toolCalls = 0
     private var toolMs = 0L
+
+    /**
+     * Time a person was being waited on, kept apart from [toolMs].
+     *
+     * A send approval happens inside the tool call that asks for it, so without
+     * this the summary would report 20 seconds of "the phone" for 20 seconds of
+     * someone deciding whether to send a message. Atomic because the wait is
+     * counted where it happens and read where the run ends.
+     */
+    private val approvalNanos = java.util.concurrent.atomic.AtomicLong(0)
     private val metricsState = MutableStateFlow<Map<String, RunMetrics>>(emptyMap())
     val metrics = metricsState.asStateFlow()
     private var assistantId: String? = null
+    private var tracedAssistantId: String? = null
+    private var tracedAssistantText: String? = null
+    private val traceFailureReported = AtomicBoolean(false)
     private val assistantText = StringBuilder()
     private var assistantOutcome = "complete"
     private var controlTakeover = false
@@ -89,6 +115,8 @@ class AgentCoordinator(
     private val startupEvents = ArrayDeque<EngineEvent>()
     private var textRevision = 0L
     private var textFlushJob: Job? = null
+    /** The agent's words already mirrored onto the overlay, so the same line is not resent. */
+    private var overlaySpeech: String? = null
     private var pendingLocalApproval: PendingLocalApproval? = null
 
     init { scope.launch { engine.events.collect { event ->
@@ -125,16 +153,18 @@ class AgentCoordinator(
             assistantId = null
             assistantItemId = null
             lastMessageWasFinal = false
-            runStartedNanos = System.nanoTime()
+            runStartedNanos = nowNanos()
             firstResponseMs = null
             toolCalls = 0
             toolMs = 0L
+            approvalNanos.set(0)
             assistantText.clear()
             assistantOutcome = "complete"
             controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
             textRevision = 0L
+            overlaySpeech = null
             runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode) }
         }
     }
@@ -160,9 +190,73 @@ class AgentCoordinator(
             controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
+            overlaySpeech = null
             completion = null
             runJob = null
             mutableState.value = RunState(RunPhase.THINKING, sessionId, "Voice ready")
+        }
+    }
+
+    /**
+     * Take the phone for a standing rule's own actions, run [block], release it.
+     *
+     * A rule that drives the screen needs the same exclusive ownership a turn
+     * has — one phone screen cannot be shared, and an automation firing
+     * underneath a person's run would fight them for it. It claims that
+     * ownership the way [beginVoice] does, and waits at most [waitMs] for it:
+     * `null` means the device stayed busy, and a rule whose moment has passed
+     * is better reported than run half an hour later behind someone else's
+     * work.
+     *
+     * The wait exists because the common case is not a collision at all — it is
+     * the agent firing a rule from inside a turn, which by definition already
+     * owns the device. Refusing there would make "run my evening rule now"
+     * always answer "the phone is busy", with the busy run being the one that
+     * asked. A short wait covers that and the ordinary case of a trigger
+     * landing mid-task; anything longer is the staleness `validUntil` is for.
+     *
+     * No model is involved. This arms the gateways and shows the control card;
+     * what runs inside is a workflow or an intent the rule named, decided
+     * before anything was claimed.
+     *
+     * Stop still works throughout: [stop] sees an active state, revokes the
+     * tools — which is what aborts a workflow between steps — and owns the
+     * teardown from there, so the epoch is re-checked here before releasing
+     * anything a stop has already released.
+     */
+    suspend fun <T> runAutomation(
+        label: String,
+        workspace: File,
+        waitMs: Long = DEFAULT_AUTOMATION_WAIT_MS,
+        block: suspend () -> T,
+    ): T? {
+        if (waitMs > 0 && !availableState.value) {
+            // Losing the race after the wait is fine: the claim below is what
+            // decides, and it refuses rather than double-claiming.
+            withTimeoutOrNull(waitMs) { availableState.first { it } }
+        }
+        val token = synchronized(lifecycleLock) {
+            if (!availableState.value || state.value.active) return null
+            availableState.value = false
+            val claimed = epoch.incrementAndGet()
+            tools.beginRun(claimed.toString(), workspace)
+            mutableState.value = RunState(RunPhase.CONTROLLING, null, label, controlling = true)
+            claimed
+        }
+        runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
+        return try {
+            block()
+        } finally {
+            val stillOurs = synchronized(lifecycleLock) {
+                val ours = epoch.get() == token
+                if (ours) {
+                    tools.revoke()
+                    mutableState.value = RunState(status = "Ready")
+                    availableState.value = true
+                }
+                ours
+            }
+            if (stillOurs) runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, label)) }
         }
     }
 
@@ -244,10 +338,15 @@ class AgentCoordinator(
         planMode: Boolean,
     ) {
         try {
+            traceFailureReported.set(false)
             // Read-only chat does not take over the user's screen. The first
             // device action checks and shows the overlay before dispatch.
             overlay.updateState(OverlayState(OverlayPhase.STARTING))
             sessions.append(message(sessionId, "user", prompt, attachments = images.map { it.absolutePath }))
+            trace(sessionId, "user", buildJsonObject {
+                put("text", prompt)
+                put("attachments", buildJsonArray { images.forEach { add(it.absolutePath) } })
+            })
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
             if (session.title == "New chat") sessions.rename(sessionId, prompt.take(48).ifBlank { "Image chat" })
             val work = sessions.workspace(sessionId)
@@ -312,7 +411,12 @@ class AgentCoordinator(
         }
         if (approval == null) return false
         if (record && sessionId != null) {
-            scope.launch { runCatching { sessions.append(message(sessionId, "user", reply.trim())) } }
+            scope.launch {
+                runCatching {
+                    sessions.append(message(sessionId, "user", reply.trim()))
+                    trace(sessionId, "user", buildJsonObject { put("text", reply.trim()); put("source", "approval_reply") })
+                }
+            }
         }
         approve(approval.requestId, allow)
         return true
@@ -339,7 +443,10 @@ class AgentCoordinator(
                 if (!isCurrentTurn(request.token, request.threadId, request.turnId)) return@launchControl
                 engine.steer(request.threadId, request.turnId, request.prompt)
                 if (isCurrentTurn(request.token, request.threadId, request.turnId)) {
-                    request.sessionId?.let { sessions.append(message(it, "user", request.prompt)) }
+                    request.sessionId?.let {
+                        sessions.append(message(it, "user", request.prompt))
+                        trace(it, "user", buildJsonObject { put("text", request.prompt); put("source", "steer") })
+                    }
                 }
             } catch (error: Exception) {
                 if (error !is CancellationException && isCurrent(request.token)) {
@@ -660,12 +767,15 @@ class AgentCoordinator(
     private suspend fun awaitLocalApproval(pending: PendingLocalApproval): LocalOutcome {
         // null means nobody answered; false means the user said no. They are
         // different outcomes and the model has to be able to tell them apart.
+        val askedAt = nowNanos()
         val decision = try {
             withTimeoutOrNull(LOCAL_APPROVAL_TIMEOUT_MS) { pending.decision.await() }
         } catch (cancelled: CancellationException) {
+            approvalNanos.addAndGet(nowNanos() - askedAt)
             clearLocalApproval(pending)
             throw cancelled
         }
+        approvalNanos.addAndGet(nowNanos() - askedAt)
         return synchronized(lifecycleLock) {
             val stillCurrent = pendingLocalApproval === pending &&
                 isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)
@@ -844,6 +954,12 @@ class AgentCoordinator(
                 }
                 ensureCurrent(token)
                 sessions.append(message(sessionId, "assistant", "Generated image", listOf(image.absolutePath)))
+                trace(sessionId, "assistant", buildJsonObject {
+                    put("text", "Generated image")
+                    put("attachment", image.absolutePath)
+                    put("threadId", event.threadId)
+                    put("turnId", event.turnId)
+                })
             }
             is EngineEvent.ToolCall -> {
                 if (!matches(event.threadId, event.turnId)) {
@@ -897,10 +1013,23 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 mutableState.value = state.value.copy(phase = if (visible) RunPhase.CONTROLLING else RunPhase.TOOL, controlling = visible, status = status, toolName = toolName)
                             }
-                            val toolStart = System.nanoTime()
+                            trace(sessionId, "tool_call", buildJsonObject {
+                                put("threadId", event.threadId.orEmpty())
+                                put("turnId", event.turnId.orEmpty())
+                                put("requestId", event.requestId)
+                                put("name", event.name)
+                                put("arguments", event.arguments)
+                            })
+                            val toolStart = nowNanos()
+                            // Any approval this call raises is subtracted below,
+                            // so tool time stays device time.
+                            val approvalsBefore = approvalNanos.get()
                             toolCalls++
                             try { result = tools.invoke(event.name, event.arguments) }
-                            finally { toolMs += (System.nanoTime() - toolStart) / 1_000_000 }
+                            finally {
+                                val waited = approvalNanos.get() - approvalsBefore
+                                toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
+                            }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (error: Exception) {
@@ -915,6 +1044,18 @@ class AgentCoordinator(
                             }
                         }
                         if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
+                            val imagePath = result.imageBase64?.let { persistTraceImage(sessionId, it) }
+                            trace(sessionId, "tool_result", buildJsonObject {
+                                put("threadId", event.threadId.orEmpty())
+                                put("turnId", event.turnId.orEmpty())
+                                put("requestId", event.requestId)
+                                put("name", event.name)
+                                put("success", result.success)
+                                put("text", result.text)
+                                put("attachments", buildJsonArray { result.attachmentPaths.forEach { add(it) } })
+                                imagePath?.let { put("imageArtifact", it) }
+                                if (result.imageBase64 != null && imagePath == null) put("imageArtifactError", "Image could not be saved")
+                            })
                             sessions.append(message(sessionId, "tool", "${event.name}: ${result.text.take(4_000)}", attachments = result.attachmentPaths))
                             engine.answerTool(event.requestId, result)
                         }
@@ -1008,6 +1149,44 @@ class AgentCoordinator(
 
     private fun isVoiceMode(): Boolean = synchronized(lifecycleLock) { voiceMode }
 
+    private suspend fun trace(sessionId: String, type: String, details: JsonObject) {
+        val entry = buildJsonObject {
+            put("timestampMs", System.currentTimeMillis())
+            put("type", type)
+            details.forEach { (key, value) -> put(key, value) }
+        }
+        try {
+            sessions.appendTrace(sessionId, entry)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (traceFailureReported.compareAndSet(false, true)) {
+                runCatching {
+                    sessions.append(message(sessionId, "system", "Session trace could not be saved: ${error.message}"))
+                }
+            }
+        }
+    }
+
+    private suspend fun persistTraceImage(sessionId: String, encoded: String): String? = try {
+        withContext(Dispatchers.IO) {
+            require(encoded.length <= 28 * 1024 * 1024) { "Image exceeds the trace limit" }
+            val bytes = java.util.Base64.getDecoder().decode(encoded)
+            require(bytes.isNotEmpty()) { "Image is empty" }
+            val extension = if (bytes.size > 2 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte()) "jpg" else "png"
+            val relative = "trace-artifacts/${UUID.randomUUID()}.$extension"
+            File(sessions.workspace(sessionId), relative).apply {
+                parentFile!!.mkdirs()
+                writeBytes(bytes)
+            }
+            relative
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
     private suspend fun appendAssistant(text: String, itemId: String?) {
         if (text.isEmpty()) return
         val token = epoch.get()
@@ -1017,22 +1196,55 @@ class AgentCoordinator(
             val session = state.value.sessionId ?: return
             val id = UUID.randomUUID().toString()
             synchronized(lifecycleLock) { assistantId = id; assistantItemId = itemId }
+            tracedAssistantId = null
+            tracedAssistantText = null
             sessions.append(ChatMessage(id, session, "assistant", "", System.currentTimeMillis(), "streaming"))
         }
         synchronized(lifecycleLock) {
             ensureCurrentLocked(token)
-            if (firstResponseMs == null) firstResponseMs = (System.nanoTime() - runStartedNanos) / 1_000_000
+            if (firstResponseMs == null) firstResponseMs = (nowNanos() - runStartedNanos) / 1_000_000
             assistantText.append(text)
             textRevision++
         }
         scheduleAssistantFlush()
     }
 
+    /**
+     * Mirror the agent's own words onto the floating card, so what it says on
+     * its way to an action is visible outside the app too. Same text as the
+     * chat message; the overlay decides how much of it fits.
+     */
+    private fun speakOnOverlay(text: String) {
+        val line = text.trim()
+        if (line.isEmpty()) return
+        val fresh = synchronized(lifecycleLock) {
+            if (overlaySpeech == line) false else { overlaySpeech = line; true }
+        }
+        if (fresh) runCatching { overlay.say(line) }
+    }
+
     private suspend fun flushAssistantSegment(clear: Boolean = true) {
         val flush = synchronized(lifecycleLock) { textFlushJob.also { it?.cancel(); textFlushJob = null } }
         flush?.join()
         val id = assistantId
-        if (id != null) assistantFlushLock.withLock { sessions.updateMessage(id, assistantText.toString(), "complete") }
+        if (id != null) {
+            val text = assistantText.toString()
+            assistantFlushLock.withLock { sessions.updateMessage(id, text, "complete") }
+            if ((id != tracedAssistantId || text != tracedAssistantText) && text.isNotBlank()) {
+                state.value.sessionId?.let { sessionId ->
+                    trace(sessionId, if (id == tracedAssistantId) "assistant_revision" else "assistant", buildJsonObject {
+                        put("messageId", id)
+                        put("threadId", thread.orEmpty())
+                        put("turnId", turn.orEmpty())
+                        put("text", text)
+                        put("phase", if (lastMessageWasFinal) "final_answer" else "message")
+                    })
+                }
+                tracedAssistantId = id
+                tracedAssistantText = text
+            }
+            speakOnOverlay(text)
+        }
         if (clear) synchronized(lifecycleLock) {
             assistantId = null; assistantItemId = null; assistantText.clear(); textRevision = 0
         }
@@ -1053,6 +1265,7 @@ class AgentCoordinator(
                     runCatching {
                         assistantFlushLock.withLock { sessions.updateMessage(id, snapshot.text, "streaming") }
                     }
+                    speakOnOverlay(snapshot.text)
                     val settled = synchronized(lifecycleLock) {
                         epoch.get() == token && assistantId == id && textRevision == snapshot.revision
                     }
@@ -1088,6 +1301,15 @@ class AgentCoordinator(
             runCatching {
                 assistantFlushLock.withLock { sessions.updateMessage(id, final.text, final.outcome) }
             }
+            if ((id != tracedAssistantId || final.text != tracedAssistantText) && final.text.isNotBlank()) {
+                trace(sessionId, if (id == tracedAssistantId) "assistant_revision" else "assistant", buildJsonObject {
+                    put("messageId", id)
+                    put("text", final.text)
+                    put("phase", if (final.outcome == "complete" && lastMessageWasFinal) "final_answer" else final.outcome)
+                })
+                tracedAssistantId = id
+                tracedAssistantText = final.text
+            }
         }
         if (final.text.isBlank()) {
             val text = when (final.outcome) {
@@ -1096,6 +1318,7 @@ class AgentCoordinator(
                 else -> "The run ended without a final reply. Check the activity details for the actions that completed."
             }
             sessions.append(message(sessionId, "assistant", text))
+            trace(sessionId, "assistant", buildJsonObject { put("text", text); put("phase", final.outcome) })
         }
         val terminalOverlay = synchronized(lifecycleLock) {
             when {
@@ -1123,7 +1346,19 @@ class AgentCoordinator(
             }
         }
         runCatching { overlay.finish(terminalOverlay) }
-        metricsState.value = metricsState.value + (sessionId to RunMetrics(firstResponseMs, (System.nanoTime() - runStartedNanos) / 1_000_000, toolCalls, toolMs))
+        val metrics = RunMetrics(
+            firstResponseMs = firstResponseMs,
+            totalMs = (nowNanos() - runStartedNanos) / 1_000_000,
+            toolCalls = toolCalls,
+            toolMs = toolMs,
+            approvalMs = approvalNanos.get() / 1_000_000,
+        )
+        metricsState.value = metricsState.value + (sessionId to metrics)
+        // Into the chat, not a log: the run that felt slow is the one someone
+        // will ask about, and the answer belongs where they are already looking.
+        RunSummary.line(metrics)?.let { summary ->
+            runCatching { sessions.append(message(sessionId, "system", summary)) }
+        }
         availableState.value = true
     }
 
@@ -1210,5 +1445,14 @@ class AgentCoordinator(
     /** Internal rather than private so tests can advance to the real deadline. */
     internal companion object {
         const val LOCAL_APPROVAL_TIMEOUT_MS = 120_000L
+
+        /**
+         * How long a firing rule waits for the phone before giving up.
+         *
+         * Long enough to outlast the turn that fired it and a short task in
+         * front of it, short enough that a rule never surfaces long after its
+         * moment — which is what `validUntil` covers properly.
+         */
+        const val DEFAULT_AUTOMATION_WAIT_MS = 90_000L
     }
 }

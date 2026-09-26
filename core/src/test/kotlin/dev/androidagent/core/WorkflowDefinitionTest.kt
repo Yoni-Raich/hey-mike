@@ -100,6 +100,16 @@ class WorkflowDefinitionTest {
         assertNull(definition.stepIndex("nope"))
     }
 
+    @Test fun malformedAndNonpositiveVersionsAreTypedRefusals() {
+        for (version in listOf("\"one\"", "0", "-1", "1.5")) {
+            val error = runCatching {
+                parse("""{"id":"w","version":$version,"package":"com.example.app","steps":[{"id":"s","action":"observe"}]}""")
+            }.exceptionOrNull()
+            assertTrue("version=$version should be a typed refusal, got $error", error is WorkflowFormatException)
+            assertEquals("version=$version", "workflow_invalid", (error as WorkflowFormatException).errorType)
+        }
+    }
+
     @Test fun nothingPositionalCanBeWrittenIntoADefinition() {
         // Coordinates and node handles are what made the old mechanism break
         // on any screen but the one it was recorded on, so there is no field
@@ -229,5 +239,15 @@ class WorkflowDefinitionTest {
         ).steps.single()
         assertEquals(WorkflowStep.MAX_STEP_MS, step.timeoutMs)
         assertEquals(WorkflowVerification.MAX_TIMEOUT_MS, step.verify!!.timeoutMs)
+    }
+
+    @Test fun anEstimateForSomethingSlowerThanATransitionIsKept() {
+        // The author named the condition, so the author knows whether it is a
+        // screen opening or a video importing. 45s used to be clamped to 20.
+        val step = parse(
+            """{"id":"w","package":"com.example.app","steps":[
+                 {"id":"s","action":"observe","verify":{"text":"Video attached","timeoutMs":45000}}]}""",
+        ).steps.single()
+        assertEquals(45_000L, step.verify!!.timeoutMs)
     }
 }

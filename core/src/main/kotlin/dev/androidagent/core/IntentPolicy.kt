@@ -249,17 +249,21 @@ object IntentPolicy {
         } catch (error: URISyntaxException) {
             return Decision.Deny("uri_malformed", "The uri could not be parsed: ${error.reason}")
         }
-        val scheme = parsed.scheme?.lowercase(Locale.ROOT)
+        val declaredScheme = parsed.scheme
             ?: return Decision.Deny(
                 "uri_relative",
                 "The uri has no scheme. A relative uri cannot be resolved to an app.",
             )
+        val scheme = declaredScheme.lowercase(Locale.ROOT)
+        // Android matches intent-filter schemes case-sensitively, even though
+        // URI schemes are case-insensitive. Keep the rest of the URI unchanged.
+        val normalizedUri = scheme + trimmed.substring(declaredScheme.length)
         val sideEffect = describeSideEffect(parsed, scheme, resolvedAction)
             ?: "Start a payment.".takeIf { paymentExtra }
         return if (sideEffect == null) {
-            Decision.Allow(trimmed, resolvedAction)
+            Decision.Allow(normalizedUri, resolvedAction)
         } else {
-            Decision.NeedsConfirmation(trimmed, resolvedAction, sideEffect)
+            Decision.NeedsConfirmation(normalizedUri, resolvedAction, sideEffect)
         }
     }
 

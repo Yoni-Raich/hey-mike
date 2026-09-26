@@ -52,7 +52,7 @@ class AppUpdateManagerTest {
         val json = """
         {
           "tag_name": "v0.1.2",
-          "body": "Bug fixes and improvements",
+          "body": "Bug fixes and improvements\nPackage: dev.androidagent.app",
           "assets": [
             {
               "name": "android-agent-0.1.2.apk",
@@ -68,12 +68,12 @@ class AppUpdateManagerTest {
         }
         """.trimIndent()
 
-        val info = AppUpdateManager.parseReleaseJson(json, currentVersion = "0.1.1")
+        val info = AppUpdateManager.parseReleaseJson(json, currentVersion = "0.1.1", currentPackageName = "dev.androidagent.app")
         assertNotNull(info)
         info!!
         assertEquals("0.1.2", info.latestVersionName)
         assertEquals("v0.1.2", info.latestTag)
-        assertEquals("Bug fixes and improvements", info.releaseNotes)
+        assertEquals("Bug fixes and improvements\nPackage: dev.androidagent.app", info.releaseNotes)
         assertEquals("android-agent-0.1.2.apk", info.apkName)
         assertEquals(250000000L, info.apkSize)
         assertTrue(info.isUpdateAvailable)
@@ -84,7 +84,7 @@ class AppUpdateManagerTest {
         val json = """
         {
           "tag_name": "v0.1.1",
-          "body": "Current release notes",
+          "body": "Current release notes\nPackage: dev.androidagent.app",
           "assets": [
             {
               "name": "android-agent-0.1.1.apk",
@@ -95,7 +95,7 @@ class AppUpdateManagerTest {
         }
         """.trimIndent()
 
-        val info = AppUpdateManager.parseReleaseJson(json, currentVersion = "0.1.1")
+        val info = AppUpdateManager.parseReleaseJson(json, currentVersion = "0.1.1", currentPackageName = "dev.androidagent.app")
         assertNotNull(info)
         assertFalse(info!!.isUpdateAvailable)
     }
@@ -116,7 +116,57 @@ class AppUpdateManagerTest {
         }
         """.trimIndent()
 
-        val info = AppUpdateManager.parseReleaseJson(json, currentVersion = "0.1.1")
+        val info = AppUpdateManager.parseReleaseJson(json, currentVersion = "0.1.1", currentPackageName = "dev.androidagent.app")
         assertNull(info)
+    }
+
+    @Test
+    fun stableReleaseRejectsDevApkAndMissingPackageMetadata() {
+        val asset = """[{"name":"hey-mike-0.14.0.apk","browser_download_url":"https://github.com/Yoni-Raich/hey-mike/releases/download/v0.14.0/hey-mike-0.14.0.apk","size":1}]"""
+        val devRelease = """{"tag_name":"v0.14.0","body":"Package: dev.androidagent.app.dev","assets":$asset}"""
+        val missingMetadata = """{"tag_name":"v0.14.0","body":"A release with no package line","assets":$asset}"""
+        assertNull(AppUpdateManager.parseReleaseJson(devRelease, "0.13.0", "dev.androidagent.app"))
+        assertNull(AppUpdateManager.parseReleaseJson(missingMetadata, "0.13.0", "dev.androidagent.app"))
+        assertTrue(AppUpdateManager.parseReleaseJson(devRelease, "0.13.0", "dev.androidagent.app.dev")!!.isUpdateAvailable)
+    }
+
+    @Test
+    fun parseNightlyReleaseJsonDetectsNewCommitByVersionCode() {
+        val json = """
+        {
+          "tag_name": "dev-nightly",
+          "body": "Automated build from dev.\n\nCommit: abc123\nVersion code: 1002\nVersion name: 0.2.2-dev.abc123\nPackage: dev.androidagent.app.dev",
+          "assets": [{
+            "name": "hey-mike-dev-nightly.apk",
+            "browser_download_url": "https://github.com/Yoni-Raich/hey-mike/releases/download/dev-nightly/hey-mike-dev-nightly.apk",
+            "size": 1234
+          }]
+        }
+        """.trimIndent()
+
+        val info = AppUpdateManager.parseNightlyReleaseJson(json, 1001, "dev.androidagent.app.dev")
+        assertNotNull(info)
+        info!!
+        assertEquals("0.2.2-dev.abc123", info.latestVersionName)
+        assertEquals(1002L, info.latestVersionCode)
+        assertEquals("abc123", info.commitSha)
+        assertTrue(info.isUpdateAvailable)
+    }
+
+    @Test
+    fun parseNightlyReleaseJsonRejectsAnotherPackage() {
+        val json = """
+        {
+          "tag_name": "dev-nightly",
+          "body": "Commit: abc123\nVersion code: 1002\nVersion name: 0.2.2-dev.abc123\nPackage: dev.androidagent.app.dev",
+          "assets": [{
+            "name": "hey-mike-dev-nightly.apk",
+            "browser_download_url": "https://github.com/Yoni-Raich/hey-mike/releases/download/dev-nightly/hey-mike-dev-nightly.apk",
+            "size": 1234
+          }]
+        }
+        """.trimIndent()
+
+        assertNull(AppUpdateManager.parseNightlyReleaseJson(json, 1001, "dev.androidagent.app"))
     }
 }

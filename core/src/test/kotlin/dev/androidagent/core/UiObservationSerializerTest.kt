@@ -74,7 +74,8 @@ class UiObservationSerializerTest {
         )
         assertEquals(
             """{"ok":true,"observationId":"ui-1","revision":1,"elapsedMs":42,"source":"uiautomator",""" +
-                """"stable":true,"activePackage":"com.example","truncated":false,"nodes":""" +
+                """"nodeActionsAvailable":false,"nodeActionHint":"ADB node ids need accessibility. """ +
+                """Use tap/type_text or enable Hey Mike accessibility.","stable":true,"activePackage":"com.example","truncated":false,"nodes":""" +
                 """[{"nodeId":"n0","text":"Send","resourceId":"com.example:id/send",""" +
                 """"class":"android.widget.Button","bounds":[10,20,110,60],"enabled":true,""" +
                 """"clickable":true,"scrollable":false,"focused":false}]}""",
@@ -102,6 +103,18 @@ class UiObservationSerializerTest {
         )
         assertEquals("accessibility", json["source"]!!.jsonPrimitive.content)
         assertFalse(json["stable"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(json["nodeActionsAvailable"]!!.jsonPrimitive.content.toBoolean())
+        assertFalse(json.containsKey("nodeActionHint"))
+    }
+
+    @Test fun semanticJsonExplainsThatFallbackNodeIdsCannotBeUsedByNodeActions() {
+        val json = parse(
+            UiObservationSerializer.semanticJson(
+                UiObservation("com.example", listOf(node())), "file", "ui-1", 1, 0, false, true,
+            )
+        )
+        assertFalse(json["nodeActionsAvailable"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(json["nodeActionHint"]!!.jsonPrimitive.content.contains("tap/type_text"))
     }
 
     @Test fun semanticJsonKeepsTheClickableAncestorAsAPositionOnlyReference() {
@@ -129,8 +142,10 @@ class UiObservationSerializerTest {
         assertTrue(json["unchanged"]!!.jsonPrimitive.content.toBoolean())
         assertEquals(12, json["unchangedSinceRevision"]!!.jsonPrimitive.content.toLong())
         assertEquals(41, json["nodeCount"]!!.jsonPrimitive.content.toInt())
-        assertTrue(json["hint"]!!.jsonPrimitive.content.startsWith("Screen is identical to revision 12."))
+        assertTrue(json["hint"]!!.jsonPrimitive.content.startsWith("Screen unchanged since revision 12."))
         assertTrue(json["hint"]!!.jsonPrimitive.content.contains("force=true"))
+        assertFalse(json["nodeActionsAvailable"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(json["hint"]!!.jsonPrimitive.content.contains("ADB node ids cannot be used"))
         assertFalse(json.containsKey("nodes"))
     }
 
@@ -328,6 +343,26 @@ class UiObservationSerializerTest {
             listOf("n0", "n1", "n2", "n3"),
             UiObservationSerializer.select(nodes, UiQuery.ALL).map { it.nodeId },
         )
+    }
+
+    @Test fun zeroMatchPackageHintNamesTheActivePackageAndRequestedPackage() {
+        val result = UiObservationSerializer.render(
+            observation = UiObservation("com.android.inputmethod.latin", listOf(node(), node(id = "n1"), node(id = "n2"))),
+            source = "accessibility",
+            backend = "a11y",
+            observationId = "ui-1",
+            revision = 1,
+            elapsedMs = 0,
+            previous = null,
+            force = false,
+            stable = true,
+            query = UiQuery(packageName = "com.example.gym"),
+        )
+        val hint = parse(result.text)["hint"]!!.jsonPrimitive.content
+
+        assertTrue(hint, hint.contains("com.android.inputmethod.latin"))
+        assertTrue(hint, hint.contains("com.example.gym"))
+        assertTrue(hint, hint.contains("No node matched package"))
     }
 
     @Test fun selectNeverMatchesTheHiddenTextOfAPasswordField() {

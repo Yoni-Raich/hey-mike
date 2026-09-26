@@ -36,6 +36,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.util.Locale
 
 /**
  * A workflow the runner executes, declared by intent rather than by keystroke.
@@ -116,6 +117,13 @@ data class WorkflowDefinition(
                 step.target?.describe()?.let { put("target", it) }
                 step.text?.let { put("text", it) }
                 if (step.action == WorkflowAction.OPEN_INTENT) put("intent", step.arguments)
+                if (step.action == WorkflowAction.CALL) {
+                    step.callTool?.let { put("tool", it) }
+                    // The arguments are what the call will do: a review of the
+                    // outline must show them, not just the tool name.
+                    if (step.arguments.isNotEmpty()) put("arguments", step.arguments)
+                    step.output?.let { put("output", it) }
+                }
                 if (step.requiresConfirmation) put("requiresConfirmation", true)
                 if (step.optional) put("optional", true)
                 if (step.skipIfVerified) put("skipIfVerified", true)
@@ -142,7 +150,7 @@ data class WorkflowDefinition(
          * somewhere nobody planned for.
          */
         fun parse(json: JsonObject, source: String? = null): WorkflowDefinition {
-            val id = json.str("id")?.lowercase()
+            val id = json.str("id")?.lowercase(Locale.ROOT)
                 ?: throw WorkflowFormatException("workflow_invalid", "\"id\" is required.")
             if (!ID_RE.matches(id)) {
                 throw WorkflowFormatException(
@@ -195,9 +203,18 @@ data class WorkflowDefinition(
                     )
                 }
             }
+            val version = json["version"]?.let { value ->
+                (value as? JsonPrimitive)?.intOrNull ?: throw WorkflowFormatException(
+                    "workflow_invalid",
+                    "Workflow \"$id\" has an invalid version; use a positive integer.",
+                )
+            } ?: 1
+            if (version < 1) throw WorkflowFormatException(
+                "workflow_invalid", "Workflow \"$id\" has an invalid version; use a positive integer.",
+            )
             return WorkflowDefinition(
                 id = id,
-                version = json["version"]?.jsonPrimitive?.intOrNull ?: 1,
+                version = version,
                 packageName = pkg,
                 description = json.str("description")?.take(MAX_DESCRIPTION_CHARS).orEmpty(),
                 steps = steps,
@@ -207,6 +224,33 @@ data class WorkflowDefinition(
         }
 
         internal val PLACEHOLDER_RE = Regex("\\{\\{\\s*([A-Za-z][A-Za-z0-9_]{0,31})\\s*\\}\\}")
+
+        /**
+         * One inline plan, for `act_plan`, validated exactly like a file.
+         *
+         * A saved definition is written once and run for months, so it may
+         * carry nothing positional. A plan is different: the model has just
+         * read the screen, can already see the whole sequence, and the plan
+         * lives for one call. It is still parsed through [parse] rather than
+         * constructed, so an inline plan cannot express a step a definition
+         * file could not - the runner behind both is the same, and so are its
+         * limits and its refusals.
+         *
+         * Nothing is stored. [AD_HOC_ID] is a fixed name so the ledger reads the
+         * same for every plan, and the failure report resumes by the caller's
+         * own steps instead of by that name.
+         */
+        fun adHoc(packageName: String, steps: JsonArray): WorkflowDefinition =
+            parse(
+                buildJsonObject {
+                    put("id", AD_HOC_ID)
+                    put("package", packageName)
+                    put("steps", steps)
+                },
+            )
+
+        /** The ledger name every inline plan runs under. */
+        const val AD_HOC_ID = "plan"
 
         private fun substitute(element: JsonElement, values: Map<String, JsonPrimitive>): JsonElement = when (element) {
             is JsonObject -> JsonObject(element.mapValues { (_, value) -> substitute(value, values) })
@@ -357,7 +401,14 @@ enum class WorkflowAction(val wire: String, val commits: Boolean, val needsTarge
     WAIT("wait", commits = false, needsTarget = false),
 
     /** Read the screen. A checkpoint step whose whole job is its `verify`. */
-    OBSERVE("observe", commits = false, needsTarget = false);
+    OBSERVE("observe", commits = false, needsTarget = false),
+
+    /**
+     * Invoke one registered device tool with rich JSON args. The tool name must
+     * be in the host's [WorkflowCallRegistry]; anything else fails before it is
+     * dispatched, so this is a generic call, not open dispatch.
+     */
+    CALL("call", commits = true, needsTarget = false);
 
     companion object {
         fun from(wire: String): WorkflowAction? =
@@ -396,6 +447,13 @@ data class WorkflowStep(
     val submit: Boolean = false,
     /** Extra arguments handed straight to the device tool, e.g. `keycode`, `direction`. */
     val arguments: JsonObject = JsonObject(emptyMap()),
+    /** For `call`: the registered device tool to invoke. */
+    val callTool: String? = null,
+    /**
+     * For `call`: capture the result under this name so later steps can use
+     * it as `{{outputs.<name>}}`.
+     */
+    val output: String? = null,
     val verify: WorkflowVerification? = null,
     val requiresConfirmation: Boolean = false,
     val optional: Boolean = false,
@@ -411,16 +469,25 @@ data class WorkflowStep(
         text?.let { put("text", it) }
         if (submit) put("submit", true)
         if (arguments.isNotEmpty()) put("arguments", arguments)
+        callTool?.let { put("tool", it) }
+        output?.let { put("output", it) }
         verify?.let { put("verify", it.toJson()) }
         if (requiresConfirmation) put("requiresConfirmation", true)
         if (optional) put("optional", true)
         if (skipIfVerified) put("skipIfVerified", true)
         timeoutMs?.let { put("timeoutMs", it) }
-        if (!waitForChange) put("waitForChange", false)
+        // Written only when it differs from the action's default, so a
+        // re-parse reads back the same value for every action.
+        val defaultWait = action != WorkflowAction.CALL && action.commits
+        if (waitForChange != defaultWait) put("waitForChange", waitForChange)
     }
 
     companion object {
         const val MAX_TEXT_CHARS = 4_000
+
+        /** Tool names stay boring for the same reason workflow ids do. */
+        private val CALL_TOOL_RE = Regex("[a-z][a-z0-9_]{0,63}")
+        internal val OUTPUT_NAME_RE = Regex("[A-Za-z][A-Za-z0-9_]{0,31}")
 
         fun parse(json: JsonObject, index: Int, workflowId: String): WorkflowStep {
             fun bad(reason: String): Nothing =
@@ -439,6 +506,23 @@ data class WorkflowStep(
                 null -> JsonObject(emptyMap())
                 is JsonObject -> raw
                 else -> bad("\"arguments\" must be an object.")
+            }
+            val callTool = json.str("tool")
+            val output = json.str("output")
+            if (action == WorkflowAction.CALL) {
+                val name = callTool ?: bad("\"call\" needs \"tool\" naming the device tool to invoke.")
+                if (!CALL_TOOL_RE.matches(name)) bad("\"$name\" is not a usable tool name.")
+                if (name in WorkflowCallRegistry.BLOCKED_CALL_TOOLS) {
+                    bad("\"$name\" cannot run inside a workflow.")
+                }
+                if (json["target"] != null) bad("\"call\" takes \"tool\" and \"arguments\", not a \"target\".")
+                if (json.str("text") != null) bad("\"call\" carries its values in \"arguments\", not \"text\".")
+                if (output != null && !OUTPUT_NAME_RE.matches(output)) {
+                    bad("\"$output\" is not a usable output name: use letters, digits and \"_\".")
+                }
+            } else {
+                if (callTool != null) bad("\"tool\" belongs on a \"call\" step.")
+                if (output != null) bad("\"output\" belongs on a \"call\" step.")
             }
             val target = when (val raw = json["target"]) {
                 null -> null
@@ -481,12 +565,18 @@ data class WorkflowStep(
                 text = text,
                 submit = json.bool("submit") ?: arguments.bool("submit") ?: false,
                 arguments = stepArguments,
+                callTool = callTool.takeIf { action == WorkflowAction.CALL },
+                output = output.takeIf { action == WorkflowAction.CALL },
                 verify = parseVerify(json, ::bad),
                 requiresConfirmation = json.bool("requiresConfirmation") ?: false,
                 optional = json.bool("optional") ?: false,
                 skipIfVerified = json.bool("skipIfVerified") ?: false,
                 timeoutMs = json.millis("timeoutMs", MIN_STEP_MS, MAX_STEP_MS),
-                waitForChange = json.bool("waitForChange") ?: action.commits,
+                // A call is usually an API-only operation with nothing new on
+                // screen, so it settles only when the definition says so. Every
+                // other action keeps its own default.
+                waitForChange = json.bool("waitForChange")
+                    ?: (action != WorkflowAction.CALL && action.commits),
             )
         }
 
@@ -600,6 +690,17 @@ data class WorkflowVerification(
     val checked: Boolean? = null,
     /** Applies [checked] to this node instead of the step's own target. */
     val checkedOf: WorkflowSelector? = null,
+    /**
+     * How long this condition may take to become true — the caller's own
+     * estimate of the work behind it, not a generic retry budget.
+     *
+     * Five seconds covers a screen transition. A video coming back into a
+     * composer, an upload, a sync or an install does not, and the caller is
+     * the only one that knows which it is: it named the condition. So the
+     * ceiling is [MAX_TIMEOUT_MS] rather than the length of a transition, and
+     * a long wait costs nothing when the condition holds early - polling
+     * stops the moment it does.
+     */
     val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
 ) {
     fun describe(): String = buildList {
@@ -621,7 +722,19 @@ data class WorkflowVerification(
     companion object {
         const val DEFAULT_TIMEOUT_MS = 5_000L
         const val MIN_TIMEOUT_MS = 500L
-        const val MAX_TIMEOUT_MS = 20_000L
+
+        /**
+         * The longest a single condition may be waited for.
+         *
+         * It was 20s, which is a screen transition with room to spare and
+         * quietly clamped anything longer - so a step that said "this import
+         * takes about 45 seconds" waited 20 and reported the condition false
+         * while it was still true-to-be. A minute fits inside
+         * [WorkflowRunner.MAX_TOTAL_MS] with room for the rest of the run, and
+         * Stop stays responsive because the poll loop checks revoke every
+         * cycle.
+         */
+        const val MAX_TIMEOUT_MS = 60_000L
 
         /**
          * Null when nothing is asserted.

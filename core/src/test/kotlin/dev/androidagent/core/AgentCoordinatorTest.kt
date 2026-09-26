@@ -23,8 +23,11 @@ package dev.androidagent.core
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -158,6 +161,121 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aRunThatUsedThePhoneEndsWithWhereItsTimeWent() = runTest {
+        // The run that felt slow is the one someone will ask about, so the
+        // answer belongs in the transcript they are reading.
+        val rig = Rig(this)
+        rig.tools.workMs = 3_000
+        rig.coordinator.send("one", "Open settings")
+        runCurrent()
+        advanceTimeBy(2_000)
+        rig.engine.emit(EngineEvent.ToolCall("1", "tap", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        advanceTimeBy(3_001)
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        val summary = rig.store.messages.last { it.role == "system" }
+        assertTrue(summary.text, summary.text.startsWith("Run summary:"))
+        assertTrue(summary.text, summary.text.contains("1 call"))
+        val metrics = rig.coordinator.metrics.value["one"]!!
+        assertEquals(1, metrics.toolCalls)
+        assertEquals(0L, metrics.approvalMs)
+        // The three seconds on the phone are the phone's, and the two before
+        // the tool call are the model's.
+        assertTrue("toolMs=${metrics.toolMs}", metrics.toolMs >= 3_000)
+        assertTrue("thinkingMs=${metrics.thinkingMs}", metrics.thinkingMs >= 2_000)
+        rig.close()
+    }
+
+    @Test fun aRunThatOnlyTalkedGetsNoSummaryLine() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "What time is it")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        assertTrue(rig.store.messages.none { it.text.startsWith("Run summary:") })
+        rig.close()
+    }
+
+    @Test fun sessionTraceKeepsOrderedToolPayloadsResultsAndFollowingAssistantText() = runTest {
+        val rig = Rig(this)
+        val prompt = "Read the screen and explain what you found"
+        val largeArgument = "argument-value-".repeat(500)
+        val largeResult = "result-value-".repeat(500)
+        val assistantText = "The screen shows the requested page. ".repeat(100)
+        val arguments = buildJsonObject {
+            put("package", "com.example.gym")
+            put("payload", largeArgument)
+        }
+        rig.tools.nextResult = ToolResult(largeResult)
+
+        rig.coordinator.send("one", prompt)
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("trace-request", "read_ui", arguments, "thread", "turn"))
+        runCurrent()
+        rig.engine.emit(EngineEvent.TextDelta(assistantText, "thread", "turn", "assistant-item"))
+        rig.engine.emit(
+            EngineEvent.MessageCompleted(
+                assistantText, "thread", "turn", "assistant-item", phase = "final_answer",
+            ),
+        )
+        runCurrent()
+
+        val entries = rig.store.traces
+        assertEquals(listOf("user", "tool_call", "tool_result", "assistant"), entries.map {
+            it["type"]!!.jsonPrimitive.content
+        })
+        assertTrue("trace timestamps are missing", entries.all { it["timestampMs"] != null })
+        val user = entries[0]
+        assertEquals(prompt, user["text"]!!.jsonPrimitive.content)
+
+        val call = entries[1]
+        assertEquals("trace-request", call["requestId"]!!.jsonPrimitive.content)
+        assertEquals("read_ui", call["name"]!!.jsonPrimitive.content)
+        assertEquals(arguments, call["arguments"]!!.jsonObject)
+        assertEquals(largeArgument, call["arguments"]!!.jsonObject["payload"]!!.jsonPrimitive.content)
+
+        val result = entries[2]
+        assertEquals("trace-request", result["requestId"]!!.jsonPrimitive.content)
+        assertEquals("read_ui", result["name"]!!.jsonPrimitive.content)
+        assertEquals(largeResult, result["text"]!!.jsonPrimitive.content)
+
+        val assistant = entries[3]
+        assertEquals(assistantText, assistant["text"]!!.jsonPrimitive.content)
+        assertEquals("final_answer", assistant["phase"]!!.jsonPrimitive.content)
+        rig.close()
+    }
+
+    @Test fun timeSpentWaitingForTheUserIsNotReportedAsTimeOnThePhone() = runTest {
+        // A send approval happens inside the tool call that asks for it. Counted
+        // as device time it would read as 20 seconds of a slow phone.
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Send it")
+        runCurrent()
+        val approved = async {
+            rig.coordinator.authorizeSend(
+                SendRequest(packageName = "com.whatsapp", appLabel = "WhatsApp", recipient = "Amir", message = "on my way"),
+            ) { ToolResult("sent") }
+        }
+        runCurrent()
+        val request = rig.coordinator.state.value.approval!!.requestId
+        advanceTimeBy(20_000)
+        runCurrent()
+        rig.coordinator.approve(request, true)
+        runCurrent()
+        assertTrue(approved.await().success)
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        val metrics = rig.coordinator.metrics.value["one"]!!
+        assertTrue("approvalMs=${metrics.approvalMs}", metrics.approvalMs >= 20_000)
+        assertTrue("toolMs=${metrics.toolMs}", metrics.toolMs < 20_000)
+        rig.close()
+    }
+
     @Test fun overlayFailureReturnsToolErrorWithoutExecutingDeviceAction() = runTest {
         val rig = Rig(this)
         rig.overlay.fail = true
@@ -212,6 +330,25 @@ class AgentCoordinatorTest {
         assertEquals("The screen is ready.", rig.store.messages.last().text)
         assertEquals("complete", rig.store.messages.last().state)
         assertTrue(rig.coordinator.available.value)
+        rig.close()
+    }
+
+    @Test fun whatTheAgentSaysAlsoReachesTheFloatingCard() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TextDelta("I will read the screen.", "thread", "turn", "commentary"))
+        rig.engine.emit(EngineEvent.MessageCompleted("I will read the screen.", "thread", "turn", "commentary", "commentary"))
+        rig.engine.emit(EngineEvent.ToolCall("tool", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        // Said once, not again when the tool call flushes the same segment.
+        assertEquals(listOf("I will read the screen."), rig.overlay.spoken)
+
+        rig.engine.emit(EngineEvent.TextDelta("The screen is ready.", "thread", "turn", "final"))
+        rig.engine.emit(EngineEvent.MessageCompleted("The screen is ready.", "thread", "turn", "final", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertEquals(listOf("I will read the screen.", "The screen is ready."), rig.overlay.spoken)
         rig.close()
     }
 
@@ -564,6 +701,9 @@ class AgentCoordinatorTest {
             scope, engine, store, tools, overlay,
             sendGrants = grants,
             bringToForeground = { foregroundRequests++ },
+            // The test's own clock, so a reported duration is exactly the time
+            // the test advanced rather than how fast the machine ran.
+            nowNanos = { test.testScheduler.currentTime * 1_000_000 },
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }
@@ -640,10 +780,12 @@ class AgentCoordinatorTest {
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
         override val sessions = MutableStateFlow(listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0)))
         val messages = mutableListOf<ChatMessage>()
+        val traces = mutableListOf<JsonObject>()
         override suspend fun createSession() = sessions.value.first()
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }
+        override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
         override suspend fun setThread(sessionId: String, threadId: String) = Unit
         override suspend fun rename(sessionId: String, title: String) = Unit
@@ -660,11 +802,15 @@ class AgentCoordinatorTest {
         override fun revoke() { revoked = true }
         override fun needsControl(name: String) = name == "tap"
         override fun hidesOverlayDuringCapture(name: String) = name == "read_ui"
+        /** How long a call takes on this fake phone, on the test's clock. */
+        var workMs = 0L
+        var nextResult = ToolResult("Done")
         override suspend fun invoke(name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
             check(!revoked)
             if (needsControl(name)) controlWasVisible = overlay.visible
             executions++; names.add(name)
-            return ToolResult("Done")
+            if (workMs > 0) delay(workMs)
+            return nextResult
         }
         override suspend fun cancel() = Unit
     }
@@ -677,12 +823,14 @@ class AgentCoordinatorTest {
         val captureHistory = mutableListOf<Boolean>()
         val states = mutableListOf<OverlayState>()
         val finished = mutableListOf<OverlayState>()
+        val spoken = mutableListOf<String>()
         override suspend fun show(status: String) { if (fail) error("Overlay permission required"); waitForShow?.await(); shown++; visible = true }
         override fun update(status: String) = Unit
         override suspend fun showState(state: OverlayState) { states += state; show(state.label) }
         override fun updateState(state: OverlayState) { states += state; update(state.label) }
         override fun finish(state: OverlayState) { finished += state; updateState(state); hide() }
         override fun hide() { visible = false }
+        override fun say(text: String) { spoken += text }
         override suspend fun setCaptureHidden(hidden: Boolean) { captureHidden = hidden; captureHistory += hidden }
     }
 }

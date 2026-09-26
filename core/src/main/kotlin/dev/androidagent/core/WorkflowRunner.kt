@@ -27,6 +27,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -88,10 +89,26 @@ class WorkflowRunner(
     private val confirm: suspend (WorkflowConfirmation) -> WorkflowConfirmationOutcome =
         { WorkflowConfirmationOutcome.UNAVAILABLE },
     private val nowMs: () -> Long = System::currentTimeMillis,
+    /**
+     * The allowlist for `call` steps. Unknown names fail before dispatch;
+     * blocked names can never run even when registered by mistake.
+     */
+    private val callRegistry: WorkflowCallRegistry = WorkflowCallRegistry.EMPTY,
 ) {
 
     /** The largest box seen on the screen, so a gesture is never aimed at an assumed resolution. */
     private var viewport: List<Int>? = null
+
+    /**
+     * Where the step being run is spending its time. Reset per step.
+     *
+     * One `elapsedMs` per step says a step was slow; it does not say whether
+     * the element took finding, the app took acting, or the screen took
+     * settling - and those have different fixes. Single-run state like
+     * [viewport]: the coordinator serializes tool calls, so one run holds this
+     * runner at a time.
+     */
+    private var stepTiming = StepTiming()
 
     /** One run's request, after the gateway has read the tool arguments. */
     data class Options(
@@ -103,6 +120,22 @@ class WorkflowRunner(
         val screenshotOnFailure: Boolean = false,
         /** The values the definition was bound with, handed back in `resume` so a resumed run gets the same ones. */
         val params: JsonObject = JsonObject(emptyMap()),
+        /**
+         * Outputs earlier `call` steps captured, handed back in `resume` so a
+         * resumed run reuses them instead of re-running the committed prefix
+         * that produced them.
+         */
+        val outputs: JsonObject = JsonObject(emptyMap()),
+        /**
+         * The tool this run came from when it is not a saved workflow: the
+         * inline plan `act_plan` builds for one screen.
+         *
+         * A failure has to hand back arguments the model can actually call
+         * again, and an inline plan has no name in the library to resume by.
+         * With this set the resume block names that tool and its own steps
+         * instead of a workflow id that does not exist.
+         */
+        val adHocTool: String? = null,
     )
 
     suspend fun run(definition: WorkflowDefinition, options: Options): ToolResult {
@@ -112,9 +145,14 @@ class WorkflowRunner(
                 "unknown_step",
                 "\"${options.startAt}\" is not a step of \"${definition.id}\". Its steps are " +
                     definition.steps.joinToString(", ") { it.id } + ".",
+                outputs = options.outputs.toMap(),
             )
         val startedAt = nowMs()
         var confirmationMs = 0L
+        // Steps before startAt never re-run: their captured outputs arrive in
+        // options.outputs instead, which is what makes resuming a committed
+        // `call` prefix safe.
+        val captured: MutableMap<String, JsonElement> = options.outputs.toMutableMap()
         val records = mutableListOf<StepRecord>()
         for (index in 0 until startIndex) {
             records += StepRecord(definition.steps[index], "skipped", "before startAt", 0L)
@@ -127,6 +165,7 @@ class WorkflowRunner(
                 return failure(
                     definition, options, records, step, index, "stopped",
                     "Run stopped before step \"${step.id}\". Nothing at or after it ran.",
+                    outputs = captured,
                 )
             }
             val elapsed = nowMs() - startedAt - confirmationMs
@@ -135,9 +174,11 @@ class WorkflowRunner(
                     definition, options, records, step, index, "budget_exhausted",
                     "The ${options.totalBudgetMs}ms budget ran out before step \"${step.id}\", which did not run. " +
                         "Resume from it rather than starting again.",
+                    outputs = captured,
                 )
             }
             val stepStarted = nowMs()
+            stepTiming = StepTiming()
 
             // A step whose condition already holds is not repeated. This is
             // what makes resuming safe — flipping a switch that is already on
@@ -155,7 +196,9 @@ class WorkflowRunner(
 
             // Asking raises this app over the one being driven, so it happens
             // before anything is resolved: a node handle read beforehand would
-            // be stale by the time the user answered.
+            // be stale by the time the user answered. A call never asks on its
+            // own: the called tool owns its approval, so there is one card and
+            // one foregrounding path whether it is called directly or here.
             if (step.requiresConfirmation) {
                 val askedAt = nowMs()
                 val outcome = try {
@@ -186,6 +229,7 @@ class WorkflowRunner(
                                     "nothing here can ask for it. It did not run. Do this step yourself, " +
                                     "with the user's agreement, then resume from the next one."
                         },
+                        outputs = captured,
                     )
                 }
                 // The approval screen was in front. Put the app being driven
@@ -194,30 +238,44 @@ class WorkflowRunner(
             }
 
             val outcome = try {
-                runStep(definition, step, options)
+                runStep(definition, step, options, captured)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 StepOutcome.Failed(
                     errorType = "step_failed",
                     message = "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
-                    committed = step.action.commits,
+                    committed = committedOf(step),
                 )
             }
             val stepMs = nowMs() - stepStarted
             when (outcome) {
-                is StepOutcome.Done -> records += StepRecord(step, "done", outcome.note, stepMs, outcome.verified)
+                is StepOutcome.Done ->
+                    records += StepRecord(step, "done", outcome.note, stepMs, outcome.verified, stepTiming.toJson())
                 is StepOutcome.Skipped -> records += StepRecord(step, "skipped", outcome.reason, stepMs)
                 is StepOutcome.Failed -> return failure(
                     definition, options, records, step, index,
                     outcome.errorType, outcome.message,
                     committed = outcome.committed,
                     screen = outcome.screen,
+                    outputs = captured,
+                    // Where the failing step spent its time is the first
+                    // question about a slow or timed-out step, and the ledger
+                    // does not carry the step that did not finish.
+                    timing = stepTiming.toJson(),
                 )
             }
         }
-        return success(definition, options, records, nowMs() - startedAt)
+        return success(definition, options, records, nowMs() - startedAt, outputs = captured)
     }
+
+    /** Whether a failure after this step counts as possibly committed. A call follows its registry entry. */
+    private fun committedOf(step: WorkflowStep): Boolean =
+        if (step.action == WorkflowAction.CALL && step.callTool != null) {
+            callRegistry.commits(step.callTool)
+        } else {
+            step.action.commits
+        }
 
     // ---- one step ----
 
@@ -236,14 +294,19 @@ class WorkflowRunner(
         definition: WorkflowDefinition,
         step: WorkflowStep,
         options: Options,
+        captured: MutableMap<String, JsonElement>,
     ): StepOutcome {
+        if (step.action == WorkflowAction.CALL) return runCall(step, captured)
         // A scroll that names nothing means "the list on this screen", so the
         // scrollable node is resolved like any other target rather than
         // guessed at with a swipe across assumed coordinates.
         val target = step.target
             ?: WorkflowSelector(scrollable = true).takeIf { step.action == WorkflowAction.SCROLL }
         val resolved = if (target != null) {
-            when (val found = resolve(target, step)) {
+            val resolveStarted = nowMs()
+            val found = resolve(target, step)
+            stepTiming.resolveMs = nowMs() - resolveStarted
+            when (found) {
                 is Resolution.Found -> found
                 is Resolution.Missing -> {
                     if (step.optional) {
@@ -274,18 +337,142 @@ class WorkflowRunner(
             null
         }
 
+        val actStarted = nowMs()
         val action = try {
-            act(definition, step, resolved)
+            act(definition, step, resolved, captured)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (missing: WorkflowOutputException) {
+            // An unresolvable reference fails before dispatch: nothing ran.
+            return StepOutcome.Failed(
+                missing.errorType,
+                "Step \"${step.id}\": ${missing.message}",
+                committed = false,
+            )
+        } catch (error: Exception) {
+            return StepOutcome.Failed(
+                "step_failed",
+                "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
+                committed = committedOf(step),
+            )
+        } finally {
+            stepTiming.actMs = nowMs() - actStarted
+        }
+        return afterAction(step, action, resolved)
+    }
+
+    /**
+     * Invoke one registered device tool and optionally capture its result for
+     * later steps.
+     *
+     * The registry is consulted before substitution and dispatch, so an
+     * unknown name fails with nothing done. Commit reporting follows the
+     * resolved arguments, so a read-only operation of a mixed tool is not
+     * reported as possibly committed. A result larger than the capture
+     * cap fails instead of being stored: silently truncating JSON would hand
+     * later steps data that parses into something else.
+     */
+    private suspend fun runCall(
+        step: WorkflowStep,
+        captured: MutableMap<String, JsonElement>,
+    ): StepOutcome {
+        val name = step.callTool ?: return StepOutcome.Failed(
+            "step_failed",
+            "Step \"${step.id}\" names no tool to call.",
+            committed = false,
+        )
+        if (name in WorkflowCallRegistry.BLOCKED_CALL_TOOLS) {
+            return StepOutcome.Failed(
+                "tool_not_allowed",
+                "Step \"${step.id}\": \"$name\" cannot run inside a workflow.",
+                committed = false,
+            )
+        }
+        val metadata = callRegistry.resolve(name) ?: return StepOutcome.Failed(
+            "unknown_tool",
+            "Step \"${step.id}\": \"$name\" is not a workflow-callable tool. " +
+                if (callRegistry.names.isEmpty()) "No tool is registered for workflow calls."
+                else "Registered tools: " + callRegistry.names.sorted().joinToString(", ") + ".",
+            committed = false,
+        )
+        val args = try {
+            WorkflowOutputRefs.resolve(step.arguments, captured) as? JsonObject ?: step.arguments
+        } catch (missing: WorkflowOutputException) {
+            return StepOutcome.Failed(
+                missing.errorType,
+                "Step \"${step.id}\": ${missing.message}",
+                committed = false,
+            )
+        }
+        // Classified from the exact resolved arguments: a read-only operation
+        // of a mixed tool reports nothing committed, while a missing or
+        // unknown operation stays conservative.
+        val mayCommit = metadata.mayCommit(args)
+        if (isRevoked()) {
+            return StepOutcome.Failed(
+                "stopped",
+                "Run stopped before step \"${step.id}\". It did not run.",
+                committed = false,
+            )
+        }
+        val callStarted = nowMs()
+        val result = try {
+            invokeTool(name, args)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             return StepOutcome.Failed(
                 "step_failed",
                 "Step \"${step.id}\" (${describe(step)}) failed: ${error.message}",
-                committed = step.action.commits,
+                committed = mayCommit,
             )
+        } finally {
+            stepTiming.actMs = nowMs() - callStarted
         }
-        return afterAction(step, action, resolved)
+        if (!result.success) {
+            return afterAction(step, result, resolved = null, committed = mayCommit)
+        }
+        var note: String? = null
+        step.output?.let { binding ->
+            if (binding !in captured && captured.size >= WorkflowCallRegistry.MAX_OUTPUT_BINDINGS) {
+                return StepOutcome.Failed(
+                    "too_many_outputs",
+                    "Step \"${step.id}\": the run already holds ${captured.size} captured outputs; " +
+                        "the limit is ${WorkflowCallRegistry.MAX_OUTPUT_BINDINGS}.",
+                    committed = mayCommit,
+                )
+            }
+            // Parsed before any size check, so the total below measures the
+            // value as it would be stored and re-serialized, not the raw text.
+            val value = runCatching { Json.parseToJsonElement(result.text) }
+                .getOrDefault(JsonPrimitive(result.text))
+            if (value.toString().length > WorkflowCallRegistry.MAX_CAPTURED_OUTPUT_CHARS) {
+                return StepOutcome.Failed(
+                    "output_too_large",
+                    "Step \"${step.id}\": the result is ${value.toString().length} characters, over the " +
+                        "${WorkflowCallRegistry.MAX_CAPTURED_OUTPUT_CHARS} limit, so it was not captured. " +
+                        "Narrow the call instead.",
+                    committed = mayCommit,
+                )
+            }
+            if (JsonObject(captured + (binding to value)).toString().length >
+                WorkflowCallRegistry.MAX_TOTAL_OUTPUT_CHARS
+            ) {
+                return StepOutcome.Failed(
+                    "output_too_large",
+                    "Step \"${step.id}\": the outputs together pass the " +
+                        "${WorkflowCallRegistry.MAX_TOTAL_OUTPUT_CHARS} character limit, so " +
+                        "\"$binding\" was not captured. Resume from the next step without it, " +
+                        "or narrow the calls.",
+                    committed = mayCommit,
+                )
+            }
+            captured[binding] = value
+            note = "captured output \"$binding\""
+        }
+        val checked = afterAction(step, result, resolved = null, committed = mayCommit)
+        if (checked is StepOutcome.Done && note != null && checked.note == null) return checked.copy(note = note)
+        return checked
     }
 
     /** Settle, then hold the step to its own condition. Shared by every action path. */
@@ -293,6 +480,7 @@ class WorkflowRunner(
         step: WorkflowStep,
         action: ToolResult,
         resolved: Resolution.Found?,
+        committed: Boolean = step.action.commits,
     ): StepOutcome {
         if (!action.success) {
             return StepOutcome.Failed(
@@ -301,14 +489,19 @@ class WorkflowRunner(
                 // Dispatched and refused. The tools report refusal without
                 // acting, but a tap that landed somewhere useless reports the
                 // same way, so a committing step is still flagged.
-                committed = step.action.commits,
+                committed = committed,
             )
         }
 
-        if (step.waitForChange) settle(step)
+        if (step.waitForChange) {
+            val settleStarted = nowMs()
+            settle(step)
+            stepTiming.settleMs = nowMs() - settleStarted
+        }
 
         val verification = step.verify ?: return StepOutcome.Done(null, verified = false)
-        val deadline = nowMs() + verification.timeoutMs
+        val verifyStarted = nowMs()
+        val deadline = verifyStarted + verification.timeoutMs
         var complaint: String? = "the screen could not be read"
         var lastScreen: Screen? = null
         while (true) {
@@ -317,18 +510,22 @@ class WorkflowRunner(
                 return StepOutcome.Failed(
                     "stopped",
                     "Run stopped while checking step \"${step.id}\". The step itself had already run.",
-                    committed = step.action.commits,
+                    committed = committed,
                 )
             }
             val screen = readScreen()
             lastScreen = screen
             if (screen.ok) {
                 complaint = verifiedOnScreen(screen, verification, step.target)
-                if (complaint == null) return StepOutcome.Done(null, verified = true)
+                if (complaint == null) {
+                    stepTiming.verifyMs = nowMs() - verifyStarted
+                    return StepOutcome.Done(null, verified = true)
+                }
             }
             if (nowMs() >= deadline) break
             delay(VERIFY_POLL_MS.coerceAtMost((deadline - nowMs()).coerceAtLeast(1L)))
         }
+        stepTiming.verifyMs = nowMs() - verifyStarted
         return StepOutcome.Failed(
             errorType = "verification_failed",
             // What the action itself reported is the first thing anyone fixing
@@ -338,7 +535,7 @@ class WorkflowRunner(
                 "did not become true within ${verification.timeoutMs}ms: $complaint. " +
                 "The action reported: ${action.text.take(MAX_STEP_TEXT)}" +
                 (resolved?.let { " (target ${it.nodeId} in ${it.observationId})" } ?: ""),
-            committed = step.action.commits,
+            committed = committed,
             screen = lastScreen,
         )
     }
@@ -348,6 +545,7 @@ class WorkflowRunner(
         definition: WorkflowDefinition,
         step: WorkflowStep,
         resolved: Resolution.Found?,
+        captured: Map<String, JsonElement>,
     ): ToolResult = when (step.action) {
         WorkflowAction.OPEN_APP -> invokeTool(
             "open_app",
@@ -359,7 +557,12 @@ class WorkflowRunner(
 
         // Through the tool, not around it: IntentPolicy and its approval card
         // judge a workflow's intent exactly as they judge the model's.
-        WorkflowAction.OPEN_INTENT -> invokeTool("open_intent", step.arguments)
+        // Captured outputs resolve here too, so a call's result can address
+        // the intent that follows it.
+        WorkflowAction.OPEN_INTENT -> invokeTool(
+            "open_intent",
+            WorkflowOutputRefs.resolve(step.arguments, captured) as? JsonObject ?: step.arguments,
+        )
 
         WorkflowAction.TAP -> {
             val node = requireNotNull(resolved) { "tap needs a target" }
@@ -368,7 +571,10 @@ class WorkflowRunner(
         }
 
         WorkflowAction.TYPE_TEXT -> {
-            val text = requireNotNull(step.text) { "type_text needs text" }
+            val template = requireNotNull(step.text) { "type_text needs text" }
+            // A captured output may supply what is typed, e.g. a code an
+            // earlier call read. A missing reference throws before dispatch.
+            val text = WorkflowOutputRefs.resolveText(template, captured)
             if (resolved == null) {
                 invokeTool("type_text", buildJsonObject { put("text", text); if (step.submit) put("submit", true) })
             } else {
@@ -427,6 +633,10 @@ class WorkflowRunner(
                 success = screen.ok,
             )
         }
+
+        // Calls run through runCall, never through act: the registry check,
+        // the output capture and the per-tool committed flag live there.
+        WorkflowAction.CALL -> error("call steps run through runCall")
     }
 
     /**
@@ -913,14 +1123,46 @@ class WorkflowRunner(
         val note: String?,
         val elapsedMs: Long,
         val verified: Boolean = false,
+        /** Where that time went, when any phase was slow enough to measure. */
+        val timing: JsonObject? = null,
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             put("id", step.id)
             put("action", step.action.wire)
             put("status", status)
-            if (status == "done") put("verified", verified)
+            if (status == "done") {
+                put("verified", verified)
+                put("verification", if (step.verify == null) "not_requested" else "verified")
+            }
             note?.let { put("note", it) }
             if (elapsedMs > 0) put("elapsedMs", elapsedMs)
+            timing?.let { put("timing", it) }
+        }
+    }
+
+    /**
+     * One step's time, split by phase.
+     *
+     * "The step took 14 seconds" and "finding the element took 12 of them" ask
+     * for different fixes: a better selector, a slower app, or a screen that
+     * never settles. Phases below [MIN_REPORTED_PHASE_MS] are left out, so a
+     * fast step still reports as one line.
+     */
+    private class StepTiming(
+        /** Reading the screen and finding the node, including re-reads and any scroll hunt. */
+        var resolveMs: Long = 0,
+        /** The device call itself. */
+        var actMs: Long = 0,
+        /** Waiting for the screen to stop moving afterwards. */
+        var settleMs: Long = 0,
+        /** Polling until the step's own condition held, or until it timed out. */
+        var verifyMs: Long = 0,
+    ) {
+        fun toJson(): JsonObject? {
+            val parts = listOf("resolve" to resolveMs, "act" to actMs, "settle" to settleMs, "verify" to verifyMs)
+                .filter { it.second >= MIN_REPORTED_PHASE_MS }
+            if (parts.isEmpty()) return null
+            return buildJsonObject { parts.forEach { (name, value) -> put(name, value) } }
         }
     }
 
@@ -950,6 +1192,13 @@ class WorkflowRunner(
         WorkflowAction.KEY -> "press ${step.arguments.str("keycode") ?: "a key"}"
         WorkflowAction.WAIT -> "wait for the screen to settle"
         WorkflowAction.OBSERVE -> "read the screen"
+        WorkflowAction.CALL -> buildString {
+            append("call ${step.callTool ?: "a tool"}")
+            // The arguments are what the call will do: an approval card or a
+            // failure must show them, not just the tool name.
+            if (step.arguments.isNotEmpty()) append(" ${step.arguments.toString().take(MAX_SUMMARY_TEXT)}")
+            step.output?.let { append(" as $it") }
+        }
     }
 
     private fun resolveStart(definition: WorkflowDefinition, startAt: String?): Int? {
@@ -964,6 +1213,7 @@ class WorkflowRunner(
         options: Options,
         records: List<StepRecord>,
         elapsedMs: Long,
+        outputs: Map<String, JsonElement> = emptyMap(),
     ): ToolResult = ToolResult(
         buildJsonObject {
             put("ok", true)
@@ -973,10 +1223,20 @@ class WorkflowRunner(
             put("steps", JsonArray(records.map { it.toJson() }))
             put("ranSteps", records.count { it.status == "done" })
             put("skippedSteps", records.count { it.status == "skipped" })
+            val unverifiedSteps = records.count { it.status == "done" && !it.verified }
+            put("unverifiedSteps", unverifiedSteps)
             put("elapsedMs", elapsedMs)
+            if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
             put(
                 "note",
-                "Every step ran and every condition that was declared held. Nothing here needs to be repeated.",
+                if (unverifiedSteps == 0) {
+                    "Workflow finished. Every step that ran passed its declared verification. " +
+                        "Skipped steps are listed separately; do not repeat completed steps."
+                } else {
+                    "Workflow finished, but $unverifiedSteps completed step(s) had no verify condition. " +
+                        "Those actions were dispatched but their intended result was not checked. " +
+                        "Inspect the final screen before deciding what to do next; do not repeat completed steps blindly."
+                },
             )
         }.toString(),
     )
@@ -991,6 +1251,8 @@ class WorkflowRunner(
         message: String,
         committed: Boolean = false,
         screen: Screen? = null,
+        outputs: Map<String, JsonElement> = emptyMap(),
+        timing: JsonObject? = null,
     ): ToolResult {
         val shot = if (options.screenshotOnFailure) {
             runCatching { invokeTool("screenshot", JsonObject(emptyMap())) }.getOrNull()?.takeIf { it.success }
@@ -1009,6 +1271,7 @@ class WorkflowRunner(
                     put("failedStep", it.id)
                     put("failedStepIndex", index)
                     put("failedStepDoes", describe(it))
+                    timing?.let { spent -> put("failedStepTiming", spent) }
                 }
                 put("steps", JsonArray(records.map { record -> record.toJson() }))
                 put("ranSteps", records.count { it.status == "done" })
@@ -1016,20 +1279,37 @@ class WorkflowRunner(
                 // rather than left to be inferred from the error type.
                 put("stepMayAlreadyHaveRun", committed)
                 screen?.let { put("screen", it.summary()) }
+                // What earlier calls captured. A resumed run receives these
+                // instead of re-running the committed prefix that made them.
+                if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
                 step?.let {
+                    val adHoc = options.adHocTool
                     put(
                         "resume",
                         buildJsonObject {
-                            put("tool", "workflow_runner")
+                            put("tool", adHoc ?: "workflow_runner")
                             put(
                                 "arguments",
                                 buildJsonObject {
-                                    put("workflow", definition.id)
-                                    put("mode", "resume")
+                                    // An inline plan is not in the library, so
+                                    // there is nothing to name it by: the
+                                    // caller resends its own steps.
+                                    if (adHoc == null) {
+                                        put("workflow", definition.id)
+                                        put("mode", "resume")
+                                    }
                                     put("startAt", it.id)
                                     if (options.params.isNotEmpty()) put("params", options.params)
+                                    if (outputs.isNotEmpty()) put("outputs", JsonObject(outputs))
                                 },
                             )
+                            if (adHoc != null) {
+                                put(
+                                    "note",
+                                    "Send the same steps again with this startAt. The steps listed as done " +
+                                        "are skipped, never re-run. Re-plan instead if the screen has moved on.",
+                                )
+                            }
                         },
                     )
                 }
@@ -1108,6 +1388,9 @@ class WorkflowRunner(
         private const val MAX_STEP_TEXT = 400
         private const val MAX_SUMMARY_TEXT = 120
         private const val MAX_REPORTED_NODES = 24
+
+        /** Below this a phase is noise, and every step would carry four numbers. */
+        private const val MIN_REPORTED_PHASE_MS = 50L
         private const val MAX_REPORTED_FIELD = 80
 
         /** Below this a reverse match is noise: "on" is inside half the labels on a screen. */

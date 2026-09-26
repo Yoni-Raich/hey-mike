@@ -57,6 +57,8 @@ interface SessionStore {
     suspend fun rename(sessionId: String, title: String)
     suspend fun deleteSession(sessionId: String)
     fun workspace(sessionId: String): File
+    /** Append one visible, ordered session event to the user's private workspace. */
+    suspend fun appendTrace(sessionId: String, entry: JsonObject) {}
     suspend fun loadQueuedTurns(): List<QueuedTurn> = emptyList()
     suspend fun saveQueuedTurns(turns: List<QueuedTurn>) {}
 }
@@ -113,7 +115,24 @@ data class AgentSkill(
 }
 data class TokenUsage(val total: Long, val input: Long, val output: Long, val cachedInput: Long = 0, val contextWindow: Long? = null)
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
-data class RunMetrics(val firstResponseMs: Long?, val totalMs: Long, val toolCalls: Int, val toolMs: Long)
+/**
+ * Where one run's wall clock went.
+ *
+ * [toolMs] is device time only and [approvalMs] is a person deciding, so the
+ * two are never the same number: a send that waited 20 seconds for Allow is not
+ * 20 seconds of the phone being slow. [thinkingMs] is what is left, which is
+ * model turns and engine overhead.
+ */
+data class RunMetrics(
+    val firstResponseMs: Long?,
+    val totalMs: Long,
+    val toolCalls: Int,
+    val toolMs: Long,
+    /** Time a person was being waited on: a send approval, a sensitive step. */
+    val approvalMs: Long = 0,
+) {
+    val thinkingMs: Long get() = (totalMs - toolMs - approvalMs).coerceAtLeast(0)
+}
 
 sealed interface EngineEvent {
     data class TurnStarted(val threadId: String, val turnId: String) : EngineEvent
@@ -393,6 +412,13 @@ interface ControlOverlay {
     fun updateState(state: OverlayState) { update(state.label) }
     /** Display the terminal state, then release the overlay. */
     fun finish(state: OverlayState) { updateState(state); hide() }
+
+    /**
+     * The agent's own latest words, as the chat shows them. Kept apart from
+     * the status label so a tool call can change what the card says the agent
+     * is doing without erasing what it last said.
+     */
+    fun say(text: String) {}
     /** Move the compact control card away from a planned device coordinate. */
     fun avoidTouch(x: Int, y: Int) {}
     /** Temporarily removes the overlay from screenshots/UI hierarchy capture. */
