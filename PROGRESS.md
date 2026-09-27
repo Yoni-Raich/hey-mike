@@ -17,10 +17,12 @@ A059; this is still a test-key-signed release, not production-key signing.
 The exact Prod APK installed in place on Nothing A059 with `adb install -r`
 over Prod 0.12.0/code 27. Version 0.14.0/code 1019 was verified afterward;
 `firstInstallTime` remained unchanged. The physical tool smoke is pending
-because the phone is locked. Do not count the earlier Dev/Xiaomi smoke as a
-Prod smoke. The corrected asset and release metadata will be published after
-this check; retain the earlier Dev bytes under a clearly disabled asset name
-so the updater selects only the corrected Prod APK.
+Accessibility setup. Do not count the earlier Dev/Xiaomi smoke as a Prod smoke.
+At the user's explicit request, the corrected Prod asset and release metadata
+were published with this gap stated in the release notes. GitHub's asset digest
+matches the SHA-256 above. The earlier Dev bytes are retained as
+`hey-mike-0.14.0-dev-preview.apk.disabled`; only the corrected Prod asset ends
+in `.apk`, so the stable updater's asset filter selects it.
 
 ## Earlier 0.14.0 Dev validation — superseded package choice
 
