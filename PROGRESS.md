@@ -29,7 +29,18 @@ and MainActivity was resumed with the app process running. This proves the
 update and launch only, not the remote flows. APK SHA-256:
 `5f50f6c4cbe04b5c23a53cbe4fd3e139ffde7725dd0f812d7e9944d16d9a2cc3`.
 
-Still open: CI on the pushed fixes; real phone-to-PC SSH reconnect, Allow/Deny,
+Android CI passed for code commit `f0cb483` on both push and pull request runs,
+including the newly added engine and remote tests.
+
+The Nothing's computer screen reported that neither saved address answered.
+The addresses matched this PC, but its Windows `sshd` service was stopped and
+port 22 had no listener. With user approval, the service was started; it now
+listens on port 22. A direct probe from the Nothing received the Windows SSH
+banner over the VPN. The home address still timed out. This proves network
+reachability over the VPN, not password login or Codex setup. The in-app retry
+is pending while the phone is in an active voice conversation.
+
+Still open: in-app computer login, real phone-to-PC SSH reconnect, Allow/Deny,
 Stop during file transfer, and the desktop-lock copy offer after resuming an
 imported chat. The expanded approval card has no physical UI proof yet. The
 full release gate was not run for these fixes; this APK is a debug test build.
