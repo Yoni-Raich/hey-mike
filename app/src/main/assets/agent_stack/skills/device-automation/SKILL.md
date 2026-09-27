@@ -9,6 +9,8 @@ The exact mechanics of each device tool, and what to do when an action does not 
 
 The accessibility service serves every tool below except `shell`, `push_file`, `pull_file` and `install_apk`, which need the optional Wireless ADB. The `source` field in an observation says which backend answered (`accessibility` or `uiautomator`), and `stable:false` means the screen had not settled when it was read.
 
+In a computer chat, `push_file` takes a path on the computer and saves the file on the phone through SSH and MediaStore. That route does not need Wireless ADB; use its returned URI with `files_media share`.
+
 ---
 
 ## 1. Compact Semantic Observation (`read_ui`)

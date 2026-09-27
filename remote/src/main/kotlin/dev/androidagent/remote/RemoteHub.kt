@@ -101,9 +101,17 @@ class RemoteHub(val store: RemoteStore) {
     }
 
     /** Another Codex on the computer (its desktop app) holds [threadId] open for writing. */
-    suspend fun isThreadBusy(computerId: String, threadId: String): Boolean = withContext(Dispatchers.IO) {
-        val connection = connection(computerId)
-        WindowsHost.parseBusy(connection.link.run(connection.scripts.threadBusy(threadId), 30_000))
+    suspend fun isThreadBusy(computerId: String, threadId: String): Boolean {
+        val held = withContext(Dispatchers.IO) {
+            val connection = connection(computerId)
+            WindowsHost.parseBusy(connection.link.run(connection.scripts.threadBusy(threadId), 30_000))
+        }
+        if (!held) return false
+        // The lock may be this app's own: its Codex holds every thread it has
+        // opened. Only a Codex that is already running is asked; none running
+        // means the holder is someone else.
+        val ours = engines[computerId]?.first ?: return true
+        return threadId !in runCatching { ours.loadedThreadIds() }.getOrDefault(emptySet())
     }
 
     /** A copy of [threadId] with its whole history, which this app's Codex can continue. */

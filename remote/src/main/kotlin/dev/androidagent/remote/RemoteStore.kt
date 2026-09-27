@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -68,6 +69,8 @@ data class RemoteBinding(
     val cwd: String,
     /** The Codex thread on that computer, once there is one. */
     val threadId: String? = null,
+    /** Null only for bindings saved by older app versions, before origin was recorded. */
+    val importedFromPc: Boolean? = false,
 )
 
 data class RemoteState(
@@ -242,6 +245,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     put(session, buildJsonObject {
                         put("computer", b.computerId); put("cwd", b.cwd)
                         b.threadId?.let { put("thread", it) }
+                        b.importedFromPc?.let { put("importedFromPc", it) }
                     })
                 }
             })
@@ -273,7 +277,12 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                 val b = value.jsonObject
                 val computer = b.text("computer") ?: return@mapNotNull null
                 if (computer !in ids) return@mapNotNull null
-                session to RemoteBinding(computer, b.text("cwd") ?: return@mapNotNull null, b.text("thread"))
+                session to RemoteBinding(
+                    computer,
+                    b.text("cwd") ?: return@mapNotNull null,
+                    b.text("thread"),
+                    (b["importedFromPc"] as? JsonPrimitive)?.booleanOrNull,
+                )
             }.toMap()
             val default = root.text("default")?.takeIf { it in ids } ?: computers.firstOrNull()?.id
             val projects = (root["projects"] as? JsonArray).orEmpty().mapNotNull { element ->

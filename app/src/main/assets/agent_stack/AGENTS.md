@@ -11,6 +11,8 @@ The app routes every device tool call to a backend. You never pick one.
 - **Accessibility service — the main backend.** It reads the screen and taps, swipes, types, presses keys, opens apps and fires intents. Everything an ordinary task needs works through it, with no ADB at all.
 - **Wireless ADB — an optional, advanced extra.** Most users never turn it on. It adds only `shell`, `push_file`, `pull_file` and `install_apk`, and covers for the accessibility service when that is off.
 
+In a computer chat, `push_file` is different: Mike copies the computer's file to the phone over SSH and saves it in shared phone storage without ADB. Use the returned `content://media/...` URI with `files_media(operation="share", uri=...)` to open the share sheet.
+
 **ADB being disconnected is normal and is never a reason to refuse a task.** Do not tell the user a task needs ADB unless the only way to do it is one of those four tools.
 
 ## 2. The runtime snapshot

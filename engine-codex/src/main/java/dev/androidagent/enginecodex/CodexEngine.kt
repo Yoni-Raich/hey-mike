@@ -219,6 +219,16 @@ class CodexEngine(
         return result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread for the copy")
     }
 
+    /**
+     * The threads this app-server has open. Any string in the answer counts,
+     * so a list of ids and a list of thread objects read the same.
+     */
+    suspend fun loadedThreadIds(): Set<String> {
+        connect()
+        val result = request("thread/loaded/list", buildJsonObject {})
+        return collectStrings(result)
+    }
+
     /** The user and agent messages of one conversation, oldest first. */
     suspend fun readThreadMessages(threadId: String): List<CodexThreadMessage> {
         connect()
@@ -962,6 +972,13 @@ class CodexEngine(
                 // The protocol counts seconds; the phone counts milliseconds.
                 CodexThread(id, title, cwd, if (updated in 1 until 100_000_000_000L) updated * 1000 else updated)
             }
+
+        internal fun collectStrings(element: JsonElement): Set<String> = when (element) {
+            is JsonPrimitive -> setOfNotNull(element.contentOrNull?.takeIf { element.isString })
+            is JsonArray -> element.flatMapTo(mutableSetOf()) { collectStrings(it) }
+            is JsonObject -> element.values.flatMapTo(mutableSetOf()) { collectStrings(it) }
+            else -> emptySet()
+        }
 
         internal fun parseThreadMessages(result: JsonObject): List<CodexThreadMessage> {
             val turns = (result["thread"] as? JsonObject)?.get("turns") as? JsonArray ?: return emptyList()

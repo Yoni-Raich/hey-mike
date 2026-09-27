@@ -240,10 +240,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * send itself then says what went wrong.
      */
     fun checkPcChatBusy(sessionId: String) {
-        val binding = graph.computers.binding(sessionId) ?: return
-        val thread = binding.threadId ?: return
+        val binding = graph.computers.binding(sessionId)
+        val thread = binding?.threadId
+        if (binding == null || binding.importedFromPc == false || thread == null) {
+            mutable.update { it.copy(pcBusyChats = it.pcBusyChats - sessionId) }
+            return
+        }
         viewModelScope.launch {
             val busy = runCatching { graph.remote.isThreadBusy(binding.computerId, thread) }.getOrDefault(false)
+            if (graph.computers.binding(sessionId) != binding) return@launch
             mutable.update { it.copy(pcBusyChats = if (busy) it.pcBusyChats + sessionId else it.pcBusyChats - sessionId) }
         }
     }
@@ -256,10 +261,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun forkPcChat(sessionId: String) = task {
         val binding = graph.computers.binding(sessionId) ?: kotlin.error("This chat does not run on a computer.")
         val thread = binding.threadId ?: kotlin.error("This chat has no conversation on the computer yet.")
+        check(binding.importedFromPc != false) { "This conversation belongs to Mike; it does not need a copy." }
         mutable.update { it.copy(pcForking = it.pcForking + sessionId) }
         try {
             val copy = graph.remote.forkThread(binding.computerId, binding.cwd, thread)
-            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.copy(threadId = copy)) }
+            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.copy(threadId = copy, importedFromPc = false)) }
             graph.sessions.setThread(sessionId, copy)
             mutable.update { it.copy(pcBusyChats = it.pcBusyChats - sessionId) }
             note(sessionId, "Mike continues here in a copy of the conversation, with its whole history. The original stays in Codex on the computer.")
@@ -294,7 +300,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val thread = graph.remote.threads.value[id]?.firstOrNull { it.id == threadId }
             ?: kotlin.error("That conversation is no longer on the computer.")
         val session = graph.sessions.createSession()
-        withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId)) }
+        withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId, importedFromPc = true)) }
         graph.sessions.setThread(session.id, threadId)
         graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
         current.value = session.id

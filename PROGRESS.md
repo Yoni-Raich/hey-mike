@@ -42,6 +42,22 @@ background automation edge cases, voice, and Wireless ADB. These are not establi
 the passing build or these phone smoke runs. No release or `main` merge was
 performed.
 
+## Computer chat ownership and phone file sharing — 2026-09-27
+
+- A conversation imported from desktop Codex is marked in the sealed computer
+  binding. Only an imported conversation with a writer lock can offer a copy;
+  Mike-owned chats do not offer to fork themselves. Older bindings without an
+  origin mark still use the lock check plus Mike's loaded thread list.
+- In a computer chat, `push_file` copies the PC file over SFTP, then saves it
+  through MediaStore on the phone without Wireless ADB. It returns a URI for
+  `files_media share`. The live tool snapshot now lists that route as ready
+  while ADB is off. `install_apk` and `pull_file` still need ADB.
+- `:app:assembleDevDebug --no-daemon --quiet` passed after rebasing this PR
+  onto `dev` at `724d072`. This proves compilation and packaging only.
+
+Not verified: a real PC-to-phone copy with ADB disconnected, WhatsApp sharing,
+and the fork banner on a physical phone.
+
 ## Xiaomi QA stability fixes — 2026-09-25
 
 The adversarial Dev Nightly run on Xiaomi 23053RN02Y found five concrete gaps:

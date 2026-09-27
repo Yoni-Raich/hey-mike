@@ -1602,9 +1602,11 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   the chat's workspace on the phone. `ComputerFilesGateway` wraps the device
   tool gateway: in a computer chat, `push_file` and `install_apk` take a path
   on the computer (absolute, or relative to the chat's folder), which is
-  copied to the phone over the chat's SSH link (SFTP) first, and `pull_file`
-  also copies the phone's file into the project folder. No new model tool;
-  phone chats are untouched. The thread instructions forbid using adb on the
+  copied to the phone over the chat's SSH link (SFTP) first. For `push_file`,
+  the device-tools module saves that copy through MediaStore and returns a
+  `content://media/...` URI for `files_media share`; this route needs no ADB.
+  `install_apk` and `pull_file` still use the phone's ADB gateway. No new model
+  tool; phone chats are untouched. The thread instructions forbid using adb on the
   computer to reach the phone: it can see other devices and skips the app's
   controls.
 - **The desktop.** Commands over SSH run in a Windows session with no screen.
@@ -1618,10 +1620,12 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   `thread/list` (sources `cli`, `vscode`, `appServer`) supplies the
   conversations the PC started; summaries only, up to 200, refreshed when the
   panel opens. Opening one binds a new chat to that thread and copies its
-  messages in once from `thread/read`. The panel connects in the background
-  once per app run, but never installs Codex on its own. A conversation that
-  is running in the PC's Codex app right now can be read, but continuing it
-  from both places at once is not guarded against.
+  messages in once from `thread/read`. The binding records that the thread
+  came from desktop Codex. If that thread has a writer lock, Mike offers a
+  copy; it checks the app-server's loaded threads so its own lock is not
+  mistaken for desktop Codex. Once Mike opens or forks the thread, the binding
+  becomes Mike-owned and the copy offer no longer appears. The panel connects
+  in the background once per app run, but never installs Codex on its own.
 - **Linux computers.** The first connection runs `uname -s` (Windows has no
   `uname`; Git's says MINGW, still Windows; macOS is refused for now) and the
   answer is kept with the computer. `LinuxHost` is the Linux side of the same

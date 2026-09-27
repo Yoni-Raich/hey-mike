@@ -103,13 +103,20 @@ class RoutingAgentEngine(
         val opened = try {
             engine.openSessionAt(binding.cwd, resumable, model, tools, freshIfLost = resumable == null)
         } catch (error: IllegalStateException) {
+            val remedy = if (binding.importedFromPc == true) {
+                "Close it in Codex on the computer, or continue in a copy from the banner above the message box."
+            } else {
+                "Reconnect this computer in Mike and try again."
+            }
             throw IllegalStateException(
-                "${error.message}. If it is open in Codex on the computer, close it there, or continue in a copy from the banner above the message box.",
+                "${error.message}. $remedy",
                 error,
             )
         }
         threads[opened] = binding.computerId
-        if (opened != binding.threadId) store.bind(sessionId, binding.copy(threadId = opened))
+        if (opened != binding.threadId || binding.importedFromPc != false) {
+            store.bind(sessionId, binding.copy(threadId = opened, importedFromPc = false))
+        }
         return opened
     }
 

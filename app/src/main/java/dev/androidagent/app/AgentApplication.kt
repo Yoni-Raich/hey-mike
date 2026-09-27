@@ -46,6 +46,7 @@ import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
 import dev.androidagent.devicetools.AndroidCapabilityTools
+import dev.androidagent.devicetools.AndroidSharedFileStore
 import dev.androidagent.enginecodex.CodexEngine
 import dev.androidagent.overlay.FloatingControlOverlay
 import dev.androidagent.runtime.AndroidRuntimeHost
@@ -70,6 +71,7 @@ class AgentApplication : Application(), AutomationHostOwner {
 }
 
 class AgentGraph(private val app: Application) {
+    private val sharedFileStore = AndroidSharedFileStore(app)
     private fun bringAppForward() {
         runCatching {
             app.startActivity(
@@ -246,7 +248,7 @@ class AgentGraph(private val app: Application) {
     init {
         runCoordinator = AgentCoordinator(
             // A computer chat names files by their path on the computer.
-            scope, engine, sessions, dev.androidagent.remote.ComputerFilesGateway(tools, remote), overlay,
+            scope, engine, sessions, dev.androidagent.remote.ComputerFilesGateway(tools, remote, sharedFileStore::save), overlay,
             sendGrants = sendGrants,
             adbStatus = { adb.status.value },
             // An approval card lives only in the app, and device control means
