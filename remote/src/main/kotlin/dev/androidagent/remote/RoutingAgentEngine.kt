@@ -114,8 +114,8 @@ class RoutingAgentEngine(
             )
         }
         threads[opened] = binding.computerId
-        if (opened != binding.threadId || binding.importedFromPc != false) {
-            store.bind(sessionId, binding.copy(threadId = opened, importedFromPc = false))
+        if (opened != binding.threadId) {
+            store.bind(sessionId, binding.copy(threadId = opened))
         }
         return opened
     }

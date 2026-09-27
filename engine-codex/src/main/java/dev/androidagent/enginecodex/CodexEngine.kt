@@ -57,6 +57,7 @@ class CodexEngine(
     private val connectLock = Mutex()
     private val writeLock = Mutex()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
+    private val approvals = ConcurrentHashMap<String, EngineEvent.Approval>()
     private val ids = AtomicLong()
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 128)
     override val events: Flow<EngineEvent> = stream.asSharedFlow()
@@ -101,6 +102,7 @@ class CodexEngine(
                 initialized = false
                 pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex process stopped")) }
                 pending.clear()
+                approvals.clear()
                 val stoppedVoiceThreadId = voiceThreadId
                 if (stoppedVoiceThreadId != null) {
                     val detail = SecretRedactor.redact(
@@ -454,10 +456,25 @@ class CodexEngine(
         })
     }
 
-    override suspend fun answerApproval(requestId: String, allow: Boolean) { respond(requestId, buildJsonObject { put("decision", if (allow) "accept" else "decline") }) }
+    override suspend fun answerApproval(requestId: String, allow: Boolean) {
+        val approval = approvals[requestId] ?: return
+        val result = buildJsonObject {
+            if (approval.method == "item/permissions/requestApproval") {
+                // Grant only the requested profile, for this turn. A rejection
+                // is an empty profile, not a command-approval decision.
+                put("permissions", if (allow) approval.details["permissions"] as? JsonObject ?: buildJsonObject {} else buildJsonObject {})
+                put("scope", "turn")
+            } else {
+                put("decision", if (allow) "accept" else "decline")
+            }
+        }
+        respond(requestId, result)
+        approvals.remove(requestId, approval)
+    }
 
     override suspend fun close() {
         initialized = false
+        approvals.clear()
         val closedVoiceThreadId = voiceThreadId
         voiceThreadId = null
         voiceClosedSignal?.cancel()
@@ -504,7 +521,12 @@ class CodexEngine(
                 val value = when (args) { is JsonObject -> args; is JsonPrimitive -> runCatching { json.parseToJsonElement(args.content).jsonObject }.getOrDefault(buildJsonObject {}); else -> buildJsonObject {} }
                 stream.emit(EngineEvent.ToolCall(id, params.string("tool"), value, params.string("threadId"), params.string("turnId")))
             }
-            id != null && method.endsWith("requestApproval") -> stream.emit(EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId")))
+            id != null && method.endsWith("requestApproval") -> {
+                val approval = EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId"))
+                approvals[id] = approval
+                stream.emit(approval)
+            }
+            method == "serverRequest/resolved" -> params["requestId"]?.toString()?.let { approvals.remove(it) }
             method == "thread/realtime/started" -> {
                 val threadId = params.string("threadId")
                 val sessionId = params.string("realtimeSessionId").ifBlank { null }

@@ -9,6 +9,16 @@ import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -66,12 +76,14 @@ class SshLink(private val target: SshTarget) : Closeable {
     private val jsch = JSch()
     private var session: Session? = null
     private var seen: HostKeySeen? = null
+    // Keep TOFU trust for this link too, including after close() or a lost session.
+    private var trustedHostKey: String? = target.pinnedHostKey
 
     /** Connect if needed and return the host key the server presented. */
     @Synchronized
     fun connect(): HostKeySeen {
         session?.takeIf { it.isConnected }?.let { return seen!! }
-        val keys = PinnedHostKeys(target.pinnedHostKey)
+        val keys = PinnedHostKeys(trustedHostKey)
         val prompts = PasswordOnly(target.password)
         val next = jsch.getSession(target.user, target.host, target.port).apply {
             setPassword(target.password)
@@ -85,13 +97,14 @@ class SshLink(private val target: SshTarget) : Closeable {
         try {
             next.connect(target.connectTimeoutMs)
         } catch (error: JSchException) {
+            val version = runCatching { next.serverVersion }.getOrNull()
+            next.disconnect()
             keys.changed?.let { throw HostKeyChanged(it) }
             // Tailscale SSH answers on the tailnet address in place of the
             // computer's own SSH server. It takes no password and may wait for
             // a browser check, which reads as a timeout; say what it is.
             // Reading the version of a server that never sent one throws
             // inside JSch; an address that did not answer has none.
-            val version = runCatching { next.serverVersion }.getOrNull()
             if (isTailscaleSsh(version, prompts.banner)) {
                 throw TailscaleCheck(approvalLink(prompts.banner), tailscaleSshMessage(prompts.banner))
             }
@@ -104,6 +117,7 @@ class SshLink(private val target: SshTarget) : Closeable {
         }
         session = next
         seen = presented
+        trustedHostKey = presented.key
         return presented
     }
 
@@ -144,7 +158,7 @@ class SshLink(private val target: SshTarget) : Closeable {
     }
 
     /** Copy a file from the computer to [target], refusing one over [maxBytes]. */
-    fun download(remotePath: String, target: File, maxBytes: Long) = withSftp(remotePath) { sftp ->
+    suspend fun download(remotePath: String, target: File, maxBytes: Long) = withSftp(remotePath) { sftp ->
         val path = sftpPath(remotePath)
         val size = sftp.stat(path).size
         check(size <= maxBytes) { "The file is ${size / (1024 * 1024)} MB; the limit is ${maxBytes / (1024 * 1024)} MB." }
@@ -153,24 +167,35 @@ class SshLink(private val target: SshTarget) : Closeable {
     }
 
     /** Copy [source] to the computer, replacing a file already at [remotePath]. */
-    fun upload(source: File, remotePath: String) = withSftp(remotePath) { sftp ->
+    suspend fun upload(source: File, remotePath: String) = withSftp(remotePath) { sftp ->
         source.inputStream().use { sftp.put(it, sftpPath(remotePath), ChannelSftp.OVERWRITE) }
     }
 
-    private fun <T> withSftp(remotePath: String, block: (ChannelSftp) -> T): T {
-        connect()
+    private suspend fun <T> withSftp(remotePath: String, block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {
+        runInterruptible { connect() }
         val live = synchronized(this) { session } ?: error("Not connected")
         val sftp = live.openChannel("sftp") as ChannelSftp
-        sftp.connect(CONNECT_TIMEOUT_MS)
-        return try {
-            block(sftp)
+        // Cancelling a coroutine alone does not close JSch's blocking I/O.
+        // This child closes only this transfer channel, leaving Codex and
+        // other channels on the shared SSH session available for Stop.
+        val closeOnCancel = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() } finally { sftp.disconnect() }
+        }
+        try {
+            runInterruptible {
+                sftp.connect(CONNECT_TIMEOUT_MS)
+                block(sftp)
+            }
         } catch (error: com.jcraft.jsch.SftpException) {
+            // JSch wraps the interrupted/closed stream as SftpException.
+            // Preserve Stop as cancellation rather than a failed child job.
+            currentCoroutineContext().ensureActive()
             throw IllegalStateException(
                 if (error.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) "No such file on the computer: $remotePath" else "SFTP failed: ${error.message}",
                 error,
             )
         } finally {
-            sftp.disconnect()
+            withContext(NonCancellable) { closeOnCancel.cancelAndJoin() }
         }
     }
 

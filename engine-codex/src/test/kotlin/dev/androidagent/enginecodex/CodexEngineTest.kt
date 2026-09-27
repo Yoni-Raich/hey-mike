@@ -882,6 +882,8 @@ class CodexEngineTest {
             runCatching { serverOut.close() }
             runCatching { clientOut.close() }
         }
+    }
+
     @Test
     fun threadListKeepsConversationsWithAFolderInMilliseconds() {
         val result = Json.parseToJsonElement(

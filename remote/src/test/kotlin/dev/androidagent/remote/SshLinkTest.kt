@@ -12,6 +12,7 @@ import org.apache.sshd.server.SshServer
 import org.apache.sshd.server.auth.password.PasswordAuthenticator
 import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.apache.sshd.server.shell.ProcessShellCommandFactory
+import org.apache.sshd.common.keyprovider.KeyPairProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -22,6 +23,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.security.KeyPairGenerator
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The SSH client against a real SSH server in the same process, and the
@@ -53,7 +56,28 @@ class SshLinkTest {
             val result = link.run("echo hello")
             assertEquals("hello", result.stdout.trim())
             assertEquals(0, result.exitCode)
-            assertEquals(1, link.run("false").exitCode)
+            assertEquals(1, link.run(if (System.getProperty("os.name").orEmpty().startsWith("Windows")) "exit /b 1" else "false").exitCode)
+        }
+    }
+
+    @Test fun reconnectKeepsTheFirstKeyAndRejectsAReplacementBeforeSendingThePassword() {
+        val attempts = AtomicInteger()
+        server.passwordAuthenticator = PasswordAuthenticator { _, _, _ -> attempts.incrementAndGet(); true }
+        SshLink(target()).use { link ->
+            val first = link.connect()
+            link.close()
+            assertEquals(first.key, link.connect().key)
+            link.close()
+            assertEquals(2, attempts.get())
+            val replacement = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+            server.keyPairProvider = KeyPairProvider.wrap(replacement)
+            try {
+                link.connect()
+                fail("Reconnect must refuse a different host key")
+            } catch (changed: HostKeyChanged) {
+                assertTrue(changed.seen.key != first.key)
+            }
+            assertEquals("No password may reach the replacement server", 2, attempts.get())
         }
     }
 
@@ -82,8 +106,9 @@ class SshLinkTest {
      * channel's streams, and the skills of the folder on the far side.
      */
     @Test fun codexAnswersOverSshAndFindsTheProjectsSkills() {
+        assumeTrue("The staged app-server is a Linux executable", System.getProperty("os.name") == "Linux")
         val binary = File("../.codex-work/runtime/package-x86_64/bin/codex-app-server").absoluteFile
-        assumeTrue("staged x86_64 app-server not present", binary.canExecute() && System.getProperty("os.arch") in setOf("amd64", "x86_64"))
+        assumeTrue("staged x86_64 app-server not present", binary.canExecute() && System.getProperty("os.arch").orEmpty() in setOf("amd64", "x86_64"))
         val project = temp.newFolder("project")
         File(project, ".git").mkdirs()
         File(project, ".agents/skills/computer-skill").mkdirs()

@@ -1576,8 +1576,10 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   is which.
 - **SSH.** JSch (pure Java, Android networking and DNS, no native binary).
   Password login; the host key is trusted on first connect, shown as a
-  `SHA256:` fingerprint, and pinned. A different key later refuses the
-  connection before the password is sent. A changed home address clears the
+  `SHA256:` fingerprint, and pinned in both the sealed store and the live
+  `SshLink`. Reconnecting that same link keeps its first key, even after a
+  disconnect. A different key refuses the connection before the password is
+  sent. A changed home address clears the
   pin. A computer may have a home address, a VPN address (such as Tailscale),
   or both. Connect tries the one that answered last first and moves on only
   when an address does not answer at all; a refused password or a changed
@@ -1594,6 +1596,10 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   approval card. *Full access*: `danger-full-access` with no approvals, as on
   the phone. What *Ask* can enforce depends on the Codex Windows sandbox on
   that PC; it is not set up by Hey Mike.
+  Permission requests retain their requested profile by request id. Allow
+  returns that profile with turn scope; Deny returns an empty profile.
+  Command and file-change requests still return accept/decline decisions.
+  The phone card names the requested network and file access and its duration.
 - **Secrets and bindings are sealed.** The agent's shell on the phone runs as
   the app's own user and can rewrite any app file. Computers, their passwords
   and which chat runs where are one AES-GCM blob under a non-exportable
@@ -1627,8 +1633,9 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   messages in once from `thread/read`. The binding records that the thread
   came from desktop Codex. If that thread has a writer lock, Mike offers a
   copy; it checks the app-server's loaded threads so its own lock is not
-  mistaken for desktop Codex. Once Mike opens or forks the thread, the binding
-  becomes Mike-owned and the copy offer no longer appears. The panel connects
+  mistaken for desktop Codex. Resuming keeps the imported origin, so a later
+  desktop lock can still offer a copy. Only an explicit fork changes an
+  imported binding to Mike-owned. The panel connects
   in the background once per app run, but never installs Codex on its own.
 - **Linux computers.** The first connection runs `uname -s` (Windows has no
   `uname`; Git's says MINGW, still Windows; macOS is refused for now) and the
@@ -1670,3 +1677,8 @@ would be a mobile round trip wrapped in `cat` and heredocs.
 - **Stop** interrupts the turn on the computer. If that fails, the engines
   are closed, which closes the SSH channel. A command Codex already started
   there may keep running; the run summary must not claim it was undone.
+  File transfers have a separate cancellation path: cancellation closes the
+  active SFTP channel and interrupts its blocking I/O, leaving the shared SSH
+  session available for the turn interrupt and future transfers. A cancelled
+  copy never advances to phone installation or sharing. Bytes already written
+  are not rolled back.

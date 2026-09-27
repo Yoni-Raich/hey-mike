@@ -2,6 +2,9 @@ package dev.androidagent.remote
 
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.ToolResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -63,6 +66,8 @@ class ComputerFilesGateway(
                 val local = File(ws, "$FROM_COMPUTER/${fileName(onComputer)}")
                 try {
                     hub.download(binding.computerId, onComputer, local, Long.MAX_VALUE)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (error: Exception) {
                     return ToolResult("Could not copy $onComputer from the computer to the phone: ${error.message}", success = false)
                 }
@@ -72,6 +77,8 @@ class ComputerFilesGateway(
                     // The app writes it into shared storage itself: nothing here needs ADB.
                     val uri = try {
                         saveToPhone(local, remotePath)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (error: Exception) {
                         return ToolResult("Copied $onComputer from the computer, but could not save it on the phone: ${error.message}", success = false)
                     }
@@ -80,15 +87,22 @@ class ComputerFilesGateway(
                             "files_media with operation share and this URI, then complete the phone's share flow.",
                     )
                 }
+                currentCoroutineContext().ensureActive()
+                if (activeRunId != runId) return ToolResult("Stopped before installing the file on the phone.", success = false)
                 inner.invoke(name, JsonObject(arguments + ("localName" to JsonPrimitive("$FROM_COMPUTER/${local.name}"))))
             }
             "pull_file" -> {
                 val result = inner.invoke(name, arguments)
                 if (!result.success) return result
+                currentCoroutineContext().ensureActive()
+                if (activeRunId != runId) return ToolResult("Stopped before copying the file to the computer.", success = false)
                 val onComputer = onComputer(binding.cwd, asked)
                 runCatching { hub.upload(binding.computerId, File(ws, asked), onComputer) }.fold(
                     { result.copy(text = "${result.text}\nSaved on the computer as $onComputer") },
-                    { result.copy(text = "${result.text}\nThe file stayed on the phone; copying it to the computer failed: ${it.message}") },
+                    {
+                        if (it is CancellationException) throw it
+                        result.copy(text = "${result.text}\nThe file stayed on the phone; copying it to the computer failed: ${it.message}", success = false)
+                    },
                 )
             }
             else -> inner.invoke(name, arguments)

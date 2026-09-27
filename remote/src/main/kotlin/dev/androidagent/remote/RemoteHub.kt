@@ -51,7 +51,10 @@ data class RemoteRoute(val host: String, val viaVpn: Boolean)
  * first needs them. Every event carries the computer it came from, so the
  * router can keep requests from two app-servers apart.
  */
-class RemoteHub(val store: RemoteStore) {
+class RemoteHub(
+    val store: RemoteStore,
+    private val createEngine: (RuntimeHost, EngineProfile) -> CodexEngine = ::CodexEngine,
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Mutex()
     private val linkLock = Mutex()
@@ -126,7 +129,7 @@ class RemoteHub(val store: RemoteStore) {
     suspend fun engine(computerId: String): CodexEngine = lock.withLock {
         engines[computerId]?.first?.let { return@withLock it }
         val computer = store.computer(computerId) ?: error("That computer was removed.")
-        val engine = CodexEngine(ComputerRuntime(computerId), profileFor(computer))
+        val engine = createEngine(ComputerRuntime(computerId), profileFor(computer))
         val job = scope.launch { engine.events.collect { stream.emit(RemoteEvent(computerId, it)) } }
         engines[computerId] = engine to job
         engine

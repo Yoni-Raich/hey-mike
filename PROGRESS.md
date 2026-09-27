@@ -1,5 +1,39 @@
 # Progress
 
+## PR #89 review fixes — 2026-09-27
+
+Fixed SSH key trust on reconnect, permission approval replies, Stop during
+SFTP copies, and imported chat ownership on resume. Also fixed a missing test
+brace and added `engine-codex` and `remote` tests to Android CI. The approval
+card now shows the requested network/file access and its turn scope.
+
+Local checks passed on Windows:
+
+- `:remote:testDebugUnitTest :engine-codex:testDebugUnitTest
+  :app:testDevDebugUnitTest` and `:core:test :device-tools:testDebugUnitTest`:
+  792 tests passed, 2 skipped. The skips need Linux (a shell script and the
+  staged Linux app-server); neither was run on Windows.
+- `:app:assembleDevDebug :app:lintDevDebug --no-daemon`: build passed;
+  lint reported 0 errors. `git diff --check` passed.
+- An in-process SSH server proved that a reused link rejects a changed key
+  before password authentication. SFTP fixtures stalled both read and write
+  replies: cancellation released the client within 3 seconds, and a later
+  transfer reused the same SSH session.
+
+Built again with `-PversionCodeOverride=1022` and installed with
+`adb -s <Nothing target> install -r --user 0` on Nothing A059. The APK reports
+`dev.androidagent.app.dev`, DevDebug, 0.14.0, code 1022. Alignment and signature
+checks passed; its debug signer matched the installed APK before replacement.
+Installation succeeded, the original first install time remained unchanged,
+and MainActivity was resumed with the app process running. This proves the
+update and launch only, not the remote flows. APK SHA-256:
+`5f50f6c4cbe04b5c23a53cbe4fd3e139ffde7725dd0f812d7e9944d16d9a2cc3`.
+
+Still open: CI on the pushed fixes; real phone-to-PC SSH reconnect, Allow/Deny,
+Stop during file transfer, and the desktop-lock copy offer after resuming an
+imported chat. The expanded approval card has no physical UI proof yet. The
+full release gate was not run for these fixes; this APK is a debug test build.
+
 ## Dev release preparation — 2026-09-26
 
 The next planned version is 0.14.0 (base versionCode 28). The physical QA

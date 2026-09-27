@@ -17,4 +17,5 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     // An in-process SSH server, so the client is tested against real SSH.
     testImplementation("org.apache.sshd:sshd-core:2.15.0")
+    testImplementation("org.apache.sshd:sshd-sftp:2.15.0")
 }
