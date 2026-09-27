@@ -598,7 +598,7 @@ private fun SessionRow(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(16.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
         contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
         onClick = onSelect,
@@ -606,7 +606,8 @@ private fun SessionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+                .heightIn(min = 48.dp)
+                .padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (running) {
@@ -620,20 +621,14 @@ private fun SessionRow(
                     modifier = Modifier.padding(end = 10.dp).size(18.dp),
                 )
             }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    session.title.ifBlank { "Untitled chat" },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                )
-                Text(
-                    formatSessionTime(session.updatedAt),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                session.title.ifBlank { "Untitled chat" },
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            )
             Box {
                 IconButton(
                     onClick = { menuOpen = true },
@@ -1388,14 +1383,4 @@ internal fun formatBytes(bytes: Long): String = when {
     bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
     bytes < 1024L * 1024L * 1024L -> "${bytes / (1024L * 1024L)} MB"
     else -> "${bytes / (1024L * 1024L * 1024L)} GB"
-}
-
-internal fun formatSessionTime(timestamp: Long): String {
-    if (timestamp <= 0L) return "No activity time"
-    return try {
-        val formatter = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
-        formatter.format(java.util.Date(timestamp))
-    } catch (_: Exception) {
-        "Updated"
-    }
 }

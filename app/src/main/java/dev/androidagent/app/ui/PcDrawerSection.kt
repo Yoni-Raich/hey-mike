@@ -255,7 +255,7 @@ internal fun DrawerSectionLabel(text: String, modifier: Modifier = Modifier) {
         text,
         style = MaterialTheme.typography.labelMedium,
         color = DrawerMuted,
-        modifier = modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
+        modifier = modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
     )
 }
 
@@ -419,36 +419,29 @@ private fun ProjectRow(
 private fun PcChatRow(entry: PcChatEntry, selected: Boolean, running: Boolean, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = onOpen,
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(16.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
         contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
         modifier = modifier.fillMaxWidth().padding(start = 28.dp),
     ) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (running) StatusDot(color = Color(0xFF69A7FF), size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    entry.title.ifBlank { "Untitled chat" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+            if (entry is PcChatEntry.OnComputer) {
+                Icon(
+                    Icons.Outlined.Computer,
+                    contentDescription = "From Codex on the computer",
+                    tint = DrawerMuted,
+                    modifier = Modifier.padding(end = 8.dp).size(16.dp),
                 )
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (entry is PcChatEntry.OnComputer) {
-                        Icon(Icons.Outlined.Computer, contentDescription = null, tint = DrawerMuted, modifier = Modifier.size(12.dp))
-                    }
-                    Text(
-                        buildString {
-                            if (entry is PcChatEntry.OnComputer) append("On the computer · ")
-                            append(formatSessionTime(entry.updatedAt))
-                            if (running) append(" · running")
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f) else DrawerMuted,
-                        maxLines = 1,
-                    )
-                }
             }
+            Text(
+                entry.title.ifBlank { "Untitled chat" },
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

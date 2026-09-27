@@ -65,6 +65,17 @@ Not verified: a real PC-to-phone copy with ADB disconnected, WhatsApp sharing,
 and the fork banner on a physical phone. Xiaomi's Computers screen says
 "No computers yet", so those remote flows could not be exercised there.
 
+## Compact chat history — 2026-09-27
+
+Local and computer chat rows now show one title line with a 48dp minimum touch
+target. Per-chat date and time text is removed; the day headings remain. An
+icon identifies computer chats. Built dev debug APK with versionCode override
+1021, then installed it with `adb -s cd4928027d76 install -r`. Package state
+showed versionCode 1021 and the original first install time. On Xiaomi
+23053RN02Y, the drawer showed compact one-line chat titles without per-chat
+timestamps and kept the Today/Yesterday headings and prior chat history.
+Computer-chat rows remain unverified on device because no computer is paired.
+
 ## Xiaomi QA stability fixes — 2026-09-25
 
 The adversarial Dev Nightly run on Xiaomi 23053RN02Y found five concrete gaps:

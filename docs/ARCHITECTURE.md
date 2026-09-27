@@ -1401,6 +1401,10 @@ A chat is something you did. A rule is something that keeps happening. The
 panel shows both, but not as equals: the rules sit **above** the chats as a
 strip, and the chats keep the rest of the panel.
 
+Chat history rows show one title line with a 48dp minimum touch target. The
+Today/Yesterday headings give time context, so individual rows omit dates and
+times. A computer icon still marks a conversation imported from desktop Codex.
+
 That ordering is the design. The question people open this panel with is often
 not "which chat was that" but "is the standing stuff still working", and a
 strip answers it before anyone reads a list. The cost is that a strip has room
