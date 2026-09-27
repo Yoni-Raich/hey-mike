@@ -44,6 +44,18 @@ class RemoteStoreTest {
         assertFalse(file.readText(Charsets.ISO_8859_1).contains("secret"))
     }
 
+    @Test fun importedThreadOriginSurvivesUntilMikeOwnsTheChat() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "origin.bin")
+        val store = RemoteStore(file, box)
+        store.save(computer, "secret")
+        val imported = RemoteBinding("pc", "C:\\src", threadId = "thread-1", importedFromPc = true)
+        store.bind("chat-1", imported)
+        assertEquals(true, RemoteStore(file, box).binding("chat-1")?.importedFromPc)
+        store.bind("chat-1", imported.copy(importedFromPc = false))
+        assertEquals(false, RemoteStore(file, box).binding("chat-1")?.importedFromPc)
+    }
+
     @Test fun anEditedFileIsNotTrustedAtAll() {
         val box = SoftwareBox()
         val file = File(temp.root, "state.bin")

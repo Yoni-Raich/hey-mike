@@ -54,9 +54,16 @@ performed.
   while ADB is off. `install_apk` and `pull_file` still need ADB.
 - `:app:assembleDevDebug --no-daemon --quiet` passed after rebasing this PR
   onto `dev` at `724d072`. This proves compilation and packaging only.
+- `RemoteStoreTest` and `ComputerFilesGatewayTest` passed on Windows after
+  adding checks for saved conversation origin and `push_file` readiness with
+  ADB off. A DevDebug APK with versionCode override 1020 installed in place on
+  Xiaomi 23053RN02Y. The installed package reports code 1020, and its
+  `firstInstallTime` stayed at 2026-09-23 16:24:36. MainActivity opened and
+  the saved chat list remained visible.
 
 Not verified: a real PC-to-phone copy with ADB disconnected, WhatsApp sharing,
-and the fork banner on a physical phone.
+and the fork banner on a physical phone. Xiaomi's Computers screen says
+"No computers yet", so those remote flows could not be exercised there.
 
 ## Xiaomi QA stability fixes — 2026-09-25
 
