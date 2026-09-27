@@ -151,7 +151,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
-import dev.androidagent.core.ChatDayGroups
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineEvent
@@ -255,7 +254,7 @@ fun AndroidAgentScreen(
                     // and Compose then cannot tell which text color goes on it.
                     drawerContentColor = MaterialTheme.colorScheme.onSurface,
                 ) {
-                    AgentDrawer(
+                    ChatLibraryDrawer(
                         state = state,
                         actions = actions,
                         close = { scope.launch { drawerState.close() } },
@@ -353,236 +352,10 @@ fun AndroidAgentScreen(
     }
 }
 
-@Composable
-private fun AgentDrawer(
-    state: AgentUiState,
-    actions: AgentUiActions,
-    close: () -> Unit,
-) {
-    var query by rememberSaveable { mutableStateOf("") }
-    val running = state.runState.active
-    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, running)
-    // A dot on Settings means something there needs the user, not that
-    // something optional is off.
-    val attention = SetupChecklist.outstanding(state.setupRows()) > 0
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .padding(horizontal = 16.dp, vertical = 20.dp),
-    ) {
-        // The top of the panel scrolls with the list: on a short screen (a
-        // phone on its side) a fixed top left no room for a single chat.
-        val top: @Composable () -> Unit = { Column {
-        // The orb and one plain sentence answer "can Mike act right now"
-        // before anything else; tapping it opens where to fix it.
-        Surface(
-            onClick = { close(); actions.onOpenSettings() },
-            shape = RoundedCornerShape(20.dp),
-            color = Color.Transparent,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(4.dp)) {
-                AgentOrb(
-                    modifier = Modifier.size(56.dp),
-                    phase = if (running) state.runState.phase else RunPhase.IDLE,
-                    controlling = state.runState.controlling,
-                    idleColor = if (control.state == ControlState.BLOCKED) DrawerAmber else DrawerTeal,
-                )
-                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                    Text("Hey Mike", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(
-                        when (control.state) {
-                            ControlState.WORKING -> "Working on your phone"
-                            ControlState.READY -> "Ready · can see and tap the screen"
-                            ControlState.BLOCKED -> "Can't reach the screen · tap to fix"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (control.state == ControlState.BLOCKED) DrawerAmber else DrawerTeal,
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(14.dp))
-        // One way in: a new chat asks where Mike works, the phone or a computer.
-        Button(
-            onClick = {
-                close()
-                actions.onNewChat()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp),
-        ) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("New chat")
-        }
-
-        Spacer(Modifier.height(12.dp))
-        TextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text(if (state.computers.isEmpty()) "Search chats" else "Search chats and projects") },
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            trailingIcon = if (query.isNotEmpty()) ({
-                IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, contentDescription = "Clear search") }
-            }) else null,
-            singleLine = true,
-            shape = RoundedCornerShape(24.dp),
-            colors = TextFieldDefaults.colors(
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                focusedContainerColor = DrawerField,
-                unfocusedContainerColor = DrawerField,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        // Above the chats, because the question this panel is opened with is
-        // often "is the standing stuff still working", and that has to be
-        // answered before anyone reads a list.
-        Spacer(Modifier.height(14.dp))
-        AutomationStrip(
-            overview = state.automations.overview,
-            onOpen = {
-                close()
-                actions.onOpenAutomations()
-            },
-            onOpenRule = {
-                close()
-                actions.onOpenAutomations()
-            },
-        )
-        Spacer(Modifier.height(8.dp))
-        } }
-
-        // Worked out once per change of what they read, not on every frame of
-        // the drawer's open animation.
-        val shown = remember(state.sessions, state.remoteBindings, query) {
-            ChatDayGroups.filter(PcChats.phoneSessions(state.sessions, state.remoteBindings), query)
-        }
-        val pcSections = remember(
-            state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings,
-            state.sessions, state.pcThreads, query,
-        ) {
-            PcChats.sections(
-                state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings,
-                state.sessions, state.pcThreads, query,
-            )
-        }
-        val dayGroups = remember(shown) { ChatDayGroups.group(shown, System.currentTimeMillis()) }
-        val expanded = remember { mutableStateMapOf<String, Boolean>() }
-        val showAll = remember { mutableStateMapOf<String, Boolean>() }
-        if (state.isLoadingSessions || (shown.isEmpty() && pcSections.isEmpty())) top()
-        when {
-            state.isLoadingSessions -> Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
-            }
-
-            shown.isEmpty() && pcSections.isEmpty() -> Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.TopStart,
-            ) {
-                Text(
-                    if (query.isBlank()) "No chats yet. Start a new chat to create one." else "No chat matches \"${query.trim()}\".",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-            }
-
-            else -> LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-                contentPadding = PaddingValues(vertical = 4.dp),
-            ) {
-                item(key = "drawer-top", contentType = "top") { top() }
-                // Up top while there is no computer: below every phone chat nobody finds it.
-                if (state.computers.isEmpty() && query.isBlank()) {
-                    item(key = "connect-computer", contentType = "quiet") {
-                        QuietRow("Work on your computer", icon = Icons.Outlined.Computer, modifier = Modifier.animateItem()) {
-                            close()
-                            actions.onOpenComputers()
-                        }
-                    }
-                }
-                // Computers first: their projects are few, the phone's chats many.
-                pcSections(pcSections, state, actions, expanded, showAll, close)
-                val phoneOpen = expanded["phone"] ?: true
-                if (pcSections.isNotEmpty() && shown.isNotEmpty()) {
-                    item(key = "on-phone", contentType = "header") {
-                        Box(Modifier.animateItem()) {
-                            FoldHeader("On this phone", "${shown.size} chats", phoneOpen, Icons.Outlined.PhoneAndroid, onToggle = { expanded["phone"] = !phoneOpen })
-                        }
-                    }
-                }
-                if (phoneOpen || pcSections.isEmpty()) dayGroups.forEach { group ->
-                    item(key = "day-${group.label}", contentType = "label") {
-                        DrawerSectionLabel(group.label, Modifier.animateItem())
-                    }
-                    items(group.sessions, key = { it.id }, contentType = { "chat" }) { session ->
-                        Box(Modifier.animateItem()) { SessionRow(
-                            session = session,
-                            onComputer = session.id in state.remoteChats,
-                            selected = session.id == state.activeSessionId,
-                            running = running && session.id == state.runState.sessionId,
-                            onSelect = {
-                                close()
-                                actions.onSelectSession(session.id)
-                            },
-                            onRename = { title -> actions.onRenameSession(session.id, title) },
-                            onDelete = { actions.onDeleteSession(session.id) },
-                        ) }
-                    }
-                }
-            }
-        }
-
-        HorizontalDivider(color = DividerDefaults.color)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            TextButton(
-                onClick = { close(); actions.onOpenWorkspaceFiles() },
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Outlined.Folder, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Files")
-            }
-            TextButton(
-                onClick = { close(); actions.onOpenSettings() },
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .semantics { if (attention) contentDescription = "Settings, needs attention" },
-            ) {
-                Icon(Icons.Outlined.Settings, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Settings")
-                if (attention) {
-                    Spacer(Modifier.width(6.dp))
-                    StatusDot(color = MaterialTheme.colorScheme.error, size = 8.dp)
-                }
-            }
-        }
-    }
-}
-
-private val DrawerTeal = Color(0xFF83D9CA)
-private val DrawerAmber = Color(0xFFF6B86A)
-private val DrawerField = Color(0xFF2A2A2D)
 private val DrawerRunning = Color(0xFF69A7FF)
 
 @Composable
-private fun SessionRow(
+internal fun SessionRow(
     session: dev.androidagent.core.ChatSession,
     onComputer: Boolean,
     selected: Boolean,
@@ -590,6 +363,7 @@ private fun SessionRow(
     onSelect: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    subtitle: String? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by rememberSaveable(session.id) { mutableStateOf(false) }
@@ -621,14 +395,18 @@ private fun SessionRow(
                     modifier = Modifier.padding(end = 10.dp).size(18.dp),
                 )
             }
-            Text(
-                session.title.ifBlank { "Untitled chat" },
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            )
+            Column(Modifier.weight(1f).padding(vertical = if (subtitle != null) 8.dp else 0.dp)) {
+                Text(
+                    session.title.ifBlank { "Untitled chat" },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                subtitle?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
             Box {
                 IconButton(
                     onClick = { menuOpen = true },

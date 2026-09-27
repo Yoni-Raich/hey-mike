@@ -1395,37 +1395,32 @@ status is re-read on every resume beside the other permissions. A rule that
 looks on and cannot run is the failure the user would otherwise only notice by
 the thing not happening, so it is counted on the hub row rather than buried.
 
-## The side panel: two kinds of thing Mike holds
+## The side panel: chats first
 
-A chat is something you did. A rule is something that keeps happening. The
-panel shows both, but not as equals: the rules sit **above** the chats as a
-strip, and the chats keep the rest of the panel.
+`ChatLibraryDrawer` opens on a flat list of recent chats across the phone and
+computers. A device picker narrows the list; search matches titles, folders and
+computer names. Each row shows its location, so equal titles on two computers
+remain distinct. Day headings provide time context; rows omit individual dates.
+Imported desktop conversations say "From Codex". Existing rename and delete
+actions remain on Mike's chats.
 
-Chat history rows show one title line with a 48dp minimum touch target. The
-Today/Yesterday headings give time context, so individual rows omit dates and
-times. A computer icon still marks a conversation imported from desktop Codex.
+Projects have their own tab. Opening a folder shows only its chats, and Back
+restores the project search and scroll position while the panel stays composed.
+`ChatLibrary` builds these lists from `PcChats`, retaining its path rules and
+imported-thread deduplication. No nested lists or per-folder plus buttons remain.
+One New chat action uses the open project, offers a folder on the selected
+computer, or starts the normal new-chat flow when All devices or This phone is
+selected. Connection recovery appears only for the selected computer; managing
+computers is one entry in the device picker.
 
-That ordering is the design. The question people open this panel with is often
-not "which chat was that" but "is the standing stuff still working", and a
-strip answers it before anyone reads a list. The cost is that a strip has room
-for almost nothing, which is what the two constraints below are for.
-
-**The strip may not grow.** At most `AutomationOverview.MAX_CHIPS` chips and
-exactly one sentence, however many rules exist. What overflows goes behind it,
-and the chips are sorted so that what needs you is what you see: blocked first,
-then running, then off.
-
-**The sentence is chosen, not listed.** `AutomationOverview` picks the most
-useful true thing in priority order — a rule that cannot run, then the next run
-that is due, then the honest nothing — and marks it as a warning or not. A
-strip that listed everything would fit nothing and help less.
-
-Both decisions live in `:core` (`AutomationOverview`, `AutomationSummaries`)
-rather than in a Composable, because they are the design and a Composable is
-not somewhere a test can reach. The same layer turns the rule format into
-sentences: the format is written for the model — ids, packages, 24-hour clocks,
-a closed vocabulary — and none of that belongs on a panel. `AutomationStrip`,
-`AutomationsSheet` and the top bar render strings and choose nothing.
+The title, New chat, close, Files and Settings stay reachable while the filters
+and list scroll on short screens. Large text moves New chat to its own row.
+Automations use one compact footer entry with a count and an attention dot.
+Its accessibility label states blocked or on/off status. The detailed rule list
+stays in `AutomationsSheet`; the hamburger
+still marks blocked rules, and Settings has its setup attention dot. Rule
+summaries and status counts come from `AutomationOverview` and
+`AutomationSummaries` in `:core`.
 
 **Three states, not two.** `AutomationSummary.Status` is ON, OFF or **BLOCKED**
 — on, and this phone cannot serve its trigger. Blocked looks identical to
@@ -1625,8 +1620,8 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   works only while someone is signed in to Windows.
 - **Projects and the PC's own conversations.** A project is a folder on a
   computer: one the user picked (sealed in the same store), one a chat here
-  runs in, or one Codex on the computer worked in. The side panel lists each
-  computer, its projects and their chats, folding each level. Codex's own
+  runs in, or one Codex on the computer worked in. The side panel filters a
+  flat chat list by device, with projects in a separate tab. Codex's own
   `thread/list` (sources `cli`, `vscode`, `appServer`) supplies the
   conversations the PC started; summaries only, up to 200, refreshed when the
   panel opens. Opening one binds a new chat to that thread and copies its

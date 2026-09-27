@@ -1,5 +1,40 @@
 # Progress
 
+## Chat library UI — 2026-09-28
+
+Replaced the nested computer/project/chat tree with recent chats, a device
+filter, search and a separate Projects tab. A project opens its own chat list;
+Back restores the project search and scroll position. One New chat action uses
+that project or offers a folder on the selected computer. Automations, Files
+and Settings have compact footer entries. Large text puts New chat on its own
+row; filters scroll on short screens.
+
+Windows checks passed:
+
+- `.\gradlew.bat :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:assembleDevDebugAndroidTest :app:lintDevDebug
+  -PversionCodeOverride=1023 --no-daemon`: 58 app tests passed, build passed,
+  lint had 0 errors. `git diff --check` passed.
+- On an API 35 x86_64 emulator, installed both APKs with `install -r`, then
+  ran `ChatLibraryUiTest` directly with `am instrument`: 4 tests passed.
+  Fixtures use 257 phone chats, 41 PC projects and one server project. They
+  cover device/project routing, search, Back and navigation while scrolling.
+- The responsive test passed again at font scale 2.0, and in landscape.
+  Inspected the captured recent, project, project-chat, large-text and short
+  screen PNGs under ignored `app/build/ui-review/`. These are synthetic UI
+  fixtures, not evidence of live Codex, SSH, voice or a physical phone run.
+
+APK: `dev.androidagent.app.dev`, DevDebug, 0.14.0, code 1023, debug signed (v2).
+Alignment and signature verification passed. SHA-256:
+`95a30bd94accaa60c51a7242f056e037230d68ec2a473dc90ab21fe9fef05721`.
+The Nothing is not currently attached to ADB; this UI build was not installed
+on it. The full release gate was not run.
+
+Remote Codex still uses the computer's sign-in. The pinned 0.156.0 protocol
+supports experimental externally managed ChatGPT access tokens, including a
+refresh callback. A per-computer choice to use Mike's active account needs
+that token lifecycle and has not been implemented in this UI change.
+
 ## PR #89 review fixes — 2026-09-27
 
 Fixed SSH key trust on reconnect, permission approval replies, Stop during
