@@ -1,6 +1,28 @@
 # Progress
 
-## 0.14.0 release preparation — 2026-09-27
+## 0.14.0 release package correction — 2026-09-27
+
+The intended release package is `dev.androidagent.app` (Prod flavor), without
+the `.dev` suffix. The first v0.14.0 asset used the wrong Dev flavor; the Dev
+validation below is historical and does not establish Prod runtime behavior.
+
+From the tagged main source `8e430e70a6c3`, `:app:assembleProdRelease`,
+`:app:lintProdDebug`, and `:app:testProdReleaseUnitTest` passed (715 tasks).
+The Prod Release APK is nondebuggable, version `0.14.0`, code 1019, package
+`dev.androidagent.app`. Zip alignment and APK Signature Scheme v3 passed.
+SHA-256: `ABC894688E9303C002C62F47A9618D547023D4A05328EB06B89681D9DD78DCE9`.
+It uses the same Android debug certificate as the existing Prod app on Nothing
+A059; this is still a test-key-signed release, not production-key signing.
+
+The exact Prod APK installed in place on Nothing A059 with `adb install -r`
+over Prod 0.12.0/code 27. Version 0.14.0/code 1019 was verified afterward;
+`firstInstallTime` remained unchanged. The physical tool smoke is pending
+because the phone is locked. Do not count the earlier Dev/Xiaomi smoke as a
+Prod smoke. The corrected asset and release metadata will be published after
+this check; retain the earlier Dev bytes under a clearly disabled asset name
+so the updater selects only the corrected Prod APK.
+
+## Earlier 0.14.0 Dev validation — superseded package choice
 
 Release candidate: versionName `0.14.0`, versionCode `1019`, Dev flavor and
 package `dev.androidagent.app.dev`, following the v0.13.0 release path from
