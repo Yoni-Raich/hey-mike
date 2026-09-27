@@ -27,8 +27,14 @@ Windows checks passed:
 APK: `dev.androidagent.app.dev`, DevDebug, 0.14.0, code 1023, debug signed (v2).
 Alignment and signature verification passed. SHA-256:
 `95a30bd94accaa60c51a7242f056e037230d68ec2a473dc90ab21fe9fef05721`.
-The Nothing is not currently attached to ADB; this UI build was not installed
-on it. The full release gate was not run.
+Installed this exact APK on Nothing A059 with
+`adb -s <Nothing target> install -r --user 0`. Installation returned Success;
+the installed version is 0.14.0, code 1023. Its signer matched the previous
+APK. The original first install time and CE/DE data directory identifiers
+remained unchanged. MainActivity was resumed and the app process was running
+after launch. This proves the update and launch only; the new drawer was not
+inspected on the phone while it was in other active use. The full release
+gate was not run.
 
 Remote Codex still uses the computer's sign-in. The pinned 0.156.0 protocol
 supports experimental externally managed ChatGPT access tokens, including a
