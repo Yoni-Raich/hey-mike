@@ -81,7 +81,13 @@ class AgentService : Service() {
     private fun updateForeground(run: RunState, voice: VoiceState) {
         val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
             if (voice.active) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
-        if (Build.VERSION.SDK_INT >= 34) startForeground(101, notification(run, voice), types)
+        // Android refuses the microphone type while the app is not in use, which
+        // the assistant panel over another app can be on some builds. Keep the
+        // service alive without it rather than crash the process.
+        if (Build.VERSION.SDK_INT >= 34) runCatching { startForeground(101, notification(run, voice), types) }.onFailure {
+            android.util.Log.w("AgentService", "microphone foreground type refused: ${it.message}")
+            startForeground(101, notification(run, voice), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        }
         else getSystemService(NotificationManager::class.java).notify(101, notification(run, voice))
     }
     private fun notification(state: RunState, voice: VoiceState): Notification {
