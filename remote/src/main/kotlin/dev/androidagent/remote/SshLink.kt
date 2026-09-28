@@ -185,11 +185,42 @@ class SshLink(private val target: SshTarget) : Closeable {
         }
     }
 
-    /** Copy [source] to the computer, replacing a file already at [remotePath]. */
-    suspend fun upload(source: File, remotePath: String, progress: (Long, Long) -> Unit = { _, _ -> }) = withSftp(remotePath) { sftp ->
+    /**
+     * Copy [source] to [remotePath] on the computer. A file already there is
+     * refused unless [replace]. Written as `.<name>.part` beside it and renamed
+     * once whole, so the computer never shows half a file under its name.
+     */
+    suspend fun upload(
+        source: File,
+        remotePath: String,
+        replace: Boolean = true,
+        progress: (Long, Long) -> Unit = { _, _ -> },
+    ) = withSftp(remotePath) { sftp ->
+        val path = sftpPath(remotePath)
+        val exists = runCatching { sftp.stat(path) }.isSuccess
+        check(!exists || replace) { "$remotePath already exists. Pass replace: true to overwrite it." }
+        val folder = path.substringBeforeLast('/')
+        val part = "$folder/." + path.substringAfterLast('/') + ".part"
         val size = source.length()
         progress(0, size)
-        source.inputStream().use { sftp.put(it, sftpPath(remotePath), Counting(size, progress), ChannelSftp.OVERWRITE) }
+        makeFolders(sftp, folder)
+        try {
+            source.inputStream().use { sftp.put(it, part, Counting(size, progress), ChannelSftp.OVERWRITE) }
+            if (exists) sftp.rm(path)
+            sftp.rename(part, path)
+        } catch (error: Exception) {
+            runCatching { sftp.rm(part) }
+            throw error
+        }
+    }
+
+    /** Creates the folders on the way to [folder] that are not there yet, like `mkdir -p`. */
+    private fun makeFolders(sftp: ChannelSftp, folder: String) {
+        var at = ""
+        for (name in folder.split('/').filter { it.isNotEmpty() }) {
+            at += "/$name"
+            if (runCatching { sftp.stat(at) }.isFailure) sftp.mkdir(at)
+        }
     }
 
     /** JSch's progress hook, adding up the chunks it reports. */

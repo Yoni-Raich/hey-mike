@@ -46,7 +46,7 @@ import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
 import dev.androidagent.devicetools.AndroidCapabilityTools
-import dev.androidagent.devicetools.AndroidSharedFileStore
+import dev.androidagent.devicetools.PhoneStoragePlace
 import dev.androidagent.enginecodex.CodexEngine
 import dev.androidagent.overlay.FloatingControlOverlay
 import dev.androidagent.runtime.AndroidRuntimeHost
@@ -71,7 +71,6 @@ class AgentApplication : Application(), AutomationHostOwner {
 }
 
 class AgentGraph(private val app: Application) {
-    private val sharedFileStore = AndroidSharedFileStore(app)
     private fun bringAppForward() {
         runCatching {
             app.startActivity(
@@ -113,12 +112,29 @@ class AgentGraph(private val app: Application) {
     // One counter for every backend, so an observation revision never moves
     // backwards when a call falls through from one gateway to another.
     private val observations = ObservationState()
+    /** The copy moving between places now, for the progress banner. */
+    val transfers = dev.androidagent.core.TransferMeter(scope)
+    /**
+     * copy_file: this chat's folder, the phone's shared storage and every
+     * saved computer as places. A use case is a recipe in the
+     * files-across-devices skill, never another tool.
+     */
+    val copyFiles = dev.androidagent.core.CopyFileGateway(
+        phone = PhoneStoragePlace(app, adb),
+        computers = { remote.filePlaces() },
+        home = { workspace -> remote.fileHome(workspace) },
+        meter = transfers,
+        scratch = java.io.File(app.cacheDir, "copies"),
+    )
     val adbTools = AndroidDeviceTools(
         adb,
         BuildConfig.APPLICATION_ID + "/dev.androidagent.app.ime.AgentInputMethodService",
         observations,
         { x, y -> overlay.avoidTouch(x, y) },
-    ) { hidden -> overlay.setCaptureHidden(hidden) }
+        { hidden -> overlay.setCaptureHidden(hidden) },
+        // install_apk takes a file already on the phone, named as copy_file names it.
+        phoneFile = { address, workspace -> copyFiles.phoneFile(address, workspace) },
+    )
     val a11yTools = A11yDeviceTools(
         app,
         observations,
@@ -237,14 +253,12 @@ class AgentGraph(private val app: Application) {
     /** The user's computers, from any chat. Passwords and bindings stay with the app. */
     val computerTools = dev.androidagent.remote.ComputerToolGateway(
         remote, sessions, computerRequests,
-        saveToPhone = sharedFileStore::save,
-        scratch = java.io.File(app.cacheDir, "from-computer"),
         bringToForeground = ::bringAppForward,
     )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, computerTools, capabilityTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator
@@ -252,8 +266,7 @@ class AgentGraph(private val app: Application) {
     val queue: SessionRunQueue
     init {
         runCoordinator = AgentCoordinator(
-            // A computer chat names files by their path on the computer.
-            scope, engine, sessions, dev.androidagent.remote.ComputerFilesGateway(tools, remote, sharedFileStore::save), overlay,
+            scope, engine, sessions, tools, overlay,
             sendGrants = sendGrants,
             adbStatus = { adb.status.value },
             // An approval card lives only in the app, and device control means

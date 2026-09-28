@@ -1603,23 +1603,37 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   computer; the app then trusts none of it and asks for the computers again.
 - **Pictures** are sent inline as data URLs; other attachments are refused in
   a computer chat because their paths are on the phone.
-- **Files between the computer and the phone.** The phone's file tools read
-  the chat's workspace on the phone. `ComputerFilesGateway` wraps the device
-  tool gateway: in a computer chat, `push_file` takes a path on the computer
-  (absolute, or relative to the chat's folder), which is copied to the phone
-  over the chat's SSH link (SFTP) first; the device-tools module saves that
-  copy through MediaStore and returns a `content://media/...` URI for
-  `files_media share`; this route needs no ADB. Copy and install are separate
-  actions the agent combines: the `computers` tool's `copy_to_phone` (any
-  chat, a full path) copies to shared storage (`destination` downloads, a
-  URI) or stages the file in the chat's phone folder (`destination` chat, a
-  `localName`), and `install_apk` only installs an APK already in that
-  folder, so a failed install is retried without copying again. A download
-  is written to `.<name>.part` and renamed when whole, so a stopped copy never
-  looks finished. `install_apk` and `pull_file` still use the phone's ADB
-  gateway. Phone chats are untouched. The thread instructions forbid using adb on the
-  computer to reach the phone: it can see other devices and skips the app's
-  controls.
+- **Files: places, one copy tool, a skill for use cases.** A file lives in
+  one of three kinds of place, and every address names one: `chat:<path>`
+  (this chat's folder on the phone), `phone:<path>` (shared storage, or a
+  `content://` uri), `<Computer>:<path>` (a saved computer, scp style). A
+  path with no place is where the chat's shell runs: the chat folder in a
+  phone chat, the project folder in a computer chat. `copy_file(from, to,
+  replace)` (`CopyFileGateway`, in `:core`) is the only tool that moves bytes
+  between places. `:core` owns the `FilePlace` contract; `:device-tools`
+  implements the phone (`PhoneStoragePlace`: MediaStore insert with
+  `IS_PENDING`, reads by uri or relative path, ADB `pull` only as a fallback
+  for a file media access cannot read); `:remote` implements each computer
+  (`ComputerPlace`, SFTP over the saved SSH link, relative paths joined to
+  the chat's folder in the computer's own style); `:app` wires them. Every
+  copy lands whole or not at all: a phone download is renamed from a part
+  file, an SFTP upload is written as `.<name>.part` and renamed, and a
+  MediaStore insert stays pending until the bytes are in. Nothing is
+  overwritten without `replace`. Between two outside places the file passes
+  through the phone's cache. `TransferMeter` reports every copy to the
+  progress banner, and Stop cancels it. Tools that act on a file take a
+  phone address and never copy on their own: `install_apk(file)` takes
+  `chat:` or `phone:`, and a computer address is refused with the copy that
+  brings it here, so a failed install is retried without copying again.
+  `files_media share` and `open` take the uri a `phone:` copy returns. Use
+  cases (install an APK built on a computer, send a computer file on
+  WhatsApp, a phone photo to a computer) are recipes in the
+  `files-across-devices` skill, not tools. A computer chat's instructions
+  carry the same recipes, since Codex there reads the computer's skills,
+  not the phone's. `push_file`, `pull_file` and `copy_to_phone` are gone:
+  one tool per kind of copy is how the tool list grew without order. The
+  thread instructions forbid using adb on the computer to reach the phone:
+  it can see other devices and skips the app's controls.
 - **The desktop.** Commands over SSH run in a Windows session with no screen.
   For screenshots, windows and the clipboard, the instructions teach a
   one-off scheduled task that runs as the signed-in user, interactively. It
@@ -1654,11 +1668,9 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   the computer's Codex (and its sign-in). Audio does not cross SSH: the
   transport is WebRTC, so only the SDP goes through the computer and the
   media flows between the phone and OpenAI.
-- **No size cap on sending files to the phone.** `push_file` and
-  `install_apk` take files of any size; the timeout grows with the size
-  (1 MB/s on top of what was asked). The user decides what is sent. The
-  text-only `pull_file` fallback keeps its cap because it holds the file in
-  memory, and screenshots keep theirs because they go to the model.
+- **No size cap on copies.** `copy_file` and `install_apk` take files of
+  any size; the user decides what is copied. Screenshots keep their cap
+  because they go to the model.
 - **The `computers` tool, from any chat.** One tool with modes: `status`,
   `browse`, `new_project`, `open_chat`, `add`. It is a tool and not a skill
   because it crosses the sealed store's line: the agent's shell has no SSH

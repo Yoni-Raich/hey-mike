@@ -1,5 +1,36 @@
 # Progress
 
+### Files across devices: places, `copy_file`, a skill — 2026-09-28
+
+One tool copies files between places: `copy_file(from, to, replace)` with
+`chat:`, `phone:` (or a `content://` uri) and a computer's name, and a bare
+path where the chat's shell runs. It replaces `push_file`, `pull_file`,
+`copy_to_phone` and the computer-chat rewriting of `push_file`.
+`install_apk(file)` takes a phone address and refuses a computer one with
+the copy to make first. Use cases (install an APK built on a computer, share
+a computer file, a phone photo to a computer) are recipes in the new
+`files-across-devices` skill; a computer chat's instructions carry the same
+recipes because Codex there reads the computer's skills. Every copy shows
+the progress banner; SFTP uploads create missing folders, are written as a
+part file and renamed.
+
+Windows checks passed: `.\gradlew.bat :core:test :device-tools:test
+:workspace:test :remote:testDebugUnitTest :engine-codex:test
+:app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug
+:app:assembleDevDebugAndroidTest --no-daemon` (core 568, device-tools 104,
+remote 34 with 2 skipped, workspace 18 with 6 skipped, engine-codex 41, app
+58; no failures), `python -m unittest tools.test_prepare_runtime`,
+`git diff --check`. New `CopyFileGatewayTest` (addresses, bare paths in
+phone and computer chats, no overwrite, no escape from the chat folder,
+install refuses a computer file, Stop) and `ComputerPlaceTest` (both ways
+against a MINA SFTP server, whole files, no part file left, no overwrite).
+
+Not verified: anything on a phone. `PhoneStoragePlace` (MediaStore insert
+and reads, the ADB fallback), the banner for the new copies, a real PC copy
+and the skill's recipes in a live chat are untested. `install_apk` still
+needs Wireless ADB. An SFTP upload stopped mid-way may leave a hidden
+`.<name>.part` on the computer.
+
 ### Chat library restyle, on the Nothing A059 — 2026-09-28
 
 Build of `ad465e4` (local versionCode 1024) installed with `install -r` on the

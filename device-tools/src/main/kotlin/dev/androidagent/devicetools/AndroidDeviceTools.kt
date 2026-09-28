@@ -37,7 +37,6 @@ import dev.androidagent.core.UiNode
 import dev.androidagent.core.UiObservation
 import dev.androidagent.core.UiObservationSerializer
 import dev.androidagent.core.UiQuery
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -74,7 +73,7 @@ import org.xmlpull.v1.XmlPullParserFactory
  *
  * Mutating tools (taps, text, keys, app launch, shell, push, install) report
  * [needsControl] true so the overlay glow is shown. Read-only tools
- * (device_status, read_ui, screenshot, pull_file) return false.
+ * (device_status, read_ui, screenshot) return false.
  */
 class AndroidDeviceTools(
     private val adb: AdbTransport,
@@ -85,6 +84,11 @@ class AndroidDeviceTools(
     /** Moves the floating card out of the way before a gesture lands on it. */
     private val avoidTouch: (Int, Int) -> Unit = { _, _ -> },
     private val observationVisibility: suspend (Boolean) -> Unit = {},
+    /**
+     * A file on this phone for an address (`chat:`, `phone:`, or a bare path
+     * in a phone chat), for install_apk. Null: a path in the chat's folder.
+     */
+    private val phoneFile: (suspend (address: String, workspace: File) -> File)? = null,
 ) : DeviceToolGateway {
 
     private val lock = Any()
@@ -110,9 +114,9 @@ class AndroidDeviceTools(
 
     override fun needsControl(name: String): Boolean =
         when (name) {
-            "device_status", "read_ui", "screenshot", "pull_file" -> false
+            "device_status", "read_ui", "screenshot" -> false
             "tap", "swipe", "type_text", "key", "open_app", "shell",
-            "push_file", "install_apk" -> true
+            "install_apk" -> true
             else -> true
         }
 
@@ -165,8 +169,6 @@ class AndroidDeviceTools(
             "key" -> pressKey(arguments)
             "open_app" -> openApp(arguments)
             "shell" -> shell(arguments)
-            "pull_file" -> pullFile(arguments, ws)
-            "push_file" -> pushFile(arguments, ws)
             "install_apk" -> installApk(arguments, ws)
             else -> ToolResult("Unknown tool: $name", success = false)
         }
@@ -733,64 +735,13 @@ class AndroidDeviceTools(
         return ToolResult(if (out.exitCode == 0) text.ifBlank { "OK" } else "exit ${out.exitCode}: $text", success = out.exitCode == 0)
     }
 
-    private suspend fun pullFile(arguments: JsonObject, ws: File): ToolResult {
-        val remote = arguments.get("remotePath")?.jsonPrimitive?.content
-            ?: throw IllegalArgumentException("remotePath is required")
-        requireValidRemotePath(remote)
-        val localName = arguments.get("localName")?.jsonPrimitive?.content
-            ?: throw IllegalArgumentException("localName is required")
-        val target = ws.resolveSafe(localName)
-        val timeout = arguments.timeoutMsOrDefault()
-        val native = adb as? AdbFileTransport
-        if (native != null) {
-            withContext(Dispatchers.IO) { target.parentFile?.mkdirs() }
-            val res = native.pullFile(target, remote, timeout)
-            return ToolResult(
-                text = bound("Pulled $remote -> ${ws.relativize(target)} (${target.length()} bytes) ${res.output}".trim()),
-                success = res.exitCode == 0,
-            )
-        }
-        // Fallback for text-only transports: base64 round-trip, bounded.
-        val out = userExecute("base64 ${shellQuote(remote)} | tr -d '\\r\\n'", timeout).output
-        val clean = out.filterNot { it.isWhitespace() }
-        if (clean.isEmpty()) throw java.io.IOException("Remote file is empty or unreadable: $remote")
-        val bytes = try {
-            Base64.getMimeDecoder().decode(clean)
-        } catch (e: IllegalArgumentException) {
-            throw java.io.IOException("Pull decode failed", e)
-        }
-        check(bytes.size <= MAX_PULL_BYTES) { "Remote file exceeds size limit" }
-        withContext(Dispatchers.IO) {
-            target.parentFile?.mkdirs()
-            target.writeBytes(bytes)
-        }
-        return ToolResult("Pulled $remote -> ${ws.relativize(target)} (${bytes.size} bytes)")
-    }
-
-    private suspend fun pushFile(arguments: JsonObject, ws: File): ToolResult {
-        val localName = arguments.get("localName")?.jsonPrimitive?.content
-            ?: throw IllegalArgumentException("localName is required")
-        val source = ws.resolveSafe(localName)
-        check(source.isFile) { "Local file does not exist: $localName" }
-        val remote = arguments.get("remotePath")?.jsonPrimitive?.content
-            ?: throw IllegalArgumentException("remotePath is required")
-        requireValidRemotePath(remote)
-        val timeout = transferTimeout(source.length(), arguments.timeoutMsOrDefault())
-        val native = adb as? AdbFileTransport
-            ?: throw java.io.IOException("Push requires a native file transport")
-        val res = native.pushFile(source, remote, timeout)
-        return ToolResult(
-            text = bound("Pushed ${ws.relativize(source)} -> $remote ${res.output}".trim()),
-            success = res.exitCode == 0,
-        )
-    }
-
     private suspend fun installApk(arguments: JsonObject, ws: File): ToolResult {
-        val localName = arguments.get("localName")?.jsonPrimitive?.content
-            ?: throw IllegalArgumentException("localName is required")
-        require(localName.endsWith(".apk", ignoreCase = true)) { "Not an APK: $localName" }
-        val source = ws.resolveSafe(localName)
-        check(source.isFile) { "APK does not exist: $localName" }
+        val address = arguments.get("file")?.jsonPrimitive?.content
+            ?: throw IllegalArgumentException("file is required")
+        // Installs what is on the phone already; it never starts a copy.
+        val source = phoneFile?.invoke(address, ws) ?: ws.resolveSafe(address.removePrefix("chat:"))
+        require(source.name.endsWith(".apk", ignoreCase = true)) { "Not an APK: $address" }
+        check(source.isFile) { "APK does not exist: $address" }
         val replace = arguments.get("replace")?.jsonPrimitive?.booleanOrNull ?: true
         val timeout = transferTimeout(source.length(), arguments.timeoutMsOrDefault().coerceAtLeast(60_000L))
         val native = adb as? AdbFileTransport
@@ -862,9 +813,6 @@ class AndroidDeviceTools(
         return target
     }
 
-    private fun File.relativize(child: File): String =
-        runCatching { relativeTo(canonicalFile).path }.getOrDefault(child.name)
-
     companion object {
         const val DEFAULT_TIMEOUT_MS = 30_000L
         const val MAX_TIMEOUT_MS = 120_000L
@@ -873,7 +821,6 @@ class AndroidDeviceTools(
         const val MAX_SHELL_CHARS = 8_000
         const val MAX_COORDINATE = 10_000
         const val MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
-        const val MAX_PULL_BYTES = 32 * 1024 * 1024
         private const val TRANSFER_BYTES_PER_MS = 1024L
         const val UI_DUMP_PATH = "/sdcard/window_dump.xml"
         private const val MAX_UI_FIELD_CHARS = UiObservationSerializer.MAX_UI_FIELD_CHARS
@@ -940,12 +887,6 @@ class AndroidDeviceTools(
         fun requireValidComponent(component: String) {
             require(component.length in 3..512) { "Invalid component name" }
             require(component.matches(COMPONENT_RE)) { "Invalid component name: $component" }
-        }
-
-        fun requireValidRemotePath(path: String) {
-            require(path.startsWith("/")) { "remotePath must be absolute: $path" }
-            require(!path.contains('\u0000')) { "remotePath contains NUL" }
-            require(path.length <= 1024) { "remotePath too long" }
         }
 
         /**
@@ -1093,15 +1034,13 @@ class AndroidDeviceTools(
             tool("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),
             tool("open_app", "Launch an app by package, optionally with activity.", mapOf("package" to "string", "activity" to "string"), listOf("package")),
             tool("shell", "Run an arbitrary shell command. Visible device control.", mapOf("command" to "string", "timeoutMs" to "integer"), listOf("command")),
-            tool("pull_file", "Copy a file from the device into the run workspace. Read-only.", mapOf("remotePath" to "string", "localName" to "string"), listOf("remotePath", "localName")),
-            tool("push_file", "Push a workspace file to the device.", mapOf("localName" to "string", "remotePath" to "string"), listOf("localName", "remotePath")),
             tool(
                 "install_apk",
-                "Install an APK that is already on the phone, in this chat's folder (localName). It never copies from a " +
-                    "computer: stage one first with computers copy_to_phone destination chat. A failed install can be " +
-                    "tried again with the same localName.",
-                mapOf("localName" to "string", "replace" to "boolean"),
-                listOf("localName"),
+                "Install an APK that is on the phone: file is a chat: or phone: address (see copy_file). It never " +
+                    "copies from elsewhere; copy_file brings a file here first, and a failed install is tried again " +
+                    "with the same file.",
+                mapOf("file" to "string", "replace" to "boolean"),
+                listOf("file"),
             ),
         )
 

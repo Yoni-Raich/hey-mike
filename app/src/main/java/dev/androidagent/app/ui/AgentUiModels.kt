@@ -186,7 +186,7 @@ data class AgentUiState(
     /** Computer chats being copied so Mike can continue them. */
     val pcForking: Set<String> = emptySet(),
     /** A file moving between a computer and this phone, for the progress banner. */
-    val fileTransfer: dev.androidagent.remote.FileTransfer? = null,
+    val fileTransfer: dev.androidagent.core.FileTransfer? = null,
     /** Computers whose conversations are being listed right now. */
     val pcRefreshing: Set<String> = emptySet(),
     /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
