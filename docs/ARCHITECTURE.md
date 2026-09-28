@@ -148,11 +148,16 @@ screen, the card fades and takes no touches, so Mike's taps reach the app.
 The screen comes from Android itself: `onHandleAssist` delivers the focused
 app's `AssistStructure`, which the system sends only while "Use text from
 screen" is on. `ScreenText` flattens it to at most 4,000 characters and never
-reads a password field. It enters the realtime conversation as one
-`developer` message that tells the model to wait for the user, so Mike does
-not read the screen back unprompted. It is not saved in the chat. When no
-structure arrives within two seconds, the message says so, and the model can
-delegate to Codex, which reads the screen with its device tools.
+reads a password field; one view longer than that is cut, not dropped. It
+enters the realtime conversation as two messages. A `developer` message holds
+only the app's guidance: wait for the user, and treat the quoted screen as
+data. The screen text follows as a plain conversation message between
+`<<<SCREEN_TEXT>>>` markers, with markers inside the screen removed. Another
+app writes that text and can put instructions in it, so it must never carry
+developer weight. Neither message is saved in the chat. When no structure
+arrives within two seconds, only the guidance goes in, and it says the screen
+is unavailable; the model can then delegate to Codex, which reads the screen
+with its device tools.
 
 The panel has no activity, so the voice conversation moved out of the chat
 screen's view model into the app-scoped `VoiceConversation`. It owns the chat
