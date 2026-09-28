@@ -59,4 +59,34 @@ class ComputerFilesGatewayTest {
         assertFalse("push_file" in phoneSnapshot.ready)
         assertTrue("push_file" in phoneSnapshot.blocked)
     }
+
+    @Test fun installInAComputerChatUsesTheStagedFileAndARetryCopiesNothing() = kotlinx.coroutines.runBlocking {
+        val store = RemoteStore(File(temp.root, "state2.bin"), object : SecretBox {
+            override fun seal(plain: ByteArray) = plain
+            override fun open(sealed: ByteArray) = sealed
+        })
+        store.save(RemoteComputer("pc", "Desk", "unreachable.invalid", user = "user"), "secret")
+        store.bind("computer-chat", RemoteBinding("pc", "C:\\src"))
+        val calls = mutableListOf<Pair<String, JsonObject>>()
+        val inner = object : DeviceToolGateway {
+            override val definitions = listOf(ToolDefinition("install_apk", "Install", buildJsonObject {}))
+            override fun beginRun(runId: String, workspace: File) = Unit
+            override fun revoke() = Unit
+            override fun needsControl(name: String) = true
+            override suspend fun invoke(name: String, arguments: JsonObject): ToolResult { calls += name to arguments; return ToolResult("Installed") }
+            override suspend fun cancel() = Unit
+        }
+        val hub = RemoteHub(store)
+        val gateway = ComputerFilesGateway(inner, hub) { _, _ -> error("not used") }
+        val workspace = File(temp.root, "sessions/computer-chat/workspace").apply { mkdirs() }
+        File(workspace, "from-computer/app.apk").apply { parentFile!!.mkdirs(); writeBytes(ByteArray(64)) }
+        gateway.beginRun("run-1", workspace)
+        val args = JsonObject(mapOf("localName" to kotlinx.serialization.json.JsonPrimitive("from-computer/app.apk")))
+        // The computer is unreachable: any copy would fail, so two passing
+        // installs prove neither touched it.
+        assertTrue(gateway.invoke("install_apk", args).success)
+        assertTrue(gateway.invoke("install_apk", args).success)
+        assertEquals(listOf("install_apk" to args, "install_apk" to args), calls)
+        assertEquals(null, hub.transfer.value)
+    }
 }

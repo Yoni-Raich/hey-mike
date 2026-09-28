@@ -16,10 +16,13 @@ import java.io.File
  *
  * Those tools read and write the chat's workspace on the phone, but a
  * computer chat's files are on the computer. So in such a chat a file the
- * phone should receive (`push_file`, `install_apk`) is named by its path on
+ * phone should receive (`push_file`) is named by its path on
  * the computer and copied to the phone over the chat's SSH link first, and a
  * file taken from the phone (`pull_file`) is copied on into the project
- * folder. Every other tool, and every phone chat, goes straight through.
+ * folder. `install_apk` is not touched: it installs an APK already on the
+ * phone, so a retry never copies again (the `computers` tool's
+ * `copy_to_phone` stages one). Every other tool, and every phone chat, goes
+ * straight through.
  */
 class ComputerFilesGateway(
     private val inner: DeviceToolGateway,
@@ -61,7 +64,7 @@ class ComputerFilesGateway(
         val asked = (arguments["localName"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: return inner.invoke(name, arguments)
         return when (name) {
-            "push_file", "install_apk" -> {
+            "push_file" -> {
                 val onComputer = onComputer(binding.cwd, asked)
                 val local = File(ws, "$FROM_COMPUTER/${fileName(onComputer)}")
                 try {
@@ -72,24 +75,19 @@ class ComputerFilesGateway(
                     return ToolResult("Could not copy $onComputer from the computer to the phone: ${error.message}", success = false)
                 }
                 val remotePath = (arguments["remotePath"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-                if (name == "push_file") {
-                    if (activeRunId != runId) return ToolResult("Stopped before saving the file on the phone.", success = false)
-                    // The app writes it into shared storage itself: nothing here needs ADB.
-                    val uri = try {
-                        saveToPhone(local, remotePath)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        return ToolResult("Copied $onComputer from the computer, but could not save it on the phone: ${error.message}", success = false)
-                    }
-                    return ToolResult(
-                        "Copied $onComputer from the computer to the phone ($uri). To send it, call " +
-                            "files_media with operation share and this URI, then complete the phone's share flow.",
-                    )
+                if (activeRunId != runId) return ToolResult("Stopped before saving the file on the phone.", success = false)
+                // The app writes it into shared storage itself: nothing here needs ADB.
+                val uri = try {
+                    saveToPhone(local, remotePath)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    return ToolResult("Copied $onComputer from the computer, but could not save it on the phone: ${error.message}", success = false)
                 }
-                currentCoroutineContext().ensureActive()
-                if (activeRunId != runId) return ToolResult("Stopped before installing the file on the phone.", success = false)
-                inner.invoke(name, JsonObject(arguments + ("localName" to JsonPrimitive("$FROM_COMPUTER/${local.name}"))))
+                ToolResult(
+                    "Copied $onComputer from the computer to the phone ($uri). To send it, call " +
+                        "files_media with operation share and this URI, then complete the phone's share flow.",
+                )
             }
             "pull_file" -> {
                 val result = inner.invoke(name, arguments)

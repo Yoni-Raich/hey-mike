@@ -61,7 +61,7 @@ class SftpCancellationTest {
         try {
             val completed = AtomicBoolean()
             val transfer = launch(Dispatchers.IO) {
-                if (download) link.download("/large.bin", temp.newFile("received.bin"), Long.MAX_VALUE)
+                if (download) link.download("/large.bin", File(temp.root, "received.bin"), Long.MAX_VALUE)
                 else link.upload(source, "/uploaded.bin")
                 completed.set(true)
             }
@@ -72,6 +72,11 @@ class SftpCancellationTest {
                 withTimeout(3_000) { transfer.cancelAndJoin() }
                 assertFalse(completed.get())
                 assertTrue(transfer.isCancelled)
+                // A stopped download leaves nothing that could pass for the file.
+                if (download) {
+                    assertFalse(File(temp.root, "received.bin").exists())
+                    assertFalse(File(temp.root, ".received.bin.part").exists())
+                }
             } finally { release.countDown(); transfer.cancel() }
 
             val small = temp.newFile("small.txt").apply { writeText("next run") }

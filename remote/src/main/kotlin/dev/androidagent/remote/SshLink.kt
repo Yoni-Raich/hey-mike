@@ -172,7 +172,17 @@ class SshLink(private val target: SshTarget) : Closeable {
         check(size <= maxBytes) { "The file is ${size / (1024 * 1024)} MB; the limit is ${maxBytes / (1024 * 1024)} MB." }
         target.parentFile?.mkdirs()
         progress(0, size)
-        target.outputStream().use { sftp.get(path, it, Counting(size, progress)) }
+        // Written beside the target and renamed at the end, so a stopped or
+        // failed copy never leaves a file that looks finished.
+        val part = File(target.parentFile, ".${target.name}.part")
+        try {
+            part.outputStream().use { sftp.get(path, it, Counting(size, progress)) }
+            check(part.length() == size) { "The copy ended early (${part.length()} of $size bytes)." }
+            if (target.exists()) target.delete()
+            check(part.renameTo(target)) { "Could not finish the copy at ${target.name}." }
+        } finally {
+            part.delete()
+        }
     }
 
     /** Copy [source] to the computer, replacing a file already at [remotePath]. */

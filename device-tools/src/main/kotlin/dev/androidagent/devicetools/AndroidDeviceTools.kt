@@ -1095,7 +1095,14 @@ class AndroidDeviceTools(
             tool("shell", "Run an arbitrary shell command. Visible device control.", mapOf("command" to "string", "timeoutMs" to "integer"), listOf("command")),
             tool("pull_file", "Copy a file from the device into the run workspace. Read-only.", mapOf("remotePath" to "string", "localName" to "string"), listOf("remotePath", "localName")),
             tool("push_file", "Push a workspace file to the device.", mapOf("localName" to "string", "remotePath" to "string"), listOf("localName", "remotePath")),
-            tool("install_apk", "Install a workspace APK on the device.", mapOf("localName" to "string", "replace" to "boolean"), listOf("localName")),
+            tool(
+                "install_apk",
+                "Install an APK that is already on the phone, in this chat's folder (localName). It never copies from a " +
+                    "computer: stage one first with computers copy_to_phone destination chat. A failed install can be " +
+                    "tried again with the same localName.",
+                mapOf("localName" to "string", "replace" to "boolean"),
+                listOf("localName"),
+            ),
         )
 
         private fun tool(

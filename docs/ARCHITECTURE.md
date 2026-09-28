@@ -1605,13 +1605,19 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   a computer chat because their paths are on the phone.
 - **Files between the computer and the phone.** The phone's file tools read
   the chat's workspace on the phone. `ComputerFilesGateway` wraps the device
-  tool gateway: in a computer chat, `push_file` and `install_apk` take a path
-  on the computer (absolute, or relative to the chat's folder), which is
-  copied to the phone over the chat's SSH link (SFTP) first. For `push_file`,
-  the device-tools module saves that copy through MediaStore and returns a
-  `content://media/...` URI for `files_media share`; this route needs no ADB.
-  `install_apk` and `pull_file` still use the phone's ADB gateway. No new model
-  tool; phone chats are untouched. The thread instructions forbid using adb on the
+  tool gateway: in a computer chat, `push_file` takes a path on the computer
+  (absolute, or relative to the chat's folder), which is copied to the phone
+  over the chat's SSH link (SFTP) first; the device-tools module saves that
+  copy through MediaStore and returns a `content://media/...` URI for
+  `files_media share`; this route needs no ADB. Copy and install are separate
+  actions the agent combines: the `computers` tool's `copy_to_phone` (any
+  chat, a full path) copies to shared storage (`destination` downloads, a
+  URI) or stages the file in the chat's phone folder (`destination` chat, a
+  `localName`), and `install_apk` only installs an APK already in that
+  folder, so a failed install is retried without copying again. A download
+  is written to `.<name>.part` and renamed when whole, so a stopped copy never
+  looks finished. `install_apk` and `pull_file` still use the phone's ADB
+  gateway. Phone chats are untouched. The thread instructions forbid using adb on the
   computer to reach the phone: it can see other devices and skips the app's
   controls.
 - **The desktop.** Commands over SSH run in a Windows session with no screen.
