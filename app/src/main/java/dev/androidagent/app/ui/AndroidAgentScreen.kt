@@ -24,6 +24,7 @@ package dev.androidagent.app.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -354,6 +355,12 @@ fun AndroidAgentScreen(
 
 private val DrawerRunning = Color(0xFF69A7FF)
 
+/**
+ * One chat in the library. The rename/delete menu is a long press on any row
+ * and a visible button only on the open chat: a button on every row read as
+ * a column of dots.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun SessionRow(
     session: dev.androidagent.core.ChatSession,
@@ -364,75 +371,93 @@ internal fun SessionRow(
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
     subtitle: String? = null,
+    subtitleIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleteOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var renameText by rememberSaveable(session.id) { mutableStateOf(session.title) }
+    val shape = RoundedCornerShape(20.dp)
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-        contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
-        onClick = onSelect,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    Box(Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = shape,
+            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+            contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
         ) {
-            if (running) {
-                StatusDot(color = DrawerRunning, size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
-            }
-            if (onComputer) {
-                Icon(
-                    Icons.Outlined.Computer,
-                    contentDescription = "Runs on a computer",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 10.dp).size(18.dp),
-                )
-            }
-            Column(Modifier.weight(1f).padding(vertical = if (subtitle != null) 8.dp else 0.dp)) {
-                Text(
-                    session.title.ifBlank { "Untitled chat" },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                )
-                subtitle?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            Box {
-                IconButton(
-                    onClick = { menuOpen = true },
-                    modifier = Modifier.semantics { contentDescription = "Session actions" },
-                ) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = null)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Rename") },
-                        leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
-                        onClick = {
-                            menuOpen = false
-                            renameText = session.title
-                            renameOpen = true
-                        },
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .combinedClickable(
+                        onClick = onSelect,
+                        onLongClick = { menuOpen = true },
+                        onLongClickLabel = "Session actions",
                     )
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
-                        onClick = {
-                            menuOpen = false
-                            deleteOpen = true
-                        },
+                    .heightIn(min = 52.dp)
+                    .padding(start = 14.dp, end = if (selected) 4.dp else 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (running) {
+                    StatusDot(color = DrawerRunning, size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
+                }
+                if (onComputer) {
+                    Icon(
+                        Icons.Outlined.Computer,
+                        contentDescription = "Runs on a computer",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 10.dp).size(18.dp),
                     )
                 }
+                Column(Modifier.weight(1f).padding(vertical = if (subtitle != null) 9.dp else 0.dp)) {
+                    Text(
+                        session.title.ifBlank { "Untitled chat" },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                    )
+                    subtitle?.let {
+                        Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            val tint = if (selected) MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant
+                            subtitleIcon?.let { icon ->
+                                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(5.dp))
+                            }
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                if (selected) {
+                    IconButton(
+                        onClick = { menuOpen = true },
+                        modifier = Modifier.semantics { contentDescription = "Session actions" },
+                    ) {
+                        Icon(Icons.Outlined.MoreVert, contentDescription = null)
+                    }
+                }
+            }
+        }
+        Box(Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        renameText = session.title
+                        renameOpen = true
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete") },
+                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        deleteOpen = true
+                    },
+                )
             }
         }
     }
