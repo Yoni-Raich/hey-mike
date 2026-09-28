@@ -52,7 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.androidagent.remote.FileTransfer
+import dev.androidagent.core.FileTransfer
 import kotlinx.coroutines.delay
 
 private val TransferInk = Color(0xFFE8C9A0)
@@ -89,7 +89,7 @@ private fun TransferCard(transfer: FileTransfer) {
     val fraction by animateFloatAsState(transfer.fraction ?: 0f, tween(250), label = "transfer")
     val failed = transfer.state == FileTransfer.State.FAILED
     val done = transfer.state == FileTransfer.State.DONE
-    val direction = if (transfer.toPhone) "${transfer.computer} → phone" else "phone → ${transfer.computer}"
+    val direction = "${transfer.from} → ${transfer.to}"
     val spoken = when {
         done -> "${transfer.name} copied, $direction"
         failed -> "${transfer.name} not copied: ${transfer.error.orEmpty()}"
@@ -103,7 +103,7 @@ private fun TransferCard(transfer: FileTransfer) {
     ) {
         Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Route(transfer.toPhone, done, failed)
+                Route(transfer.from, transfer.to, done, failed)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(transfer.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -156,7 +156,7 @@ private fun TransferCard(transfer: FileTransfer) {
 
 /** Where from and where to, with a dot travelling along the arrow while it moves. */
 @Composable
-private fun Route(toPhone: Boolean, done: Boolean, failed: Boolean) {
+private fun Route(from: String, to: String, done: Boolean, failed: Boolean) {
     val travel by rememberInfiniteTransition(label = "route").animateFloat(
         0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Restart), label = "route-dot",
     )
@@ -165,15 +165,19 @@ private fun Route(toPhone: Boolean, done: Boolean, failed: Boolean) {
             done -> Icon(Icons.Outlined.Check, null, tint = TransferDone, modifier = Modifier.size(20.dp))
             failed -> Icon(Icons.Outlined.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
             else -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (toPhone) Icons.Outlined.Computer else Icons.Outlined.PhoneAndroid, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(placeIcon(from), null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Box(Modifier.width(22.dp).height(15.dp), contentAlignment = Alignment.CenterStart) {
                     Box(Modifier.offset(x = (travel * 16).dp).size(5.dp).background(TransferInk, RoundedCornerShape(3.dp)))
                 }
-                Icon(if (toPhone) Icons.Outlined.PhoneAndroid else Icons.Outlined.Computer, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurface)
+                Icon(placeIcon(to), null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
 }
+
+/** The phone and this chat's folder are on the phone; any other place is a computer. */
+private fun placeIcon(place: String) =
+    if (place == "phone" || place == "this chat") Icons.Outlined.PhoneAndroid else Icons.Outlined.Computer
 
 internal fun sizeLabel(bytes: Long): String = when {
     bytes >= 1L shl 30 -> String.format(java.util.Locale.US, "%.1f GB", bytes / (1L shl 30).toDouble())

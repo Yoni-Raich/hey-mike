@@ -22,8 +22,8 @@ class LinuxHostTest {
     }
 
     @Test fun linuxPathsKeepTheirStyle() {
-        assertEquals("/home/me/app/out/a.png", ComputerFilesGateway.onComputer("/home/me/app/", "out/a.png"))
-        assertEquals("/tmp/a.png", ComputerFilesGateway.onComputer("/home/me/app", "/tmp/a.png"))
+        assertEquals("/home/me/app/out/a.png", ComputerPlace.fullPath("out/a.png", "/home/me/app/", "Server"))
+        assertEquals("/tmp/a.png", ComputerPlace.fullPath("/tmp/a.png", "/home/me/app", "Server"))
         assertEquals("/home/me/a.png", SshLink.sftpPath("/home/me/a.png"))
         assertEquals("/home/me/App", ComputerToolGateway.pathKey("/home/me/App/"))
     }

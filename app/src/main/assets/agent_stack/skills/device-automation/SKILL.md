@@ -7,9 +7,9 @@ description: How every device tool works and how to recover when the phone does 
 
 The exact mechanics of each device tool, and what to do when an action does not land.
 
-The accessibility service serves every tool below except `shell`, `push_file`, `pull_file` and `install_apk`, which need the optional Wireless ADB. The `source` field in an observation says which backend answered (`accessibility` or `uiautomator`), and `stable:false` means the screen had not settled when it was read.
+The accessibility service serves every tool below except `shell` and `install_apk`, which need the optional Wireless ADB. The `source` field in an observation says which backend answered (`accessibility` or `uiautomator`), and `stable:false` means the screen had not settled when it was read.
 
-In a computer chat, `push_file` takes a path on the computer and saves the file on the phone through SSH and MediaStore. That route does not need Wireless ADB; use its returned URI with `files_media share`.
+Files come and go with `copy_file`, which needs no ADB; `install_apk` takes a file already on the phone. The `files-across-devices` skill has the addresses and recipes.
 
 ---
 
