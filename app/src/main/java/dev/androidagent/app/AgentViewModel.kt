@@ -105,6 +105,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
         viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
         viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
+        viewModelScope.launch { graph.remote.transfer.collect { move -> mutable.update { it.copy(fileTransfer = move) } } }
         viewModelScope.launch {
             graph.computerRequests.collect { request ->
                 when (request) {

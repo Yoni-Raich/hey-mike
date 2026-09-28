@@ -45,45 +45,38 @@ class ChatLibraryUiTest {
         compose.setContent { AndroidAgentTheme { Surface(modifier = Modifier.widthIn(max = 360.dp).fillMaxSize(), color = DrawerSurface, contentColor = MaterialTheme.colorScheme.onSurface) { ChatLibraryDrawer(state, actions, {}) } } }
     }
 
-    @Test fun hundredsOfChatsShowAFlatRecentListAndASeparateProjectList() {
+    @Test fun everythingIsAFlatRecentListAndAComputerShowsItsProjects() {
         show()
+        compose.onNodeWithText("Everything").assertIsDisplayed()
         compose.onNodeWithText("Plan the week").assertIsDisplayed()
         compose.onNodeWithText("Review project 0").assertIsDisplayed()
-        compose.onNodeWithText("project-0", substring = false).assertDoesNotExist()
-        screenshot("library-recent")
-        compose.onNodeWithText("Projects").performClick()
+        screenshot("library-everything")
+        compose.onNodeWithContentDescription("Work PC, connected").performClick()
         compose.onNodeWithText("project-0", substring = false).assertIsDisplayed()
         compose.onNodeWithText("Plan the week").assertDoesNotExist()
-        screenshot("library-projects")
+        screenshot("library-computer")
     }
 
-    @Test fun deviceAndProjectChoicesRouteNewChatsToThatProject() {
+    @Test fun aProjectsNewChatGoesToThatProject() {
         var destination: Pair<String, String>? = null
         show(AgentUiActions(onNewChatInProject = { computer, path -> destination = computer to path }))
-        compose.onNodeWithText("All devices").performClick()
-        compose.onNodeWithText("Server", substring = false).performClick()
-        compose.onNodeWithText("Projects").performClick()
-        compose.onNodeWithText("mobile-app", substring = false).performClick()
+        compose.onNodeWithContentDescription("Server, connected").performClick()
         compose.onNodeWithText("Fix the upload").assertIsDisplayed()
         compose.onNodeWithText("Plan the week").assertDoesNotExist()
-        screenshot("library-project-chats")
-        compose.onNodeWithText("New chat").performClick()
+        compose.onNodeWithText("New chat here").performClick()
         compose.runOnIdle { assertEquals("server" to "/work/mobile-app", destination) }
     }
 
-    @Test fun searchKeepsTheSelectedDeviceAndBackRestoresTheProjects() {
+    @Test fun searchNarrowsTheChosenComputer() {
         show()
-        compose.onNodeWithText("All devices").performClick()
-        compose.onNodeWithText("Server", substring = false).performClick()
-        compose.onNodeWithText("Projects").performClick()
-        compose.onNodeWithContentDescription("Search chats or projects").performTextInput("mobile")
-        compose.onNodeWithText("mobile-app", substring = false).performClick()
-        compose.onNodeWithContentDescription("Back to projects").performClick()
-        compose.onNodeWithContentDescription("Search chats or projects").assertTextContains("mobile")
-        compose.onNodeWithText("mobile-app", substring = false).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Work PC, connected").performClick()
+        compose.onNodeWithContentDescription("Search").performClick()
+        compose.onNodeWithContentDescription("Search chats or projects").performTextInput("project 10")
+        compose.onNodeWithText("Review project 10", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("project-3", substring = false).assertDoesNotExist()
     }
 
-    @Test fun smallScreensKeepActionsReachableWhileTheLibraryScrolls() {
+    @Test fun theRailKeepsSettingsAndAutomationsReachable() {
         var openedAutomations = false
         val rule = AutomationSummary("fixture", "Daily check", "Check", "Every day", AutomationSummary.Status.BLOCKED, AutomationAttention.NONE, "Needs notification access")
         show(AgentUiActions(onOpenAutomations = { openedAutomations = true }), fixture.copy(
@@ -91,17 +84,8 @@ class ChatLibraryUiTest {
         ))
         compose.onNodeWithText("New chat").assertIsDisplayed()
         compose.onNodeWithContentDescription("Close chats").assertIsDisplayed()
-        compose.onNodeWithText("Settings").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Automations, 1 needs you").assertIsDisplayed()
-        screenshot("library-responsive")
-        compose.onNodeWithTag("chat-library").performScrollToNode(hasText("Projects", substring = false))
-        compose.onNodeWithText("Projects").performClick()
-        compose.onNodeWithTag("chat-library").performScrollToNode(hasText("project-10", substring = false))
-        compose.onNodeWithText("project-10", substring = false).performClick()
-        compose.onNodeWithTag("chat-library").performScrollToNode(hasText("Review project 10", substring = false))
-        compose.onNodeWithText("Review project 10", substring = false).assertIsDisplayed()
-        compose.onNodeWithText("New chat").assertIsDisplayed()
-        compose.onNodeWithText("Settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Settings").assertIsDisplayed()
+        screenshot("library-rail")
         compose.onNodeWithContentDescription("Automations, 1 needs you").performClick()
         compose.runOnIdle { assertEquals(true, openedAutomations) }
     }

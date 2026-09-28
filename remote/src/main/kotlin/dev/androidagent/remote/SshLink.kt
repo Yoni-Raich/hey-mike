@@ -157,18 +157,41 @@ class SshLink(private val target: SshTarget) : Closeable {
         return SshProcess(channel, stdin, stdout, stderr)
     }
 
-    /** Copy a file from the computer to [target], refusing one over [maxBytes]. */
-    suspend fun download(remotePath: String, target: File, maxBytes: Long) = withSftp(remotePath) { sftp ->
+    /**
+     * Copy a file from the computer to [target], refusing one over [maxBytes].
+     * [progress] hears (bytes so far, total) as the copy goes.
+     */
+    suspend fun download(
+        remotePath: String,
+        target: File,
+        maxBytes: Long,
+        progress: (Long, Long) -> Unit = { _, _ -> },
+    ) = withSftp(remotePath) { sftp ->
         val path = sftpPath(remotePath)
         val size = sftp.stat(path).size
         check(size <= maxBytes) { "The file is ${size / (1024 * 1024)} MB; the limit is ${maxBytes / (1024 * 1024)} MB." }
         target.parentFile?.mkdirs()
-        target.outputStream().use { sftp.get(path, it) }
+        progress(0, size)
+        target.outputStream().use { sftp.get(path, it, Counting(size, progress)) }
     }
 
     /** Copy [source] to the computer, replacing a file already at [remotePath]. */
-    suspend fun upload(source: File, remotePath: String) = withSftp(remotePath) { sftp ->
-        source.inputStream().use { sftp.put(it, sftpPath(remotePath), ChannelSftp.OVERWRITE) }
+    suspend fun upload(source: File, remotePath: String, progress: (Long, Long) -> Unit = { _, _ -> }) = withSftp(remotePath) { sftp ->
+        val size = source.length()
+        progress(0, size)
+        source.inputStream().use { sftp.put(it, sftpPath(remotePath), Counting(size, progress), ChannelSftp.OVERWRITE) }
+    }
+
+    /** JSch's progress hook, adding up the chunks it reports. */
+    private class Counting(private val total: Long, private val progress: (Long, Long) -> Unit) : com.jcraft.jsch.SftpProgressMonitor {
+        private var done = 0L
+        override fun init(op: Int, src: String?, dest: String?, max: Long) = Unit
+        override fun count(count: Long): Boolean {
+            done += count
+            progress(done, total)
+            return true
+        }
+        override fun end() = Unit
     }
 
     private suspend fun <T> withSftp(remotePath: String, block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {

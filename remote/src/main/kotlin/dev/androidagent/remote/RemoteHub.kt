@@ -183,12 +183,59 @@ class RemoteHub(
 
     /** Copy a file from the computer to this phone. */
     suspend fun download(computerId: String, remotePath: String, target: File, maxBytes: Long) = withContext(Dispatchers.IO) {
-        connection(computerId).link.download(remotePath, target, maxBytes)
+        tracked(computerId, target.name, toPhone = true) { progress ->
+            connection(computerId).link.download(remotePath, target, maxBytes, progress)
+        }
+    }
+
+    private val mutableTransfer = MutableStateFlow<FileTransfer?>(null)
+    /** The file moving between a computer and this phone now, or the last one for a moment after. */
+    val transfer: StateFlow<FileTransfer?> = mutableTransfer.asStateFlow()
+    private val transferIds = java.util.concurrent.atomic.AtomicLong()
+
+    /**
+     * Run one copy and publish its progress: at most every 120 ms, so a fast
+     * link does not flood the screen. The finished state stays up for a
+     * moment so the user sees it land, then clears unless another began.
+     */
+    private suspend fun <T> tracked(computerId: String, name: String, toPhone: Boolean, copy: suspend ((Long, Long) -> Unit) -> T): T {
+        val id = transferIds.incrementAndGet()
+        val label = store.computer(computerId)?.label ?: "the computer"
+        val start = System.currentTimeMillis()
+        var last = 0L
+        mutableTransfer.value = FileTransfer(id, name, label, toPhone, 0, 0, start)
+        val progress: (Long, Long) -> Unit = { bytes, total ->
+            val now = System.currentTimeMillis()
+            if (now - last >= 120 || bytes >= total) {
+                last = now
+                mutableTransfer.value = FileTransfer(id, name, label, toPhone, bytes, total, start)
+            }
+        }
+        val result = try {
+            copy(progress)
+        } catch (error: Throwable) {
+            val failed = mutableTransfer.value?.takeIf { it.id == id }
+            if (failed != null) {
+                mutableTransfer.value = failed.copy(
+                    state = FileTransfer.State.FAILED,
+                    error = if (error is kotlinx.coroutines.CancellationException) "Stopped" else error.message,
+                )
+                scope.launch { kotlinx.coroutines.delay(4_000); mutableTransfer.compareAndSet(mutableTransfer.value?.takeIf { it.id == id }, null) }
+            }
+            throw error
+        }
+        mutableTransfer.value?.takeIf { it.id == id }?.let { now ->
+            mutableTransfer.value = now.copy(bytes = maxOf(now.bytes, now.total), state = FileTransfer.State.DONE)
+        }
+        scope.launch { kotlinx.coroutines.delay(2_500); mutableTransfer.compareAndSet(mutableTransfer.value?.takeIf { it.id == id }, null) }
+        return result
     }
 
     /** Copy a file from this phone to the computer. */
     suspend fun upload(computerId: String, source: File, remotePath: String) = withContext(Dispatchers.IO) {
-        connection(computerId).link.upload(source, remotePath)
+        tracked(computerId, source.name, toPhone = false) { progress ->
+            connection(computerId).link.upload(source, remotePath, progress)
+        }
     }
 
     /** The folders in [path] on the computer; with [create], the folder is made first. */

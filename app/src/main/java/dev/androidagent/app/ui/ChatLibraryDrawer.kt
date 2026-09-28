@@ -1,7 +1,15 @@
 package dev.androidagent.app.ui
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,45 +21,41 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,374 +63,553 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.androidagent.core.ChatDayGroups
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.SetupChecklist
+import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteSetup
 
-// The drawer's own quiet palette on the lifted surface: a filled field for
-// search, a tonal tile behind project icons, teal for "reachable".
-private val LibraryField = Color(0xFF26262A)
-private val LibraryTile = Color(0xFF2A2A2E)
-private val LibraryTeal = Color(0xFF83D9CA)
-private val LibraryAmber = Color(0xFFF6B86A)
-private val LibraryOffline = Color(0xFF6B6B70)
+// A warm, quiet ground: the list is the content, the chrome recedes. One
+// accent (amber) says "live"; teal only marks a reachable computer.
+internal val LibraryGround = Color(0xFF141413)
+private val LibraryRail = Color(0xFF0F0F0E)
+private val LibraryLine = Color(0xFF232220)
+private val LibraryTile = Color(0xFF1F1E1C)
+private val LibraryRaised = Color(0xFF252422)
+private val LibraryLight = Color(0xFFECEBE6)
+private val LibraryMuted = Color(0xFF8E8C85)
+private val LibraryFaint = Color(0xFF6C6A64)
+private val LibraryAmber = Color(0xFFE8C9A0)
+private val LibraryTeal = Color(0xFF7FC8B6)
+private val LibraryOffline = Color(0xFF55534E)
+private const val CHATS_PER_PROJECT = 5
 
 /**
- * Recent chats first. Browse one device or project without unfolding a tree.
- *
- * Layout, top to bottom: the title, one primary "New chat", a filled search
- * field, device chips (only once there is a computer), a Recent/Projects
- * switch, then the list. Everything under the title scrolls with the list,
- * so a short or sideways screen still shows chats.
+ * The chat library. With computers, a rail on the left picks the place
+ * (everything, this phone, or one computer) and the page beside it shows
+ * that place: recent chats, or a computer's projects folding open over
+ * their chats. With the phone alone there is no rail, just the chats.
  */
 @Composable
 internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, close: () -> Unit) {
     var location by rememberSaveable { mutableStateOf(ChatLibrary.ALL) }
-    var projectsTab by rememberSaveable { mutableStateOf(false) }
-    var projectKey by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
-    var projectSearch by rememberSaveable { mutableStateOf("") }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    val showAll = remember { mutableStateMapOf<String, Boolean>() }
     val sections = remember(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, state.sessions, state.pcThreads) {
         PcChats.sections(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, state.sessions, state.pcThreads)
     }
     val hasComputers = state.computers.isNotEmpty()
-    val scope = location.takeIf { it in setOf(ChatLibrary.ALL, ChatLibrary.PHONE) || state.computers.any { computer -> computer.id == it } } ?: ChatLibrary.ALL
+    val scope = location.takeIf { it in setOf(ChatLibrary.ALL, ChatLibrary.PHONE) || state.computers.any { c -> c.id == it } }
+        ?.takeIf { hasComputers } ?: ChatLibrary.ALL
     val computer = state.computers.firstOrNull { it.id == scope }
-    val project = sections.flatMap { it.projects }.firstOrNull { it.key == projectKey }
-    val showProjects = projectsTab && project == null && scope != ChatLibrary.PHONE
-    val chats = remember(state.sessions, state.remoteBindings, sections, scope, project, query) {
-        ChatLibrary.chats(state.sessions, state.remoteBindings, sections, scope, project?.key, query)
+    val chats = remember(state.sessions, state.remoteBindings, sections, scope, query) {
+        ChatLibrary.chats(state.sessions, state.remoteBindings, sections, scope, null, query)
     }
-    val projects = remember(sections, scope, query) { ChatLibrary.projects(sections, scope, query) }
-    var limit by remember(scope, projectKey, query, showProjects) { mutableIntStateOf(40) }
+    val projects = remember(sections, scope, query) { if (computer == null) emptyList() else ChatLibrary.projects(sections, scope, query) }
+    var limit by remember(scope, query) { mutableStateOf(40) }
     val listStates = remember { mutableMapOf<String, LazyListState>() }
-    val listState = listStates.getOrPut("$scope/$projectKey/$showProjects/$query") { LazyListState() }
-    fun backToProjects() { projectKey = null; projectsTab = true; query = projectSearch }
-    BackHandler(enabled = state.isDrawerOpen && project != null) { backToProjects() }
+    val listState = listStates.getOrPut(scope) { LazyListState() }
     val attention = SetupChecklist.outstanding(state.setupRows()) > 0
     val focus = LocalFocusManager.current
     val dismiss = { focus.clearFocus(); close() }
+    fun choose(id: String) { focus.clearFocus(); location = id }
     val newChat = {
         dismiss()
-        when {
-            project != null -> actions.onNewChatInProject(project.computerId, project.path)
-            computer != null -> actions.onNewProject(computer.id)
-            else -> actions.onNewChat()
-        }
+        if (computer != null) actions.onNewProject(computer.id) else actions.onNewChat()
     }
-    fun choose(id: String) { focus.clearFocus(); location = id; projectKey = null; if (id == ChatLibrary.PHONE) projectsTab = false }
+    val automationSummary = when {
+        state.automations.overview.blocked == 1 -> "1 needs you"
+        state.automations.overview.blocked > 1 -> "${state.automations.overview.blocked} need you"
+        state.automations.overview.enabled > 0 -> "${state.automations.overview.enabled} on"
+        else -> "${state.automations.total} off"
+    }
 
-    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-        Column(Modifier.fillMaxHeight().imePadding()) {
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 24.dp, end = 12.dp, top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Chats", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, contentDescription = "Close chats") }
+    CompositionLocalProvider(LocalContentColor provides LibraryLight) {
+        Row(Modifier.fillMaxHeight().background(LibraryGround).imePadding()) {
+            if (hasComputers) {
+                DeviceRail(
+                    state = state,
+                    sections = sections.map { it.computer },
+                    scope = scope,
+                    attention = attention,
+                    automationSummary = automationSummary,
+                    onChoose = ::choose,
+                    onAdd = { dismiss(); actions.onOpenComputers() },
+                    onAutomations = { dismiss(); actions.onOpenAutomations() },
+                    onFiles = { dismiss(); actions.onOpenWorkspaceFiles() },
+                    onSettings = { dismiss(); actions.onOpenSettings() },
+                )
             }
-
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).testTag("chat-library"),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                item(key = "new-chat", contentType = "new-chat") {
-                    Button(
-                        onClick = newChat,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).heightIn(min = 52.dp),
-                        shape = RoundedCornerShape(26.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary),
-                    ) {
-                        Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("New chat", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-                item(key = "search", contentType = "search") {
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                LibraryHeader(
+                    title = when {
+                        !hasComputers -> "Chats"
+                        scope == ChatLibrary.ALL -> "Everything"
+                        scope == ChatLibrary.PHONE -> "This phone"
+                        else -> computer?.label.orEmpty()
+                    },
+                    searching = searching,
+                    onSearch = { searching = !searching; if (!searching) query = "" },
+                    onClose = dismiss,
+                )
+                LibraryStatus(state, scope, computer, chats.size, sections.size)
+                AnimatedVisibility(visible = searching, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    val focusRequester = remember { FocusRequester() }
+                    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
                     TextField(
                         value = query, onValueChange = { query = it }, singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
-                        placeholder = { Text(if (showProjects) "Search projects" else "Search chats") },
-                        leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                        placeholder = { Text(if (computer != null) "Search ${computer.label}" else "Search chats") },
                         trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, "Clear search") } }) else null,
-                        shape = RoundedCornerShape(28.dp),
+                        shape = RoundedCornerShape(14.dp),
                         colors = TextFieldDefaults.colors(
-                            focusedContainerColor = LibraryField,
-                            unfocusedContainerColor = LibraryField,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedContainerColor = LibraryTile, unfocusedContainerColor = LibraryTile,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = LibraryAmber,
                         ),
-                        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 12.dp, bottom = 4.dp)
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 10.dp)
+                            .focusRequester(focusRequester)
                             .semantics { contentDescription = "Search chats or projects" },
                     )
                 }
-                // Only a computer makes "where" a question worth a row.
-                if (hasComputers) item(key = "devices", contentType = "devices") {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp),
-                        modifier = Modifier.padding(top = 6.dp),
-                    ) {
-                        item { DeviceChip("All devices", scope == ChatLibrary.ALL) { choose(ChatLibrary.ALL) } }
-                        item { DeviceChip("This phone", scope == ChatLibrary.PHONE, icon = Icons.Outlined.PhoneAndroid) { choose(ChatLibrary.PHONE) } }
-                        items(sections, key = { it.computer.id }) { section ->
-                            val setup = state.computerSetup[section.computer.id]
-                            DeviceChip(
-                                section.computer.label,
-                                scope == section.computer.id,
-                                icon = Icons.Outlined.Computer,
-                                dot = when {
-                                    setup is RemoteSetup.Working || section.computer.id in state.pcRefreshing -> LibraryAmber
-                                    setup is RemoteSetup.Ready -> LibraryTeal
-                                    else -> LibraryOffline
-                                },
-                            ) { choose(section.computer.id) }
-                        }
-                        item {
-                            IconButton(onClick = { dismiss(); actions.onOpenComputers() }) {
-                                Icon(Icons.Outlined.Tune, contentDescription = "Manage computers", tint = DrawerMuted)
+
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).testTag("chat-library"),
+                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),
+                ) {
+                    item(key = "new-chat", contentType = "new-chat") {
+                        NewChatCard(
+                            hint = when {
+                                computer != null -> "pick a folder"
+                                hasComputers -> "on this phone"
+                                else -> null
+                            },
+                            onClick = newChat,
+                        )
+                    }
+                    if (computer != null) {
+                        item(key = "connection", contentType = "connection") { LibraryConnection(state, computer.id, actions, dismiss) }
+                        item(key = "projects-label", contentType = "label") {
+                            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Caps("Projects", Modifier.weight(1f))
+                                TextButton(onClick = { dismiss(); actions.onNewProject(computer.id) }) { Text("New project", color = LibraryAmber) }
                             }
                         }
-                    }
-                }
-                if (project == null && scope != ChatLibrary.PHONE && hasComputers) item(key = "tabs", contentType = "tabs") {
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 10.dp, bottom = 2.dp)) {
-                        SegmentedButton(
-                            selected = !showProjects, onClick = { projectsTab = false },
-                            shape = SegmentedButtonDefaults.itemShape(0, 2),
-                            icon = {}, label = { Text("Recent chats", maxLines = 1) },
-                        )
-                        SegmentedButton(
-                            selected = showProjects, onClick = { projectsTab = true },
-                            shape = SegmentedButtonDefaults.itemShape(1, 2),
-                            icon = {}, label = { Text("Projects", maxLines = 1) },
-                        )
-                    }
-                }
-                if (project != null) item(key = "project-heading", contentType = "heading") {
-                    Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { backToProjects() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to projects") }
-                        Column(Modifier.weight(1f)) {
-                            Text(project.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(state.computers.firstOrNull { it.id == project.computerId }?.label.orEmpty(), style = MaterialTheme.typography.bodySmall, color = DrawerMuted)
+                        if (projects.isEmpty() && state.computerSetup[computer.id] is RemoteSetup.Ready) item(key = "no-projects", contentType = "empty") {
+                            LibraryEmpty(
+                                icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else Icons.Outlined.Folder,
+                                title = if (query.isNotBlank()) "Nothing matches" else "No projects yet",
+                                detail = if (query.isNotBlank()) "Try another name." else "Start a new chat to pick a folder on ${computer.label}.",
+                            )
                         }
-                    }
-                }
-                computer?.let { selected -> item(key = "connection", contentType = "connection") { LibraryConnection(state, selected.id, actions, dismiss) } }
-                if (state.isLoadingSessions) item(key = "loading", contentType = "loading") {
-                    Row(Modifier.fillMaxWidth().padding(vertical = 32.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = LibraryTeal)
-                        Spacer(Modifier.width(12.dp))
-                        Text("Loading chats", style = MaterialTheme.typography.bodyMedium, color = DrawerMuted)
-                    }
-                } else if (showProjects) {
-                    if (projects.isEmpty()) item(key = "empty-projects", contentType = "empty") {
-                        LibraryEmpty(
-                            icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else Icons.Outlined.Folder,
-                            title = if (query.isNotBlank()) "No matching projects" else "No projects yet",
-                            detail = if (query.isNotBlank()) "Try another name." else "Pick a computer and start a new chat to choose a folder.",
-                        )
-                    }
-                    item(key = "projects-top", contentType = "spacer") { Spacer(Modifier.height(6.dp)) }
-                    items(projects, key = { it.key }, contentType = { "project" }) { row ->
-                        val owner = state.computers.firstOrNull { it.id == row.computerId }
-                        ProjectRow(
-                            name = row.name,
-                            detail = listOfNotNull(
-                                owner?.label.takeIf { scope == ChatLibrary.ALL },
-                                if (row.chats.size == 1) "1 chat" else "${row.chats.size} chats",
-                            ).joinToString(" · "),
-                            modifier = Modifier.animateItem(),
-                        ) { focus.clearFocus(); projectSearch = query; query = ""; projectKey = row.key }
-                    }
-                } else {
-                    if (chats.isEmpty()) item(key = "empty-chats", contentType = "empty") {
-                        LibraryEmpty(
-                            icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else Icons.Outlined.Forum,
-                            title = if (query.isNotBlank()) "No matching chats" else "No chats here yet",
-                            detail = if (query.isNotBlank()) "Try another name or choose All devices." else "Start a new chat when you are ready.",
-                        )
-                    }
-                    val visible = chats.take(limit)
-                    val rows = visible.associateBy { it.key }
-                    val groups = ChatDayGroups.group(visible.map { ChatSession(it.key, it.entry.title, 0L, it.entry.updatedAt) }, System.currentTimeMillis())
-                    groups.forEach { group ->
-                        item(key = "day-${group.label}", contentType = "day") { DrawerSectionLabel(group.label, Modifier.animateItem().padding(top = 10.dp)) }
-                        items(group.sessions, key = { it.id }, contentType = { "chat" }) { stub ->
-                            val row = rows.getValue(stub.id)
-                            val owner = state.computers.firstOrNull { it.id == row.computerId }
-                            // Where a chat lives is worth saying only when there is more than one place.
-                            val where = when {
-                                project != null || !hasComputers -> null
-                                row.computerId == null -> if (scope == ChatLibrary.ALL) "This phone" else null
-                                else -> listOfNotNull(owner?.label.takeIf { scope == ChatLibrary.ALL }, row.project?.name).joinToString(" · ").ifBlank { null }
+                        projects.forEachIndexed { index, project ->
+                            val holdsCurrent = project.chats.any { (it as? PcChatEntry.Local)?.session?.id == state.activeSessionId }
+                            val open = expanded[project.key] ?: (query.isNotBlank() || holdsCurrent || index == 0)
+                            val matching = if (query.isBlank() || project.name.contains(query.trim(), true)) project.chats
+                            else project.chats.filter { it.title.contains(query.trim(), true) }
+                            item(key = project.key, contentType = "project") {
+                                ProjectHeader(project.name, project.chats.size, open, Modifier.animateItem()) {
+                                    focus.clearFocus(); expanded[project.key] = !open
+                                }
                             }
-                            val whereIcon = if (where == null) null else if (row.computerId == null) Icons.Outlined.PhoneAndroid else Icons.Outlined.Computer
-                            val local = (row.entry as? PcChatEntry.Local)?.session
-                            Box(Modifier.animateItem()) {
-                                if (local != null) {
-                                    SessionRow(
-                                        session = local, onComputer = false, selected = local.id == state.activeSessionId,
-                                        running = state.runState.active && local.id == state.runState.sessionId,
-                                        onSelect = { dismiss(); actions.onSelectSession(local.id) },
-                                        onRename = { actions.onRenameSession(local.id, it) },
-                                        onDelete = { actions.onDeleteSession(local.id) },
-                                        subtitle = where, subtitleIcon = whereIcon,
-                                    )
-                                } else {
-                                    CodexThreadRow(
-                                        title = row.entry.title,
-                                        detail = listOfNotNull(where, "In Codex on the computer").joinToString(" · "),
-                                    ) { dismiss(); actions.onOpenPcThread(row.computerId!!, (row.entry as PcChatEntry.OnComputer).thread.id) }
+                            if (open) {
+                                val all = showAll[project.key] == true
+                                val rows = if (all) matching else matching.take(CHATS_PER_PROJECT)
+                                items(rows, key = { "${project.key}/${it.key}" }, contentType = { "chat" }) { entry ->
+                                    Box(Modifier.animateItem().padding(start = 18.dp)) {
+                                        LibraryChatRow(
+                                            entry = entry,
+                                            detail = listOfNotNull(
+                                                if (entry is PcChatEntry.OnComputer) "In Codex on ${computer.label}" else null,
+                                                shortTime(entry.updatedAt),
+                                            ).joinToString(" · "),
+                                            leading = null,
+                                            state = state,
+                                            actions = actions,
+                                            dismiss = dismiss,
+                                            computerId = computer.id,
+                                        )
+                                    }
+                                }
+                                if (matching.size > CHATS_PER_PROJECT) item(key = "${project.key}/more", contentType = "quiet") {
+                                    QuietLink(if (all) "Show fewer" else "Show all ${matching.size}", Modifier.animateItem().padding(start = 30.dp)) { showAll[project.key] = !all }
+                                }
+                                item(key = "${project.key}/new", contentType = "quiet") {
+                                    QuietLink("New chat here", Modifier.animateItem().padding(start = 30.dp), icon = Icons.Outlined.Add) {
+                                        dismiss(); actions.onNewChatInProject(project.computerId, project.path)
+                                    }
                                 }
                             }
                         }
-                    }
-                    if (chats.size > limit) item(key = "more", contentType = "more") {
-                        TextButton(onClick = { limit += 40 }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Show more chats", color = LibraryTeal) }
+                    } else {
+                        if (state.isLoadingSessions) item(key = "loading", contentType = "loading") {
+                            Row(Modifier.fillMaxWidth().padding(vertical = 32.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LibraryAmber)
+                                Spacer(Modifier.width(12.dp))
+                                Text("Loading chats", style = MaterialTheme.typography.bodyMedium, color = LibraryMuted)
+                            }
+                        } else if (chats.isEmpty()) item(key = "empty", contentType = "empty") {
+                            LibraryEmpty(
+                                icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else Icons.Outlined.Forum,
+                                title = if (query.isNotBlank()) "Nothing matches" else "No chats yet",
+                                detail = if (query.isNotBlank()) "Try another word." else "Start one with New chat.",
+                            )
+                        }
+                        val visible = chats.take(limit)
+                        val byKey = visible.associateBy { it.key }
+                        val groups = ChatDayGroups.group(visible.map { ChatSession(it.key, it.entry.title, 0L, it.entry.updatedAt) }, System.currentTimeMillis())
+                        groups.forEach { group ->
+                            item(key = "day-${group.label}", contentType = "day") { Caps(group.label, Modifier.animateItem().padding(start = 12.dp, top = 18.dp, bottom = 4.dp)) }
+                            items(group.sessions, key = { it.id }, contentType = { "chat" }) { stub ->
+                                val row = byKey.getValue(stub.id)
+                                val owner = state.computers.firstOrNull { it.id == row.computerId }
+                                val detail = listOfNotNull(
+                                    if (scope == ChatLibrary.ALL && owner != null) row.project?.name else null,
+                                    if (row.entry is PcChatEntry.OnComputer) "In Codex" else null,
+                                    shortTime(row.entry.updatedAt),
+                                ).joinToString(" · ")
+                                Box(Modifier.animateItem()) {
+                                    LibraryChatRow(
+                                        entry = row.entry,
+                                        detail = detail,
+                                        leading = if (scope == ChatLibrary.ALL && hasComputers) ({ PlaceBadge(owner) }) else null,
+                                        state = state,
+                                        actions = actions,
+                                        dismiss = dismiss,
+                                        computerId = row.computerId,
+                                    )
+                                }
+                            }
+                        }
+                        if (chats.size > limit) item(key = "more", contentType = "quiet") {
+                            QuietLink("Show more chats", Modifier.padding(start = 12.dp)) { limit += 40 }
+                        }
                     }
                 }
-            }
 
-            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = LibraryTile)
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                if (state.automations.total > 0) {
-                    val summary = when {
-                        state.automations.overview.blocked == 1 -> "1 needs you"
-                        state.automations.overview.blocked > 1 -> "${state.automations.overview.blocked} need you"
-                        state.automations.overview.enabled > 0 -> "${state.automations.overview.enabled} on"
-                        else -> "${state.automations.total} off"
+                // Without a rail these live at the bottom of the page instead.
+                if (!hasComputers) {
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = LibraryLine)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (state.automations.total > 0) {
+                            FooterLink(Icons.Outlined.Schedule, "Automations", Modifier.weight(1f).semantics { contentDescription = "Automations, $automationSummary" }, alert = state.automations.overview.needsAttention) { dismiss(); actions.onOpenAutomations() }
+                        }
+                        FooterLink(Icons.Outlined.Folder, "Files", Modifier.weight(1f)) { dismiss(); actions.onOpenWorkspaceFiles() }
+                        FooterLink(Icons.Outlined.Settings, "Settings", Modifier.weight(1f).semantics { if (attention) contentDescription = "Settings, needs attention" }, alert = attention) { dismiss(); actions.onOpenSettings() }
                     }
-                    FooterRow(
-                        icon = Icons.Outlined.Schedule,
-                        label = "Automations",
-                        trailing = summary,
-                        alert = state.automations.overview.needsAttention,
-                        modifier = Modifier.semantics { contentDescription = "Automations, $summary" },
-                    ) { dismiss(); actions.onOpenAutomations() }
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FooterRow(Icons.Outlined.Folder, "Files", modifier = Modifier.weight(1f)) { dismiss(); actions.onOpenWorkspaceFiles() }
-                    FooterRow(
-                        Icons.Outlined.Settings, "Settings", alert = attention,
-                        modifier = Modifier.weight(1f).semantics { if (attention) contentDescription = "Settings, needs attention" },
-                    ) { dismiss(); actions.onOpenSettings() }
                 }
             }
         }
     }
 }
 
-/** One device in the "where" row: selected is filled, others outlined; computers carry their state as a dot. */
 @Composable
-private fun DeviceChip(label: String, selected: Boolean, icon: ImageVector? = null, dot: Color? = null, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        leadingIcon = {
-            if (dot != null) {
-                Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
-                    icon?.let { Icon(it, null, Modifier.size(18.dp)) }
-                    Box(Modifier.align(Alignment.BottomEnd).size(7.dp).background(dot, CircleShape))
+private fun DeviceRail(
+    state: AgentUiState,
+    sections: List<RemoteComputer>,
+    scope: String,
+    attention: Boolean,
+    automationSummary: String,
+    onChoose: (String) -> Unit,
+    onAdd: () -> Unit,
+    onAutomations: () -> Unit,
+    onFiles: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    Column(
+        Modifier.width(72.dp).fillMaxHeight().background(LibraryRail).padding(top = 20.dp, bottom = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            RailButton("All devices", scope == ChatLibrary.ALL, onClick = { onChoose(ChatLibrary.ALL) }) {
+                Icon(Icons.Outlined.Layers, null, Modifier.size(22.dp))
+            }
+            Box(Modifier.width(28.dp).height(1.dp).background(LibraryLine))
+            RailButton("This phone", scope == ChatLibrary.PHONE, onClick = { onChoose(ChatLibrary.PHONE) }) {
+                Icon(Icons.Outlined.PhoneAndroid, null, Modifier.size(20.dp))
+            }
+            sections.forEach { computer ->
+                val setup = state.computerSetup[computer.id]
+                val busy = setup is RemoteSetup.Working || computer.id in state.pcRefreshing
+                val dot = when {
+                    busy -> LibraryAmber
+                    setup is RemoteSetup.Ready -> LibraryTeal
+                    else -> LibraryOffline
                 }
-            } else icon?.let { Icon(it, null, Modifier.size(18.dp)) }
-        },
-        shape = RoundedCornerShape(10.dp),
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-            selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            selectedLeadingIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            labelColor = MaterialTheme.colorScheme.onSurface,
-            iconColor = DrawerMuted,
-        ),
-        border = FilterChipDefaults.filterChipBorder(enabled = true, selected = selected, borderColor = LibraryTile, selectedBorderColor = Color.Transparent),
-        modifier = Modifier.heightIn(min = 40.dp),
+                val status = when {
+                    busy -> "connecting"
+                    setup is RemoteSetup.Ready -> "connected"
+                    else -> "not connected"
+                }
+                RailButton("${computer.label}, $status", scope == computer.id, dot = dot, label = computer.label, onClick = { onChoose(computer.id) }) {
+                    Text(monogram(computer.label), fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                }
+            }
+            Surface(
+                onClick = onAdd,
+                shape = CircleShape,
+                color = Color.Transparent,
+                border = BorderStroke(1.dp, LibraryLine),
+                modifier = Modifier.size(48.dp).semantics { contentDescription = "Manage computers" },
+            ) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Add, null, Modifier.size(18.dp), tint = LibraryMuted) }
+            }
+        }
+        RailIcon(Icons.Outlined.Schedule, "Automations, $automationSummary", alert = state.automations.overview.needsAttention, onClick = onAutomations)
+        RailIcon(Icons.Outlined.Folder, "Files", onClick = onFiles)
+        RailIcon(Icons.Outlined.Settings, if (attention) "Settings, needs attention" else "Settings", alert = attention, onClick = onSettings)
+    }
+}
+
+/** A place on the rail: a circle that squares off when chosen, with its name under it. */
+@Composable
+private fun RailButton(
+    description: String,
+    selected: Boolean,
+    dot: Color? = null,
+    label: String? = null,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val chosen = selected
+    val corner by animateDpAsState(if (selected) 16.dp else 24.dp, label = "rail-corner")
+    val fill by animateColorAsState(if (selected) LibraryLight else LibraryTile, label = "rail-fill")
+    val ink by animateColorAsState(if (selected) LibraryGround else LibraryLight, label = "rail-ink")
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box {
+            Surface(
+                onClick = onClick,
+                shape = RoundedCornerShape(corner),
+                color = fill,
+                contentColor = ink,
+                modifier = Modifier.size(48.dp).semantics { contentDescription = description; this.selected = chosen; role = Role.Tab },
+            ) { Box(contentAlignment = Alignment.Center) { content() } }
+            dot?.let {
+                Box(Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp).size(14.dp).background(LibraryRail, CircleShape), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(8.dp).background(it, CircleShape))
+                }
+            }
+        }
+        label?.let {
+            Text(
+                it, style = MaterialTheme.typography.labelSmall, color = if (selected) LibraryLight else LibraryFaint,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(64.dp).padding(top = 4.dp), textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RailIcon(icon: ImageVector, description: String, alert: Boolean = false, onClick: () -> Unit) {
+    Box {
+        IconButton(onClick = onClick, modifier = Modifier.semantics { contentDescription = description }) {
+            Icon(icon, null, Modifier.size(20.dp), tint = LibraryMuted)
+        }
+        if (alert) Box(Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp).size(7.dp).background(MaterialTheme.colorScheme.error, CircleShape))
+    }
+}
+
+@Composable
+private fun LibraryHeader(title: String, searching: Boolean, onSearch: () -> Unit, onClose: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            title,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Medium,
+            fontSize = 28.sp,
+            letterSpacing = (-0.4).sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onSearch) {
+            Icon(if (searching) Icons.Outlined.Close else Icons.Outlined.Search, contentDescription = if (searching) "Close search" else "Search")
+        }
+        IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, contentDescription = "Close chats", tint = LibraryMuted) }
+    }
+}
+
+/** One line under the title: how much is here, or how the computer is. */
+@Composable
+private fun LibraryStatus(state: AgentUiState, scope: String, computer: RemoteComputer?, chatCount: Int, computers: Int) {
+    val (text, color) = when {
+        computer != null -> when (val setup = state.computerSetup[computer.id]) {
+            is RemoteSetup.Ready -> listOfNotNull(
+                if (computer.id in state.pcRefreshing) "Refreshing" else "Connected",
+                if (setup.route?.viaVpn == true) "over VPN" else null,
+                computer.os?.label,
+            ).joinToString(" · ") to (if (computer.id in state.pcRefreshing) LibraryAmber else LibraryTeal)
+            is RemoteSetup.Working -> setup.step to LibraryAmber
+            else -> "Not connected" to LibraryMuted
+        }
+        scope == ChatLibrary.ALL && computers > 0 -> "${computers + 1} places · $chatCount chats" to LibraryMuted
+        else -> (if (chatCount == 1) "1 chat" else "$chatCount chats") to LibraryMuted
+    }
+    Row(Modifier.padding(start = 20.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (computer != null) {
+            Box(Modifier.size(6.dp).background(color, CircleShape))
+            Spacer(Modifier.width(7.dp))
+        }
+        Text(text, style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun NewChatCard(hint: String?, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = LibraryLight,
+        contentColor = LibraryGround,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+    ) {
+        Row(Modifier.heightIn(min = 52.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.EditNote, null, Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+            Text("New chat", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Spacer(Modifier.weight(1f))
+            hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFF5B5953)) }
+        }
+    }
+}
+
+@Composable
+private fun Caps(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text.uppercase(),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        letterSpacing = 1.sp,
+        color = LibraryFaint,
+        modifier = modifier,
     )
 }
 
 @Composable
-private fun ProjectRow(name: String, detail: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(20.dp), modifier = modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).background(LibraryTile, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Folder, null, tint = LibraryTeal, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = DrawerMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Icon(Icons.Outlined.ChevronRight, "Open $name", tint = DrawerMuted, modifier = Modifier.size(20.dp))
+private fun ProjectHeader(name: String, count: Int, open: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(onClick = onClick, color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp), modifier = modifier.fillMaxWidth()) {
+        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (open) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight, if (open) "Close $name" else "Open $name", Modifier.size(18.dp), tint = LibraryMuted)
+            Spacer(Modifier.width(10.dp))
+            Text(name, style = MaterialTheme.typography.bodyLarge, fontSize = 15.sp, fontWeight = if (open) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text("$count", fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = LibraryFaint)
         }
     }
 }
 
-/** A conversation only Codex on the computer has so far: opening it brings it here. */
+/** Which place a chat lives in, as a small monogram or a phone. */
 @Composable
-private fun CodexThreadRow(title: String, detail: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.Center) {
-            Text(title.ifBlank { "Untitled chat" }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Computer, null, tint = DrawerMuted, modifier = Modifier.size(13.dp))
-                Spacer(Modifier.width(5.dp))
-                Text(detail, style = MaterialTheme.typography.labelSmall, color = DrawerMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun PlaceBadge(computer: RemoteComputer?) {
+    Box(Modifier.size(28.dp).background(LibraryTile, CircleShape), contentAlignment = Alignment.Center) {
+        if (computer == null) Icon(Icons.Outlined.PhoneAndroid, "This phone", Modifier.size(14.dp), tint = LibraryMuted)
+        else Text(monogram(computer.label), fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+            modifier = Modifier.semantics { contentDescription = computer.label })
+    }
+}
+
+@Composable
+private fun LibraryChatRow(
+    entry: PcChatEntry,
+    detail: String,
+    leading: (@Composable () -> Unit)?,
+    state: AgentUiState,
+    actions: AgentUiActions,
+    dismiss: () -> Unit,
+    computerId: String?,
+) {
+    val local = (entry as? PcChatEntry.Local)?.session
+    if (local != null) {
+        val running = state.runState.active && local.id == state.runState.sessionId
+        SessionRow(
+            session = local, onComputer = false, selected = local.id == state.activeSessionId,
+            running = running,
+            onSelect = { dismiss(); actions.onSelectSession(local.id) },
+            onRename = { actions.onRenameSession(local.id, it) },
+            onDelete = { actions.onDeleteSession(local.id) },
+            subtitle = if (running) listOf("Running", detail).filter { it.isNotBlank() }.joinToString(" · ") else detail.ifBlank { null },
+            leading = leading,
+            subtitleColor = if (running) LibraryAmber else null,
+        )
+    } else {
+        Surface(
+            onClick = { dismiss(); actions.onOpenPcThread(computerId!!, (entry as PcChatEntry.OnComputer).thread.id) },
+            color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                leading?.let { it(); Spacer(Modifier.width(12.dp)) }
+                Column(Modifier.weight(1f)) {
+                    Text(entry.title.ifBlank { "Untitled chat" }, style = MaterialTheme.typography.bodyMedium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(detail, style = MaterialTheme.typography.labelSmall, fontSize = 12.sp, color = LibraryMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun QuietLink(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, onClick: () -> Unit) {
+    Surface(onClick = onClick, color = Color.Transparent, contentColor = LibraryAmber, shape = RoundedCornerShape(12.dp), modifier = modifier.fillMaxWidth()) {
+        Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            icon?.let { Icon(it, null, Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)) }
+            Text(text, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
 
 @Composable
 private fun LibraryEmpty(icon: ImageVector, title: String, detail: String) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(48.dp).background(LibraryTile, CircleShape), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = DrawerMuted, modifier = Modifier.size(24.dp))
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(44.dp).border(1.dp, LibraryLine, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = LibraryMuted, modifier = Modifier.size(20.dp))
         }
-        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 14.dp), textAlign = TextAlign.Center)
-        Text(detail, style = MaterialTheme.typography.bodyMedium, color = DrawerMuted, modifier = Modifier.padding(top = 6.dp), textAlign = TextAlign.Center)
+        Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp), textAlign = TextAlign.Center)
+        Text(detail, style = MaterialTheme.typography.bodySmall, color = LibraryMuted, modifier = Modifier.padding(top = 4.dp), textAlign = TextAlign.Center)
     }
 }
 
 @Composable
-private fun FooterRow(
-    icon: ImageVector,
-    label: String,
-    modifier: Modifier = Modifier,
-    trailing: String? = null,
-    alert: Boolean = false,
-    onClick: () -> Unit,
-) {
-    Surface(onClick = onClick, color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(24.dp), modifier = modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(12.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f, fill = trailing != null), maxLines = 1)
-            trailing?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = DrawerMuted, maxLines = 1) }
-            if (alert) { Spacer(Modifier.width(8.dp)); StatusDot(MaterialTheme.colorScheme.error, size = 7.dp) }
+private fun FooterLink(icon: ImageVector, label: String, modifier: Modifier = Modifier, alert: Boolean = false, onClick: () -> Unit) {
+    Surface(onClick = onClick, color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp), modifier = modifier) {
+        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Icon(icon, null, Modifier.size(18.dp), tint = LibraryMuted)
+            Spacer(Modifier.width(8.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            if (alert) { Spacer(Modifier.width(6.dp)); StatusDot(MaterialTheme.colorScheme.error, size = 6.dp) }
         }
     }
 }
@@ -434,27 +617,33 @@ private fun FooterRow(
 @Composable
 private fun LibraryConnection(state: AgentUiState, id: String, actions: AgentUiActions, close: () -> Unit) {
     val setup = state.computerSetup[id]
-    Box(Modifier.padding(horizontal = 4.dp, vertical = 6.dp)) {
+    Box(Modifier.padding(horizontal = 4.dp).padding(top = 10.dp)) {
         when (setup) {
-            is RemoteSetup.Working -> Column(Modifier.padding(horizontal = 4.dp)) {
-                LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = LibraryTeal, trackColor = LibraryTile)
-                Text(setup.step, style = MaterialTheme.typography.bodySmall, color = DrawerMuted, modifier = Modifier.padding(top = 8.dp))
-            }
+            is RemoteSetup.Working -> LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = LibraryAmber, trackColor = LibraryTile)
             is RemoteSetup.Failed -> PcProblemCard(message = setup.message, primary = "Try again", onPrimary = { actions.onReconnectComputer(id) }, secondary = "Settings", onSecondary = { close(); actions.onOpenComputers() }, modifier = Modifier.padding(0.dp))
             is RemoteSetup.NeedsTailscaleApproval -> TailscaleApprovalCard(state.computers.first { it.id == id }.label, setup.url, { actions.onOpenTailscaleApproval(id, it) }, { actions.onReconnectComputer(id) })
             is RemoteSetup.NeedsSignIn -> PcProblemCard("Codex needs a sign-in on this computer.", "Sign in", { close(); actions.onOpenComputers() })
-            is RemoteSetup.Ready -> Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                val refreshing = id in state.pcRefreshing
-                if (refreshing) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = LibraryAmber)
-                else Box(Modifier.size(7.dp).background(LibraryTeal, CircleShape))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (refreshing) "Refreshing chats…" else "Connected${if (setup.route?.viaVpn == true) " over VPN" else ""}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (refreshing) LibraryAmber else LibraryTeal,
-                )
-            }
-            null -> QuietRow("Connect to load chats", Icons.Outlined.Computer) { actions.onReconnectComputer(id) }
+            is RemoteSetup.Ready -> Unit
+            null -> QuietLink("Connect to load its projects", icon = Icons.Outlined.Computer) { actions.onReconnectComputer(id) }
         }
     }
+}
+
+/** First letter of a computer's name, for the rail and the badges. */
+internal fun monogram(label: String): String = label.trim().firstOrNull()?.uppercase() ?: "?"
+
+/** Today: the time. This week: the weekday. Older: the date. */
+internal fun shortTime(timestamp: Long, now: Long = System.currentTimeMillis()): String {
+    if (timestamp <= 0) return ""
+    val zone = java.time.ZoneId.systemDefault()
+    val then = java.time.Instant.ofEpochMilli(timestamp).atZone(zone)
+    val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val days = java.time.temporal.ChronoUnit.DAYS.between(then.toLocalDate(), today)
+    val pattern = when {
+        days <= 0L -> "HH:mm"
+        days < 7L -> "EEE"
+        then.year == java.time.Instant.ofEpochMilli(now).atZone(zone).year -> "d MMM"
+        else -> "d MMM yyyy"
+    }
+    return then.format(java.time.format.DateTimeFormatter.ofPattern(pattern, java.util.Locale.getDefault()))
 }

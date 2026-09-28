@@ -250,7 +250,7 @@ fun AndroidAgentScreen(
                     modifier = Modifier
                         .fillMaxHeight()
                         .widthIn(max = 360.dp),
-                    drawerContainerColor = DrawerSurface,
+                    drawerContainerColor = LibraryGround,
                     // Named, because the drawer's own color is not in the scheme
                     // and Compose then cannot tell which text color goes on it.
                     drawerContentColor = MaterialTheme.colorScheme.onSurface,
@@ -305,6 +305,7 @@ fun AndroidAgentScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
+                        TransferBanner(state.fileTransfer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                         state.runState.approval?.let { approval ->
                             ApprovalCard(
                                 approval = approval,
@@ -372,19 +373,22 @@ internal fun SessionRow(
     onDelete: () -> Unit,
     subtitle: String? = null,
     subtitleIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    leading: (@Composable () -> Unit)? = null,
+    subtitleColor: Color? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleteOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var renameText by rememberSaveable(session.id) { mutableStateOf(session.title) }
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(12.dp)
 
     Box(Modifier.fillMaxWidth()) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = shape,
-            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-            contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+            // The open chat is lifted, not coloured: colour is kept for "running".
+            color = if (selected) Color(0xFF252422) else Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
             Row(
                 modifier = Modifier
@@ -395,12 +399,13 @@ internal fun SessionRow(
                         onLongClick = { menuOpen = true },
                         onLongClickLabel = "Session actions",
                     )
-                    .heightIn(min = 52.dp)
-                    .padding(start = 14.dp, end = if (selected) 4.dp else 14.dp),
+                    .heightIn(min = 56.dp)
+                    .padding(start = 12.dp, end = if (selected) 4.dp else 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (running) {
-                    StatusDot(color = DrawerRunning, size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
+                leading?.let { it(); Spacer(Modifier.width(12.dp)) }
+                if (running && leading == null) {
+                    StatusDot(color = Color(0xFFE8C9A0), size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
                 }
                 if (onComputer) {
                     Icon(
@@ -416,16 +421,17 @@ internal fun SessionRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                        fontSize = 15.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                     )
                     subtitle?.let {
                         Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                            val tint = if (selected) MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant
+                            val tint = subtitleColor ?: Color(0xFF8E8C85)
                             subtitleIcon?.let { icon ->
                                 Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(5.dp))
                             }
-                            Text(it, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(it, style = MaterialTheme.typography.labelSmall, fontSize = 12.sp, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
