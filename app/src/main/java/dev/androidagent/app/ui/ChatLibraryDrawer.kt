@@ -295,7 +295,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                 val row = byKey.getValue(stub.id)
                                 val owner = state.computers.firstOrNull { it.id == row.computerId }
                                 val detail = listOfNotNull(
-                                    if (scope == ChatLibrary.ALL && owner != null) row.project?.name else null,
+                                    if (scope == ChatLibrary.ALL && owner != null) row.project?.name?.takeIf { !it.equals(row.entry.title, true) } else null,
                                     if (row.entry is PcChatEntry.OnComputer) "In Codex" else null,
                                     shortTime(row.entry.updatedAt),
                                 ).joinToString(" · ")
