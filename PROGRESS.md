@@ -1,5 +1,19 @@
 # Progress
 
+### Chat library restyle, on the Nothing A059 — 2026-09-28
+
+Build of `ad465e4` (local versionCode 1024) installed with `install -r` on the
+Nothing A059; accessibility stayed enabled. With two computers saved (Pc on
+Windows, Server on Ubuntu): device chips showed All devices / This phone /
+Pc / Server with status dots; Projects listed projects from both computers;
+the Pc chip showed "Connected over VPN" and its projects from Codex on the
+PC. A new chat in the Android-agent-use project ran on the PC and answered
+"What git branch is this folder on?" with the branch the main checkout is
+on. On the Xiaomi Redmi 12 (phone chats only) the device row and the "This
+phone" labels are hidden. Not checked: long-press rename/delete on a device,
+the instrumented `ChatLibraryUiTest` (not run: installing the test APK
+turns off accessibility).
+
 ## Chat library UI — 2026-09-28
 
 Replaced the nested computer/project/chat tree with recent chats, a device
