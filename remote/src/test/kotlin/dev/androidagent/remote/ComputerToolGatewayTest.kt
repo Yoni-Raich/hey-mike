@@ -86,6 +86,13 @@ class ComputerToolGatewayTest {
         assertTrue(unknownProject["message"]!!.jsonPrimitive.content.contains("app"))
     }
 
+    @Test fun copyToPhoneWantsAFullPath() {
+        val store = RemoteStore(File(temp.root, "c.bin"), PlainBox)
+        store.save(RemoteComputer(id = "pc", label = "Desk", host = "192.168.1.20", user = "yoni"), "secret")
+        val reply = call(gateway(store), "mode" to "copy_to_phone", "path" to "notes.md")
+        assertEquals("relative_path", reply["errorType"]!!.jsonPrimitive.content)
+    }
+
     @Test fun nothingRunsAfterStop() {
         val gateway = gateway()
         gateway.revoke()

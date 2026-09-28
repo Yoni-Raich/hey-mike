@@ -235,7 +235,12 @@ class AgentGraph(private val app: Application) {
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
     /** The user's computers, from any chat. Passwords and bindings stay with the app. */
-    val computerTools = dev.androidagent.remote.ComputerToolGateway(remote, sessions, computerRequests, ::bringAppForward)
+    val computerTools = dev.androidagent.remote.ComputerToolGateway(
+        remote, sessions, computerRequests,
+        saveToPhone = sharedFileStore::save,
+        scratch = java.io.File(app.cacheDir, "from-computer"),
+        bringToForeground = ::bringAppForward,
+    )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(

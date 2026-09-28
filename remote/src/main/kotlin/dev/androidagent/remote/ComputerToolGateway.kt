@@ -49,6 +49,13 @@ class ComputerToolGateway(
     private val sessions: SessionStore,
     /** Read by the app's screen, which clears it once shown. */
     private val requests: MutableStateFlow<ComputerUiRequest?>,
+    /**
+     * Save a copied file into the phone's shared storage and return its
+     * `content://media/...` address. Null: `copy_to_phone` is refused.
+     */
+    private val saveToPhone: (suspend (file: File, phonePath: String) -> String)? = null,
+    /** Where a copy waits between the computer and shared storage. */
+    private val scratch: File? = null,
     private val bringToForeground: () -> Unit,
 ) : DeviceToolGateway {
 
@@ -82,6 +89,7 @@ class ComputerToolGateway(
                 "new_project" -> newProject(arguments)
                 "open_chat" -> openChat(arguments)
                 "add" -> add(arguments)
+                "copy_to_phone" -> copyToPhone(arguments)
                 else -> refusal("unknown_mode", "\"$mode\" is not a mode. Use ${MODES.joinToString(", ")}.")
             }
         } catch (refused: Refused) {
@@ -187,6 +195,39 @@ class ComputerToolGateway(
         }
     }
 
+    /**
+     * A file on a computer, copied into the phone's shared storage from any
+     * chat. A phone chat has no shell on the computer, so without this it
+     * could name a file there and never reach it.
+     */
+    private suspend fun copyToPhone(arguments: JsonObject): ToolResult {
+        val computer = computer(arguments)
+        val path = arguments.text("path") ?: throw Refused("missing_path", "Give the file's full path on ${computer.label}.")
+        if (!path.matches(ABSOLUTE)) throw Refused("relative_path", "Give the full path on ${computer.label}, such as C:\\Users\\me\\file.txt or /home/me/file.txt.")
+        val save = saveToPhone ?: throw Refused("unsupported", "This build cannot save files on the phone.")
+        val dir = scratch ?: throw Refused("unsupported", "This build cannot save files on the phone.")
+        val name = folderName(path)
+        val local = File(dir, "${UUID.randomUUID()}/$name")
+        try {
+            hub.download(computer.id, path, local, Long.MAX_VALUE)
+            val phonePath = arguments.text("phonePath") ?: "Download/$name"
+            val uri = save(local, phonePath)
+            return ok {
+                put("computer", computer.label)
+                put("from", path)
+                put("uri", uri)
+                put("bytes", local.length())
+                put("note", "Saved on the phone. To send it, call files_media with operation share and this uri.")
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            throw Refused("copy_failed", "Could not copy $path from ${computer.label}: ${error.message}")
+        } finally {
+            local.parentFile?.deleteRecursively()
+        }
+    }
+
     private fun add(arguments: JsonObject): ToolResult {
         val host = arguments.text("host").orEmpty()
         val vpnHost = arguments.text("vpnHost").orEmpty()
@@ -238,7 +279,7 @@ class ComputerToolGateway(
     companion object {
         const val NAME = "computers"
         private const val RECENT = 8
-        private val MODES = listOf("status", "browse", "new_project", "open_chat", "add")
+        private val MODES = listOf("status", "browse", "new_project", "open_chat", "add", "copy_to_phone")
         private val ABSOLUTE = Regex("^([A-Za-z]:[\\\\/]|/).*")
 
         /** Windows paths ignore case and may use either slash; Linux paths are kept as they are. */
@@ -259,6 +300,8 @@ class ComputerToolGateway(
                 "new_project: make a folder on a computer a project (create: true makes the folder). " +
                 "open_chat: start a chat in a project to work there; message is the task plus what this chat decided, " +
                 "and the user sends it. add: fill in the app's add-computer form; the user types the password there. " +
+                "copy_to_phone: copy a file from a computer (path, full) into the phone's storage (phonePath, " +
+                "default Download/<name>) and get a content:// uri to share. " +
                 "computer is a name or id; the default computer when left out."
 
         val DEFINITION = ToolDefinition(
@@ -273,7 +316,8 @@ class ComputerToolGateway(
                         put("description", "Defaults to status.")
                     })
                     put("computer", prop("string", "Computer name or id. Leave out for the default computer."))
-                    put("path", prop("string", "browse, new_project: a path on the computer, such as C:\\Users\\me\\src or /home/me/src. browse: blank is the home folder."))
+                    put("path", prop("string", "browse, new_project, copy_to_phone: a path on the computer, such as C:\\Users\\me\\src or /home/me/src. browse: blank is the home folder."))
+                    put("phonePath", prop("string", "copy_to_phone: where on the phone, such as Download/report.pdf or Pictures/shot.png."))
                     put("create", prop("boolean", "new_project: make the folder if it does not exist."))
                     put("project", prop("string", "open_chat: a project's name or its folder's full path."))
                     put("message", prop("string", "open_chat: the task for the new chat, written for the user to send."))
