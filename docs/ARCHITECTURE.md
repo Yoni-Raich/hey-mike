@@ -134,6 +134,35 @@ tool calls, then interrupts an active delegated turn, stops microphone capture,
 and asks app-server to stop the realtime conversation. Completed side effects
 cannot be undone.
 
+
+### Assistant panel over the current app
+
+Holding the power button with Mike as the digital assistant opens a panel over
+the app the user is in, instead of switching to Mike. The
+`VoiceInteractionSession` draws it: a glow sweeps around the screen edge from
+the power button, then a card rises from the bottom with the voice orb, the
+live transcript, and Mute, Open Mike and End. Only the card takes touches, so
+the app underneath can still be read and scrolled. While Mike acts on the
+screen, the card fades and takes no touches, so Mike's taps reach the app.
+
+The screen comes from Android itself: `onHandleAssist` delivers the focused
+app's `AssistStructure`, which the system sends only while "Use text from
+screen" is on. `ScreenText` flattens it to at most 4,000 characters and never
+reads a password field. It enters the realtime conversation as one
+`developer` message that tells the model to wait for the user, so Mike does
+not read the screen back unprompted. It is not saved in the chat. When no
+structure arrives within two seconds, the message says so, and the model can
+delegate to Codex, which reads the screen with its device tools.
+
+The panel has no activity, so the voice conversation moved out of the chat
+screen's view model into the app-scoped `VoiceConversation`. It owns the chat
+the conversation records into, the transcript and the typed-line echo check.
+The chat screen and the panel both drive it, so "Open Mike" hands a live
+conversation to the app without restarting it. Closing the panel (End, Back)
+ends a conversation that the panel started. Without microphone permission or
+consent, a press opens the app's voice mode as before, because the panel has
+nowhere to ask for either.
+
 ## Unicode input
 
 Device tools temporarily select the bundled IME and probe its actual editor

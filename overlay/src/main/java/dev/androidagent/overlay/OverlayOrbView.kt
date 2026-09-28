@@ -44,8 +44,9 @@ import kotlin.math.sqrt
  * The agent's live indicator on the floating controls: the voice-mode sphere
  * shrunk to a few hundred points. It churns harder the busier the agent is and
  * takes the colour of the run's state. It only animates while it is on screen.
+ * Public because the assistant panel in `:app` shows the same sphere.
  */
-internal class OverlayOrbView(context: Context) : View(context) {
+class OverlayOrbView(context: Context) : View(context) {
     private val points = FloatArray(POINTS * 3).also { points ->
         for (index in 0 until POINTS) {
             val y = 1f - index / (POINTS - 1f) * 2f

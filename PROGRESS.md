@@ -1,5 +1,26 @@
 # Progress
 
+### Assistant panel over the current app — 2026-09-28
+
+Holding the power button now opens Mike over the current app, instead of
+switching to Mike. An edge glow sweeps in, a card rises from the bottom, and
+live voice starts with the screen's text already given to the model. See
+`docs/ARCHITECTURE.md`, "Assistant panel over the current app". Voice
+ownership moved from `AgentViewModel` to the app-scoped `VoiceConversation`.
+
+Checked on 2026-09-28 on Windows: `:app:testDevDebugUnitTest` (with the new
+`ScreenTextTest`, 7 tests), `:voice:testDebugUnitTest`, `:core:test`,
+`:app:assembleDevDebug` and `:app:lintDevDebug` (0 errors, 22 warnings) pass.
+The dev debug APK (versionCode 28) was installed with `install -r` on the
+Nothing A059, where Mike was already the digital assistant. The user held the
+power button there and approved the result. The log shows the
+`VoiceInteractionSession` window, no crash and no start failure.
+
+Not tested: the Redmi (installed, but Google is still its assistant); a
+device-control task started from the panel, so whether Mike's taps pass the
+faded card; an approval asked from the panel; the path without "Use text from
+screen"; "Open Mike" handoff; the full release gate.
+
 ### Files across devices: places, `copy_file`, a skill — 2026-09-28
 
 One tool copies files between places: `copy_file(from, to, replace)` with

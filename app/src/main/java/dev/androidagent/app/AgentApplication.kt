@@ -264,6 +264,8 @@ class AgentGraph(private val app: Application) {
     val coordinator: AgentCoordinator
         get() = runCoordinator
     val queue: SessionRunQueue
+    /** The live voice conversation, shared by the chat screen and the assistant panel. */
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
         runCoordinator = AgentCoordinator(
             scope, engine, sessions, tools, overlay,
