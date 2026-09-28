@@ -46,6 +46,7 @@ import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
 import dev.androidagent.devicetools.AndroidCapabilityTools
+import dev.androidagent.devicetools.PhoneStoragePlace
 import dev.androidagent.enginecodex.CodexEngine
 import dev.androidagent.overlay.FloatingControlOverlay
 import dev.androidagent.runtime.AndroidRuntimeHost
@@ -70,10 +71,30 @@ class AgentApplication : Application(), AutomationHostOwner {
 }
 
 class AgentGraph(private val app: Application) {
+    private fun bringAppForward() {
+        runCatching {
+            app.startActivity(
+                android.content.Intent(app, MainActivity::class.java).addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+                ),
+            )
+        }
+    }
+
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
-    val engine = CodexEngine(runtime)
+    /** The phone's own Codex. */
+    val phoneEngine = CodexEngine(runtime)
+    /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
+    val computers = dev.androidagent.remote.RemoteStore(
+        java.io.File(app.filesDir, "remote/computers.bin"),
+        dev.androidagent.remote.KeystoreSecretBox(),
+    )
+    val remote = dev.androidagent.remote.RemoteHub(computers)
+    /** What chats talk to: the phone's Codex, or a computer's for a chat opened on one. */
+    val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     // The last quota of every saved account, for the home screen widget.
@@ -91,12 +112,29 @@ class AgentGraph(private val app: Application) {
     // One counter for every backend, so an observation revision never moves
     // backwards when a call falls through from one gateway to another.
     private val observations = ObservationState()
+    /** The copy moving between places now, for the progress banner. */
+    val transfers = dev.androidagent.core.TransferMeter(scope)
+    /**
+     * copy_file: this chat's folder, the phone's shared storage and every
+     * saved computer as places. A use case is a recipe in the
+     * files-across-devices skill, never another tool.
+     */
+    val copyFiles = dev.androidagent.core.CopyFileGateway(
+        phone = PhoneStoragePlace(app, adb),
+        computers = { remote.filePlaces() },
+        home = { workspace -> remote.fileHome(workspace) },
+        meter = transfers,
+        scratch = java.io.File(app.cacheDir, "copies"),
+    )
     val adbTools = AndroidDeviceTools(
         adb,
         BuildConfig.APPLICATION_ID + "/dev.androidagent.app.ime.AgentInputMethodService",
         observations,
         { x, y -> overlay.avoidTouch(x, y) },
-    ) { hidden -> overlay.setCaptureHidden(hidden) }
+        { hidden -> overlay.setCaptureHidden(hidden) },
+        // install_apk takes a file already on the phone, named as copy_file names it.
+        phoneFile = { address, workspace -> copyFiles.phoneFile(address, workspace) },
+    )
     val a11yTools = A11yDeviceTools(
         app,
         observations,
@@ -210,10 +248,17 @@ class AgentGraph(private val app: Application) {
         // next due; without this it waited for an unrelated firing to be armed.
         onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
     )
+    /** What the computers tool asks the screen to show; the view model clears it. */
+    val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
+    /** The user's computers, from any chat. Passwords and bindings stay with the app. */
+    val computerTools = dev.androidagent.remote.ComputerToolGateway(
+        remote, sessions, computerRequests,
+        bringToForeground = ::bringAppForward,
+    )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator
@@ -227,16 +272,7 @@ class AgentGraph(private val app: Application) {
             // An approval card lives only in the app, and device control means
             // the app is not in front. Raising it is what makes the approval
             // answerable at all.
-            bringToForeground = {
-                runCatching {
-                    app.startActivity(
-                        android.content.Intent(app, MainActivity::class.java).addFlags(
-                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
-                        ),
-                    )
-                }
-            },
+            bringToForeground = ::bringAppForward,
         )
         queue = SessionRunQueue(
             scope,

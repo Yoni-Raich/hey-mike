@@ -1,5 +1,136 @@
 # Progress
 
+### Files across devices: places, `copy_file`, a skill — 2026-09-28
+
+One tool copies files between places: `copy_file(from, to, replace)` with
+`chat:`, `phone:` (or a `content://` uri) and a computer's name, and a bare
+path where the chat's shell runs. It replaces `push_file`, `pull_file`,
+`copy_to_phone` and the computer-chat rewriting of `push_file`.
+`install_apk(file)` takes a phone address and refuses a computer one with
+the copy to make first. Use cases (install an APK built on a computer, share
+a computer file, a phone photo to a computer) are recipes in the new
+`files-across-devices` skill; a computer chat's instructions carry the same
+recipes because Codex there reads the computer's skills. Every copy shows
+the progress banner; SFTP uploads create missing folders, are written as a
+part file and renamed.
+
+Windows checks passed: `.\gradlew.bat :core:test :device-tools:test
+:workspace:test :remote:testDebugUnitTest :engine-codex:test
+:app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug
+:app:assembleDevDebugAndroidTest --no-daemon` (core 568, device-tools 104,
+remote 34 with 2 skipped, workspace 18 with 6 skipped, engine-codex 41, app
+58; no failures), `python -m unittest tools.test_prepare_runtime`,
+`git diff --check`. New `CopyFileGatewayTest` (addresses, bare paths in
+phone and computer chats, no overwrite, no escape from the chat folder,
+install refuses a computer file, Stop) and `ComputerPlaceTest` (both ways
+against a MINA SFTP server, whole files, no part file left, no overwrite).
+
+Not verified: anything on a phone. `PhoneStoragePlace` (MediaStore insert
+and reads, the ADB fallback), the banner for the new copies, a real PC copy
+and the skill's recipes in a live chat are untested. `install_apk` still
+needs Wireless ADB. An SFTP upload stopped mid-way may leave a hidden
+`.<name>.part` on the computer.
+
+### Chat library restyle, on the Nothing A059 — 2026-09-28
+
+Build of `ad465e4` (local versionCode 1024) installed with `install -r` on the
+Nothing A059; accessibility stayed enabled. With two computers saved (Pc on
+Windows, Server on Ubuntu): device chips showed All devices / This phone /
+Pc / Server with status dots; Projects listed projects from both computers;
+the Pc chip showed "Connected over VPN" and its projects from Codex on the
+PC. A new chat in the Android-agent-use project ran on the PC and answered
+"What git branch is this folder on?" with the branch the main checkout is
+on. On the Xiaomi Redmi 12 (phone chats only) the device row and the "This
+phone" labels are hidden. Not checked: long-press rename/delete on a device,
+the instrumented `ChatLibraryUiTest` (not run: installing the test APK
+turns off accessibility).
+
+## Chat library UI — 2026-09-28
+
+Replaced the nested computer/project/chat tree with recent chats, a device
+filter, search and a separate Projects tab. A project opens its own chat list;
+Back restores the project search and scroll position. One New chat action uses
+that project or offers a folder on the selected computer. Automations, Files
+and Settings have compact footer entries. Large text puts New chat on its own
+row; filters scroll on short screens.
+
+Windows checks passed:
+
+- `.\gradlew.bat :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:assembleDevDebugAndroidTest :app:lintDevDebug
+  -PversionCodeOverride=1023 --no-daemon`: 58 app tests passed, build passed,
+  lint had 0 errors. `git diff --check` passed.
+- On an API 35 x86_64 emulator, installed both APKs with `install -r`, then
+  ran `ChatLibraryUiTest` directly with `am instrument`: 4 tests passed.
+  Fixtures use 257 phone chats, 41 PC projects and one server project. They
+  cover device/project routing, search, Back and navigation while scrolling.
+- The responsive test passed again at font scale 2.0, and in landscape.
+  Inspected the captured recent, project, project-chat, large-text and short
+  screen PNGs under ignored `app/build/ui-review/`. These are synthetic UI
+  fixtures, not evidence of live Codex, SSH, voice or a physical phone run.
+
+APK: `dev.androidagent.app.dev`, DevDebug, 0.14.0, code 1023, debug signed (v2).
+Alignment and signature verification passed. SHA-256:
+`95a30bd94accaa60c51a7242f056e037230d68ec2a473dc90ab21fe9fef05721`.
+Installed this exact APK on Nothing A059 with
+`adb -s <Nothing target> install -r --user 0`. Installation returned Success;
+the installed version is 0.14.0, code 1023. Its signer matched the previous
+APK. The original first install time and CE/DE data directory identifiers
+remained unchanged. MainActivity was resumed and the app process was running
+after launch. This proves the update and launch only; the new drawer was not
+inspected on the phone while it was in other active use. The full release
+gate was not run.
+
+Remote Codex still uses the computer's sign-in. The pinned 0.156.0 protocol
+supports experimental externally managed ChatGPT access tokens, including a
+refresh callback. A per-computer choice to use Mike's active account needs
+that token lifecycle and has not been implemented in this UI change.
+
+## PR #89 review fixes — 2026-09-27
+
+Fixed SSH key trust on reconnect, permission approval replies, Stop during
+SFTP copies, and imported chat ownership on resume. Also fixed a missing test
+brace and added `engine-codex` and `remote` tests to Android CI. The approval
+card now shows the requested network/file access and its turn scope.
+
+Local checks passed on Windows:
+
+- `:remote:testDebugUnitTest :engine-codex:testDebugUnitTest
+  :app:testDevDebugUnitTest` and `:core:test :device-tools:testDebugUnitTest`:
+  792 tests passed, 2 skipped. The skips need Linux (a shell script and the
+  staged Linux app-server); neither was run on Windows.
+- `:app:assembleDevDebug :app:lintDevDebug --no-daemon`: build passed;
+  lint reported 0 errors. `git diff --check` passed.
+- An in-process SSH server proved that a reused link rejects a changed key
+  before password authentication. SFTP fixtures stalled both read and write
+  replies: cancellation released the client within 3 seconds, and a later
+  transfer reused the same SSH session.
+
+Built again with `-PversionCodeOverride=1022` and installed with
+`adb -s <Nothing target> install -r --user 0` on Nothing A059. The APK reports
+`dev.androidagent.app.dev`, DevDebug, 0.14.0, code 1022. Alignment and signature
+checks passed; its debug signer matched the installed APK before replacement.
+Installation succeeded, the original first install time remained unchanged,
+and MainActivity was resumed with the app process running. This proves the
+update and launch only, not the remote flows. APK SHA-256:
+`5f50f6c4cbe04b5c23a53cbe4fd3e139ffde7725dd0f812d7e9944d16d9a2cc3`.
+
+Android CI passed for code commit `f0cb483` on both push and pull request runs,
+including the newly added engine and remote tests.
+
+The Nothing's computer screen reported that neither saved address answered.
+The addresses matched this PC, but its Windows `sshd` service was stopped and
+port 22 had no listener. With user approval, the service was started; it now
+listens on port 22. A direct probe from the Nothing received the Windows SSH
+banner over the VPN. The home address still timed out. This proves network
+reachability over the VPN, not password login or Codex setup. The in-app retry
+is pending while the phone is in an active voice conversation.
+
+Still open: in-app computer login, real phone-to-PC SSH reconnect, Allow/Deny,
+Stop during file transfer, and the desktop-lock copy offer after resuming an
+imported chat. The expanded approval card has no physical UI proof yet. The
+full release gate was not run for these fixes; this APK is a debug test build.
+
 ## Dev release preparation — 2026-09-26
 
 The next planned version is 0.14.0 (base versionCode 28). The physical QA
@@ -41,6 +172,40 @@ flow, first-launch and account switching, broad device tools, scheduled and
 background automation edge cases, voice, and Wireless ADB. These are not established by
 the passing build or these phone smoke runs. No release or `main` merge was
 performed.
+
+## Computer chat ownership and phone file sharing — 2026-09-27
+
+- A conversation imported from desktop Codex is marked in the sealed computer
+  binding. Only an imported conversation with a writer lock can offer a copy;
+  Mike-owned chats do not offer to fork themselves. Older bindings without an
+  origin mark still use the lock check plus Mike's loaded thread list.
+- In a computer chat, `push_file` copies the PC file over SFTP, then saves it
+  through MediaStore on the phone without Wireless ADB. It returns a URI for
+  `files_media share`. The live tool snapshot now lists that route as ready
+  while ADB is off. `install_apk` and `pull_file` still need ADB.
+- `:app:assembleDevDebug --no-daemon --quiet` passed after rebasing this PR
+  onto `dev` at `724d072`. This proves compilation and packaging only.
+- `RemoteStoreTest` and `ComputerFilesGatewayTest` passed on Windows after
+  adding checks for saved conversation origin and `push_file` readiness with
+  ADB off. A DevDebug APK with versionCode override 1020 installed in place on
+  Xiaomi 23053RN02Y. The installed package reports code 1020, and its
+  `firstInstallTime` stayed at 2026-09-23 16:24:36. MainActivity opened and
+  the saved chat list remained visible.
+
+Not verified: a real PC-to-phone copy with ADB disconnected, WhatsApp sharing,
+and the fork banner on a physical phone. Xiaomi's Computers screen says
+"No computers yet", so those remote flows could not be exercised there.
+
+## Compact chat history — 2026-09-27
+
+Local and computer chat rows now show one title line with a 48dp minimum touch
+target. Per-chat date and time text is removed; the day headings remain. An
+icon identifies computer chats. Built dev debug APK with versionCode override
+1021, then installed it with `adb -s cd4928027d76 install -r`. Package state
+showed versionCode 1021 and the original first install time. On Xiaomi
+23053RN02Y, the drawer showed compact one-line chat titles without per-chat
+timestamps and kept the Today/Yesterday headings and prior chat history.
+Computer-chat rows remain unverified on device because no computer is paired.
 
 ## Xiaomi QA stability fixes — 2026-09-25
 
@@ -106,6 +271,169 @@ positive paths still lack new physical coverage. After the package lookup fix, t
 --no-daemon`) passed, as did all five `tools.test_prepare_runtime` tests and
 `git diff --check`. These build checks do not establish the untested physical
 paths. The package-filtered read did not exercise keyboard/IME context.
+## Computers over SSH (Windows) — 2026-09-24
+
+On `claude/model-ssh-capability-ifuz1p`, a chat can run on the user's Windows
+PC. The side panel's *Computer* button opens a sheet: add a PC (IP, user,
+password, and *Ask me first* or *Full access*), connect, and pick a project
+folder. The app installs the pinned Codex 0.156.0 app-server on the PC
+(sha256-checked), runs it over SSH, and the chat talks to it. Codex then has
+its own tools, the project's AGENTS.md and the PC's skills. See
+`docs/ARCHITECTURE.md`, "Computers".
+
+Verified here, on Linux with a new SDK install (no phone, no Windows PC):
+- `:remote:testDebugUnitTest` 13/13. Includes an in-process SSH server
+  (Apache MINA): password login, host-key pinning, a wrong key refused, a
+  wrong password named. Also the **real Linux Codex 0.156.0 app-server
+  started over an SSH channel**: `account/read` answered, and `skills/list`
+  found a skill placed in the remote project's `.agents/skills`.
+- `:core:test` 547/547, `:app:testDevDebugUnitTest` 48/48 (new approval-card
+  case), new `CodexEngineTest` cases (Windows cwd and access in
+  `thread/start`, inline pictures, skill paths with backslashes).
+- `:app:assembleDevDebug`, `:app:assembleDevRelease` (JSch present in the
+  dex), `:app:lintDevDebug` with 0 errors.
+- The Windows package sha256 values were computed from the downloaded
+  release assets (x86_64 and aarch64).
+
+Pre-existing, not from this change: `CodexEngineTest.openSessionFallsBackToThreadStartOnResumeFailure`
+fails on `dev` too (expects one `thread/resume`; the engine tries with tools,
+then without).
+
+Not verified (needs a phone and a Windows PC):
+- JSch on Android (it uses the Java 8 classes; ed25519/curve25519 may be
+  dropped for ECDSA/ECDH) against Windows OpenSSH Server.
+- The PowerShell probe, install and folder scripts on real Windows, the cmd
+  quoting of a user folder with spaces, and a PowerShell `DefaultShell`.
+- `codex-app-server.exe` over a Windows OpenSSH exec channel, the device-code
+  sign-in on the PC, a full turn with edits, an approval answered on the
+  phone, Stop, and whether Windows OpenSSH ends the process when the
+  channel closes.
+- What *Ask me first* enforces without the Codex Windows sandbox set up.
+- The Computers sheet and folder picker on a real screen.
+
+### Computers sheet: setup guide, VPN address, default computer — 2026-09-25
+
+- The add form opens with a 5-step "set up the PC" guide (OpenSSH Server,
+  `Get-Service sshd`, `ipconfig`, `whoami`, Codex installs itself), copy
+  buttons, and a share button that sends the steps to the PC. Fields carry
+  hints; the button says what is still missing. Sheet text colour fixed (it
+  was dark on dark).
+- A computer can have a second, VPN address (e.g. Tailscale). Connect tries
+  the address that answered last first, the home one to begin with (6 s
+  when another is left), and moves on only when an address does not answer
+  at all. A refused password or a changed host key stops. The pinned key
+  holds for both addresses.
+- Several computers, one default (the first added; passes on when removed).
+  The side panel's *Computer* button connects straight to the default and
+  opens its folder picker; Back shows the list.
+
+Verified on Windows: `:remote:testDebugUnitTest --tests *RemoteStoreTest*`
+passes (new default and VPN cases), `:app:assembleDevDebug` builds, the APK
+installs on the Nothing A059 with `install -r`. The two `SshLinkTest` cases
+that run Linux commands and the Linux app-server fail on a Windows host, as
+expected. Not verified: the sheet on screen, the VPN fallback against a
+real PC, `:app:lintDevDebug`. A phone-chat request "do X on the computer"
+is not routed to the default computer: a computer chat is still chosen when
+it is opened.
+
+### Computers: projects, PC conversations, file transfer — 2026-09-25
+
+- Computers screen is a full screen (scrolling a folder list no longer
+  closes it). Adding a computer is two steps: the PC's setup steps, then the
+  sign-in. One address is enough: home, VPN, or both.
+- Side panel: each computer first, with status and folding projects; under
+  each project the chats here plus the conversations Codex on the PC has
+  (`thread/list`), "From Codex on the PC". Opening one binds a chat to that
+  thread and copies its messages from `thread/read`. The phone's chats fold
+  under "On this phone". The panel connects quietly once per app run
+  (never installs Codex).
+- New chat: "Where should Mike work?" chips (this phone, recent projects,
+  another folder) until the first message. Title bar of a computer chat:
+  computer · folder + phone.
+- Files: `push_file`/`install_apk` in a computer chat take a path on the PC
+  and are copied over SFTP; `pull_file` copies into the project folder.
+- Instructions: the Windows desktop is reached through a one-off interactive
+  scheduled task (screenshots etc.); adb on the PC must not be used for the
+  phone.
+
+Verified on Windows with the Nothing A059: the PC's OpenSSH (Win32-OpenSSH
+10.0 via winget) answers on the Tailscale address from the phone
+(`nc -z 100.81.116.55 22` open; the LAN address times out because the
+Ethernet profile is Public and the firewall rule is Private only). A real
+computer chat ran on the PC; before the file bridge, copying a picture to
+the phone failed through `push_file` and only worked through the PC's own
+adb, which is why the bridge exists. Unit tests: new `PcChatsTest`,
+`ComputerFilesGatewayTest`, thread list/read parsing, store projects;
+`:app:lintDevDebug` clean; `:core:test` and `:app:testDevDebugUnitTest`
+pass. Not verified: the new side panel and screens on the phone,
+`thread/list` answers from the real PC (parameters taken from the 0.156.0
+binary), SFTP transfer against Windows, the desktop scheduled-task recipe.
+
+### Voice on computers, no send size cap, the `computers` tool — 2026-09-25
+
+- Voice works in a computer chat: realtime starts on the thread's own
+  app-server (the PC's Codex); WebRTC, so only SDP crosses SSH.
+- `push_file`/`install_apk`: no size cap; the timeout grows with the size.
+  Also no cap on the SFTP copy from the PC.
+- New tool `computers` (modes `status`, `browse`, `new_project`,
+  `open_chat`, `add`) in every chat. `add` opens the app's form filled in,
+  with a warning to check the address; the password is typed there only.
+  `open_chat` opens a project chat with the task in the composer, unsent.
+
+Verified: `ComputerToolGatewayTest` (add fills the form and the schema has
+no password field, missing address refused, status with no computer,
+unknown computer/project name what exists, nothing after Stop),
+`:core:test`, `:device-tools:test`, `:app:testDevDebugUnitTest`,
+`:app:lintDevDebug`, `:app:assembleDevDebug`. Not verified on the device:
+voice in a computer chat, a 310 MB push, the tool's modes against the real
+PC, the filled-in form and the composer draft.
+
+### Linux (Ubuntu) computers — 2026-09-25
+
+The system is found on the first connection (`uname -s`) and kept. Linux
+computers use POSIX `sh` scripts (`LinuxHost`) and the phone's own pinned
+Linux Codex package, installed under `~/.local/share/heymike`. The add
+screen's setup step has Windows and Ubuntu guides (`apt install
+openssh-server`, `hostname -I`, `whoami`). Paths, the folder picker, file
+transfer and project grouping handle `/` paths.
+
+Verified: the generated probe, folder list (a quote in a name, hidden
+folders skipped, git detection), create-folder and missing-folder scripts
+ran in a real Linux `sh` (busybox, WSL) and gave the expected `HEYMIKE`
+answers; `LinuxHostTest` (uname reading, Linux paths, quoted app-server
+path; the script test runs only where a Linux `sh` exists and was skipped
+on Windows); full remote/core/device-tools/app unit tests, lint, build. Not
+verified: the install script's download and sha256 check and the app-server
+start on Linux (running a downloaded binary was not allowed here), a real
+Ubuntu machine over SSH, the Linux desktop recipe.
+
+### Side panel: Material 3 pass and loading states — 2026-09-25
+
+- Every slow step shows where it happens: an indeterminate line and a
+  spinner under the computer's header while it connects or lists its
+  conversations, placeholder rows until the first projects arrive, an error
+  card with Try again and What to check, a sign-in card, and a loading view
+  (progress line, "Loading the conversation from <computer>", placeholder
+  bubbles) while a PC conversation's messages come in.
+- Material 3 look: 56 dp section headers, 48 dp project rows with a count
+  badge, 52 dp pill chat rows with the secondary-container indicator, a
+  lifted drawer surface with an explicit text color, item animations.
+- Speed: the grouping is remembered per input instead of rebuilt each frame,
+  and rows carry content types.
+- The panel's top scrolls with the list, so a phone on its side still shows
+  chats. "Work on your computer" sits under the search box, not below every
+  phone chat. The computers screen is an in-app layer (Back steps back) that
+  clears the gesture bar.
+
+Verified on the Xiaomi Redmi 12 (`cd4928027d76`, Android 15, dev build with
+a local versionCode 1016): the panel opens with readable text and the pill
+selection; in landscape the fixed top had left no room for chats (fixed);
+the computer entry was last in a long list (fixed); the setup step's bottom
+button sat under the gesture bar in a dialog window (fixed by the in-app
+layer); Back goes form, setup, list, closed; Windows and Ubuntu guides both
+render. Not verified on a device: the connecting, error, sign-in and PC
+conversation loading states (no computer is set up on that phone, and
+entering a password is not something the tester does).
 
 ## Chat streaming scroll — 2026-09-24
 

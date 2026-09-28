@@ -22,6 +22,8 @@ package dev.androidagent.app.ui
 
 import dev.androidagent.core.EngineEvent
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -48,6 +50,23 @@ class ApprovalSummaryTest {
         assertEquals(listOf("To" to "+972587160002", "Message" to "היי"), summary.lines)
     }
 
+    @Test fun aComputerCommandShowsTheCommandAndWhere() {
+        val summary = EngineEvent.Approval(
+            requestId = "remote|pc|4",
+            method = "item/commandExecution/requestApproval",
+            details = buildJsonObject {
+                put("command", "npm install")
+                put("cwd", "C:\\src\\app")
+                put("reason", "Install the project's packages")
+            },
+        ).summary()
+        assertEquals("Run this on the computer?", summary.headline)
+        assertEquals(
+            listOf("Command" to "npm install", "In" to "C:\\src\\app", "Why" to "Install the project's packages"),
+            summary.lines,
+        )
+    }
+
     @Test fun anIntentWithNoUriNamesItsAction() {
         val summary = EngineEvent.Approval(
             requestId = "p",
@@ -61,6 +80,21 @@ class ApprovalSummaryTest {
         assertEquals("Open this?", summary.headline)
         assertEquals(
             listOf("What" to "Start a payment. (AMOUNT=10)", "Action" to "CHECKOUT", "App" to "com.example.pay"),
+            summary.lines,
+        )
+    }
+
+    @Test fun computerPermissionsNameTheRequestedAccessAndItsDuration() {
+        val summary = EngineEvent.Approval(
+            requestId = "remote|pc|4",
+            method = "item/permissions/requestApproval",
+            details = Json.parseToJsonElement(
+                """{"reason":"Copy the report","cwd":"C:\\project","permissions":{"network":{"enabled":true},"fileSystem":{"read":["C:\\reports"],"write":["C:\\shared"],"entries":[{"path":{"type":"path","path":"D:\\output"},"access":"write"}]}}}""",
+            ).jsonObject,
+        ).summary()
+        assertEquals(
+            listOf("Why" to "Copy the report", "In" to "C:\\project", "Network" to "Allow access",
+                "Read files" to "C:\\reports", "Change files" to "C:\\shared", "Change files" to "D:\\output", "For" to "This turn only"),
             summary.lines,
         )
     }

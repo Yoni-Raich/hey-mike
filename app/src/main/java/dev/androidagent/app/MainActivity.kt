@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         model.graph.runtimePermissions.resumed(this)
         model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
+        model.appResumed()
         model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole(); model.refreshAutomations()
     }
     override fun onPause() {
@@ -155,6 +156,40 @@ class MainActivity : ComponentActivity() {
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
         onDrawerChanged = { open -> model.editUi { it.copy(isDrawerOpen = open) } },
+        onOpenComputers = { ensureService(); model.openComputers() },
+        onCloseComputers = { model.editUi { it.copy(isComputersOpen = false, folderBrowser = null) } },
+        onSaveComputer = { draft -> ensureService(); model.saveComputer(draft) },
+        onRemoveComputer = { id -> model.removeComputer(id) },
+        onSetDefaultComputer = { id -> model.setDefaultComputer(id) },
+        onNewProject = { id -> ensureService(); model.newProject(id) },
+        onNewChatInProject = { id, path -> model.openFolderChat(id, path) },
+        onOpenPcThread = { id, thread -> ensureService(); model.openPcThread(id, thread) },
+        onRefreshPcThreads = { ensureService(); model.refreshPcThreads() },
+        onReconnectComputer = { id -> ensureService(); model.reconnectComputer(id) },
+        onMoveNewChat = { id, path -> model.moveNewChat(id, path) },
+        onComputerProposalShown = { model.editUi { it.copy(computerProposal = null) } },
+        onForkPcChat = { id -> model.forkPcChat(id) },
+        onCheckPcChatBusy = { id -> model.checkPcChatBusy(id) },
+        onComposerSeedUsed = { id -> model.editUi { it.copy(composerSeeds = it.composerSeeds - id) } },
+        onShareText = { text ->
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+            runCatching { startActivity(Intent.createChooser(send, "Send the setup steps")) }
+                .onFailure { model.error("No app on this phone can share text.") }
+        },
+        onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
+        onCheckComputerSignIn = { id -> model.checkComputerSignIn(id) },
+        onOpenTailscaleApproval = { id, url ->
+            model.openedTailscaleApproval(id)
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { model.error("No app on this phone can open $url") }
+        },
+        onOpenUrl = { url ->
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { model.error("No app on this phone can open $url") }
+        },
+        onBrowseFolder = { id, path -> model.browseFolder(id, path) },
+        onCloseFolderBrowser = { model.editUi { it.copy(folderBrowser = null) } },
+        onOpenFolderChat = { id, path -> model.openFolderChat(id, path) },
         onNewChat = { model.newChat() },
         onSelectSession = model::select,
         onAttach = { filePicker.launch(arrayOf("*/*")) },

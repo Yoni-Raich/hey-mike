@@ -142,12 +142,12 @@ class AndroidDeviceToolsTest {
         val tools = AndroidDeviceTools(adb)
         val ws = Files.createTempDirectory("ws").toFile()
         tools.beginRun("r1", ws)
-        for (evil in listOf("../evil.txt", "/abs.txt", "a/../../evil.txt", "C:\\evil.txt", "sub\\file.txt")) {
+        for (evil in listOf("../evil.apk", "/abs.apk", "a/../../evil.apk", "C:\\evil.apk", "sub\\file.apk")) {
             try {
                 runBlocking {
                     tools.invoke(
-                        "pull_file",
-                        buildJsonObject { put("remotePath", "/sdcard/f.txt"); put("localName", evil) },
+                        "install_apk",
+                        buildJsonObject { put("file", evil) },
                     )
                 }
                 fail("expected rejection for $evil")
@@ -274,8 +274,7 @@ class AndroidDeviceToolsTest {
         assertFalse(tools.needsControl("device_status"))
         assertFalse(tools.needsControl("read_ui"))
         assertFalse(tools.needsControl("screenshot"))
-        assertFalse(tools.needsControl("pull_file"))
-        for (name in listOf("tap", "swipe", "type_text", "key", "open_app", "shell", "push_file", "install_apk")) {
+        for (name in listOf("tap", "swipe", "type_text", "key", "open_app", "shell", "install_apk")) {
             assertTrue("$name must need control", tools.needsControl(name))
         }
         assertTrue(tools.needsControl("unknown_future_tool"))
