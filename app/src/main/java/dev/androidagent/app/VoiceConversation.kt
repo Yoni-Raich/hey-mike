@@ -116,10 +116,24 @@ class VoiceConversation(
 
     /**
      * Context the model should use but not reply to, such as the screen the
-     * user summoned Mike over. Not recorded in the chat: the user never said it.
+     * user summoned Mike over. Only [guidance] is sent as the app's own
+     * (developer) instruction. [quoted] came from another app and goes in as
+     * plain conversation text, so instructions hidden in it get no more weight
+     * than text the user pasted. Neither is recorded in the chat: the user
+     * never said them.
      */
-    suspend fun addContext(text: String) {
-        voice.appendText(text, role = "developer")
+    suspend fun addContext(guidance: String, quoted: String? = null) {
+        voice.appendText(guidance, role = "developer")
+        if (quoted == null) return
+        // Its echo, if one comes back as a user transcript, is dropped like a typed line's.
+        val echo = quoted.trim()
+        synchronized(pendingTypedTexts) { pendingTypedTexts.addLast(echo) }
+        try {
+            voice.appendText(quoted)
+        } catch (failure: Exception) {
+            synchronized(pendingTypedTexts) { pendingTypedTexts.removeLastOccurrence(echo) }
+            throw failure
+        }
     }
 
     private suspend fun handle(event: VoiceEvent) {

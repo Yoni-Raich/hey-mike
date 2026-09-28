@@ -174,7 +174,8 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
             // Usually here long before voice is up; a screen that never reports
             // (a secure window, the setting off) must not hold the call.
             val capture = withTimeoutOrNull(SCREEN_WAIT_MS) { screen.await() }
-            graph.voiceConversation.addContext(ScreenText.prompt(capture))
+            val context = ScreenText.context(capture)
+            graph.voiceConversation.addContext(context.guidance, context.quoted)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
