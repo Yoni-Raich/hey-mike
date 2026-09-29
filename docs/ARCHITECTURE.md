@@ -94,6 +94,11 @@ selectable assistant text, and expandable diagnostic/activity rows. The composer
 uses the existing send, steer, stop, model, and attachment action contracts.
 Stop remains reachable while a steering draft exists; STOPPING blocks dispatch
 and preserves that draft. Terminal formatting is removed before display.
+A Hebrew or Arabic word stays on the line of the number after it (a no-break
+space, `bindNumbersToLabels`), an assistant message's copy button sits on the
+side its last line ends on with a 48dp target, and "Jump to latest" appears
+only 96dp or more from the end, in the corner on that same side. The composer's
+field and chip outlines are at least 3:1 against the black behind them.
 Compose fixture tests exercise UI callbacks without starting or authenticating
 Codex. They do not establish real runtime, device-control, or network success.
 
@@ -1611,8 +1616,18 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   computer.
 - **Live remote activity.** `item/started` and `item/completed` notifications
   for reasoning, commands, file changes and other supported tool items become
-  activity rows in the chat. Rows update from running to complete or failed,
-  and their details can be expanded. Raw app-server JSON never reaches the UI.
+  `remote_activity` messages in the chat, updated from running to complete or
+  failed. Raw app-server JSON never reaches the UI. `chatRows` folds
+  back-to-back ones into one `RemoteActivityRow`, drawn like the phone's
+  actions group but with the computer's icon: a header that names the computer
+  and counts what ran ("Working on Server" while live, "Worked on Server · 4
+  commands" after) and steps that say what each one did ("Ran ls -la",
+  "Thought"), with the shell Codex wraps a command in taken off. A live group
+  nobody opened shows its newest four steps. A step still `streaming` after its
+  run ended shows as stopped, never as running. The computer's group and the
+  phone's never merge, so what ran where stays readable. The chat's top bar
+  says where the chat works as "Server · folder · This phone", each place
+  with its icon, and leaves the folder out when it is the chat's own name.
 - **The phone is still reachable.** The phone's device tools are advertised to
   the computer's thread as well, so a task on the PC can still act on the
   phone. The computer's thread instructions (`RemoteInstructions`) say which

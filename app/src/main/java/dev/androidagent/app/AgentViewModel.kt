@@ -84,16 +84,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         } }
         viewModelScope.launch {
             graph.computers.state.collect { remote ->
-                val labels = remote.bindings.mapNotNull { (chat, binding) ->
-                    val computer = remote.computers.firstOrNull { it.id == binding.computerId } ?: return@mapNotNull null
-                    chat to "${computer.label} · ${folderName(binding.cwd)}"
-                }.toMap()
                 mutable.update {
                     it.copy(
                         computers = remote.computers,
                         computersUnreadable = remote.unreadable,
                         defaultComputerId = remote.defaultComputerId,
-                        remoteChats = labels,
                         remoteBindings = remote.bindings,
                         computerProjects = remote.projects,
                     )

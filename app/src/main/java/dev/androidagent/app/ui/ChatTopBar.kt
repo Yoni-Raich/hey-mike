@@ -174,30 +174,10 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
                 // Which machine this chat acts on, so a command is never sent
                 // to the computer by someone who thought it was the phone.
                 // It also says the phone is still in reach from there.
-                state.activeSessionId?.let(state.remoteChats::get)?.let { where ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.Computer, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp),
-                        )
-                        Text(
-                            " $where",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        Text(
-                            "  +  ",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Icon(
-                            Icons.Outlined.PhoneAndroid, contentDescription = "and this phone",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp),
-                        )
-                    }
+                val binding = state.activeSessionId?.let(state.remoteBindings::get)
+                val computer = binding?.let { b -> state.computers.firstOrNull { it.id == b.computerId } }
+                if (binding != null && computer != null) {
+                    RemotePlace(computer.label, remoteFolderLabel(binding.cwd, state.activeSessionTitle))
                 }
             }
         },
@@ -211,6 +191,43 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
     )
     if (showStatus) StatusSheet(state, actions) { showStatus = false }
 }
+
+/**
+ * Where a computer chat works, in words, each place with its icon: the
+ * computer and its folder, then this phone. It used to read "Server · name +"
+ * with a bare phone icon: the chat's own name said twice, and a plus sign that
+ * looked like a button.
+ */
+@Composable
+private fun RemotePlace(computer: String, folder: String?) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp)
+    val where = listOfNotNull(computer, folder).joinToString(" · ")
+    Row(
+        Modifier.semantics(mergeDescendants = true) { contentDescription = "Works on $where, and can also use this phone" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Computer, contentDescription = null, tint = muted, modifier = Modifier.size(14.dp))
+        Text(" $where", maxLines = 1, overflow = TextOverflow.Ellipsis, style = style, color = muted, modifier = Modifier.weight(1f, fill = false))
+        Text("  ·  ", style = style, color = muted)
+        Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, tint = muted, modifier = Modifier.size(14.dp))
+        Text(" This phone", maxLines = 1, style = style, color = muted)
+    }
+}
+
+/**
+ * The folder a computer chat works in, or null when it is the chat's own name:
+ * a subtitle that repeats its title says nothing. Compared by letters and
+ * digits only, so "stremio-cli-downloader" and "Stremio CLI downloader" match.
+ */
+internal fun remoteFolderLabel(cwd: String, chatTitle: String?): String? {
+    val folder = folderName(cwd).trim().takeIf { it.isNotEmpty() } ?: return null
+    if (chatTitle != null && sameName(folder, chatTitle)) return null
+    return folder
+}
+
+private fun sameName(a: String, b: String): Boolean =
+    a.filter(Char::isLetterOrDigit).equals(b.filter(Char::isLetterOrDigit), ignoreCase = true)
 
 // The way into the panel is a button of its own, so the chat name is only a
 // name. It also carries the panel's one urgent fact: a rule that is switched

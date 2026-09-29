@@ -173,8 +173,6 @@ data class AgentUiState(
     val isComputersOpen: Boolean = false,
     /** Picking the folder a computer chat opens in. */
     val folderBrowser: FolderBrowserState? = null,
-    /** Chats that run on a computer: chat id to "Desk · app". */
-    val remoteChats: Map<String, String> = emptyMap(),
     /** Which computer and folder each computer chat runs in. */
     val remoteBindings: Map<String, dev.androidagent.remote.RemoteBinding> = emptyMap(),
     /** Folders the user picked on each computer. */

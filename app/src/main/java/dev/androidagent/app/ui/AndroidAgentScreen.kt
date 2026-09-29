@@ -120,6 +120,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -134,6 +135,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -513,6 +515,9 @@ internal fun SessionRow(
     }
 }
 
+/** How far from the end the chat must be scrolled before "Jump to latest" appears. */
+private val JUMP_BUTTON_DISTANCE = 96.dp
+
 private data class ChatScrollSnapshot(
     val totalItemsCount: Int,
     val lastVisibleIndex: Int,
@@ -628,12 +633,16 @@ private fun AgentChatContent(
                 EmptyChatCard(state, actions)
             }
         } else {
-            // Back-to-back device actions fold into one row.
+            // Back-to-back device actions fold into one row, and so do a
+            // computer's steps: seven identical rows hid the answer.
             val running = state.runState.active && state.runState.sessionId == state.activeSessionId
+            val computerLabel = state.activeSessionId?.let(state.remoteBindings::get)
+                ?.let { binding -> state.computers.firstOrNull { it.id == binding.computerId }?.label }
             items(chatRows(state.messages, running), key = { it.key }) { row ->
                 when (row) {
-                    is MessageRow -> MessageBubble(row.message)
+                    is MessageRow -> MessageBubble(row.message, row.copyText)
                     is ActionsRow -> DeviceActionsRow(row)
+                    is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }
             }
             if (offersWorkflowSuggestion(state.messages, running)) {
@@ -647,10 +656,26 @@ private fun AgentChatContent(
             }
         }
     }
-    // Shown once the user scrolls up; tapping it resumes following the reply.
+    // Shown once the user has scrolled a real distance up; tapping it resumes
+    // following the reply. "Can scroll forward" alone was true for the padding
+    // under the last line, so a nudge of a few pixels raised a button that
+    // promised more below where there was none.
+    val jumpDistance = with(LocalDensity.current) { JUMP_BUTTON_DISTANCE.toPx() }
+    val farFromEnd by remember(listState, jumpDistance) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            last != null && (last.index < info.totalItemsCount - 1 ||
+                last.offset + last.size - info.viewportEndOffset > jumpDistance)
+        }
+    }
+    // In a corner, on the side the text ends, so it stays off the column being read: a Hebrew reply starts at the right.
+    val textEndsRtl = state.messages.lastOrNull()?.text?.let(::endsRtl) == true
     androidx.compose.animation.AnimatedVisibility(
-        visible = !followLatest && listState.canScrollForward,
-        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+        visible = !followLatest && farFromEnd,
+        modifier = Modifier
+            .align(if (textEndsRtl) Alignment.BottomStart else Alignment.BottomEnd)
+            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
         enter = androidx.compose.animation.fadeIn(),
         exit = androidx.compose.animation.fadeOut(),
     ) {
@@ -861,18 +886,8 @@ private fun LoadingMessagesCard() {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
     val role = message.role.lowercase()
-    if (role == "remote_activity") {
-        ActivityDetail(
-            title = message.text.substringBefore("\n\n"),
-            detail = message.text.substringAfter("\n\n", ""),
-            failed = message.state == "failed" || message.state == "interrupted",
-            live = message.state == "streaming",
-            key = message.id,
-        )
-        return
-    }
     val user = role == "user"
     val system = role == "system" || role == "tool"
     if (role == "note") {
@@ -931,14 +946,21 @@ private fun MessageBubble(message: ChatMessage) {
                         SelectionContainer { Text(withRtlLines(message.text), modifier = Modifier.fillMaxWidth(), color = textColor, style = MaterialTheme.typography.bodyLarge) }
                     } else {
                         MarkdownMessage(message.text, textColor)
-                        val clipboard = LocalClipboardManager.current
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                            IconButton(
-                                onClick = { clipboard.setText(AnnotatedString(message.text)) },
-                                modifier = Modifier.size(40.dp).semantics { contentDescription = "Copy message" },
+                        if (copyText != null) {
+                            val clipboard = LocalClipboardManager.current
+                            // Under the text, on the side it ends: a Hebrew reply starts at the right,
+                            // and a button at the far left was a screen away from it.
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = if (endsRtl(copyText)) Arrangement.End else Arrangement.Start,
                             ) {
-                                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy message", modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                IconButton(
+                                    onClick = { clipboard.setText(AnnotatedString(copyText)) },
+                                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Copy message" },
+                                ) {
+                                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy message", modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     }
@@ -1037,28 +1059,19 @@ internal fun ApprovalCard(
 }
 
 @Composable
-private fun ActivityDetail(title: String, detail: String, failed: Boolean = false, live: Boolean = false, key: Any = title) {
+private fun ActivityDetail(title: String, detail: String, failed: Boolean = false, key: Any = title) {
     var expanded by rememberSaveable(key) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (live) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            } else {
-                val icon = when {
-                    failed -> Icons.Outlined.ErrorOutline
-                    title == "Command execution" -> Icons.Outlined.Computer
-                    title == "File change" -> Icons.Outlined.Edit
-                    title == "Thinking" -> Icons.Outlined.AutoAwesome
-                    else -> Icons.Outlined.PictureInPictureAlt
-                }
-                Icon(icon, null, Modifier.size(18.dp),
-                    tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Icon(if (failed) Icons.Outlined.ErrorOutline else Icons.Outlined.PictureInPictureAlt, null,
+                Modifier.size(18.dp), tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             Text(title, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium)
+            // Tinted like its title: left at the default it is the brightest thing in the row.
             if (detail.isNotBlank()) Icon(Icons.Outlined.ExpandMore,
-                if (expanded) "Hide activity details" else "Show activity details", Modifier.size(18.dp))
+                if (expanded) "Hide activity details" else "Show activity details", Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (expanded && detail.isNotBlank()) SelectionContainer {
             Text(detail, style = MaterialTheme.typography.bodySmall,

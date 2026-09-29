@@ -124,4 +124,91 @@ class ChatRowsTest {
         val code = "```\n- שלום\n- hello\n```"
         assertEquals(code, keepListsTogether(code))
     }
+
+    @Test fun aComputersStepsFoldIntoOneRowOfTheirOwn() {
+        val rows = chatRows(
+            listOf(
+                message("u1", "user"),
+                message("r1", "remote_activity", "Command execution\n\nls"),
+                message("r2", "remote_activity", "Thinking\n\n"),
+                message("r3", "remote_activity", "Command execution\n\ncat a"),
+                message("a1", "assistant"),
+            ),
+            running = false,
+        )
+        assertEquals(listOf("u1", "remote-r1", "a1"), rows.map { it.key })
+        assertEquals(3, (rows[1] as RemoteActivityRow).steps.size)
+        assertFalse((rows[1] as RemoteActivityRow).live)
+    }
+
+    @Test fun whatRanOnThePhoneAndOnTheComputerNeverMerge() {
+        val rows = chatRows(
+            listOf(
+                message("t1", "tool", "read_ui: ok"),
+                message("r1", "remote_activity", "Command execution\n\nls"),
+                message("r2", "remote_activity", "Command execution\n\ncat a"),
+                message("t2", "tool", "tap: ok"),
+            ),
+            running = true,
+        )
+        assertEquals(listOf("actions-t1", "remote-r1", "actions-t2"), rows.map { it.key })
+        assertFalse((rows[0] as ActionsRow).live)
+        assertFalse((rows[1] as RemoteActivityRow).live)
+        assertTrue((rows[2] as ActionsRow).live)
+    }
+
+    @Test fun onlyATrailingComputerGroupIsLive() {
+        val messages = listOf(message("r1", "remote_activity"), message("a1", "assistant"), message("r2", "remote_activity"))
+        val rows = chatRows(messages, running = true)
+        assertFalse((rows[0] as RemoteActivityRow).live)
+        assertTrue((rows[2] as RemoteActivityRow).live)
+    }
+
+    @Test fun aHebrewWordStaysOnTheLineOfItsNumber() {
+        val nbsp = " "
+        assertEquals(
+            "בפרק${nbsp}2 של ריצ'ר, עונה${nbsp}1: קובץ",
+            bindNumbersToLabels("בפרק 2 של ריצ'ר, עונה 1: קובץ"),
+        )
+        // Only after an RTL letter: Latin and digits keep their ordinary spaces.
+        assertEquals("season 1 and episode 2", bindNumbersToLabels("season 1 and episode 2"))
+        assertEquals("שלום world 5", bindNumbersToLabels("שלום world 5"))
+    }
+
+    @Test fun codeKeepsItsSpacesWhenNumbersAreBound() {
+        val nbsp = " "
+        assertEquals("עונה${nbsp}1 `run 2` x 3", bindNumbersToLabels("עונה 1 `run 2` x 3"))
+        // A word right before a code span, and the span itself.
+        assertEquals("עונה `עונה 1`", bindNumbersToLabels("עונה `עונה 1`"))
+        val fenced = "```\nעונה 1\n```\nעונה${nbsp}2"
+        assertEquals(fenced, bindNumbersToLabels("```\nעונה 1\n```\nעונה 2"))
+    }
+
+    @Test fun theLastLineDecidesWhichSideATextEndsOn() {
+        assertTrue(endsRtl("Done.\nהכול מוכן"))
+        assertTrue(endsRtl("הכול מוכן\n\n"))
+        assertFalse(endsRtl("הכול מוכן\nDone."))
+        assertFalse(endsRtl(""))
+    }
+
+    @Test fun oneCopyButtonEndsATurnAndCopiesAllOfIt() {
+        val messages = listOf(
+            message("u1", "user", "ask"),
+            message("a1", "assistant", "first block"),
+            message("r1", "remote_activity", "Command execution\n\nls"),
+            message("a2", "assistant", "final block"),
+            message("u2", "user", "again"),
+            message("a3", "assistant", "reply"),
+        )
+        val copies = turnCopyTexts(messages)
+        assertEquals(setOf("a2", "a3"), copies.keys)
+        assertEquals("first block\n\nfinal block", copies["a2"])
+        val rows = chatRows(messages, running = false).filterIsInstance<MessageRow>()
+        assertEquals(listOf("a2", "a3"), rows.filter { it.copyText != null }.map { it.message.id })
+    }
+
+    @Test fun aStreamingReplyHasNoCopyYet() {
+        val streaming = ChatMessage("a1", "s", "assistant", "partial", 0L, "streaming")
+        assertTrue(turnCopyTexts(listOf(message("u", "user"), streaming)).isEmpty())
+    }
 }

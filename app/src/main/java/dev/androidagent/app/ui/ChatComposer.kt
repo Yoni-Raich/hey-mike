@@ -128,9 +128,12 @@ import dev.androidagent.core.VoicePhase
 // Stop is never more than one tap away. Model and reasoning share one chip
 // under the field, which opens a sheet.
 
-private val FieldBorder = Color(0xFF383838)
-private val FieldBorderFocused = Color(0xFF4A4A4A)
-private val ChipBorder = Color(0xFF333333)
+// Outlines are what mark a field or a chip as one, so they need 3:1 against
+// the black behind them (WCAG 1.4.11). The old #383838, #4A4A4A and #333333
+// measured 1.8, 2.4 and 1.7, and the chips read as disabled.
+private val FieldBorder = Color(0xFF5C5C5C)
+private val FieldBorderFocused = Color(0xFF9A9A9A)
+private val ChipBorder = Color(0xFF5C5C5C)
 private val ChipInk = Color(0xFFCFCFCF)
 private val SheetFill = Color(0xFF1B1B1B)
 private val OptionFill = Color(0xFF252525)

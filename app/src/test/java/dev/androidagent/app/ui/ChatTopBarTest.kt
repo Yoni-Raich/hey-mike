@@ -24,6 +24,7 @@ import dev.androidagent.a11y.A11yStatus
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ConnectionPhase
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChatTopBarTest {
@@ -47,6 +48,16 @@ class ChatTopBarTest {
     @Test fun aRunIsWorkingWithOrWithoutThePhone() {
         assertEquals("Working on your phone through Accessibility", phoneControl(true, ConnectionPhase.DISCONNECTED, true).sentence())
         assertEquals("Working on your request", phoneControl(false, ConnectionPhase.DISCONNECTED, true).sentence())
+    }
+
+    @Test fun aSubtitleNeverRepeatsTheChatsOwnName() {
+        // The chat is named after its folder: the folder adds nothing.
+        assertNull(remoteFolderLabel("C:\\Users\\me\\stremio-cli-downloader", "stremio-cli-downloader"))
+        assertNull(remoteFolderLabel("/home/me/stremio-cli-downloader", "Stremio CLI downloader"))
+        // A chat with a name of its own still says where it works.
+        assertEquals("app", remoteFolderLabel("/home/me/app", "Fix the login bug"))
+        assertEquals("app", remoteFolderLabel("C:\\src\\app\\", null))
+        assertEquals("/", remoteFolderLabel("/", "Root"))
     }
 
     @Test fun backendNotesSayWhatToDo() {

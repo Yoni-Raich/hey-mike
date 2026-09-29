@@ -1,5 +1,45 @@
 # Progress
 
+### Computer chat panel: activity as one row, a plainer header — 2026-09-29
+
+A UX review of a screenshot of a computer chat (Mike on the phone, Codex on a
+PC over SSH) became fixes on top of `fix/remote-account-model-activity`
+(`bfe4dd9`, not yet merged: this branch needs it first). In that screenshot
+seven activity rows, all reading "Command execution" or "Thinking", took 46% of
+the screen before the answer began.
+
+- A computer's back-to-back activity is now one `RemoteActivityRow`: "Working
+  on Server" while live, "Worked on Server · 4 commands" after, with "N
+  failed" in the error color. Steps say what they did ("Ran ls -la", "Thought",
+  the shell Codex wraps a command in taken off), show a spinner or a failure
+  icon, and a step left streaming by a run that ended reads as stopped. The
+  phone's group stays separate. Thinking has its own icon instead of Skills'
+  sparkle. Expand arrows take their label's color.
+- The top bar reads "Server · folder · This phone", each with its icon, and
+  drops the folder when it is the chat's own name; `remoteChats` is gone.
+- An assistant message's copy button is 48dp and sits on the side its last
+  line ends; a Hebrew or Arabic word is joined to the number after it with a
+  no-break space; "Jump to latest" shows only 96dp or more from the end, in
+  the corner on that side. Composer and chip outlines are at least 3:1.
+
+Withdrawn after reading the code, not fixed because not broken: the composer
+already switches between voice, send, steer and stop; the ring around the
+sphere is the quota meter; title, answer and hint are all 17sp (a height
+measured from the screenshot had included the caret); the white strip under
+the composer is very likely the keyboard's, since `MainActivity` already draws
+edge-to-edge with a black navigation bar. Left open: English-only strings and
+no RTL mirroring of the chrome (there is no string resource file), the model
+chip's wording, the accent palette, per-step durations.
+
+Checked on 2026-09-29 on Windows: `:app:testDevDebugUnitTest` (85 tests, 17
+new, 0 failures), `:app:assembleDevDebug`, `:app:lintDevDebug` (0 errors, 22
+warnings, none new) and `git diff --check` pass.
+
+Not tested: any of this on a phone, so no screenshot of the new panel exists;
+a live run on a paired computer (the command-unwrapping pattern is only
+tested on hand-written strings, not on real Codex output); TalkBack; the jump
+button's corner and the header on a real Hebrew chat.
+
 ### Computer chats use Mike's account, model and live activity — 2026-09-29
 
 Remote app-servers now receive the active ChatGPT access token from Mike on

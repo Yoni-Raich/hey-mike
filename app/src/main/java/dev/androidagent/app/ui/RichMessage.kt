@@ -103,7 +103,7 @@ internal fun MarkdownMessage(value: String, textColor: Color) {
                 }
             }).build()
     }
-    val rendered = remember(renderer, value) { renderer.toMarkdown(keepListsTogether(value)) }
+    val rendered = remember(renderer, value) { renderer.toMarkdown(keepListsTogether(bindNumbersToLabels(value))) }
     AndroidView(
         modifier = Modifier.fillMaxWidth().semantics { text = AnnotatedString(rendered.toString()) },
         factory = { TextView(it).apply {
