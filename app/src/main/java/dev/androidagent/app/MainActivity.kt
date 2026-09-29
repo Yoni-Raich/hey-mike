@@ -177,7 +177,6 @@ class MainActivity : ComponentActivity() {
                 .onFailure { model.error("No app on this phone can share text.") }
         },
         onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
-        onCheckComputerSignIn = { id -> model.checkComputerSignIn(id) },
         onOpenTailscaleApproval = { id, url ->
             model.openedTailscaleApproval(id)
             runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }

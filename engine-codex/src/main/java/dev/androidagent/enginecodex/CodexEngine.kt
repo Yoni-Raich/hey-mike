@@ -49,15 +49,22 @@ data class EngineProfile(
     val inlineImages: Boolean = false,
 )
 
+/** Short-lived phone credential sent only over the encrypted SSH app-server stream. */
+data class ExternalChatgptTokens(val accessToken: String, val accountId: String, val planType: String? = null) {
+    override fun toString(): String = "ExternalChatgptTokens(<redacted>)"
+}
+
 class CodexEngine(
     private val runtime: RuntimeHost,
     private val profile: EngineProfile = PHONE_PROFILE,
 ) : AgentEngine, RealtimeVoiceEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectLock = Mutex()
+    private val externalAuthLock = Mutex()
     private val writeLock = Mutex()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
     private val approvals = ConcurrentHashMap<String, EngineEvent.Approval>()
+    private val selectedModels = ConcurrentHashMap<String, String>()
     private val ids = AtomicLong()
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 128)
     override val events: Flow<EngineEvent> = stream.asSharedFlow()
@@ -72,6 +79,8 @@ class CodexEngine(
     private var writer: BufferedWriter? = null
     private var readerJob: Job? = null
     private var initialized = false
+    private var externalAuth: ExternalChatgptTokens? = null
+    private var externalRefresh: (suspend (String?) -> ExternalChatgptTokens)? = null
     private val json = Json { ignoreUnknownKeys = true }
     private val stderrLock = Any()
     private val stderrTail = ArrayDeque<String>()
@@ -80,6 +89,7 @@ class CodexEngine(
         if (initialized && process?.isAlive == true) return@withLock
         runtime.prepare()
         val started = runtime.startAppServer()
+        externalAuth = null
         process = started
         writer = started.outputStream.bufferedWriter(Charsets.UTF_8)
         readerJob = scope.launch {
@@ -268,7 +278,10 @@ class CodexEngine(
                 try {
                     val result = request("thread/resume", resumeSessionParams(cwd, threadId, model, attempt, profile))
                     val resumedId = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() }
-                    if (resumedId != null) return resumedId
+                    if (resumedId != null) {
+                        if (!model.isNullOrBlank()) selectedModels[resumedId] = model else selectedModels.remove(resumedId)
+                        return resumedId
+                    }
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     // If thread/resume fails (e.g. "no rollout found for thread id",
@@ -287,7 +300,9 @@ class CodexEngine(
         }
         val startParams = startSessionParams(cwd, model, tools, profile)
         val result = request("thread/start", startParams)
-        return result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread ID")
+        val opened = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread ID")
+        if (!model.isNullOrBlank()) selectedModels[opened] = model else selectedModels.remove(opened)
+        return opened
     }
 
     override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String =
@@ -337,7 +352,8 @@ class CodexEngine(
     ): String {
         val result = request(
             "turn/start",
-            turnStartParams(threadId, prompt, images, reasoningEffort, skill, capabilities, planModel, profile.inlineImages),
+            turnStartParams(threadId, prompt, images, reasoningEffort, skill, capabilities, planModel, profile.inlineImages,
+                selectedModels[threadId]),
         )
         return result["turn"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no turn ID")
     }
@@ -472,6 +488,29 @@ class CodexEngine(
         approvals.remove(requestId, approval)
     }
 
+    /** Use Mike's current ChatGPT account in a remote app-server, without saving it on the PC. */
+    suspend fun ensureExternalAuth(
+        tokens: ExternalChatgptTokens,
+        refresh: suspend (String?) -> ExternalChatgptTokens,
+    ) = externalAuthLock.withLock {
+        connect()
+        externalRefresh = refresh
+        if (externalAuth == tokens) return@withLock
+        request("account/login/start", buildJsonObject {
+            put("type", "chatgptAuthTokens")
+            put("accessToken", tokens.accessToken)
+            put("chatgptAccountId", tokens.accountId)
+            tokens.planType?.let { put("chatgptPlanType", it) }
+        })
+        externalAuth = tokens
+    }
+
+    /** Refresh the phone's managed credential before handing out a new short-lived token. */
+    suspend fun refreshAccountToken() {
+        connect()
+        request("account/read", buildJsonObject { put("refreshToken", true) })
+    }
+
     override suspend fun close() {
         initialized = false
         approvals.clear()
@@ -516,6 +555,27 @@ class CodexEngine(
             return
         }
         when {
+            method == "account/chatgptAuthTokens/refresh" && id != null -> {
+                try {
+                    val updated = (externalRefresh ?: error("Remote account is not connected"))(
+                        params.string("previousAccountId").ifBlank { null },
+                    )
+                    externalAuth = updated
+                    respond(id, buildJsonObject {
+                        put("accessToken", updated.accessToken)
+                        put("chatgptAccountId", updated.accountId)
+                        updated.planType?.let { put("chatgptPlanType", it) }
+                    })
+                } catch (_: Exception) {
+                    write(buildJsonObject {
+                        put("id", json.parseToJsonElement(id))
+                        put("error", buildJsonObject {
+                            put("code", -32000)
+                            put("message", "Mike could not refresh the phone account. Sign in again on the phone.")
+                        })
+                    })
+                }
+            }
             method == "item/tool/call" && id != null -> {
                 val args = params["arguments"]
                 val value = when (args) { is JsonObject -> args; is JsonPrimitive -> runCatching { json.parseToJsonElement(args.content).jsonObject }.getOrDefault(buildJsonObject {}); else -> buildJsonObject {} }
@@ -593,6 +653,7 @@ class CodexEngine(
             method == "item/agentMessage/delta" -> stream.emit(EngineEvent.TextDelta(params.string("delta"), params.string("threadId"), params.string("turnId"), params.string("itemId").ifBlank { null }))
             method == "item/completed" -> {
                 val item = params["item"] as? JsonObject
+                item?.let { itemActivity(it, params, complete = true) }?.let { stream.emit(it) }
                 if (item?.string("type") == "agentMessage") stream.emit(EngineEvent.MessageCompleted(
                     item.string("text"), params.string("threadId"), params.string("turnId"),
                     item.string("id"), item.string("phase").ifBlank { null },
@@ -618,7 +679,9 @@ class CodexEngine(
             method == "account/updated" -> scope.launch { runCatching { account() }.onSuccess { stream.emit(EngineEvent.AccountChanged(it)) } }
             method == "skills/changed" -> stream.emit(EngineEvent.SkillsChanged)
             method == "item/started" -> {
-                val type = (params["item"] as? JsonObject)?.string("type").orEmpty()
+                val item = params["item"] as? JsonObject
+                item?.let { itemActivity(it, params, complete = false) }?.let { stream.emit(it) }
+                val type = item?.string("type").orEmpty()
                 if (type !in setOf("agentMessage", "userMessage", "")) stream.emit(EngineEvent.Activity(when (type) { "reasoning" -> "Working"; "commandExecution" -> "Working in session files"; "fileChange" -> "Updating session files"; else -> "Working" }, params.string("threadId"), params.string("turnId")))
             }
             method == "error" -> stream.emit(
@@ -672,6 +735,50 @@ class CodexEngine(
     }
 
     companion object {
+        internal fun itemActivity(item: JsonObject, params: JsonObject, complete: Boolean): EngineEvent.ItemActivity? {
+            val type = item.string("type")
+            val id = item.string("id")
+            if (id.isBlank()) return null
+            val title = when (type) {
+                "reasoning" -> "Thinking"
+                "commandExecution" -> "Command execution"
+                "fileChange" -> "File change"
+                "mcpToolCall", "dynamicToolCall" -> "Tool: " +
+                    listOf(item.string("server").ifBlank { item.string("namespace") }, item.string("tool"))
+                        .filter { it.isNotBlank() }.joinToString(".").ifBlank { "Call" }
+                "webSearch" -> "Web search"
+                "collabAgentToolCall", "subAgentActivity" -> "Agent work"
+                "imageGeneration" -> "Image generation"
+                "imageView" -> "Image view"
+                "sleep" -> "Waiting"
+                "plan" -> "Plan"
+                "enteredReviewMode" -> "Review started"
+                "exitedReviewMode" -> "Review finished"
+                "contextCompaction" -> "Making room in context"
+                else -> return null
+            }
+            val detail = when (type) {
+                "commandExecution" -> listOfNotNull(item.string("command").takeIf { it.isNotBlank() },
+                    item.string("exitCode").takeIf { complete && it.isNotBlank() }?.let { "Exit code: $it" })
+                    .joinToString("\n")
+                "fileChange" -> (item["changes"] as? JsonArray)?.mapNotNull {
+                    (it as? JsonObject)?.string("path")?.takeIf(String::isNotBlank)
+                }?.joinToString("\n").orEmpty()
+                "reasoning" -> (item["summary"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                    ?.joinToString("\n").orEmpty()
+                "webSearch" -> item.string("query")
+                "imageView" -> item.string("path")
+                "plan" -> item.string("text")
+                "enteredReviewMode", "exitedReviewMode" -> item.string("review")
+                "collabAgentToolCall" -> item.string("tool")
+                "subAgentActivity" -> listOf(item.string("agentPath"), item.string("kind"))
+                    .filter { it.isNotBlank() }.joinToString(" · ")
+                else -> ""
+            }
+            val status = item.string("status")
+            val state = if (!complete) "streaming" else if (status in setOf("failed", "declined", "interrupted")) "failed" else "complete"
+            return EngineEvent.ItemActivity(id, title, detail, state, params.string("threadId"), params.string("turnId"))
+        }
         private val BRAND_COLOR = Regex("#[0-9A-Fa-f]{6}")
 
         private const val MAX_STDERR_LINES = 80
@@ -803,6 +910,7 @@ class CodexEngine(
             capabilities: DeviceCapabilities? = null,
             planModel: String? = null,
             inlineImages: Boolean = false,
+            selectedModel: String? = null,
         ): JsonObject = buildJsonObject {
             put("threadId", threadId)
             put("input", buildJsonArray {
@@ -832,6 +940,7 @@ class CodexEngine(
             })
             // Omitting effort keeps the app-server's model default in control.
             if (!reasoningEffort.isNullOrBlank()) put("effort", reasoningEffort)
+            if (!selectedModel.isNullOrBlank()) put("model", selectedModel)
             // Plan mode is a collaboration mode; its settings take precedence over
             // the turn's model and effort, so they are restated here. A null
             // developer_instructions keeps Codex's own plan-mode instructions.

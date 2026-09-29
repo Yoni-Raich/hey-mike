@@ -3,6 +3,7 @@ package dev.androidagent.remote
 import dev.androidagent.core.RuntimeHost
 import dev.androidagent.core.RuntimeStatus
 import dev.androidagent.enginecodex.CodexEngine
+import dev.androidagent.enginecodex.ExternalChatgptTokens
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -28,7 +29,11 @@ class RoutingAgentEngineTest {
         val stateFile = File(temp.root, "computers.bin")
         val store = RemoteStore(stateFile, box)
         store.save(RemoteComputer("pc", "PC", "localhost", user = "test"), "test-only")
-        val hub = RemoteHub(store) { _, profile -> CodexEngine(ReplyRuntime(), profile) }
+        var phoneTokens = ExternalChatgptTokens("test-token", "test-account")
+        val remoteRuntimes = mutableListOf<ReplyRuntime>()
+        val hub = RemoteHub(store, { _, _ -> phoneTokens }) { _, profile ->
+            CodexEngine(ReplyRuntime().also { remoteRuntimes += it }, profile)
+        }
         val router = RoutingAgentEngine(CodexEngine(ReplyRuntime()), hub)
         try {
             for (origin in listOf(true, null, false)) {
@@ -39,6 +44,10 @@ class RoutingAgentEngineTest {
                 val workspace = File(temp.root, "sessions/$chat/workspace").apply { mkdirs() }
                 repeat(2) {
                     assertEquals(threadId, withTimeout(5_000) { router.openSession(workspace, threadId, null, emptyList()) })
+                    assertTrue(remoteRuntimes.any { runtime -> runtime.requests.any {
+                        it["method"]?.jsonPrimitive?.content == "account/login/start" &&
+                            it["params"]?.jsonObject?.get("chatgptAccountId")?.jsonPrimitive?.content == "test-account"
+                    } })
                     assertEquals(binding, RemoteStore(stateFile, box).binding(chat))
                     hub.disconnect("pc")
                 }
@@ -48,11 +57,22 @@ class RoutingAgentEngineTest {
             assertEquals("new-thread", withTimeout(5_000) { router.openSession(workspace, null, null, emptyList()) })
             assertEquals(false, store.binding("new")?.importedFromPc)
             assertEquals("new-thread", store.binding("new")?.threadId)
+            phoneTokens = ExternalChatgptTokens("second-token", "second-account")
+            assertEquals("new-thread", withTimeout(5_000) { router.openSession(workspace, "new-thread", "gpt-6-sol", emptyList()) })
+            assertTrue(remoteRuntimes.any { runtime -> runtime.requests.any {
+                it["method"]?.jsonPrimitive?.content == "account/login/start" &&
+                    it["params"]?.jsonObject?.get("chatgptAccountId")?.jsonPrimitive?.content == "second-account"
+            } })
+            assertTrue(remoteRuntimes.any { runtime -> runtime.requests.any {
+                it["method"]?.jsonPrimitive?.content == "thread/resume" &&
+                    it["params"]?.jsonObject?.get("model")?.jsonPrimitive?.content == "gpt-6-sol"
+            } })
         } finally { router.close() }
     }
 
     /** A protocol peer which resumes the requested thread; no SSH or account is used. */
     private class ReplyRuntime : RuntimeHost {
+        val requests = java.util.Collections.synchronizedList(mutableListOf<JsonObject>())
         override val status = MutableStateFlow(RuntimeStatus())
         override val homeDirectory = File(".")
         private val input = PipedInputStream()
@@ -63,6 +83,7 @@ class RoutingAgentEngineTest {
                 reset()
                 lines.forEach { line ->
                     val request = Json.parseToJsonElement(line).jsonObject
+                    requests.add(request)
                     val id = request["id"] ?: return@forEach
                     val method = request["method"]?.jsonPrimitive?.content
                     val thread = (request["params"] as? JsonObject)?.get("threadId") ?: JsonPrimitive("new-thread")

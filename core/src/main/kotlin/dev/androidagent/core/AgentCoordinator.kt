@@ -113,6 +113,7 @@ class AgentCoordinator(
     private var awaitingTurn = false
     private var voiceMode = false
     private val startupEvents = ArrayDeque<EngineEvent>()
+    private val remoteItems = mutableSetOf<String>()
     private var textRevision = 0L
     private var textFlushJob: Job? = null
     /** The agent's words already mirrored onto the overlay, so the same line is not resent. */
@@ -163,6 +164,7 @@ class AgentCoordinator(
             controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
+            remoteItems.clear()
             textRevision = 0L
             overlaySpeech = null
             runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode) }
@@ -1069,6 +1071,22 @@ class AgentCoordinator(
                     overlay.updateState(OverlayState(OverlayPhase.RUNNING, event.text))
                 }
             }
+            is EngineEvent.ItemActivity -> if (event.remote && matches(event.threadId, event.turnId) && !isVoiceMode()) {
+                val sessionId = state.value.sessionId ?: return
+                val key = "remote:${event.threadId}:${event.turnId}:${event.itemId}"
+                val visible = SecretRedactor.redact("${event.title}\n\n${event.detail.take(4_000)}")
+                if (remoteItems.add(key)) {
+                    flushAssistantSegment()
+                    sessions.append(message(sessionId, "remote_activity", visible).copy(id = key, state = event.state))
+                } else {
+                    sessions.updateMessage(key, visible, event.state)
+                }
+                if (event.state == "streaming") synchronized(lifecycleLock) {
+                    if (isCurrentTurnLocked(epoch.get(), event.threadId, event.turnId)) {
+                        mutableState.value = state.value.copy(status = event.title)
+                    }
+                }
+            }
             is EngineEvent.Approval -> {
                 val accepted = synchronized(lifecycleLock) {
                     if (approvalMatchesLocked(event) && state.value.approval == null && pendingLocalApproval == null) {
@@ -1388,6 +1406,7 @@ class AgentCoordinator(
         is EngineEvent.MessageCompleted -> event.threadId
         is EngineEvent.GeneratedImage -> event.threadId
         is EngineEvent.Activity -> event.threadId
+        is EngineEvent.ItemActivity -> event.threadId
         is EngineEvent.UsageChanged, is EngineEvent.AccountChanged, EngineEvent.SkillsChanged -> null
     }
 
@@ -1401,6 +1420,7 @@ class AgentCoordinator(
         is EngineEvent.MessageCompleted -> event.turnId
         is EngineEvent.GeneratedImage -> event.turnId
         is EngineEvent.Activity -> event.turnId
+        is EngineEvent.ItemActivity -> event.turnId
         is EngineEvent.UsageChanged, is EngineEvent.AccountChanged, EngineEvent.SkillsChanged -> null
     }
 

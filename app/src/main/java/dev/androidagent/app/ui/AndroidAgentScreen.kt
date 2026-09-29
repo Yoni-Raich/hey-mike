@@ -863,6 +863,16 @@ private fun LoadingMessagesCard() {
 @Composable
 private fun MessageBubble(message: ChatMessage) {
     val role = message.role.lowercase()
+    if (role == "remote_activity") {
+        ActivityDetail(
+            title = message.text.substringBefore("\n\n"),
+            detail = message.text.substringAfter("\n\n", ""),
+            failed = message.state == "failed" || message.state == "interrupted",
+            live = message.state == "streaming",
+            key = message.id,
+        )
+        return
+    }
     val user = role == "user"
     val system = role == "system" || role == "tool"
     if (role == "note") {
@@ -1027,13 +1037,24 @@ internal fun ApprovalCard(
 }
 
 @Composable
-private fun ActivityDetail(title: String, detail: String, failed: Boolean = false, key: Any = title) {
+private fun ActivityDetail(title: String, detail: String, failed: Boolean = false, live: Boolean = false, key: Any = title) {
     var expanded by rememberSaveable(key) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(if (failed) Icons.Outlined.ErrorOutline else Icons.Outlined.PictureInPictureAlt, null,
-                Modifier.size(18.dp), tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            if (live) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                val icon = when {
+                    failed -> Icons.Outlined.ErrorOutline
+                    title == "Command execution" -> Icons.Outlined.Computer
+                    title == "File change" -> Icons.Outlined.Edit
+                    title == "Thinking" -> Icons.Outlined.AutoAwesome
+                    else -> Icons.Outlined.PictureInPictureAlt
+                }
+                Icon(icon, null, Modifier.size(18.dp),
+                    tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text(title, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium)
             if (detail.isNotBlank()) Icon(Icons.Outlined.ExpandMore,

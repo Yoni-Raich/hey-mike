@@ -357,13 +357,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun checkComputerSignIn(id: String) = task {
-        when (graph.remote.checkSignIn(id)) {
-            is RemoteSetup.Ready -> browseFolder(id, graph.computers.computer(id)?.lastFolder.orEmpty())
-            else -> mutable.update { it.copy(infoMessage = "Codex on the computer is not signed in yet.") }
-        }
-    }
-
     /** Remove a computer and the chats that run on it. Nothing on the computer changes. */
     fun removeComputer(id: String) = task {
         val chats = graph.computers.state.value.bindings.filterValues { it.computerId == id }.keys

@@ -143,6 +143,11 @@ sealed interface EngineEvent {
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    /** One Codex item. The router marks it remote before it reaches chat history. */
+    data class ItemActivity(
+        val itemId: String, val title: String, val detail: String, val state: String,
+        val threadId: String, val turnId: String, val remote: Boolean = false,
+    ) : EngineEvent
     data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent

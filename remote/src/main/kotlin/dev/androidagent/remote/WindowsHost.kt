@@ -41,8 +41,9 @@ data class FolderListing(
  *
  * The app-server is the official Codex release pinned for the phone, fetched
  * by the computer from GitHub and checked against the hashes below before it
- * is unpacked. It runs as the signed-in user with their own `~/.codex`, so
- * their sign-in, config, skills and MCP servers are the ones Codex uses.
+ * is unpacked. It runs as the signed-in user with their own `~/.codex`
+ * config, skills and MCP servers. RemoteHub supplies Mike's active ChatGPT
+ * account to this app-server over SSH before any Codex call.
  */
 object WindowsHost : HostScripts {
     const val CODEX_VERSION = "0.156.0"

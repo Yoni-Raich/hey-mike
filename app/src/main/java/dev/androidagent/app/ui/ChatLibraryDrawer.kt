@@ -622,7 +622,6 @@ private fun LibraryConnection(state: AgentUiState, id: String, actions: AgentUiA
             is RemoteSetup.Working -> LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = LibraryAmber, trackColor = LibraryTile)
             is RemoteSetup.Failed -> PcProblemCard(message = setup.message, primary = "Try again", onPrimary = { actions.onReconnectComputer(id) }, secondary = "Settings", onSecondary = { close(); actions.onOpenComputers() }, modifier = Modifier.padding(0.dp))
             is RemoteSetup.NeedsTailscaleApproval -> TailscaleApprovalCard(state.computers.first { it.id == id }.label, setup.url, { actions.onOpenTailscaleApproval(id, it) }, { actions.onReconnectComputer(id) })
-            is RemoteSetup.NeedsSignIn -> PcProblemCard("Codex needs a sign-in on this computer.", "Sign in", { close(); actions.onOpenComputers() })
             is RemoteSetup.Ready -> Unit
             null -> QuietLink("Connect to load its projects", icon = Icons.Outlined.Computer) { actions.onReconnectComputer(id) }
         }

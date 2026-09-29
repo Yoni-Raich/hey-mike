@@ -1,5 +1,31 @@
 # Progress
 
+### Computer chats use Mike's account, model and live activity — 2026-09-29
+
+Remote app-servers now receive the active ChatGPT access token from Mike on
+the phone before any remote Codex call. The phone's refresh token stays on the
+phone; a remote refresh request asks the phone to refresh its own account.
+Remote calls fail if Mike has no usable ChatGPT sign-in. The selected model is
+sent when opening a remote thread and again at each turn. Remote item events
+now appear as expandable rows in the chat, including thinking, commands, file
+changes and tools, with a running or failed state. The computer setup no
+longer asks for a separate Codex device-code sign-in.
+
+Windows checks passed: `:engine-codex:testDebugUnitTest`
+(42 tests), `:remote:testDebugUnitTest` (36 tests, 2 Linux-only skipped),
+`:core:test` (568 tests), `:app:testDevDebugUnitTest` (68 tests),
+`:app:assembleDevDebug`, `:app:lintDevDebug`, and `git diff --check`.
+The DevDebug APK (0.14.0, code 28) installed with `adb -s <Nothing A059>
+install -r --user 0`, and `MainActivity` launch returned successfully. The
+wireless ADB connection then dropped before inspecting the screen or sending
+a remote turn.
+
+Not verified: a live turn on a paired computer, which account the backend
+billed, model selection on that computer, token refresh after expiry, or live
+activity rows on the phone. The external-token login is an experimental
+Codex 0.156.0 app-server API, so compatibility with later versions needs a
+fresh check before changing the pinned runtime.
+
 ### Assistant panel over the current app — 2026-09-28
 
 Holding the power button now opens Mike over the current app, instead of

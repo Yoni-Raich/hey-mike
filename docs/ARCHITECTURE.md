@@ -1584,7 +1584,7 @@ the phone's own Codex. `CodexEngine` only needs a `Process`, so the new
 `:remote` module hands it an SSH exec channel (`SshProcess`) instead of a local
 child. Everything Codex does there is native to that computer: its shell,
 `apply_patch`, git, the project's `AGENTS.md`, the user's `~/.codex` config,
-sign-in, MCP servers, and skills from `~/.agents/skills` and the repo's
+MCP servers, and skills from `~/.agents/skills` and the repo's
 `.agents/skills`, which also appear in the composer's skill picker.
 
 Why not a `remote_shell` tool for the phone's Codex: file edits, reads,
@@ -1599,6 +1599,20 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   coordinator sees them. An unscoped failure from a computer that is not
   running the current turn is dropped, because the coordinator ends any
   active run on one.
+- **Account and model.** Before any remote app-server call, `RemoteHub`
+  supplies an externally managed ChatGPT access token from the active Mike
+  account on the phone. The phone's refresh token stays on the phone; the
+  app-server requests a fresh access token through the SSH stream when it
+  expires. An account change during refresh fails the remote turn. If Mike
+  cannot provide a ChatGPT token, the remote call stops before running under
+  the computer's saved Codex account. `CodexEngine` passes the model selected
+  in Mike to both `thread/start` or `thread/resume` and each `turn/start`.
+  The computer's Codex config, MCP servers and skills still come from that
+  computer.
+- **Live remote activity.** `item/started` and `item/completed` notifications
+  for reasoning, commands, file changes and other supported tool items become
+  activity rows in the chat. Rows update from running to complete or failed,
+  and their details can be expanded. Raw app-server JSON never reaches the UI.
 - **The phone is still reachable.** The phone's device tools are advertised to
   the computer's thread as well, so a task on the PC can still act on the
   phone. The computer's thread instructions (`RemoteInstructions`) say which
@@ -1699,7 +1713,7 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   (XDG_RUNTIME_DIR, DBus, Wayland or X11) instead of a scheduled task.
 - **Voice follows the thread.** `RoutingAgentEngine` starts realtime on the
   app-server that owns the chat's thread, so voice in a computer chat runs on
-  the computer's Codex (and its sign-in). Audio does not cross SSH: the
+  the computer's Codex with Mike's active account. Audio does not cross SSH: the
   transport is WebRTC, so only the SDP goes through the computer and the
   media flows between the phone and OpenAI.
 - **No size cap on copies.** `copy_file` and `install_apk` take files of

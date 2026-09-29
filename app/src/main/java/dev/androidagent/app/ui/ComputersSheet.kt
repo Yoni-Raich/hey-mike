@@ -156,7 +156,7 @@ private fun stepsText(os: dev.androidagent.remote.HostOs) =
 
 /**
  * Computers Mike can work on, on a screen of its own: the list, adding or
- * editing one (the PC's setup first, then the sign-in), and the folder picker
+ * editing one (the PC's setup first, then Mike's account), and the folder picker
  * a project is started from. A full screen, so scrolling a long folder list
  * never closes it; Back steps back one view.
  */
@@ -409,7 +409,7 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
             buildString {
                 append("Connected to ${setup.probe.computerName.ifBlank { computer.label }}")
                 setup.route?.let { append(if (it.viaVpn) " over the VPN" else " on the home network") }
-                append(" · Codex signed in as ${setup.account}")
+                append(" · Using Mike's account: ${setup.account}")
             },
             fontSize = 13.sp, lineHeight = 18.sp, color = ReadyInk, modifier = Modifier.padding(top = 12.dp),
         )
@@ -427,15 +427,6 @@ private fun SetupLine(computer: RemoteComputer, setup: RemoteSetup?, actions: Ag
             onConnect = { actions.onConnectComputer(computer.id) },
             modifier = Modifier.padding(top = 12.dp),
         )
-        is RemoteSetup.NeedsSignIn -> Column(Modifier.padding(top = 12.dp)) {
-            Text("Sign in to Codex on this computer", fontSize = 14.sp, color = WaitInk, fontWeight = FontWeight.Medium)
-            Text("Open the page, sign in, and enter this code:", fontSize = 13.sp, color = Muted)
-            setup.code?.let { Text(it, fontSize = 24.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(vertical = 6.dp)) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                setup.url?.let { url -> OutlinedButton(onClick = { actions.onOpenUrl(url) }) { Text("Open sign-in page") } }
-                TextButton(onClick = { actions.onCheckComputerSignIn(computer.id) }) { Text("I signed in") }
-            }
-        }
     }
 }
 
@@ -484,8 +475,7 @@ private fun UbuntuChecklist(onShare: () -> Unit) {
     ) { CodeLine("whoami") }
     SetupStep(
         5, "Nothing else to install",
-        "Mike installs Codex on the computer the first time it connects and uses your Codex sign-in there, " +
-            "or shows a code to sign in.",
+        "Mike installs Codex on the computer the first time it connects. Remote chats use the ChatGPT account selected in Mike.",
     )
     OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 44.dp)) {
         Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -512,8 +502,7 @@ private fun WindowsChecklist(onShare: () -> Unit) {
     ) { CodeLine("whoami") }
     SetupStep(
         5, "Nothing else to install",
-        "Mike installs Codex on the PC the first time it connects (about 120 MB) and uses your Codex sign-in there, " +
-            "or shows a code to sign in.",
+        "Mike installs Codex on the PC the first time it connects (about 120 MB). Remote chats use the ChatGPT account selected in Mike.",
     )
     OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 44.dp)) {
         Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -564,7 +553,7 @@ private fun ColumnScope.ComputerForm(
     val editing = initial.id != null
     SheetHeader(
         if (editing) "Edit computer" else "Connect",
-        if (editing) "The sign-in is kept sealed on this phone." else "Step 2 of 2 · the sign-in is kept sealed on this phone",
+        if (editing) "The SSH password is kept sealed on this phone." else "Step 2 of 2 · the SSH password is kept sealed on this phone",
         onBack = onCancel,
     )
     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {

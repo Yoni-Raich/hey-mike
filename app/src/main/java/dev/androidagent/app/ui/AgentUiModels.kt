@@ -341,10 +341,8 @@ data class AgentUiActions(
     val onComposerSeedUsed: (sessionId: String) -> Unit = {},
     /** Hand text to another app, such as the PC setup steps to email to oneself. */
     val onShareText: (String) -> Unit = {},
-    /** Connect, install Codex if needed, and check its sign-in. */
+    /** Connect, install Codex if needed, and use Mike's active account. */
     val onConnectComputer: (String) -> Unit = {},
-    /** The user says they finished signing in to Codex on the computer. */
-    val onCheckComputerSignIn: (String) -> Unit = {},
     val onOpenUrl: (String) -> Unit = {},
     /** Show the folders in one folder of a computer; blank is its home folder. */
     val onBrowseFolder: (computerId: String, path: String) -> Unit = { _, _ -> },

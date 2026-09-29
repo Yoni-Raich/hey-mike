@@ -214,6 +214,21 @@ class CodexEngineTest {
 
         val automatic = CodexEngine.turnStartParams("thread", "Hello", emptyList(), null)
         assertFalse(automatic.containsKey("effort"))
+        val selectedModel = CodexEngine.turnStartParams("thread", "Hello", emptyList(), "high", selectedModel = "gpt-6-sol")
+        assertEquals("gpt-6-sol", selectedModel["model"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun computerItemsKeepTheirIdentityAndVisibleAction() {
+        val scope = Json.parseToJsonElement("""{"threadId":"thread-1","turnId":"turn-1"}""").jsonObject
+        val command = Json.parseToJsonElement("""{"id":"item-1","type":"commandExecution","command":"git status","status":"inProgress"}""").jsonObject
+        val started = CodexEngine.itemActivity(command, scope, complete = false)!!
+        assertEquals("Command execution", started.title)
+        assertEquals("git status", started.detail)
+        assertEquals("streaming", started.state)
+        assertEquals("item-1", started.itemId)
+        val failed = CodexEngine.itemActivity(Json.parseToJsonElement("""{"id":"item-1","type":"commandExecution","command":"git status","status":"failed"}""").jsonObject, scope, complete = true)!!
+        assertEquals("failed", failed.state)
+        assertNull(CodexEngine.itemActivity(Json.parseToJsonElement("""{"id":"item-2","type":"agentMessage"}""").jsonObject, scope, complete = true))
     }
 
     @Test fun turnParamsIncludeNativeSkillInput() {

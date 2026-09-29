@@ -92,7 +92,15 @@ class AgentGraph(private val app: Application) {
         java.io.File(app.filesDir, "remote/computers.bin"),
         dev.androidagent.remote.KeystoreSecretBox(),
     )
-    val remote = dev.androidagent.remote.RemoteHub(computers)
+    val remote = dev.androidagent.remote.RemoteHub(
+        computers,
+        authTokens = { refresh, previous ->
+            dev.androidagent.remote.PhoneAccountTokens(
+                phoneEngine,
+                java.io.File(runtime.codexHomeDirectory, "auth.json"),
+            ).current(refresh, previous)
+        },
+    )
     /** What chats talk to: the phone's Codex, or a computer's for a chat opened on one. */
     val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.

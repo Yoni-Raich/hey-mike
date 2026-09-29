@@ -185,6 +185,7 @@ class RoutingAgentEngine(
             // The computer's own sign-in and quota are not the phone's.
             is EngineEvent.AccountChanged -> null
             is EngineEvent.UsageChanged -> event.takeIf { it.threadId != null }
+            is EngineEvent.ItemActivity -> event.copy(remote = true)
             // An unscoped failure ends whatever run is active, so a computer
             // that is not running this one keeps its failures to itself.
             is EngineEvent.Failure -> event.takeIf { !it.threadId.isNullOrBlank() || activeComputer == computer }

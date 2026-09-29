@@ -1,6 +1,5 @@
 package dev.androidagent.remote
 
-import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.RuntimeHost
 import dev.androidagent.core.RuntimePhase
@@ -9,6 +8,7 @@ import dev.androidagent.enginecodex.CodexEngine
 import dev.androidagent.enginecodex.CodexThread
 import dev.androidagent.enginecodex.CodexThreadMessage
 import dev.androidagent.enginecodex.EngineProfile
+import dev.androidagent.enginecodex.ExternalChatgptTokens
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,8 +32,6 @@ data class RemoteEvent(val computerId: String, val event: EngineEvent)
 /** Where setting a computer up has got to, for the sheet to show. */
 sealed interface RemoteSetup {
     data class Working(val step: String) : RemoteSetup
-    /** Codex on the computer is not signed in; the user opens [url] and enters [code]. */
-    data class NeedsSignIn(val url: String?, val code: String?) : RemoteSetup
     /** Tailscale SSH answered and wants the user to approve at [url] (null: its rule has no browser check). */
     data class NeedsTailscaleApproval(val url: String?) : RemoteSetup
     /** [route] is the address that answered, for the sheet to name. */
@@ -53,6 +51,8 @@ data class RemoteRoute(val host: String, val viaVpn: Boolean)
  */
 class RemoteHub(
     val store: RemoteStore,
+    private val authTokens: suspend (refresh: Boolean, previousAccountId: String?) -> ExternalChatgptTokens =
+        { _, _ -> error("Sign in to ChatGPT in Mike before using a computer chat.") },
     private val createEngine: (RuntimeHost, EngineProfile) -> CodexEngine = ::CodexEngine,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -127,17 +127,22 @@ class RemoteHub(
 
     /** The Codex for [computerId], started on first use. */
     suspend fun engine(computerId: String): CodexEngine = lock.withLock {
-        engines[computerId]?.first?.let { return@withLock it }
-        val computer = store.computer(computerId) ?: error("That computer was removed.")
-        val engine = createEngine(ComputerRuntime(computerId), profileFor(computer))
-        val job = scope.launch { engine.events.collect { stream.emit(RemoteEvent(computerId, it)) } }
-        engines[computerId] = engine to job
+        val engine = engines[computerId]?.first ?: run {
+            val computer = store.computer(computerId) ?: error("That computer was removed.")
+            val created = createEngine(ComputerRuntime(computerId), profileFor(computer))
+            val job = scope.launch { created.events.collect { stream.emit(RemoteEvent(computerId, it)) } }
+            engines[computerId] = created to job
+            created
+        }
+        // Every entry point checks the active phone account. A failed exchange
+        // stops here; the computer's own saved sign-in is never used for a run.
+        engine.ensureExternalAuth(authTokens(false, null)) { previous -> authTokens(true, previous) }
         engine
     }
 
     /**
      * Connect, trust the host key the first time, install Codex if it is
-     * missing and check its sign-in. Progress goes to [setup].
+     * missing and connect Mike's active account. Progress goes to [setup].
      */
     suspend fun setUp(computerId: String, install: Boolean = true): RemoteSetup {
         val result = runCatching<RemoteSetup> {
@@ -156,29 +161,12 @@ class RemoteHub(
             }
             report(computerId, RemoteSetup.Working("Starting Codex on ${probe.computerName.ifBlank { "the computer" }}"))
             val account = engine(computerId).account()
-            if (account.signedIn) RemoteSetup.Ready(probe, account.label, connection.route)
-            else {
-                val login = engine(computerId).login()
-                RemoteSetup.NeedsSignIn(login.loginUrl, login.userCode)
-            }
+            check(account.signedIn) { "Mike could not use the phone account on this computer." }
+            RemoteSetup.Ready(probe, account.label, connection.route)
         }.getOrElse { if (it is TailscaleCheck) RemoteSetup.NeedsTailscaleApproval(it.url) else RemoteSetup.Failed(it.message ?: it.toString()) }
         report(computerId, result)
         if (result is RemoteSetup.Ready) refreshThreads(computerId)
         return result
-    }
-
-    /** Check whether a device-code sign-in on the computer has finished. */
-    suspend fun checkSignIn(computerId: String): RemoteSetup {
-        val result = runCatching {
-            val account: AccountStatus = engine(computerId).account()
-            if (!account.signedIn) return@runCatching null
-            val connection = connection(computerId)
-            val probe = withContext(Dispatchers.IO) { connection.probe(refresh = false) }
-            RemoteSetup.Ready(probe, account.label, connection.route)
-        }.getOrElse { RemoteSetup.Failed(it.message ?: it.toString()) }
-        result?.let { report(computerId, it) }
-        if (result is RemoteSetup.Ready) refreshThreads(computerId)
-        return result ?: mutableSetup.value[computerId] ?: RemoteSetup.Working("Waiting for sign-in")
     }
 
     /** Copy a file from the computer to this phone. */
