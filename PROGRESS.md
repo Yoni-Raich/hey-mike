@@ -17,8 +17,9 @@ the screen before the answer began.
   sparkle. Expand arrows take their label's color.
 - The top bar reads "Server · folder · This phone", each with its icon, and
   drops the folder when it is the chat's own name; `remoteChats` is gone.
-- An assistant message's copy button is 48dp and sits on the side its last
-  line ends; a Hebrew or Arabic word is joined to the number after it with a
+- Copying is a long press on a block (a user's prompt, or the agent's whole
+  reply after it) with Copy and Select text; there is no copy button, and
+  the "Working" line sits under the chat's last line while it runs. A Hebrew or Arabic word is joined to the number after it with a
   no-break space; "Jump to latest" shows only 96dp or more from the end, in
   the corner on that side. Composer and chip outlines are at least 3:1.
 

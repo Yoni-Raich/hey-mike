@@ -191,7 +191,7 @@ class ChatRowsTest {
         assertFalse(endsRtl(""))
     }
 
-    @Test fun oneCopyButtonEndsATurnAndCopiesAllOfIt() {
+    @Test fun aLongPressOnAnyAgentBlockCopiesItsWholeTurn() {
         val messages = listOf(
             message("u1", "user", "ask"),
             message("a1", "assistant", "first block"),
@@ -201,14 +201,16 @@ class ChatRowsTest {
             message("a3", "assistant", "reply"),
         )
         val copies = turnCopyTexts(messages)
-        assertEquals(setOf("a2", "a3"), copies.keys)
+        assertEquals(setOf("a1", "a2", "a3"), copies.keys)
+        assertEquals("first block\n\nfinal block", copies["a1"])
         assertEquals("first block\n\nfinal block", copies["a2"])
+        assertEquals("reply", copies["a3"])
         val rows = chatRows(messages, running = false).filterIsInstance<MessageRow>()
-        assertEquals(listOf("a2", "a3"), rows.filter { it.copyText != null }.map { it.message.id })
+        assertEquals(listOf("a1", "a2", "a3"), rows.filter { it.copyText != null }.map { it.message.id })
     }
 
-    @Test fun aStreamingReplyHasNoCopyYet() {
+    @Test fun aReplyStillStreamingCopiesWhatIsThereSoFar() {
         val streaming = ChatMessage("a1", "s", "assistant", "partial", 0L, "streaming")
-        assertTrue(turnCopyTexts(listOf(message("u", "user"), streaming)).isEmpty())
+        assertEquals("partial", turnCopyTexts(listOf(message("u", "user"), streaming))["a1"])
     }
 }

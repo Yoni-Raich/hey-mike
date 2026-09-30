@@ -28,8 +28,9 @@ internal sealed interface ChatRow {
 }
 
 /**
- * [copyText] is set only on the last assistant message of a turn: the whole
- * turn's reply, so one copy button ends it instead of one after every block.
+ * [copyText] is what a long press on an agent block copies: the whole reply of
+ * its turn, from after the user's prompt to the end, however many blocks the
+ * activity between them split it into.
  */
 internal data class MessageRow(val message: ChatMessage, val copyText: String? = null) : ChatRow {
     override val key: String get() = message.id
@@ -86,17 +87,16 @@ internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatR
 }
 
 /**
- * Message id to the text its copy button copies: for the last assistant
- * message of each turn, every assistant block of that turn joined. A reply
- * still streaming has none yet.
+ * Agent message id to the text a long press on it copies: every agent block of
+ * its turn joined, a turn being everything after one user prompt up to the next.
  */
 internal fun turnCopyTexts(messages: List<ChatMessage>): Map<String, String> {
     val result = mutableMapOf<String, String>()
     var blocks = mutableListOf<ChatMessage>()
     fun close() {
-        val last = blocks.lastOrNull()
-        if (last != null && !last.state.equals("streaming", ignoreCase = true)) {
-            result[last.id] = blocks.joinToString("\n\n") { it.text.trim() }
+        if (blocks.isNotEmpty()) {
+            val whole = blocks.joinToString("\n\n") { it.text.trim() }
+            blocks.forEach { result[it.id] = whole }
         }
         blocks = mutableListOf()
     }

@@ -95,8 +95,11 @@ uses the existing send, steer, stop, model, and attachment action contracts.
 Stop remains reachable while a steering draft exists; STOPPING blocks dispatch
 and preserves that draft. Terminal formatting is removed before display.
 A Hebrew or Arabic word stays on the line of the number after it (a no-break
-space, `bindNumbersToLabels`), an assistant message's copy button sits on the
-side its last line ends on with a 48dp target, and "Jump to latest" appears
+space, `bindNumbersToLabels`), there is no copy button: a long press on a
+block opens Copy and Select text. A block is a user's prompt, or the agent's
+reply, which is everything after that prompt up to the next one. While this
+chat's own run works, its status line sits under the last line of the chat
+instead of above the composer. "Jump to latest" appears
 only 96dp or more from the end, in the corner on that same side. The composer's
 field and chip outlines are at least 3:1 against the black behind them.
 With computers saved, an empty new chat is one question, "Where should Mike

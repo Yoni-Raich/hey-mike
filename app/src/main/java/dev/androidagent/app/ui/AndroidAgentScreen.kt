@@ -113,6 +113,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -632,6 +637,17 @@ private fun AgentChatContent(
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }
             }
+            // While this chat's own run works, its status sits right under the
+            // last line instead of pinned above the composer. A reply that is
+            // still empty already shows its own "Working".
+            val last = state.messages.lastOrNull()
+            val emptyReply = last != null && last.role.equals("assistant", true) && last.text.isBlank() &&
+                last.state.equals("streaming", true)
+            if (running && !state.voiceState.active && !emptyReply) {
+                item(key = "run-status", contentType = "run-status") {
+                    RunStatusLine(state.runState, Modifier.fillMaxWidth())
+                }
+            }
             if (offersWorkflowSuggestion(state.messages, running)) {
                 item(key = "suggest-workflows-${state.messages.last().id}") {
                     AssistChip(
@@ -890,28 +906,43 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
                     )
                 }
                 if (message.text.isNotBlank()) {
-                    if (user) {
-                        SelectionContainer { Text(withRtlLines(message.text), modifier = Modifier.fillMaxWidth(), color = textColor, style = MaterialTheme.typography.bodyLarge) }
-                    } else {
-                        MarkdownMessage(message.text, textColor)
-                        if (copyText != null) {
-                            val clipboard = LocalClipboardManager.current
-                            // Under the text, on the side it ends: a Hebrew reply starts at the right,
-                            // and a button at the far left was a screen away from it.
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = if (endsRtl(copyText)) Arrangement.End else Arrangement.Start,
-                            ) {
-                                IconButton(
-                                    onClick = { clipboard.setText(AnnotatedString(copyText)) },
-                                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Copy message" },
-                                ) {
-                                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy message", modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                    // A long press on a block opens its menu. A user's prompt is
+                    // one block; an agent's reply is everything after that prompt.
+                    val clipboard = LocalClipboardManager.current
+                    val blockText = if (user) message.text else copyText ?: message.text
+                    var menuOpen by remember(message.id) { mutableStateOf(false) }
+                    var selectOpen by remember(message.id) { mutableStateOf(false) }
+                    Box(
+                        Modifier.semantics {
+                            customActions = listOf(
+                                CustomAccessibilityAction("Copy message") { clipboard.setText(AnnotatedString(blockText)); true },
+                            )
+                        },
+                    ) {
+                        if (user) {
+                            Text(
+                                withRtlLines(message.text),
+                                modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onLongPress = { menuOpen = true }) },
+                                color = textColor,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        } else {
+                            MarkdownMessage(message.text, textColor, onLongPress = { menuOpen = true })
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Copy") },
+                                leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+                                onClick = { menuOpen = false; clipboard.setText(AnnotatedString(blockText)) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Select text") },
+                                leadingIcon = { Icon(Icons.Outlined.SelectAll, contentDescription = null) },
+                                onClick = { menuOpen = false; selectOpen = true },
+                            )
                         }
                     }
+                    if (selectOpen) SelectTextDialog(blockText) { selectOpen = false }
                 } else if (message.state.equals("streaming", ignoreCase = true)) {
                     Row(
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -939,6 +970,20 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
             }
         }
     }
+}
+
+/** The block's text where part of it can be selected, since a long press opens the menu instead. */
+@Composable
+private fun SelectTextDialog(text: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        text = {
+            SelectionContainer {
+                Text(text, Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodyLarge)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 @Composable

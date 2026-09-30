@@ -236,8 +236,11 @@ internal fun AgentComposer(
             .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (state.runState.active) {
-            RunStatusRow(state.runState, showStop = !active && !voiceActive, onStop = actions.onStop)
+        // This chat's own run is shown in the chat, under its last line; only a
+        // run somewhere else (another chat, a voice call) is reported here,
+        // with its Stop.
+        if (state.runState.active && !active) {
+            RunStatusRow(state.runState, showStop = !voiceActive, onStop = actions.onStop)
         }
         if (state.queuedTurns.isNotEmpty()) QueuedTurns(state, actions)
         if (query != null) {
@@ -487,11 +490,18 @@ private fun ComposerButton(
 
 @Composable
 private fun RunStatusRow(runState: RunState, showStop: Boolean, onStop: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        RunStatusLine(runState, Modifier.weight(1f))
+        if (showStop) TextButton(onClick = onStop) { Text("Stop active task") }
+    }
+}
+
+/** The agent's orb and what it is doing, "Working" or the tool it is on. */
+@Composable
+internal fun RunStatusLine(runState: RunState, modifier: Modifier = Modifier) {
     Row(
-        Modifier
-            .fillMaxWidth()
+        modifier
             .heightIn(min = 32.dp)
-            .padding(start = 8.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -506,7 +516,6 @@ private fun RunStatusRow(runState: RunState, showStop: Boolean, onStop: () -> Un
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (showStop) TextButton(onClick = onStop) { Text("Stop active task") }
     }
 }
 
