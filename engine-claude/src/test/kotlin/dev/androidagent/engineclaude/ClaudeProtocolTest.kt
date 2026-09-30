@@ -66,6 +66,14 @@ class ClaudeProtocolTest {
         assertFalse(args.any { it == "--bare" || it.contains("Bash") || it.contains("Grep") })
     }
 
+    @Test fun probeArgsLoadNothingAndKeepNoTranscript() {
+        val args = ClaudeProtocol.probeArgs()
+        assertEquals("", args[args.indexOf("--tools") + 1])
+        assertEquals("", args[args.indexOf("--setting-sources") + 1])
+        assertTrue(args.containsAll(listOf("--strict-mcp-config", "--no-session-persistence")))
+        assertFalse(args.any { it == "--bare" || it == "--resume" || it == "--session-id" })
+    }
+
     @Test fun chatArgsResumeAKnownSessionAndOmitEffortWhenUnset() {
         val args = ClaudeProtocol.chatArgs("11111111-2222-4333-8444-555555555555", resume = true, "opus", null, "m", "s")
         assertEquals("11111111-2222-4333-8444-555555555555", args[args.indexOf("--resume") + 1])
@@ -223,6 +231,38 @@ class ClaudeProtocolTest {
         assertEquals(1790785800L, limits[0].resetsAt)
         assertEquals(300L, limits[0].windowMinutes)
         assertEquals(10_080L, limits[1].windowMinutes)
+    }
+
+    @Test fun theUsageRequestIsTheSdkGetUsageFrame() {
+        val frame = ClaudeProtocol.usageRequest("req-1")
+        assertEquals(
+            """{"type":"control_request","request_id":"req-1","request":{"subtype":"get_usage","skip_behaviors":true}}""",
+            frame.toString(),
+        )
+    }
+
+    @Test fun theUsageReplyGivesTheSameNamesAsTheRateLimitEvent() {
+        val limits = ClaudeProtocol.parseUsageReply(GET_USAGE_REPLY)
+        assertEquals(listOf("5-hour", "weekly"), limits.map { it.name })
+        // A percent already: 0.5 stays 0.5 %, not 50 %.
+        assertEquals(12.5, limits[0].usedPercent!!, 0.001)
+        assertEquals(0.5, limits[1].usedPercent!!, 0.001)
+        assertEquals(1790785800L, limits[0].resetsAt)
+        assertEquals(1790827200L, limits[1].resetsAt)
+        assertEquals(300L, limits[0].windowMinutes)
+        assertEquals(10_080L, limits[1].windowMinutes)
+    }
+
+    @Test fun aUsageReplyWithoutPlanLimitsGivesNone() {
+        fun reply(text: String) = ClaudeProtocol.parseUsageReply(Json.parseToJsonElement(text).jsonObject)
+        assertTrue(reply("""{"rate_limits_available":false,"rate_limits":null}""").isEmpty())
+        assertTrue(reply("""{"rate_limits_available":false,"rate_limits":{"five_hour":{"utilization":5,"resets_at":null}}}""").isEmpty())
+        assertTrue(reply("""{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":null,"resets_at":null}}}""").isEmpty())
+        assertTrue(reply("""{}""").isEmpty())
+        // A reset time that is not a date is dropped, the percent kept.
+        val odd = reply("""{"rate_limits":{"five_hour":{"utilization":250,"resets_at":"soon"}}}""").single()
+        assertEquals(100.0, odd.usedPercent!!, 0.001)
+        assertNull(odd.resetsAt)
     }
 
     @Test fun aRejectedLimitGivesTheResetTime() {

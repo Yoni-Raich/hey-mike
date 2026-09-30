@@ -196,11 +196,22 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     mutable.update { it.copy(claude = it.claude.copy(account = event.status)) }
                     if (event.status.signedIn) runCatching { loadClaudeModels() }
                 }
-                is EngineEvent.UsageChanged -> usageChanged(EngineKind.CLAUDE, event)
+                is EngineEvent.UsageChanged -> {
+                    usageChanged(EngineKind.CLAUDE, event)
+                    event.limits?.let(::recordClaudeUsage)
+                }
                 is EngineEvent.Failure -> if (!graph.coordinator.state.value.active) error(event.message)
                 else -> Unit
             }
         } }
+        // Claude's last limits from disk, until Claude reports new ones.
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) { runCatching { graph.claudeUsage.read() }.getOrNull() } ?: return@launch
+            if (mutable.value.claude.usageReadAtMillis != null) return@launch
+            engines = engines.withLimits(EngineKind.CLAUDE, saved.limits)
+            mutable.update { it.copy(claude = it.claude.copy(usageReadAtMillis = saved.readAtMillis)) }
+            project()
+        }
         viewModelScope.launch {
             graph.claudeHost.installState.collect { install -> mutable.update { it.copy(claude = it.claude.copy(install = install)) } }
         }
@@ -234,9 +245,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 availableModels = choice.catalog.map { it.id },
                 selectedModel = choice.model,
                 selectedReasoningEffort = choice.effort,
-                usageLimits = engines.limits(kind),
+                usageLimits = engines.limits(kind).let { limits ->
+                    // Claude's limits can be a saved reading: a window past its reset is not shown as current.
+                    if (kind == EngineKind.CLAUDE) LastUsageStore.current(limits, System.currentTimeMillis() / 1000L) else limits
+                },
             )
         }
+    }
+
+    /** Note when Claude reported [limits] and keep them for the next start. */
+    private fun recordClaudeUsage(limits: List<UsageLimit>) {
+        if (limits.isEmpty()) return
+        mutable.update { it.copy(claude = it.claude.copy(usageReadAtMillis = System.currentTimeMillis())) }
+        viewModelScope.launch(Dispatchers.IO) { runCatching { graph.claudeUsage.save(limits) } }
     }
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
@@ -796,23 +817,34 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         graph.claudeEngine.logout()
         engines = engines.withLimits(EngineKind.CLAUDE, emptyList())
-        mutable.update { it.copy(claude = it.claude.copy(account = AccountStatus(false, CLAUDE_SIGN_IN))) }
+        // The saved limits belong to the account that signed out.
+        withContext(Dispatchers.IO) { runCatching { graph.claudeUsage.clear() } }
+        mutable.update { it.copy(claude = it.claude.copy(account = AccountStatus(false, CLAUDE_SIGN_IN), usageReadAtMillis = null)) }
         project()
     }
 
     /** Read the open chat's engine quota again. */
     fun refreshUsage() {
-        if (mutable.value.activeEngine == EngineKind.CLAUDE) task { refreshClaude() } else refreshAccount()
+        if (mutable.value.activeEngine != EngineKind.CLAUDE) {
+            refreshAccount()
+            return
+        }
+        task {
+            mutable.update { it.copy(isRefreshingAccount = true) }
+            try { refreshClaude() } finally { mutable.update { it.copy(isRefreshingAccount = false) } }
+        }
     }
 
-    /** Claude's sign-in from `claude auth status`, then its models and last quota. Needs the binary. */
+    /** Claude's sign-in from `claude auth status`, then its quota and models. Needs the binary. */
     private suspend fun refreshClaude() {
         if (graph.claudeHost.installState.value.phase != ClaudeInstallPhase.INSTALLED) return
         val account = graph.claudeEngine.account()
         mutable.update { it.copy(claude = it.claude.copy(account = account)) }
         if (account.signedIn) {
-            runCatching { loadClaudeModels() }
+            // Usage first: with no chat running, the process that reads it
+            // also reads the model list, so the models below need no second one.
             runCatching { graph.claudeEngine.refreshUsage() }
+            runCatching { loadClaudeModels() }
         }
     }
 

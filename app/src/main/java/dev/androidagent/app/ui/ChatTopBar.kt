@@ -84,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.a11y.A11yStatus
+import dev.androidagent.core.AccountUsageOverview
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineKind
@@ -380,7 +381,7 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
             StatusLabel("USAGE · ${providerName(state.activeEngine).uppercase()}")
             if (windows.isEmpty()) {
                 Text(
-                    if (state.activeEngine == EngineKind.CLAUDE) "Claude reports its 5-hour and weekly limits after the first message."
+                    if (state.activeEngine == EngineKind.CLAUDE) "Tap Refresh usage to read Claude's 5-hour and weekly limits."
                     else "Account quota is not available for this account yet.",
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
@@ -388,6 +389,16 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
                 )
             }
             windows.forEach { window -> UsageWindowRow(window) }
+            // Claude's limits can be a reading saved before a restart: say how old it is.
+            val readAt = state.claude.usageReadAtMillis
+            if (state.activeEngine == EngineKind.CLAUDE && windows.isNotEmpty() && readAt != null) {
+                Text(
+                    AccountUsageOverview.readText(readAt, System.currentTimeMillis()),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = StatusMuted,
+                )
+            }
             TextButton(onClick = actions.onRefreshUsage, enabled = !state.isRefreshingAccount) {
                 LoadingButtonContent(loading = state.isRefreshingAccount, icon = Icons.Outlined.Refresh, label = "Refresh usage", loadingLabel = "Refreshing…")
             }

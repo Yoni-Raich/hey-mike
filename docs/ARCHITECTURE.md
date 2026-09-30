@@ -1812,6 +1812,13 @@ A user with a Claude subscription can run Mike on it, on the phone only.
 - **Per-engine state in the view model.** Model pick, effort and quota are
   kept per engine (`EngineChoices`); the chips, `/status` and the usage sheet
   show the open chat's engine. Claude reports `5-hour` and `weekly` limits.
+- **Claude usage without a message.** `refreshUsage()` sends the SDK's
+  experimental `get_usage` control request (`skip_behaviors: true`) to a
+  running chat, or to a throwaway probe (`--no-session-persistence`, no
+  tools, no settings) that also answers `initialize`, so the refresh on start
+  costs one process. A refusal or timeout emits nothing. The app keeps the
+  last reading in `claude-usage.json` (`LastUsageStore`), shows its age, and
+  drops a window once its reset time has passed; sign-out clears it.
 - **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
   `claude` binary through the pinned Alpine musl loader, packaged as
   `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
