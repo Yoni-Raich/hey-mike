@@ -73,6 +73,30 @@ interface RuntimeHost {
     suspend fun stop()
 }
 
+/** Which agent engine a chat runs on. Fixed for the life of a chat. */
+@Serializable
+enum class EngineKind { CODEX, CLAUDE }
+
+/**
+ * Launches the official, unmodified Claude Code binary on this phone.
+ *
+ * The binary is downloaded at first run and never bundled or patched. The
+ * host owns the loader, the private config dir, the network proxy and the
+ * environment; engines only pass `claude` arguments.
+ */
+interface ClaudeProcessHost {
+    /** Install state of the pinned binary; READY once it is present and verified. */
+    val status: StateFlow<RuntimeStatus>
+    /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its files. */
+    val homeDirectory: File
+    /** Download and verify the pinned binary if needed. Fails closed on any mismatch. */
+    suspend fun prepare()
+    /** Start `claude <args>` in [workingDirectory] with [extraEnv] on top of the host environment. */
+    suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String> = emptyMap()): Process
+    /** Stop every process this host started. */
+    suspend fun stopAll()
+}
+
 data class ToolDefinition(val name: String, val description: String, val inputSchema: JsonObject)
 data class ToolResult(val text: String, val imageBase64: String? = null, val success: Boolean = true, val attachmentPaths: List<String> = emptyList())
 data class LocalIntentRequest(
@@ -160,6 +184,13 @@ interface AgentEngine {
     suspend fun refreshUsage() {}
     suspend fun login(): AccountStatus
     suspend fun logout()
+    /**
+     * Finish a sign-in that needs the user to paste a code back, as Claude
+     * Code's browser login does. The engine only relays the code to its own
+     * login process; it never keeps it.
+     */
+    suspend fun completeLogin(code: String): AccountStatus =
+        throw UnsupportedOperationException("This engine does not take a pasted sign-in code.")
     suspend fun models(): List<String>
     /**
      * Return model metadata when the engine can provide it. The default keeps
