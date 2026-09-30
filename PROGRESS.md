@@ -1,5 +1,53 @@
 # Progress
 
+### Claude engine on a real phone, without a sign-in (WP-F) — 2026-09-30
+
+On `wp-f` (from `feat/claude-subscription` at `14e1828`), `dev` debug
+0.14.0 (versionCode 28) on the Redmi Note 12 `PVRWC6JJJN8P9LPR` (Android 15,
+HyperOS, arm64, Wi-Fi, no SIM). Built with `./gradlew.bat
+:app:assembleDevDebug :app:assembleDevDebugAndroidTest`, installed with
+`adb -s PVRWC6JJJN8P9LPR install -r -t` (the Xiaomi USB-install dialog
+tapped; it only appears once the keyguard is dismissed with `wm
+dismiss-keyguard`). The UI was driven with `adb input` and read with
+`uiautomator dump`. Screenshots stay off the repo.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Onboarding and Settings > Accounts: "ChatGPT (Codex)" / "Claude subscription" choice, the Claude card with the required notice, 232 MB size, confirm dialog, Anthropic privacy link | Pass |
+| 2 | Download from the card: cancel at 46.7 MB deletes `claude.part` and the card shows Download again; a full download plus hash took 7.25 s (232 MB, about 32 MB/s); `run-as … sha256sum` on the phone gives `31efc413…cd62ee8` (the pin) | Pass |
+| 3 | Force-stop and reopen: "Claude Code is ready" within 1 s, same file (inode, 16:22 mtime), no `claude.part`, nothing downloaded | Pass |
+| 4 | "Sign in to Claude": `claude auth login` gave a link and Chrome opened `claude.ai/login?…returnTo=/oauth/authorize…redirect_uri=https://platform.claude.com/oauth/code/callback`. Back to the app: the card shows the masked code field, "Finish sign-in", "Open the sign-in page again". Not signed in further | Pass |
+| 5 | Unsigned Claude chat, one message: "The task could not finish. Sign in to Claude in Settings first." within 2 s, send button back, no overlay | Pass |
+| 6 | From the app process (`ClaudeEngineDeviceTest`, real `ClaudeCodeEngine` + `AndroidClaudeHost` + `LoopbackMcpServer`, no sign-in): `system/init` has `claude_code_version` 2.1.285, `mcp_servers` mike `connected`, 32 `mcp__mike__*` tools (all 32 phone tool definitions), built-ins `Edit, Glob, Read, Skill, Write`, `permissionMode` dontAsk, `apiKeySource` none, `model` claude-sonnet-5-5. The turn ends `failed` in 1.1–1.2 s with "Not logged in · Please run /login" | Pass |
+| 7 | Proxy during 4–6: no CONNECT at all (unsigned `claude` makes no network request), so nothing was denied. Every `claude` launch logs one `denied unknown: unreadable-head`: that is the proxy's own `verifyListening()` probe, not traffic | Pass, log noise |
+| 8 | Stop: the UI cannot reach a starting Claude turn without a sign-in (the coordinator refuses first, item 5). At engine level a stop right after sending took 3.0 s and ended `interrupted` via the kill fallback; the CLI never answers an interrupt that arrives while the message is still queued. The next message then failed with "Claude is not running for this chat." (the killed process still read as alive): fixed in `938622e`, after which it gets its answer in 0.4 s | Fixed |
+| 9 | Codex: a new chat can switch to "ChatGPT (Codex)"; an unsigned Codex message says "Sign in to Codex in Settings first."; the Codex account block (Sign in to Codex, Log in, Refresh) is unchanged, now under its own "ChatGPT (Codex)" heading | Pass |
+| 10 | Claude chat: header "Claude subscription", no mic (send button only); a Codex chat shows "Start voice conversation" | Pass |
+
+Commands for 6 and 8: `adb -s PVRWC6JJJN8P9LPR shell am instrument -w -e
+class dev.androidagent.app.ClaudeEngineDeviceTest
+dev.androidagent.app.dev.test/androidx.test.runner.AndroidJUnitRunner`: OK
+(2 tests). `./gradlew.bat :engine-claude:testDebugUnitTest`: 50 tests, 0
+failures (new: `aTurnRightAfterAKilledStopStartsANewProcess`, which failed
+before the fix). To get past onboarding without an account for 5, 9 and 10,
+`onboardingFinished` in the app's `ui` preferences was set to true and set
+back to false afterwards. The androidTest package was uninstalled; the app
+stays installed with the verified binary.
+
+Found, not fixed: the proxy's denial log never names the host
+(`LocalhostConnectProxy` passes `""` to `onDenied` for every reason), so a
+host missing from the allowlist during a real sign-in shows only as
+`denied unknown: host-not-allowed`; the liveness probe adds a false denial
+per launch. With the phone in Hebrew the chrome is mirrored and English
+sentences show their end punctuation on the wrong side ("?Which account
+should I use").
+
+Needs the user's sign-in (not done): the code paste and `claude auth
+status` after it, a real reply, a `mcp__mike__*` tool call round trip,
+steer `priority:"next"`, `/compact`, the `5-hour` / `weekly` usage
+windows, stop during a tool call, `Grep`/`Bash`, hosts the real sign-in
+and chat reach (watch `adb logcat -s AndroidClaudeHost`), Android 16.
+
 ### Claude subscription chats wired into the app (WP-E) — 2026-09-30
 
 On `wp-e` (from `feat/claude-subscription`, WP-A..D merged), the Claude engine
