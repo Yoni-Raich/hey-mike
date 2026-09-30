@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+. The Claude sign-in (runtime/claude-home, which holds
+    CLAUDE_CONFIG_DIR) and the downloaded Claude Code binary never leave the
+    phone: not in a cloud backup, not in a device-to-device transfer.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="runtime/claude-home" />
+        <exclude domain="file" path="runtime/claude-tmp" />
+        <exclude domain="file" path="runtime/claude" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="runtime/claude-home" />
+        <exclude domain="file" path="runtime/claude-tmp" />
+        <exclude domain="file" path="runtime/claude" />
+    </device-transfer>
+</data-extraction-rules>
