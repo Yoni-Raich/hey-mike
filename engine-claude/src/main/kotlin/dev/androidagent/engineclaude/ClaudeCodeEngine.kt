@@ -32,7 +32,6 @@ import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.SecretRedactor
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolResult
-import dev.androidagent.core.UsageLimit
 import dev.androidagent.engineclaude.ClaudeProtocol.string
 import dev.androidagent.engineclaude.ClaudeStreamMapper.Signal
 import kotlinx.coroutines.CancellationException
@@ -97,7 +96,7 @@ class ClaudeCodeEngine(
     private val pendingTools = ConcurrentHashMap<String, PendingTool>()
     private val modelLock = Mutex()
     @Volatile private var models: List<AgentModel>? = null
-    @Volatile private var limits: List<UsageLimit>? = null
+    private val usageLock = Mutex()
     private val loginLock = Mutex()
     @Volatile private var loginProcess: Process? = null
     @Volatile private var accountCache: Pair<Long, AccountStatus>? = null
@@ -121,8 +120,39 @@ class ClaudeCodeEngine(
         return status
     }
 
+    /**
+     * Read the plan limits with the `get_usage` control request, never with
+     * a message. A running chat answers it. With none running, a throwaway
+     * process answers it (see [probe]): it gets no message, no tools and no
+     * settings, writes no transcript, and its `initialize` reply fills the
+     * model list too, so the app's refresh on start needs one process, not
+     * two. This runs only when the app asks: on start and on Refresh usage.
+     *
+     * Fails quietly. A CLI that refuses the request, a reply without plan
+     * limits, or a timeout emits nothing, so the last reading stays.
+     */
     override suspend fun refreshUsage() {
-        limits?.let { stream.emit(EngineEvent.UsageChanged(null, limits = it)) }
+        if (!installed()) return
+        usageLock.withLock {
+            val reply = try {
+                val chat = chats.values.filter { it.alive }.maxByOrNull { it.lastUsed }
+                if (chat != null) {
+                    withTimeoutOrNull(USAGE_TIMEOUT_MS) { chat.usage() }
+                } else {
+                    val probe = probe(usage = true)
+                    if (models == null) {
+                        probe.initialize?.let(ClaudeProtocol::parseModels)?.takeIf { it.isNotEmpty() }?.let { models = it }
+                    }
+                    probe.usage
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                null
+            }
+            val limits = reply?.let(ClaudeProtocol::parseUsageReply).orEmpty()
+            if (limits.isNotEmpty()) stream.emit(EngineEvent.UsageChanged(null, limits = limits))
+        }
     }
 
     /**
@@ -532,11 +562,7 @@ class ClaudeCodeEngine(
         suspend fun dispatch(signals: List<Signal>) {
             for (signal in signals) {
                 when (signal) {
-                    is Signal.Emit -> {
-                        val event = signal.event
-                        if (event is EngineEvent.UsageChanged && event.limits != null) limits = event.limits
-                        stream.emit(event)
-                    }
+                    is Signal.Emit -> stream.emit(signal.event)
                     is Signal.ControlResponse -> controls.remove(signal.requestId)?.let { waiter ->
                         if (signal.error != null) waiter.completeExceptionally(IllegalStateException(signal.error))
                         else waiter.complete(signal.response ?: JsonObject(emptyMap()))
@@ -560,7 +586,13 @@ class ClaudeCodeEngine(
             }
         }
 
-        private suspend fun control(subtype: String): JsonObject {
+        /** The `get_usage` reply. Throws when the CLI refuses it or stops. */
+        suspend fun usage(): JsonObject = request(ClaudeProtocol::usageRequest)
+
+        private suspend fun control(subtype: String): JsonObject = request { id -> ClaudeProtocol.controlRequest(id, subtype) }
+
+        /** Write the control request [frame] builds for a fresh id and wait for its answer. */
+        private suspend fun request(frame: (String) -> JsonObject): JsonObject {
             val id = "req-${UUID.randomUUID()}"
             val waiter = CompletableDeferred<JsonObject>()
             controls[id] = waiter
@@ -569,7 +601,7 @@ class ClaudeCodeEngine(
                 // registered after that must not wait for an answer that
                 // cannot come.
                 check(!readerEnded.isCompleted) { "Claude stopped" }
-                write(ClaudeProtocol.controlRequest(id, subtype))
+                write(frame(id))
                 return waiter.await()
             } finally {
                 controls.remove(id)
@@ -682,34 +714,50 @@ class ClaudeCodeEngine(
         output.await()
     }
 
-    /** Ask a throwaway process for the model list. It sends no message, so no usage is spent. */
-    private suspend fun probeModels(): List<AgentModel> = withContext(Dispatchers.IO) {
+    private suspend fun probeModels(): List<AgentModel> = probe(usage = false).initialize?.let(ClaudeProtocol::parseModels).orEmpty()
+
+    /** What a probe process answered. A request it refused or did not answer is null. */
+    private class Probe(val initialize: JsonObject?, val usage: JsonObject?)
+
+    /**
+     * Ask a throwaway process for `initialize` and, with [usage], `get_usage`.
+     * It sends no message, so no usage is spent.
+     */
+    private suspend fun probe(usage: Boolean): Probe = withContext(Dispatchers.IO) {
         val process = host.start(ClaudeProtocol.probeArgs(), home(), emptyMap())
         try {
             launch { drain(process.errorStream) }
-            val reply = CompletableDeferred<JsonObject>()
+            val wanted = if (usage) setOf(PROBE_ID, PROBE_USAGE_ID) else setOf(PROBE_ID)
+            val answers = ConcurrentHashMap<String, JsonObject>()
+            val done = CompletableDeferred<Unit>()
             launch {
                 runCatching {
                     process.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                        val left = wanted.toMutableSet()
                         for (line in lines) {
                             val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
                             val response = message["response"] as? JsonObject ?: continue
-                            if (message.string("type") == "control_response" && response.string("request_id") == PROBE_ID) {
-                                (response["response"] as? JsonObject)?.let(reply::complete)
-                                break
+                            if (message.string("type") != "control_response" || !left.remove(response.string("request_id"))) continue
+                            if (response.string("subtype") == "success") {
+                                (response["response"] as? JsonObject)?.let { answers[response.string("request_id")] = it }
                             }
+                            if (left.isEmpty()) break
                         }
                     }
                 }
-                reply.completeExceptionally(IllegalStateException("No model list"))
+                done.complete(Unit)
             }
             process.outputStream.bufferedWriter(Charsets.UTF_8).apply {
                 write(ClaudeProtocol.controlRequest(PROBE_ID, "initialize").toString())
                 newLine()
+                if (usage) {
+                    write(ClaudeProtocol.usageRequest(PROBE_USAGE_ID).toString())
+                    newLine()
+                }
                 flush()
             }
-            val answer = withTimeoutOrNull(PROBE_TIMEOUT_MS) { runCatching { reply.await() }.getOrNull() }
-            answer?.let(ClaudeProtocol::parseModels).orEmpty()
+            withTimeoutOrNull(PROBE_TIMEOUT_MS) { done.await() }
+            Probe(answers[PROBE_ID], answers[PROBE_USAGE_ID])
         } finally {
             process.destroyForcibly()
         }
@@ -773,6 +821,8 @@ class ClaudeCodeEngine(
         private const val NOT_FOUND = "No conversation found"
         private const val MCP_CONFIG_FILE = "mcp.json"
         private const val PROBE_ID = "probe-initialize"
+        private const val PROBE_USAGE_ID = "probe-usage"
+        private const val USAGE_TIMEOUT_MS = 20_000L
         private val STOPPED = ToolResult("Run stopped. No device action was performed.", success = false)
         private const val HANDSHAKE_TIMEOUT_MS = 60_000L
         private const val COMMAND_TIMEOUT_MS = 30_000L

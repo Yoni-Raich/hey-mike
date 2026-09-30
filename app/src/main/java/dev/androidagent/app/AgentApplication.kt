@@ -36,6 +36,7 @@ import dev.androidagent.core.CodexAccountVault
 import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
+import dev.androidagent.core.LastUsageStore
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.WorkflowConfirmationOutcome
 import dev.androidagent.core.WorkflowCallMetadata
@@ -133,6 +134,8 @@ class AgentGraph(private val app: Application) {
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     // The last quota of every saved account, for the home screen widget.
     val usageBook = AccountUsageBook(java.io.File(runtime.runtimeRoot, "accounts/usage.json"))
+    // Claude's last 5-hour and weekly limits, so the usage sheet has them after a restart.
+    val claudeUsage = LastUsageStore(java.io.File(runtime.runtimeRoot, "claude-usage.json"))
     val adb = AndroidAdbTransport(app)
     private lateinit var runCoordinator: AgentCoordinator
     // Declared before the gateways: they take `overlay` as a constructor argument,

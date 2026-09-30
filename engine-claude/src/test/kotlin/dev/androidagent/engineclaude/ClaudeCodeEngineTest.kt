@@ -399,6 +399,89 @@ class ClaudeCodeEngineTest {
         assertFalse(probe.isAlive)
     }
 
+    private fun usageAnswer(requestId: String, error: String? = null): JsonObject =
+        if (error == null) ClaudeProtocol.controlSuccess(requestId, GET_USAGE_REPLY) else ClaudeProtocol.controlError(requestId, error)
+
+    /** A probe that answers `initialize`, and `get_usage` with [usageError] or the reply. */
+    private fun probeScript(usageError: String? = null): (FakeClaude) -> Unit = { process ->
+        process.onLine = { p, line ->
+            val frame = runCatching { Json.parseToJsonElement(line).jsonObject }.getOrNull()
+            val id = frame?.get("request_id")?.jsonPrimitive?.content
+            when (frame?.requestSubtype()) {
+                "initialize" -> p.send(FakeClaude.initializeResponse(id!!))
+                "get_usage" -> p.send(usageAnswer(id!!, usageError))
+            }
+        }
+    }
+
+    private fun limitEvents() = events.filterIsInstance<EngineEvent.UsageChanged>().filter { it.limits != null }
+
+    @Test fun refreshUsageAsksTheRunningChatAndSendsNoMessage() = runBlocking {
+        val engine = engine()
+        engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send(result())
+        awaitEvent<EngineEvent.TurnFinished>()
+
+        val refresh = async(Dispatchers.Default) { engine.refreshUsage() }
+        val request = chat.nextFrame { it.type() == "control_request" && it.requestSubtype() == "get_usage" }
+        assertEquals(JsonPrimitive(true), request["request"]!!.jsonObject["skip_behaviors"])
+        chat.send(usageAnswer(request["request_id"]!!.jsonPrimitive.content))
+        refresh.await()
+
+        val limits = awaitEvent<EngineEvent.UsageChanged> { it.limits != null }.limits!!
+        assertEquals(listOf("5-hour", "weekly"), limits.map { it.name })
+        assertEquals(12.5, limits[0].usedPercent!!, 0.001)
+        assertEquals("no process just for usage", 1, host.started.size)
+        assertTrue("no message is sent for usage", chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun aChatThatRefusesTheUsageRequestIsLeftAsItWas() = runBlocking {
+        val engine = engine()
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+
+        val refresh = async(Dispatchers.Default) { engine.refreshUsage() }
+        val request = chat.nextFrame { it.requestSubtype() == "get_usage" }
+        chat.send(usageAnswer(request["request_id"]!!.jsonPrimitive.content, error = "Unsupported control request subtype: get_usage"))
+        refresh.await()
+        Thread.sleep(200)
+        assertTrue(limitEvents().isEmpty())
+        assertTrue(events.none { it is EngineEvent.Failure })
+
+        // The running turn is not disturbed.
+        assertTrue(chat.isAlive)
+        chat.send(result())
+        assertEquals("completed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+    }
+
+    @Test fun withNoChatRunningAProbeReadsUsageAndTheModelList() = runBlocking {
+        host.script = probeScript()
+        val engine = engine()
+        engine.refreshUsage()
+
+        val probe = host.started.single()
+        assertTrue("--no-session-persistence" in probe.args)
+        assertTrue(probe.lines.any { it.contains("\"subtype\":\"get_usage\"") })
+        assertFalse("the probe never sends a message", probe.lines.any { it.contains("\"type\":\"user\"") })
+        assertFalse(probe.isAlive)
+        assertEquals(listOf("5-hour", "weekly"), awaitEvent<EngineEvent.UsageChanged> { it.limits != null }.limits!!.map { it.name })
+
+        // The same probe answered `initialize`: the model list needs no second process.
+        assertTrue(engine.modelCatalog().any { it.id == "claude-opus-4-8" })
+        assertEquals(1, host.started.size)
+    }
+
+    @Test fun aProbeThatRefusesTheUsageRequestEmitsNothing() = runBlocking {
+        host.script = probeScript(usageError = "Unsupported control request subtype: get_usage")
+        val engine = engine()
+        engine.refreshUsage()
+        Thread.sleep(200)
+        assertTrue(limitEvents().isEmpty())
+        assertFalse(host.started.single().isAlive)
+    }
+
     @Test fun skillsAreReadFromTheInstalledSkillFilesOnly() = runBlocking {
         val skills = File(home, ".claude/skills")
         File(skills, "quick-actions").mkdirs()

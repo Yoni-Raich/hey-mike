@@ -1,5 +1,23 @@
 # Progress
 
+### Claude usage before the first message (fix-2) — 2026-09-30
+
+Found on a phone: the usage sheet was empty for Claude until a message was
+sent, and Refresh usage did nothing. Unit tests only; not yet on a phone.
+
+- `ClaudeCodeEngine.refreshUsage()` sends `get_usage` (shape from
+  `sdk.d.ts` of `@anthropic-ai/claude-agent-sdk` 0.3.285) to a running
+  chat, or else to a probe process that gets no message and writes no
+  transcript. The reply maps to the same `5-hour` / `weekly` rows; its
+  utilization is a percent, not a fraction. A refusal emits nothing.
+- The last Claude reading is kept in app-private `claude-usage.json` with
+  the time it was seen; the sheet shows "Updated 3h ago" and drops a window
+  past its reset time. Sign-out clears it. The refresh button spins for
+  Claude too, and the start refresh reads usage and models in one probe.
+
+Gaps: that CLI 2.1.285 on the phone answers `get_usage` and accepts
+`--no-session-persistence`, and that the usage endpoint passes the proxy.
+
 ### Claude tablet findings fixed (fix-1) — 2026-09-30
 
 From real use on a Galaxy Tab S7 (Android 13, Hebrew) with a Claude

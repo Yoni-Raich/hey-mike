@@ -214,6 +214,8 @@ data class ClaudeUiState(
     val account: AccountStatus? = null,
     /** A sign-in step is running. */
     val busy: Boolean = false,
+    /** When Claude last reported its limits, shown as their age; null when never. */
+    val usageReadAtMillis: Long? = null,
 )
 
 /** A computer as the add or edit form holds it, before it is saved. */

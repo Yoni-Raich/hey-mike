@@ -41,6 +41,7 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.File
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -127,10 +128,14 @@ internal object ClaudeProtocol {
         add("--system-prompt-file"); add(systemPromptFile)
     }
 
-    /** A process that only answers `initialize`, to read the model list. */
+    /**
+     * A process that only answers control requests (`initialize`,
+     * `get_usage`) and never gets a message. `--no-session-persistence`
+     * (the SDK's `persistSession: false`) keeps it from writing a transcript.
+     */
     fun probeArgs(): List<String> = listOf(
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-        "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+        "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
     )
 
     val AUTH_STATUS_ARGS = listOf("auth", "status", "--json")
@@ -181,6 +186,20 @@ internal object ClaudeProtocol {
 
     fun interruptRequest(requestId: String): JsonObject =
         controlRequest(requestId, "interrupt", buildJsonObject { put("cancel_queued", true) })
+
+    /**
+     * Ask for the plan limits behind `/usage`. No model call is made.
+     *
+     * Shape from `SDKControlGetUsageRequest` in `sdk.d.ts` of
+     * `@anthropic-ai/claude-agent-sdk` 0.3.285, the SDK release of Claude
+     * Code [PINNED_VERSION]. Its `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`
+     * writes `{"type":"control_request","request_id":…,"request":{"subtype":"get_usage","skip_behaviors":true}}`.
+     * `skip_behaviors` skips the CLI's scan of local transcripts; only the
+     * limits are wanted. The SDK calls it experimental, so a CLI that
+     * refuses it is expected and the reply is read defensively.
+     */
+    fun usageRequest(requestId: String): JsonObject =
+        controlRequest(requestId, "get_usage", buildJsonObject { put("skip_behaviors", true) })
 
     fun controlSuccess(requestId: String, response: JsonObject): JsonObject = buildJsonObject {
         put("type", "control_response")
@@ -383,6 +402,36 @@ internal object ClaudeProtocol {
         val (name, minutes) = windowName(type)
         val used = percent(info["utilization"]) ?: if (info.string("status") == "rejected") 100.0 else null
         return listOf(UsageLimit(name, used, (info["resetsAt"] as? JsonPrimitive)?.longOrNull, minutes))
+    }
+
+    /**
+     * The `get_usage` reply (`SDKControlGetUsageResponse` in the same
+     * `sdk.d.ts`) as usage limits. `rate_limits.five_hour`, `seven_day`, …
+     * each hold `{"utilization": 0-100 | null, "resets_at": ISO 8601 | null}`.
+     * Empty when `rate_limits_available` is false or `rate_limits` is null.
+     *
+     * Only the windows `rate_limit_event` names too are kept, so the rows do
+     * not change with where the reading came from. Unlike that event,
+     * utilization here is already a percent.
+     */
+    fun parseUsageReply(reply: JsonObject): List<UsageLimit> {
+        if ((reply["rate_limits_available"] as? JsonPrimitive)?.booleanOrNull == false) return emptyList()
+        val windows = reply["rate_limits"] as? JsonObject ?: return emptyList()
+        return windows.entries.mapNotNull { (key, value) ->
+            val (name, minutes) = WINDOW_NAMES[key] ?: return@mapNotNull null
+            val window = value as? JsonObject ?: return@mapNotNull null
+            val used = (window["utilization"] as? JsonPrimitive)?.doubleOrNull?.takeIf { it.isFinite() }?.coerceIn(0.0, 100.0)
+            val resetsAt = epochSeconds(window["resets_at"])
+            if (used == null && resetsAt == null) null else UsageLimit(name, used, resetsAt, minutes)
+        }
+    }
+
+    /** An ISO 8601 time as epoch seconds. A bare number is taken as seconds already. */
+    private fun epochSeconds(value: JsonElement?): Long? {
+        val primitive = value as? JsonPrimitive ?: return null
+        primitive.longOrNull?.let { return it.takeIf { it > 0 } }
+        val text = primitive.contentOrNull?.trim()?.takeIf { it.isNotEmpty() && primitive.isString } ?: return null
+        return runCatching { OffsetDateTime.parse(text).toEpochSecond() }.getOrNull()
     }
 
     /** Utilization arrives as a fraction; a value above 1 is read as a percent already. */

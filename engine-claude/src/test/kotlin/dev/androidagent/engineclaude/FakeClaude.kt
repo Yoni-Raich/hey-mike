@@ -189,6 +189,26 @@ internal class FakeClaude(val args: List<String>, val cwd: File, val env: Map<St
     }
 }
 
+/**
+ * A `get_usage` reply. Not recorded: it follows `SDKControlGetUsageResponse`
+ * in `sdk.d.ts` of `@anthropic-ai/claude-agent-sdk` 0.3.285 (utilization is
+ * a percent, `resets_at` is ISO 8601). `behaviors` is null because the
+ * request sets `skip_behaviors`.
+ */
+internal val GET_USAGE_REPLY: JsonObject = Json.parseToJsonElement(
+    """
+    {"session":{"total_cost_usd":0,"total_api_duration_ms":0,"total_duration_ms":0,"total_lines_added":0,"total_lines_removed":0,"model_usage":{}},
+     "subscription_type":"max","rate_limits_available":true,
+     "rate_limits":{"five_hour":{"utilization":12.5,"resets_at":"2026-09-30T16:30:00+00:00"},
+                    "seven_day":{"utilization":0.5,"resets_at":"2026-10-01T04:00:00.000Z"},
+                    "seven_day_opus":null,
+                    "seven_day_oauth_apps":{"utilization":3,"resets_at":null},
+                    "model_scoped":[{"display_name":"Fable","utilization":1,"resets_at":null}],
+                    "extra_usage":{"is_enabled":false,"monthly_limit":null,"used_credits":null,"utilization":null}},
+     "behaviors":null}
+    """.trimIndent(),
+).jsonObject
+
 internal fun JsonObject.type(): String = (this["type"] as? JsonPrimitive)?.content.orEmpty()
 internal fun JsonObject.requestSubtype(): String =
     ((this["request"] as? JsonObject)?.get("subtype") as? JsonPrimitive)?.content.orEmpty()
