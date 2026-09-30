@@ -48,6 +48,7 @@ class ClaudeRuntimeInstallerTest {
         size = payload.size.toLong(),
     )
     private val opened = mutableListOf<FakeConnection>()
+    private var hashes = 0
 
     @Before
     fun setUp() {
@@ -72,10 +73,14 @@ class ClaudeRuntimeInstallerTest {
         supported = supported,
         openConnection = { url -> FakeConnection(url, body(), code, length).also { opened += it } },
         usableSpace = { space },
+        hasher = { file -> hashes++; ClaudeRuntimeInstaller.sha256(file) },
     )
 
+    private val binary: File get() = File(root, "claude/9.9.9/claude")
+    private val record: File get() = File(root, "claude/9.9.9/${ClaudeRuntimeInstaller.VERIFIED_NAME}")
+
     private fun leftovers(): List<String> =
-        File(root, "claude").walkTopDown().filter { it.isFile }.map { it.relativeTo(root).invariantSeparatorsPath }.toList()
+        File(root, "claude").walkTopDown().filter { it.isFile }.map { it.relativeTo(root).invariantSeparatorsPath }.toList().sorted()
 
     @Test
     fun `install downloads verifies and renames atomically`() = runBlocking<Unit> {
@@ -84,7 +89,7 @@ class ClaudeRuntimeInstallerTest {
 
         assertEquals(File(root, "claude/9.9.9/claude"), binary)
         assertTrue(binary.readBytes().contentEquals(payload))
-        assertEquals(listOf("claude/9.9.9/claude"), leftovers())
+        assertEquals(listOf("claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
         val state = installer.state.value
         assertEquals(ClaudeInstallPhase.INSTALLED, state.phase)
         assertEquals(payload.size.toLong(), state.bytesDownloaded)
@@ -176,7 +181,7 @@ class ClaudeRuntimeInstallerTest {
         val installer = installer()
 
         installer.install()
-        assertEquals(listOf("claude/9.9.9/claude"), leftovers())
+        assertEquals(listOf("claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
         assertFalse(File(root, "claude/2.0.0").exists())
     }
 
@@ -190,8 +195,88 @@ class ClaudeRuntimeInstallerTest {
 
         assertEquals(File(root, "claude/9.9.9/claude"), installer.refresh())
         assertEquals(ClaudeInstallPhase.INSTALLED, installer.state.value.phase)
-        assertEquals(listOf("claude/9.9.9/claude"), leftovers())
+        assertEquals(listOf("claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
         assertTrue(opened.isEmpty())
+        assertEquals(1, hashes)
+    }
+
+    @Test
+    fun `a later start trusts the record and does not hash again`() = runBlocking<Unit> {
+        installer().install()
+        assertEquals("the download is hashed as it streams", 0, hashes)
+        assertTrue(record.isFile)
+
+        val restarted = installer()
+        assertEquals(binary, restarted.refresh())
+        assertEquals(ClaudeInstallPhase.INSTALLED, restarted.state.value.phase)
+        assertEquals(0, hashes)
+        assertEquals(1, opened.size)
+    }
+
+    @Test
+    fun `a size change hashes again and removes the wrong binary`() = runBlocking<Unit> {
+        installer().install()
+        binary.appendBytes(byteArrayOf(1))
+
+        assertNull(installer().refresh())
+        assertEquals("a wrong size fails before any hash", 0, hashes)
+        assertFalse(binary.exists())
+        assertFalse(record.exists())
+    }
+
+    @Test
+    fun `a new modification time hashes again then trusts the new record`() = runBlocking<Unit> {
+        installer().install()
+        assertTrue(binary.setLastModified(binary.lastModified() - 60_000))
+
+        assertEquals(binary, installer().refresh())
+        assertEquals(1, hashes)
+        assertEquals(binary, installer().refresh())
+        assertEquals("the rewritten record holds", 1, hashes)
+    }
+
+    @Test
+    fun `a record for another pin is not trusted`() = runBlocking<Unit> {
+        installer().install()
+        val otherPin = pin.copy(sha256 = "0".repeat(64))
+
+        assertNull(installer(pinned = otherPin).refresh())
+        assertEquals(1, hashes)
+        assertFalse(binary.exists())
+    }
+
+    @Test
+    fun `a record naming another version is not trusted`() = runBlocking<Unit> {
+        installer().install()
+        record.writeText(record.readText().replace("version=9.9.9", "version=9.9.8"))
+
+        assertEquals(binary, installer().refresh())
+        assertEquals(1, hashes)
+        assertTrue(record.readText().contains("version=9.9.9"))
+    }
+
+    @Test
+    fun `a corrupt record hashes again and is rewritten`() = runBlocking<Unit> {
+        installer().install()
+        record.writeText("not a record")
+
+        assertEquals(binary, installer().refresh())
+        assertEquals(1, hashes)
+        assertEquals(binary, installer().refresh())
+        assertEquals(1, hashes)
+    }
+
+    @Test
+    fun `a record never vouches for a fresh download`() = runBlocking<Unit> {
+        installer().install()
+        val good = record.readText()
+        binary.delete()
+        record.writeText(good)
+        val wrong = payload.copyOf().also { it[7] = (it[7] + 1).toByte() }
+
+        assertFailsWith<IllegalStateException> { installer(body = { ByteArrayInputStream(wrong) }).install() }
+        assertFalse(binary.exists())
+        assertFalse(record.exists())
     }
 
     @Test

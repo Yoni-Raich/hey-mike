@@ -68,6 +68,11 @@ data class ClaudeInstallState(
  * size and sha256, and is then renamed atomically. Any failure or cancel
  * deletes the partial file. Other versions are deleted. Nothing here reads
  * the Claude config dir.
+ *
+ * After a good sha256 check, `claude.verified` next to the binary records the
+ * version, size, modification time and sha256. A later start trusts it only
+ * while all of those still match the pin and the file, so the 232 MB binary
+ * is not hashed on every app start; anything else hashes it again.
  */
 class ClaudeRuntimeInstaller(
     /** `filesDir/runtime/claude`: holds only version directories. */
@@ -77,6 +82,8 @@ class ClaudeRuntimeInstaller(
     private val supported: Boolean = true,
     private val openConnection: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
     private val usableSpace: (File) -> Long = { it.usableSpace },
+    /** Hashes a binary already on disk. Tests count the calls. */
+    private val hasher: (File) -> String = { sha256(it) },
 ) {
     private val mutableState = MutableStateFlow(
         if (supported) ClaudeInstallState(ClaudeInstallPhase.NOT_INSTALLED, totalBytes = pin.size)
@@ -87,6 +94,9 @@ class ClaudeRuntimeInstaller(
     val versionDirectory: File get() = File(installRoot, pin.version)
     val binaryFile: File get() = File(versionDirectory, BINARY_NAME)
     private val partialFile: File get() = File(versionDirectory, PARTIAL_NAME)
+    /** The last good sha256 check, so an app start need not hash 232 MB again. */
+    internal val verifiedRecordFile: File get() = File(versionDirectory, VERIFIED_NAME)
+    private val verifiedRecordTemp: File get() = File(versionDirectory, "$VERIFIED_NAME.tmp")
 
     private val lock = Mutex()
     @Volatile private var cancelRequested = false
@@ -120,6 +130,7 @@ class ClaudeRuntimeInstaller(
         }
         removeOtherVersions()
         partialFile.delete()
+        verifiedRecordTemp.delete()
         val binary = verifiedBinaryOrNull()
         mutableState.value = if (binary != null) {
             ClaudeInstallState(ClaudeInstallPhase.INSTALLED, pin.size, pin.size, "Claude Code ${pin.version} ready")
@@ -143,6 +154,8 @@ class ClaudeRuntimeInstaller(
             check(free >= needed) {
                 "Not enough free space: Claude Code needs ${needed / MIB} MB, ${free / MIB} MB free"
             }
+            // A record never vouches for a new download: the bytes are hashed as they arrive.
+            verifiedRecordFile.delete()
             publish(ClaudeInstallPhase.DOWNLOADING, 0, "Downloading Claude Code ${pin.version}")
             download()
             publish(ClaudeInstallPhase.VERIFYING, pin.size, "Verifying Claude Code")
@@ -153,6 +166,7 @@ class ClaudeRuntimeInstaller(
                 StandardCopyOption.REPLACE_EXISTING,
             )
             verifiedKey = binaryFile.length() to binaryFile.lastModified()
+            writeVerifiedRecord(binaryFile)
             publish(ClaudeInstallPhase.INSTALLED, pin.size, "Claude Code ${pin.version} ready")
             return binaryFile
         } catch (failure: Throwable) {
@@ -226,20 +240,85 @@ class ClaudeRuntimeInstaller(
         }
     }
 
-    /** The binary if its size and sha256 match the pin; a wrong file is deleted. */
+    /**
+     * The binary if its size and sha256 match the pin; a wrong file is deleted.
+     * The hash is skipped only when the record of the last good check still
+     * names this pin and the file's size and modification time are unchanged.
+     */
     private fun verifiedBinaryOrNull(): File? {
         val binary = binaryFile
-        if (!binary.isFile) return null
+        if (!binary.isFile) {
+            verifiedRecordFile.delete()
+            return null
+        }
         val key = binary.length() to binary.lastModified()
         if (key == verifiedKey) return binary
-        val matches = binary.length() == pin.size && sha256(binary).equals(pin.sha256, ignoreCase = true)
+        if (recordStillHolds(binary)) {
+            verifiedKey = key
+            return binary
+        }
+        val matches = binary.length() == pin.size && hasher(binary).equals(pin.sha256, ignoreCase = true)
         if (!matches) {
             verifiedKey = null
+            verifiedRecordFile.delete()
             binary.delete()
             return null
         }
         verifiedKey = key
+        writeVerifiedRecord(binary)
         return binary
+    }
+
+    private fun recordStillHolds(binary: File): Boolean {
+        val file = verifiedRecordFile
+        if (!file.isFile || file.length() > MAX_RECORD_BYTES) return false
+        val record = runCatching { VerifiedRecord.decode(file.readText()) }.getOrNull() ?: return false
+        val modified = binary.lastModified()
+        return record.version == pin.version &&
+            record.sha256.equals(pin.sha256, ignoreCase = true) &&
+            record.size == pin.size &&
+            record.size == binary.length() &&
+            modified > 0 &&
+            record.lastModified == modified
+    }
+
+    /** Written only after a sha256 match, and atomically. A failed write just means hashing again next start. */
+    private fun writeVerifiedRecord(binary: File) {
+        val record = VerifiedRecord(pin.version, binary.length(), binary.lastModified(), pin.sha256.lowercase())
+        runCatching {
+            verifiedRecordTemp.writeText(record.encode())
+            Files.move(
+                verifiedRecordTemp.toPath(),
+                verifiedRecordFile.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        }.onFailure {
+            verifiedRecordTemp.delete()
+            verifiedRecordFile.delete()
+        }
+    }
+
+    /** What was true of the binary when its sha256 last matched the pin. */
+    internal data class VerifiedRecord(val version: String, val size: Long, val lastModified: Long, val sha256: String) {
+        fun encode(): String = "version=$version\nsize=$size\nlastModified=$lastModified\nsha256=$sha256\n"
+
+        companion object {
+            /** Null for anything that is not a complete record. */
+            fun decode(text: String): VerifiedRecord? {
+                val fields = text.lines().mapNotNull { line ->
+                    val at = line.indexOf('=')
+                    if (at <= 0) null else line.substring(0, at).trim() to line.substring(at + 1).trim()
+                }.toMap()
+                val version = fields["version"]?.takeIf { it.isNotEmpty() } ?: return null
+                val size = fields["size"]?.toLongOrNull() ?: return null
+                val lastModified = fields["lastModified"]?.toLongOrNull() ?: return null
+                val sha256 = fields["sha256"]?.takeIf { SHA256_HEX.matches(it) } ?: return null
+                return VerifiedRecord(version, size, lastModified, sha256)
+            }
+
+            private val SHA256_HEX = Regex("^[0-9a-fA-F]{64}$")
+        }
     }
 
     private fun removeOtherVersions() {
@@ -257,6 +336,8 @@ class ClaudeRuntimeInstaller(
     companion object {
         const val BINARY_NAME = "claude"
         private const val PARTIAL_NAME = "claude.part"
+        const val VERIFIED_NAME = "claude.verified"
+        private const val MAX_RECORD_BYTES = 4L * 1024
         private const val MIB = 1024L * 1024L
         /** Room left after the download for sessions, temp files and updates. */
         const val FREE_SPACE_MARGIN_BYTES = 64L * MIB
