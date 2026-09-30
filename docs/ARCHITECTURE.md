@@ -99,6 +99,9 @@ space, `bindNumbersToLabels`), an assistant message's copy button sits on the
 side its last line ends on with a 48dp target, and "Jump to latest" appears
 only 96dp or more from the end, in the corner on that same side. The composer's
 field and chip outlines are at least 3:1 against the black behind them.
+With computers saved, an empty new chat is one question, "Where should Mike
+work?", answered from a card of rows (this phone, recent projects, another
+folder) in `NewChatPlace.kt`; without computers it keeps the plain headline.
 Compose fixture tests exercise UI callbacks without starting or authenticating
 Codex. They do not establish real runtime, device-control, or network success.
 

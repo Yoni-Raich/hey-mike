@@ -63,11 +63,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Computer
-import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.PhoneAndroid
-import androidx.compose.material3.FilterChip
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
@@ -715,6 +711,12 @@ private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
     val hasSession = state.activeSessionId != null
     val binding = state.activeSessionId?.let(state.remoteBindings::get)
     val computer = binding?.let { b -> state.computers.firstOrNull { it.id == b.computerId } }
+    // Where this chat runs can change until its first message: with computers
+    // to choose from, that choice is the screen.
+    if (hasSession && state.computers.isNotEmpty() && !state.runState.active) {
+        WhereMikeWorks(state, binding, actions)
+        return
+    }
     Column(
         modifier = Modifier.fillMaxWidth().padding(top = 72.dp, bottom = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -730,51 +732,6 @@ private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
             },
             style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        // Where this chat runs can change until its first message.
-        if (hasSession && state.computers.isNotEmpty() && !state.runState.active) {
-            WhereMikeWorks(state, binding, actions)
-        }
-    }
-}
-
-/** The new-chat choice of where Mike works: this phone, or a project on a computer. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun WhereMikeWorks(state: AgentUiState, binding: dev.androidagent.remote.RemoteBinding?, actions: AgentUiActions) {
-    val sections = PcChats.sections(
-        state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, state.sessions, state.pcThreads,
-    )
-    val recent = PcChats.recentProjects(sections)
-    val labels = state.computers.associate { it.id to it.label }
-    Column(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Where should Mike work?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        ) {
-            FilterChip(
-                selected = binding == null,
-                onClick = { actions.onMoveNewChat(null, null) },
-                label = { Text("This phone") },
-                leadingIcon = { Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp)) },
-            )
-            recent.forEach { project ->
-                FilterChip(
-                    selected = binding != null && binding.computerId == project.computerId &&
-                        PcChats.pathKey(binding.cwd) == PcChats.pathKey(project.path),
-                    onClick = { actions.onMoveNewChat(project.computerId, project.path) },
-                    label = { Text("${labels[project.computerId].orEmpty()} · ${project.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    leadingIcon = { Icon(Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                )
-            }
-            val target = state.defaultComputerId ?: state.computers.first().id
-            FilterChip(
-                selected = false,
-                onClick = { actions.onNewProject(target) },
-                label = { Text(if (recent.isEmpty()) "A folder on ${labels[target].orEmpty()}" else "Another folder") },
-                leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
-            )
-        }
     }
 }
 
