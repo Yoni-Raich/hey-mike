@@ -182,8 +182,35 @@ class ClaudeProtocolTest {
         assertTrue(models.first { it.id == "haiku" }.reasoningEfforts.isEmpty())
     }
 
+    @Test fun recordedModelsKeepTheirValueAndShowTheCliNameAndDescription() {
+        val response = fixture("initialize-response.jsonl").single()["response"]!!.jsonObject["response"]!!.jsonObject
+        val models = ClaudeProtocol.parseModels(response).associateBy { it.id }
+        assertEquals("Sonnet 5.5", models.getValue("sonnet").displayName)
+        assertEquals("Opus 5.5", models.getValue("opus").displayName)
+        assertEquals("Haiku 4.5", models.getValue("haiku").displayName)
+        assertEquals("Efficient for routine tasks", models.getValue("sonnet").description)
+        val fable = models.getValue("claude-fable-5-1")
+        assertEquals("Fable 5.1", fable.displayName)
+        assertTrue(fable.description, fable.description.startsWith(ClaudeProtocol.FABLE_NOTE))
+        assertFalse(models.getValue("opus").description.contains(ClaudeProtocol.FABLE_NOTE))
+    }
+
+    @Test fun modelsWithoutACliNameGetThePinnedName() {
+        val response = Json.parseToJsonElement(
+            """{"models":[{"value":"sonnet"},{"value":"opus","displayName":"opus"},{"value":"claude-fable-5-1"},{"value":"haiku"},{"value":"claude-new-9"}]}""",
+        ).jsonObject
+        val models = ClaudeProtocol.parseModels(response).associateBy { it.id }
+        assertEquals("Sonnet 5.5", models.getValue("sonnet").displayName)
+        assertEquals("Opus 5.5", models.getValue("opus").displayName)
+        assertEquals("Fable 5.1", models.getValue("claude-fable-5-1").displayName)
+        assertEquals(ClaudeProtocol.FABLE_NOTE, models.getValue("claude-fable-5-1").description)
+        assertEquals("Haiku 4.5", models.getValue("haiku").displayName)
+        assertEquals("claude-new-9", models.getValue("claude-new-9").displayName)
+    }
+
     @Test fun fallbackModelsAreTheThreeAliases() {
         assertEquals(listOf("sonnet", "opus", "haiku"), ClaudeProtocol.FALLBACK_MODELS.map { it.id })
+        assertEquals(listOf("Sonnet 5.5", "Opus 5.5", "Haiku 4.5"), ClaudeProtocol.FALLBACK_MODELS.map { it.displayName })
         assertEquals(ClaudeProtocol.EFFORTS, ClaudeProtocol.FALLBACK_MODELS.first().reasoningEfforts.map { it.value })
     }
 

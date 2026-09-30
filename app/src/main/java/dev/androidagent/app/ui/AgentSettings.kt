@@ -336,7 +336,7 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
         SettingsHubRow(
             icon = SettingsRoute.MODEL.icon(),
             title = SettingsRoute.MODEL.title(),
-            summary = state.selectedModel ?: "Not chosen yet",
+            summary = state.selectedModel?.let { claudeModelName(state, it) ?: it } ?: "Not chosen yet",
             onClick = { onOpen(SettingsRoute.MODEL) },
         )
         SettingsHubRow(
@@ -1102,13 +1102,17 @@ private fun ColumnScope.ModelSettings(state: AgentUiState, actions: AgentUiActio
     } else {
         Box {
             OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(state.selectedModel ?: "Choose a model", modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
+                Text(
+                    state.selectedModel?.let { claudeModelName(state, it) ?: it } ?: "Choose a model",
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Start,
+                )
                 Icon(Icons.Outlined.ExpandMore, contentDescription = "Choose model")
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 state.availableModels.forEach { model ->
                     DropdownMenuItem(
-                        text = { Text(model) },
+                        text = { Text(claudeModelName(state, model) ?: model) },
                         trailingIcon = if (model == state.selectedModel) ({ Icon(Icons.Outlined.Check, contentDescription = null) }) else null,
                         onClick = {
                             expanded = false

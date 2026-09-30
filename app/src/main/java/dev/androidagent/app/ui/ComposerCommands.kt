@@ -22,6 +22,7 @@ package dev.androidagent.app.ui
 
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.ConnectionPhase
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.UsageSummary
 import kotlin.math.roundToInt
 
@@ -82,12 +83,28 @@ internal fun brandArgb(hex: String?): Long? {
 }
 
 /**
+ * A Claude model's shown name, such as "Sonnet 5.5" for `sonnet`, or null for
+ * a Codex chat. Codex keeps showing its model ids as before.
+ */
+internal fun claudeModelName(state: AgentUiState, id: String): String? {
+    if (state.activeEngine != EngineKind.CLAUDE) return null
+    return state.modelCatalog.firstOrNull { it.id == id }?.displayName?.takeIf { it.isNotBlank() } ?: id
+}
+
+/** How the chip, the picker and /status name a model. */
+internal fun modelLabel(state: AgentUiState, id: String): String = claudeModelName(state, id) ?: id.removePrefix("gpt-")
+
+/** The short line under a Claude model in the picker, such as Fable's extra-usage hint. Empty for Codex. */
+internal fun modelNote(state: AgentUiState, id: String): String =
+    if (state.activeEngine != EngineKind.CLAUDE) "" else state.modelCatalog.firstOrNull { it.id == id }?.description.orEmpty()
+
+/**
  * One line for /status. Context use is left out on purpose: the engine reports
  * the thread's running token total, not what is in the window now.
  */
 internal fun statusSummary(state: AgentUiState, nowSeconds: Long = System.currentTimeMillis() / 1000L): String {
     val parts = mutableListOf<String>()
-    val model = state.selectedModel?.removePrefix("gpt-") ?: "Default model"
+    val model = state.selectedModel?.let { modelLabel(state, it) } ?: "Default model"
     parts += model + state.selectedReasoningEffort?.let { " · $it" }.orEmpty()
     if (state.planMode) parts += "Plan mode"
     UsageSummary.primary(UsageSummary.windows(state.usageLimits, nowSeconds))?.let { window ->
