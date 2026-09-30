@@ -32,7 +32,11 @@ import dev.androidagent.core.AutomationOverview
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunState
+import dev.androidagent.runtime.ClaudeBinaryPin
+import dev.androidagent.runtime.ClaudeInstallPhase
+import dev.androidagent.runtime.ClaudeInstallState
 import dev.androidagent.core.RuntimeStatus
 import dev.androidagent.core.SetupChecklist
 import dev.androidagent.core.SetupRow
@@ -193,6 +197,23 @@ data class AgentUiState(
     val computerProposal: ComputerDraft? = null,
     /** Text to put in a chat's composer, unsent, once: chat id to text. */
     val composerSeeds: Map<String, String> = emptyMap(),
+    /**
+     * The open chat's engine. The model chips, the quota and voice follow it:
+     * [modelCatalog], [selectedModel] and [usageLimits] are this engine's.
+     */
+    val activeEngine: EngineKind = EngineKind.CODEX,
+    /** The engine a new chat starts on, chosen in onboarding or Settings. */
+    val defaultEngine: EngineKind = EngineKind.CODEX,
+    /** Claude subscription setup. [accountStatus] stays the Codex sign-in. */
+    val claude: ClaudeUiState = ClaudeUiState(),
+)
+
+/** Claude subscription setup: the one-time download and the sign-in. */
+data class ClaudeUiState(
+    val install: ClaudeInstallState = ClaudeInstallState(ClaudeInstallPhase.NOT_INSTALLED, totalBytes = ClaudeBinaryPin.CURRENT.size),
+    val account: AccountStatus? = null,
+    /** A sign-in step is running. */
+    val busy: Boolean = false,
 )
 
 /** A computer as the add or edit form holds it, before it is saved. */
@@ -347,6 +368,20 @@ data class AgentUiActions(
     val onCloseFolderBrowser: () -> Unit = {},
     /** Start a chat that runs on the computer, in this folder. */
     val onOpenFolderChat: (computerId: String, path: String) -> Unit = { _, _ -> },
+    /** The engine new chats start on. */
+    val onDefaultEngine: (EngineKind) -> Unit = {},
+    /** Before the first message: run this chat on the other engine instead. */
+    val onChooseChatEngine: (EngineKind) -> Unit = {},
+    /** Download Claude Code, after the user saw its size. */
+    val onDownloadClaude: () -> Unit = {},
+    val onCancelClaudeDownload: () -> Unit = {},
+    /** Start `claude auth login` and open its page. */
+    val onClaudeLogin: () -> Unit = {},
+    /** Hand the pasted code to the waiting sign-in. The code is not kept anywhere. */
+    val onClaudeCode: (String) -> Unit = {},
+    val onClaudeLogout: () -> Unit = {},
+    /** Read the open chat's engine quota again. */
+    val onRefreshUsage: () -> Unit = {},
 )
 
 /** The setup checklist for this state, so no screen assembles the signals itself. */
@@ -358,8 +393,10 @@ internal fun AgentUiState.onboardingStep(): dev.androidagent.core.OnboardingStep
 
 internal fun AgentUiState.setupSignals(): SetupSignals = SetupSignals(
         runtimePhase = runtimeStatus.phase,
-        signedIn = accountStatus?.signedIn,
-        loginPending = accountStatus?.signedIn == false && accountStatus?.loginUrl != null,
+        // Either engine is enough to chat: a Claude-only user is signed in.
+        signedIn = if (claude.account?.signedIn == true) true else accountStatus?.signedIn,
+        loginPending = (accountStatus?.signedIn == false && accountStatus?.loginUrl != null) ||
+            (claude.account?.signedIn == false && claude.account?.loginUrl != null),
         a11yConnected = a11yStatus.connected,
         a11yDeclared = a11yStatus.declaredEnabled,
         overlayGranted = permissions.overlay,

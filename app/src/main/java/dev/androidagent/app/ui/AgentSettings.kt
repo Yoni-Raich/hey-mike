@@ -114,6 +114,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.ConnectionPhase
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.SetupChecklist
@@ -147,7 +148,7 @@ private fun SetupItem.route(): SettingsRoute = when (this) {
 
 private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.RUNTIME -> "Local runtime"
-    SettingsRoute.ACCOUNT -> "Codex account"
+    SettingsRoute.ACCOUNT -> "Accounts"
     SettingsRoute.SCREEN_CONTROL -> "See and tap the screen"
     SettingsRoute.FLOATING_CONTROL -> "Floating Stop button"
     SettingsRoute.WIRELESS_ADB -> "Run commands and install apps"
@@ -351,7 +352,7 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
         SettingsHubRow(
             icon = SettingsRoute.ACCOUNT.icon(),
             title = SettingsRoute.ACCOUNT.title(),
-            summary = account.summary,
+            summary = accountsSummary(state),
             state = account.state.takeIf { it != SetupState.DONE },
             onClick = { onOpen(SettingsRoute.ACCOUNT) },
         )
@@ -431,11 +432,14 @@ private fun ColumnScope.PrivacySettings(state: AgentUiState, actions: AgentUiAct
     var confirmWithdraw by rememberSaveable { mutableStateOf(false) }
     Text("Where your data goes", fontWeight = FontWeight.Medium)
     Explanation(
-        "Hey Mike has no servers of its own. Chats, files and your sign-in stay on this phone. What Mike sees " +
-            "and what you type goes to Codex (OpenAI) to answer you, and is covered only by the Codex policies. " +
+        "Hey Mike has no servers of its own. Chats, files and your sign-ins stay on this phone. What Mike sees " +
+            "and what you type goes to the chat's own AI to answer you, and is covered only by that provider's policies. " +
             "Update checks ask GitHub for the latest version and send nothing about you.",
     )
+    Explanation("ChatGPT (Codex) chats go to OpenAI.")
     TextButton(onClick = { uriHandler.openUri(POLICIES_URL) }) { Text("Read the Codex and OpenAI policies") }
+    Explanation("Claude chats go to Anthropic, through Anthropic's Claude Code running on this phone.")
+    TextButton(onClick = { uriHandler.openUri(ANTHROPIC_PRIVACY_URL) }) { Text("Read Anthropic's privacy policy") }
 
     val agreedAt = state.onboarding.consentAt
     Text(
@@ -574,8 +578,28 @@ private fun ColumnScope.RuntimeSettings(state: AgentUiState, actions: AgentUiAct
     }
 }
 
+/** "Codex signed in · Claude not set up": both accounts on one line of the hub. */
+internal fun accountsSummary(state: AgentUiState): String {
+    val codex = if (state.accountStatus?.signedIn == true) "signed in" else "not signed in"
+    return "Codex $codex · Claude ${claudeSummary(state.claude).lowercase()}"
+}
+
+/** Which account new chats use, then each account: ChatGPT (Codex) and the Claude subscription. */
 @Composable
 private fun ColumnScope.AccountSettings(state: AgentUiState, actions: AgentUiActions) {
+    Text("New chats use", fontWeight = FontWeight.Medium)
+    ProviderChoice(state.defaultEngine, actions.onDefaultEngine)
+    Explanation("Each chat keeps the account it started with. An empty chat can still switch.")
+    Spacer(Modifier.height(8.dp))
+    Text(providerName(EngineKind.CODEX), style = MaterialTheme.typography.titleMedium)
+    CodexAccountSettings(state, actions)
+    Spacer(Modifier.height(8.dp))
+    Text(providerName(EngineKind.CLAUDE), style = MaterialTheme.typography.titleMedium)
+    ClaudeCard(state.claude, actions)
+}
+
+@Composable
+private fun ColumnScope.CodexAccountSettings(state: AgentUiState, actions: AgentUiActions) {
     val uriHandler = LocalUriHandler.current
     val account = state.accountStatus
     StatusLine(

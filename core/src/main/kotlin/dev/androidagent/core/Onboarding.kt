@@ -51,8 +51,9 @@ object Onboarding {
     /**
      * Raise this when the consent text changes in substance. Everyone who
      * agreed to an older version is asked again before the next run.
+     * Version 2 names Anthropic, which gets the data of Claude chats.
      */
-    const val CONSENT_VERSION = 1
+    const val CONSENT_VERSION = 2
 
     /**
      * The screen to show. Sign-in and screen access are skipped once they are

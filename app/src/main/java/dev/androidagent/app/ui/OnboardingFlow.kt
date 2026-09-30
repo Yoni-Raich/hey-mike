@@ -78,6 +78,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.HandoverOffer
 import dev.androidagent.core.Onboarding
 import dev.androidagent.core.OnboardingStep
@@ -109,9 +110,10 @@ internal val ConsentStatements = listOf(
     "Mike can make mistakes" to
         "It can misread the screen or tap the wrong thing. Watch what it does, check anything important, " +
         "and press Stop if something looks wrong. Actions already done may not be undone.",
-    "Your data goes only to Codex" to
-        "Hey Mike has no servers of its own. What Mike sees and what you type goes to Codex (OpenAI) to " +
-        "answer you, and is covered only by the Codex policies. Chats and your sign-in stay on this phone.",
+    "Your data goes only to the AI you chose" to
+        "Hey Mike has no servers of its own. What Mike sees and what you type goes to Codex (OpenAI), or to " +
+        "Claude (Anthropic) in a Claude chat, to answer you, and is covered only by that provider's policies. " +
+        "Chats and your sign-in stay on this phone.",
 )
 
 @Composable
@@ -227,6 +229,7 @@ private fun ColumnScope.ConsentStep(actions: AgentUiActions) {
             }
         }
         TextButton(onClick = { uriHandler.openUri(POLICIES_URL) }) { Text("Read the Codex and OpenAI policies") }
+        TextButton(onClick = { uriHandler.openUri(ANTHROPIC_PRIVACY_URL) }) { Text("Read Anthropic's privacy policy") }
     }
     val left = checked.count { !it }
     PrimaryButton(
@@ -248,6 +251,8 @@ private fun ColumnScope.SignInStep(state: AgentUiState, actions: AgentUiActions)
     val uriHandler = LocalUriHandler.current
     val account = state.accountStatus
     val waiting = account?.loginUrl != null
+    // The account picked here is also what new chats use; Settings can change it.
+    val claude = state.defaultEngine == EngineKind.CLAUDE
     StepBar(OnboardingStep.SIGN_IN)
     Column(
         modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -255,35 +260,46 @@ private fun ColumnScope.SignInStep(state: AgentUiState, actions: AgentUiActions)
     ) {
         AgentOrb(modifier = Modifier.size(120.dp), phase = RunPhase.IDLE)
         Title("Sign in so I can think")
-        Text(
-            "I use your ChatGPT account. Your browser opens, you sign in there, and you come straight back here.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Body,
-        )
         OnboardingCard {
-            Row(verticalAlignment = Alignment.Top) {
-                Icon(Icons.Outlined.Lock, contentDescription = null, tint = Teal, modifier = Modifier.padding(end = 12.dp))
-                Text("I never see your password. The sign-in is kept on this phone only.", color = Body)
-            }
+            Text("Which account should I use?", style = MaterialTheme.typography.bodySmall, color = Muted)
+            ProviderChoice(state.defaultEngine, actions.onDefaultEngine)
         }
-        account?.userCode?.takeIf { waiting && it.isNotBlank() }?.let { code ->
+        if (claude) {
+            // The Claude card carries its own download and sign-in buttons.
+            OnboardingCard { ClaudeCard(state.claude, actions) }
+        } else {
+            Text(
+                "I use your ChatGPT account. Your browser opens, you sign in there, and you come straight back here.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = Body,
+            )
             OnboardingCard {
-                Text("If the page asks for a code, enter:", style = MaterialTheme.typography.bodySmall, color = Muted)
-                Text(code, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.5.sp)
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Outlined.Lock, contentDescription = null, tint = Teal, modifier = Modifier.padding(end = 12.dp))
+                    Text("I never see your password. The sign-in is kept on this phone only.", color = Body)
+                }
+            }
+            account?.userCode?.takeIf { waiting && it.isNotBlank() }?.let { code ->
+                OnboardingCard {
+                    Text("If the page asks for a code, enter:", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    Text(code, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.5.sp)
+                }
             }
         }
     }
-    RuntimeLine(state, actions)
-    val runtimeReady = state.runtimeStatus.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)
-    PrimaryButton(
-        label = when {
-            waiting -> "Open the sign-in page again"
-            runtimeReady -> "Sign in with ChatGPT"
-            else -> "Getting ready…"
-        },
-        enabled = waiting || runtimeReady,
-        onClick = { account?.loginUrl?.let(uriHandler::openUri) ?: actions.onLogin() },
-    )
+    if (!claude) {
+        RuntimeLine(state, actions)
+        val runtimeReady = state.runtimeStatus.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)
+        PrimaryButton(
+            label = when {
+                waiting -> "Open the sign-in page again"
+                runtimeReady -> "Sign in with ChatGPT"
+                else -> "Getting ready…"
+            },
+            enabled = waiting || runtimeReady,
+            onClick = { account?.loginUrl?.let(uriHandler::openUri) ?: actions.onLogin() },
+        )
+    }
 }
 
 @Composable
@@ -330,7 +346,7 @@ private fun ColumnScope.ScreenAccessStep(state: AgentUiState, actions: AgentUiAc
                 Icon(Icons.Outlined.Shield, contentDescription = null, tint = Teal, modifier = Modifier.padding(end = 12.dp))
                 Text(
                     "I only act during a task you started, a card shows what I'm doing, and Stop is always on screen. " +
-                        "While a task runs, what's on the screen is sent to Codex.",
+                        "While a task runs, what's on the screen is sent to the AI you chose.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Body,
                 )
