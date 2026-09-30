@@ -55,6 +55,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.GraphicEq
@@ -69,10 +70,14 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -259,12 +264,12 @@ internal fun AgentComposer(
         val border by animateColorAsState(if (focused) FieldBorderFocused else FieldBorder, tween(200), label = "composer-border")
         Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, border)) {
             Row(Modifier.padding(4.dp), verticalAlignment = Alignment.Bottom) {
-                IconButton(
-                    onClick = actions.onAttach,
+                AttachMenu(
                     enabled = !active && !voiceActive && state.activeSessionId != null,
-                ) {
-                    Icon(Icons.Outlined.Add, "Attach file")
-                }
+                    onPhoto = actions.onAttachPhoto,
+                    onCamera = actions.onTakePhoto,
+                    onFile = actions.onAttach,
+                )
                 Column(
                     Modifier
                         .weight(1f)
@@ -879,6 +884,36 @@ internal fun CommandNote(text: String) {
         )
         HorizontalDivider(Modifier.weight(1f), color = NoteRule)
     }
+}
+
+/**
+ * The plus: one tap opens the three things worth attaching, each with its
+ * picture. A single "Attach file" button sent everyone through the system file
+ * browser, where a photo from the gallery is three taps deep and the camera is
+ * not offered at all.
+ */
+@Composable
+private fun AttachMenu(enabled: Boolean, onPhoto: () -> Unit, onCamera: () -> Unit, onFile: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, enabled = enabled) {
+            Icon(Icons.Outlined.Add, "Attach a photo, picture or file")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            AttachItem("Photo", Icons.Outlined.Image) { open = false; onPhoto() }
+            AttachItem("Camera", Icons.Outlined.PhotoCamera) { open = false; onCamera() }
+            AttachItem("File", Icons.Outlined.AttachFile) { open = false; onFile() }
+        }
+    }
+}
+
+@Composable
+private fun AttachItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        leadingIcon = { Icon(icon, contentDescription = null) },
+        onClick = onClick,
+    )
 }
 
 @Composable

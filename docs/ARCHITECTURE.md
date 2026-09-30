@@ -1694,8 +1694,18 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   Keystore key (`KeystoreSecretBox`). An edited file does not open, so it
   cannot point a saved password at another host or move a chat onto a
   computer; the app then trusts none of it and asks for the computers again.
-- **Pictures** are sent inline as data URLs; other attachments are refused in
-  a computer chat because their paths are on the phone.
+- **Pictures** are sent inline as data URLs. Any other attachment is copied to
+  the computer over SFTP first (`RemoteHub.sendAttachments`), into
+  `.hey-mike/attachments/<time>/` in the chat's project folder, and the prompt
+  names where it landed ("Attached files on this computer"). They used to be
+  refused, because their paths are on the phone. A failed copy sends nothing
+  and keeps the attachments. The folder shows up in `git status` of a project
+  that is a repository.
+- **The composer's plus** opens Photo (system photo picker, several at once, no
+  storage permission), Camera (one shot written to `cache/captures/` through
+  the app's FileProvider, copied into the chat, then deleted; no CAMERA
+  permission, because the system camera app takes the picture) and File. All
+  three feed the same pending attachments, in phone chats and computer chats.
 - **Files: places, one copy tool, a skill for use cases.** A file lives in
   one of three kinds of place, and every address names one: `chat:<path>`
   (this chat's folder on the phone), `phone:<path>` (shared storage, or a

@@ -191,6 +191,27 @@ class RemoteHub(
         connection(computerId).link.upload(source, remotePath, replace, progress)
     }
 
+    /**
+     * Put files the user attached to a message onto the computer the chat runs
+     * on, and return where each one landed, in the computer's own spelling, for
+     * the prompt. They go to `.hey-mike/attachments/<time>/` in the chat's
+     * project folder: inside the folder Codex may work in, and a folder per
+     * message so two files with one name never overwrite each other.
+     *
+     * [files] are the name to show and the local file. A chat with no computer
+     * has nothing to upload to.
+     */
+    suspend fun sendAttachments(sessionId: String, files: List<Pair<String, File>>): List<String> {
+        val binding = requireNotNull(store.binding(sessionId)) { "This chat does not run on a computer." }
+        val computer = requireNotNull(store.computer(binding.computerId)) { "That computer is no longer saved." }
+        val folder = ".hey-mike/attachments/" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+        return files.map { (name, file) ->
+            val full = ComputerPlace.fullPath("$folder/${safeRemoteName(name)}", binding.cwd, computer.label)
+            upload(computer.id, file, full, replace = true)
+            full
+        }
+    }
+
     /** Every saved computer as a place `copy_file` can read from and write to. */
     fun filePlaces(): List<dev.androidagent.core.FilePlace> = store.state.value.computers.map { ComputerPlace(this, it) }
 
@@ -345,6 +366,13 @@ class RemoteHub(
 
     companion object {
         private const val FALLBACK_TIMEOUT_MS = 6_000
+
+        /**
+         * A file name both Windows and POSIX accept: no separators, no
+         * characters Windows forbids, no trailing dot or space.
+         */
+        internal fun safeRemoteName(name: String): String =
+            name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trim().trimEnd('.', ' ').take(120).ifBlank { "attachment" }
 
         fun profileFor(computer: RemoteComputer): EngineProfile = EngineProfile(
             developerInstructions = RemoteInstructions.forComputer(computer),

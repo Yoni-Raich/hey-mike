@@ -1,5 +1,18 @@
 # Progress
 
+### The plus attaches a photo, a camera shot or a file, also on a computer — 2026-09-30
+
+The plus was one "Attach file" button into the system file browser, and a
+computer chat refused anything but pictures. Now it opens Photo / Camera / File,
+and a file attached in a computer chat is copied to the project folder on the
+computer (`.hey-mike/attachments/<time>/`) before the turn is queued.
+
+Evidence: `:remote:testDebugUnitTest :app:testDevDebugUnitTest` 127 tests, 0
+failures (new: file names safe on Windows and Linux, the path a file lands on);
+`:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors. Not run on a device:
+the menu, the camera round trip (including the activity being recreated while
+the camera is open), and an SFTP upload from a real computer chat.
+
 ### Wireless ADB: the real state, a dropped pairing, a one-tap switch — 2026-09-30
 
 Reported: Mike showed Wireless ADB as off while the switch was on, and turning

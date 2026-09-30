@@ -475,15 +475,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val active = graph.coordinator.state.value
-        if (graph.computers.binding(id) != null && attachments.any { it.mimeType?.startsWith("image/") != true }) {
-            error("A computer chat can take pictures only. Copy other files to the computer first.")
-            return
-        }
+        val onComputer = graph.computers.binding(id) != null
         val paths = attachments.mapNotNull { it.path?.let(::File) }
         val images = attachments.filter { it.mimeType?.startsWith("image/") == true }.mapNotNull { it.path?.let(::File) }
         val otherFiles = paths.filter { it !in images }
-        val promptText = text
-        val prompt = if (otherFiles.isEmpty()) promptText else promptText + "\n\nAttached files in this session:\n" + otherFiles.joinToString("\n") { it.absolutePath }
+        val otherNames = attachments.filter { it.path != null && it.mimeType?.startsWith("image/") != true }.map { it.name }
         val snapshot = mutable.value
         val invokedSkillName = text.trimStart()
             .takeIf { it.startsWith("\$") }
@@ -499,6 +495,28 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             ?: if (snapshot.planMode) snapshot.modelCatalog.firstOrNull()?.id ?: snapshot.availableModels.firstOrNull() else null
         if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return }
         task {
+            // Pictures travel inside the turn. Any other file has to be on the
+            // machine the agent runs on, so a computer chat copies it there
+            // first and names where it landed. A failed copy sends nothing and
+            // keeps the attachments, so the user can try again.
+            val where = if (onComputer && otherFiles.isNotEmpty()) {
+                mutable.update { it.copy(infoMessage = "Sending ${otherFiles.size} file${if (otherFiles.size == 1) "" else "s"} to the computer…", errorMessage = null) }
+                try {
+                    graph.remote.sendAttachments(id, otherNames.zip(otherFiles))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    mutable.update { it.copy(infoMessage = null, errorMessage = "Could not send the file to the computer: ${e.message ?: e.javaClass.simpleName}") }
+                    return@task
+                }
+            } else {
+                otherFiles.map { it.absolutePath }
+            }
+            val prompt = if (where.isEmpty()) text else {
+                val place = if (onComputer) "Attached files on this computer" else "Attached files in this session"
+                text + "\n\n$place:\n" + where.joinToString("\n")
+            }
+            mutable.update { it.copy(infoMessage = null) }
             graph.queue.submit(QueuedTurn(sessionId = id, prompt = prompt, imagePaths = images.map { it.absolutePath },
                 model = model, effort = selectedReasoningEffort(snapshot), skill = invokedSkill, planMode = snapshot.planMode))
             mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
@@ -1019,11 +1037,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.adb.forgetPairing()
         mutable.update { it.copy(infoMessage = "Pairing removed. Pair again to connect.") }
     }
-    fun addAttachment(uri: Uri) = task {
-        val id = current.value ?: return@task
+    /**
+     * [deleteAfter] is a temporary file the copy came from, such as a camera
+     * shot, and [name] replaces the name the source gives (a shot's is a UUID).
+     */
+    fun addAttachment(uri: Uri, deleteAfter: File? = null, name: String? = null) = task {
+        try {
+            copyAttachment(uri, name)
+        } finally {
+            deleteAfter?.delete()
+        }
+    }
+
+    private suspend fun copyAttachment(uri: Uri, givenName: String?) {
+        val id = current.value ?: return
         val resolver = getApplication<Application>().contentResolver
         val type = resolver.getType(uri) ?: "application/octet-stream"
-        val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "attachment"
+        val name = givenName ?: resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "attachment"
         val safeName = name.replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").take(100).ifBlank { "attachment" }
         val target = File(File(graph.sessions.workspace(id), "attachments").apply { mkdirs() }, "${UUID.randomUUID()}-$safeName")
         withContext(Dispatchers.IO) {
