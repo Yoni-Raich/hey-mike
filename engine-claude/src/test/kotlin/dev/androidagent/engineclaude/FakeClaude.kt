@@ -46,11 +46,13 @@ internal class FakePipe {
     private val queue = LinkedBlockingQueue<ByteArray>()
     private val eof = ByteArray(0)
     @Volatile private var closed = false
+    /** Writes fail as after a SIGKILL, while the reader still waits. */
+    @Volatile var broken = false
 
     val output: OutputStream = object : OutputStream() {
         override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
         override fun write(b: ByteArray, off: Int, len: Int) {
-            if (closed) throw IOException("Broken pipe")
+            if (closed || broken) throw IOException("Broken pipe")
             if (len > 0) queue.put(b.copyOfRange(off, off + len))
         }
         override fun close() {
@@ -98,6 +100,11 @@ internal class FakeClaude(val args: List<String>, val cwd: File, val env: Map<St
     @Volatile var onLine: (FakeClaude, String) -> Unit = { _, _ -> }
     @Volatile var exitCode: Int? = null
     @Volatile var forced = false
+    /**
+     * Like a real process after SIGKILL: stdin breaks at once, but the
+     * process reads as alive until the test calls [finish].
+     */
+    @Volatile var lingerOnKill = false
 
     init {
         thread(isDaemon = true, name = "fake-claude-stdin") {
@@ -163,7 +170,11 @@ internal class FakeClaude(val args: List<String>, val cwd: File, val env: Map<St
     override fun exitValue(): Int = exitCode ?: throw IllegalThreadStateException("running")
     override fun isAlive(): Boolean = exitCode == null
     override fun destroy() = finish(143)
-    override fun destroyForcibly(): Process { forced = true; finish(137); return this }
+    override fun destroyForcibly(): Process {
+        forced = true
+        if (lingerOnKill) stdin.broken = true else finish(137)
+        return this
+    }
 
     companion object {
         private val initialize: JsonObject by lazy {

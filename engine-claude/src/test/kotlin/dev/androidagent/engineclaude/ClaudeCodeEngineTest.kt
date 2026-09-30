@@ -204,6 +204,29 @@ class ClaudeCodeEngineTest {
         assertTrue(chat.isAlive)
     }
 
+    /**
+     * Found on a phone: a stop right after sending is not answered (the CLI
+     * drops the queued message), so the process is killed after the grace.
+     * SIGKILL is asynchronous, and a message sent at once must not be
+     * written to the dying process.
+     */
+    @Test fun aTurnRightAfterAKilledStopStartsANewProcess() = runBlocking {
+        val engine = engine(grace = 300)
+        val (id, turnId) = engine.begin()
+        val first = host.chats().single()
+        first.lingerOnKill = true
+        engine.interrupt(id, turnId)
+        assertEquals("interrupted", awaitEvent<EngineEvent.TurnFinished>().status)
+        assertTrue(first.forced)
+        assertTrue("the killed process still reads as alive", first.isAlive)
+
+        engine.startTurn(id, "again", emptyList(), null, null, DeviceCapabilities(), null)
+        val second = host.chats()[1]
+        assertEquals(id, second.after("--resume"))
+        assertEquals("again", second.nextFrame { it.type() == "user" }["message"]!!.jsonObject["content"]!!.jsonArray.last().jsonObject["text"]!!.jsonPrimitive.content)
+        first.finish(137)
+    }
+
     @Test fun aProcessThatDiesMidTurnFailsAndTheNextTurnResumes() = runBlocking {
         val engine = engine()
         val (id, turnId) = engine.begin()

@@ -611,8 +611,13 @@ class ClaudeCodeEngine(
             }
         }
 
-        /** SIGKILL, for a stop the CLI did not honour. The reader then ends the turn. */
+        /**
+         * SIGKILL, for a stop the CLI did not honour. The reader then ends the turn.
+         * The process can still read as alive for a moment after the kill, so
+         * it is marked unusable: the next turn starts a new one.
+         */
         fun kill() {
+            running = null
             process?.destroyForcibly()
             server?.stop()
             server = null
