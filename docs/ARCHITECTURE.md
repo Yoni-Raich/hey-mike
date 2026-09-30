@@ -94,7 +94,7 @@ DNS, TLS and connection failures remain diagnosable without exposing tokens or
 device codes. Proxy lifecycle follows the supervised app-server and closes on
 stop or failed startup.
 
-The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.156.0,
+The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.159.2,
 ChatGPT account sessions use `https://chatgpt.com/backend-api/codex` for
 models and responses. Allowing only auth.openai.com and api.openai.com lets
 device-code login succeed while blocking signed-in chat. The runtime sets
@@ -104,7 +104,7 @@ The model list is never hard-coded. `model/list` returns what the OpenAI
 backend sends the app-server, and the backend filters by the client version
 the app-server reports. New models therefore appear only after the pinned
 package is bumped in `tools/prepare_runtime.py` (0.153.4 -> 0.156.0 on
-2026-09-22 for the GPT-6 models). Cached archives are named with the version,
+2026-09-22 for the GPT-6 models, then 0.156.0 -> 0.159.2 on 2026-09-30 for GPT-6.1 Sol). Cached archives are named with the version,
 so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
@@ -1676,7 +1676,7 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
   and PowerShell default shells. The computer downloads the official
   `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
-  pinned on the phone (0.156.0), checks its sha256 against hashes compiled
+  pinned on the phone (0.159.2), checks its sha256 against hashes compiled
   into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
   The phone and computer therefore speak one protocol version.
 - **Access is the user's choice per computer.** *Ask me first*:

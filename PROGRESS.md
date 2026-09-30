@@ -1,5 +1,33 @@
 # Progress
 
+### Model menu, and Codex 0.159.2 for GPT-6.1 — 2026-09-30
+
+GPT-6.1 Sol arrives in the model list only with a newer app-server: the list
+comes from `model/list` of the pinned Codex, and upstream added it to the
+bundled catalog (default model) in rust-v0.159.1. The pin moved 0.156.0 ->
+0.159.2 (the latest stable; its only change over 0.159.1 is a Windows console
+fix, which matters to the computers we install on). Changed together, because
+the phone and the computer must speak one protocol: `tools/prepare_runtime.py`
+(ARM64 and x86_64), `LinuxHost.kt`, `WindowsHost.kt` (version and hashes), the
+license file name, NOTICE, README. The hashes are the GitHub release digests of
+`codex-app-server-package-*`. `prepare_runtime.py` ran clean: layout unchanged,
+two code-mode host strings, patch applied. A computer that has 0.156.0 installed
+has no 0.159.2 yet, because the install path carries the version: connecting it
+from the Computers sheet installs the new one (about 120 MB).
+
+The model choice is a small menu over its chip instead of a bottom sheet:
+Intelligence levels (Low ... Max, a check on the one in effect), then a Model
+row that opens the list. The chip reads "6 Luna Extra High". Picking a model's
+own default level stores Auto again.
+
+Evidence: `python -m unittest tools.test_prepare_runtime`,
+`python tools/prepare_runtime.py`, `:remote:testDebugUnitTest
+:engine-codex:testDebugUnitTest :app:testDevDebugUnitTest` 172 tests, 0
+failures, `:app:assembleDevDebug`, `:app:lintDevDebug` 0 errors. Not run: the
+new app-server on a phone (does 6.1 Sol appear, does a turn run), a computer
+install of 0.159.2, the menu on a device, `ChatUiTest` (updated, compiled only
+by the test build, not run).
+
 ### The plus attaches a photo, a camera shot or a file, also on a computer — 2026-09-30
 
 The plus was one "Attach file" button into the system file browser, and a

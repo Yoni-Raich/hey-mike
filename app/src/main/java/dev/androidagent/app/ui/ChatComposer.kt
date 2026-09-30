@@ -122,7 +122,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.core.AgentSkill
-import dev.androidagent.core.ReasoningEffortOption
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
 import dev.androidagent.core.VoicePhase
@@ -325,13 +324,16 @@ internal fun AgentComposer(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SkillsChip(enabled = state.activeSessionId != null && !voiceActive) { browsing = true }
-            ModelChip(state, enabled = !active && !voiceActive) {
-                if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
+            // The menu hangs off the chip it was opened from, and opens above it.
+            Box {
+                ModelChip(state, enabled = !active && !voiceActive) {
+                    if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
+                }
+                ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
             }
             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
         }
     }
-    if (choosingModel) ModelSheet(state, actions, onDismiss = { choosingModel = false })
     if (browsing) {
         SkillsSheet(
             skills = state.availableSkills,
@@ -942,9 +944,15 @@ private fun AttachmentChip(name: String, onRemove: () -> Unit) {
 
 @Composable
 private fun ModelChip(state: AgentUiState, enabled: Boolean, onClick: () -> Unit) {
-    val model = state.selectedModel?.removePrefix("gpt-")
-    val label = if (model == null) "Choose model" else "$model · ${state.selectedReasoningEffort ?: "default"}"
     val ink = if (enabled) ChipInk else DisabledInk
+    // "6 Luna Extra High": the model in bold, then the level it will run at.
+    val effort = effectiveEffort(state.modelCatalog.firstOrNull { it.id == state.selectedModel }, state.selectedReasoningEffort)
+    val label = state.selectedModel?.let { id ->
+        buildAnnotatedString {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(shortModelName(id)) }
+            effort?.let { append(" " + effortLabel(it)) }
+        }
+    } ?: AnnotatedString("Choose model")
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -968,101 +976,6 @@ private fun ModelChip(state: AgentUiState, enabled: Boolean, onClick: () -> Unit
                 modifier = Modifier.widthIn(max = 220.dp),
             )
             Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp), tint = ink)
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ModelSheet(state: AgentUiState, actions: AgentUiActions, onDismiss: () -> Unit) {
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val efforts = state.modelCatalog.firstOrNull { it.id == state.selectedModel }?.reasoningEfforts.orEmpty()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = SheetFill) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            SheetLabel("MODEL")
-            state.availableModels.forEach { model ->
-                val selected = model == state.selectedModel
-                Surface(
-                    onClick = { actions.onModelSelected(model) },
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (selected) OptionFill else Color.Transparent,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(model.removePrefix("gpt-"), Modifier.weight(1f), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                        if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.secondary)
-                    }
-                }
-            }
-            if (efforts.isNotEmpty()) {
-                SheetLabel("REASONING")
-                (listOf<ReasoningEffortOption?>(null) + efforts).chunked(3).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { option ->
-                            EffortOption(
-                                option = option,
-                                selected = option?.value == state.selectedReasoningEffort,
-                                modifier = Modifier.weight(1f),
-                            ) { actions.onReasoningEffortSelected(option?.value) }
-                        }
-                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SheetLabel(text: String) {
-    Text(
-        text,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.8.sp,
-        color = MutedInk,
-        modifier = Modifier.padding(top = 6.dp),
-    )
-}
-
-@Composable
-private fun EffortOption(option: ReasoningEffortOption?, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val note = option?.description?.takeIf { it.isNotBlank() } ?: if (option == null) "Model default" else ""
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        color = if (selected) Color.White else Color.Transparent,
-        border = if (selected) null else BorderStroke(1.dp, ChipBorder),
-        modifier = modifier.heightIn(min = 60.dp),
-    ) {
-        Column(
-            Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                option?.value ?: "Default",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (selected) Color.Black else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-            if (note.isNotEmpty()) {
-                Text(
-                    note,
-                    fontSize = 12.sp,
-                    color = if (selected) Color(0xFF4A4A4A) else MutedInk,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
     }
 }
