@@ -456,30 +456,30 @@ class ClaudeCodeEngineTest {
         assertEquals("completed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
     }
 
-    @Test fun withNoChatRunningAProbeReadsUsageAndTheModelList() = runBlocking {
+    @Test fun withNoChatRunningRefreshOnlyFillsTheModelListAndAsksNoUsage() = runBlocking {
+        // A fresh CLI has no limits to report (`"rate_limits": null` until its
+        // first model request), so asking a throwaway process is pointless.
         host.script = probeScript()
         val engine = engine()
         engine.refreshUsage()
 
         val probe = host.started.single()
         assertTrue("--no-session-persistence" in probe.args)
-        assertTrue(probe.lines.any { it.contains("\"subtype\":\"get_usage\"") })
+        assertFalse(probe.lines.any { it.contains("\"subtype\":\"get_usage\"") })
         assertFalse("the probe never sends a message", probe.lines.any { it.contains("\"type\":\"user\"") })
         assertFalse(probe.isAlive)
-        assertEquals(listOf("5-hour", "weekly"), awaitEvent<EngineEvent.UsageChanged> { it.limits != null }.limits!!.map { it.name })
-
-        // The same probe answered `initialize`: the model list needs no second process.
+        Thread.sleep(200)
+        assertTrue(limitEvents().isEmpty())
         assertTrue(engine.modelCatalog().any { it.id == "claude-opus-4-8" })
         assertEquals(1, host.started.size)
     }
 
-    @Test fun aProbeThatRefusesTheUsageRequestEmitsNothing() = runBlocking {
-        host.script = probeScript(usageError = "Unsupported control request subtype: get_usage")
+    @Test fun withNoChatRunningAndModelsKnownRefreshStartsNothing() = runBlocking {
+        host.script = probeScript()
         val engine = engine()
         engine.refreshUsage()
-        Thread.sleep(200)
-        assertTrue(limitEvents().isEmpty())
-        assertFalse(host.started.single().isAlive)
+        engine.refreshUsage()
+        assertEquals("the second refresh starts no process", 1, host.started.size)
     }
 
     @Test fun skillsAreReadFromTheInstalledSkillFilesOnly() = runBlocking {

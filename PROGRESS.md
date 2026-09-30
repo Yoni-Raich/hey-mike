@@ -18,6 +18,20 @@ sent, and Refresh usage did nothing. Unit tests only; not yet on a phone.
 Gaps: that CLI 2.1.285 on the phone answers `get_usage` and accepts
 `--no-session-persistence`, and that the usage endpoint passes the proxy.
 
+Checked on the Galaxy Tab S7 afterwards, with the signed-in official
+binary run through the app's loader (`run-as`, a local CONNECT proxy via
+`adb reverse`), sending `initialize` then `get_usage` and no message:
+the CLI answers `get_usage` with `"subscription_type":"max",
+"rate_limits_available":true,"rate_limits":null`. A fresh process has no
+limits until its first model request, so a probe can never fill the sheet.
+Changed: with no chat running, `refreshUsage()` asks nothing (it only fills
+a missing model list); a running chat still answers, and the saved last
+reading covers restarts. The empty sheet now says the limits appear after
+the first message. The same probe, without `--strict-mcp-config`, retried
+`mcp-proxy.anthropic.com` (the account's claude.ai connectors) over 30
+times in 20 s against the proxy; the app's own processes pass that flag,
+and the host now also sets `ENABLE_CLAUDEAI_MCP_SERVERS=false`.
+
 ### Claude tablet findings fixed (fix-1) — 2026-09-30
 
 From real use on a Galaxy Tab S7 (Android 13, Hebrew) with a Claude

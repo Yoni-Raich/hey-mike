@@ -381,7 +381,7 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
             StatusLabel("USAGE · ${providerName(state.activeEngine).uppercase()}")
             if (windows.isEmpty()) {
                 Text(
-                    if (state.activeEngine == EngineKind.CLAUDE) "Tap Refresh usage to read Claude's 5-hour and weekly limits."
+                    if (state.activeEngine == EngineKind.CLAUDE) "Claude shares its 5-hour and weekly limits after your first message."
                     else "Account quota is not available for this account yet.",
                     fontSize = 13.sp,
                     lineHeight = 18.sp,

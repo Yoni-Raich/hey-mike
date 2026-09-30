@@ -122,11 +122,11 @@ class ClaudeCodeEngine(
 
     /**
      * Read the plan limits with the `get_usage` control request, never with
-     * a message. A running chat answers it. With none running, a throwaway
-     * process answers it (see [probe]): it gets no message, no tools and no
-     * settings, writes no transcript, and its `initialize` reply fills the
-     * model list too, so the app's refresh on start needs one process, not
-     * two. This runs only when the app asks: on start and on Refresh usage.
+     * a message. Only a running chat can answer it: the CLI learns the limits
+     * from its first model request, and a fresh process replies
+     * `"rate_limits": null` (seen on CLI 2.1.285 on a device). So with no chat
+     * running this reads nothing and the app keeps its last saved reading; it
+     * only fills the model list if that is still missing.
      *
      * Fails quietly. A CLI that refuses the request, a reply without plan
      * limits, or a timeout emits nothing, so the last reading stays.
@@ -139,11 +139,10 @@ class ClaudeCodeEngine(
                 if (chat != null) {
                     withTimeoutOrNull(USAGE_TIMEOUT_MS) { chat.usage() }
                 } else {
-                    val probe = probe(usage = true)
                     if (models == null) {
-                        probe.initialize?.let(ClaudeProtocol::parseModels)?.takeIf { it.isNotEmpty() }?.let { models = it }
+                        probeModels().takeIf { it.isNotEmpty() }?.let { models = it }
                     }
-                    probe.usage
+                    null
                 }
             } catch (error: CancellationException) {
                 throw error

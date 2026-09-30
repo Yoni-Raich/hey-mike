@@ -66,6 +66,7 @@ class ClaudeEnvironmentTest {
             "DISABLE_ERROR_REPORTING" to "1",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1",
             "CLAUDE_CODE_MAX_RETRIES" to "2",
+            "ENABLE_CLAUDEAI_MCP_SERVERS" to "false",
             "NO_COLOR" to "1",
             "BROWSER" to "true",
         ).forEach { (key, value) -> assertEquals(key, value, env[key]) }

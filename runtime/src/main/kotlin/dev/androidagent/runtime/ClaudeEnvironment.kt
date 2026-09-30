@@ -81,6 +81,9 @@ object ClaudeEnvironment {
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
         // The default is 10 retries with backoff: a failed request would stall for a minute.
         env["CLAUDE_CODE_MAX_RETRIES"] = "2"
+        // Without this, a process that does not pass --strict-mcp-config retries the
+        // account's claude.ai connectors at mcp-proxy.anthropic.com, which the proxy denies.
+        env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
         env["NO_COLOR"] = "1"
         // `claude auth login` must not try to open a browser; the app shows the URL.
         env["BROWSER"] = "true"
