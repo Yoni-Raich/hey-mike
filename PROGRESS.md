@@ -1,5 +1,51 @@
 # Progress
 
+### Claude subscription chats wired into the app (WP-E) — 2026-09-30
+
+On `wp-e` (from `feat/claude-subscription`, WP-A..D merged), the Claude engine
+is now reachable from the app. Decisions are in `docs/ARCHITECTURE.md`,
+"Claude subscription chats: one engine per chat".
+
+- `AgentGraph` builds `AndroidClaudeHost` and `ClaudeCodeEngine` with a
+  `LoopbackMcpServer` adapter, passes the Claude home to
+  `installDefaultSkills`, and re-checks an already downloaded binary at start
+  (hash only, never a download).
+- `RoutingAgentEngine` routes by the chat's engine, remembers Claude threads,
+  finds them again through their chat after a restart, tags Claude request
+  ids `claude|`, and refuses voice in Claude chats. The coordinator checks the
+  chat's own engine and says "Starting Claude", "Sign in to Claude in Settings
+  first.", "Claude could not finish".
+- The view model keeps model, effort and quota per engine; the chips,
+  `/status` and the usage sheet follow the open chat. The widget stays Codex.
+- Onboarding and Settings > Accounts: "ChatGPT (Codex)" / "Claude
+  subscription" choice (the default for new chats), and the Claude card: size
+  first (232 MB) and a confirm, progress, cancel, errors, "Not available on
+  this device", sign-in page opened with `ACTION_VIEW`, a masked paste field
+  cleared on submit, sign-out, the required notice, Anthropic's privacy link.
+  An empty phone chat can switch engine; the top bar names the account.
+- No mic in Claude chats; the assistant press and voice start use a Codex
+  chat. `/compact` on a Claude chat opens it first and notes before waiting.
+- The consent text names Anthropic, so `CONSENT_VERSION` is 2. A 300-minute
+  quota window now reads "5-hour" instead of "Daily" (Codex too).
+- CI also runs `:engine-claude`, `:mcp-loopback`, `:runtime` and `:workspace`
+  unit tests.
+
+Checked on 2026-09-30 on Windows, JDK 17 (Android Studio jbr):
+`./gradlew.bat test assembleDevDebug assembleDevRelease
+assembleDevDebugAndroidTest :app:lintDevDebug` BUILD SUCCESSFUL (1761 unit
+tests, 0 failures, 20 skipped; new: 4 coordinator, 5 router, 12
+`EngineChoicesTest`, 7 `ClaudeSetupTest`, 1 `UsageSummaryTest`); lint 0
+errors, 21 warnings, none in touched files; `python -m unittest
+tools.test_prepare_runtime` 15 tests OK; `git diff --check` clean. The dev
+debug APK carries `lib/arm64-v8a/libld_musl.so` and `musl-COPYRIGHT` and no
+`claude` binary.
+
+Not tested: anything on a phone (WP-F): the real download and hash check,
+the sign-in link and a real subscription sign-in with a pasted code, a Claude
+chat turn, MCP tools reaching `claude`, stop during a tool call, compact after
+a restart, the Compose screens themselves (no screenshot exists), Android 16,
+and TalkBack on the new controls.
+
 ### Computer chat panel: activity as one row, a plainer header — 2026-09-29
 
 A UX review of a screenshot of a computer chat (Mike on the phone, Codex on a

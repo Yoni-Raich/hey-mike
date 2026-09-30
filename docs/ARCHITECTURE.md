@@ -1765,3 +1765,69 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   session available for the turn interrupt and future transfers. A cancelled
   copy never advances to phone installation or sharing. Bytes already written
   are not rolled back.
+
+## Claude subscription chats: one engine per chat
+
+Approved design: `docs/superpowers/specs/2026-09-30-claude-subscription-design.md`.
+A user with a Claude subscription can run Mike on it, on the phone only.
+
+- **Engine per chat, fixed.** `ChatSession.engine` is `CODEX` or `CLAUDE`
+  (schema v3, old chats read as Codex). A new chat takes the default engine
+  chosen in onboarding or Settings > Accounts; an empty phone chat can switch,
+  which swaps it for a fresh chat on the other engine, so the engine of a chat
+  never changes after it is created. Computer chats are always Codex. The top
+  bar names the chat's account.
+- **Routing.** `RoutingAgentEngine` reads the chat's engine from the session
+  store in `openSession` (via the `<sessions>/<id>/workspace` folder), keeps
+  Claude thread ids, and finds one again through its chat after a restart.
+  Claude tool and approval request ids get a `claude|` tag, as computer ids
+  get `remote|`, so ids cannot collide. The plain account calls stay Codex's;
+  `connect(kind)` and `account(kind)` reach the right engine, and the
+  coordinator uses them with the chat's engine, so its messages name Claude
+  or Codex. `codexEvents` is the Codex-only stream the view model reads for
+  Codex sign-in, quota and the home screen widget, which stays Codex-only.
+- **Per-engine state in the view model.** Model pick, effort and quota are
+  kept per engine (`EngineChoices`); the chips, `/status` and the usage sheet
+  show the open chat's engine. Claude reports `5-hour` and `weekly` limits.
+- **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
+  `claude` binary through the pinned Alpine musl loader, packaged as
+  `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
+  W^X does not apply. The binary (2.1.285, pinned sha256 and size) is never
+  bundled: it is downloaded from `downloads.claude.ai` only after the user
+  saw its size (232 MB) and tapped Download, with progress and cancel, and
+  hashed before use. At app start the host only re-checks a binary that is
+  already there. On other ABIs the card says "Not available on this device".
+- **Phone tools over loopback MCP.** Each chat process gets its own
+  `LoopbackMcpServer` (127.0.0.1, fresh port and bearer token per start), so
+  a tool call is always tied to the chat that made it. A `tools/call` becomes
+  `EngineEvent.ToolCall` and waits for `answerTool`, so approvals, overlay
+  states, revoke-before-interrupt and the trace are the same as for Codex.
+- **How `claude` runs (WP-C decisions).** One `claude -p` stream-json process
+  per open chat, started lazily by the first turn and restarted with
+  `--resume` when model, effort or tools change; at most two chat processes
+  live at once, the idle ones stopped first. `--setting-sources user` so the
+  skills installed in `<claudeHome>/.claude/skills` load; built-in tools are
+  `Read,Edit,Write,Glob,Skill`, with `Read` and `Edit` allowed only inside the
+  chat workspace; `Grep` and `Bash` stay off until proven on a phone.
+- **Sign-in.** `claude auth login` runs inside the app's private
+  `CLAUDE_CONFIG_DIR`; the app opens its link with `ACTION_VIEW` and hands the
+  pasted code to that process's stdin. The paste field is masked, is not saved
+  across configuration changes and is cleared on submit; the code is not
+  logged or stored. Sign-in state comes only from `claude auth status`.
+- **Compliance rules** (from the spec): official unmodified binary checked
+  against its pinned hash; never bundled; sign-in only inside `claude`; the
+  app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
+  excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
+  headers or `--bare`; API keys and base-URL variables are scrubbed from the
+  child environment; the UI says "Use your own Claude subscription (runs
+  Anthropic's Claude Code). Not affiliated with Anthropic." and never uses
+  "Claude Code" as a feature name.
+- **What Claude chats do not have.** Voice (the mic button is hidden and
+  every voice entry point refuses or uses a Codex chat), computers, API-key
+  mode and several Claude accounts. `/compact` works: after a restart the view
+  model opens the chat before compacting, and the note shows before the call,
+  which waits for Claude to finish.
+- **Privacy and consent.** The consent text and the privacy page name both
+  providers, with OpenAI's and Anthropic's policy links. Naming Anthropic
+  changed the consent in substance, so `Onboarding.CONSENT_VERSION` is 2 and
+  existing users confirm again.
