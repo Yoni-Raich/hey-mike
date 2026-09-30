@@ -88,7 +88,9 @@ object UsageSummary {
     fun label(limit: UsageLimit): String = when (val minutes = limit.windowMinutes) {
         null -> limit.name.ifBlank { "Usage" }
         in 1..90 -> "Hourly"
-        in 91..(MINUTES_PER_DAY + 120) -> "Daily"
+        // A five-hour window is not a day; whole hours well short of one say so.
+        in 91 until (MINUTES_PER_DAY - 120) -> if (minutes % 60L == 0L) "${minutes / 60}-hour" else "Daily"
+        in (MINUTES_PER_DAY - 120)..(MINUTES_PER_DAY + 120) -> "Daily"
         in (MINUTES_PER_DAY + 121)..(MINUTES_PER_DAY * 8) -> "Weekly"
         else -> "${minutes / MINUTES_PER_DAY}-day"
     }
