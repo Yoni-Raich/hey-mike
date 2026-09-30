@@ -80,6 +80,8 @@ class AgentCoordinator(
     private val toolLock = Mutex()
     private val assistantFlushLock = Mutex()
     private var runJob: Job? = null
+    /** The engine of the chat the current run belongs to, for the words the run shows. */
+    @Volatile private var runEngine: EngineKind = EngineKind.CODEX
     private val toolJobs = mutableSetOf<Job>()
     private val controlJobs = mutableSetOf<Job>()
     private var completion: CompletableDeferred<Unit>? = null
@@ -147,7 +149,10 @@ class AgentCoordinator(
             availableState.value = false
             val token = epoch.incrementAndGet()
             val runCompletion = CompletableDeferred<Unit>()
-            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting Codex")
+            // The chat's engine names every message this run shows; run() reads
+            // it again from the store before anything is checked.
+            runEngine = sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine ?: EngineKind.CODEX
+            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}")
             completion = runCompletion
             thread = null
             turn = null
@@ -353,8 +358,11 @@ class AgentCoordinator(
             if (session.title == "New chat") sessions.rename(sessionId, prompt.take(48).ifBlank { "Image chat" })
             val work = sessions.workspace(sessionId)
             tools.beginRun(token.toString(), work)
-            engine.connect()
-            check(engine.account().signedIn) { "Sign in to Codex in Settings first." }
+            // Sign-in is per engine: a Claude chat needs Claude, not Codex.
+            val kind = session.engine
+            synchronized(lifecycleLock) { if (isCurrentLocked(token)) runEngine = kind }
+            engine.connect(kind)
+            check(engine.account(kind).signedIn) { "Sign in to ${kind.label} in Settings first." }
             ensureCurrent(token)
             val openedThread = engine.openSession(work, session.engineThreadId, model, tools.definitions)
             synchronized(lifecycleLock) {
@@ -1119,7 +1127,7 @@ class AgentCoordinator(
                     }
                 } else when (event.status) {
                     "failed" -> {
-                        val error = event.error ?: "Codex could not finish"
+                        val error = event.error ?: "${runEngine.label} could not finish"
                         synchronized(lifecycleLock) {
                             assistantOutcome = "error"
                             mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = error)

@@ -79,6 +79,13 @@ interface RuntimeHost {
 @Serializable
 enum class EngineKind { CODEX, CLAUDE }
 
+/** The engine's short name in the app's own words: "Codex" or "Claude". */
+val EngineKind.label: String
+    get() = when (this) {
+        EngineKind.CODEX -> "Codex"
+        EngineKind.CLAUDE -> "Claude"
+    }
+
 /**
  * Launches the official, unmodified Claude Code binary on this phone.
  *
@@ -183,6 +190,13 @@ interface AgentEngine {
     val events: Flow<EngineEvent>
     suspend fun connect()
     suspend fun account(): AccountStatus
+    /**
+     * Get ready to run chats of [kind]. An engine that runs one kind ignores
+     * it; a router connects only the engine that kind needs.
+     */
+    suspend fun connect(kind: EngineKind) = connect()
+    /** The sign-in that runs chats of [kind]. */
+    suspend fun account(kind: EngineKind): AccountStatus = account()
     suspend fun refreshUsage() {}
     suspend fun login(): AccountStatus
     suspend fun logout()
