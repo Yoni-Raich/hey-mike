@@ -136,7 +136,8 @@ class RoutingAgentEngineTest {
             val first = async(Dispatchers.Default) {
                 withTimeout(5_000) { router.events.first { it is EngineEvent.ToolCall } as EngineEvent.ToolCall }
             }
-            kotlinx.coroutines.delay(100)
+            // The fake's flow has no replay: wait until the router listens, or a busy build drops the event.
+            withTimeout(5_000) { claude.listeners.first { it > 0 } }
             claude.emit(EngineEvent.ToolCall("1", "tap", JsonObject(emptyMap()), "claude-thread", "turn"))
             val call = first.await()
             assertNotEquals("1", call.requestId)
@@ -171,6 +172,7 @@ class RoutingAgentEngineTest {
     private class FakeClaude : AgentEngine {
         private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 16)
         override val events = stream.asSharedFlow()
+        val listeners get() = stream.subscriptionCount
         val openedModels = mutableListOf<String?>()
         val steers = mutableListOf<String>()
         val interrupts = mutableListOf<String>()
