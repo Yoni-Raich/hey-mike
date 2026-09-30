@@ -28,6 +28,26 @@ reported as Wireless Debugging off/on-waiting when Android exposes that state;
 the loop stays idle until the app has a stored pairing identity, and pairing
 codes are never requested by reconnect.
 
+`AdbStatus` carries the switch (`adb_wifi_enabled`), whether Mike holds a
+pairing, and whether adbd refused it, next to the connection phase. The UI
+names what is missing ("Wireless debugging is on · connecting…", "is off",
+"Android dropped the pairing · pair again") rather than "Not connected", which
+read as "off" on a phone whose switch was on. Android forgets a wireless
+pairing after 7 days without a connection (`adb_allowed_connection_time`); adbd
+then fails the TLS handshake (`SSLV3_ALERT_CERTIFICATE_UNKNOWN` on the client).
+The loop recognises that, stops retrying (each try was five handshakes inside
+Kadb) and waits for a new pairing, the switch moving, or five minutes. A
+`ContentObserver` on the switch wakes the loop at once and drops a connection
+whose adbd went away. `discover()` no longer announces itself while connected:
+it used to overwrite CONNECTED, and the loop then closed a live connection.
+
+Mike switches Wireless debugging on itself by writing the same global setting
+the Settings switch writes, so Android still shows its own "allow on this
+network" prompt on a new network and keeps it off without Wi-Fi. That needs
+WRITE_SECURE_SETTINGS, which Mike grants itself with `pm grant` over its own
+ADB shell on its first connect: no power beyond the shell the user already
+paired. Until then the "Turn on" button opens the Settings screen.
+
 Immediately before each typed Codex turn, `AgentCoordinator` snapshots what
 device control can do (see "Per-operation device capability" below). The engine
 adds a small application-owned runtime-context text item before the user's text

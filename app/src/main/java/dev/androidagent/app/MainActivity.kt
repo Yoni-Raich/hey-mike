@@ -222,6 +222,7 @@ class MainActivity : ComponentActivity() {
         onRemoveAccount = { id -> model.removeAccount(id) },
         onRefreshAccount = { model.refreshAccount() },
         onOpenWirelessSettings = ::openWirelessDebugging,
+        onTurnOnWireless = { if (!model.turnOnWireless()) openWirelessDebugging() },
         onOpenAccessibilitySettings = { openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
         onOpenAssistantSettings = {
             if (AssistLaunch.settingsIntents().none { openSettings(it, report = false) }) {

@@ -1,5 +1,30 @@
 # Progress
 
+### Wireless ADB: the real state, a dropped pairing, a one-tap switch — 2026-09-30
+
+Reported: Mike showed Wireless ADB as off while the switch was on, and turning
+it on meant leaving the app. On the Nothing A059 (Android 16): `adb_wifi_enabled=1`,
+adbd on 42121, Mike's saved port 33453 (stale), no loopback connection, and
+`dumpsys adb` listed only two trusted keys, not Mike's. adbd logged
+`CERTIFICATE_VERIFY_FAILED` in bursts of five (Kadb's own retries) every ~13s
+from uid 10318, the dev build: Android had dropped the pairing, most likely
+after 7 days without a connection. Fixed in `:adb`, `:core` and the UI:
+
+- `AdbStatus` carries the switch, the pairing and a refused key; the status
+  sheet and checklist say which is missing. A refused key stops the retries.
+- `discover()` no longer overwrites CONNECTED (opening the Wireless ADB page
+  used to drop and remake a live connection).
+- A settings observer drops a connection when the switch goes off.
+- "Turn on" writes the switch directly, after Mike grants itself
+  WRITE_SECURE_SETTINGS over its own ADB on first connect.
+
+Evidence: `:core:test :adb:testDebugUnitTest :app:testDevDebugUnitTest` 672
+tests, 0 failures; `:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors. On
+the Nothing, logcat showed `SSLProtocolException ... SSLV3_ALERT_CERTIFICATE_UNKNOWN`
+recognised and a single burst of handshakes, then none. Not yet verified:
+pairing again, the self-grant, and the one-tap switch; they need the user to
+pair on the phone.
+
 ### Computer chat panel: activity as one row, a plainer header — 2026-09-29
 
 A UX review of a screenshot of a computer chat (Mike on the phone, Codex on a

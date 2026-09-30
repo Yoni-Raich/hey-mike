@@ -21,7 +21,12 @@
 package dev.androidagent.adb
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
 import com.flyfishxu.kadb.shell.AdbShellPacket
@@ -34,6 +39,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -47,6 +53,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
@@ -82,8 +89,19 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val reconnectLock = Any()
     private var reconnectJob: Job? = null
+    private var switchObserver: ContentObserver? = null
+
+    /** Set when adbd refused Mike's key; cleared by a new pairing or the switch turning on. */
+    @Volatile private var pairingRejected = false
+
+    /** Wakes the reconnect loop out of its backoff: the switch moved, or a new pairing exists. */
+    private val wake = Channel<Unit>(Channel.CONFLATED)
 
     override val status: StateFlow<AdbStatus> = _status.asStateFlow()
+
+    init {
+        _status.value = statusOf(ConnectionPhase.DISCONNECTED, "Not connected", null)
+    }
 
     /**
      * Keep the last successful connect port and rediscover it while the app's
@@ -93,6 +111,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
     fun startAutoReconnect(scope: CoroutineScope) {
         synchronized(reconnectLock) {
             if (reconnectJob?.isActive == true) return
+            watchSwitch()
             val job = scope.launch(Dispatchers.IO) { reconnectLoop() }
             reconnectJob = job
             job.invokeOnCompletion {
@@ -107,11 +126,72 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
         synchronized(reconnectLock) {
             reconnectJob?.cancel()
             reconnectJob = null
+            switchObserver?.let { runCatching { appContext.contentResolver.unregisterContentObserver(it) } }
+            switchObserver = null
+        }
+    }
+
+    /**
+     * Whether [switchWirelessDebuggingOn] can work: Mike holds
+     * WRITE_SECURE_SETTINGS, which it grants itself over its own ADB
+     * connection the first time it connects.
+     */
+    fun canSwitchWirelessDebugging(): Boolean =
+        appContext.checkSelfPermission(WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Turn Wireless debugging on the way its switch in Settings does: by
+     * writing the same global setting. On a network the user has not allowed
+     * before, Android shows its own "Allow wireless debugging on this network?"
+     * prompt; without Wi-Fi it switches straight back off. Returns false when
+     * Mike cannot write the setting.
+     */
+    fun switchWirelessDebuggingOn(): Boolean {
+        if (!canSwitchWirelessDebugging()) return false
+        val written = runCatching {
+            Settings.Global.putInt(appContext.contentResolver, WIRELESS_DEBUGGING_SETTING, 1)
+        }.getOrDefault(false)
+        if (written) {
+            pairingRejected = false
+            wake.trySend(Unit)
+        }
+        return written
+    }
+
+    /**
+     * Follow the switch as it moves instead of finding out on the next poll:
+     * show "on" as soon as it is on, drop a connection whose adbd just went
+     * away, and retry at once rather than after the backoff.
+     */
+    private fun watchSwitch() {
+        if (switchObserver != null) return
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                val on = wirelessDebuggingEnabled()
+                // A fresh start of adbd deserves one more try with the old key.
+                if (on == true) pairingRejected = false
+                if (on == false && status.value.phase == ConnectionPhase.CONNECTED) {
+                    dropConnection("Wireless Debugging was turned off")
+                } else {
+                    refreshStatus()
+                }
+                wake.trySend(Unit)
+            }
+        }
+        runCatching {
+            appContext.contentResolver.registerContentObserver(
+                Settings.Global.getUriFor(WIRELESS_DEBUGGING_SETTING), false, observer,
+            )
+            switchObserver = observer
         }
     }
 
     override suspend fun discover(): List<AdbEndpoint> {
-        setStatus(ConnectionPhase.DISCOVERING, "Looking for Wireless Debugging services", null)
+        // Looking is not losing a connection. Announcing it while connected
+        // used to replace CONNECTED with "Discovery complete", and the
+        // reconnect loop then closed the live connection to make a new one.
+        val announce = status.value.phase !in BUSY_OR_CONNECTED
+        if (announce) setStatus(ConnectionPhase.DISCOVERING, "Looking for Wireless Debugging services", null)
         return try {
             val services = AdbServiceDiscovery(appContext).discover()
             services.map { AdbEndpoint(it.port, it.isPairingService(), LOOPBACK) }
@@ -131,7 +211,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            setStatus(ConnectionPhase.ERROR, safeMessage(e, "Discovery failed"), connectedPort)
+            if (announce) setStatus(ConnectionPhase.ERROR, safeMessage(e, "Discovery failed"), connectedPort)
             emptyList()
         }
     }
@@ -150,9 +230,11 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                         Kadb.pair(LOOPBACK, port, code, DEVICE_NAME)
                     }
                 }
+                pairingRejected = false
+                wake.trySend(Unit)
                 synchronized(lifecycleLock) {
                     if (generation == token) {
-                        _status.value = AdbStatus(ConnectionPhase.DISCONNECTED, "Paired; connect using the Wireless Debugging port", null)
+                        _status.value = statusOf(ConnectionPhase.DISCONNECTED, "Paired; connect using the Wireless Debugging port", null)
                     }
                 }
             } catch (e: CancellationException) {
@@ -214,7 +296,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                 oldClient = client
                 client = null
                 connectedPort = null
-                _status.value = AdbStatus(ConnectionPhase.CONNECTING, "Connecting to $LOOPBACK:$port", port)
+                _status.value = statusOf(ConnectionPhase.CONNECTING, "Connecting to $LOOPBACK:$port", port)
             }
             closeQuietly(oldClient)
 
@@ -236,6 +318,11 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                 check(probe.exitCode == 0 && probe.output.contains("ANDROID_AGENT_CONNECTED")) {
                     probe.allOutput.ifBlank { "ADB connection check failed" }
                 }
+                pairingRejected = false
+                val connectedClient = newClient!!
+                withTimeoutOrNull(GRANT_TIMEOUT_MS) {
+                    runInterruptible(Dispatchers.IO) { grantSwitchPermission(connectedClient) }
+                }
                 synchronized(lifecycleLock) {
                     if (generation != token) {
                         closeQuietly(newClient)
@@ -244,7 +331,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                     }
                     client = newClient
                     connectedPort = port
-                    _status.value = AdbStatus(ConnectionPhase.CONNECTED, "Connected to $LOOPBACK:$port", port)
+                    _status.value = statusOf(ConnectionPhase.CONNECTED, "Connected to $LOOPBACK:$port", port)
                     preferences.edit().putInt(KEY_CONNECT_PORT, port).apply()
                 }
                 newClient = null
@@ -253,12 +340,66 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                 throw e
             } catch (e: Exception) {
                 closeQuietly(newClient)
-                setErrorIfCurrent(token, safeMessage(e, "Connection failed"))
-                throw IOException(safeMessage(e, "Connection failed"), e)
+                // Class and message only: neither holds a key or a code.
+                Log.w(TAG, "connect to port $port failed: ${e.javaClass.name}: ${e.message}")
+                val rejected = AdbReconnectPolicy.isPairingRejected(e)
+                if (rejected) pairingRejected = true
+                val message = if (rejected) AdbReconnectPolicy.PAIRING_REJECTED_MESSAGE else safeMessage(e, "Connection failed")
+                setErrorIfCurrent(token, message)
+                throw IOException(message, e)
             } finally {
                 clearActive(job, newClient)
             }
         }
+    }
+
+    /**
+     * Grant Mike WRITE_SECURE_SETTINGS through its own ADB shell, so it can
+     * later switch Wireless debugging on without sending the user to Settings.
+     * This adds no power: the shell it uses already writes those settings.
+     * Best effort; without it the user turns the switch on by hand as before.
+     */
+    private fun grantSwitchPermission(adb: Kadb) {
+        if (canSwitchWirelessDebugging()) return
+        val user = android.os.Process.myUid() / PER_USER_RANGE
+        runCatching { adb.shell("pm grant --user $user ${appContext.packageName} $WRITE_SECURE_SETTINGS") }
+            .onFailure { Log.w(TAG, "could not grant the Wireless debugging switch: ${it.message}") }
+    }
+
+    /** Close a live connection whose adbd has gone, and say why. */
+    private fun dropConnection(message: String) {
+        val old: Kadb?
+        synchronized(lifecycleLock) {
+            generation++
+            old = client
+            client = null
+            connectedPort = null
+            _status.value = statusOf(ConnectionPhase.DISCONNECTED, message, null)
+        }
+        closeQuietly(old)
+    }
+
+    /** Re-publish the current phase with a fresh reading of the switch, the pairing and the permission. */
+    private fun refreshStatus() {
+        synchronized(lifecycleLock) {
+            val current = _status.value
+            _status.value = statusOf(current.phase, current.message, current.port)
+        }
+    }
+
+    private fun statusOf(phase: ConnectionPhase, message: String, port: Int?) = AdbStatus(
+        phase = phase,
+        message = message,
+        port = port,
+        wirelessDebugging = wirelessDebuggingEnabled(),
+        paired = hasStoredIdentity(),
+        pairingRejected = pairingRejected && phase != ConnectionPhase.CONNECTED,
+        canSwitchOn = canSwitchWirelessDebugging(),
+    )
+
+    /** Sleep, unless the switch moves or a new pairing arrives first. */
+    private suspend fun rest(ms: Long) {
+        withTimeoutOrNull(ms) { wake.receive() }
     }
 
     private suspend fun reconnectLoop() {
@@ -266,15 +407,23 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
         while (currentCoroutineContext().isActive) {
             if (status.value.phase == ConnectionPhase.CONNECTED) {
                 attempt = 0
-                delay(RECONNECT_CONNECTED_DELAY_MS)
+                // The observer usually sees the switch go off first; this is
+                // the fallback, so a dead connection never reads as live.
+                if (wirelessDebuggingEnabled() == false) {
+                    dropConnection("Wireless Debugging was turned off")
+                    continue
+                }
+                rest(RECONNECT_CONNECTED_DELAY_MS)
                 continue
             }
 
             val wirelessEnabled = wirelessDebuggingEnabled()
             if (wirelessEnabled == false) {
                 setStatus(ConnectionPhase.DISCONNECTED, AdbReconnectPolicy.noServiceMessage(false), null)
-                attempt++
-                delay(AdbReconnectPolicy.retryDelayMs(attempt))
+                attempt = 0
+                // Nothing to connect to until the switch moves, and the
+                // observer wakes this the moment it does.
+                rest(SWITCH_OFF_POLL_MS)
                 continue
             }
 
@@ -285,7 +434,16 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
             if (!hasStoredIdentity()) {
                 setStatus(ConnectionPhase.DISCONNECTED, "Pair this phone once to enable automatic reconnect", null)
                 attempt = 0
-                delay(RECONNECT_CONNECTED_DELAY_MS)
+                rest(RECONNECT_CONNECTED_DELAY_MS)
+                continue
+            }
+
+            // adbd refused this key. Every retry costs five TLS handshakes in
+            // Kadb and cannot succeed, so wait for a new pairing instead.
+            if (pairingRejected) {
+                setStatus(ConnectionPhase.ERROR, AdbReconnectPolicy.PAIRING_REJECTED_MESSAGE, null)
+                rest(AdbReconnectPolicy.REJECTED_RETRY_MS)
+                pairingRejected = false
                 continue
             }
 
@@ -294,7 +452,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
             if (savedPort != null) {
                 connected = tryReconnect(savedPort)
             }
-            if (!connected && currentCoroutineContext().isActive) {
+            if (!connected && !pairingRejected && currentCoroutineContext().isActive) {
                 val endpoints = discover()
                 val target = if (savedPort == null) {
                     AdbReconnectPolicy.preferredConnectPort(null, endpoints)
@@ -305,7 +463,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                     connected = tryReconnect(target)
                 }
             }
-            if (connected) {
+            if (connected || pairingRejected) {
                 attempt = 0
                 continue
             }
@@ -315,7 +473,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                 AdbReconnectPolicy.noServiceMessage(wirelessDebuggingEnabled()),
                 savedPort,
             )
-            delay(AdbReconnectPolicy.retryDelayMs(attempt))
+            rest(AdbReconnectPolicy.retryDelayMs(attempt))
             attempt++
         }
     }
@@ -412,7 +570,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
             activeClient = null
             activeJob = null
             connectedPort = null
-            _status.value = AdbStatus(ConnectionPhase.DISCONNECTED, "ADB operation cancelled", null)
+            _status.value = statusOf(ConnectionPhase.DISCONNECTED, "ADB operation cancelled", null)
         }
     }
 
@@ -426,7 +584,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
             activeJob?.cancel(CancellationException("ADB disconnected"))
             activeJob = null
             connectedPort = null
-            _status.value = AdbStatus(ConnectionPhase.DISCONNECTED, "Disconnected", null)
+            _status.value = statusOf(ConnectionPhase.DISCONNECTED, "Disconnected", null)
         }
         closeQuietly(old)
     }
@@ -442,7 +600,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                 activeJob?.cancel(CancellationException("Pairing forgotten"))
                 activeJob = null
                 connectedPort = null
-                _status.value = AdbStatus(ConnectionPhase.DISCONNECTED, "Pairing identity removed", null)
+                _status.value = statusOf(ConnectionPhase.DISCONNECTED, "Pairing identity removed", null)
             }
             closeQuietly(old)
             synchronized(identityLock) {
@@ -455,7 +613,9 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
                 clearKadbCertMemory()
                 identityReady = false
             }
+            pairingRejected = false
             preferences.edit().remove(KEY_CONNECT_PORT).apply()
+            refreshStatus()
         }
     }
 
@@ -511,7 +671,7 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
     private fun beginOperation(phase: ConnectionPhase, message: String, port: Int?): Long {
         synchronized(lifecycleLock) {
             val token = ++generation
-            _status.value = AdbStatus(phase, message, port)
+            _status.value = statusOf(phase, message, port)
             return token
         }
     }
@@ -533,13 +693,13 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
     private fun setErrorIfCurrent(token: Long, message: String) {
         synchronized(lifecycleLock) {
             if (generation == token) {
-                _status.value = AdbStatus(ConnectionPhase.ERROR, message, connectedPort)
+                _status.value = statusOf(ConnectionPhase.ERROR, message, connectedPort)
             }
         }
     }
 
     private fun setStatus(phase: ConnectionPhase, message: String, port: Int?) {
-        synchronized(lifecycleLock) { _status.value = AdbStatus(phase, message, port) }
+        synchronized(lifecycleLock) { _status.value = statusOf(phase, message, port) }
     }
 
     private fun ensureIdentity() {
@@ -626,5 +786,11 @@ class AndroidAdbTransport(context: Context) : AdbTransport, AdbFileTransport {
         private const val IDENTITY_DIRECTORY = "kadb_identity"
         private const val CERTIFICATE_FILE = "certificate.pem"
         private const val PRIVATE_KEY_FILE = "private_key.pem"
+        private const val TAG = "AdbTransport"
+        private const val WRITE_SECURE_SETTINGS = "android.permission.WRITE_SECURE_SETTINGS"
+        private const val PER_USER_RANGE = 100_000
+        private const val GRANT_TIMEOUT_MS = 10_000L
+        private const val SWITCH_OFF_POLL_MS = 60_000L
+        private val BUSY_OR_CONNECTED = setOf(ConnectionPhase.CONNECTED, ConnectionPhase.CONNECTING, ConnectionPhase.PAIRING)
     }
 }

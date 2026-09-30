@@ -844,7 +844,21 @@ private fun ColumnScope.WirelessAdbSettings(state: AgentUiState, actions: AgentU
     var confirmMike by rememberSaveable { mutableStateOf(false) }
     val canHandOff = state.adbStatus.phase != ConnectionPhase.CONNECTED && !busy &&
         state.a11yStatus.connected && state.permissions.overlay && !state.runState.active
-    if (state.adbStatus.phase != ConnectionPhase.CONNECTED) {
+    if (adbFix(state.adbStatus) == AdbFix.TURN_ON) {
+        // Paired and only switched off: one tap, no pairing, no hand-off.
+        Button(onClick = actions.onTurnOnWireless, modifier = Modifier.fillMaxWidth()) {
+            LoadingButtonContent(
+                loading = false,
+                icon = Icons.Outlined.Wifi,
+                label = "Turn on Wireless debugging",
+                spinnerColor = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Explanation(
+            if (state.adbStatus.canSwitchOn) "Mike flips the switch itself and reconnects. You stay here."
+            else "Opens the Wireless debugging screen: turn the switch on there. After Mike connects once, this works from here.",
+        )
+    } else if (state.adbStatus.phase != ConnectionPhase.CONNECTED) {
         Explanation("With this, Mike can also run system commands for exact changes, move and organize files, and install or remove apps.")
         Button(onClick = { confirmMike = true }, enabled = canHandOff, modifier = Modifier.fillMaxWidth()) {
             LoadingButtonContent(
@@ -866,7 +880,7 @@ private fun ColumnScope.WirelessAdbSettings(state: AgentUiState, actions: AgentU
         }
     }
     StatusLine(
-        title = readableConnectionPhase(state.adbStatus.phase),
+        title = if (state.adbStatus.pairingRejected) "Pairing expired" else readableConnectionPhase(state.adbStatus.phase),
         detail = buildString {
             append(state.adbStatus.message)
             state.adbStatus.port?.let { append(" · port ").append(it) }
