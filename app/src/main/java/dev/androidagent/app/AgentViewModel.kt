@@ -247,6 +247,18 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun setDefaultEngine(kind: EngineKind) {
         preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
         mutable.update { it.copy(defaultEngine = kind) }
+        // The empty chat open now (on first launch, the one made at start)
+        // follows the choice; a chat that has begun keeps its engine.
+        val id = current.value ?: return
+        val session = mutable.value.sessions.firstOrNull { it.id == id } ?: return
+        val run = graph.coordinator.state.value
+        val movable = ChatEngines.canChange(
+            session,
+            hasMessages = mutable.value.messages.isNotEmpty(),
+            boundToComputer = graph.computers.binding(id) != null,
+            running = run.active && run.sessionId == id,
+        )
+        if (movable && session.engine != kind) chooseChatEngine(kind)
     }
 
     /**
