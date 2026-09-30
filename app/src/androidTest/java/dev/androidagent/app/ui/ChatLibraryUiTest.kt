@@ -63,7 +63,7 @@ class ChatLibraryUiTest {
         compose.onNodeWithContentDescription("Server, connected").performClick()
         compose.onNodeWithText("Fix the upload").assertIsDisplayed()
         compose.onNodeWithText("Plan the week").assertDoesNotExist()
-        compose.onNodeWithText("New chat here").performClick()
+        compose.onNodeWithContentDescription("New chat in mobile-app").performClick()
         compose.runOnIdle { assertEquals("server" to "/work/mobile-app", destination) }
     }
 

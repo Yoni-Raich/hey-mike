@@ -239,7 +239,10 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                             val matching = if (query.isBlank() || project.name.contains(query.trim(), true)) project.chats
                             else project.chats.filter { it.title.contains(query.trim(), true) }
                             item(key = project.key, contentType = "project") {
-                                ProjectHeader(project.name, project.chats.size, open, Modifier.animateItem()) {
+                                ProjectHeader(
+                                    project.name, project.chats.size, open, Modifier.animateItem(),
+                                    onNewChat = { dismiss(); actions.onNewChatInProject(project.computerId, project.path) },
+                                ) {
                                     focus.clearFocus(); expanded[project.key] = !open
                                 }
                             }
@@ -261,11 +264,6 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                 }
                                 if (matching.size > CHATS_PER_PROJECT) item(key = "${project.key}/more", contentType = "quiet") {
                                     QuietLink(if (all) "Show fewer" else "Show all ${matching.size}", Modifier.animateItem().padding(start = 30.dp)) { showAll[project.key] = !all }
-                                }
-                                item(key = "${project.key}/new", contentType = "quiet") {
-                                    QuietLink("New chat here", Modifier.animateItem().padding(start = 30.dp), icon = Icons.Outlined.Add) {
-                                        dismiss(); actions.onNewChatInProject(project.computerId, project.path)
-                                    }
                                 }
                             }
                         }
@@ -519,13 +517,18 @@ private fun Caps(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ProjectHeader(name: String, count: Int, open: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun ProjectHeader(name: String, count: Int, open: Boolean, modifier: Modifier = Modifier, onNewChat: () -> Unit, onClick: () -> Unit) {
     Surface(onClick = onClick, color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp), modifier = modifier.fillMaxWidth()) {
-        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.heightIn(min = 48.dp).padding(start = 12.dp, end = 0.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(if (open) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight, if (open) "Close $name" else "Open $name", Modifier.size(18.dp), tint = LibraryMuted)
             Spacer(Modifier.width(10.dp))
             Text(name, style = MaterialTheme.typography.bodyLarge, fontSize = 15.sp, fontWeight = if (open) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text("$count", fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = LibraryFaint)
+            // A new chat in this project, where the project is named: it was a
+            // row of its own under every open project.
+            IconButton(onClick = onNewChat, modifier = Modifier.semantics { contentDescription = "New chat in $name" }) {
+                Icon(Icons.Outlined.Add, contentDescription = null, Modifier.size(20.dp), tint = LibraryAmber)
+            }
         }
     }
 }

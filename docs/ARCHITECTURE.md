@@ -1448,7 +1448,9 @@ separate menu button.
 Projects have their own tab. Opening a folder shows only its chats, and Back
 restores the project search and scroll position while the panel stays composed.
 `ChatLibrary` builds these lists from `PcChats`, retaining its path rules and
-imported-thread deduplication. No nested lists or per-folder plus buttons remain.
+imported-thread deduplication. In a computer's projects list each project
+header carries one "+" that starts a chat in that project, replacing the
+"New chat here" row that sat under every open project.
 One New chat action uses the open project, offers a folder on the selected
 computer, or starts the normal new-chat flow when All devices or This phone is
 selected. Connection recovery appears only for the selected computer; managing
