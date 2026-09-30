@@ -20,6 +20,7 @@
 
 package dev.androidagent.runtime
 
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.NetDiagnostics
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
@@ -44,7 +45,8 @@ import kotlin.concurrent.thread
  * Safety contract:
  * - Binds only 127.0.0.1 on an ephemeral port; never 0.0.0.0.
  * - Accepts CONNECT only, port 443 only, strict host allowlist
- *   ([NetDiagnostics.defaultAllowedHosts] plus observed additions).
+ *   ([NetDiagnostics.defaultAllowedHosts] for Codex; [forEngine] picks the
+ *   list for another engine, such as Claude).
  * - Tunnels bytes blindly: no TLS MITM, no decryption, no header/body/token
  *   logging. Log output is at most host:port plus allow/deny/error category.
  * - Supports long-lived streaming (no read timeout) and TCP half-close.
@@ -260,6 +262,14 @@ class LocalhostConnectProxy(
     }
 
     companion object {
+        /** A proxy limited to [engine]'s own hosts and ports. */
+        fun forEngine(engine: EngineKind, listener: ProxyEventListener? = null): LocalhostConnectProxy =
+            LocalhostConnectProxy(
+                allowedHosts = NetDiagnostics.allowedHostsFor(engine),
+                allowedPorts = NetDiagnostics.allowedPortsFor(engine),
+                listener = listener
+            )
+
         /**
          * Read HTTP request head bytes (headers only) up to 8 KiB.
          * Returns null when the head is missing, oversized, or unreadable.

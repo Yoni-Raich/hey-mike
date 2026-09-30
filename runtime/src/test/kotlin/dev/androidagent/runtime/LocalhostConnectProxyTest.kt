@@ -86,6 +86,40 @@ class LocalhostConnectProxyTest {
         }
     }
 
+    @Test
+    fun `claude proxy refuses codex hosts`() {
+        val proxy = LocalhostConnectProxy.forEngine(dev.androidagent.core.EngineKind.CLAUDE)
+        try {
+            val port = proxy.start()
+            listOf("chatgpt.com", "auth.openai.com", "downloads.claude.ai").forEach { host ->
+                Socket("127.0.0.1", port).use { client ->
+                    client.soTimeout = 2_000
+                    client.getOutputStream().write("CONNECT $host:443 HTTP/1.1\r\n\r\n".toByteArray())
+                    client.getOutputStream().flush()
+                    assertTrue(host, readHead(client).startsWith("HTTP/1.1 403"))
+                }
+            }
+        } finally {
+            proxy.stop()
+        }
+    }
+
+    @Test
+    fun `codex proxy refuses claude hosts`() {
+        val proxy = LocalhostConnectProxy.forEngine(dev.androidagent.core.EngineKind.CODEX)
+        try {
+            val port = proxy.start()
+            Socket("127.0.0.1", port).use { client ->
+                client.soTimeout = 2_000
+                client.getOutputStream().write("CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n".toByteArray())
+                client.getOutputStream().flush()
+                assertTrue(readHead(client).startsWith("HTTP/1.1 403"))
+            }
+        } finally {
+            proxy.stop()
+        }
+    }
+
     private fun readHead(socket: Socket): String {
         val out = StringBuilder()
         while (!out.endsWith("\r\n\r\n")) out.append(socket.getInputStream().read().toChar())
