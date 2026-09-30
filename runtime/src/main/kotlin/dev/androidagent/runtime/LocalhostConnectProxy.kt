@@ -26,6 +26,7 @@ import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.PushbackInputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -164,7 +165,13 @@ class LocalhostConnectProxy(
     private fun handleClient(client: Socket) {
         client.keepAlive = true
         client.soTimeout = 15_000
-        val head = readHead(client.getInputStream()) ?: run {
+        val input = PushbackInputStream(client.getInputStream(), 1)
+        // A connection closed before its first byte asked for nothing: that
+        // is [verifyListening]'s own probe, not a request to deny.
+        val first = runCatching { input.read() }.getOrElse { -2 }
+        if (first == -1) return
+        if (first >= 0) input.unread(first)
+        val head = (if (first >= 0) readHead(input) else null) ?: run {
             listener?.onDenied("", 0, "unreadable-head")
             return
         }
@@ -178,7 +185,8 @@ class LocalhostConnectProxy(
                     client.getOutputStream().write((status + "Connection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
                     client.getOutputStream().flush()
                 }
-                listener?.onDenied("", 0, check.reason)
+                // The host and port only, never the rest of the request.
+                listener?.onDenied(check.target?.host?.let(::loggableHost).orEmpty(), check.target?.port ?: 0, check.reason)
             }
             is NetDiagnostics.ConnectCheck.Allow -> {
                 val target = check.target
@@ -269,6 +277,10 @@ class LocalhostConnectProxy(
                 allowedPorts = NetDiagnostics.allowedPortsFor(engine),
                 listener = listener
             )
+
+        /** A requested host as it may appear in a log line: host characters only, at most 253 of them. */
+        internal fun loggableHost(host: String): String =
+            host.take(253).map { if ((it.isLetterOrDigit() && it.code < 128) || it in ".-:_") it else '?' }.joinToString("")
 
         /**
          * Read HTTP request head bytes (headers only) up to 8 KiB.

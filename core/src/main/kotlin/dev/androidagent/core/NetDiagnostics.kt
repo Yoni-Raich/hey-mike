@@ -87,7 +87,8 @@ object NetDiagnostics {
 
     sealed interface ConnectCheck {
         data class Allow(val target: ConnectTarget) : ConnectCheck
-        data class Deny(val reason: String) : ConnectCheck
+        /** [target] is the parsed host and port when the request named one, for the log. */
+        data class Deny(val reason: String, val target: ConnectTarget? = null) : ConnectCheck
     }
 
     /**
@@ -105,8 +106,8 @@ object NetDiagnostics {
         if (parts.size < 3) return ConnectCheck.Deny("malformed-request-line")
         if (!parts[0].equals("CONNECT", ignoreCase = false)) return ConnectCheck.Deny("method-not-allowed")
         val target = parseAuthority(parts[1]) ?: return ConnectCheck.Deny("malformed-authority")
-        if (target.port !in allowedPorts) return ConnectCheck.Deny("port-not-allowed")
-        if (!isHostAllowed(target.host, allowedHosts)) return ConnectCheck.Deny("host-not-allowed")
+        if (target.port !in allowedPorts) return ConnectCheck.Deny("port-not-allowed", target)
+        if (!isHostAllowed(target.host, allowedHosts)) return ConnectCheck.Deny("host-not-allowed", target)
         return ConnectCheck.Allow(target)
     }
 
