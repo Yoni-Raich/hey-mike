@@ -1146,7 +1146,7 @@ private fun ColumnScope.WorkspaceSettings(state: AgentUiState, actions: AgentUiA
 private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActions) {
     val usage = state.tokenUsage
     // The same bars the top-bar meter draws, so the two places can never
-    // disagree about what "74% left" looks like.
+    // disagree about what "26% used" looks like.
     val windows = remember(state.usageLimits) {
         UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L)
     }
