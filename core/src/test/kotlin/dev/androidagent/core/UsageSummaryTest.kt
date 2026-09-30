@@ -88,6 +88,12 @@ class UsageSummaryTest {
         assertEquals("30-day", UsageSummary.label(UsageLimit("x", 10.0, windowMinutes = 60 * 24 * 30)))
     }
 
+    @Test fun aFiveHourWindowIsNotCalledDaily() {
+        // Claude's and Codex's short window: five hours, not a day.
+        assertEquals("5-hour", UsageSummary.label(UsageLimit("5-hour", 10.0, windowMinutes = 300)))
+        assertEquals("Daily", UsageSummary.label(UsageLimit("x", 10.0, windowMinutes = 60 * 24)))
+    }
+
     @Test fun twoWindowsThatRoundToTheSameNameAreSpelledOut() {
         // Seen on a real account: two limits both landing in the weekly band,
         // which drew two rows labelled "Weekly" with different numbers.

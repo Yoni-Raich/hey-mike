@@ -110,6 +110,46 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aClaudeChatChecksTheClaudeSignInAndSaysClaude() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("claude", "Read my screen")
+        assertEquals("Starting Claude", rig.coordinator.state.value.status)
+        runCurrent()
+        assertEquals(listOf(EngineKind.CLAUDE), rig.engine.connectedKinds)
+        assertEquals(listOf(EngineKind.CLAUDE), rig.engine.accountKinds)
+        assertEquals(1, rig.engine.turns)
+        rig.close()
+    }
+
+    @Test fun aCodexChatStillChecksTheCodexSignIn() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read my screen")
+        assertEquals("Starting Codex", rig.coordinator.state.value.status)
+        runCurrent()
+        assertEquals(listOf(EngineKind.CODEX), rig.engine.accountKinds)
+        rig.close()
+    }
+
+    @Test fun aSignedOutClaudeChatAsksForTheClaudeSignIn() = runTest {
+        val rig = Rig(this)
+        rig.engine.signedOut += EngineKind.CLAUDE
+        rig.coordinator.send("claude", "Read my screen")
+        runCurrent()
+        assertEquals(0, rig.engine.turns)
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text == "Sign in to Claude in Settings first." })
+        rig.close()
+    }
+
+    @Test fun aClaudeTurnThatFailsWithoutAReasonNamesClaude() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("claude", "Read my screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("failed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text == "Claude could not finish" })
+        rig.close()
+    }
+
     @Test fun anOrdinaryTurnIsNotAPlan() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Clean up my inbox", model = "gpt-5.6-luna")
@@ -720,9 +760,17 @@ class AgentCoordinatorTest {
         var waitForInterrupt: CompletableDeferred<Unit>? = null
         val answers = mutableListOf<ToolResult>()
         val approvalAnswers = mutableListOf<Pair<String, Boolean>>()
+        val connectedKinds = mutableListOf<EngineKind>()
+        val accountKinds = mutableListOf<EngineKind>()
+        val signedOut = mutableSetOf<EngineKind>()
         suspend fun emit(value: EngineEvent) = stream.emit(value)
         override suspend fun connect() = Unit
+        override suspend fun connect(kind: EngineKind) { connectedKinds += kind }
         override suspend fun account() = AccountStatus(true, "Test")
+        override suspend fun account(kind: EngineKind): AccountStatus {
+            accountKinds += kind
+            return AccountStatus(kind !in signedOut, "Test")
+        }
         override suspend fun login() = account()
         override suspend fun logout() = Unit
         override suspend fun models() = listOf("test")
@@ -778,7 +826,9 @@ class AgentCoordinatorTest {
         var queued = emptyList<QueuedTurn>()
         override suspend fun loadQueuedTurns() = queued
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
-        override val sessions = MutableStateFlow(listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0)))
+        override val sessions = MutableStateFlow(
+            listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0), ChatSession("claude", "Claude", 0, 0, engine = EngineKind.CLAUDE)),
+        )
         val messages = mutableListOf<ChatMessage>()
         val traces = mutableListOf<JsonObject>()
         override suspend fun createSession(engine: EngineKind) = sessions.value.first()

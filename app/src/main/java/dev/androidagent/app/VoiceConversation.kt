@@ -23,6 +23,7 @@ package dev.androidagent.app
 import dev.androidagent.core.AgentCoordinator
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.DeviceToolGateway
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.SessionStore
 import dev.androidagent.core.VoiceEvent
 import dev.androidagent.remote.RoutingAgentEngine
@@ -74,6 +75,8 @@ class VoiceConversation(
     suspend fun begin(sessionId: String, model: String?) {
         check(!coordinator().state.value.active) { "Stop the current agent run before starting voice." }
         val session = sessions.getSession(sessionId) ?: error("Chat no longer exists.")
+        // Realtime voice is Codex's; a Claude chat has none.
+        check(session.engine == EngineKind.CODEX) { "Voice works only in ChatGPT (Codex) chats. Start one to talk." }
         engine.connect()
         check(engine.account().signedIn) { "Sign in to Codex in Settings first." }
         val workspace = sessions.workspace(sessionId)

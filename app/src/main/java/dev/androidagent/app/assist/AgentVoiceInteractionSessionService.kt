@@ -191,10 +191,11 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
      */
     private suspend fun chooseSession(): String {
         val preferences = context.getSharedPreferences(AssistLaunch.UI_PREFERENCES, 0)
+        // Voice is Codex's, so a saved Claude chat is never reused here.
         val saved = preferences.getString(AssistLaunch.KEY_SESSION, null)
-            ?.takeIf { graph.sessions.getSession(it) != null }
+            ?.takeIf { graph.sessions.getSession(it)?.engine == dev.androidagent.core.EngineKind.CODEX }
         val id = if (saved != null && graph.sessions.messages(saved).first().isEmpty()) saved
-        else graph.sessions.createSession().id
+        else graph.sessions.createSession(dev.androidagent.core.EngineKind.CODEX).id
         preferences.edit().putString(AssistLaunch.KEY_SESSION, id).apply()
         return id
     }

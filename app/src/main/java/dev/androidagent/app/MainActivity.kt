@@ -299,6 +299,14 @@ class MainActivity : ComponentActivity() {
             model.editUi { it.copy(isSettingsOpen = false) }
             model.letMikeSetUpWireless()
         },
+        onDefaultEngine = model::setDefaultEngine,
+        onChooseChatEngine = { kind -> model.chooseChatEngine(kind) },
+        onDownloadClaude = { ensureService(); model.downloadClaude() },
+        onCancelClaudeDownload = { model.cancelClaudeDownload() },
+        onClaudeLogin = { ensureService(); model.claudeLogin() },
+        onClaudeCode = { code -> model.claudeCompleteLogin(code) },
+        onClaudeLogout = { model.claudeLogout() },
+        onRefreshUsage = model::refreshUsage,
     )
 
     /**

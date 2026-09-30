@@ -140,6 +140,12 @@ internal fun WhereMikeWorks(state: AgentUiState, binding: dev.androidagent.remot
             Spacer(Modifier.width(8.dp))
             Text("On a computer, Mike can still use this phone.", fontSize = 12.sp, lineHeight = 16.sp, color = PlaceMuted)
         }
+        // On this phone the chat can also run on Claude; computers run Codex.
+        if (binding == null) {
+            Box(Modifier.fillMaxWidth().padding(top = 20.dp), contentAlignment = Alignment.Center) {
+                ChatEngineChoice(state, actions)
+            }
+        }
     }
 }
 

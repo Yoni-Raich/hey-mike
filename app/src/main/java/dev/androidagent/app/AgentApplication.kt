@@ -47,7 +47,12 @@ import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
 import dev.androidagent.devicetools.AndroidCapabilityTools
 import dev.androidagent.devicetools.PhoneStoragePlace
+import dev.androidagent.engineclaude.ClaudeCodeEngine
+import dev.androidagent.engineclaude.McpToolServer
+import dev.androidagent.engineclaude.McpToolServerFactory
 import dev.androidagent.enginecodex.CodexEngine
+import dev.androidagent.mcp.LoopbackMcpServer
+import dev.androidagent.runtime.AndroidClaudeHost
 import dev.androidagent.overlay.FloatingControlOverlay
 import dev.androidagent.runtime.AndroidRuntimeHost
 import dev.androidagent.workspace.LocalSessionStore
@@ -101,8 +106,29 @@ class AgentGraph(private val app: Application) {
             ).current(refresh, previous)
         },
     )
-    /** What chats talk to: the phone's Codex, or a computer's for a chat opened on one. */
-    val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote)
+    /**
+     * Anthropic's Claude Code on this phone. Never bundled: it is downloaded
+     * only when the user asks in Settings or onboarding, then run unmodified
+     * through the packaged musl loader.
+     */
+    val claudeHost = AndroidClaudeHost(app)
+    /**
+     * Claude chats. One `claude` process per open chat, each with its own
+     * loopback MCP server for the phone tools; the engine itself never
+     * downloads anything.
+     */
+    val claudeEngine = ClaudeCodeEngine(
+        claudeHost,
+        toolServers = McpToolServerFactory { name, tools, call ->
+            val server = LoopbackMcpServer(name, tools, call)
+            object : McpToolServer {
+                override fun start() = server.start().claudeMcpConfig(name)
+                override fun stop() = server.stop()
+            }
+        },
+    )
+    /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
+    val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     // The last quota of every saved account, for the home screen widget.
@@ -318,8 +344,12 @@ class AgentGraph(private val app: Application) {
         // now, so the first arming happens here rather than at the first event.
         runCatching { automationHost.start() }
         runCatching {
-            WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app)
+            // Claude reads the same skills from its own home.
+            WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app, claudeHost.homeDirectory)
         }
+        // Report a binary downloaded in an earlier run as ready. This checks
+        // its hash and never downloads.
+        scope.launch(Dispatchers.IO) { runCatching { claudeHost.installer.refresh() } }
         // Separate from the skills so a failed skill install cannot leave the
         // user without their preferences, or the reverse.
         runCatching {

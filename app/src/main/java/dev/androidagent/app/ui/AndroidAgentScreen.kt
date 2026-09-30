@@ -732,6 +732,8 @@ private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
             },
             style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // A phone chat picks its engine before its first message.
+        if (hasSession && binding == null && !state.runState.active) ChatEngineChoice(state, actions)
     }
 }
 
