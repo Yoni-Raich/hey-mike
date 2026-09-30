@@ -630,22 +630,27 @@ private fun AgentChatContent(
             val running = state.runState.active && state.runState.sessionId == state.activeSessionId
             val computerLabel = state.activeSessionId?.let(state.remoteBindings::get)
                 ?.let { binding -> state.computers.firstOrNull { it.id == binding.computerId }?.label }
-            items(chatRows(state.messages, running), key = { it.key }) { row ->
+            // While this chat's own run works, one status line sits under the
+            // last line, always. A reply still empty used to show its own
+            // "Working" instead and the line came back once it had text, so
+            // the orb vanished for a moment at every new block: the empty
+            // reply is not drawn while the status line stands in for it.
+            val showStatus = running && !state.voiceState.active
+            val shown = if (showStatus) {
+                state.messages.filterNot {
+                    it.role.equals("assistant", true) && it.text.isBlank() && it.state.equals("streaming", true)
+                }
+            } else state.messages
+            items(chatRows(shown, running), key = { it.key }) { row ->
                 when (row) {
                     is MessageRow -> MessageBubble(row.message, row.copyText)
                     is ActionsRow -> DeviceActionsRow(row)
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }
             }
-            // While this chat's own run works, its status sits right under the
-            // last line instead of pinned above the composer. A reply that is
-            // still empty already shows its own "Working".
-            val last = state.messages.lastOrNull()
-            val emptyReply = last != null && last.role.equals("assistant", true) && last.text.isBlank() &&
-                last.state.equals("streaming", true)
-            if (running && !state.voiceState.active && !emptyReply) {
+            if (showStatus) {
                 item(key = "run-status", contentType = "run-status") {
-                    RunStatusLine(state.runState, Modifier.fillMaxWidth())
+                    RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem())
                 }
             }
             if (offersWorkflowSuggestion(state.messages, running)) {
