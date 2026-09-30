@@ -47,10 +47,10 @@ class LocalSessionStore(context: Context) : SessionStore {
     override val sessions: StateFlow<List<ChatSession>> = sessionStream.asStateFlow()
     init { db.execSQL("UPDATE messages SET state='interrupted' WHERE state='streaming'") }
 
-    override suspend fun createSession(): ChatSession = mutate {
+    override suspend fun createSession(engine: EngineKind): ChatSession = mutate {
         val now = System.currentTimeMillis()
-        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now)
-        db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now) })
+        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now, engine = engine)
+        db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now); put("engine", engine.name) })
         workspace(session.id).mkdirs()
         refresh()
         session
@@ -119,19 +119,24 @@ class LocalSessionStore(context: Context) : SessionStore {
     }
     private suspend fun <T> mutate(block: () -> T): T = withContext(Dispatchers.IO) { lock.withLock { block() } }
     private fun refresh(sessionId: String? = null) { sessionStream.value = loadSessions(); sessionId?.let { streams[it]?.value = loadMessages(it) } }
-    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4))) } }
+    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread,engine FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4), engineOf(c.getString(5)))) } }
+    // A value this release does not know (a newer app, a bad write) must not
+    // lose the chat, so it reads as the engine every chat had before.
+    private fun engineOf(stored: String?): EngineKind = EngineKind.entries.firstOrNull { it.name == stored } ?: EngineKind.CODEX
     private fun loadMessages(sessionId: String): List<ChatMessage> = db.rawQuery("SELECT id,role,text,created,state,attachments FROM messages WHERE session=? ORDER BY created,rowid", arrayOf(sessionId)).use { c -> buildList { while (c.moveToNext()) add(ChatMessage(c.getString(0), sessionId, c.getString(1), c.getString(2), c.getLong(3), c.getString(4), runCatching { Json.decodeFromString<List<String>>(c.getString(5)) }.getOrDefault(emptyList()))) } }
 
-    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 2) {
+    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 3) {
         override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true); db.enableWriteAheadLogging() }
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT)")
+            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX')")
             db.execSQL("CREATE TABLE messages(id TEXT PRIMARY KEY,session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,attachments TEXT NOT NULL)")
             db.execSQL("CREATE INDEX message_session ON messages(session,created)")
             db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            // Every chat before v3 ran on Codex; the default fills existing rows in place.
+            if (oldVersion < 3) db.execSQL("ALTER TABLE sessions ADD COLUMN engine TEXT NOT NULL DEFAULT 'CODEX'")
         }
     }
 }

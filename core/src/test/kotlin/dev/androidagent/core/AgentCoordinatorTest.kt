@@ -781,7 +781,7 @@ class AgentCoordinatorTest {
         override val sessions = MutableStateFlow(listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0)))
         val messages = mutableListOf<ChatMessage>()
         val traces = mutableListOf<JsonObject>()
-        override suspend fun createSession() = sessions.value.first()
+        override suspend fun createSession(engine: EngineKind) = sessions.value.first()
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }

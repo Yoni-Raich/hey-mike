@@ -43,12 +43,14 @@ interface AdbTransport {
 }
 
 @Serializable
-data class ChatSession(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val engineThreadId: String? = null)
+data class ChatSession(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val engineThreadId: String? = null, val engine: EngineKind = EngineKind.CODEX)
 @Serializable
 data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
 interface SessionStore {
     val sessions: StateFlow<List<ChatSession>>
-    suspend fun createSession(): ChatSession
+    /** A new chat that runs on [engine] for its whole life. */
+    suspend fun createSession(engine: EngineKind): ChatSession
+    suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
     suspend fun getSession(id: String): ChatSession?
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
