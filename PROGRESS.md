@@ -1,5 +1,31 @@
 # Progress
 
+### Claude tablet findings fixed (fix-1) — 2026-09-30
+
+From real use on a Galaxy Tab S7 (Android 13, Hebrew) with a Claude
+subscription. Unit tests only; not yet checked on the tablet.
+
+- Model picker and chip: Claude chats show the CLI's names ("Sonnet 5.5",
+  "Opus 5.5", "Fable 5.1", "Haiku 4.5") with its description; a pinned
+  alias table covers a missing name. Fable's row says "May use extra
+  usage". `--model` still gets the CLI's value. Codex is unchanged.
+- Binary check: `claude.verified` next to the binary records version,
+  size, mtime and sha256 after a good hash; a start skips the 232 MB hash
+  only when all of them still match. A download is always hashed.
+- RTL: every Material text style uses `TextDirection.Content`, so English
+  reads left to right on a Hebrew phone; the layout stays mirrored.
+- Usage rows: the bar fills with the used part (as the ring does), so the
+  label now says "31% used" instead of "69% left". Both engines.
+- Proxy log: a denial names the requested host and port; the
+  `verifyListening()` probe no longer logs `unreadable-head`.
+- Stop note: not changed. `AgentCoordinator.stop()` bumps the run epoch,
+  so `finalizeRun` never appends "Stopped. Actions already completed were
+  not undone." after a user stop, for Codex or Claude. The reply streamed
+  so far is kept and marked interrupted; the note only appears when an
+  engine ends a turn as interrupted by itself.
+
+Gaps: the tablet check of each item above.
+
 ### Claude engine on a real phone, without a sign-in (WP-F) — 2026-09-30
 
 On `wp-f` (from `feat/claude-subscription` at `14e1828`), `dev` debug

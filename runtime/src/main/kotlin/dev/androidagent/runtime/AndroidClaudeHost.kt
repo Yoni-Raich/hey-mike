@@ -176,7 +176,9 @@ class AndroidClaudeHost(
     private object ProxyLog : LocalhostConnectProxy.ProxyEventListener {
         override fun onListening(port: Int) = Unit
         override fun onAllowed(host: String, port: Int) { Log.i(TAG, "CONNECT $host:$port") }
-        override fun onDenied(host: String, port: Int, reason: String) { Log.w(TAG, "denied ${host.ifBlank { "unknown" }}: $reason") }
+        override fun onDenied(host: String, port: Int, reason: String) {
+            Log.w(TAG, "denied ${host.ifBlank { "unknown" }}${if (port > 0) ":$port" else ""}: $reason")
+        }
         override fun onError(category: String) { Log.w(TAG, "proxy-error:$category") }
         override fun onStopped() = Unit
     }

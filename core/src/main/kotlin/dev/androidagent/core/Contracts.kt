@@ -147,6 +147,8 @@ data class AgentModel(
     val displayName: String = id,
     val reasoningEfforts: List<ReasoningEffortOption> = emptyList(),
     val defaultReasoningEffort: String? = null,
+    /** A short line shown under the name in the picker; empty when the engine gives none. */
+    val description: String = "",
 )
 
 /** Skill metadata returned by Codex's native skills/list catalog. */

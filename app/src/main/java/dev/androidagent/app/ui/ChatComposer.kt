@@ -922,7 +922,7 @@ private fun AttachmentChip(name: String, onRemove: () -> Unit) {
 
 @Composable
 private fun ModelChip(state: AgentUiState, enabled: Boolean, onClick: () -> Unit) {
-    val model = state.selectedModel?.removePrefix("gpt-")
+    val model = state.selectedModel?.let { modelLabel(state, it) }
     val label = if (model == null) "Choose model" else "$model · ${state.selectedReasoningEffort ?: "default"}"
     val ink = if (enabled) ChipInk else DisabledInk
     Surface(
@@ -975,7 +975,13 @@ private fun ModelSheet(state: AgentUiState, actions: AgentUiActions, onDismiss: 
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(model.removePrefix("gpt-"), Modifier.weight(1f), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+                        val note = modelNote(state, model)
+                        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            Text(modelLabel(state, model), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+                            if (note.isNotBlank()) {
+                                Text(note, fontSize = 12.sp, lineHeight = 16.sp, color = MutedInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                         if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.secondary)
                     }
                 }

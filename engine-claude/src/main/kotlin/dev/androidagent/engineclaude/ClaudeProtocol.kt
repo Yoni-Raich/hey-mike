@@ -297,7 +297,10 @@ internal object ClaudeProtocol {
         return null
     }
 
-    /** Models from the `initialize` control response. The account-default entry is dropped; `sonnet` leads. */
+    /**
+     * Models from the `initialize` control response. The account-default entry is dropped; `sonnet` leads.
+     * The value sent to `--model` stays the CLI's own `value`; only the shown name and note change.
+     */
     fun parseModels(initialize: JsonObject): List<AgentModel> {
         val models = (initialize["models"] as? JsonArray).orEmpty().mapNotNull { element ->
             val model = element as? JsonObject ?: return@mapNotNull null
@@ -310,18 +313,49 @@ internal object ClaudeProtocol {
                 .map { ReasoningEffortOption(it) }
             AgentModel(
                 id = id,
-                displayName = model.string("displayName").trim().ifBlank { id },
+                displayName = modelName(id, model.string("displayName")),
                 reasoningEfforts = efforts,
+                description = modelNote(id, model.string("resolvedModel"), model.string("description")),
             )
         }.distinctBy { it.id }
         return models.sortedBy { if (it.id == DEFAULT_MODEL) 0 else 1 }
     }
 
+    /**
+     * Names for the aliases as Claude Code [PINNED_VERSION] resolves them,
+     * for when the CLI gives no name of its own.
+     */
+    private val PINNED_NAMES: Map<String, String> = mapOf(
+        "sonnet" to "Sonnet 5.5",
+        "opus" to "Opus 5.5",
+        "haiku" to "Haiku 4.5",
+        "fable" to "Fable 5.1",
+        "claude-fable-5-1" to "Fable 5.1",
+    )
+
+    /**
+     * Fable is never the default, and Anthropic may bill it against extra
+     * usage credits instead of the plan's limits.
+     */
+    const val FABLE_NOTE = "May use extra usage"
+
+    /** The CLI's name for a model, else the pinned one, else the id itself. */
+    fun modelName(id: String, cliName: String = ""): String =
+        cliName.trim().takeIf { it.isNotEmpty() && it != id } ?: PINNED_NAMES[id] ?: id
+
+    /** The line under a model in the picker: the CLI's description, led by the Fable hint. */
+    fun modelNote(id: String, resolvedModel: String = "", cliDescription: String = ""): String {
+        val description = cliDescription.trim()
+        val fable = id.contains("fable", ignoreCase = true) || resolvedModel.contains("fable", ignoreCase = true)
+        if (!fable) return description
+        return if (description.isEmpty()) FABLE_NOTE else "$FABLE_NOTE · $description"
+    }
+
     /** Used until a process has answered `initialize`. */
     val FALLBACK_MODELS: List<AgentModel> = listOf(
-        AgentModel("sonnet", "Sonnet", EFFORTS.map { ReasoningEffortOption(it) }),
-        AgentModel("opus", "Opus", EFFORTS.map { ReasoningEffortOption(it) }),
-        AgentModel("haiku", "Haiku"),
+        AgentModel("sonnet", modelName("sonnet"), EFFORTS.map { ReasoningEffortOption(it) }),
+        AgentModel("opus", modelName("opus"), EFFORTS.map { ReasoningEffortOption(it) }),
+        AgentModel("haiku", modelName("haiku")),
     )
 
     private val WINDOW_NAMES = mapOf(
