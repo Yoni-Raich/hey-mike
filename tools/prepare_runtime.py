@@ -2,7 +2,7 @@
 """Stage the official Codex app-server package for the Android APK.
 
 Pipeline (stdlib only, reproducible):
-  1. Verify SHA-256 of the official rust-v0.156.0 ARM64 and x86_64 musl packages.
+  1. Verify SHA-256 of the official rust-v0.159.2 ARM64 and x86_64 musl packages.
   2. Safely extract them to .codex-work/runtime/package-* (no absolute paths,
      no "..", no symlinks/hardlinks, no devices).
   3. Copy native ELFs to app/build/generated/runtime/jniLibs/<abi>/ as .so
@@ -31,8 +31,8 @@ import urllib.request
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXPECTED_SHA256 = "817e464eec79ae7b3af56ea1395e4ddd58387e76e294bac0721dc58ceddec636"
-PACKAGE_VERSION = "0.156.0"
+EXPECTED_SHA256 = "90884f8ea095b04796feff55b4acbdd5f8582040ce35b72fdcc49054aba96257"
+PACKAGE_VERSION = "0.159.2"
 PACKAGE_TARGET = "aarch64-unknown-linux-musl"
 X86_PACKAGE_TARGET = "x86_64-unknown-linux-musl"
 
@@ -212,7 +212,7 @@ def is_extractable_lib_name(name: str) -> bool:
 def patch_code_mode_host_lookup(path: str) -> None:
     """Point the staged app-server at the Android-packaged helper name.
 
-    Codex 0.156.0 resolves the helper as a sibling named
+    Codex 0.159.2 resolves the helper as a sibling named
     ``codex-code-mode-host``. Android only extracts native-library entries
     from the APK when their name starts with ``lib`` and ends with ``.so``
     (debuggable apps are exempt), so the exact sibling cannot exist in the
@@ -332,7 +332,7 @@ def stage_assets(
             "launch": "<nativeLibraryDir>/libcodex_app_server.so --listen stdio://",
         },
         "notes": (
-            "The official rust-v0.156.0 app-server is staged with an in-place "
+            "The official rust-v0.159.2 app-server is staged with an in-place "
             "helper-name patch: its final code-mode host lookup uses "
             "libcodex_codemode.so, the lib*.so entry Android extracts into "
             "nativeLibraryDir. The original package archive is unchanged; "
@@ -356,18 +356,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--out-assets", default=DEFAULT_ASSETS)
     parser.add_argument(
         "--url",
-        default="https://github.com/openai/codex/releases/download/rust-v0.156.0/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz",
+        default="https://github.com/openai/codex/releases/download/rust-v0.159.2/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz",
         help="Download the package from this URL when --package is missing.",
     )
     parser.add_argument("--x86-package", default=DEFAULT_X86_PACKAGE)
     parser.add_argument("--x86-package-dir", default=DEFAULT_X86_PACKAGE_DIR)
     parser.add_argument(
         "--x86-expected-sha256",
-        default="037a10600af8228fca6f600ccd37048eb70b875df9097774fa9776f494ea55ea",
+        default="07c7f808615d1ef3b04d295fbe53ba57f3391358a25c5575efdec277b2cf8d41",
     )
     parser.add_argument(
         "--x86-url",
-        default="https://github.com/openai/codex/releases/download/rust-v0.156.0/codex-app-server-package-x86_64-unknown-linux-musl.tar.gz",
+        default="https://github.com/openai/codex/releases/download/rust-v0.159.2/codex-app-server-package-x86_64-unknown-linux-musl.tar.gz",
         help="Download the x86_64 package from this URL when --x86-package is missing.",
     )
     parser.add_argument("--ca-bundle", default=DEFAULT_CA_BUNDLE)

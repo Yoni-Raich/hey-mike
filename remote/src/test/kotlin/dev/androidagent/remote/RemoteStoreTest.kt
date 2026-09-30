@@ -139,7 +139,7 @@ class RemoteStoreTest {
         val probe = WindowsHost.parseProbe(
             ExecResult(
                 "Welcome banner\r\nHEYMIKE {\"computer\":\"DESK\",\"home\":\"C:\\\\Users\\\\Yoni Raich\",\"arch\":\"x86_64\"," +
-                    "\"exe\":\"C:\\\\Users\\\\Yoni Raich\\\\AppData\\\\Local\\\\HeyMike\\\\codex\\\\0.156.0\\\\bin\\\\codex-app-server.exe\"," +
+                    "\"exe\":\"C:\\\\Users\\\\Yoni Raich\\\\AppData\\\\Local\\\\HeyMike\\\\codex\\\\0.159.2\\\\bin\\\\codex-app-server.exe\"," +
                     "\"installed\":true,\"shell\":\"\"}\r\n",
                 "", 0,
             ),
@@ -147,11 +147,11 @@ class RemoteStoreTest {
         assertTrue(probe.installed)
         assertFalse(probe.powerShellDefault)
         assertEquals(
-            "\"C:\\Users\\Yoni Raich\\AppData\\Local\\HeyMike\\codex\\0.156.0\\bin\\codex-app-server.exe\" --listen stdio://",
+            "\"C:\\Users\\Yoni Raich\\AppData\\Local\\HeyMike\\codex\\0.159.2\\bin\\codex-app-server.exe\" --listen stdio://",
             WindowsHost.appServerCommand(probe),
         )
         assertEquals(
-            "& 'C:\\Users\\Yoni Raich\\AppData\\Local\\HeyMike\\codex\\0.156.0\\bin\\codex-app-server.exe' --listen stdio://",
+            "& 'C:\\Users\\Yoni Raich\\AppData\\Local\\HeyMike\\codex\\0.159.2\\bin\\codex-app-server.exe' --listen stdio://",
             WindowsHost.appServerCommand(probe.copy(powerShellDefault = true)),
         )
         val listing = WindowsHost.parseListing(
