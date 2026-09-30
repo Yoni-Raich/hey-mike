@@ -55,7 +55,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.GraphicEq
@@ -73,11 +72,10 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -889,33 +887,62 @@ internal fun CommandNote(text: String) {
 }
 
 /**
- * The plus: one tap opens the three things worth attaching, each with its
- * picture. A single "Attach file" button sent everyone through the system file
- * browser, where a photo from the gallery is three taps deep and the camera is
- * not offered at all.
+ * The plus opens "Add context": the three things worth attaching as three
+ * equal tiles, each with its picture, in a sheet like the app's other sheets.
+ * A single "Attach file" button sent everyone through the system file browser,
+ * where a photo from the gallery is three taps deep and the camera is not
+ * offered at all.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AttachMenu(enabled: Boolean, onPhoto: () -> Unit, onCamera: () -> Unit, onFile: () -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { open = true }, enabled = enabled) {
-            Icon(Icons.Outlined.Add, "Attach a photo, picture or file")
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            AttachItem("Photo", Icons.Outlined.Image) { open = false; onPhoto() }
-            AttachItem("Camera", Icons.Outlined.PhotoCamera) { open = false; onCamera() }
-            AttachItem("File", Icons.Outlined.AttachFile) { open = false; onFile() }
+    IconButton(onClick = { open = true }, enabled = enabled) {
+        Icon(Icons.Outlined.Add, "Add a photo, a camera shot or a file")
+    }
+    if (!open) return
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = { open = false }, sheetState = sheet, containerColor = SheetFill) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+                IconButton(onClick = { open = false }, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close")
+                }
+                Text("Add context", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AttachTile("Camera", Icons.Outlined.PhotoCamera, Modifier.weight(1f)) { open = false; onCamera() }
+                AttachTile("Photos", Icons.Outlined.Image, Modifier.weight(1f)) { open = false; onPhoto() }
+                AttachTile("Files", Icons.Outlined.UploadFile, Modifier.weight(1f)) { open = false; onFile() }
+            }
         }
     }
 }
 
 @Composable
-private fun AttachItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = { Text(label) },
-        leadingIcon = { Icon(icon, contentDescription = null) },
+private fun AttachTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    Surface(
         onClick = onClick,
-    )
+        shape = RoundedCornerShape(18.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, ChipBorder),
+        modifier = modifier.heightIn(min = 104.dp),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(vertical = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp), tint = ChipInk)
+            Text(label, fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+        }
+    }
 }
 
 @Composable
