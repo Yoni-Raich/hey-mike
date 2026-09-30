@@ -27,7 +27,29 @@ import kotlinx.serialization.json.JsonObject
 import java.io.File
 
 enum class ConnectionPhase { DISCONNECTED, DISCOVERING, PAIRING, CONNECTING, CONNECTED, ERROR }
-data class AdbStatus(val phase: ConnectionPhase = ConnectionPhase.DISCONNECTED, val message: String = "Not connected", val port: Int? = null)
+/**
+ * Mike's own ADB connection, plus what Android says about it. [phase] is the
+ * connection; the rest is why it is or is not there, so a phone whose
+ * Wireless debugging is on is never shown as "off" just because Mike is not
+ * connected yet.
+ */
+data class AdbStatus(
+    val phase: ConnectionPhase = ConnectionPhase.DISCONNECTED,
+    val message: String = "Not connected",
+    val port: Int? = null,
+    /** Android's Wireless debugging switch; null when it cannot be read. */
+    val wirelessDebugging: Boolean? = null,
+    /** Mike holds a pairing identity. */
+    val paired: Boolean = false,
+    /**
+     * adbd refused that identity: Android dropped the pairing, which it does
+     * after 7 days without a connection or when authorizations are revoked.
+     * Only pairing again fixes it, so retrying is pointless.
+     */
+    val pairingRejected: Boolean = false,
+    /** Mike can flip Wireless debugging on itself, without opening Settings. */
+    val canSwitchOn: Boolean = false,
+)
 data class AdbEndpoint(val port: Int, val pairing: Boolean, val host: String = "127.0.0.1")
 data class CommandResult(val output: String, val exitCode: Int)
 interface AdbTransport {

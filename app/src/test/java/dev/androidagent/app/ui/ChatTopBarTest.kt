@@ -65,6 +65,23 @@ class ChatTopBarTest {
         assertEquals("Allow restricted settings to finish turning it on", a11yNote(A11yStatus(declaredEnabled = true, connected = false)))
         assertEquals("Off", a11yNote(A11yStatus(declaredEnabled = false, connected = false)))
         assertEquals("Connected · port 37123", adbNote(AdbStatus(ConnectionPhase.CONNECTED, "Connected", 37123)))
-        assertEquals("Reconnecting", adbNote(AdbStatus(ConnectionPhase.CONNECTING, "Connecting")))
+        assertEquals("Connecting…", adbNote(AdbStatus(ConnectionPhase.CONNECTING, "Connecting")))
+    }
+
+    @Test fun wirelessDebuggingOnIsNeverShownAsOff() {
+        val onButNotConnected = AdbStatus(ConnectionPhase.DISCONNECTED, wirelessDebugging = true, paired = true)
+        assertEquals("Wireless debugging is on · connecting…", adbNote(onButNotConnected))
+        assertNull(adbFix(onButNotConnected))
+        val off = onButNotConnected.copy(wirelessDebugging = false)
+        assertEquals("Wireless debugging is off", adbNote(off))
+        assertEquals(AdbFix.TURN_ON, adbFix(off))
+    }
+
+    @Test fun aDroppedPairingAsksForANewOneNotForTheSwitch() {
+        val dropped = AdbStatus(ConnectionPhase.ERROR, wirelessDebugging = true, paired = true, pairingRejected = true)
+        assertEquals("Android dropped the pairing · pair again", adbNote(dropped))
+        assertEquals(AdbFix.PAIR, adbFix(dropped))
+        // Never paired: turning the switch on alone would not connect.
+        assertEquals(AdbFix.PAIR, adbFix(AdbStatus(ConnectionPhase.DISCONNECTED, wirelessDebugging = false)))
     }
 }

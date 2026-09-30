@@ -60,6 +60,10 @@ data class SetupSignals(
     val microphoneGranted: Boolean = false,
     val adbPhase: ConnectionPhase = ConnectionPhase.DISCONNECTED,
     val adbPort: Int? = null,
+    /** Android's Wireless debugging switch; null when unknown. See [AdbStatus]. */
+    val adbWirelessDebugging: Boolean? = null,
+    val adbPaired: Boolean = false,
+    val adbPairingRejected: Boolean = false,
 )
 
 object SetupChecklist {
@@ -164,27 +168,53 @@ object SetupChecklist {
         summary = if (signals.overlayGranted) "Allowed" else "Not allowed · device control cannot start",
     )
 
-    private fun wirelessAdbRow(signals: SetupSignals) = SetupRow(
-        item = SetupItem.WIRELESS_ADB,
-        state = when (signals.adbPhase) {
-            ConnectionPhase.CONNECTED -> SetupState.DONE
-            ConnectionPhase.DISCOVERING, ConnectionPhase.PAIRING, ConnectionPhase.CONNECTING -> SetupState.WORKING
-            ConnectionPhase.ERROR -> SetupState.BLOCKED
-            ConnectionPhase.DISCONNECTED -> SetupState.PENDING
-        },
-        // Optional: the accessibility service serves screen control, and ADB
-        // adds only shell, file transfer and installs. Counting it as required
-        // told every user without Wireless Debugging the agent could not run.
-        importance = SetupImportance.OPTIONAL,
-        summary = when (signals.adbPhase) {
-            ConnectionPhase.CONNECTED -> signals.adbPort?.let { "Connected · port $it" } ?: "Connected"
-            ConnectionPhase.DISCOVERING -> "Looking for this phone…"
-            ConnectionPhase.PAIRING -> "Pairing…"
-            ConnectionPhase.CONNECTING -> "Connecting…"
-            ConnectionPhase.ERROR -> "Connection failed"
-            ConnectionPhase.DISCONNECTED -> "Not paired · only for shell, files and installs"
-        },
-    )
+    private fun wirelessAdbRow(signals: SetupSignals): SetupRow {
+        val status = AdbStatus(
+            phase = signals.adbPhase,
+            port = signals.adbPort,
+            wirelessDebugging = signals.adbWirelessDebugging,
+            paired = signals.adbPaired,
+            pairingRejected = signals.adbPairingRejected,
+        )
+        return SetupRow(
+            item = SetupItem.WIRELESS_ADB,
+            state = adbState(status),
+            // Optional: the accessibility service serves screen control, and ADB
+            // adds only shell, file transfer and installs. Counting it as required
+            // told every user without Wireless Debugging the agent could not run.
+            importance = SetupImportance.OPTIONAL,
+            summary = adbSummary(status),
+        )
+    }
+
+    fun adbState(status: AdbStatus): SetupState = when {
+        status.phase == ConnectionPhase.CONNECTED -> SetupState.DONE
+        status.pairingRejected -> SetupState.BLOCKED
+        status.phase == ConnectionPhase.ERROR -> SetupState.BLOCKED
+        status.phase != ConnectionPhase.DISCONNECTED -> SetupState.WORKING
+        // On and paired: the service loop is about to connect.
+        status.wirelessDebugging == true && status.paired -> SetupState.WORKING
+        else -> SetupState.PENDING
+    }
+
+    /**
+     * The Wireless ADB row in words, for this checklist and the status sheet.
+     * It names the switch and the pairing separately: "Not connected" alone
+     * read as "off" on a phone whose Wireless debugging was on.
+     */
+    fun adbSummary(status: AdbStatus): String = when {
+        status.phase == ConnectionPhase.CONNECTED -> status.port?.let { "Connected · port $it" } ?: "Connected"
+        status.pairingRejected -> "Android dropped the pairing · pair again"
+        status.phase == ConnectionPhase.PAIRING -> "Pairing…"
+        status.phase == ConnectionPhase.CONNECTING -> "Connecting…"
+        status.phase == ConnectionPhase.DISCOVERING -> "Looking for this phone…"
+        status.phase == ConnectionPhase.ERROR -> "Connection failed"
+        status.wirelessDebugging == false -> "Wireless debugging is off"
+        status.wirelessDebugging == true && status.paired -> "Wireless debugging is on · connecting…"
+        status.wirelessDebugging == true -> "Wireless debugging is on · not paired yet"
+        status.paired -> "Not connected"
+        else -> "Not paired · only for shell, files and installs"
+    }
 
     private fun permissionRow(
         item: SetupItem,

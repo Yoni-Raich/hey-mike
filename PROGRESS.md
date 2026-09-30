@@ -93,6 +93,30 @@ the sign-in link and a real subscription sign-in with a pasted code, a Claude
 chat turn, MCP tools reaching `claude`, stop during a tool call, compact after
 a restart, the Compose screens themselves (no screenshot exists), Android 16,
 and TalkBack on the new controls.
+### Wireless ADB: the real state, a dropped pairing, a one-tap switch — 2026-09-30
+
+Reported: Mike showed Wireless ADB as off while the switch was on, and turning
+it on meant leaving the app. On the Nothing A059 (Android 16): `adb_wifi_enabled=1`,
+adbd on 42121, Mike's saved port 33453 (stale), no loopback connection, and
+`dumpsys adb` listed only two trusted keys, not Mike's. adbd logged
+`CERTIFICATE_VERIFY_FAILED` in bursts of five (Kadb's own retries) every ~13s
+from uid 10318, the dev build: Android had dropped the pairing, most likely
+after 7 days without a connection. Fixed in `:adb`, `:core` and the UI:
+
+- `AdbStatus` carries the switch, the pairing and a refused key; the status
+  sheet and checklist say which is missing. A refused key stops the retries.
+- `discover()` no longer overwrites CONNECTED (opening the Wireless ADB page
+  used to drop and remake a live connection).
+- A settings observer drops a connection when the switch goes off.
+- "Turn on" writes the switch directly, after Mike grants itself
+  WRITE_SECURE_SETTINGS over its own ADB on first connect.
+
+Evidence: `:core:test :adb:testDebugUnitTest :app:testDevDebugUnitTest` 672
+tests, 0 failures; `:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors. On
+the Nothing, logcat showed `SSLProtocolException ... SSLV3_ALERT_CERTIFICATE_UNKNOWN`
+recognised and a single burst of handshakes, then none. Not yet verified:
+pairing again, the self-grant, and the one-tap switch; they need the user to
+pair on the phone.
 
 ### Computer chat panel: activity as one row, a plainer header — 2026-09-29
 
@@ -111,8 +135,9 @@ the screen before the answer began.
   sparkle. Expand arrows take their label's color.
 - The top bar reads "Server · folder · This phone", each with its icon, and
   drops the folder when it is the chat's own name; `remoteChats` is gone.
-- An assistant message's copy button is 48dp and sits on the side its last
-  line ends; a Hebrew or Arabic word is joined to the number after it with a
+- Copying is a long press on a block (a user's prompt, or the agent's whole
+  reply after it) with Copy and Select text; there is no copy button, and
+  the "Working" line sits under the chat's last line while it runs. A Hebrew or Arabic word is joined to the number after it with a
   no-break space; "Jump to latest" shows only 96dp or more from the end, in
   the corner on that side. Composer and chip outlines are at least 3:1.
 

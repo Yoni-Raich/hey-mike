@@ -88,6 +88,7 @@ import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
+import dev.androidagent.core.SetupChecklist
 import dev.androidagent.core.UsageSummary
 
 // The chat's top bar. The title opens the chats; the agent's sphere is the
@@ -129,13 +130,24 @@ internal fun a11yNote(status: A11yStatus): String = when {
     else -> "Off"
 }
 
-internal fun adbNote(status: AdbStatus): String = when (status.phase) {
-    ConnectionPhase.CONNECTED -> status.port?.let { "Connected · port $it" } ?: "Connected"
-    ConnectionPhase.DISCOVERING -> "Searching"
-    ConnectionPhase.PAIRING -> "Pairing"
-    ConnectionPhase.CONNECTING -> "Reconnecting"
-    ConnectionPhase.ERROR -> "Could not connect"
-    ConnectionPhase.DISCONNECTED -> "Not connected"
+internal fun adbNote(status: AdbStatus): String = SetupChecklist.adbSummary(status)
+
+/** What the Wireless ADB row's button does, when it has one. */
+internal enum class AdbFix { TURN_ON, PAIR, SET_UP }
+
+/**
+ * The one step that moves Wireless ADB forward. Switched off but paired:
+ * turn it on, from here when Mike can write the switch. Pairing dropped or
+ * never made: pair. Null while a connection is on its way.
+ */
+internal fun adbFix(status: AdbStatus): AdbFix? = when {
+    status.phase == ConnectionPhase.CONNECTED -> null
+    status.phase in setOf(ConnectionPhase.DISCOVERING, ConnectionPhase.PAIRING, ConnectionPhase.CONNECTING) -> null
+    status.pairingRejected -> AdbFix.PAIR
+    status.wirelessDebugging == false && status.paired -> AdbFix.TURN_ON
+    !status.paired -> AdbFix.PAIR
+    status.wirelessDebugging == true && status.phase == ConnectionPhase.DISCONNECTED -> null
+    else -> AdbFix.SET_UP
 }
 
 private val ReadyTeal = Color(0xFF83D9CA)
@@ -320,7 +332,7 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
         ControlState.READY -> ReadyTeal
         ControlState.BLOCKED -> BlockedAmber
     }
-    val adbBusy = state.adbStatus.phase in setOf(ConnectionPhase.DISCOVERING, ConnectionPhase.PAIRING, ConnectionPhase.CONNECTING)
+    val adbFix = adbFix(state.adbStatus)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = StatusSheetFill) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 20.dp),
@@ -350,10 +362,18 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
                     title = "Wireless ADB",
                     note = adbNote(state.adbStatus),
                     on = state.adbStatus.phase == ConnectionPhase.CONNECTED,
-                    busy = adbBusy,
-                    fixLabel = "Set up",
-                    // Pairing lives in the app's settings; Wireless Debugging alone is not enough.
-                    onFix = { onDismiss(); actions.onOpenSettings() },
+                    busy = adbFix == null,
+                    fixLabel = when (adbFix) {
+                        AdbFix.TURN_ON -> "Turn on"
+                        AdbFix.PAIR -> "Pair"
+                        else -> "Set up"
+                    },
+                    onFix = when (adbFix) {
+                        // Stays open: the row turns into a spinner, then a check.
+                        AdbFix.TURN_ON -> actions.onTurnOnWireless
+                        // Pairing lives in the app's settings; the switch alone is not enough.
+                        else -> ({ onDismiss(); actions.onOpenSettings() })
+                    },
                 )
             }
             // The open chat's own account: Codex, or the Claude subscription.

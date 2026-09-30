@@ -58,7 +58,7 @@ import io.noties.prism4j.Prism4j
 import java.io.File
 
 @Composable
-internal fun MarkdownMessage(value: String, textColor: Color) {
+internal fun MarkdownMessage(value: String, textColor: Color, onLongPress: (() -> Unit)? = null) {
     val context = LocalContext.current
     val accent = MaterialTheme.colorScheme.secondary.toArgb()
     val fontSize = MaterialTheme.typography.bodyLarge.fontSize.value
@@ -110,7 +110,8 @@ internal fun MarkdownMessage(value: String, textColor: Color) {
             // Follows the app's type scale; sp keeps the phone's font size setting.
             textSize = fontSize
             setLineSpacing(0f, 1.25f)
-            setTextIsSelectable(true)
+            // Not selectable: a long press opens the message's menu instead
+            // (copy, select text), so it must reach the view's own listener.
             // Decided per line: any Hebrew or Arabic letter makes the whole
             // line right-to-left, so "Yoni Raich (את/ה)" no longer flips a
             // Hebrew list to the left just because it starts with Latin.
@@ -118,6 +119,7 @@ internal fun MarkdownMessage(value: String, textColor: Color) {
         } },
         update = { view ->
             view.setTextColor(textColor.toArgb())
+            view.setOnLongClickListener(onLongPress?.let { press -> View.OnLongClickListener { press(); true } })
             if (view.tag != value) { renderer.setParsedMarkdown(view, rendered); view.tag = value }
         },
     )

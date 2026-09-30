@@ -1181,6 +1181,27 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             discover()
         }
     }
+    /**
+     * Switch Wireless debugging on without leaving Mike. Returns false when
+     * Mike cannot (it has never connected over ADB, which is when it gets the
+     * permission), and the caller opens the Settings screen instead. The
+     * service loop connects as soon as the switch is on.
+     */
+    fun turnOnWireless(): Boolean {
+        if (!graph.adb.switchWirelessDebuggingOn()) return false
+        mutable.update { it.copy(infoMessage = "Turning on Wireless debugging…", errorMessage = null) }
+        task {
+            delay(WIRELESS_SWITCH_CHECK_MS)
+            // Android turns it straight back off without Wi-Fi, and on a
+            // network it has not seen asks first with a dialog of its own.
+            if (graph.adb.status.value.wirelessDebugging == false) {
+                mutable.update {
+                    it.copy(infoMessage = "Wireless debugging is still off. It needs Wi-Fi, and on a new network Android asks you to allow it first.")
+                }
+            }
+        }
+        return true
+    }
     fun connect(port: String) = task {
         check(!graph.coordinator.state.value.active) { "Stop the current run before changing the connection." }
         mutable.update { it.copy(isConnecting = true) }
@@ -1329,6 +1350,7 @@ private const val VOICE_CODEX_ONLY = "Voice works only in ChatGPT (Codex) chats.
 
 /** Long enough for Mike to reach Developer options, including turning them on. */
 private const val WIRELESS_SETUP_TIMEOUT_MS = 300_000L
+private const val WIRELESS_SWITCH_CHECK_MS = 5_000L
 
 // The user approved this in the app before the run starts, so the prompt says
 // so rather than asking Mike to ask again, which would end the turn and let

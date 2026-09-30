@@ -273,6 +273,8 @@ data class AgentUiActions(
     val onConnect: (port: String) -> Unit = {},
     val onDiscover: () -> Unit = {},
     val onOpenWirelessSettings: () -> Unit = {},
+    /** Switch Wireless debugging on from inside Mike; opens its Settings screen when Mike cannot. */
+    val onTurnOnWireless: () -> Unit = {},
     val onOpenAccessibilitySettings: () -> Unit = {},
     val onOpenAssistantSettings: () -> Unit = {},
     /** Notification access: the one permission no app can grant itself, and rules need it. */
@@ -405,6 +407,9 @@ internal fun AgentUiState.setupSignals(): SetupSignals = SetupSignals(
         microphoneGranted = permissions.microphone,
         adbPhase = adbStatus.phase,
         adbPort = adbStatus.port,
+        adbWirelessDebugging = adbStatus.wirelessDebugging,
+        adbPaired = adbStatus.paired,
+        adbPairingRejected = adbStatus.pairingRejected,
     )
 
 internal fun EngineEvent.Approval.detailsText(): String = details.toString().removeSurrounding("{", "}")
