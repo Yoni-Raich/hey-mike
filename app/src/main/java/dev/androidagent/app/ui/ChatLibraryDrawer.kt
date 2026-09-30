@@ -250,10 +250,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                     Box(Modifier.animateItem().padding(start = 18.dp)) {
                                         LibraryChatRow(
                                             entry = entry,
-                                            detail = listOfNotNull(
-                                                if (entry is PcChatEntry.OnComputer) "In Codex on ${computer.label}" else null,
-                                                shortTime(entry.updatedAt),
-                                            ).joinToString(" · "),
+                                            detail = if (entry is PcChatEntry.OnComputer) "In Codex on ${computer.label}" else "",
                                             leading = null,
                                             state = state,
                                             actions = actions,
@@ -294,10 +291,12 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                             items(group.sessions, key = { it.id }, contentType = { "chat" }) { stub ->
                                 val row = byKey.getValue(stub.id)
                                 val owner = state.computers.firstOrNull { it.id == row.computerId }
+                                // Only what the title does not already say: the
+                                // day headings carry the time, and a line under
+                                // every row doubled its height for a clock.
                                 val detail = listOfNotNull(
                                     if (scope == ChatLibrary.ALL && owner != null) row.project?.name?.takeIf { !it.equals(row.entry.title, true) } else null,
                                     if (row.entry is PcChatEntry.OnComputer) "In Codex" else null,
-                                    shortTime(row.entry.updatedAt),
                                 ).joinToString(" · ")
                                 Box(Modifier.animateItem()) {
                                     LibraryChatRow(
@@ -570,11 +569,13 @@ private fun LibraryChatRow(
             color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 leading?.let { it(); Spacer(Modifier.width(12.dp)) }
                 Column(Modifier.weight(1f)) {
                     Text(entry.title.ifBlank { "Untitled chat" }, style = MaterialTheme.typography.bodyMedium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(detail, style = MaterialTheme.typography.labelSmall, fontSize = 12.sp, color = LibraryMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (detail.isNotBlank()) {
+                        Text(detail, style = MaterialTheme.typography.labelSmall, fontSize = 12.sp, color = LibraryMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -630,19 +631,3 @@ private fun LibraryConnection(state: AgentUiState, id: String, actions: AgentUiA
 
 /** First letter of a computer's name, for the rail and the badges. */
 internal fun monogram(label: String): String = label.trim().firstOrNull()?.uppercase() ?: "?"
-
-/** Today: the time. This week: the weekday. Older: the date. */
-internal fun shortTime(timestamp: Long, now: Long = System.currentTimeMillis()): String {
-    if (timestamp <= 0) return ""
-    val zone = java.time.ZoneId.systemDefault()
-    val then = java.time.Instant.ofEpochMilli(timestamp).atZone(zone)
-    val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-    val days = java.time.temporal.ChronoUnit.DAYS.between(then.toLocalDate(), today)
-    val pattern = when {
-        days <= 0L -> "HH:mm"
-        days < 7L -> "EEE"
-        then.year == java.time.Instant.ofEpochMilli(now).atZone(zone).year -> "d MMM"
-        else -> "d MMM yyyy"
-    }
-    return then.format(java.time.format.DateTimeFormatter.ofPattern(pattern, java.util.Locale.getDefault()))
-}

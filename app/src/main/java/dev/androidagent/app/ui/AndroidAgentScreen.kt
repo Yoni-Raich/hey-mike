@@ -77,7 +77,6 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -359,9 +358,9 @@ fun AndroidAgentScreen(
 private val DrawerRunning = Color(0xFF69A7FF)
 
 /**
- * One chat in the library. The rename/delete menu is a long press on any row
- * and a visible button only on the open chat: a button on every row read as
- * a column of dots.
+ * One chat in the library. Rename and delete are a long press on any row. The
+ * open chat used to carry a visible menu button as well, which made its row
+ * the tallest and widest in the list for an action used rarely.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -401,8 +400,8 @@ internal fun SessionRow(
                         onLongClick = { menuOpen = true },
                         onLongClickLabel = "Session actions",
                     )
-                    .heightIn(min = 56.dp)
-                    .padding(start = 12.dp, end = if (selected) 4.dp else 12.dp),
+                    .heightIn(min = 48.dp)
+                    .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 leading?.let { it(); Spacer(Modifier.width(12.dp)) }
@@ -417,7 +416,7 @@ internal fun SessionRow(
                         modifier = Modifier.padding(end = 10.dp).size(18.dp),
                     )
                 }
-                Column(Modifier.weight(1f).padding(vertical = if (subtitle != null) 9.dp else 0.dp)) {
+                Column(Modifier.weight(1f).padding(vertical = if (subtitle != null) 6.dp else 0.dp)) {
                     Text(
                         session.title.ifBlank { "Untitled chat" },
                         maxLines = 1,
@@ -435,14 +434,6 @@ internal fun SessionRow(
                             }
                             Text(it, style = MaterialTheme.typography.labelSmall, fontSize = 12.sp, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                    }
-                }
-                if (selected) {
-                    IconButton(
-                        onClick = { menuOpen = true },
-                        modifier = Modifier.semantics { contentDescription = "Session actions" },
-                    ) {
-                        Icon(Icons.Outlined.MoreVert, contentDescription = null)
                     }
                 }
             }

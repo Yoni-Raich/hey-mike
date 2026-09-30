@@ -1439,9 +1439,11 @@ the thing not happening, so it is counted on the hub row rather than buried.
 `ChatLibraryDrawer` opens on a flat list of recent chats across the phone and
 computers. A device picker narrows the list; search matches titles, folders and
 computer names. Each row shows its location, so equal titles on two computers
-remain distinct. Day headings provide time context; rows omit individual dates.
-Imported desktop conversations say "From Codex". Existing rename and delete
-actions remain on Mike's chats.
+remain distinct. Day headings provide time context; rows omit individual dates
+and times, so a row is one 48dp line unless it has a project name, "Running" or
+"In Codex" to add. Imported desktop conversations say "From Codex". Rename and
+delete on Mike's chats are a long press on the row only; the open chat has no
+separate menu button.
 
 Projects have their own tab. Opening a folder shows only its chats, and Back
 restores the project search and scroll position while the panel stays composed.
