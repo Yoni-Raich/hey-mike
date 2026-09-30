@@ -23,10 +23,16 @@ own default level stores Auto again.
 Evidence: `python -m unittest tools.test_prepare_runtime`,
 `python tools/prepare_runtime.py`, `:remote:testDebugUnitTest
 :engine-codex:testDebugUnitTest :app:testDevDebugUnitTest` 172 tests, 0
-failures, `:app:assembleDevDebug`, `:app:lintDevDebug` 0 errors. Not run: the
-new app-server on a phone (does 6.1 Sol appear, does a turn run), a computer
-install of 0.159.2, the menu on a device, `ChatUiTest` (updated, compiled only
-by the test build, not run).
+failures, `:app:assembleDevDebug`, `:app:lintDevDebug` 0 errors,
+`:app:assembleDevDebugAndroidTest` compiles.
+
+On a Redmi 23053RN02Y (HyperOS, Android 15; `install -r` with
+`versionCodeOverride=1018`, because the phone had the nightly 1017): the model
+list shows GPT-6.1 Sol first, then 6 Astra, 6 Sol, 6 Luna, 5.6 Sol, 5.6 Terra,
+5.6 Luna and 5.5; 6.1 Sol offers Low to Ultra (Ultra is new) and defaults to
+Low. A turn with a picture on 6.1 Sol answered correctly, and the session log
+says `"model":"gpt-6.1-sol"`, `"cli_version":"0.159.2"`. Not run: a computer
+install of 0.159.2, and `ChatUiTest`.
 
 ### The plus attaches a photo, a camera shot or a file, also on a computer — 2026-09-30
 
@@ -36,10 +42,18 @@ and a file attached in a computer chat is copied to the project folder on the
 computer (`.hey-mike/attachments/<time>/`) before the turn is queued.
 
 Evidence: `:remote:testDebugUnitTest :app:testDevDebugUnitTest` 127 tests, 0
-failures (new: file names safe on Windows and Linux, the path a file lands on);
-`:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors. Not run on a device:
-the menu, the camera round trip (including the activity being recreated while
-the camera is open), and an SFTP upload from a real computer chat.
+failures (new: file names safe on Windows and Linux, the path a file lands on,
+and `RemoteHub.sendAttachments` against an in-process SFTP server: two files
+land whole in one `.hey-mike/attachments/<time>/` folder, no `.part` left);
+`:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors.
+
+On the Redmi: the plus opens Photo, Camera and File. Photo opens the system
+picker and several can be chosen; the picture is attached and a turn with it
+answered. Camera opens the system one-shot camera, the shot returns as
+"Photo <date>.jpg" and `cache/captures` is empty afterwards. File opens the
+system file picker (nothing was picked). Long press on the answer gives Copy
+and Select text. Not run: the activity being recreated while the camera is
+open, and an upload from a real computer chat (the Redmi has no saved computer).
 
 ### Wireless ADB: the real state, a dropped pairing, a one-tap switch — 2026-09-30
 
@@ -62,9 +76,16 @@ after 7 days without a connection. Fixed in `:adb`, `:core` and the UI:
 Evidence: `:core:test :adb:testDebugUnitTest :app:testDevDebugUnitTest` 672
 tests, 0 failures; `:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors. On
 the Nothing, logcat showed `SSLProtocolException ... SSLV3_ALERT_CERTIFICATE_UNKNOWN`
-recognised and a single burst of handshakes, then none. Not yet verified:
-pairing again, the self-grant, and the one-tap switch; they need the user to
-pair on the phone.
+recognised and a single burst of handshakes, then none.
+
+On the Redmi (paired and connected): the status sheet read "Connected · port
+46333"; `WRITE_SECURE_SETTINGS` was `granted=true`, so Mike had granted itself
+over its own ADB. With `settings put global adb_wifi_enabled 0` the row became
+"Wireless debugging is off" with a Turn on button within three seconds and the
+orb went amber; tapping Turn on set the switch back to 1, the row showed "Looking
+for this phone…" and then "Connected · port 39617", the sheet staying open
+throughout. Not verified: pairing again after a dropped pairing (the Redmi's
+pairing was still good), and the same flow on the Nothing.
 
 ### Computer chat panel: activity as one row, a plainer header — 2026-09-29
 
