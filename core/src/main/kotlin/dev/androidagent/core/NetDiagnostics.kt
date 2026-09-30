@@ -54,8 +54,31 @@ object NetDiagnostics {
         "chatgpt.com"
     )
 
+    /**
+     * CONNECT allowlist for the on-phone Claude Code process: the API, and
+     * the sign-in and account hosts. Updates, telemetry and error reporting
+     * are switched off in its environment, so their hosts are not listed.
+     */
+    val claudeAllowedHosts: Set<String> = setOf(
+        "api.anthropic.com",
+        "claude.ai",
+        "claude.com",
+        "platform.claude.com"
+    )
+
     /** Only TLS is tunnelled. Plain HTTP through the proxy is never allowed. */
     val defaultAllowedPorts: Set<Int> = setOf(443)
+
+    /** Hosts one engine's proxy may reach. Engines never share a list. */
+    fun allowedHostsFor(engine: EngineKind): Set<String> = when (engine) {
+        EngineKind.CODEX -> defaultAllowedHosts
+        EngineKind.CLAUDE -> claudeAllowedHosts
+    }
+
+    /** Ports one engine's proxy may reach: TLS only for every engine. */
+    fun allowedPortsFor(engine: EngineKind): Set<Int> = when (engine) {
+        EngineKind.CODEX, EngineKind.CLAUDE -> defaultAllowedPorts
+    }
 
     /** Local bypasses that must never be proxied. */
     const val NO_PROXY_VALUE = "localhost,127.0.0.1"

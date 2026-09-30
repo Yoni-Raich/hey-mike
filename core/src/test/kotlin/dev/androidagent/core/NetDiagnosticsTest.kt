@@ -34,6 +34,26 @@ class NetDiagnosticsTest {
     }
 
     @Test
+    fun `each engine gets only its own hosts`() {
+        assertEquals(NetDiagnostics.defaultAllowedHosts, NetDiagnostics.allowedHostsFor(EngineKind.CODEX))
+        assertEquals(
+            setOf("api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com"),
+            NetDiagnostics.allowedHostsFor(EngineKind.CLAUDE)
+        )
+        val claude = NetDiagnostics.allowedHostsFor(EngineKind.CLAUDE)
+        listOf("api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com").forEach { host ->
+            assertTrue(host, NetDiagnostics.checkConnectRequest("CONNECT $host:443 HTTP/1.1\r\n\r\n", claude) is NetDiagnostics.ConnectCheck.Allow)
+            assertTrue(host, NetDiagnostics.checkConnectRequest("CONNECT $host:443 HTTP/1.1\r\n\r\n") is NetDiagnostics.ConnectCheck.Deny)
+        }
+        listOf("chatgpt.com", "auth.openai.com", "downloads.claude.ai", "statsig.anthropic.com", "api.anthropic.com.evil.example").forEach { host ->
+            assertTrue(host, NetDiagnostics.checkConnectRequest("CONNECT $host:443 HTTP/1.1\r\n\r\n", claude) is NetDiagnostics.ConnectCheck.Deny)
+        }
+        assertTrue(NetDiagnostics.checkConnectRequest("CONNECT api.anthropic.com:80 HTTP/1.1\r\n\r\n", claude) is NetDiagnostics.ConnectCheck.Deny)
+        assertEquals(setOf(443), NetDiagnostics.allowedPortsFor(EngineKind.CLAUDE))
+        assertEquals(NetDiagnostics.defaultAllowedPorts, NetDiagnostics.allowedPortsFor(EngineKind.CODEX))
+    }
+
+    @Test
     fun `stderr colors are removed while secrets remain redacted`() {
         val safe = SecretRedactor.redactStderrLine("\u001B[31mERROR\u001B[0m [2mrequest failed[0m Bearer abcdefghijkl")
         assertEquals("ERROR request failed Bearer [REDACTED]", safe)
