@@ -1,9 +1,15 @@
 package dev.androidagent.remote
 
+import dev.androidagent.core.AccountStatus
+import dev.androidagent.core.ClaudeProcessHost
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RuntimeHost
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.RuntimeStatus
+import dev.androidagent.engineclaude.ClaudeCodeEngine
+import dev.androidagent.engineclaude.ClaudeComputer
+import dev.androidagent.engineclaude.McpToolServerFactory
 import dev.androidagent.enginecodex.CodexEngine
 import dev.androidagent.enginecodex.CodexThread
 import dev.androidagent.enginecodex.CodexThreadMessage
@@ -26,8 +32,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-/** An engine event and the computer it came from. */
-data class RemoteEvent(val computerId: String, val event: EngineEvent)
+/** An engine event and the computer it came from. [engine] is the engine that sent it there. */
+data class RemoteEvent(val computerId: String, val event: EngineEvent, val engine: EngineKind = EngineKind.CODEX)
 
 /** Where setting a computer up has got to, for the sheet to show. */
 sealed interface RemoteSetup {
@@ -48,11 +54,22 @@ data class RemoteRoute(val host: String, val viaVpn: Boolean)
  * One SSH link and one app-server per computer, started when a chat on it
  * first needs them. Every event carries the computer it came from, so the
  * router can keep requests from two app-servers apart.
+ *
+ * A computer that has its own Claude Code, signed in by its user, can run
+ * chats on Claude too ([claude]). That is the computer's install and sign-in:
+ * unlike Codex, which is handed the phone's ChatGPT account for each run,
+ * nothing about a Claude sign-in travels in either direction.
  */
 class RemoteHub(
     val store: RemoteStore,
     private val authTokens: suspend (refresh: Boolean, previousAccountId: String?) -> ExternalChatgptTokens =
         { _, _ -> error("Sign in to ChatGPT in Mike before using a computer chat.") },
+    /** Where the Claude engines keep local scratch files; nothing of the computer's is stored there. */
+    private val claudeScratch: File = File(System.getProperty("java.io.tmpdir") ?: ".", "hey-mike-claude"),
+    private val createClaude: (ClaudeProcessHost, ClaudeComputer) -> ClaudeCodeEngine = { host, computer ->
+        // The tools ride on the process's own streams there, so no server is ever made.
+        ClaudeCodeEngine(host, McpToolServerFactory { _, _, _ -> error("A computer chat has no tool server") }, maxLiveChats = 4, computer = computer)
+    },
     private val createEngine: (RuntimeHost, EngineProfile) -> CodexEngine = ::CodexEngine,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -60,6 +77,7 @@ class RemoteHub(
     private val linkLock = Mutex()
     private val links = ConcurrentHashMap<String, Connection>()
     private val engines = ConcurrentHashMap<String, Pair<CodexEngine, Job>>()
+    private val claudeEngines = ConcurrentHashMap<String, Triple<ClaudeCodeEngine, ComputerClaudeHost, Job>>()
     /** The address that last answered per computer, tried first next time. */
     private val lastHost = ConcurrentHashMap<String, String>()
     private val stream = MutableSharedFlow<RemoteEvent>(extraBufferCapacity = 128)
@@ -87,6 +105,48 @@ class RemoteHub(
         } finally {
             mutableRefreshing.value = mutableRefreshing.value - computerId
         }
+    }
+
+    private val mutableClaude = MutableStateFlow<Map<String, ComputerClaude>>(emptyMap())
+    /** Per computer, its own Claude Code as last checked. A computer not checked yet has no entry. */
+    val claudeState: StateFlow<Map<String, ComputerClaude>> = mutableClaude.asStateFlow()
+
+    /**
+     * The Claude Code of [computerId]. Its first use looks for `claude` on the
+     * computer and fails with words for the user when there is none.
+     */
+    suspend fun claude(computerId: String): ClaudeCodeEngine = lock.withLock {
+        claudeEngines[computerId]?.first ?: run {
+            store.computer(computerId) ?: error("That computer was removed.")
+            val host = ComputerClaudeHost(computerId)
+            val created = createClaude(host, host)
+            val job = scope.launch { created.events.collect { stream.emit(RemoteEvent(computerId, it, EngineKind.CLAUDE)) } }
+            claudeEngines[computerId] = Triple(created, host, job)
+            created
+        }
+    }
+
+    /**
+     * Look for Claude Code on the computer and read its sign-in and models,
+     * for the model menu. Quiet: a computer that cannot be asked reads as
+     * having none.
+     */
+    suspend fun checkClaude(computerId: String): ComputerClaude {
+        val found = runCatching {
+            val engine = claude(computerId)
+            val probe = claudeEngines[computerId]?.second?.probe(refresh = true)
+            if (probe?.path == null) return@runCatching ComputerClaude(installed = false)
+            val account: AccountStatus = engine.account()
+            ComputerClaude(
+                installed = true,
+                version = probe.version,
+                signedIn = account.signedIn,
+                account = account.label.takeIf { account.signedIn }.orEmpty(),
+                models = if (account.signedIn) engine.modelCatalog() else emptyList(),
+            )
+        }.getOrElse { ComputerClaude(installed = false) }
+        mutableClaude.value = mutableClaude.value + (computerId to found)
+        return found
     }
 
     private val mutableRefreshing = MutableStateFlow<Set<String>>(emptySet())
@@ -165,7 +225,11 @@ class RemoteHub(
             RemoteSetup.Ready(probe, account.label, connection.route)
         }.getOrElse { if (it is TailscaleCheck) RemoteSetup.NeedsTailscaleApproval(it.url) else RemoteSetup.Failed(it.message ?: it.toString()) }
         report(computerId, result)
-        if (result is RemoteSetup.Ready) refreshThreads(computerId)
+        if (result is RemoteSetup.Ready) {
+            refreshThreads(computerId)
+            // Beside the setup, never part of it: a computer without Claude is still ready.
+            scope.launch { checkClaude(computerId) }
+        }
         return result
     }
 
@@ -232,6 +296,8 @@ class RemoteHub(
     suspend fun disconnect(computerId: String) {
         val engine = lock.withLock { engines.remove(computerId) }
         engine?.let { (codex, job) -> runCatching { codex.close() }; job.cancel() }
+        lock.withLock { claudeEngines.remove(computerId) }?.let { (claude, _, job) -> runCatching { claude.close() }; job.cancel() }
+        mutableClaude.value = mutableClaude.value - computerId
         links.remove(computerId)?.let { withContext(Dispatchers.IO) { runCatching { it.link.close() } } }
         mutableSetup.value = mutableSetup.value - computerId
         if (store.computer(computerId) == null) mutableThreads.value = mutableThreads.value - computerId
@@ -242,7 +308,7 @@ class RemoteHub(
 
     suspend fun closeAll() {
         store.state.value.computers.forEach { disconnect(it.id) }
-        (engines.keys + links.keys).toSet().forEach { disconnect(it) }
+        (engines.keys + claudeEngines.keys + links.keys).toSet().forEach { disconnect(it) }
     }
 
     private fun report(computerId: String, step: RemoteSetup) {
@@ -361,6 +427,112 @@ class RemoteHub(
             withContext(Dispatchers.IO) { process?.destroy() }
             process = null
             mutableStatus.value = RuntimeStatus(RuntimePhase.READY, "Codex stopped on the computer")
+        }
+    }
+
+    /**
+     * The computer's own Claude Code, as the Claude engine's host and place.
+     *
+     * Short commands (`auth status`, the model probe) and each chat's process
+     * all start the same way: a script file under `~/.hey-mike/claude` on the
+     * computer, then one command that runs it.
+     */
+    private inner class ComputerClaudeHost(private val computerId: String) : ClaudeProcessHost, ClaudeComputer {
+        private val mutableStatus = MutableStateFlow(RuntimeStatus())
+        override val status: StateFlow<RuntimeStatus> = mutableStatus
+        // Nothing of the computer's lives here: the engine only looks for app-installed skills, and finds none.
+        override val homeDirectory: File get() = File(claudeScratch, computerId).apply { mkdirs() }
+        @Volatile private var cached: ClaudeProbe? = null
+        private val started = java.util.concurrent.CopyOnWriteArrayList<Process>()
+
+        private fun computer(): RemoteComputer = store.computer(computerId) ?: error("That computer was removed.")
+
+        override val instructions: String get() = RemoteInstructions.forComputer(computer(), EngineKind.CLAUDE)
+        override val permissionMode: String get() = if (computer().access == RemoteAccess.FULL) "bypassPermissions" else "acceptEdits"
+        override val askUser: Boolean get() = computer().access != RemoteAccess.FULL
+        override val notReady: String
+            get() = "Claude Code is not on ${computer().label}. Install it there, sign in with `claude`, and connect the computer again."
+
+        suspend fun probe(refresh: Boolean): ClaudeProbe {
+            if (!refresh) cached?.let { return it }
+            val found = withContext(Dispatchers.IO) {
+                val connection = connection(computerId)
+                ClaudeLaunch.parseProbe(connection.link.run(ClaudeLaunch.probe(connection.os), 60_000))
+            }
+            cached = found
+            mutableStatus.value =
+                if (found.path != null) RuntimeStatus(RuntimePhase.READY, "Claude Code ${found.version}".trim())
+                else RuntimeStatus(RuntimePhase.MISSING, notReady)
+            return found
+        }
+
+        /** Find `claude` once per connection. Nothing is downloaded or installed. */
+        override suspend fun prepare() { probe(refresh = false) }
+
+        override suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String>): Process =
+            startScript("run-" + Integer.toHexString(args.hashCode()), cwd = null, files = emptyMap(), env = extraEnv) { args }
+
+        override suspend fun startChat(
+            chatId: String,
+            cwd: String,
+            files: Map<String, String>,
+            env: Map<String, String>,
+            args: (paths: Map<String, String>) -> List<String>,
+        ): Process {
+            require(chatId.matches(LinuxHost.THREAD_ID)) { "Unexpected chat id" }
+            return startScript("chat-$chatId", cwd, files, env, args)
+        }
+
+        private suspend fun startScript(
+            name: String,
+            cwd: String?,
+            files: Map<String, String>,
+            env: Map<String, String>,
+            args: (Map<String, String>) -> List<String>,
+        ): Process = withContext(Dispatchers.IO) {
+            try {
+                launchOnce(name, cwd, files, env, args)
+            } catch (error: Exception) {
+                // The link may have dropped while idle; one fresh connection, then the error stands.
+                if (error is IllegalArgumentException) throw error
+                dropLink(computerId)
+                cached = null
+                launchOnce(name, cwd, files, env, args)
+            }.also { started += it; started.removeAll { old -> !old.isAlive } }
+        }
+
+        private suspend fun launchOnce(
+            name: String,
+            cwd: String?,
+            files: Map<String, String>,
+            env: Map<String, String>,
+            args: (Map<String, String>) -> List<String>,
+        ): Process {
+            val connection = connection(computerId)
+            val found = probe(refresh = false)
+            val claude = found.path ?: error(notReady)
+            val folder = ClaudeLaunch.folder(found.home, connection.os)
+            val paths = files.mapValues { (file, text) -> put(connection, ClaudeLaunch.file(folder, file, connection.os), text) }
+            val script = ClaudeLaunch.script(connection.os, claude, cwd, env, args(paths))
+            val scriptPath = put(connection, ClaudeLaunch.file(folder, ClaudeLaunch.scriptName(name, connection.os), connection.os), script)
+            return connection.link.start(ClaudeLaunch.command(connection.os, scriptPath, connection.probe(refresh = false).powerShellDefault))
+        }
+
+        /** Write [text] to [remotePath] on the computer and return the path. */
+        private suspend fun put(connection: Connection, remotePath: String, text: String): String {
+            val local = File.createTempFile("claude-launch", ".tmp", homeDirectory)
+            try {
+                local.writeText(text)
+                connection.link.upload(local, remotePath, replace = true)
+            } finally {
+                local.delete()
+            }
+            return remotePath
+        }
+
+        override suspend fun stopAll() {
+            withContext(Dispatchers.IO) { started.forEach { runCatching { it.destroy() } } }
+            started.clear()
         }
     }
 

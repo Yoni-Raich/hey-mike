@@ -51,7 +51,8 @@ object Onboarding {
     /**
      * Raise this when the consent text changes in substance. Everyone who
      * agreed to an older version is asked again before the next run.
-     * Version 2 names Anthropic, which gets the data of Claude chats.
+     * Version 2 names Anthropic, which gets the data of Claude chats, and says
+     * that a chat which changes model gives its earlier messages to the other AI.
      */
     const val CONSENT_VERSION = 2
 

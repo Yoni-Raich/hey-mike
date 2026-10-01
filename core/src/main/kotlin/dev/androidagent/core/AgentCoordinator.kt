@@ -433,8 +433,8 @@ class AgentCoordinator(
             // Sign-in is per engine: a Claude chat needs Claude, not Codex.
             val kind = session.engine
             synchronized(lifecycleLock) { if (isCurrentLocked(token)) { runWorkspace = work; runEngine = kind } }
-            engine.connect(kind)
-            check(engine.account(kind).signedIn) { "Sign in to ${kind.label} in Settings first." }
+            engine.connect(kind, work)
+            check(engine.account(kind, work).signedIn) { "Sign in to ${kind.label} in Settings first." }
             ensureCurrent(token)
             val openedThread = engine.openSession(work, session.engineThreadId, model, tools.definitions)
             synchronized(lifecycleLock) {

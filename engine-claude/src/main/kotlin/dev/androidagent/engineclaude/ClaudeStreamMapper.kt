@@ -324,13 +324,15 @@ internal class ClaudeStreamMapper(
         "Glob" -> "Find files" to "Looking through session files"
         "Grep" -> "Search files" to "Looking through session files"
         "Skill" -> "Load skill" to "Loading a skill"
+        // Only a computer's Claude Code has a shell.
+        "Bash", "PowerShell" -> "Run command" to "Running a command"
         else -> "Tool: $name" to "Working"
     }
 
     private fun builtinDetail(input: JsonObject): String {
         val path = input.string("file_path").ifBlank { input.string("path") }
         if (path.isNotBlank()) return relative(path)
-        return input.string("pattern").ifBlank { input.string("skill") }
+        return input.string("pattern").ifBlank { input.string("skill") }.ifBlank { input.string("command").take(MAX_COMMAND_SHOWN) }
     }
 
     private fun relative(path: String): String {
@@ -386,5 +388,6 @@ internal class ClaudeStreamMapper(
 
     private companion object {
         const val MAX_RETIRED = 256
+        const val MAX_COMMAND_SHOWN = 400
     }
 }

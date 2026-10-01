@@ -1,28 +1,37 @@
 package dev.androidagent.remote
 
+import dev.androidagent.core.EngineKind
+
 /**
- * Thread instructions for Codex running on one of the user's computers.
+ * Thread instructions for Codex or Claude Code running on one of the user's
+ * computers.
  *
- * Codex brings its own tools, the project's AGENTS.md and the computer's
- * skills; this only says who is talking, from where, and which rules still
- * hold. The phone's device tools are advertised to the thread too, so the
- * rules about them are repeated here.
+ * The engine brings its own tools, the project's own instructions file and
+ * the computer's skills; this only says who is talking, from where, and which
+ * rules still hold. The phone's device tools are advertised to the thread
+ * too, so the rules about them are repeated here.
  */
 object RemoteInstructions {
-    fun forComputer(computer: RemoteComputer): String {
+    fun forComputer(computer: RemoteComputer, engine: EngineKind = EngineKind.CODEX): String {
+        val claude = engine == EngineKind.CLAUDE
         val access = when (computer.access) {
-            RemoteAccess.ASK -> "Commands that need more than the workspace sandbox allows ask the user first; their answer comes from the phone."
+            RemoteAccess.ASK ->
+                if (claude) "A command or a change outside the chat's folder that needs permission asks the user first; their answer comes from the phone."
+                else "Commands that need more than the workspace sandbox allows ask the user first; their answer comes from the phone."
             RemoteAccess.FULL -> "The user gave you full access to this computer without approval prompts. Be careful with anything destructive or hard to undo."
         }
         val linux = computer.os == HostOs.LINUX
         val desktop = if (linux) LINUX_DESKTOP else WINDOWS_DESKTOP
-        return """You are Mike, the AI agent from the Hey Mike app. The user is talking to you from their Android phone. In this chat you run as Codex on their ${if (linux) "Linux" else "Windows"} computer "${computer.label}", reached from the phone over SSH, and you work in the chat's folder on that computer.
+        val runsAs = if (claude) "Claude Code" else "Codex"
+        val ownFiles = if (claude) "the computer's own skills and CLAUDE.md" else "the computer's own skills and AGENTS.md"
+        val poweredBy = if (claude) "Anthropic's Claude models through Claude Code on this computer" else "OpenAI's Codex models through Codex on this computer"
+        return """You are Mike, the AI agent from the Hey Mike app. The user is talking to you from their Android phone. In this chat you run as $runsAs on their ${if (linux) "Linux" else "Windows"} computer "${computer.label}", reached from the phone over SSH, and you work in the chat's folder on that computer.
 
-Your shell, file edits, git and the computer's own skills and AGENTS.md all act on the computer, not the phone. $access
+Your shell, file edits, git and $ownFiles all act on the computer, not the phone. $access
 
 $desktop
 
-Identity: Your name is Mike. Write it as מייק only when you reply in Hebrew; in any other language write just Mike. You are software, not a person. If asked what powers you, say you run on OpenAI's Codex models through Codex on this computer. Always answer in the language of the user's latest message.
+Identity: Your name is Mike. Write it as מייק only when you reply in Hebrew; in any other language write just Mike. You are software, not a person. If asked what powers you, say you run on $poweredBy. Always answer in the language of the user's latest message.
 
 The phone: The Hey Mike device tools in your tool list operate the user's phone, not this computer. Use them only when the user asks for something on the phone.
 

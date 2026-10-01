@@ -130,6 +130,40 @@ internal object ClaudeProtocol {
     }
 
     /**
+     * Arguments for a chat on one of the user's computers. Claude Code keeps
+     * its own tools, settings, skills and MCP servers there, as when the user
+     * runs it themselves; Mike's text is added to its system prompt, and the
+     * phone tools are the one server Mike brings, allowed without a prompt
+     * because the app has its own approvals for them. With [askUser], a tool
+     * that needs permission asks over the control channel (`stdio`).
+     */
+    fun computerChatArgs(
+        sessionId: String,
+        resume: Boolean,
+        model: String,
+        effort: String?,
+        mcpConfig: String,
+        appendPromptFile: String,
+        permissionMode: String,
+        askUser: Boolean,
+    ): List<String> = buildList {
+        add("-p")
+        add("--input-format"); add("stream-json")
+        add("--output-format"); add("stream-json")
+        add("--verbose")
+        add("--include-partial-messages")
+        add("--replay-user-messages")
+        if (resume) { add("--resume"); add(sessionId) } else { add("--session-id"); add(sessionId) }
+        add("--model"); add(model)
+        if (effort != null) { add("--effort"); add(effort) }
+        add("--mcp-config"); add(mcpConfig)
+        add("--allowedTools"); add("$MCP_TOOL_PREFIX*")
+        add("--permission-mode"); add(permissionMode)
+        if (askUser) { add("--permission-prompt-tool"); add("stdio") }
+        add("--append-system-prompt-file"); add(appendPromptFile)
+    }
+
+    /**
      * A process that only answers control requests (`initialize`,
      * `get_usage`) and never gets a message. `--no-session-persistence`
      * (the SDK's `persistSession: false`) keeps it from writing a transcript.

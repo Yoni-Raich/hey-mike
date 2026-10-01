@@ -254,6 +254,14 @@ interface AgentEngine {
     suspend fun connect(kind: EngineKind) = connect()
     /** The sign-in that runs chats of [kind]. */
     suspend fun account(kind: EngineKind): AccountStatus = account()
+    /**
+     * [connect] for the chat whose folder is [workspace]. A chat that runs
+     * somewhere else, such as on a computer, may need a different engine of
+     * the same kind than a chat on this phone.
+     */
+    suspend fun connect(kind: EngineKind, workspace: File) = connect(kind)
+    /** [account] for the chat whose folder is [workspace]: the sign-in its turn will run on. */
+    suspend fun account(kind: EngineKind, workspace: File): AccountStatus = account(kind)
     suspend fun refreshUsage() {}
     suspend fun login(): AccountStatus
     suspend fun logout()

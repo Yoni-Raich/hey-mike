@@ -9,6 +9,7 @@ android {
 dependencies {
     api(project(":core"))
     api(project(":engine-codex"))
+    api(project(":engine-claude"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // Pure-Java SSH client: Android networking and DNS, no native binary to stage.

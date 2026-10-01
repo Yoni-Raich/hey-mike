@@ -73,6 +73,11 @@ import java.util.concurrent.TimeUnit
  * [answerTool], so the coordinator's approvals, overlay and stop flow are the
  * same as for Codex.
  *
+ * With a [computer], the engine runs that computer's own Claude Code
+ * instead: the same turns, steering and stop, with the phone tools carried on
+ * the process's own streams ([StdioMcp]) and the computer's tools asking the
+ * user on the phone ([ClaudePermission]).
+ *
  * Compliance: the engine only passes `claude` arguments. The host owns the
  * binary, its environment and the proxy. Sign-in is `claude auth login` with
  * the pasted code relayed to that process only; sign-in state comes only from
@@ -86,6 +91,8 @@ class ClaudeCodeEngine(
     private val interruptGraceMs: Long = 3_000,
     private val maxLiveChats: Int = 2,
     private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
+    /** Set when this engine runs the Claude Code of one of the user's computers, reached through [host]. */
+    private val computer: ClaudeComputer? = null,
 ) : AgentEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 256)
@@ -94,6 +101,7 @@ class ClaudeCodeEngine(
     private val chats = ConcurrentHashMap<String, Chat>()
     private val chatsLock = Mutex()
     private val pendingTools = ConcurrentHashMap<String, PendingTool>()
+    private val pendingApprovals = ConcurrentHashMap<String, PendingApproval>()
     private val modelLock = Mutex()
     @Volatile private var models: List<AgentModel>? = null
     private val usageLock = Mutex()
@@ -103,17 +111,26 @@ class ClaudeCodeEngine(
 
     private class PendingTool(val threadId: String, val turnId: String, val result: CompletableDeferred<ToolResult>)
 
+    /** A permission prompt of the computer's Claude Code, waiting for the user's answer on the phone. */
+    private class PendingApproval(val threadId: String, val turnId: String, val answer: suspend (allow: Boolean) -> Unit)
+
     private fun installed(): Boolean = host.status.value.phase.let { it == RuntimePhase.READY || it == RuntimePhase.RUNNING }
 
-    /** Checks only. The binary is never downloaded from here: that needs the user's consent in Settings. */
+    /**
+     * Checks only. The binary is never downloaded from here: that needs the
+     * user's consent in Settings. For a computer, the host first looks for
+     * the `claude` its user installed there; nothing is installed for them.
+     */
     override suspend fun connect() {
-        check(installed()) { DOWNLOAD_FIRST }
+        if (computer != null) host.prepare()
+        check(installed()) { computer?.notReady ?: DOWNLOAD_FIRST }
     }
 
     // ---- account ----------------------------------------------------------------
 
     override suspend fun account(): AccountStatus {
-        if (!installed()) return AccountStatus(false, DOWNLOAD_FIRST)
+        if (computer != null) runCatching { host.prepare() }
+        if (!installed()) return AccountStatus(false, computer?.notReady ?: DOWNLOAD_FIRST)
         accountCache?.let { (at, status) -> if (status.signedIn && System.nanoTime() - at < ACCOUNT_CACHE_NS) return status }
         val status = ClaudeProtocol.parseAuthStatus(runCommand(ClaudeProtocol.AUTH_STATUS_ARGS, COMMAND_TIMEOUT_MS))
         accountCache = System.nanoTime() to status
@@ -249,15 +266,19 @@ class ClaudeCodeEngine(
      * fresh UUID. The process starts with the first turn, which knows the
      * reasoning effort, so a chat is not started twice.
      */
-    override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
+    override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
+        openSessionAt(workspace.absolutePath, threadId, model, tools)
+
+    /** [openSession] for a folder named as the machine that runs `claude` spells it: a computer's project folder. */
+    suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
         connect()
         val known = ClaudeProtocol.isSessionId(threadId)
         val id = if (known) threadId!! else UUID.randomUUID().toString()
-        val dir = workspace.absoluteFile
+        val dir = cwd
         val wantedModel = ClaudeProtocol.normalizeModel(model, models.orEmpty().map { it.id })
         return chatsLock.withLock {
             val existing = chats[id]
-            if (existing != null && existing.workspace != dir) {
+            if (existing != null && existing.cwd != dir) {
                 existing.shutdown()
                 chats.remove(id)
             }
@@ -396,14 +417,21 @@ class ClaudeCodeEngine(
         pendingTools[requestId]?.result?.complete(result)
     }
 
-    /** `dontAsk` and the allow rules never prompt, so there is nothing to answer. */
-    override suspend fun answerApproval(requestId: String, allow: Boolean) = Unit
+    /**
+     * On the phone `dontAsk` and the allow rules never prompt, so there is
+     * nothing to answer. A computer's Claude Code asks before a tool that
+     * needs permission, and this is the user's answer.
+     */
+    override suspend fun answerApproval(requestId: String, allow: Boolean) {
+        pendingApprovals.remove(requestId)?.answer?.invoke(allow)
+    }
 
     override suspend fun close() {
         val all = chatsLock.withLock { chats.values.toList().also { chats.clear() } }
         all.forEach { runCatching { it.shutdown() } }
         pendingTools.values.forEach { it.result.complete(STOPPED) }
         pendingTools.clear()
+        pendingApprovals.clear()
         loginProcess?.destroyForcibly()
         loginProcess = null
         runCatching { host.stopAll() }
@@ -411,6 +439,10 @@ class ClaudeCodeEngine(
 
     private fun failPendingTools(threadId: String, turnId: String) {
         pendingTools.values.filter { it.threadId == threadId && it.turnId == turnId }.forEach { it.result.complete(STOPPED) }
+        // A prompt nobody answered before the turn ended is refused, so the CLI is not left waiting.
+        pendingApprovals.entries.filter { it.value.threadId == threadId && it.value.turnId == turnId }.forEach { (id, pending) ->
+            if (pendingApprovals.remove(id) != null) scope.launch { runCatching { pending.answer(false) } }
+        }
     }
 
     private fun home(): File = host.homeDirectory.apply { mkdirs() }
@@ -435,10 +467,11 @@ class ClaudeCodeEngine(
 
     private class ChatStartException(message: String, val notFound: Boolean) : IllegalStateException(message)
 
-    private inner class Chat(val threadId: String, val workspace: File, @Volatile var resumable: Boolean) {
+    private inner class Chat(val threadId: String, val cwd: String, @Volatile var resumable: Boolean) {
         val lock = Mutex()
         val state = Any()
-        val mapper = ClaudeStreamMapper(threadId, workspace)
+        // Paths are shown relative to the chat folder only where this JVM can name it.
+        val mapper = ClaudeStreamMapper(threadId, if (computer == null) File(cwd) else null)
         @Volatile var model: String = ClaudeProtocol.DEFAULT_MODEL
         @Volatile var effort: String? = null
         @Volatile var tools: List<ToolDefinition> = emptyList()
@@ -485,9 +518,55 @@ class ClaudeCodeEngine(
             running = wanted
         }
 
-        private suspend fun start(resume: Boolean) = withContext(Dispatchers.IO) {
+        private suspend fun start(resume: Boolean) = if (computer != null) startOnComputer(computer, resume) else startOnPhone(resume)
+
+        /**
+         * The computer's own Claude Code, in the chat's project folder. The
+         * phone tools ride on this process's streams, so there is no server
+         * to start and no token to write.
+         */
+        private suspend fun startOnComputer(place: ClaudeComputer, resume: Boolean) = withContext(Dispatchers.IO) {
+            try {
+                val files = mapOf(
+                    PROMPT_FILE to place.instructions,
+                    MCP_CONFIG_FILE to StdioMcp.config(ClaudeProtocol.MCP_SERVER_NAME),
+                )
+                attach(place.startChat(threadId, cwd, files, ClaudeProtocol.CHAT_ENV) { paths ->
+                    ClaudeProtocol.computerChatArgs(
+                        threadId, resume, model, effort,
+                        mcpConfig = paths.getValue(MCP_CONFIG_FILE),
+                        appendPromptFile = paths.getValue(PROMPT_FILE),
+                        permissionMode = place.permissionMode,
+                        askUser = place.askUser,
+                    )
+                })
+                val reply = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) {
+                    request { id -> ClaudeProtocol.controlRequest(id, "initialize", StdioMcp.initializeExtra(ClaudeProtocol.MCP_SERVER_NAME)) }
+                } ?: error("Claude did not start in time")
+                ClaudeProtocol.parseModels(reply).takeIf { it.isNotEmpty() }?.let { models = it }
+            } catch (error: CancellationException) {
+                stopProcess()
+                throw error
+            } catch (error: Exception) {
+                throw startFailure(error)
+            }
+        }
+
+        /** Stop what did start, and say why with the last lines of stderr. */
+        private suspend fun startFailure(error: Exception): ChatStartException {
+            stderrJob?.let { job -> withTimeoutOrNull(1_000) { job.join() } }
+            val tail = stderrSnapshot(5)
+            stopProcess()
+            val detail = listOfNotNull(error.message, tail.takeIf { it.isNotBlank() }).joinToString(" | ")
+            return ChatStartException(
+                SecretRedactor.redact("Claude could not open this chat: $detail"),
+                notFound = tail.contains(NOT_FOUND, ignoreCase = true),
+            )
+        }
+
+        private suspend fun startOnPhone(resume: Boolean) = withContext(Dispatchers.IO) {
             val dir = dir().apply { mkdirs() }
-            val promptFile = File(dir, "system-prompt.md")
+            val promptFile = File(dir, PROMPT_FILE)
             promptFile.writeText(ClaudeInstructions.systemPrompt(readAgentsMd()))
             val toolServer = toolServers.create(ClaudeProtocol.MCP_SERVER_NAME, { tools }) { name, arguments ->
                 onToolCall(name, arguments)
@@ -497,7 +576,7 @@ class ClaudeCodeEngine(
                 val mcpFile = File(dir, MCP_CONFIG_FILE)
                 writePrivate(mcpFile, toolServer.start())
                 val args = ClaudeProtocol.chatArgs(threadId, resume, model, effort, mcpFile.absolutePath, promptFile.absolutePath)
-                attach(host.start(args, workspace.apply { mkdirs() }, ClaudeProtocol.CHAT_ENV))
+                attach(host.start(args, File(cwd).apply { mkdirs() }, ClaudeProtocol.CHAT_ENV))
                 val reply = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { control("initialize") }
                     ?: error("Claude did not start in time")
                 ClaudeProtocol.parseModels(reply).takeIf { it.isNotEmpty() }?.let { models = it }
@@ -505,19 +584,12 @@ class ClaudeCodeEngine(
                 stopProcess()
                 throw error
             } catch (error: Exception) {
-                stderrJob?.let { job -> withTimeoutOrNull(1_000) { job.join() } }
-                val tail = stderrSnapshot(5)
-                stopProcess()
-                val detail = listOfNotNull(error.message, tail.takeIf { it.isNotBlank() }).joinToString(" | ")
-                throw ChatStartException(
-                    SecretRedactor.redact("Claude could not open this chat: $detail"),
-                    notFound = tail.contains(NOT_FOUND, ignoreCase = true),
-                )
+                throw startFailure(error)
             }
         }
 
         private fun readAgentsMd(): String? =
-            File(workspace, "AGENTS.md").takeIf { it.isFile && it.length() <= MAX_AGENTS_MD_BYTES }?.let { runCatching { it.readText() }.getOrNull() }
+            File(cwd, "AGENTS.md").takeIf { it.isFile && it.length() <= MAX_AGENTS_MD_BYTES }?.let { runCatching { it.readText() }.getOrNull() }
 
         private fun attach(started: Process) {
             synchronized(stderrLock) { stderrTail.clear() }
@@ -566,16 +638,63 @@ class ClaudeCodeEngine(
                         if (signal.error != null) waiter.completeExceptionally(IllegalStateException(signal.error))
                         else waiter.complete(signal.response ?: JsonObject(emptyMap()))
                     }
-                    is Signal.ControlRequest -> runCatching { write(ClaudeProtocol.answerControlRequest(signal.requestId, signal.request)) }
+                    is Signal.ControlRequest -> onControlRequest(signal)
                     is Signal.Init -> checkInit(signal.message)
                     is Signal.Ended -> failPendingTools(threadId, signal.turn.turnId)
                 }
             }
         }
 
+        /**
+         * A request from the CLI. On the phone only permission prompts come,
+         * and they are refused. On a computer the phone tools arrive here as
+         * MCP messages, each answered in its own coroutine because a tool
+         * call waits for the app, and a permission prompt goes to the user.
+         */
+        private suspend fun onControlRequest(signal: Signal.ControlRequest) {
+            val place = computer
+            val subtype = signal.request.string("subtype")
+            val mcp = if (place != null && subtype == "mcp_message") StdioMcp.messageOf(signal.request, ClaudeProtocol.MCP_SERVER_NAME) else null
+            when {
+                mcp != null -> scope.launch {
+                    val body = try {
+                        StdioMcp.answer(ClaudeProtocol.MCP_SERVER_NAME, mcp, tools) { name, arguments -> onToolCall(name, arguments) }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        runCatching { write(ClaudeProtocol.controlError(signal.requestId, "The phone could not answer")) }
+                        return@launch
+                    }
+                    runCatching { write(ClaudeProtocol.controlSuccess(signal.requestId, body)) }
+                }
+                place != null && place.askUser && subtype == "can_use_tool" -> askUser(signal)
+                else -> runCatching { write(ClaudeProtocol.answerControlRequest(signal.requestId, signal.request)) }
+            }
+        }
+
+        private suspend fun askUser(signal: Signal.ControlRequest) {
+            val turn = synchronized(state) { mapper.toolTurn() }
+            if (turn == null) {
+                runCatching { write(ClaudeProtocol.controlSuccess(signal.requestId, ClaudePermission.deny("No task is running in this chat."))) }
+                return
+            }
+            val approvalId = "claude-ask-${UUID.randomUUID()}"
+            pendingApprovals[approvalId] = PendingApproval(threadId, turn.turnId) { allow ->
+                val answer = if (allow) ClaudePermission.allow(signal.request) else ClaudePermission.deny("The user did not allow this.")
+                runCatching { write(ClaudeProtocol.controlSuccess(signal.requestId, answer)) }
+            }
+            // A stop between the check above and here still refuses the prompt.
+            if (turn.ended || turn.interruptRequested) {
+                failPendingTools(threadId, turn.turnId)
+                return
+            }
+            stream.emit(EngineEvent.Approval(approvalId, ClaudePermission.METHOD, ClaudePermission.details(signal.request, cwd), threadId, turn.turnId))
+        }
+
         private fun checkInit(message: JsonObject) {
             val version = message.string("claude_code_version")
-            if (version.isNotBlank() && version != ClaudeProtocol.PINNED_VERSION) {
+            // A computer runs whichever Claude Code its user installed.
+            if (computer == null && version.isNotBlank() && version != ClaudeProtocol.PINNED_VERSION) {
                 System.err.println("ClaudeCodeEngine: claude $version is running, expected ${ClaudeProtocol.PINNED_VERSION}")
             }
             val mike = (message["mcp_servers"] as? JsonArray)?.mapNotNull { it as? JsonObject }
@@ -667,7 +786,7 @@ class ClaudeCodeEngine(
             }
             server?.stop()
             server = null
-            File(dir(), MCP_CONFIG_FILE).delete()
+            if (computer == null) File(dir(), MCP_CONFIG_FILE).delete()
             failControls()
             synchronized(state) { mapper.processEnded("") }
         }
@@ -819,6 +938,7 @@ class ClaudeCodeEngine(
         private const val TURN_OVER = "The task has already finished."
         private const val NOT_FOUND = "No conversation found"
         private const val MCP_CONFIG_FILE = "mcp.json"
+        private const val PROMPT_FILE = "system-prompt.md"
         private const val PROBE_ID = "probe-initialize"
         private const val PROBE_USAGE_ID = "probe-usage"
         private const val USAGE_TIMEOUT_MS = 20_000L
