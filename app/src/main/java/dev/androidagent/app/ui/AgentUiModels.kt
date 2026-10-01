@@ -386,8 +386,6 @@ data class AgentUiActions(
     val onOpenFolderChat: (computerId: String, path: String) -> Unit = { _, _ -> },
     /** The engine new chats start on. */
     val onDefaultEngine: (EngineKind) -> Unit = {},
-    /** Run this chat on the other engine from its next message. */
-    val onChooseChatEngine: (EngineKind) -> Unit = {},
     /** Download Claude Code, after the user saw its size. */
     val onDownloadClaude: () -> Unit = {},
     val onCancelClaudeDownload: () -> Unit = {},

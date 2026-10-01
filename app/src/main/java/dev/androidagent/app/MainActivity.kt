@@ -343,7 +343,6 @@ class MainActivity : ComponentActivity() {
             model.letMikeSetUpWireless()
         },
         onDefaultEngine = model::setDefaultEngine,
-        onChooseChatEngine = { kind -> model.useEngine(kind) },
         onDownloadClaude = { ensureService(); model.downloadClaude() },
         onCancelClaudeDownload = { model.cancelClaudeDownload() },
         onClaudeLogin = { ensureService(); model.claudeLogin() },

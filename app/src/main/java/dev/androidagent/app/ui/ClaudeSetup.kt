@@ -35,7 +35,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -250,28 +249,5 @@ private fun BusyButton(label: String, busy: Boolean, enabled: Boolean = true, on
         } else {
             Text(label)
         }
-    }
-}
-
-/** The account choice of an empty phone chat. Later it changes from the model menu, like any model. */
-@Composable
-internal fun ChatEngineChoice(state: AgentUiState, actions: AgentUiActions) {
-    // Nothing to choose on a phone Claude cannot run on; Settings says why.
-    if (state.claude.install.phase == ClaudeInstallPhase.UNSUPPORTED && state.activeEngine == EngineKind.CODEX) return
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            EngineKind.values().forEach { kind ->
-                FilterChip(
-                    selected = kind == state.activeEngine,
-                    onClick = { if (kind != state.activeEngine) actions.onChooseChatEngine(kind) },
-                    label = { Text(providerName(kind)) },
-                )
-            }
-        }
-        Text(
-            "You can change this later too, from the model menu.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
