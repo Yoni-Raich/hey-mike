@@ -4,7 +4,8 @@
 
 Asked: Claude should be part of the whole system, not a separate kind of
 chat. Built on PR #99 after merging `dev` (parallel chats, the model menu)
-into it. **Nothing here ran on a phone yet**; see "Not tested".
+into it. On a phone only the install and the database upgrade ran so far;
+see "On a phone" and "Not tested".
 
 What changed:
 
@@ -66,12 +67,29 @@ Checks (Windows 11, this worktree):
     argument) under Git Bash `sh`: `initialize` answered, and it ended when
     stdin closed.
 
+On a phone (Redmi 23053RN02Y, Android 15, serial `cd4928027d76`, dev debug
+of `f1a07d0`, run by a Sonnet subagent with the owner's approval):
+
+- The phone had the automated dev build (versionCode 1018, `sessions.db`
+  `user_version` 2, no `engine` column). `adb install -r` was refused as a
+  downgrade (this build is versionCode 28); `adb install -r -d` succeeded.
+  No Xiaomi install dialog appeared.
+- First launch: the process stayed up and the log had no `FATAL EXCEPTION`
+  or `SQLiteException`. `sessions.db` then read `user_version` 4 with the
+  columns `engine`, `parked`, `catch_up` added; 60 chats and 968 messages
+  were still there, all `CODEX`. Only schema and counts were read from a
+  pulled copy, which was deleted.
+- The app opened on the consent screen, as it should for consent version 2,
+  with the new sentence about a chat that changes model. The test stopped
+  there: accepting it is the owner's to do.
+- The accessibility service was already off before the install
+  (`enabled_accessibility_services` was `null`) and still is.
+
 Not tested:
 
-- **Anything on a phone.** Switching a real chat between Codex and Claude and
-  back, the hand-over text as the models read it, the model menu on a
-  screen, voice in a Claude chat (needs sound), and the v3 to v4 database
-  upgrade on a phone that already has chats.
+- **On a phone, everything after the consent screen.** Switching a real chat
+  between Codex and Claude and back, the hand-over text as the models read
+  it, the model menu on a screen, and voice in a Claude chat (needs sound).
 - **A real computer over SSH.** The Claude probe scripts were not run on a
   computer (the Linux one not at all), the launch was not run through JSch
   and SFTP, and no Claude turn ran from the phone on a PC. The `.sh` script
