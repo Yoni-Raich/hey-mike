@@ -1,5 +1,27 @@
 # Progress
 
+### Usage widget shows the Claude account — 2026-10-01
+
+Asked: the home screen usage widget should show the Claude account too.
+
+- The widget draws the signed-in Claude account as the last orb, marked
+  "Claude" with the age of its reading. It is a saved reading: Claude reports
+  its quota only while a Claude process runs, and the widget cannot start one.
+- `LastUsageStore` also keeps the account's name (`saveAccount`,
+  `clearAccount`); the view model saves it from the Claude sign-in status and
+  refreshes the widget on a new reading, a new name and a sign-out.
+  `readSaved()` gives the widget the reading with its expired windows, which
+  it draws as empty like the Codex rows.
+- With more than four orbs the Claude row stays and Codex accounts make room.
+
+Checks (Windows 11): `./gradlew.bat :core:test :app:testDevDebugUnitTest
+--tests "*UsageWidgetTest" :app:lintDevDebug --no-daemon`: passed (new:
+`UsageWidgetTest` 4, `AccountUsageBookTest` +4, `LastUsageStoreTest` +3; lint
+0 errors).
+
+Not tested: the widget on a phone, so the real look of the fifth row and its
+text width are unchecked. The full gate was not re-run after this change.
+
 ### Claude as a full engine: switch mid-chat, one model menu, computers, voice — 2026-10-01
 
 Asked: Claude should be part of the whole system, not a separate kind of

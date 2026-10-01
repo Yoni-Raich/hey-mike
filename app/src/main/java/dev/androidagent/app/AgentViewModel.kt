@@ -211,7 +211,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
         } }
         // Claude's own sign-in and its 5-hour and weekly limits. The home
-        // screen widget stays Codex-only.
+        // screen widget shows them too, under the account's name.
         viewModelScope.launch { graph.claudeEngine.events.collect { event ->
             when (event) {
                 is EngineEvent.AccountChanged -> {
@@ -237,6 +237,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             graph.claudeHost.installState.collect { install -> mutable.update { it.copy(claude = it.claude.copy(install = install)) } }
+        }
+        viewModelScope.launch {
+            mutable.map { it.claude.account }.distinctUntilChanged().collect(::rememberClaudeAccount)
         }
         // A binary already on the phone, or one just downloaded: read the sign-in.
         viewModelScope.launch {
@@ -289,8 +292,27 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private fun recordClaudeUsage(limits: List<UsageLimit>) {
         if (limits.isEmpty()) return
         mutable.update { it.copy(claude = it.claude.copy(usageReadAtMillis = System.currentTimeMillis())) }
-        viewModelScope.launch(Dispatchers.IO) { runCatching { graph.claudeUsage.save(limits) } }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.claudeUsage.save(limits) }
+            refreshWidget()
+        }
     }
+
+    /**
+     * Keep the signed-in Claude account's name for the widget, which cannot
+     * ask Claude for it. A status that says signed out removes the name, so the
+     * widget stops showing an account that is gone.
+     */
+    private fun rememberClaudeAccount(status: AccountStatus?) {
+        status ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val before = graph.claudeUsage.account()
+            if (status.signedIn) graph.claudeUsage.saveAccount(status.label) else graph.claudeUsage.clearAccount()
+            if (graph.claudeUsage.account() != before) refreshWidget()
+        }
+    }
+
+    private fun refreshWidget() = dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
     // The chat on screen, if nobody has written in it yet, is already a new chat.
@@ -901,6 +923,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // The saved limits belong to the account that signed out.
         withContext(Dispatchers.IO) { runCatching { graph.claudeUsage.clear() } }
         mutable.update { it.copy(claude = it.claude.copy(account = AccountStatus(false, CLAUDE_SIGN_IN), usageReadAtMillis = null)) }
+        refreshWidget()
         project()
     }
 

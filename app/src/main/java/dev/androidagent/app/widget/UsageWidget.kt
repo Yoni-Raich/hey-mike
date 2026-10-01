@@ -42,6 +42,8 @@ import dev.androidagent.app.R
 import dev.androidagent.app.ui.quotaColor
 import dev.androidagent.core.AccountUsageOverview
 import dev.androidagent.core.AccountUsageRow
+import dev.androidagent.core.ClaudeAccountUsage
+import dev.androidagent.core.EngineKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,7 +57,9 @@ import kotlin.math.sqrt
 // Every saved account's quota on the home screen, each as a still frame of
 // Mike's orb: the sphere takes the quota colour and dims as the window fills,
 // and the ring around it fills the way the top-bar meter does. Only the live
-// account can be read; the others show their last reading and its age.
+// account can be read; the others show their last reading and its age. The
+// signed-in Claude account is the last orb, marked "Claude": its quota is a
+// reading from when a Claude chat last ran.
 
 class UsageWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) = renderAsync(context, manager, ids)
@@ -93,9 +97,17 @@ object UsageWidget {
 
     internal fun render(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val graph = (context as? AgentApplication)?.graph ?: return
-        val rows = AccountUsageOverview.rows(graph.accounts.state(), graph.usageBook.all(), System.currentTimeMillis())
-        val views = build(context, rows.take(MAX_ACCOUNTS))
+        val claude = graph.claudeUsage.account()?.let { ClaudeAccountUsage(it, graph.claudeUsage.readSaved()) }
+        val rows = AccountUsageOverview.rows(graph.accounts.state(), graph.usageBook.all(), System.currentTimeMillis(), claude)
+        val views = build(context, fit(rows))
         ids.forEach { manager.updateAppWidget(it, views) }
+    }
+
+    /** At most [MAX_ACCOUNTS] rows; the Claude row keeps its place and the Codex accounts make room. */
+    internal fun fit(rows: List<AccountUsageRow>): List<AccountUsageRow> {
+        if (rows.size <= MAX_ACCOUNTS) return rows
+        val claude = rows.filter { it.engine == EngineKind.CLAUDE }
+        return rows.filter { it.engine != EngineKind.CLAUDE }.take(MAX_ACCOUNTS - claude.size) + claude
     }
 
     private fun build(context: Context, rows: List<AccountUsageRow>): RemoteViews {
@@ -124,17 +136,25 @@ object UsageWidget {
         val detail = row.window?.let { window -> listOfNotNull(window.label, window.resetText?.lowercaseFirst()).joinToString(" · ") }
             ?: "Not read yet"
         item.setTextViewText(R.id.widget_account_detail, detail)
-        item.setTextViewText(R.id.widget_account_status, if (row.live) "In use" else row.readText ?: "Switch to read")
+        item.setTextViewText(R.id.widget_account_status, statusText(row))
         item.setTextColor(R.id.widget_account_status, if (row.live) Live else Unknown)
         item.setContentDescription(R.id.widget_account_root, spoken(row))
         return item
+    }
+
+    internal fun statusText(row: AccountUsageRow): String = when {
+        row.live -> "In use"
+        // Claude cannot be switched to; its quota is read when a Claude chat runs.
+        row.engine == EngineKind.CLAUDE -> listOfNotNull("Claude", row.readText).joinToString(" · ")
+        else -> row.readText ?: "Switch to read"
     }
 
     private fun spoken(row: AccountUsageRow): String {
         val window = row.window
         val quota = window?.fraction?.let { "${((1f - it) * 100).roundToInt()}% of ${window.label.lowercase()} quota left" }
             ?: "quota not read yet"
-        return listOfNotNull(row.name, quota, window?.resetText, if (row.live) "in use" else row.readText).joinToString(", ")
+        val provider = if (row.engine == EngineKind.CLAUDE) "Claude" else null
+        return listOfNotNull(row.name, provider, quota, window?.resetText, if (row.live) "in use" else row.readText).joinToString(", ")
     }
 
     private fun String.lowercaseFirst() = replaceFirstChar { it.lowercase() }

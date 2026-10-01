@@ -578,6 +578,16 @@ catches up. Other accounts show their last reading and its age, and a window
 whose reset time has passed since then is drawn empty. The widget is redrawn on
 every reading and account change, and by the platform every 30 minutes.
 
+The signed-in Claude account is the last orb, marked "Claude". Claude has one
+sign-in and reports its quota only while a Claude process runs, so its row is
+always a reading with an age: `LastUsageStore` (`claude-usage.json`) already
+keeps the reading, and now also the account's name (`claude-usage.json.account`,
+written when the status says signed in, deleted when it says signed out or on
+logout) so the widget can name the account without starting Claude. The widget
+shapes the raw reading with the same reset rule as the Codex rows
+(`readSaved`, `AccountUsageOverview.rows(..., claude)`). When there are more
+than four orbs the Claude row keeps its place and the Codex accounts make room.
+
 ## Rich chat presentation
 
 Assistant markdown is rendered with Markwon (tables, strikethrough, prism4j

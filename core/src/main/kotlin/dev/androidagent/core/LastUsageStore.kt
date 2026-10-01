@@ -50,9 +50,37 @@ class LastUsageStore(
         return if (limits.isEmpty()) null else UsageReading(limits, saved.readAtMillis)
     }
 
+    /**
+     * The latest reading as it was saved, expired windows included. The home
+     * screen widget shapes it itself: a window past its reset shows as empty
+     * there, where [read] would leave it out.
+     */
+    fun readSaved(): UsageReading? = book.all()[KEY]?.let { UsageReading(it.limits, it.readAtMillis) }
+
+    private val accountFile = File(file.path + ".account")
+
+    /** Keep [label] as the signed-in account's name, so the widget can name it without starting Claude. */
+    fun saveAccount(label: String) {
+        val name = label.trim()
+        if (name.isEmpty() || account() == name) return
+        runCatching {
+            file.parentFile?.mkdirs()
+            accountFile.writeText(name)
+        }
+    }
+
+    /** The signed-in account's name as last saved, or null once it signed out. */
+    fun account(): String? = runCatching { if (accountFile.isFile) accountFile.readText().trim().ifEmpty { null } else null }.getOrNull()
+
+    /** Forget the account's name: it signed out, or its sign-in is gone. The reading stays until [clear]. */
+    fun clearAccount() {
+        accountFile.delete()
+    }
+
     /** Forget the reading, for a sign-out: it belongs to that account. */
     fun clear() {
         file.delete()
+        accountFile.delete()
     }
 
     companion object {

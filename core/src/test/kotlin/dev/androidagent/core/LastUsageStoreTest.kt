@@ -84,4 +84,28 @@ class LastUsageStoreTest {
         store().save(listOf(weekly))
         assertEquals(listOf(weekly), store().read()!!.limits)
     }
+
+    @Test fun theSavedReadingKeepsAWindowThatHasReset() {
+        store().save(listOf(fiveHour, weekly))
+        clock += 2 * 3_600_000L
+        // read() leaves the 5-hour window out; the widget gets it whole and shapes it itself.
+        assertEquals(listOf(fiveHour, weekly), store().readSaved()!!.limits)
+        assertNull(LastUsageStore(folder.root.resolve("none.json")).readSaved())
+    }
+
+    @Test fun theAccountNameSurvivesARestartAndGoesOnSignOut() {
+        assertNull(store().account())
+        store().saveAccount("  yoni@example.com ")
+        assertEquals("yoni@example.com", store().account())
+        store().clearAccount()
+        assertNull(store().account())
+        store().saveAccount("yoni@example.com")
+        store().clear()
+        assertNull("a sign-out takes the name with the reading", store().account())
+    }
+
+    @Test fun aBlankAccountNameIsNotSaved() {
+        store().saveAccount("   ")
+        assertNull(store().account())
+    }
 }
