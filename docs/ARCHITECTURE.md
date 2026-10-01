@@ -568,6 +568,20 @@ new last row appears below the viewport. Scrolling up pauses following, and
 the jump-to-latest button resumes it. Streaming text does not restart a scroll
 animation on each update.
 
+**An idle screen draws nothing.** A per-frame loop that never ends keeps the
+app rendering at the display's refresh rate for as long as the screen is on:
+the agent orb in the top bar did that at rest and cost more than a full core
+(main thread plus RenderThread) with Mike doing nothing. So every endless
+animation is tied to something happening. The orb's rule lives in
+`OrbMotion.kt`, free of Compose so it is unit-tested: `runAtRest` (IDLE or
+ERROR, and not controlling the screen) and `orbNeedsFrames`. At rest the orb's
+clock eases to a halt over about 2.5 s, so the globe glides to a stop rather
+than freezing mid-turn, and then the frame loop ends; a phase change restarts
+it. `AgentPulse` uses the same `runAtRest`. Loops that only run with an active
+run, a voice session, a moving file or a loading screen (status dot, voice
+sphere, transfer route, computer-chat loading) are left as they are. A new
+endless animation must name what ends it.
+
 ## What the agent says on the floating card
 
 The agent's own words reach the card, not only the chat. `ControlOverlay.say`

@@ -157,14 +157,15 @@ private fun TransferCard(transfer: FileTransfer) {
 /** Where from and where to, with a dot travelling along the arrow while it moves. */
 @Composable
 private fun Route(from: String, to: String, done: Boolean, failed: Boolean) {
-    val travel by rememberInfiniteTransition(label = "route").animateFloat(
-        0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Restart), label = "route-dot",
-    )
     Box(Modifier.size(width = 64.dp, height = 36.dp).background(Color(0xFF26241F), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
         when {
             done -> Icon(Icons.Outlined.Check, null, tint = TransferDone, modifier = Modifier.size(20.dp))
             failed -> Icon(Icons.Outlined.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
             else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                // Only while the file moves: a landed or failed card holds still.
+                val travel by rememberInfiniteTransition(label = "route").animateFloat(
+                    0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Restart), label = "route-dot",
+                )
                 Icon(placeIcon(from), null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Box(Modifier.width(22.dp).height(15.dp), contentAlignment = Alignment.CenterStart) {
                     Box(Modifier.offset(x = (travel * 16).dp).size(5.dp).background(TransferInk, RoundedCornerShape(3.dp)))

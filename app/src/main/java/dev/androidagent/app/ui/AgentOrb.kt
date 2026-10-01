@@ -38,9 +38,7 @@ import androidx.compose.ui.graphics.lerp
 import dev.androidagent.core.RunPhase
 import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.exp
 import kotlin.math.min
-import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -48,6 +46,7 @@ import kotlin.math.sqrt
 // few hundred points, the same one the floating controls show. It churns
 // harder the busier the run is and takes the colour of its state: teal while
 // working, blue while acting on the screen, amber while stopping, red on error.
+// At rest it slows to a halt and stops drawing (see OrbMotion).
 
 private val OrbWorking = Color(0xFF83D9CA)
 private val OrbControlling = Color(0xFF69A7FF)
@@ -56,37 +55,9 @@ private val OrbError = Color(0xFFFFB4AB)
 private val OrbIdle = Color(0xFF8F8F8F)
 
 private const val ORB_POINTS = 220
-private const val ORB_BANDS = 8
 
 // Tilt towards the viewer, so the poles read as a globe rather than a disc.
 private const val ORB_TILT = 0.38f
-
-private class OrbMotion {
-    var seconds = 0f
-    var level = 0.2f
-    var spin = 0f
-    val bands = FloatArray(ORB_BANDS)
-
-    fun step(dt: Float, target: Float) {
-        seconds += dt
-        level += (target - level) * (1f - exp(-dt * if (target > level) 20f else 6f))
-        for (band in 0 until ORB_BANDS) {
-            val shape = exp(-((band - 3.4f) / 3f).pow(2))
-            val flutter = 0.5f + 0.5f * sin(seconds * (4.3f + band * 1.7f) + band * 2.1f) *
-                sin(seconds * (2.9f + band * 0.9f) + band)
-            val goal = level * shape * (0.4f + 0.6f * flutter)
-            bands[band] += (goal - bands[band]) * (1f - exp(-dt * if (goal > bands[band]) 24f else 8f))
-        }
-        spin += dt * (0.35f + 0.9f * level)
-    }
-
-    fun band(position: Float): Float {
-        val at = position.coerceIn(0f, 1f) * (ORB_BANDS - 1)
-        val low = at.toInt().coerceAtMost(ORB_BANDS - 1)
-        val high = min(ORB_BANDS - 1, low + 1)
-        return bands[low] + (bands[high] - bands[low]) * (at - low)
-    }
-}
 
 @Composable
 internal fun AgentOrb(
@@ -110,7 +81,7 @@ internal fun AgentOrb(
     // How hard it churns: busiest while acting on the screen.
     val activity by rememberUpdatedState(
         when {
-            phase == RunPhase.ERROR || phase == RunPhase.IDLE -> 0.08f
+            phase == RunPhase.ERROR || phase == RunPhase.IDLE -> ORB_REST_ACTIVITY
             phase == RunPhase.STOPPING -> 0.2f
             controlling || phase == RunPhase.CONTROLLING -> 0.42f
             phase == RunPhase.TOOL -> 0.34f
@@ -132,14 +103,17 @@ internal fun AgentOrb(
     }
     val frame = remember { mutableLongStateOf(0L) }
     val moving = animationsEnabled()
-    LaunchedEffect(moving) {
-        if (!moving) return@LaunchedEffect
+    val resting = runAtRest(phase, controlling)
+    // Frames only while there is motion to show: at rest the orb glides to a
+    // stop and the loop ends, so an idle chat draws nothing. A change of phase
+    // restarts it.
+    LaunchedEffect(moving, resting) {
         var previous = 0L
-        while (true) {
+        while (orbNeedsFrames(moving, resting, motion, activity)) {
             withInfiniteAnimationFrameNanos { now ->
                 val dt = if (previous == 0L) 0.016f else (now - previous).coerceIn(0L, 50_000_000L) / 1_000_000_000f
                 previous = now
-                motion.step(dt, activity)
+                motion.step(dt, activity, resting)
                 frame.longValue = now
             }
         }

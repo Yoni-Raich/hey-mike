@@ -1,5 +1,51 @@
 # Progress
 
+### An idle screen no longer redraws every frame — 2026-10-01
+
+Reported: the phone warms up with Mike open and doing nothing. Measured on a
+Galaxy Tab S7 on 2026-09-30: more than a full core in the foreground, ~60 fps
+of continuous frames, nothing in the background. Cause: the agent orb
+(`AgentOrb.kt`) ran a `withInfiniteAnimationFrameNanos` loop forever whenever
+system animations were on, whatever the phase, and the orb is always on screen
+(chat top bar, onboarding, settings). Now at rest (IDLE or ERROR, not
+controlling) the orb's clock eases to a halt over about 2.5 s and the loop
+ends; a phase change restarts it. The rule is in `OrbMotion.kt`
+(`runAtRest`, `orbNeedsFrames`), with `OrbMotionTest` (idle stops, settling
+glides, a settled orb holds still, a run resumes, animations off never asks
+for frames). `AgentPulse` already stopped at rest and now uses the same
+`runAtRest`; it is not used anywhere at the moment. The transfer banner's
+moving dot no longer ticks under a landed or failed card. Status dot, voice
+sphere and computer-chat loading only animate with something in progress and
+were left alone.
+
+Measured on a Redmi Note 12 (2303CRA44A, Android 15, HyperOS 2.0, 120 Hz,
+100% charged and on USB), dev debug, Mike in the foreground on the
+"Sign in so I can think" screen, which shows the same orb at IDLE (the phone
+is not signed in, so no chat screen could be opened). Nine back-to-back
+windows of `sleep 20` (about 22 s each with the adb calls), per window:
+`adb -s <serial> shell dumpsys gfxinfo dev.androidagent.app.dev reset`, then
+`utime+stime` from `/proc/<pid>/stat` and `ps -o TIME -p <pid>` before and
+after, and "Total frames rendered" from `dumpsys gfxinfo`; battery
+temperature from `dumpsys battery` at the start and end (~3.5 min):
+
+| Build | CPU-s per window (min / median / max) | Frames per window | Temperature |
+|---|---|---|---|
+| base `origin/dev` 8757ed8 | 30.6 / 32.5 / 45.5 | 2005 - 2942 | 31.0 -> 34.0 C |
+| this fix | 0.00 / 0.01 / 0.05 | 0 | 31.0 -> 31.0 C |
+
+Both runs started at 31.0 C (the phone cooled with the screen off in
+between). `top -H` on the base build: RenderThread 69%, main thread 66%. After
+a cold start of the fix, `gfxinfo` counted 143 frames in the first 2 s and
+none in the next 14 s. Gate: `./gradlew.bat test :app:assembleDevDebug
+:app:lintDevDebug` passed, 1523 tests, 0 failures; lint 0 errors, no
+baseline; `git diff --check` clean.
+
+Not tested: a real run (no sign-in on the test phone), so the orb restarting
+when a run begins and settling when it ends is covered only by the unit
+tests; the chat top bar itself (same composable and phase as the screen
+measured); the POCO F7 Pro, where the warmth was first felt, was not
+available; animations-off on a device.
+
 ### Model menu, and Codex 0.159.2 for GPT-6.1 — 2026-09-30
 
 GPT-6.1 Sol arrives in the model list only with a newer app-server: the list
