@@ -80,7 +80,6 @@ private data class PulseStyle(
     // Seconds for one take-apart-and-reassemble cycle.
     val cycleSeconds: Float,
     val intensity: Float,
-    val animated: Boolean = true,
 )
 
 private class PulseGeometry(
@@ -113,7 +112,8 @@ fun AgentPulse(
     tool: String? = null,
 ) {
     val style = pulseStyle(phase, controlling)
-    val moving = style.animated && animationsEnabled()
+    // At rest the mechanism holds still: no frame loop, as for the orb.
+    val moving = !runAtRest(phase, controlling) && animationsEnabled()
     val motion = remember(tool, phase) {
         if (phase == RunPhase.TOOL || phase == RunPhase.CONTROLLING) toolMotion(tool) else null
     }
@@ -600,8 +600,8 @@ private fun pulseStyle(phase: RunPhase, controlling: Boolean): PulseStyle {
         RunPhase.TOOL -> PulseStyle(scheme.primary, gearSpeed = 0.34f, cycleSeconds = 4f, intensity = 1f)
         RunPhase.CONTROLLING -> PulseStyle(ControlColor, gearSpeed = 0.42f, cycleSeconds = 3.2f, intensity = 1f)
         RunPhase.STOPPING -> PulseStyle(scheme.onSurfaceVariant, gearSpeed = 0.1f, cycleSeconds = 6.5f, intensity = 0.6f)
-        RunPhase.ERROR -> PulseStyle(scheme.error, gearSpeed = 0f, cycleSeconds = 6f, intensity = 0.85f, animated = false)
-        RunPhase.IDLE -> PulseStyle(scheme.onSurfaceVariant, gearSpeed = 0f, cycleSeconds = 6f, intensity = 0.5f, animated = false)
+        RunPhase.ERROR -> PulseStyle(scheme.error, gearSpeed = 0f, cycleSeconds = 6f, intensity = 0.85f)
+        RunPhase.IDLE -> PulseStyle(scheme.onSurfaceVariant, gearSpeed = 0f, cycleSeconds = 6f, intensity = 0.5f)
     }
 }
 
