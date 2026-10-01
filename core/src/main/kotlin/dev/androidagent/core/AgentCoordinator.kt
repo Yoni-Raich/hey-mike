@@ -91,7 +91,7 @@ class AgentCoordinator(
     private val mutableState = MutableStateFlow(RunState())
     val state: StateFlow<RunState> = mutableState.asStateFlow()
     private val availableState = MutableStateFlow(true)
-    override val available = availableState.asStateFlow()
+    val available = availableState.asStateFlow()
     private val epoch = AtomicLong()
     private val lifecycleLock = Any()
     private val toolLock = Mutex()
@@ -140,6 +140,12 @@ class AgentCoordinator(
     private var runWorkspace: File? = null
     /** This run holds [PhoneShare.lease] and armed the gateway. Changed only under [lifecycleLock]. */
     private var deviceHeld = false
+    /**
+     * This run has read or acted on the screen, so it keeps the phone to its
+     * end. Re-arming the gateway clears the handles a read returned, and a tap
+     * needs the screen it was planned on.
+     */
+    private var screenSticky = false
 
     init { if (!share.routed) scope.launch { engine.events.collect { deliver(it) } } }
 
@@ -155,6 +161,7 @@ class AgentCoordinator(
     /** Whether events of [threadId] belong to this coordinator's run. */
     internal fun ownsThread(threadId: String): Boolean = synchronized(lifecycleLock) { thread == threadId }
 
+    override val freed: Flow<*> get() = available
     override fun canStart(): Boolean = availableState.value && !state.value.active
     override fun phaseOf(sessionId: String): RunPhase? = state.value.takeIf { it.active && it.sessionId == sessionId }?.phase
     override fun steer(sessionId: String, prompt: String) { if (phaseOf(sessionId) != null) steer(prompt) }
@@ -199,6 +206,7 @@ class AgentCoordinator(
             textRevision = 0L
             overlaySpeech = null
             runWorkspace = null
+            screenSticky = false
             runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode) }
         }
     }
@@ -216,6 +224,7 @@ class AgentCoordinator(
             epoch.incrementAndGet()
             // The phone is taken at the first tool call, as for a typed turn.
             runWorkspace = workspace
+            screenSticky = false
             voiceMode = true
             thread = threadId
             turn = null
@@ -1039,6 +1048,7 @@ class AgentCoordinator(
                     toolLock.withLock {
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        if (usesScreen(event.name)) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
                         val visible = tools.needsControl(event.name)
                         val capture = tools.hidesOverlayDuringCapture(event.name)
                         // act_and_observe wraps the real action, so report that
@@ -1108,6 +1118,7 @@ class AgentCoordinator(
                                     overlay.updateState(OverlayState(OverlayPhase.THINKING))
                                 }
                             }
+                            handBackUnlessOnScreen()
                         }
                         if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                             val imagePath = result.imageBase64?.let { persistTraceImage(sessionId, it) }
@@ -1473,6 +1484,27 @@ class AgentCoordinator(
         return armed
     }
 
+    /**
+     * After a call that left the screen alone (files, contacts, a computer,
+     * knowledge), give the phone back, so another chat's call can run before
+     * this run's next one. A run on the screen keeps it: see [screenSticky].
+     */
+    private fun handBackUnlessOnScreen() {
+        val released = synchronized(lifecycleLock) {
+            if (!deviceHeld || screenSticky) {
+                false
+            } else {
+                runCatching { tools.revoke() }
+                deviceHeld = false
+                true
+            }
+        }
+        if (released) share.lease.release(this)
+    }
+
+    private fun usesScreen(name: String): Boolean =
+        tools.needsControl(name) || tools.hidesOverlayDuringCapture(name) || name in SCREEN_READS
+
     private fun launchControl(block: suspend CoroutineScope.() -> Unit): Job {
         val job = scope.launch(start = CoroutineStart.LAZY, block = block)
         synchronized(lifecycleLock) { controlJobs.add(job) }
@@ -1560,6 +1592,9 @@ class AgentCoordinator(
     /** Internal rather than private so tests can advance to the real deadline. */
     internal companion object {
         const val LOCAL_APPROVAL_TIMEOUT_MS = 120_000L
+
+        /** Reads of the screen that do not count as control, but whose handles the next tap uses. */
+        private val SCREEN_READS = setOf("read_ui", "screenshot")
 
         /**
          * How long a firing rule waits for the phone before giving up.

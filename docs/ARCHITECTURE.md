@@ -480,16 +480,24 @@ handlers and the permission dialog still need physical-device proof.
 
 ## Parallel chats, one phone
 
-Chats run at once: `AgentRuns` keeps up to three `AgentCoordinator`s, one per
-running chat, so a new chat started while another works starts straight away.
-Each coordinator is unchanged in what it does for one run. What they share:
+Chats run at once, with no cap, as Codex does on a computer: `AgentRuns`
+gives each running chat an `AgentCoordinator` of its own, reusing an idle one
+before making another, so a new chat started while others work starts straight
+away. Each coordinator is unchanged in what it does for one run. What they
+share:
 
-- The phone. `DeviceLease` gives the device gateway to one run at a time. A run
-  takes it at its first tool call, not at its start, so a chat that only thinks,
-  or one whose agent works on a computer, never waits; it keeps it until the run
-  ends, so another chat's taps never land between its own. A run waiting for it
-  says "Waiting for the phone". The gateway's `beginRun`/`revoke` follow the
-  lease, so the gateway always serves exactly the run that holds it.
+- The phone. It has one screen and one foreground app, so two runs cannot both
+  drive it: one would open an app and the other's tap would land in it.
+  `DeviceLease` gives the device gateway to one run at a time. A run takes it at
+  a tool call, not at its start, so a chat that only thinks, or one whose agent
+  works on a computer, never waits. A call that leaves the screen alone (files,
+  contacts, calendar, a computer, knowledge) holds it for that call only. Once a
+  run reads or acts on the screen it keeps the lease to its end: the handles a
+  read returns are what its next tap uses, re-arming the gateway clears them,
+  and the tap needs the screen it was planned on. A run waiting for it says
+  "Waiting for the phone". The gateway's `beginRun`/`revoke` follow the lease,
+  so the gateway always serves exactly the run that holds it; making the
+  gateways per run would let non-screen calls overlap too.
 - The floating card. Only the lease holder (or anyone, when nobody holds it)
   updates or finishes it, so a thinking chat never relabels or closes another
   chat's control card. Its Stop, like the notification's, stops every chat:
@@ -503,8 +511,8 @@ Each coordinator is unchanged in what it does for one run. What they share:
 Voice still needs every chat idle. Approvals are per chat; a yes typed into a
 chat answers that chat's card. The chat screen shows the open chat's run only.
 
-`SessionRunQueue` holds a turn only while every run is busy, or while its own
-chat is still running, and otherwise starts as many as there are free runs.
+`SessionRunQueue` holds a turn only while its own chat is still running; any
+other turn starts at once.
 Sending into the chat that is already running still steers it. FIFO order is durable in a `run_queue` SQLite table,
 and a turn is dequeued before it starts, so a process crash cannot replay a
 side effect. A queue restored at startup is paused and needs an explicit

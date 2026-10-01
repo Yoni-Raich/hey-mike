@@ -109,19 +109,56 @@ class AgentRunsTest {
         rig.close()
     }
 
-    @Test fun turnsWaitOnlyWhenEveryRunIsBusy() = runTest {
-        val rig = Rig(this, size = 2)
-        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "A"))
-        rig.queue.submit(QueuedTurn(sessionId = "two", prompt = "B"))
-        rig.queue.submit(QueuedTurn(sessionId = "three", prompt = "C"))
+    @Test fun chatsAreNotCapped() = runTest {
+        val rig = Rig(this)
+        val chats = (1..6).map { "c$it" }
+        rig.store.sessions.value = chats.map { ChatSession(it, it, 0, 0) }
+        chats.forEach { rig.queue.submit(QueuedTurn(sessionId = it, prompt = "Go $it")) }
         runCurrent()
-        assertEquals(2, rig.engine.started.size)
-        assertEquals(listOf("C"), rig.queue.turns.value.map { it.prompt })
+        assertEquals(chats.map { "thread-$it" }, rig.engine.started)
+        assertTrue(rig.queue.turns.value.isEmpty())
+        assertEquals(6, rig.runs.slots.size)
 
+        // A finished chat's coordinator is reused rather than another made.
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-c1", turnId = "turn-thread-c1"))
+        runCurrent()
+        rig.store.sessions.value = rig.store.sessions.value + ChatSession("c7", "c7", 0, 0)
+        rig.queue.submit(QueuedTurn(sessionId = "c7", prompt = "Go c7"))
+        runCurrent()
+        assertEquals(6, rig.runs.slots.size)
+        assertTrue(rig.runs.stateOf("c7")!!.active)
+        rig.close()
+    }
+
+    @Test fun aCallThatLeavesTheScreenAloneDoesNotKeepThePhone() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "Look up a contact")
+        rig.runs.send("two", "Tap something")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r1", "contacts", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r2", "tap", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        // One is still thinking, but no longer holds the phone: two taps at once.
+        assertEquals(listOf("r1", "r2"), rig.engine.answered)
+        assertTrue(rig.runs.stateOf("one")!!.active)
+        rig.close()
+    }
+
+    @Test fun aChatThatReadTheScreenKeepsThePhoneToItsEnd() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "Read the screen")
+        rig.runs.send("two", "Look up a contact")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r1", "read_ui", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r2", "contacts", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        // The handles one read are what its next tap uses, so two waits.
+        assertEquals(listOf("r1"), rig.engine.answered)
         rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-one", turnId = "turn-thread-one"))
         runCurrent()
-        assertEquals(listOf("thread-one", "thread-two", "thread-three"), rig.engine.started)
-        assertTrue(rig.queue.turns.value.isEmpty())
+        assertEquals(listOf("r1", "r2"), rig.engine.answered)
         rig.close()
     }
 
@@ -137,13 +174,13 @@ class AgentRunsTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope, size: Int = 3) {
+    private class Rig(test: TestScope) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = Engine()
         val store = Store()
         val overlay = Overlay()
         val tools = Tools()
-        val runs = AgentRuns(scope, engine, size) { share ->
+        val runs = AgentRuns(scope, engine) { share ->
             AgentCoordinator(scope, engine, store, tools, overlay, share = share)
         }
         val queue = SessionRunQueue(scope, runs, store)
@@ -204,6 +241,7 @@ class AgentRunsTest {
         override fun beginRun(runId: String, workspace: File) { revoked = false }
         override fun revoke() { revoked = true }
         override fun needsControl(name: String) = name == "tap"
+        override fun hidesOverlayDuringCapture(name: String) = name == "read_ui"
         override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
             check(!revoked)
             executions++

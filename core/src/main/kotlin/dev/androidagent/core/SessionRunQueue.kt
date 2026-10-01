@@ -91,7 +91,7 @@ class SessionRunQueue(
     init {
         scope.launch {
             loaded.join()
-            coordinator.available.collect { if (it) dispatch() }
+            coordinator.freed.collect { dispatch() }
         }
     }
 

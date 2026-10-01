@@ -22,18 +22,22 @@ package dev.androidagent.core
 
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** What [SessionRunQueue] needs from whatever runs turns: one coordinator, or [AgentRuns]. */
 interface TurnRunner {
-    /** Turns true whenever a turn may have become able to start. */
-    val available: StateFlow<Boolean>
+    /** Emits whenever a run may have ended, so a waiting turn may now start. */
+    val freed: Flow<*>
     /** A turn for a chat that is not running could start now. */
     fun canStart(): Boolean
     /** The phase of [sessionId]'s run, or null when that chat is not running. */
@@ -51,32 +55,50 @@ interface TurnRunner {
 }
 
 /**
- * Several chats running at once.
+ * Chats running at once, as many as are started.
  *
- * Each running chat has a coordinator of its own, so a new chat started while
- * another works starts straight away instead of waiting in the queue. The
- * phone itself is still one screen: [DeviceLease] gives it to one run at a
- * time, from that run's first tool call to its end. A chat that only thinks,
- * or one whose agent works on a computer, never waits for it.
+ * Each running chat has a coordinator of its own, made when no idle one is
+ * left, so a new chat started while others work starts straight away instead
+ * of waiting in the queue. Codex runs any number of threads; the only thing
+ * the chats share is the phone's one screen. [DeviceLease] gives it to one run
+ * at a time: for the length of one call for a tool that leaves the screen
+ * alone, and from the first read or tap to the run's end for one that does.
+ * A chat that only thinks, or works on a computer, never waits for it.
  *
  * Engine events are routed here, by thread, to the one coordinator that owns
  * it. A coordinator collecting them itself would refuse every other chat's
  * tool calls and approvals as not its own.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class AgentRuns(
     scope: CoroutineScope,
     engine: AgentEngine,
-    size: Int = DEFAULT_PARALLEL_RUNS,
-    create: (PhoneShare) -> AgentCoordinator,
+    private val create: (PhoneShare) -> AgentCoordinator,
 ) : TurnRunner {
     val lease = DeviceLease()
-    val slots: List<AgentCoordinator> = List(size.coerceAtLeast(1)) { index ->
-        create(PhoneShare(lease, routed = true, othersActive = { othersActive(index) }))
-    }
+    private val slotList = MutableStateFlow<List<AgentCoordinator>>(emptyList())
+    /** Every coordinator made so far; an idle one is reused before another is made. */
+    val slots: List<AgentCoordinator> get() = slotList.value
     private var voiceSlot: AgentCoordinator? = null
 
-    /** Every running chat's state, by chat. */
-    val sessionStates: StateFlow<Map<String, RunState>> = combine(slots.map { it.state }) { states ->
+    init { slotList.value = listOf(newSlot()) }
+
+    private fun newSlot(): AgentCoordinator {
+        lateinit var made: AgentCoordinator
+        made = create(PhoneShare(lease, routed = true, othersActive = { slots.any { it !== made && it.state.value.active } }))
+        return made
+    }
+
+    /** An idle coordinator, or a new one. Chats are not capped. */
+    private fun freeSlot(): AgentCoordinator = synchronized(this) {
+        slots.firstOrNull { it.canStart() } ?: newSlot().also { slotList.value = slots + it }
+    }
+
+    private inline fun <reified T, R> eachSlot(crossinline pick: (AgentCoordinator) -> Flow<T>, crossinline fold: (List<T>) -> R): Flow<R> =
+        slotList.flatMapLatest { list -> combine(list.map { pick(it) }) { fold(it.toList()) } }
+
+    /** Every chat's latest run state, by chat. */
+    val sessionStates: StateFlow<Map<String, RunState>> = eachSlot({ it.state }) { states ->
         // An active run wins over the finished one a slot last held for the same chat.
         states.filter { it.sessionId != null }.sortedBy { it.active }.associateBy { it.sessionId!! }
     }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
@@ -86,15 +108,17 @@ class AgentRuns(
      * assistant panel, voice. The run on the phone first, then one waiting on
      * the user, then any other.
      */
-    val state: StateFlow<RunState> = combine(slots.map { it.state }) { states ->
+    val state: StateFlow<RunState> = eachSlot({ it.state }) { states ->
         val active = states.filter { it.active }
         active.firstOrNull { it.controlling } ?: active.firstOrNull { it.approval != null } ?: active.firstOrNull() ?: RunState()
     }.stateIn(scope, SharingStarted.Eagerly, RunState())
 
-    override val available: StateFlow<Boolean> = combine(slots.map { it.available }) { free -> free.any { it } }
-        .stateIn(scope, SharingStarted.Eagerly, true)
+    /** No chat is running. */
+    val available: StateFlow<Boolean> = state.map { !it.active }.stateIn(scope, SharingStarted.Eagerly, true)
 
-    val metrics: StateFlow<Map<String, RunMetrics>> = combine(slots.map { it.metrics }) { maps ->
+    override val freed: Flow<*> = slotList.flatMapLatest { list -> list.map { it.available }.merge() }
+
+    val metrics: StateFlow<Map<String, RunMetrics>> = eachSlot({ it.metrics }) { maps ->
         maps.fold(emptyMap<String, RunMetrics>()) { all, one -> all + one }
     }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
@@ -105,15 +129,14 @@ class AgentRuns(
     /** Some chat is running, read now rather than through [state]. */
     val anyActive: Boolean get() = slots.any { it.state.value.active }
 
-    private fun othersActive(index: Int): Boolean = slots.withIndex().any { (i, slot) -> i != index && slot.state.value.active }
-
     private fun slotFor(sessionId: String): AgentCoordinator? =
         slots.firstOrNull { it.state.value.active && it.state.value.sessionId == sessionId }
 
     /** This chat's run, or null when it is not running. */
     fun stateOf(sessionId: String): RunState? = slotFor(sessionId)?.state?.value
 
-    override fun canStart(): Boolean = slots.any { it.canStart() }
+    /** Always: a chat that is not running can start beside any number of others. */
+    override fun canStart(): Boolean = true
     override fun phaseOf(sessionId: String): RunPhase? = slotFor(sessionId)?.state?.value?.phase
 
     override fun send(
@@ -125,7 +148,7 @@ class AgentRuns(
         skill: AgentSkill?,
         planMode: Boolean,
     ) {
-        val slot = synchronized(this) { slotFor(sessionId) ?: slots.firstOrNull { it.canStart() } } ?: return
+        val slot = synchronized(this) { slotFor(sessionId) ?: freeSlot() }
         // A chat already running is steered by its own coordinator.
         slot.send(sessionId, prompt, images, model, reasoningEffort, skill, planMode)
     }
@@ -159,9 +182,7 @@ class AgentRuns(
     }
 
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {
-        val slot = synchronized(this) {
-            slots.firstOrNull { it.canStart() } ?: error("Another agent run is already active.")
-        }
+        val slot = freeSlot()
         slot.beginVoice(sessionId, threadId, workspace)
         voiceSlot = slot
     }
@@ -174,13 +195,8 @@ class AgentRuns(
         waitMs: Long = AgentCoordinator.DEFAULT_AUTOMATION_WAIT_MS,
         block: suspend () -> T,
     ): T? {
-        val slot = synchronized(this) { slots.firstOrNull { it.canStart() } }
-            ?: run {
-                withTimeoutOrNull(waitMs) { available.first { it } }
-                synchronized(this) { slots.firstOrNull { it.canStart() } }
-            }
-            ?: return null
-        return slot.runAutomation(label, workspace, waitMs, block)
+        // A coordinator of its own, so it waits only for the phone, never for a chat that is thinking.
+        return freeSlot().runAutomation(label, workspace, waitMs, block)
     }
 
     // Asked from inside a tool call, so by the run holding the phone.
@@ -204,11 +220,6 @@ class AgentRuns(
         // A thread no run owns goes to one coordinator, which refuses its tool
         // calls and approvals: nothing is waiting for them.
         (slots.firstOrNull { it.ownsThread(thread) } ?: slots.first()).deliver(event)
-    }
-
-    companion object {
-        /** Chats that may run at once. Each holds a Codex turn open. */
-        const val DEFAULT_PARALLEL_RUNS = 3
     }
 }
 
