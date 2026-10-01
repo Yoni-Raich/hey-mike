@@ -1,5 +1,35 @@
 # Progress
 
+### Chats run in parallel; the phone goes to one at a time — 2026-10-01
+
+A new chat opened while another ran showed that run's "Working · Stop active
+task" and queued its first message behind it. Now `AgentRuns` runs up to three
+chats at once, each with its own `AgentCoordinator`, and `DeviceLease` gives the
+phone to one of them from its first tool call to its end (the other waits, and
+says "Waiting for the phone"). Engine events are routed by thread. The chat
+screen shows the open chat's run; the drawer marks every running chat. New chat
+no longer asks to confirm while a chat runs. See ARCHITECTURE "Parallel chats,
+one phone".
+
+Also: a chat nobody wrote in is not shown in history and is deleted on leaving
+it or at the next start; the "Where should Mike work?" list folds to the chosen
+place, with a chevron for the rest.
+
+Evidence: `AgentRunsTest` (8: a new chat starts while another runs, each chat
+gets only its own words, the phone to one chat at a time, a thinking chat leaves
+the other's card alone, stopping one leaves the other running and the engine
+open, a stray tool call is refused, turns wait only when every run is busy, a
+chat's second turn waits for that chat), `:core:test` 577, `:app:testDevDebugUnitTest`
+92, 0 failures; `:app:assembleDevDebug`, `:app:lintDevDebug`,
+`:app:compileDevDebugAndroidTestKotlin`.
+
+Not tested yet: two chats at once on a phone with the real app-server; a
+phone-driving chat beside a computer chat; approvals in two chats at once; the
+overlay hand-over between two chats on a device; voice beside a running chat
+(refused by design). A turn whose start races a stop, with another chat
+running, is not interrupted (the engine is not closed); its tool calls are
+refused.
+
 ### Model menu, and Codex 0.159.2 for GPT-6.1 — 2026-09-30
 
 GPT-6.1 Sol arrives in the model list only with a newer app-server: the list

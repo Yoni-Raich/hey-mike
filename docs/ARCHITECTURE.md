@@ -478,13 +478,34 @@ state. Its Android calls live behind `CapabilityPlatform`, while policy and
 dispatch are JVM-testable without a phone. Provider behavior, OEM intent
 handlers and the permission dialog still need physical-device proof.
 
-## Session queue and exclusive device ownership
+## Parallel chats, one phone
 
-The MVP still allows one active run per phone, because one phone screen cannot
-be shared. `SessionRunQueue` makes that limit a queue instead of a rejection:
-the UI accepts a turn for any chat, and `AgentCoordinator` publishes an
-`available` flag that gates dispatch. Sending into the chat that is already
-running still steers it. FIFO order is durable in a `run_queue` SQLite table,
+Chats run at once: `AgentRuns` keeps up to three `AgentCoordinator`s, one per
+running chat, so a new chat started while another works starts straight away.
+Each coordinator is unchanged in what it does for one run. What they share:
+
+- The phone. `DeviceLease` gives the device gateway to one run at a time. A run
+  takes it at its first tool call, not at its start, so a chat that only thinks,
+  or one whose agent works on a computer, never waits; it keeps it until the run
+  ends, so another chat's taps never land between its own. A run waiting for it
+  says "Waiting for the phone". The gateway's `beginRun`/`revoke` follow the
+  lease, so the gateway always serves exactly the run that holds it.
+- The floating card. Only the lease holder (or anyone, when nobody holds it)
+  updates or finishes it, so a thinking chat never relabels or closes another
+  chat's control card. Its Stop, like the notification's, stops every chat:
+  stopping only the chat on the phone would hand the phone to the next one.
+- The engine. Events are routed by thread to the coordinator that owns it; a
+  coordinator collecting them itself would refuse every other chat's tool calls
+  and approvals. A thread nobody owns has its tool calls and approvals refused.
+  A stop never closes the engine while another chat runs; a turn that cannot be
+  interrupted is then left to finish, with its tool calls refused.
+
+Voice still needs every chat idle. Approvals are per chat; a yes typed into a
+chat answers that chat's card. The chat screen shows the open chat's run only.
+
+`SessionRunQueue` holds a turn only while every run is busy, or while its own
+chat is still running, and otherwise starts as many as there are free runs.
+Sending into the chat that is already running still steers it. FIFO order is durable in a `run_queue` SQLite table,
 and a turn is dequeued before it starts, so a process crash cannot replay a
 side effect. A queue restored at startup is paused and needs an explicit
 Resume, and a local stop pauses the queue rather than releasing the next run at

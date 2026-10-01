@@ -47,7 +47,6 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Terminal
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -161,17 +160,7 @@ private val BackendTileInk = Color(0xFFE6E6E6)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDrawer: () -> Unit) {
-    var confirmNew by remember { mutableStateOf(false) }
     var showStatus by remember { mutableStateOf(false) }
-    if (confirmNew) {
-        AlertDialog(
-            onDismissRequest = { confirmNew = false },
-            title = { Text("Start a new chat?") },
-            text = { Text("The current task will keep running. New tasks will wait in the queue.") },
-            confirmButton = { TextButton(onClick = { confirmNew = false; actions.onNewChat() }) { Text("New chat") } },
-            dismissButton = { TextButton(onClick = { confirmNew = false }) { Text("Cancel") } },
-        )
-    }
     val title = state.activeSessionTitle?.takeIf { it.isNotBlank() } ?: "Hey Mike"
     TopAppBar(
         navigationIcon = { PanelButton(state, onOpenDrawer) },
@@ -195,7 +184,8 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
         },
         actions = {
             AgentStatusButton(state) { showStatus = true }
-            IconButton(onClick = { if (state.runState.active) confirmNew = true else actions.onNewChat() }) {
+            // A running chat keeps running beside the new one, so there is nothing to confirm.
+            IconButton(onClick = actions.onNewChat) {
                 Icon(Icons.Outlined.EditNote, contentDescription = "New chat")
             }
         },
@@ -277,7 +267,7 @@ private fun PanelButton(state: AgentUiState, onOpenDrawer: () -> Unit) {
 
 @Composable
 private fun AgentStatusButton(state: AgentUiState, onClick: () -> Unit) {
-    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runState.active)
+    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runs.isNotEmpty())
     val windows = remember(state.usageLimits) { UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L) }
     val primary = remember(windows) { UsageSummary.primary(windows) }
     val spoken = "${control.sentence()}. ${UsageSummary.spoken(primary)}. Open status and usage"
@@ -316,7 +306,7 @@ private fun AgentStatusButton(state: AgentUiState, onClick: () -> Unit) {
 @Composable
 private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss: () -> Unit) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runState.active)
+    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runs.isNotEmpty())
     val windows = remember(state.usageLimits) { UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L) }
     val dot = when (control.state) {
         ControlState.WORKING -> WorkingBlue

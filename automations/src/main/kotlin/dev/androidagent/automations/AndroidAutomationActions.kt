@@ -29,7 +29,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import dev.androidagent.core.AgentCoordinator
+import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.AutomationActionResult
 import dev.androidagent.core.AutomationActions
 import dev.androidagent.core.DeviceToolGateway
@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Two rules shape every method here.
  *
  * **A rule takes the device the way a turn does.** `run_workflow` and
- * `open_intent` go through [AgentCoordinator.runAutomation], which claims the
+ * `open_intent` go through [AgentRuns.runAutomation], which claims the
  * same exclusive ownership a person's run claims, shows the same control card
  * and answers the same Stop. It refuses rather than queues when the phone is
  * busy, and the refusal is reported — a rule that fires while you are mid-task
@@ -64,7 +64,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class AndroidAutomationActions(
     private val context: Context,
-    private val coordinator: () -> AgentCoordinator,
+    private val coordinator: () -> AgentRuns,
     private val tools: () -> DeviceToolGateway,
     private val queue: () -> SessionRunQueue,
     private val sessions: SessionStore,

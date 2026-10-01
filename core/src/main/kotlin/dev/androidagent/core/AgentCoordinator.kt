@@ -42,7 +42,7 @@ class AgentCoordinator(
     private val engine: AgentEngine,
     private val sessions: SessionStore,
     private val tools: DeviceToolGateway,
-    private val overlay: ControlOverlay,
+    screenOverlay: ControlOverlay,
     /** Standing "always allow" answers to send approvals. */
     private val sendGrants: SendGrantStore = InMemorySendGrantStore(),
     /**
@@ -69,12 +69,29 @@ class AgentCoordinator(
      * [adbStatus] so that stays the trailing parameter.
      */
     private val nowNanos: () -> Long = System::nanoTime,
+    /** The phone shared with other chats' runs; on its own by default. */
+    private val share: PhoneShare = PhoneShare(),
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
-) {
+) : TurnRunner {
+    // The card on the screen belongs to whichever run holds the phone. A chat
+    // that is only thinking leaves it alone, so it never finishes or relabels
+    // another chat's control card.
+    private val overlay: ControlOverlay = object : ControlOverlay {
+        private fun mine(): Boolean = share.lease.holder.let { it == null || it === this@AgentCoordinator }
+        override suspend fun show(status: String) { if (mine()) screenOverlay.show(status) }
+        override fun update(status: String) { if (mine()) screenOverlay.update(status) }
+        override fun hide() { if (mine()) screenOverlay.hide() }
+        override suspend fun showState(state: OverlayState) { if (mine()) screenOverlay.showState(state) }
+        override fun updateState(state: OverlayState) { if (mine()) screenOverlay.updateState(state) }
+        override fun finish(state: OverlayState) { if (mine()) screenOverlay.finish(state) }
+        override fun say(text: String) { if (mine()) screenOverlay.say(text) }
+        override fun avoidTouch(x: Int, y: Int) { if (mine()) screenOverlay.avoidTouch(x, y) }
+        override suspend fun setCaptureHidden(hidden: Boolean) { if (mine()) screenOverlay.setCaptureHidden(hidden) }
+    }
     private val mutableState = MutableStateFlow(RunState())
     val state: StateFlow<RunState> = mutableState.asStateFlow()
     private val availableState = MutableStateFlow(true)
-    val available = availableState.asStateFlow()
+    override val available = availableState.asStateFlow()
     private val epoch = AtomicLong()
     private val lifecycleLock = Any()
     private val toolLock = Mutex()
@@ -119,23 +136,37 @@ class AgentCoordinator(
     /** The agent's words already mirrored onto the overlay, so the same line is not resent. */
     private var overlaySpeech: String? = null
     private var pendingLocalApproval: PendingLocalApproval? = null
+    /** Where this run's tool calls work; the gateway is armed with it when the phone is taken. */
+    private var runWorkspace: File? = null
+    /** This run holds [PhoneShare.lease] and armed the gateway. Changed only under [lifecycleLock]. */
+    private var deviceHeld = false
 
-    init { scope.launch { engine.events.collect { event ->
+    init { if (!share.routed) scope.launch { engine.events.collect { deliver(it) } } }
+
+    /** One engine event for this coordinator; [AgentRuns] calls it for the thread this run owns. */
+    internal suspend fun deliver(event: EngineEvent) {
         try { handleEvent(event) } catch (cancelled: CancellationException) {
             // A local stop can invalidate an event while its storage write suspends.
             // Keep collecting for the next run unless the app scope itself ended.
             currentCoroutineContext().ensureActive()
         }
-    } } }
+    }
 
-    fun send(
+    /** Whether events of [threadId] belong to this coordinator's run. */
+    internal fun ownsThread(threadId: String): Boolean = synchronized(lifecycleLock) { thread == threadId }
+
+    override fun canStart(): Boolean = availableState.value && !state.value.active
+    override fun phaseOf(sessionId: String): RunPhase? = state.value.takeIf { it.active && it.sessionId == sessionId }?.phase
+    override fun steer(sessionId: String, prompt: String) { if (phaseOf(sessionId) != null) steer(prompt) }
+
+    override fun send(
         sessionId: String,
         prompt: String,
-        images: List<File> = emptyList(),
-        model: String? = null,
-        reasoningEffort: String? = null,
-        skill: AgentSkill? = null,
-        planMode: Boolean = false,
+        images: List<File>,
+        model: String?,
+        reasoningEffort: String?,
+        skill: AgentSkill?,
+        planMode: Boolean,
     ) {
         if (prompt.isBlank() && images.isEmpty()) return
         synchronized(lifecycleLock) {
@@ -167,6 +198,7 @@ class AgentCoordinator(
             remoteItems.clear()
             textRevision = 0L
             overlaySpeech = null
+            runWorkspace = null
             runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode) }
         }
     }
@@ -181,8 +213,9 @@ class AgentCoordinator(
         synchronized(lifecycleLock) {
             check(availableState.value && !state.value.active) { "Another agent run is already active." }
             availableState.value = false
-            val token = epoch.incrementAndGet()
-            tools.beginRun(token.toString(), workspace)
+            epoch.incrementAndGet()
+            // The phone is taken at the first tool call, as for a typed turn.
+            runWorkspace = workspace
             voiceMode = true
             thread = threadId
             turn = null
@@ -240,10 +273,27 @@ class AgentCoordinator(
         val token = synchronized(lifecycleLock) {
             if (!availableState.value || state.value.active) return null
             availableState.value = false
-            val claimed = epoch.incrementAndGet()
-            tools.beginRun(claimed.toString(), workspace)
-            mutableState.value = RunState(RunPhase.CONTROLLING, null, label, controlling = true)
-            claimed
+            mutableState.value = RunState(RunPhase.STARTING, null, label)
+            epoch.incrementAndGet()
+        }
+        // Another chat may be driving the phone; the rule waits for it as long
+        // as it would have waited for a busy coordinator.
+        val leased = withTimeoutOrNull(waitMs.coerceAtLeast(1)) { share.lease.acquire(this@AgentCoordinator) } != null
+        val armed = synchronized(lifecycleLock) {
+            val ours = epoch.get() == token
+            if (leased && ours) {
+                deviceHeld = true
+                tools.beginRun(token.toString(), workspace)
+                mutableState.value = RunState(RunPhase.CONTROLLING, null, label, controlling = true)
+            } else if (ours) {
+                mutableState.value = RunState(status = "Ready")
+                availableState.value = true
+            }
+            leased && ours
+        }
+        if (!armed) {
+            if (leased) share.lease.release(this)
+            return null
         }
         runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
         return try {
@@ -253,12 +303,16 @@ class AgentCoordinator(
                 val ours = epoch.get() == token
                 if (ours) {
                     tools.revoke()
+                    deviceHeld = false
                     mutableState.value = RunState(status = "Ready")
-                    availableState.value = true
                 }
                 ours
             }
-            if (stillOurs) runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, label)) }
+            if (stillOurs) {
+                runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, label)) }
+                share.lease.release(this)
+                availableState.value = true
+            }
         }
     }
 
@@ -284,6 +338,7 @@ class AgentCoordinator(
                 turnId = turn,
                 controls = controls,
                 toolsInFlight = toolsInFlight,
+                device = deviceHeld.also { deviceHeld = false },
             )
             turn = null
             controlTakeover = false
@@ -295,12 +350,12 @@ class AgentCoordinator(
             )
             result
         }
-        tools.revoke()
+        if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING, "Voice")) }
         scope.launch {
             withContext(NonCancellable) {
                 context.controls.forEach { job -> runCatching { withTimeout(2_000) { job.join() } } }
-                val deviceStop = async { runCatching { withTimeout(2_000) { tools.cancel() } } }
+                val deviceStop = async { if (context.device) runCatching { withTimeout(2_000) { tools.cancel() } } }
                 val engineStop = async {
                     runCatching {
                         withTimeout(2_000) {
@@ -323,6 +378,7 @@ class AgentCoordinator(
                     }
                 }
                 runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, "Voice ended")) }
+                if (context.device) share.lease.release(this@AgentCoordinator)
                 availableState.value = true
             }
         }
@@ -352,7 +408,9 @@ class AgentCoordinator(
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
             if (session.title == "New chat") sessions.rename(sessionId, prompt.take(48).ifBlank { "Image chat" })
             val work = sessions.workspace(sessionId)
-            tools.beginRun(token.toString(), work)
+            // The phone is taken at the first tool call, so a chat that only
+            // thinks never waits for one that is driving it.
+            synchronized(lifecycleLock) { if (isCurrentLocked(token)) runWorkspace = work }
             engine.connect()
             check(engine.account().signedIn) { "Sign in to Codex in Settings first." }
             ensureCurrent(token)
@@ -489,6 +547,7 @@ class AgentCoordinator(
                 toolsInFlight = toolsInFlight,
                 flush = flush,
                 runJob = runJob,
+                device = deviceHeld.also { deviceHeld = false },
             )
             awaitingTurn = false
             startupEvents.clear()
@@ -496,21 +555,24 @@ class AgentCoordinator(
             mutableState.value = snapshot.copy(phase = RunPhase.STOPPING, status = "Stopping", controlling = false, approval = null)
             result
         }
-        tools.revoke()
+        if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING)) }
         context.runJob?.cancel()
         scope.launch {
             withContext(NonCancellable) {
                 context.controls.forEach { job -> runCatching { withTimeout(2_000) { job.join() } } }
-                val deviceStop = async { runCatching { withTimeout(2_000) { tools.cancel() } } }
+                val deviceStop = async { if (context.device) runCatching { withTimeout(2_000) { tools.cancel() } } }
+                // Closing the engine ends every chat on it. With another chat
+                // running, a turn that cannot be interrupted is left to finish
+                // instead: no run owns its thread, so its tool calls are refused.
                 val engineStop = async {
                     val interrupted = runCatching {
                         withTimeout(2_000) {
                             if (context.threadId != null && context.turnId != null) engine.interrupt(context.threadId, context.turnId)
-                            else engine.close()
+                            else if (!share.othersActive()) engine.close()
                         }
                     }.isSuccess
-                    if (!interrupted) runCatching { engine.close() }
+                    if (!interrupted && !share.othersActive()) runCatching { engine.close() }
                 }
                 deviceStop.await()
                 context.toolsInFlight.forEach { job -> runCatching { withTimeout(2_000) { job.join() } } }
@@ -536,6 +598,7 @@ class AgentCoordinator(
                     }
                 }
                 runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, "Stopped")) }
+                if (context.device) share.lease.release(this@AgentCoordinator)
                 availableState.value = true
             }
         }
@@ -975,6 +1038,7 @@ class AgentCoordinator(
                 launchTool {
                     toolLock.withLock {
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         val visible = tools.needsControl(event.name)
                         val capture = tools.hidesOverlayDuringCapture(event.name)
                         // act_and_observe wraps the real action, so report that
@@ -1309,11 +1373,11 @@ class AgentCoordinator(
                 voiceMode = false
                 startupEvents.clear()
                 controlTakeover = false
-                AssistantFinal(assistantId, assistantText.toString(), assistantOutcome, flush)
+                AssistantFinal(assistantId, assistantText.toString(), assistantOutcome, flush, deviceHeld.also { deviceHeld = false })
             }
         } ?: return
         final.flush?.let { job -> runCatching { withTimeout(1_000) { job.join() } } }
-        runCatching { tools.revoke() }
+        if (final.device) runCatching { tools.revoke() }
         runCatching { overlay.setCaptureHidden(false) }
         final.id?.let { id ->
             runCatching {
@@ -1364,6 +1428,7 @@ class AgentCoordinator(
             }
         }
         runCatching { overlay.finish(terminalOverlay) }
+        if (final.device) share.lease.release(this)
         val metrics = RunMetrics(
             firstResponseMs = firstResponseMs,
             totalMs = (nowNanos() - runStartedNanos) / 1_000_000,
@@ -1378,6 +1443,34 @@ class AgentCoordinator(
             runCatching { sessions.append(message(sessionId, "system", summary)) }
         }
         availableState.value = true
+    }
+
+    /**
+     * Take the phone for this run before its first tool call. Another chat may
+     * be driving it; this run waits, saying so, until that chat is done.
+     */
+    private suspend fun claimDevice(token: Long, threadId: String, turnId: String): Boolean {
+        if (synchronized(lifecycleLock) { deviceHeld }) return true
+        if (!share.lease.tryAcquire(this)) {
+            synchronized(lifecycleLock) {
+                if (isCurrentTurnLocked(token, threadId, turnId)) mutableState.value = state.value.copy(status = "Waiting for the phone")
+            }
+            share.lease.acquire(this)
+        }
+        // Armed only while the turn is still current, under the same lock a
+        // stop reads [deviceHeld] in, so exactly one side hands the phone back.
+        val armed = synchronized(lifecycleLock) {
+            val work = runWorkspace
+            if (isCurrentTurnLocked(token, threadId, turnId) && work != null) {
+                tools.beginRun(token.toString(), work)
+                deviceHeld = true
+                true
+            } else {
+                false
+            }
+        }
+        if (!armed) share.lease.release(this)
+        return armed
     }
 
     private fun launchControl(block: suspend CoroutineScope.() -> Unit): Job {
@@ -1439,7 +1532,7 @@ class AgentCoordinator(
         val send: SendRequest? = null,
     )
     private data class AssistantTextSnapshot(val revision: Long, val text: String)
-    private data class AssistantFinal(val id: String?, val text: String, val outcome: String, val flush: Job?)
+    private data class AssistantFinal(val id: String?, val text: String, val outcome: String, val flush: Job?, val device: Boolean)
     private data class StopContext(
         val stoppingEpoch: Long,
         val snapshot: RunState,
@@ -1451,6 +1544,7 @@ class AgentCoordinator(
         val toolsInFlight: List<Job>,
         val flush: Job?,
         val runJob: Job?,
+        val device: Boolean,
     )
 
     private data class VoiceStopContext(
@@ -1460,6 +1554,7 @@ class AgentCoordinator(
         val turnId: String?,
         val controls: List<Job>,
         val toolsInFlight: List<Job>,
+        val device: Boolean,
     )
 
     /** Internal rather than private so tests can advance to the real deadline. */

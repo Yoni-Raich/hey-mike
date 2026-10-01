@@ -236,7 +236,7 @@ class MainActivity : ComponentActivity() {
         onTakePhoto = ::takePhoto,
         onRemoveAttachment = model::removeAttachment,
         onSend = { text, attachments -> ensureService(); model.send(text, attachments) },
-        onSteer = { model.graph.coordinator.steer(it) },
+        onSteer = { model.steer(it) },
         onStop = model::stop,
         onCancelQueued = model::cancelQueued,
         onResumeQueue = { model.resumeQueue() },

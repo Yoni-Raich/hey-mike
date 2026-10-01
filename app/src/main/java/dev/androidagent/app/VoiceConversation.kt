@@ -20,7 +20,7 @@
 
 package dev.androidagent.app
 
-import dev.androidagent.core.AgentCoordinator
+import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.SessionStore
@@ -53,7 +53,7 @@ class VoiceConversation(
     private val engine: RoutingAgentEngine,
     private val voice: AndroidRealtimeVoiceController,
     private val tools: DeviceToolGateway,
-    private val coordinator: () -> AgentCoordinator,
+    private val coordinator: () -> AgentRuns,
 ) {
     private val mutableSessionId = MutableStateFlow<String?>(null)
     private val mutableTranscript = MutableStateFlow(VoiceTranscript())

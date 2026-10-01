@@ -557,7 +557,7 @@ private fun LibraryChatRow(
 ) {
     val local = (entry as? PcChatEntry.Local)?.session
     if (local != null) {
-        val running = state.runState.active && local.id == state.runState.sessionId
+        val running = state.runs[local.id]?.active == true
         SessionRow(
             session = local, onComputer = false, selected = local.id == state.activeSessionId,
             running = running,

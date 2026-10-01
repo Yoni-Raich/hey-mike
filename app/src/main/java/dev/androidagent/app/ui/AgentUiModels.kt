@@ -100,7 +100,10 @@ data class AgentUiState(
     val attachments: List<PendingAttachment> = emptyList(),
     val workspaceFiles: List<WorkspaceFileItem> = emptyList(),
     val discoveredEndpoints: List<AdbEndpoint> = emptyList(),
+    /** The open chat's run. Other chats may be running beside it: see [runs]. */
     val runState: RunState = RunState(),
+    /** Every chat running now, by chat. */
+    val runs: Map<String, RunState> = emptyMap(),
     val queuedTurns: List<dev.androidagent.core.QueuedTurn> = emptyList(),
     val queuePaused: Boolean = false,
     val tokenUsage: dev.androidagent.core.TokenUsage? = null,

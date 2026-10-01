@@ -55,7 +55,9 @@ data class QueuedTurn(
 )
 
 /**
- * FIFO sessions share one device owner. Restored work requires explicit Resume.
+ * Turns wait here only while every run is busy, or while their own chat is
+ * still running; a chat that is free starts at once, beside the others.
+ * FIFO otherwise. Restored work requires explicit Resume.
  *
  * Pausing (Stop, voice) holds the work that was already waiting. A message the
  * user submits afterwards is a request to run now, so it runs as soon as the
@@ -64,7 +66,7 @@ data class QueuedTurn(
  */
 class SessionRunQueue(
     private val scope: CoroutineScope,
-    private val coordinator: AgentCoordinator,
+    private val coordinator: TurnRunner,
     private val store: SessionStore,
     private val clock: () -> Long = System::currentTimeMillis,
     /** Told about a turn dropped for being stale, so it is reported rather than vanishing. */
@@ -97,11 +99,11 @@ class SessionRunQueue(
         loaded.join()
         lock.withLock {
             check(store.getSession(request.sessionId) != null) { "Chat no longer exists." }
-            val active = coordinator.state.value
-            if (active.active && active.sessionId == request.sessionId) {
-                check(active.phase != RunPhase.STARTING && active.phase != RunPhase.STOPPING) { "Wait for the current turn to start or stop." }
+            val phase = coordinator.phaseOf(request.sessionId)
+            if (phase != null) {
+                check(phase != RunPhase.STARTING && phase != RunPhase.STOPPING) { "Wait for the current turn to start or stop." }
                 check(request.imagePaths.isEmpty()) { "Send attachments after this run finishes." }
-                coordinator.steer(request.prompt)
+                coordinator.steer(request.sessionId, request.prompt)
                 return
             }
             check(pending.value.size < 32) { "The queue is full. Cancel a queued task first." }
@@ -123,25 +125,26 @@ class SessionRunQueue(
     private suspend fun save(value: List<QueuedTurn>) { store.saveQueuedTurns(value); pending.value = value }
 
     private suspend fun dispatch() = lock.withLock {
-        if (!coordinator.available.value || coordinator.state.value.active) return@withLock
-        // Stale turns are dropped before anything is chosen, so an expired one
-        // at the head cannot hold up the turn behind it.
-        val now = clock()
-        val fresh = pending.value.filter { it.validUntil == null || it.validUntil >= now }
-        if (fresh.size != pending.value.size) {
-            val dropped = pending.value - fresh.toSet()
-            save(fresh)
-            dropped.forEach { onExpired(it) }
+        // One turn per free run, until the runs or the startable turns run out.
+        while (coordinator.canStart()) {
+            // Stale turns are dropped before anything is chosen, so an expired one
+            // at the head cannot hold up the turn behind it.
+            val now = clock()
+            val fresh = pending.value.filter { it.validUntil == null || it.validUntil >= now }
+            if (fresh.size != pending.value.size) {
+                val dropped = pending.value - fresh.toSet()
+                save(fresh)
+                dropped.forEach { onExpired(it) }
+            }
+            // While paused, only turns submitted since the pause may start. A
+            // chat still running keeps its next turn until that run ends.
+            val next = fresh.firstOrNull { turn ->
+                (!pausedState.value || turn.id in submittedNow) && coordinator.phaseOf(turn.sessionId) == null
+            } ?: return@withLock
+            // Dequeue durably before starting, so a process crash cannot replay side effects.
+            save(pending.value - next)
+            submittedNow -= next.id
+            coordinator.send(next.sessionId, next.prompt, next.imagePaths.map(::File), next.model, next.effort, next.skill, next.planMode)
         }
-        // While paused, only turns submitted since the pause may start.
-        val next = if (pausedState.value) {
-            fresh.firstOrNull { it.id in submittedNow }
-        } else {
-            fresh.firstOrNull()
-        } ?: return@withLock
-        // Dequeue durably before starting, so a process crash cannot replay side effects.
-        save(pending.value - next)
-        submittedNow -= next.id
-        coordinator.send(next.sessionId, next.prompt, next.imagePaths.map(::File), next.model, next.effort, next.skill, next.planMode)
     }
 }

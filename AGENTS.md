@@ -14,7 +14,7 @@ Read `PROGRESS.md` and `docs/ARCHITECTURE.md` before work. Write short, clear En
 ## Architecture (see `docs/ARCHITECTURE.md`)
 
 - Modules (`settings.gradle.kts`): `:app` (Compose UI, wiring) `:core` (contracts, coordinator, run state) `:engine-codex` (app-server JSON-RPC) `:runtime` (binary staging, process supervision, CONNECT proxy) `:workspace` (sessions/files) `:adb` (pairing identity, discovery, transport) `:a11y` (accessibility bridge) `:device-tools` (sole agent device gateway) `:overlay` (floating card, stop) `:voice` (realtime audio).
-- Rules: UI observes app events, never raw Codex JSON. All device ops go through `device-tools`; arbitrary shell = visible-control mode with overlay states Starting/Thinking/Running/Controlling/Stopping/Done/Error. One active run per phone. Stop revokes new tool calls first, then interrupts — never claim completed side effects were undone.
+- Rules: UI observes app events, never raw Codex JSON. All device ops go through `device-tools`; arbitrary shell = visible-control mode with overlay states Starting/Thinking/Running/Controlling/Stopping/Done/Error. Chats run in parallel (`AgentRuns`, up to 3), but one run drives the phone at a time (`DeviceLease`, from its first tool call to its end). Stop revokes new tool calls first, then interrupts — never claim completed side effects were undone.
 - On-device skills: canonical sources `app/src/main/assets/agent_stack/skills/*/SKILL.md`, installed at startup to app-private `$HOME/.agents/skills`; engine discovers via `skills/list`. No hard-coded slash list.
 
 ## Device
