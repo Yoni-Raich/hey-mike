@@ -51,6 +51,8 @@ interface TurnRunner {
         reasoningEffort: String? = null,
         skill: AgentSkill? = null,
         planMode: Boolean = false,
+        /** The engine this turn runs on; the chat moves to it first. Null keeps the chat's own. */
+        engineKind: EngineKind? = null,
     )
 }
 
@@ -147,10 +149,11 @@ class AgentRuns(
         reasoningEffort: String?,
         skill: AgentSkill?,
         planMode: Boolean,
+        engineKind: EngineKind?,
     ) {
         val slot = synchronized(this) { slotFor(sessionId) ?: freeSlot() }
         // A chat already running is steered by its own coordinator.
-        slot.send(sessionId, prompt, images, model, reasoningEffort, skill, planMode)
+        slot.send(sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind)
     }
 
     override fun steer(sessionId: String, prompt: String) { slotFor(sessionId)?.steer(prompt) }

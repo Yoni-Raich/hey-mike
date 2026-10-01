@@ -65,13 +65,35 @@ interface AdbTransport {
 }
 
 @Serializable
-/** [hasMessages] is false for a chat nobody has written in yet: it is not history, and it is not kept. */
-data class ChatSession(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val engineThreadId: String? = null, val hasMessages: Boolean = true, val engine: EngineKind = EngineKind.CODEX)
+/**
+ * [hasMessages] is false for a chat nobody has written in yet: it is not history, and it is not kept.
+ *
+ * [engine] runs the chat's next turn and [engineThreadId] is that engine's
+ * thread. A chat can change engine between turns: the thread it leaves waits
+ * in [parked], and [catchUpFrom] says what the engine it moves to has missed.
+ */
+data class ChatSession(
+    val id: String,
+    val title: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val engineThreadId: String? = null,
+    val hasMessages: Boolean = true,
+    val engine: EngineKind = EngineKind.CODEX,
+    /** The thread of each engine this chat is not running on now. */
+    val parked: Map<EngineKind, ParkedThread> = emptyMap(),
+    /** Messages newer than this have not reached [engine]'s thread yet. Null when it has seen them all. */
+    val catchUpFrom: Long? = null,
+)
+
+/** An engine's thread for a chat that now runs on another engine, and the time up to which it saw the chat. */
+@Serializable
+data class ParkedThread(val threadId: String, val seenUntil: Long)
 @Serializable
 data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
 interface SessionStore {
     val sessions: StateFlow<List<ChatSession>>
-    /** A new chat that runs on [engine] for its whole life. */
+    /** A new chat that starts on [engine]. */
     suspend fun createSession(engine: EngineKind): ChatSession
     suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
     suspend fun getSession(id: String): ChatSession?
@@ -79,6 +101,14 @@ interface SessionStore {
     suspend fun append(message: ChatMessage)
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
     suspend fun setThread(sessionId: String, threadId: String)
+    /**
+     * Run the chat's next turn on [engine]. The thread of the engine it leaves
+     * is kept, and the one it had on [engine] before, if any, comes back; see
+     * [EngineSwitch]. Nothing changes when the chat already runs on [engine].
+     */
+    suspend fun setEngine(sessionId: String, engine: EngineKind) {}
+    /** The chat's engine has now been given everything said so far. */
+    suspend fun markCaughtUp(sessionId: String) {}
     suspend fun rename(sessionId: String, title: String)
     suspend fun deleteSession(sessionId: String)
     fun workspace(sessionId: String): File
@@ -98,7 +128,7 @@ interface RuntimeHost {
     suspend fun stop()
 }
 
-/** Which agent engine a chat runs on. Fixed for the life of a chat. */
+/** Which agent engine runs a turn. A chat can change it between turns. */
 @Serializable
 enum class EngineKind { CODEX, CLAUDE }
 
@@ -150,6 +180,8 @@ data class AgentModel(
     val defaultReasoningEffort: String? = null,
     /** A short line shown under the name in the picker; empty when the engine gives none. */
     val description: String = "",
+    /** The engine that runs this model. Picking the model picks the engine. */
+    val engine: EngineKind = EngineKind.CODEX,
 )
 
 /** Skill metadata returned by Codex's native skills/list catalog. */

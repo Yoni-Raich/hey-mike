@@ -24,6 +24,7 @@ import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AgentModel
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.DeviceCapabilities
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.ReasoningEffortOption
 import dev.androidagent.core.TokenUsage
 import dev.androidagent.core.UsageLimit
@@ -335,6 +336,7 @@ internal object ClaudeProtocol {
                 displayName = modelName(id, model.string("displayName")),
                 reasoningEfforts = efforts,
                 description = modelNote(id, model.string("resolvedModel"), model.string("description")),
+                engine = EngineKind.CLAUDE,
             )
         }.distinctBy { it.id }
         return models.sortedBy { if (it.id == DEFAULT_MODEL) 0 else 1 }
@@ -372,9 +374,9 @@ internal object ClaudeProtocol {
 
     /** Used until a process has answered `initialize`. */
     val FALLBACK_MODELS: List<AgentModel> = listOf(
-        AgentModel("sonnet", modelName("sonnet"), EFFORTS.map { ReasoningEffortOption(it) }),
-        AgentModel("opus", modelName("opus"), EFFORTS.map { ReasoningEffortOption(it) }),
-        AgentModel("haiku", modelName("haiku")),
+        AgentModel("sonnet", modelName("sonnet"), EFFORTS.map { ReasoningEffortOption(it) }, engine = EngineKind.CLAUDE),
+        AgentModel("opus", modelName("opus"), EFFORTS.map { ReasoningEffortOption(it) }, engine = EngineKind.CLAUDE),
+        AgentModel("haiku", modelName("haiku"), engine = EngineKind.CLAUDE),
     )
 
     private val WINDOW_NAMES = mapOf(

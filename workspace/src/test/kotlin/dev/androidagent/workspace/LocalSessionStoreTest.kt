@@ -22,10 +22,12 @@ package dev.androidagent.workspace
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.EngineKind
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -81,7 +83,63 @@ class LocalSessionStoreTest {
         assertEquals("thread-1", old.engineThreadId)
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(3, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(4, it.version) }
+    }
+
+    @Test
+    fun aChatKeepsOneThreadPerEngineAcrossSwitchesAndReopens() = runBlocking {
+        val store = LocalSessionStore(context)
+        val chat = store.createSession(EngineKind.CODEX)
+        store.setThread(chat.id, "codex-thread")
+        store.append(ChatMessage("m1", chat.id, "user", "hello", 10))
+
+        store.setEngine(chat.id, EngineKind.CLAUDE)
+        val onClaude = LocalSessionStore(context).getSession(chat.id)!!
+        assertEquals(EngineKind.CLAUDE, onClaude.engine)
+        assertNull(onClaude.engineThreadId)
+        assertEquals("codex-thread", onClaude.parked[EngineKind.CODEX]?.threadId)
+        // Claude has no thread in this chat yet, so it has seen nothing.
+        assertEquals(0L, onClaude.catchUpFrom)
+
+        store.setThread(chat.id, "claude-thread")
+        store.markCaughtUp(chat.id)
+        assertNull(store.getSession(chat.id)!!.catchUpFrom)
+
+        store.setEngine(chat.id, EngineKind.CODEX)
+        val back = LocalSessionStore(context).getSession(chat.id)!!
+        assertEquals(EngineKind.CODEX, back.engine)
+        assertEquals("codex-thread", back.engineThreadId)
+        assertEquals("claude-thread", back.parked[EngineKind.CLAUDE]?.threadId)
+        // Codex missed what was said while the chat ran on Claude.
+        assertEquals(onClaude.parked[EngineKind.CODEX]?.seenUntil, back.catchUpFrom)
+    }
+
+    @Test
+    fun anEmptyChatChangesEngineWithNothingToCatchUp() = runBlocking {
+        val store = LocalSessionStore(context)
+        val chat = store.createSession(EngineKind.CODEX)
+
+        store.setEngine(chat.id, EngineKind.CLAUDE)
+
+        val moved = store.getSession(chat.id)!!
+        assertEquals(EngineKind.CLAUDE, moved.engine)
+        assertNull(moved.catchUpFrom)
+        assertEquals(emptyMap<EngineKind, Any>(), moved.parked)
+    }
+
+    @Test
+    fun aFileAnOlderBuildOpenedInBetweenIsUpgradedAgainWithoutLosingChats() = runBlocking {
+        // A newer build wrote the engine column, then an older build opened
+        // the file and set its version back, keeping the column.
+        val created = LocalSessionStore(context).createSession(EngineKind.CLAUDE)
+        val file = context.getDatabasePath("sessions.db")
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { it.version = 2 }
+
+        val store = LocalSessionStore(context)
+
+        assertEquals(EngineKind.CLAUDE, store.getSession(created.id)!!.engine)
+        store.setEngine(created.id, EngineKind.CODEX)
+        assertEquals(EngineKind.CODEX, store.getSession(created.id)!!.engine)
     }
 
     @Test

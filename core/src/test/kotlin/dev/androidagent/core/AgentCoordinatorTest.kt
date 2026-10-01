@@ -130,6 +130,64 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aTurnForTheOtherEngineMovesTheChatAndCarriesWhatWasSaid() = runTest {
+        val rig = Rig(this)
+        rig.engine.threads = mapOf(EngineKind.CODEX to "codex-thread", EngineKind.CLAUDE to "claude-thread")
+        rig.coordinator.send("one", "Open my alarms")
+        runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("Your alarms are open.", "codex-thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "codex-thread", turnId = "turn"))
+        advanceUntilIdle()
+        assertEquals(listOf("Open my alarms"), rig.engine.prompts)
+
+        rig.coordinator.send("one", "Now set one for 7", model = "sonnet", engineKind = EngineKind.CLAUDE)
+        assertEquals("Starting Claude", rig.coordinator.state.value.status)
+        runCurrent()
+
+        val session = rig.store.getSession("one")!!
+        assertEquals(EngineKind.CLAUDE, session.engine)
+        assertEquals("claude-thread", session.engineThreadId)
+        assertEquals("codex-thread", session.parked[EngineKind.CODEX]?.threadId)
+        assertEquals(listOf(EngineKind.CODEX, EngineKind.CLAUDE), rig.engine.accountKinds)
+        // Claude never saw the chat: it is told what was said, then the new message.
+        val prompt = rig.engine.prompts.last()
+        assertTrue(prompt.startsWith("[Earlier in this chat]"))
+        assertTrue("User: Open my alarms\nMike: Your alarms are open.\n" in prompt)
+        assertTrue(prompt.endsWith("[End of earlier messages]\n\nNow set one for 7"))
+        // The chat shows only what the user typed.
+        assertEquals(listOf("Open my alarms", "Now set one for 7"), rig.store.messages.filter { it.role == "user" }.map { it.text })
+        assertNull(session.catchUpFrom)
+        rig.close()
+    }
+
+    @Test fun anEngineThatIsUpToDateGetsThePromptAsTyped() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "First")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        advanceUntilIdle()
+        rig.coordinator.send("one", "Second", engineKind = EngineKind.CODEX)
+        runCurrent()
+        assertEquals(listOf("First", "Second"), rig.engine.prompts)
+        rig.close()
+    }
+
+    @Test fun aThreadTheEngineLostIsGivenTheChatAgain() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "First")
+        runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("Done.", "thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        advanceUntilIdle()
+        // The engine cannot resume the stored thread and hands back a new one.
+        rig.engine.threads = mapOf(EngineKind.CODEX to "fresh-thread")
+        rig.coordinator.send("one", "Second")
+        runCurrent()
+        assertTrue(rig.engine.prompts.last().startsWith("[Earlier in this chat]"))
+        assertTrue("User: First\nMike: Done.\n" in rig.engine.prompts.last())
+        rig.close()
+    }
+
     @Test fun aSignedOutClaudeChatAsksForTheClaudeSignIn() = runTest {
         val rig = Rig(this)
         rig.engine.signedOut += EngineKind.CLAUDE
@@ -763,9 +821,13 @@ class AgentCoordinatorTest {
         val connectedKinds = mutableListOf<EngineKind>()
         val accountKinds = mutableListOf<EngineKind>()
         val signedOut = mutableSetOf<EngineKind>()
+        /** The thread each engine opens; "thread" when not set. */
+        var threads = emptyMap<EngineKind, String>()
+        val prompts = mutableListOf<String>()
+        private var kind = EngineKind.CODEX
         suspend fun emit(value: EngineEvent) = stream.emit(value)
         override suspend fun connect() = Unit
-        override suspend fun connect(kind: EngineKind) { connectedKinds += kind }
+        override suspend fun connect(kind: EngineKind) { connectedKinds += kind; this.kind = kind }
         override suspend fun account() = AccountStatus(true, "Test")
         override suspend fun account(kind: EngineKind): AccountStatus {
             accountKinds += kind
@@ -774,8 +836,8 @@ class AgentCoordinatorTest {
         override suspend fun login() = account()
         override suspend fun logout() = Unit
         override suspend fun models() = listOf("test")
-        override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>) = "thread"
-        override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String { turns++; return "turn" }
+        override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>) = threads[kind] ?: "thread"
+        override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String { turns++; prompts += prompt; return "turn" }
         override suspend fun startTurn(threadId: String, prompt: String, images: List<File>, reasoningEffort: String?): String {
             this.reasoningEffort = reasoningEffort
             return startTurn(threadId, prompt, images)
@@ -837,7 +899,13 @@ class AgentCoordinatorTest {
         override suspend fun append(message: ChatMessage) { messages.add(message) }
         override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
-        override suspend fun setThread(sessionId: String, threadId: String) = Unit
+        private fun change(sessionId: String, change: (ChatSession) -> ChatSession) {
+            sessions.value = sessions.value.map { if (it.id == sessionId) change(it) else it }
+        }
+        override suspend fun setThread(sessionId: String, threadId: String) = change(sessionId) { it.copy(engineThreadId = threadId) }
+        override suspend fun setEngine(sessionId: String, engine: EngineKind) =
+            change(sessionId) { EngineSwitch.switch(it.copy(hasMessages = messages.any { m -> m.sessionId == sessionId }), engine, now = messages.size.toLong()) }
+        override suspend fun markCaughtUp(sessionId: String) = change(sessionId) { it.copy(catchUpFrom = null) }
         override suspend fun rename(sessionId: String, title: String) = Unit
         override suspend fun deleteSession(sessionId: String) = Unit
         override fun workspace(sessionId: String) = File("session-$sessionId")

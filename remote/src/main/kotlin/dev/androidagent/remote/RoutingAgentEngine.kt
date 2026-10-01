@@ -8,6 +8,7 @@ import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.EngineKind
+import dev.androidagent.core.EngineSwitch
 import dev.androidagent.core.RealtimeAudioChunk
 import dev.androidagent.core.RealtimeTransport
 import dev.androidagent.core.RealtimeVoiceEngine
@@ -44,10 +45,12 @@ import java.util.concurrent.ConcurrentHashMap
  * requests are tagged with the computer before the coordinator sees them.
  *
  * A chat whose [dev.androidagent.core.ChatSession.engine] is Claude opens on
- * [claude] instead, looked up through [sessions] when the chat is opened, and
- * its thread is remembered so every later call goes there too. Claude's
- * request ids are tagged the same way, so they can never meet a Codex id.
- * The plain account calls stay Codex's; [account] with a kind reaches Claude.
+ * [claude] instead, looked up through [sessions] every time the chat is
+ * opened, because a chat can move between the engines from one turn to the
+ * next. A thread stays with the engine that made it, so every later call
+ * about that thread goes there. Claude's request ids are tagged the same way
+ * as a computer's, so they can never meet a Codex id. The plain account calls
+ * stay Codex's; [account] with a kind reaches Claude.
  *
  * Voice follows the thread too: realtime is started by the app-server that
  * owns the chat's thread, so a computer chat talks to the computer's Codex.
@@ -220,11 +223,15 @@ class RoutingAgentEngine(
         return computerOf(threadId)?.let { hub.engine(it) } ?: local
     }
 
-    /** Claude threads are remembered when opened; after a restart the chat that stored one names it. */
+    /**
+     * Claude threads are remembered when opened; after a restart the chat that
+     * stored one names it, whether the chat runs on Claude now or has moved
+     * to Codex and keeps the Claude thread for later.
+     */
     private fun isClaude(threadId: String): Boolean {
         if (claude == null) return false
         if (threadId in claudeThreads) return true
-        val owned = sessions?.sessions?.value?.any { it.engineThreadId == threadId && it.engine == EngineKind.CLAUDE } == true
+        val owned = sessions?.sessions?.value?.any { EngineSwitch.engineOf(it, threadId) == EngineKind.CLAUDE } == true
         if (owned) claudeThreads += threadId
         return owned
     }

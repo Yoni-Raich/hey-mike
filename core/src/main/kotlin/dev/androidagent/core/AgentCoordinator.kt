@@ -176,6 +176,7 @@ class AgentCoordinator(
         reasoningEffort: String?,
         skill: AgentSkill?,
         planMode: Boolean,
+        engineKind: EngineKind?,
     ) {
         if (prompt.isBlank() && images.isEmpty()) return
         synchronized(lifecycleLock) {
@@ -189,7 +190,7 @@ class AgentCoordinator(
             val runCompletion = CompletableDeferred<Unit>()
             // The chat's engine names every message this run shows; run() reads
             // it again from the store before anything is checked.
-            runEngine = sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine ?: EngineKind.CODEX
+            runEngine = engineKind ?: sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine ?: EngineKind.CODEX
             mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}")
             completion = runCompletion
             thread = null
@@ -212,7 +213,7 @@ class AgentCoordinator(
             overlaySpeech = null
             runWorkspace = null
             screenSticky = false
-            runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode) }
+            runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind) }
         }
     }
 
@@ -408,13 +409,18 @@ class AgentCoordinator(
         reasoningEffort: String?,
         skill: AgentSkill?,
         planMode: Boolean,
+        engineKind: EngineKind?,
     ) {
         try {
             traceFailureReported.set(false)
             // Read-only chat does not take over the user's screen. The first
             // device action checks and shows the overlay before dispatch.
             overlay.updateState(OverlayState(OverlayPhase.STARTING))
-            sessions.append(message(sessionId, "user", prompt, attachments = images.map { it.absolutePath }))
+            // The turn names its engine, and the chat moves to it first.
+            val before = sessions.getSession(sessionId) ?: error("Chat no longer exists")
+            if (engineKind != null && before.engine != engineKind) sessions.setEngine(sessionId, engineKind)
+            val sent = message(sessionId, "user", prompt, attachments = images.map { it.absolutePath })
+            sessions.append(sent)
             trace(sessionId, "user", buildJsonObject {
                 put("text", prompt)
                 put("attachments", buildJsonArray { images.forEach { add(it.absolutePath) } })
@@ -437,6 +443,16 @@ class AgentCoordinator(
             }
             sessions.setThread(sessionId, openedThread)
             ensureCurrent(token)
+            // What this engine's thread has not seen: everything since it was
+            // last used in this chat, or the whole chat for a thread that is
+            // new although the chat is not (first time on this engine, or a
+            // thread the engine lost).
+            val lostThread = session.engineThreadId != null && session.engineThreadId != openedThread
+            val missedSince = if (lostThread) 0L else session.catchUpFrom
+            val handoff = missedSince?.let { since ->
+                ChatHandoff.build(sessions.messages(sessionId).first().filter { it.createdAt > since && it.id != sent.id })
+            }
+            ensureCurrent(token)
             synchronized(lifecycleLock) {
                 ensureCurrentLocked(token)
                 mutableState.value = state.value.copy(phase = RunPhase.THINKING, status = "Working")
@@ -444,10 +460,11 @@ class AgentCoordinator(
             overlay.updateState(OverlayState(OverlayPhase.THINKING))
             beginTurn(token)
             val startedTurn = engine.startTurn(
-                openedThread, prompt, images, reasoningEffort, skill,
+                openedThread, handoff.orEmpty() + prompt, images, reasoningEffort, skill,
                 DeviceCapabilities.of(tools, adbStatus()),
                 planModel = if (planMode) model else null,
             )
+            if (session.catchUpFrom != null) sessions.markCaughtUp(sessionId)
             if (!activateTurn(token, startedTurn)) return
             ensureCurrent(token)
             runCompletion.await()
