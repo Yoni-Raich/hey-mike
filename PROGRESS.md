@@ -30,9 +30,15 @@ New UI review/unknown-result and Android Keystore persistence tests compile.
 Not run: those instrumented tests, rendered UI, physical background/restart
 execution, or a release gate. A fresh API 35 emulator was booted, then closed
 when the user selected the Xiaomi; no APK or test was installed on it.
-The Xiaomi USB target and the phone served by this chat's device tools differ,
-so Xiaomi installation/testing waits for the app-controlled connection.
-No connected instrumentation, data removal or phone install was performed.
+The user then selected the Nothing A059 (Android 16, ARM64). The app-controlled
+Wireless ADB connection is live and the installed dev app is 0.14.0 (28).
+The matching debug-signed dev APK from code commit `da7bdc4` was transferred
+to Downloads; its SHA-256 matches the computer copy:
+`80c3fd2d0b98405349a198625877a05d24f832f14aefb1cb5945fdc6d5c7787d`.
+The user authorized an in-place update as the last action because it stops
+this chat, and will reopen Mike to test and continue. This records the
+pre-install handoff, not an installation or runtime success. No second app,
+connected instrumentation or data removal was used.
 
 Remaining design scope: goal-driven planning, inferred/shared memory,
 scoped permission grants, rollback-resistant state, voice permits and
