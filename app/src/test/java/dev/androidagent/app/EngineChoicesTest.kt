@@ -101,19 +101,35 @@ class EngineChoicesTest {
         assertEquals(EngineKind.CODEX, ChatEngines.of(sessions, null))
     }
 
-    @Test fun theEngineCanChangeOnlyBeforeTheFirstMessageOnThisPhone() {
-        val fresh = ChatSession("a", "New chat", 0, 0)
-        assertTrue(ChatEngines.canChange(fresh, hasMessages = false, boundToComputer = false, running = false))
-        assertFalse(ChatEngines.canChange(fresh, hasMessages = true, boundToComputer = false, running = false))
-        assertFalse(ChatEngines.canChange(fresh.copy(engineThreadId = "t"), hasMessages = false, boundToComputer = false, running = false))
-        assertFalse(ChatEngines.canChange(fresh, hasMessages = false, boundToComputer = true, running = false))
-        assertFalse(ChatEngines.canChange(fresh, hasMessages = false, boundToComputer = false, running = true))
-        assertFalse(ChatEngines.canChange(null, hasMessages = false, boundToComputer = false, running = false))
+    @Test fun theModelListHoldsBothEnginesCodexFirst() {
+        val engines = EngineChoices()
+            .update(EngineKind.CLAUDE) { it.withCatalog(listOf(sonnet.copy(engine = EngineKind.CLAUDE))) }
+            .update(EngineKind.CODEX) { it.withCatalog(listOf(AgentModel("gpt-5"))) }
+
+        assertEquals(listOf("gpt-5", "sonnet"), engines.offered(EngineKind.entries).map { it.id })
+        assertEquals(listOf(EngineKind.CODEX, EngineKind.CLAUDE), engines.offered(EngineKind.entries).map { it.engine })
+        // A chat that cannot run Claude is not offered its models.
+        assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX)).map { it.id })
     }
 
-    @Test fun onlyCodexChatsHaveVoice() {
-        assertTrue(ChatEngines.hasVoice(EngineKind.CODEX))
-        assertFalse(ChatEngines.hasVoice(EngineKind.CLAUDE))
+    @Test fun aModelIsTaggedWithTheEngineWhoseListItIsIn() {
+        // The fake and older engines do not tag their models.
+        val engines = EngineChoices().update(EngineKind.CLAUDE) { it.withCatalog(listOf(sonnet)) }
+        assertEquals(listOf(EngineKind.CLAUDE), engines.offered(EngineKind.entries).map { it.engine })
+    }
+
+    @Test fun pickingAModelPicksItsEngine() {
+        val offered = listOf(AgentModel("gpt-5"), sonnet.copy(engine = EngineKind.CLAUDE))
+        assertEquals(EngineKind.CLAUDE, ChatEngines.engineOfModel(offered, "sonnet", active = EngineKind.CODEX))
+        assertEquals(EngineKind.CODEX, ChatEngines.engineOfModel(offered, "gpt-5", active = EngineKind.CLAUDE))
+        // An id nobody lists stays on the chat's engine.
+        assertEquals(EngineKind.CLAUDE, ChatEngines.engineOfModel(offered, "gone", active = EngineKind.CLAUDE))
+    }
+
+    @Test fun aChatOnAnotherEngineCanTalkOnceCodexIsSignedIn() {
+        assertTrue(ChatEngines.hasVoice(EngineKind.CODEX, codexSignedIn = false))
+        assertTrue(ChatEngines.hasVoice(EngineKind.CLAUDE, codexSignedIn = true))
+        assertFalse(ChatEngines.hasVoice(EngineKind.CLAUDE, codexSignedIn = false))
     }
 
     @Test fun theDefaultEngineIsReadBackAndFallsBackToCodex() {

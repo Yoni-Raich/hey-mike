@@ -84,11 +84,12 @@ internal fun brandArgb(hex: String?): Long? {
 
 /**
  * A Claude model's shown name, such as "Sonnet 5.5" for `sonnet`, or null for
- * a Codex chat. Codex keeps showing its model ids as before.
+ * a Codex model. Codex keeps showing its model ids as before.
  */
 internal fun claudeModelName(state: AgentUiState, id: String): String? {
-    if (state.activeEngine != EngineKind.CLAUDE) return null
-    return state.modelCatalog.firstOrNull { it.id == id }?.displayName?.takeIf { it.isNotBlank() } ?: id
+    val model = state.modelCatalog.firstOrNull { it.id == id && it.engine == EngineKind.CLAUDE }
+        ?: return id.takeIf { state.activeEngine == EngineKind.CLAUDE && state.modelCatalog.none { it.id == id } }
+    return model.displayName.takeIf { it.isNotBlank() } ?: id
 }
 
 /** How the chip, the picker and /status name a model. */
@@ -96,7 +97,7 @@ internal fun modelLabel(state: AgentUiState, id: String): String = claudeModelNa
 
 /** The short line under a Claude model in the picker, such as Fable's extra-usage hint. Empty for Codex. */
 internal fun modelNote(state: AgentUiState, id: String): String =
-    if (state.activeEngine != EngineKind.CLAUDE) "" else state.modelCatalog.firstOrNull { it.id == id }?.description.orEmpty()
+    state.modelCatalog.firstOrNull { it.id == id && it.engine == EngineKind.CLAUDE }?.description.orEmpty()
 
 /**
  * One line for /status. Context use is left out on purpose: the engine reports

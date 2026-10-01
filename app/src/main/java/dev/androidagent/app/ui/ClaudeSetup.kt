@@ -114,7 +114,7 @@ internal fun claudeSummary(claude: ClaudeUiState): String = when (claudeStage(cl
     ClaudeStage.SIGNED_IN -> "Signed in"
 }
 
-/** Which account new chats use. Each chat keeps the one it started with. */
+/** Which account new chats use. A chat that has begun keeps its own until another model is picked in it. */
 @Composable
 internal fun ProviderChoice(selected: EngineKind, onSelect: (EngineKind) -> Unit) {
     Column(Modifier.fillMaxWidth().selectableGroup()) {
@@ -253,7 +253,7 @@ private fun BusyButton(label: String, busy: Boolean, enabled: Boolean = true, on
     }
 }
 
-/** The engine choice of an empty phone chat. The engine is fixed once the first message is sent. */
+/** The account choice of an empty phone chat. Later it changes from the model menu, like any model. */
 @Composable
 internal fun ChatEngineChoice(state: AgentUiState, actions: AgentUiActions) {
     // Nothing to choose on a phone Claude cannot run on; Settings says why.
@@ -269,7 +269,7 @@ internal fun ChatEngineChoice(state: AgentUiState, actions: AgentUiActions) {
             }
         }
         Text(
-            "You can change this until you send the first message.",
+            "You can change this later too, from the model menu.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -201,8 +201,9 @@ data class AgentUiState(
     /** Text to put in a chat's composer, unsent, once: chat id to text. */
     val composerSeeds: Map<String, String> = emptyMap(),
     /**
-     * The open chat's engine. The model chips, the quota and voice follow it:
-     * [modelCatalog], [selectedModel] and [usageLimits] are this engine's.
+     * The engine the open chat runs on now. [selectedModel] and [usageLimits]
+     * are this engine's. [modelCatalog] holds every engine's models the chat
+     * can pick, and picking one of another engine moves the chat to it.
      */
     val activeEngine: EngineKind = EngineKind.CODEX,
     /** The engine a new chat starts on, chosen in onboarding or Settings. */
@@ -219,7 +220,10 @@ data class ClaudeUiState(
     val busy: Boolean = false,
     /** When Claude last reported its limits, shown as their age; null when never. */
     val usageReadAtMillis: Long? = null,
-)
+) {
+    /** Downloaded and signed in: Claude models can be picked in a chat on this phone. */
+    val ready: Boolean get() = install.phase == ClaudeInstallPhase.INSTALLED && account?.signedIn == true
+}
 
 /** A computer as the add or edit form holds it, before it is saved. */
 data class ComputerDraft(
@@ -380,7 +384,7 @@ data class AgentUiActions(
     val onOpenFolderChat: (computerId: String, path: String) -> Unit = { _, _ -> },
     /** The engine new chats start on. */
     val onDefaultEngine: (EngineKind) -> Unit = {},
-    /** Before the first message: run this chat on the other engine instead. */
+    /** Run this chat on the other engine from its next message. */
     val onChooseChatEngine: (EngineKind) -> Unit = {},
     /** Download Claude Code, after the user saw its size. */
     val onDownloadClaude: () -> Unit = {},

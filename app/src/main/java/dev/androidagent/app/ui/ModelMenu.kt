@@ -47,10 +47,28 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.core.AgentModel
+import dev.androidagent.core.EngineKind
+import dev.androidagent.runtime.ClaudeInstallPhase
 
 // The model choice as a small menu over the chip, not a sheet over half the
 // screen: the intelligence levels first, because that is what changes from
 // task to task, and the model behind one more tap, because it rarely does.
+//
+// The model page lists every engine's models, one group per account. Picking a
+// model of the other engine moves the chat there, at any point in the chat.
+
+/** The model page's groups, in the order shown: each engine that offers models, with them. */
+internal fun modelGroups(catalog: List<AgentModel>): List<Pair<EngineKind, List<AgentModel>>> =
+    EngineKind.entries.mapNotNull { kind -> catalog.filter { it.engine == kind }.takeIf { it.isNotEmpty() }?.let { kind to it } }
+
+/**
+ * Whether the model page ends with a row that leads to the Claude setup: a
+ * phone chat on a phone that can run Claude, while Claude is not ready yet.
+ */
+internal fun offersClaudeSetup(state: AgentUiState): Boolean =
+    state.claude.install.phase != ClaudeInstallPhase.UNSUPPORTED && !state.claude.ready &&
+        state.activeSessionId?.let(state.remoteBindings::get) == null &&
+        state.modelCatalog.none { it.engine == EngineKind.CLAUDE }
 
 /** "xhigh" as it reads in a menu: "Extra High". */
 internal fun effortLabel(value: String): String = when (value.trim().lowercase()) {
@@ -90,7 +108,7 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
     var page by remember { mutableStateOf(ModelPage.MAIN) }
     // Reopen on the intelligence levels, not wherever it was last left.
     LaunchedEffect(expanded) { if (!expanded) page = ModelPage.MAIN }
-    val model = state.modelCatalog.firstOrNull { it.id == state.selectedModel }
+    val model = state.modelCatalog.firstOrNull { it.id == state.selectedModel && it.engine == state.activeEngine }
     val efforts = model?.reasoningEfforts.orEmpty()
     val current = effectiveEffort(model, state.selectedReasoningEffort)
     DropdownMenu(
@@ -133,12 +151,29 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                     leadingIcon = { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back", tint = MenuMuted) },
                     onClick = { page = ModelPage.MAIN },
                 )
-                state.availableModels.forEach { id ->
-                    val title = modelTitle(id, state.modelCatalog.firstOrNull { it.id == id }?.displayName)
-                    ChoiceRow(title, selected = id == state.selectedModel) {
-                        actions.onModelSelected(id)
-                        onDismiss()
+                val groups = modelGroups(state.modelCatalog)
+                val setup = offersClaudeSetup(state)
+                groups.forEach { (kind, models) ->
+                    // One account needs no heading.
+                    if (groups.size > 1 || setup) MenuHeader(providerName(kind))
+                    models.forEach { entry ->
+                        ChoiceRow(
+                            modelTitle(entry.id, entry.displayName),
+                            selected = entry.id == state.selectedModel && kind == state.activeEngine,
+                            note = entry.description.takeIf { kind == EngineKind.CLAUDE },
+                        ) {
+                            actions.onModelSelected(entry.id)
+                            onDismiss()
+                        }
                     }
+                }
+                if (setup) {
+                    MenuHeader(providerName(EngineKind.CLAUDE))
+                    DropdownMenuItem(
+                        text = { Text("Set up in Settings", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface) },
+                        trailingIcon = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) },
+                        onClick = { onDismiss(); actions.onOpenSettings() },
+                    )
                 }
             }
         }
@@ -151,9 +186,14 @@ private fun MenuHeader(text: String) {
 }
 
 @Composable
-private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun ChoiceRow(label: String, selected: Boolean, note: String? = null, onClick: () -> Unit) {
     DropdownMenuItem(
-        text = { Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface) },
+        text = {
+            Column {
+                Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                if (!note.isNullOrBlank()) Text(note, fontSize = 12.sp, lineHeight = 16.sp, color = MenuMuted, maxLines = 2)
+            }
+        },
         trailingIcon = if (selected) {
             { Icon(Icons.Outlined.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
         } else {

@@ -194,7 +194,7 @@ internal fun AgentComposer(
         hasDraft = hasDraft,
         runActive = state.runState.active,
         voiceActive = voiceActive,
-        voiceAllowed = ChatEngines.hasVoice(state.activeEngine),
+        voiceAllowed = ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
     )
     val runCommand: (ComposerCommand) -> Unit = { command ->
         draft = ""

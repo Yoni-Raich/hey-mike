@@ -29,7 +29,8 @@ import dev.androidagent.core.UsageLimit
  * One engine's model list and the user's pick from it.
  *
  * Codex and Claude offer different models, so each engine keeps its own
- * pick; the chips show the one of the open chat's engine.
+ * pick. The model menu lists both engines' models; the chip shows the pick
+ * of the engine the open chat runs on.
  */
 data class ModelChoice(
     val catalog: List<AgentModel> = emptyList(),
@@ -85,6 +86,10 @@ data class EngineChoices(
     fun update(kind: EngineKind, change: (ModelChoice) -> ModelChoice) = copy(models = models + (kind to change(of(kind))))
     fun limits(kind: EngineKind): List<UsageLimit> = quotas[kind].orEmpty()
     fun withLimits(kind: EngineKind, limits: List<UsageLimit>) = copy(quotas = quotas + (kind to limits))
+
+    /** One list for the model menu: the models of each engine in [kinds], Codex first. */
+    fun offered(kinds: Collection<EngineKind>): List<AgentModel> =
+        EngineKind.entries.filter { it in kinds }.flatMap { kind -> of(kind).catalog.map { if (it.engine == kind) it else it.copy(engine = kind) } }
 }
 
 /** What a chat's engine decides in the app. */
@@ -93,14 +98,20 @@ object ChatEngines {
         sessions.firstOrNull { it.id == id }?.engine ?: EngineKind.CODEX
 
     /**
-     * The engine is fixed for the life of a chat. Before its first message a
-     * phone chat can still be swapped for a fresh one on the other engine.
+     * The engine that runs the model [id] picked from [offered]. The chat's
+     * own engine wins when both list the id; an id nobody lists stays there too.
      */
-    fun canChange(session: ChatSession?, hasMessages: Boolean, boundToComputer: Boolean, running: Boolean): Boolean =
-        session != null && session.engineThreadId == null && !hasMessages && !boundToComputer && !running
+    fun engineOfModel(offered: List<AgentModel>, id: String, active: EngineKind): EngineKind =
+        offered.firstOrNull { it.id == id && it.engine == active }?.engine
+            ?: offered.firstOrNull { it.id == id }?.engine
+            ?: active
 
-    /** Realtime voice is a Codex feature; Claude chats have none. */
-    fun hasVoice(kind: EngineKind): Boolean = kind == EngineKind.CODEX
+    /**
+     * Realtime voice is Codex's. A Codex chat always shows the voice button,
+     * which then asks for the sign-in; a chat on another engine can talk too,
+     * on Codex, once Codex is signed in (see [VoiceConversation.begin]).
+     */
+    fun hasVoice(kind: EngineKind, codexSignedIn: Boolean): Boolean = kind == EngineKind.CODEX || codexSignedIn
 
     /** A stored engine name, or Codex for anything unknown. */
     fun parse(value: String?): EngineKind = EngineKind.values().firstOrNull { it.name == value } ?: EngineKind.CODEX

@@ -46,8 +46,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("ui", 0)
     private val current = MutableStateFlow<String?>(null)
     /**
-     * Each engine's model pick and quota. The UI shows the open chat's
-     * engine through [project]; changed on the main thread only.
+     * Each engine's model list, pick and quota. The open chat is offered the
+     * models of every engine that can run in it, and shows the pick and the
+     * quota of the one it runs on, through [project]. Changed on the main
+     * thread only.
      */
     private var engines = EngineChoices()
         .update(EngineKind.CODEX) { ModelChoice(model = preferences.getString(KEY_MODEL, null), effort = preferences.getString(KEY_EFFORT, null)) }
@@ -114,6 +116,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         computerProjects = remote.projects,
                     )
                 }
+                // A chat on a computer is offered other models than one on the phone.
+                project()
             }
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
@@ -210,13 +214,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             when (event) {
                 is EngineEvent.AccountChanged -> {
                     mutable.update { it.copy(claude = it.claude.copy(account = event.status)) }
+                    project()
                     if (event.status.signedIn) runCatching { loadClaudeModels() }
                 }
                 is EngineEvent.UsageChanged -> {
                     usageChanged(EngineKind.CLAUDE, event)
                     event.limits?.let(::recordClaudeUsage)
                 }
-                is EngineEvent.Failure -> if (!graph.coordinator.state.value.active) error(event.message)
+                is EngineEvent.Failure -> if (!graph.coordinator.anyActive) error(event.message)
                 else -> Unit
             }
         } }
@@ -250,15 +255,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         project()
     }
 
-    /** Show the open chat's engine: its models, its pick and its quota. */
+    /**
+     * Show the open chat: the models of every engine it can run on, side by
+     * side, and the pick and quota of the engine it runs on now.
+     */
     private fun project() {
         mutable.update { state ->
             val kind = ChatEngines.of(state.sessions, current.value)
             val choice = engines.of(kind)
+            val offered = engines.offered(enginesFor(current.value, kind, state))
             state.copy(
                 activeEngine = kind,
-                modelCatalog = choice.catalog,
-                availableModels = choice.catalog.map { it.id },
+                modelCatalog = offered,
+                availableModels = offered.map { it.id },
                 selectedModel = choice.model,
                 selectedReasoningEffort = choice.effort,
                 usageLimits = engines.limits(kind).let { limits ->
@@ -284,51 +293,60 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (!blank) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
     }
 
-    /** The engine new chats start on. Chats that exist keep theirs. */
+    /**
+     * The engine new chats start on, from onboarding or Settings. A chat that
+     * has begun keeps its own until a model of the other engine is picked in it.
+     */
     fun setDefaultEngine(kind: EngineKind) {
-        preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
-        mutable.update { it.copy(defaultEngine = kind) }
-        // The empty chat open now (on first launch, the one made at start)
-        // follows the choice; a chat that has begun keeps its engine.
+        rememberDefaultEngine(kind)
+        // The empty chat open now (on first launch, the one made at start) follows the choice.
         val id = current.value ?: return
         val session = mutable.value.sessions.firstOrNull { it.id == id } ?: return
-        val run = graph.coordinator.state.value
-        val movable = ChatEngines.canChange(
-            session,
-            hasMessages = mutable.value.messages.isNotEmpty(),
-            boundToComputer = graph.computers.binding(id) != null,
-            running = run.active && run.sessionId == id,
-        )
-        if (movable && session.engine != kind) chooseChatEngine(kind)
+        if (isBlank(session) && session.engine != kind && graph.computers.binding(id) == null) useEngine(kind)
+    }
+
+    private fun isBlank(session: ChatSession): Boolean = !session.hasMessages && session.engineThreadId == null
+
+    private fun rememberDefaultEngine(kind: EngineKind) {
+        preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
+        mutable.update { it.copy(defaultEngine = kind) }
     }
 
     /**
-     * Run the open chat on [kind] instead. A chat's engine is fixed, so this
-     * swaps the still-empty chat for a fresh one on the other engine.
+     * The engines the chat [id] can run on, where it runs: the one it is on,
+     * Codex, and Claude once it is downloaded and signed in on this phone.
      */
-    fun chooseChatEngine(kind: EngineKind) = task {
-        val id = current.value ?: return@task
-        val session = graph.sessions.getSession(id)
-        if (session?.engine == kind) return@task
-        val run = graph.coordinator.state.value
-        check(
-            ChatEngines.canChange(
-                session,
-                hasMessages = mutable.value.messages.isNotEmpty(),
-                boundToComputer = graph.computers.binding(id) != null,
-                running = run.active && run.sessionId == id,
-            ),
-        ) { "This chat has started. Start a new chat to use ${kind.label}." }
-        replaceEmptyChat(id, kind)
+    private fun enginesFor(id: String?, running: EngineKind, state: AgentUiState): Set<EngineKind> = buildSet {
+        add(running)
+        add(EngineKind.CODEX)
+        val onComputer = id != null && graph.computers.binding(id) != null
+        if (!onComputer && state.claude.ready) add(EngineKind.CLAUDE)
     }
 
-    /** Swap an empty chat for a new one on [kind], and open it. */
-    private suspend fun replaceEmptyChat(id: String, kind: EngineKind): String {
-        val fresh = graph.sessions.createSession(kind)
-        current.value = fresh.id
-        graph.queue.cancelSession(id)
-        graph.sessions.deleteSession(id)
-        return fresh.id
+    /**
+     * Run the open chat on [kind] from its next message. This works at any
+     * point in a chat: each engine keeps its own thread, and the one the chat
+     * moves to is told what was said meanwhile (see [EngineSwitch]).
+     */
+    fun useEngine(kind: EngineKind) = task {
+        val id = current.value ?: return@task
+        val session = graph.sessions.getSession(id) ?: return@task
+        if (session.engine == kind) return@task
+        check(graph.coordinator.phaseOf(id) == null) { "Wait for Mike to finish, or stop him, before changing the model." }
+        check(!(graph.voice.state.value.active && graph.voiceConversation.sessionId.value == id)) { "End voice before changing the model." }
+        // A chat nobody wrote in yet may be pointed at an engine that is still
+        // being set up, as onboarding does; its first message then says what is missing.
+        val onComputer = graph.computers.binding(id) != null
+        check(kind in enginesFor(id, session.engine, mutable.value) || (isBlank(session) && !onComputer)) {
+            if (onComputer) "${kind.label} cannot run this computer chat." else "Set up ${kind.label} in Settings first."
+        }
+        graph.sessions.setEngine(id, kind)
+        // Like any model pick, it also holds for the next new chat.
+        rememberDefaultEngine(kind)
+        if (session.hasMessages) {
+            val model = engines.of(kind).let { choice -> choice.catalog.firstOrNull { it.id == choice.model }?.displayName ?: choice.model }
+            note(id, "Switched to ${providerName(kind)}${model?.let { " · $it" }.orEmpty()}. It is told what was said in this chat with your next message.")
+        }
     }
 
     /** Delete a chat that has no message and no thread, unless something is still using it. */
@@ -485,14 +503,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * computer folder. After that its conversation lives where it started.
      */
     fun moveNewChat(computerId: String?, path: String?) = task {
-        var id = current.value ?: kotlin.error("Choose a chat first.")
+        val id = current.value ?: kotlin.error("Choose a chat first.")
         check(mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.engineThreadId == null) {
             "This chat has started. Start a new chat to work somewhere else."
         }
         // A computer runs Codex, so a still-empty Claude chat moves there as a Codex chat.
-        if (computerId != null && graph.sessions.getSession(id)?.engine == EngineKind.CLAUDE) {
-            id = replaceEmptyChat(id, EngineKind.CODEX)
-        }
+        if (computerId != null) graph.sessions.setEngine(id, EngineKind.CODEX)
         withContext(Dispatchers.IO) {
             if (computerId == null || path == null) {
                 graph.computers.unbind(id)
@@ -651,7 +667,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         // The chat's own engine's pick. Plan mode is carried by a model name,
         // so it falls back to the first offered model when none is picked.
-        val choice = engines.of(ChatEngines.of(snapshot.sessions, id))
+        val kind = ChatEngines.of(snapshot.sessions, id)
+        val choice = engines.of(kind)
         val model = choice.modelFor(snapshot.planMode)
         if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return }
         task {
@@ -678,7 +695,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
             mutable.update { it.copy(infoMessage = null) }
             graph.queue.submit(QueuedTurn(sessionId = id, prompt = prompt, imagePaths = images.map { it.absolutePath },
-                model = model, effort = choice.turnEffort, skill = invokedSkill, planMode = snapshot.planMode))
+                model = model, effort = choice.turnEffort, skill = invokedSkill, planMode = snapshot.planMode, engine = kind))
             mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
         }
     }
@@ -755,9 +772,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 setupJob?.join()
                 val id = current.filterNotNull().first()
                 if (graph.voice.state.value.active) return@task
-                // Voice is Codex's, so a Claude chat also gets a new Codex chat.
-                val claudeChat = graph.sessions.getSession(id)?.engine == EngineKind.CLAUDE
-                if (!graph.coordinator.state.value.active && (claudeChat || graph.sessions.messages(id).first().isNotEmpty())) {
+                if (!graph.coordinator.state.value.active && graph.sessions.messages(id).first().isNotEmpty()) {
+                    // Voice is Codex's, so a chat made for it starts there.
                     current.value = graph.sessions.createSession(EngineKind.CODEX).id
                 }
                 mutable.update { it.copy(voiceSummon = "Opening your conversation") }
@@ -777,7 +793,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun beginVoice() {
         graph.queue.pause()
         val sessionId = current.value ?: kotlin.error("Choose a chat first.")
-        check(ChatEngines.hasVoice(ChatEngines.of(mutable.value.sessions, sessionId))) { VOICE_CODEX_ONLY }
         mutable.update { it.copy(errorMessage = null) }
         graph.voiceConversation.begin(sessionId, engines.of(EngineKind.CODEX).model)
     }
@@ -863,8 +878,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun claudeLogout() = claudeTask {
-        val run = graph.coordinator.state.value
-        check(!(run.active && ChatEngines.of(mutable.value.sessions, run.sessionId) == EngineKind.CLAUDE)) {
+        check(mutable.value.sessions.none { it.engine == EngineKind.CLAUDE && graph.coordinator.phaseOf(it.id) != null }) {
             "Stop the Claude chat that is running before signing out."
         }
         graph.claudeEngine.logout()
@@ -892,6 +906,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (graph.claudeHost.installState.value.phase != ClaudeInstallPhase.INSTALLED) return
         val account = graph.claudeEngine.account()
         mutable.update { it.copy(claude = it.claude.copy(account = account)) }
+        project()
         if (account.signedIn) {
             // Usage first: with no chat running, the process that reads it
             // also reads the model list, so the models below need no second one.
@@ -1180,11 +1195,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(isLoadingSkills = false) }
         }
     }
-    /** Pick a model for the open chat's engine. */
+    /**
+     * Pick a model for the open chat. The list holds both engines' models, so
+     * picking one of the other engine also moves the chat to that engine.
+     */
     fun model(value: String) {
-        val kind = mutable.value.activeEngine
+        val state = mutable.value
+        val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.activeEngine)
         engines = engines.update(kind) { it.select(value) }
         persistChoice(kind)
+        if (kind != state.activeEngine) useEngine(kind)
         project()
     }
     fun reasoningEffort(value: String?) {
@@ -1442,7 +1462,6 @@ private const val KEY_CLAUDE_MODEL = "claudeModel"
 private const val KEY_CLAUDE_EFFORT = "claudeReasoningEffort"
 private const val KEY_DEFAULT_ENGINE = "defaultEngine"
 private const val CLAUDE_SIGN_IN = "Sign in to Claude"
-private const val VOICE_CODEX_ONLY = "Voice works only in ChatGPT (Codex) chats. Start one to talk."
 
 /** Long enough for Mike to reach Developer options, including turning them on. */
 private const val WIRELESS_SETUP_TIMEOUT_MS = 300_000L
