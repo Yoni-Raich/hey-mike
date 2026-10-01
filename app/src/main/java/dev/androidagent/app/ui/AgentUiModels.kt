@@ -182,6 +182,8 @@ data class AgentUiState(
     val folderBrowser: FolderBrowserState? = null,
     /** Which computer and folder each computer chat runs in. */
     val remoteBindings: Map<String, dev.androidagent.remote.RemoteBinding> = emptyMap(),
+    /** Per computer, its own Claude Code as last checked: whether a chat there can run on Claude, and with which models. */
+    val computerClaude: Map<String, dev.androidagent.remote.ComputerClaude> = emptyMap(),
     /** Folders the user picked on each computer. */
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */

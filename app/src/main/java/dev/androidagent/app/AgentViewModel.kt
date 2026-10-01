@@ -121,6 +121,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
+        // A computer's own Claude Code decides whether its chats are offered Claude models.
+        viewModelScope.launch { graph.remote.claudeState.collect { found -> mutable.update { it.copy(computerClaude = found) }; project() } }
         viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
         viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
         viewModelScope.launch { graph.transfers.current.collect { move -> mutable.update { it.copy(fileTransfer = move) } } }
@@ -263,7 +265,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { state ->
             val kind = ChatEngines.of(state.sessions, current.value)
             val choice = engines.of(kind)
-            val offered = engines.offered(enginesFor(current.value, kind, state))
+            val computer = current.value?.let(graph.computers::binding)?.computerId
+            val offered = engines.offered(
+                enginesFor(current.value, kind, state),
+                // A computer's Claude Code lists its own models; the aliases until it has answered.
+                claudeModels = computer?.let { id -> state.computerClaude[id]?.models?.takeIf { it.isNotEmpty() } ?: engines.of(EngineKind.CLAUDE).catalog },
+            )
             state.copy(
                 activeEngine = kind,
                 modelCatalog = offered,
@@ -314,13 +321,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * The engines the chat [id] can run on, where it runs: the one it is on,
-     * Codex, and Claude once it is downloaded and signed in on this phone.
+     * Codex, and Claude where it is set up. For a chat on this phone that is
+     * the downloaded Claude Code and its sign-in; for a chat on a computer it
+     * is that computer's own Claude Code, signed in there.
      */
     private fun enginesFor(id: String?, running: EngineKind, state: AgentUiState): Set<EngineKind> = buildSet {
         add(running)
         add(EngineKind.CODEX)
-        val onComputer = id != null && graph.computers.binding(id) != null
-        if (!onComputer && state.claude.ready) add(EngineKind.CLAUDE)
+        val computer = id?.let(graph.computers::binding)?.computerId
+        val claude = if (computer == null) state.claude.ready else state.computerClaude[computer]?.ready == true
+        if (claude) add(EngineKind.CLAUDE)
     }
 
     /**
@@ -336,9 +346,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(!(graph.voice.state.value.active && graph.voiceConversation.sessionId.value == id)) { "End voice before changing the model." }
         // A chat nobody wrote in yet may be pointed at an engine that is still
         // being set up, as onboarding does; its first message then says what is missing.
-        val onComputer = graph.computers.binding(id) != null
-        check(kind in enginesFor(id, session.engine, mutable.value) || (isBlank(session) && !onComputer)) {
-            if (onComputer) "${kind.label} cannot run this computer chat." else "Set up ${kind.label} in Settings first."
+        val computer = graph.computers.binding(id)?.let { graph.computers.computer(it.computerId) }
+        check(kind in enginesFor(id, session.engine, mutable.value) || (isBlank(session) && computer == null)) {
+            if (computer != null) "Claude Code is not set up on ${computer.label}. Install it there and sign in with `claude`, then connect the computer again."
+            else "Set up ${kind.label} in Settings first."
         }
         graph.sessions.setEngine(id, kind)
         // Like any model pick, it also holds for the next new chat.
@@ -507,8 +518,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.engineThreadId == null) {
             "This chat has started. Start a new chat to work somewhere else."
         }
-        // A computer runs Codex, so a still-empty Claude chat moves there as a Codex chat.
-        if (computerId != null) graph.sessions.setEngine(id, EngineKind.CODEX)
+        // A still-empty Claude chat stays on Claude only on a computer that has its own Claude Code.
+        if (computerId != null && mutable.value.computerClaude[computerId]?.ready != true) graph.sessions.setEngine(id, EngineKind.CODEX)
         withContext(Dispatchers.IO) {
             if (computerId == null || path == null) {
                 graph.computers.unbind(id)

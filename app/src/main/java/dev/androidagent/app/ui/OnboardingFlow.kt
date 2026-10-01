@@ -111,9 +111,10 @@ internal val ConsentStatements = listOf(
         "It can misread the screen or tap the wrong thing. Watch what it does, check anything important, " +
         "and press Stop if something looks wrong. Actions already done may not be undone.",
     "Your data goes only to the AI you chose" to
-        "Hey Mike has no servers of its own. What Mike sees and what you type goes to Codex (OpenAI), or to " +
-        "Claude (Anthropic) in a Claude chat, to answer you, and is covered only by that provider's policies. " +
-        "Chats and your sign-in stay on this phone.",
+        "Hey Mike has no servers of its own. What Mike sees and what you type goes to the AI that answers in " +
+        "that chat, Codex (OpenAI) or Claude (Anthropic), and is covered only by that provider's policies. " +
+        "If you change the model inside a chat, or talk by voice in a Claude chat, the other one is given that " +
+        "chat's earlier messages too. Chats and your sign-in stay on this phone.",
 )
 
 @Composable

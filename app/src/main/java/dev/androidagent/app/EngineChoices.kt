@@ -87,9 +87,17 @@ data class EngineChoices(
     fun limits(kind: EngineKind): List<UsageLimit> = quotas[kind].orEmpty()
     fun withLimits(kind: EngineKind, limits: List<UsageLimit>) = copy(quotas = quotas + (kind to limits))
 
-    /** One list for the model menu: the models of each engine in [kinds], Codex first. */
-    fun offered(kinds: Collection<EngineKind>): List<AgentModel> =
-        EngineKind.entries.filter { it in kinds }.flatMap { kind -> of(kind).catalog.map { if (it.engine == kind) it else it.copy(engine = kind) } }
+    /**
+     * One list for the model menu: the models of each engine in [kinds], Codex
+     * first. [claudeModels] replaces the phone's Claude list for a chat whose
+     * Claude runs somewhere else: a computer offers the models of its own
+     * Claude Code.
+     */
+    fun offered(kinds: Collection<EngineKind>, claudeModels: List<AgentModel>? = null): List<AgentModel> =
+        EngineKind.entries.filter { it in kinds }.flatMap { kind ->
+            val catalog = claudeModels?.takeIf { kind == EngineKind.CLAUDE } ?: of(kind).catalog
+            catalog.map { if (it.engine == kind) it else it.copy(engine = kind) }
+        }
 }
 
 /** What a chat's engine decides in the app. */

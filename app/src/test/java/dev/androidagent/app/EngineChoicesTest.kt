@@ -112,6 +112,18 @@ class EngineChoicesTest {
         assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX)).map { it.id })
     }
 
+    @Test fun aComputerChatIsOfferedTheModelsOfThatComputersClaude() {
+        val engines = EngineChoices()
+            .update(EngineKind.CODEX) { it.withCatalog(listOf(AgentModel("gpt-5"))) }
+            .update(EngineKind.CLAUDE) { it.withCatalog(listOf(sonnet)) }
+        val onComputer = listOf(AgentModel("opus", "Opus 5.5", engine = EngineKind.CLAUDE))
+
+        // Codex's models stay the phone's; Claude's are the computer's own.
+        assertEquals(listOf("gpt-5", "opus"), engines.offered(EngineKind.entries, claudeModels = onComputer).map { it.id })
+        // A computer without Claude: its list is not asked for at all.
+        assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX), claudeModels = onComputer).map { it.id })
+    }
+
     @Test fun aModelIsTaggedWithTheEngineWhoseListItIsIn() {
         // The fake and older engines do not tag their models.
         val engines = EngineChoices().update(EngineKind.CLAUDE) { it.withCatalog(listOf(sonnet)) }

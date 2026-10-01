@@ -433,12 +433,14 @@ private fun ColumnScope.PrivacySettings(state: AgentUiState, actions: AgentUiAct
     Text("Where your data goes", fontWeight = FontWeight.Medium)
     Explanation(
         "Hey Mike has no servers of its own. Chats, files and your sign-ins stay on this phone. What Mike sees " +
-            "and what you type goes to the chat's own AI to answer you, and is covered only by that provider's policies. " +
+            "and what you type goes to the AI that answers in that chat, and is covered only by that provider's policies. " +
+            "When you change the model inside a chat, or talk by voice in a Claude chat, the other AI is given that " +
+            "chat's earlier messages too. " +
             "Update checks ask GitHub for the latest version and send nothing about you.",
     )
     Explanation("ChatGPT (Codex) chats go to OpenAI.")
     TextButton(onClick = { uriHandler.openUri(POLICIES_URL) }) { Text("Read the Codex and OpenAI policies") }
-    Explanation("Claude chats go to Anthropic, through Anthropic's Claude Code running on this phone.")
+    Explanation("Claude chats go to Anthropic, through Anthropic's Claude Code running on this phone, or on your computer for a chat that runs there.")
     TextButton(onClick = { uriHandler.openUri(ANTHROPIC_PRIVACY_URL) }) { Text("Read Anthropic's privacy policy") }
 
     val agreedAt = state.onboarding.consentAt
@@ -589,7 +591,7 @@ internal fun accountsSummary(state: AgentUiState): String {
 private fun ColumnScope.AccountSettings(state: AgentUiState, actions: AgentUiActions) {
     Text("New chats use", fontWeight = FontWeight.Medium)
     ProviderChoice(state.defaultEngine, actions.onDefaultEngine)
-    Explanation("Each chat keeps the account it started with. An empty chat can still switch.")
+    Explanation("A chat stays on its account until you pick a model of the other one in its model menu. You can do that at any point in a chat.")
     Spacer(Modifier.height(8.dp))
     Text(providerName(EngineKind.CODEX), style = MaterialTheme.typography.titleMedium)
     CodexAccountSettings(state, actions)

@@ -219,7 +219,7 @@ internal fun ColumnScope.ClaudeCard(claude: ClaudeUiState, actions: AgentUiActio
     }
     Text(
         "In Claude chats, what Mike sees and what you type goes to Anthropic to answer you, and is covered by " +
-            "Anthropic's policies. Your sign-in stays on this phone. Claude chats have no voice.",
+            "Anthropic's policies. Your sign-in stays on this phone. Voice runs on ChatGPT (Codex), also in a Claude chat.",
         style = MaterialTheme.typography.bodySmall,
         color = muted,
     )

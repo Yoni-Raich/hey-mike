@@ -107,6 +107,7 @@ class AgentGraph(private val app: Application) {
                 java.io.File(runtime.codexHomeDirectory, "auth.json"),
             ).current(refresh, previous)
         },
+        claudeScratch = java.io.File(runtime.runtimeRoot, "claude-computers"),
     )
     /**
      * Anthropic's Claude Code on this phone. Never bundled: it is downloaded
