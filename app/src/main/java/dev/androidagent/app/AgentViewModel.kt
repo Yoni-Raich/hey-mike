@@ -54,6 +54,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     val ui: StateFlow<AgentUiState> = mutable.asStateFlow()
     private val usageByThread = mutableMapOf<String, TokenUsage>()
     private var setupJob: Job? = null
+    private var purgedUnstarted = false
+    private var previousChat: String? = null
 
     init {
         viewModelScope.launch {
@@ -68,10 +70,18 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     current.value = list.firstOrNull { it.id == saved }?.id ?: list.firstOrNull()?.id
                 }
                 if (list.isEmpty()) current.value = graph.sessions.createSession().id
+                // Chats nobody wrote in last run are not history: drop them once, at start.
+                if (!purgedUnstarted) {
+                    purgedUnstarted = true
+                    list.filter { it.id != current.value }.forEach { discardIfUnstarted(it.id) }
+                }
                 updateTitle()
             }
         }
         viewModelScope.launch { current.filterNotNull().collectLatest { id ->
+            // Leaving a chat nobody wrote in: it was a place to start, not history.
+            previousChat?.takeIf { it != id }?.let { old -> viewModelScope.launch { discardIfUnstarted(old) } }
+            previousChat = id
             // A computer conversation may be held open by Codex on the computer.
             checkPcChatBusy(id)
             preferences.edit().putString("session", id).apply()
@@ -183,7 +193,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
-    fun newChat() = task { current.value = graph.sessions.createSession().id }
+    // The chat on screen, if nobody has written in it yet, is already a new chat.
+    fun newChat() = task {
+        val id = current.value
+        val blank = id != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.let { !it.hasMessages && it.engineThreadId == null } == true
+        if (!blank) current.value = graph.sessions.createSession().id
+    }
+
+    /** Delete a chat that has no message and no thread, unless something is still using it. */
+    private suspend fun discardIfUnstarted(id: String) = runCatching {
+        val session = graph.sessions.getSession(id) ?: return@runCatching
+        if (session.hasMessages || session.engineThreadId != null || id in mutable.value.pcChatLoading) return@runCatching
+        if (graph.coordinator.state.value.let { it.active && it.sessionId == id }) return@runCatching
+        if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) return@runCatching
+        graph.queue.cancelSession(id)
+        withContext(Dispatchers.IO) { graph.computers.unbind(id) }
+        graph.sessions.deleteSession(id)
+    }
 
     /** Save a new or edited computer, then connect to it straight away. */
     fun saveComputer(draft: ComputerDraft) = task {

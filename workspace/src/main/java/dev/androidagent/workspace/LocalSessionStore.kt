@@ -49,7 +49,7 @@ class LocalSessionStore(context: Context) : SessionStore {
 
     override suspend fun createSession(): ChatSession = mutate {
         val now = System.currentTimeMillis()
-        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now)
+        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now, hasMessages = false)
         db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now) })
         workspace(session.id).mkdirs()
         refresh()
@@ -119,7 +119,7 @@ class LocalSessionStore(context: Context) : SessionStore {
     }
     private suspend fun <T> mutate(block: () -> T): T = withContext(Dispatchers.IO) { lock.withLock { block() } }
     private fun refresh(sessionId: String? = null) { sessionStream.value = loadSessions(); sessionId?.let { streams[it]?.value = loadMessages(it) } }
-    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4))) } }
+    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread,EXISTS(SELECT 1 FROM messages WHERE session=sessions.id) FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4), c.getInt(5) == 1)) } }
     private fun loadMessages(sessionId: String): List<ChatMessage> = db.rawQuery("SELECT id,role,text,created,state,attachments FROM messages WHERE session=? ORDER BY created,rowid", arrayOf(sessionId)).use { c -> buildList { while (c.moveToNext()) add(ChatMessage(c.getString(0), sessionId, c.getString(1), c.getString(2), c.getLong(3), c.getString(4), runCatching { Json.decodeFromString<List<String>>(c.getString(5)) }.getOrDefault(emptyList()))) } }
 
     private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 2) {
