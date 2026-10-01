@@ -1,5 +1,95 @@
 # Progress
 
+### Claude as a full engine: switch mid-chat, one model menu, computers, voice — 2026-10-01
+
+Asked: Claude should be part of the whole system, not a separate kind of
+chat. Built on PR #99 after merging `dev` (parallel chats, the model menu)
+into it. **Nothing here ran on a phone yet**; see "Not tested".
+
+What changed:
+
+- A chat can change engine at any point. It keeps one thread per engine
+  (`ChatSession.parked`, `sessions.db` v4) and the engine it moves to is told
+  what it missed as text built from the chat's own messages (`EngineSwitch`,
+  `ChatHandoff`). The turn names its engine (`QueuedTurn.engine`).
+- One model menu: ChatGPT (Codex) models, then Claude models. Picking one of
+  the other engine moves the open chat there and adds a note to the chat.
+- A chat on a computer can run on that computer's own Claude Code (the
+  user's install and sign-in there; no sign-in is copied either way). The
+  phone tools travel on the process's own streams (`StdioMcp`), and a tool
+  that needs permission asks on the phone (`can_use_tool`).
+- Voice in a Claude chat: Claude Code has no speech-to-speech mode (its
+  `/voice` is dictation in the interactive terminal, no SSH, no `-p`, no
+  Hebrew; https://code.claude.com/docs/en/voice-dictation). So voice stays
+  Codex's; a Claude chat talks on its own Codex thread and goes back after.
+- `sessions.db` upgrades add a column only when missing. Found while reading
+  the merge: `dev` keeps a newer file open by ignoring the downgrade, which
+  sets the version back and keeps the columns, and the next upgrade then
+  failed on `duplicate column name: engine`.
+
+Checks (Windows 11, this worktree):
+
+- Full gate: `./gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+  :voice:lintDebug :app:lintDevDebug --no-daemon --console=plain --continue`:
+  BUILD SUCCESSFUL in 1m 39s. 1953 unit tests over debug and release, 0
+  failures, 16 skipped (remote 4, workspace 12).
+  Lint: 0 errors (app 21 warnings, voice 2). `python -m unittest
+  tools.test_prepare_runtime`: 15 OK. `git diff --check`: clean.
+- APK: `app-dev-release-unsigned.apk` holds `lib/arm64-v8a/libld_musl.so`
+  (723,480 bytes) and no file named `claude`.
+- New unit tests: `EngineSwitchTest`, `ChatHandoffTest`, three coordinator
+  tests (a turn for the other engine moves the chat and carries the chat; an
+  engine that is up to date gets the prompt as typed; a lost thread is given
+  the chat again), three `LocalSessionStoreTest` cases (one thread per engine
+  across reopen, an empty chat owes nothing, a file an older build opened in
+  between), `ClaudeComputerTest` (9), `ClaudeOnComputerTest` (11), and model
+  menu, approval card and engine choice cases in `:app`.
+- Against the real CLI on this PC (Claude Code 2.1.286, the user's own
+  sign-in, two short Haiku turns):
+  - `--mcp-config {"mcpServers":{"mike":{"type":"sdk","name":"mike"}}}` with
+    `initialize {sdkMcpServers:["mike"]}`: the CLI sent `mcp_message`
+    `initialize`, `notifications/initialized`, `tools/list` and `tools/call`;
+    `mcp_status` then read `mike: connected, source sdk`. The model called the
+    tool and got the answer sent back as `mcp_response`.
+  - `--permission-mode acceptEdits --permission-prompt-tool stdio`: `echo hi`
+    ran without a prompt; `curl -s https://example.com -o out.html` sent
+    `can_use_tool`, and the `deny` answer reached the model as the tool error.
+  - With `ENABLE_TOOL_SEARCH=false` the tool was called directly; without it
+    the model first used `ToolSearch`.
+- Launch scripts against the real CLI, with stdin and stdout as pipes:
+  - The `.cmd` shape, in a folder named `פרויקט 100%` under a path with a
+    space, under `cmd.exe /c` and under `powershell -c "& '...'"`: `initialize`
+    answered in both, and the process ended when stdin closed.
+  - Hebrew through that `.cmd` in both directions, with and without
+    `chcp 65001`, under both shells: bytes intact.
+  - The POSIX shape (`cd -- '…it'\''s פרויקט'`, `export`, `exec`, an empty
+    argument) under Git Bash `sh`: `initialize` answered, and it ended when
+    stdin closed.
+
+Not tested:
+
+- **Anything on a phone.** Switching a real chat between Codex and Claude and
+  back, the hand-over text as the models read it, the model menu on a
+  screen, voice in a Claude chat (needs sound), and the v3 to v4 database
+  upgrade on a phone that already has chats.
+- **A real computer over SSH.** The Claude probe scripts were not run on a
+  computer (the Linux one not at all), the launch was not run through JSch
+  and SFTP, and no Claude turn ran from the phone on a PC. The `.sh` script
+  was run only under Git Bash, not on Linux.
+- A permission prompt answered with Allow on a real CLI (only Deny was), and
+  `bypassPermissions` for a full-access computer.
+- A queued turn that crosses an engine switch, outside unit tests.
+
+Known gaps, by choice:
+
+- A computer must still be set up through Codex, so with a ChatGPT sign-in,
+  before its Claude can be used.
+- Claude conversations kept on a computer are not listed or imported.
+- The computer's Claude skills are not listed in the composer.
+- A Claude session file the CLI itself removed starts again under the same
+  id, and the chat's history is not sent again in that case.
+- The hand-over carries text only: no tool results, and pictures by path.
+
 ### Chats run in parallel; the phone goes to one at a time — 2026-10-01
 
 A new chat opened while another ran showed that run's "Working · Stop active

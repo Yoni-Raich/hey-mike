@@ -2,6 +2,8 @@
 
 Date: 2026-09-30. Status: approved by the user in chat. Branch: `feat/claude-subscription` (from `dev`).
 
+**Changed on 2026-10-01**, at the user's request. This document is the first design and is kept as written. Since then the engine is no longer fixed for the life of a chat, both engines' models share one menu, a computer chat can run on that computer's own Claude Code, and voice works in a Claude chat (on Codex). The decisions are in `docs/ARCHITECTURE.md`, section "Claude as a full engine". The compliance rules below are unchanged.
+
 ## Goal
 
 A user with a Claude subscription (Pro, Max, Team, Enterprise) can use Mike on the phone with that subscription. Codex stays as it is. The engine is chosen per chat and is fixed for the life of the chat.
