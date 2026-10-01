@@ -37,6 +37,8 @@ import java.time.ZonedDateTime
  * be tested without any of it.
  */
 interface AutomationActions {
+    /** Bind checks to this run, including work that waits for the phone or enters the queue. */
+    fun forRun(ruleId: String, permit: ResponsibilityPermit?, check: () -> Unit): AutomationActions = this
     suspend fun runWorkflow(workflow: String, parameters: JsonObject): AutomationActionResult
     suspend fun openIntent(arguments: JsonObject): AutomationActionResult
     suspend fun notify(title: String?, text: String): AutomationActionResult
@@ -127,8 +129,15 @@ class AutomationRunner(
     private val now: () -> ZonedDateTime,
 ) {
 
-    suspend fun run(fired: AutomationEvaluator.Outcome.Fired): AutomationRunReport {
+    suspend fun run(
+        fired: AutomationEvaluator.Outcome.Fired,
+        permit: ResponsibilityPermit? = null,
+        check: () -> Unit = {},
+        onAction: (Int) -> Unit = {},
+    ): AutomationRunReport {
         val rule = fired.rule
+        val runActions = actions.forRun(rule.id, permit, check)
+        check()
 
         // Armed by the attempt. See the class comment.
         history.record(rule.id, now())
@@ -136,8 +145,11 @@ class AutomationRunner(
         val completed = mutableListOf<String>()
         val validUntil = now().toInstant().toEpochMilli() + rule.guard.validForMs
         for ((index, action) in fired.actions.withIndex()) {
+            try { check() } catch (stale: IllegalStateException) {
+                return AutomationRunReport(rule.id, false, completed, index, "responsibility_inactive", stale.message)
+            }
             if (action.requiresApproval || action.kind == AutomationActionKind.ASK) {
-                if (!actions.canAsk()) {
+                if (!runActions.canAsk()) {
                     return AutomationRunReport(
                         rule.id, ok = false, completed = completed, stoppedAt = index,
                         errorType = "confirmation_unavailable",
@@ -147,7 +159,7 @@ class AutomationRunner(
                 }
                 val question = action.raw.str("question")
                     ?: "\"${rule.id}\" wants to ${action.describe()}. Go ahead?"
-                if (!actions.ask(question)) {
+                if (!runActions.ask(question)) {
                     return AutomationRunReport(
                         rule.id, ok = false, completed = completed, stoppedAt = index,
                         errorType = "declined",
@@ -155,15 +167,20 @@ class AutomationRunner(
                             if (completed.isEmpty()) "" else " What had already run is listed.",
                     )
                 }
+                // Approval cannot resurrect work paused while the question was open.
+                try { check() } catch (stale: IllegalStateException) {
+                    return AutomationRunReport(rule.id, false, completed, index, "responsibility_inactive", stale.message)
+                }
                 // An `ask` is the gate itself: approving it completes it.
                 if (action.kind == AutomationActionKind.ASK) {
                     completed += action.describe()
+                    onAction(completed.size)
                     continue
                 }
             }
 
             val result = try {
-                perform(action, rule.id, validUntil)
+                perform(runActions, action, rule.id, validUntil)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -181,11 +198,12 @@ class AutomationRunner(
                 )
             }
             completed += action.describe()
+            onAction(completed.size)
         }
         return AutomationRunReport(rule.id, ok = true, completed = completed)
     }
 
-    private suspend fun perform(action: AutomationAction, ruleId: String, validUntil: Long): AutomationActionResult =
+    private suspend fun perform(actions: AutomationActions, action: AutomationAction, ruleId: String, validUntil: Long): AutomationActionResult =
         when (action.kind) {
             AutomationActionKind.RUN_WORKFLOW -> actions.runWorkflow(
                 action.raw.str("workflow").orEmpty(),

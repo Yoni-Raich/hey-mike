@@ -112,6 +112,10 @@ data class AgentUiState(
     val isDefaultAssistant: Boolean = false,
     /** Standing rules and the two permissions they need. Re-read on resume, like the rest. */
     val automations: AutomationsStatus = AutomationsStatus(),
+    val responsibilities: dev.androidagent.core.ResponsibilitySnapshot = dev.androidagent.core.ResponsibilitySnapshot(),
+    val isResponsibilitiesOpen: Boolean = false,
+    val responsibilityError: String? = null,
+    val responsibilityHolds: Map<String, String> = emptyMap(),
     val runtimeStatus: RuntimeStatus = RuntimeStatus(),
     /**
      * Why the tunnel to OpenAI last failed, in one sentence, or null when it
@@ -266,6 +270,11 @@ data class AgentUiActions(
     /** Open the rules list from the panel's strip. */
     val onOpenAutomations: () -> Unit = {},
     val onCloseAutomations: () -> Unit = {},
+    val onOpenResponsibilities: () -> Unit = {},
+    val onCloseResponsibilities: () -> Unit = {},
+    val onCreateResponsibility: (String, String, List<String>) -> String? = { _, _, _ -> null },
+    val onResponsibilityState: (String, String) -> String? = { _, _ -> null },
+    val onResponsibilityNotes: (String, String) -> String? = { _, _ -> null },
     /** Turn one rule on or off. */
     val onToggleRule: (id: String, enabled: Boolean) -> Unit = { _, _ -> },
     /** Fire one rule now: naming it supplies its trigger, nothing else is waived. */

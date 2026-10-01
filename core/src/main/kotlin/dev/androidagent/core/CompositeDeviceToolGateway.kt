@@ -41,6 +41,8 @@ import java.io.File
  */
 class CompositeDeviceToolGateway(
     private val members: List<DeviceToolGateway>,
+    /** Also runs for nested workflow/act_plan calls, not only the outer model call. */
+    private val beforeInvoke: () -> Unit = {},
 ) : DeviceToolGateway {
 
     init {
@@ -114,6 +116,7 @@ class CompositeDeviceToolGateway(
         members.any { member -> runCatching { member.deviceBackendLive() }.getOrDefault(false) }
 
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
+        beforeInvoke()
         if (name == DEVICE_STATUS) {
             // Only the composite knows every backend, so it answers this itself.
             return ToolResult(statusLine() ?: "No device backend is configured.")

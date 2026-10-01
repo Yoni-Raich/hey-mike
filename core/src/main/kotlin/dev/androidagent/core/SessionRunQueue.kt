@@ -52,6 +52,8 @@ data class QueuedTurn(
      * drops the turn rather than running it long after its moment.
      */
     val validUntil: Long? = null,
+    val automationRuleId: String? = null,
+    val responsibilityPermit: ResponsibilityPermit? = null,
 )
 
 /**
@@ -69,6 +71,9 @@ class SessionRunQueue(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Told about a turn dropped for being stale, so it is reported rather than vanishing. */
     private val onExpired: (QueuedTurn) -> Unit = {},
+    /** Returns a check carried into the coordinator and every tool call of that turn. */
+    private val guardFor: (QueuedTurn) -> (() -> Unit) = { {} },
+    private val onRejected: (QueuedTurn) -> Unit = {},
 ) {
     private val lock = Mutex()
     private val pending = MutableStateFlow<List<QueuedTurn>>(emptyList())
@@ -98,7 +103,7 @@ class SessionRunQueue(
         lock.withLock {
             check(store.getSession(request.sessionId) != null) { "Chat no longer exists." }
             val active = coordinator.state.value
-            if (active.active && active.sessionId == request.sessionId) {
+            if (request.automationRuleId == null && active.active && active.sessionId == request.sessionId) {
                 check(active.phase != RunPhase.STARTING && active.phase != RunPhase.STOPPING) { "Wait for the current turn to start or stop." }
                 check(request.imagePaths.isEmpty()) { "Send attachments after this run finishes." }
                 coordinator.steer(request.prompt)
@@ -122,7 +127,7 @@ class SessionRunQueue(
 
     private suspend fun save(value: List<QueuedTurn>) { store.saveQueuedTurns(value); pending.value = value }
 
-    private suspend fun dispatch() = lock.withLock {
+    private suspend fun dispatch(): Unit = lock.withLock {
         if (!coordinator.available.value || coordinator.state.value.active) return@withLock
         // Stale turns are dropped before anything is chosen, so an expired one
         // at the head cannot hold up the turn behind it.
@@ -139,9 +144,24 @@ class SessionRunQueue(
         } else {
             fresh.firstOrNull()
         } ?: return@withLock
+        val guard = guardFor(next)
+        // Reject before dispatch; a held turn cannot outlive a pause then reactivation.
+        if (runCatching { guard() }.isFailure) {
+            save(pending.value - next)
+            submittedNow -= next.id
+            onRejected(next)
+            // Dispatch is retriggered without recursing under the queue lock.
+            scope.launch { dispatch() }
+            return@withLock
+        }
         // Dequeue durably before starting, so a process crash cannot replay side effects.
         save(pending.value - next)
         submittedNow -= next.id
-        coordinator.send(next.sessionId, next.prompt, next.imagePaths.map(::File), next.model, next.effort, next.skill, next.planMode)
+        try {
+            coordinator.send(next.sessionId, next.prompt, next.imagePaths.map(::File), next.model, next.effort, next.skill, next.planMode, guard)
+        } catch (stale: IllegalStateException) {
+            onRejected(next)
+            scope.launch { dispatch() }
+        }
     }
 }

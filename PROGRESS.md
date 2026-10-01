@@ -1,5 +1,44 @@
 # Progress
 
+### Persistent responsibilities: wrapper phase — 2026-10-01
+
+Built in a clean worktree from current `origin/dev` `8757ed8e`. The first
+slice adds persistent ownership of existing rules, a Responsibilities sheet,
+explicit user notes and a metadata-only activity history. Chat can prepare a
+draft; activation is a user review action. Drafts hold their rules. Pause,
+completion and edited rule definitions invalidate queued/running permits.
+The coordinator and composite recheck permits for nested workflow calls.
+Local Stop also holds active responsibilities. Interrupted or uncertain
+actions require review; acknowledgement leaves execution paused.
+
+State is separate from sessions and signed with Android Keystore HMAC.
+Corrupt/missing signed state or a failed write holds automations and keeps
+chat available. Atomic file replacement was tested with fresh store instances,
+incomplete temp writes, invalid replacements and tampered signatures.
+Queued model turns are reported as dispatched, not task completion.
+
+Evidence on Windows/JDK 21: `:core:test`,
+`:workspace:testDebugUnitTest`, `:app:testDevDebugUnitTest`,
+`:remote:testDebugUnitTest`, `:engine-codex:testDebugUnitTest`,
+`:device-tools:testDebugUnitTest`: 988 cases, 0 failures/errors, 8 existing
+Windows skips (6 workspace shell tests, 2 remote Linux host tests).
+`:automations:testDebugUnitTest` has no tests. `:app:assembleDevDebug`,
+`:app:lintDevDebug` (0 errors, 22 warnings) and
+`:app:assembleDevDebugAndroidTest` pass. `git diff --check` is clean.
+New UI review/unknown-result and Android Keystore persistence tests compile.
+
+Not run: those instrumented tests, rendered UI, physical background/restart
+execution, or a release gate. A fresh API 35 emulator was booted, then closed
+when the user selected the Xiaomi; no APK or test was installed on it.
+The Xiaomi USB target and the phone served by this chat's device tools differ,
+so Xiaomi installation/testing waits for the app-controlled connection.
+No connected instrumentation, data removal or phone install was performed.
+
+Remaining design scope: goal-driven planning, inferred/shared memory,
+scoped permission grants, rollback-resistant state, voice permits and
+automatic computer delegation/sync. This is the wrapper phase of Persistent
+Mike, not the full blueprint or a promise of always-on Android execution.
+
 ### Model menu, and Codex 0.159.2 for GPT-6.1 — 2026-09-30
 
 GPT-6.1 Sol arrives in the model list only with a newer app-server: the list

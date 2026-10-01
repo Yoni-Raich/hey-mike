@@ -32,6 +32,17 @@ import org.junit.Test
 import java.io.File
 
 class CompositeDeviceToolGatewayTest {
+    @Test fun nestedWorkflowCallsRecheckThePermitAndNeverFallbackAfterRevocation() = runBlocking {
+        val first = FakeGateway("a11y", tools = listOf("tap"))
+        val fallback = FakeGateway("adb", tools = listOf("tap"))
+        var allowed = true
+        val composite = CompositeDeviceToolGateway(listOf(first, fallback), beforeInvoke = { check(allowed) { "paused" } })
+        composite.invoke("tap", empty())
+        allowed = false
+        assertTrue(runCatching { composite.invoke("tap", empty()) }.isFailure)
+        assertEquals(listOf("tap"), first.invoked)
+        assertTrue(fallback.invoked.isEmpty())
+    }
 
     @Test fun aToolRoutesToTheFirstBackendThatDeclaresIt() = runBlocking {
         val first = FakeGateway("a11y", tools = listOf("read_ui", "tap"))

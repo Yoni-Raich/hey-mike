@@ -2,6 +2,64 @@
 
 One Android project, with replaceable modules and small core contracts.
 
+## Persistent responsibilities: first slice
+
+`Responsibility` is durable ownership of 1–16 existing automation rules.
+The goal, lifecycle, explicit user notes and activity survive chat deletion
+and app process restart. `ResponsibilityService` lives in `:core`;
+`FileResponsibilityStore` lives in `:workspace`. The app stores one bounded,
+atomically replaced snapshot in `files/persistent/responsibilities.json`,
+separate from sessions and the runtime home. No session DB migration is needed.
+The app seals the snapshot with an Android Keystore HMAC key. A forged or
+missing signed snapshot holds all automations rather than releasing owned
+rules as if the store were empty. Chat remains available on a storage error.
+This is integrity checking, not protection against replay of an older valid
+signed snapshot; rollback-resistant storage remains future work.
+
+One rule has at most one responsibility owner, including after completion.
+Draft, paused, completed and needs-attention owners hold their rules.
+Unbound rules keep their existing execution path. Creating a draft therefore
+holds previously enabled rules until the user reviews and activates it.
+Activation records the rule definitions' hashes. Editing, disabling or
+deleting a reviewed rule prevents dispatch until another user review.
+Voice rules are refused at activation because voice does not carry a
+responsibility permit yet.
+
+The `responsibility` tool can create drafts, list, describe, show activity
+and pause. Activation, completion, acknowledgement and note editing are app
+UI actions, not tool operations. The Responsibilities sheet is reachable from
+the chat library on both the phone and computer tabs. Notes are scoped,
+explicit user memory; the model can read them via the tool. They are not
+inferred from activity and are not automatically injected into every turn.
+There is no new permission grant, planner, executor framework or sync engine.
+
+`AutomationHost` filters events and alarm/listener registrations through the
+service. A captured responsibility id/version is checked before each rule
+action, after a confirmation, after waiting for device ownership, and before
+dispatching a queued model turn. The coordinator carries the same check into
+the composite gateway, including nested workflow and act-plan calls. Pausing
+or changing an owner interrupts a run whose permit has become stale.
+Reactivation increments the version, so it cannot release old queued work.
+An automation turn for its own running chat is queued rather than steered into
+that run. Existing device policy, send approval and single-owner enforcement
+still apply. Local Stop revokes/interrupts the current run and pauses active
+responsibilities as well as the waiting chat queue.
+
+Activity keeps rule ids, action kinds, counts and status, without notification
+bodies, arguments, model replies or raw error text. STARTED is saved before
+execution; a process restart changes unfinished records to UNKNOWN and holds
+the owner for review. Acknowledgement leaves it paused and never retries a
+side effect. An uncertain tool failure also needs review. A queued model turn
+is DISPATCHED, not task completion; its actual execution result is in its rule
+chat. Activity is capped at 512 records, preserving unresolved records.
+
+Persistence does not promise uninterrupted Android execution. Existing alarm
+permissions, Doze, the notification listener, runtime availability, deadlines
+and user reachability still determine when rules can run. No background model
+loop is added. Automations remain phone-local; computer chats can prepare and
+inspect responsibilities, but automatic delegation to a computer is deferred.
+This first slice is the wrapper phase, not the full persistent-agent blueprint.
+
 | Module | Responsibility |
 |---|---|
 | app | Compose chat, setup, foreground lifecycle, dependency wiring |

@@ -38,6 +38,7 @@ import dev.androidagent.core.AutomationRunReport
 import dev.androidagent.core.AutomationRunner
 import dev.androidagent.core.AutomationTriggerKind
 import dev.androidagent.core.AutomationWakeups
+import dev.androidagent.core.ResponsibilityService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -90,6 +91,7 @@ class AutomationHost(
     private val agentAvailable: () -> Boolean = { false },
     /** Told about every run, for a log line or a settings screen. */
     private val onReport: (AutomationRunReport) -> Unit = {},
+    private val responsibilities: ResponsibilityService? = null,
 ) {
 
     private val evaluator = AutomationEvaluator(history)
@@ -139,7 +141,9 @@ class AutomationHost(
      * Packages the notification listener may look at, read before it touches a
      * title or a body. Empty means it has nothing to do.
      */
-    fun watchedNotificationPackages(): Set<String> = AutomationWakeups.watchedPackages(library.all())
+    fun watchedNotificationPackages(): Set<String> = AutomationWakeups.watchedPackages(runnableRules())
+
+    private fun runnableRules() = responsibilities?.runnable(library.all()) ?: library.all()
 
     /**
      * Deliver an event. Evaluation and any run happen off the caller's thread.
@@ -152,19 +156,29 @@ class AutomationHost(
      */
     fun onEvent(event: AutomationEvent) {
         scope.launch {
-            runLock.withLock {
-                val context = snapshot(event.at)
-                val outcomes = evaluator.evaluate(library.all(), event, context)
-                for (outcome in outcomes.filterIsInstance<AutomationEvaluator.Outcome.Fired>()) {
-                    val report = runner.run(outcome)
-                    onReport(report)
-                    if (!report.ok) {
-                        Log.w(TAG, "Rule ${report.ruleId} stopped: ${report.errorType} ${report.message.orEmpty()}")
+            try {
+                runLock.withLock {
+                    val context = snapshot(event.at)
+                    val outcomes = evaluator.evaluate(runnableRules(), event, context)
+                    for (outcome in outcomes.filterIsInstance<AutomationEvaluator.Outcome.Fired>()) {
+                        try {
+                            val report = responsibilities?.run(outcome, runner) ?: runner.run(outcome)
+                            onReport(report)
+                            if (!report.ok) {
+                                Log.w(TAG, "Rule ${report.ruleId} stopped: ${report.errorType} ${report.message.orEmpty()}")
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (held: IllegalStateException) {
+                            // A pause may land after evaluation but before this rule claims the phone.
+                            Log.w(TAG, "Rule ${outcome.rule.id} held before dispatch.")
+                        }
                     }
                 }
+            } finally {
+                // Also re-arm when a previously matched responsibility changed.
+                rearm()
             }
-            // A rule that just fired has a new cooldown and a new next run.
-            rearm()
         }
     }
 
@@ -188,7 +202,7 @@ class AutomationHost(
      * and at boot — the alarm itself does not survive a restart.
      */
     fun rearm() {
-        val next = AutomationWakeups.nextRunAt(library.all(), ZonedDateTime.now(zone()), history)
+        val next = AutomationWakeups.nextRunAt(runnableRules(), ZonedDateTime.now(zone()), history)
         if (next == null) alarms.cancel() else alarms.armFor(next)
     }
 

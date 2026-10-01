@@ -131,6 +131,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.coordinator.state.collect { state -> mutable.update { it.copy(runState = state) } } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
+        viewModelScope.launch {
+            graph.responsibilities.snapshot.collect { value ->
+                mutable.update { it.copy(responsibilities = value, responsibilityError = graph.responsibilities.loadError,
+                    responsibilityHolds = responsibilityHolds()) }
+            }
+        }
+        viewModelScope.launch {
+            graph.responsibilities.storageError.collect { value ->
+                mutable.update { it.copy(responsibilityError = value) }
+            }
+        }
         viewModelScope.launch { graph.adb.status.collect { state -> mutable.update { it.copy(adbStatus = state) } } }
         // Connection is a flow; whether the user switched it on is a settings
         // read, so re-check it whenever the service attaches or drops.
@@ -555,7 +566,42 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (graph.voice.state.value.active) stopVoice() else graph.coordinator.stop()
+        runCatching { graph.responsibilities.pauseActive(); graph.responsibilitiesChanged() }
+            .onFailure { error("Stopped the run, but could not save paused responsibilities: ${it.message}") }
     }
+
+    fun createResponsibility(title: String, goal: String, rules: List<String>): String? = try {
+        graph.responsibilities.create("r-" + UUID.randomUUID().toString(), title, goal, rules)
+        graph.responsibilitiesChanged()
+        null
+    } catch (failure: Exception) { failure.message ?: "Could not save the responsibility." }
+
+    fun responsibilityState(id: String, operation: String): String? = try {
+        when (operation) {
+            "activate" -> graph.responsibilities.activate(id)
+            "pause" -> graph.responsibilities.pause(id)
+            "complete" -> graph.responsibilities.complete(id)
+            "acknowledge" -> graph.responsibilities.acknowledge(id)
+            else -> error("Unknown responsibility action.")
+        }
+        graph.responsibilitiesChanged()
+        null
+    } catch (failure: Exception) { failure.message ?: "Could not change the responsibility." }
+
+    fun responsibilityNotes(id: String, notes: String): String? = try {
+        graph.responsibilities.saveNotes(id, notes)
+        graph.responsibilitiesChanged()
+        null
+    } catch (failure: Exception) { failure.message ?: "Could not save the notes." }
+
+    private fun responsibilityHolds(): Map<String, String> =
+        graph.responsibilities.snapshot.value.responsibilities
+            .filter { it.state == dev.androidagent.core.ResponsibilityState.ACTIVE }
+            .mapNotNull { item ->
+                item.ruleIds.firstNotNullOfOrNull { rule ->
+                    runCatching { graph.responsibilities.check(rule, graph.responsibilities.permit(rule)) }.exceptionOrNull()?.message
+                }?.let { item.id to it }
+            }.toMap()
     fun toggleVoice() {
         if (graph.voice.state.value.active) stopVoice() else startVoice()
     }
@@ -787,6 +833,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }.getOrDefault(dev.androidagent.core.AutomationOverview.EMPTY)
         mutable.update { state ->
             state.copy(
+                responsibilityHolds = responsibilityHolds(),
                 automations = dev.androidagent.app.ui.AutomationsStatus(
                     overview = overview,
                     notificationAccess = runCatching {
@@ -811,14 +858,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Turn a rule on or off, then re-arm: the alarm set may have changed. */
     fun setRuleEnabled(id: String, enabled: Boolean) {
         runCatching { graph.automations.setEnabled(id, enabled) }
-        runCatching { graph.automationHost.rearm() }
+        runCatching { graph.responsibilitiesChanged() }
         refreshAutomations()
     }
 
     /** Delete a rule for good, then re-arm: it may have been the next one due. */
     fun deleteRule(id: String) {
         val removed = runCatching { graph.automations.delete(id) }.getOrDefault(false)
-        runCatching { graph.automationHost.rearm() }
+        runCatching { graph.responsibilitiesChanged() }
         val name = dev.androidagent.core.AutomationSummaries.chipName(id)
         mutable.update {
             it.copy(infoMessage = if (removed) "Deleted \"" + name + "\"" else "Could not delete \"" + name + "\"")
@@ -844,7 +891,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (changes.isEmpty()) return null
         return try {
             graph.automations.update(id, changes)
-            runCatching { graph.automationHost.rearm() }
+            runCatching { graph.responsibilitiesChanged() }
             mutable.update { it.copy(infoMessage = "Saved \"" + AutomationSummaries.chipName(id) + "\"") }
             refreshAutomations()
             null

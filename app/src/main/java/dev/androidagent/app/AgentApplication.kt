@@ -113,7 +113,12 @@ class AgentGraph(private val app: Application) {
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
-        onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
+        onStop = {
+            queue.pause()
+            runCoordinator.stop()
+            if (voice.state.value.active) scope.launch { voice.stop() }
+            runCatching { responsibilities.pauseActive(); responsibilitiesChanged() }
+        },
         onSend = { text -> runCoordinator.steer(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
     )
@@ -228,6 +233,19 @@ class AgentGraph(private val app: Application) {
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
     /** Read by the panel to say when each rule last ran; written only by the host. */
     val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
+    val responsibilities = dev.androidagent.core.ResponsibilityService(
+        dev.androidagent.workspace.FileResponsibilityStore(File(app.filesDir, "persistent/responsibilities.json"), KeystoreResponsibilitySeal()),
+        automations,
+    )
+    private val responsibilityTools = dev.androidagent.core.ResponsibilityToolGateway(responsibilities) {
+        responsibilitiesChanged()
+    }
+    fun responsibilitiesChanged() {
+        if (::automationHost.isInitialized) automationHost.rearm()
+        // Pausing/reviewing cannot leave an old permit driving the phone or computer.
+        if (::runCoordinator.isInitialized && runCoordinator.state.value.active &&
+            runCatching { runCoordinator.checkExecutionGuard() }.isFailure) runCoordinator.stop()
+    }
     private val automationActions = AndroidAutomationActions(
         context = app,
         coordinator = { runCoordinator },
@@ -254,7 +272,7 @@ class AgentGraph(private val app: Application) {
         fireNow = { id -> if (::automationHost.isInitialized) automationHost.runNow(id) },
         // A rule the agent writes, edits or deletes changes when the alarm is
         // next due; without this it waited for an unrelated firing to be armed.
-        onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
+        onChanged = { responsibilitiesChanged() },
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
@@ -266,7 +284,8 @@ class AgentGraph(private val app: Application) {
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
+        listOf(workflowTools, knowledgeTools, automationTools, responsibilityTools, computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
+        beforeInvoke = { if (::runCoordinator.isInitialized) runCoordinator.checkExecutionGuard() },
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     val coordinator: AgentCoordinator
@@ -288,6 +307,20 @@ class AgentGraph(private val app: Application) {
             scope,
             coordinator,
             sessions,
+            guardFor = { turn ->
+                {
+                    turn.automationRuleId?.let { ruleId -> responsibilities.check(ruleId, turn.responsibilityPermit) }
+                }
+            },
+            onRejected = { turn ->
+                scope.launch {
+                    sessions.append(dev.androidagent.core.ChatMessage(
+                        id = java.util.UUID.randomUUID().toString(), sessionId = turn.sessionId,
+                        role = "system", text = "This did not run: its responsibility was paused or changed.",
+                        createdAt = System.currentTimeMillis(),
+                    ))
+                }
+            },
             // A turn a rule queued has a moment; a turn a person sent does not
             // expire. Dropping a stale one is reported, never silent.
             onExpired = { turn ->
@@ -313,6 +346,7 @@ class AgentGraph(private val app: Application) {
             actions = automationActions,
             scope = scope,
             agentAvailable = { runCoordinator.available.value },
+            responsibilities = responsibilities,
         )
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.

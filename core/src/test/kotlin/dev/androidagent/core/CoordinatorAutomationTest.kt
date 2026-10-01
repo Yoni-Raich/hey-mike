@@ -49,6 +49,26 @@ import java.io.File
  * has — one screen cannot be shared — and Stop has to keep working through it.
  */
 class CoordinatorAutomationTest {
+    @Test fun aPermitRevokedDuringTheDeviceWaitCannotClaimThePhone() = runTest {
+        val rig = Rig(this)
+        rig.occupy()
+        advanceUntilIdle()
+        var allowed = true
+        var acted = false
+        val waiting = async {
+            runCatching {
+                rig.coordinator.runAutomation("Responsibility", File("ws"), guard = { check(allowed) }) { acted = true }
+            }
+        }
+        advanceTimeBy(1000)
+        allowed = false
+        rig.release()
+        advanceUntilIdle()
+        assertTrue(waiting.await().isFailure)
+        assertFalse(acted)
+        assertTrue(rig.coordinator.available.value)
+        rig.close()
+    }
 
     @Test fun aRuleTakesTheDeviceAndGivesItBack() = runTest {
         val rig = Rig(this)

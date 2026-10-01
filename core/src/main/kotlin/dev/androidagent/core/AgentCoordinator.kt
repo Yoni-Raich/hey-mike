@@ -77,6 +77,10 @@ class AgentCoordinator(
     val available = availableState.asStateFlow()
     private val epoch = AtomicLong()
     private val lifecycleLock = Any()
+    @Volatile private var executionGuard: () -> Unit = {}
+
+    /** Host-owned lifecycle check. It does not replace the existing tool approval gates. */
+    fun checkExecutionGuard() = executionGuard()
     private val toolLock = Mutex()
     private val assistantFlushLock = Mutex()
     private var runJob: Job? = null
@@ -136,6 +140,7 @@ class AgentCoordinator(
         reasoningEffort: String? = null,
         skill: AgentSkill? = null,
         planMode: Boolean = false,
+        guard: () -> Unit = {},
     ) {
         if (prompt.isBlank() && images.isEmpty()) return
         synchronized(lifecycleLock) {
@@ -144,6 +149,8 @@ class AgentCoordinator(
                 return
             }
             if (!availableState.value) return
+            guard()
+            executionGuard = guard
             availableState.value = false
             val token = epoch.incrementAndGet()
             val runCompletion = CompletableDeferred<Unit>()
@@ -180,6 +187,7 @@ class AgentCoordinator(
         require(threadId.isNotBlank()) { "Voice thread ID is required." }
         synchronized(lifecycleLock) {
             check(availableState.value && !state.value.active) { "Another agent run is already active." }
+            executionGuard = {}
             availableState.value = false
             val token = epoch.incrementAndGet()
             tools.beginRun(token.toString(), workspace)
@@ -230,6 +238,7 @@ class AgentCoordinator(
         label: String,
         workspace: File,
         waitMs: Long = DEFAULT_AUTOMATION_WAIT_MS,
+        guard: () -> Unit = {},
         block: suspend () -> T,
     ): T? {
         if (waitMs > 0 && !availableState.value) {
@@ -239,6 +248,8 @@ class AgentCoordinator(
         }
         val token = synchronized(lifecycleLock) {
             if (!availableState.value || state.value.active) return null
+            guard()
+            executionGuard = guard
             availableState.value = false
             val claimed = epoch.incrementAndGet()
             tools.beginRun(claimed.toString(), workspace)
@@ -253,6 +264,7 @@ class AgentCoordinator(
                 val ours = epoch.get() == token
                 if (ours) {
                     tools.revoke()
+                    executionGuard = {}
                     mutableState.value = RunState(status = "Ready")
                     availableState.value = true
                 }
@@ -369,6 +381,7 @@ class AgentCoordinator(
             }
             overlay.updateState(OverlayState(OverlayPhase.THINKING))
             beginTurn(token)
+            checkExecutionGuard()
             val startedTurn = engine.startTurn(
                 openedThread, prompt, images, reasoningEffort, skill,
                 DeviceCapabilities.of(tools, adbStatus()),

@@ -43,6 +43,29 @@ import java.io.File
  * from running at 23:40; everything without a deadline is unchanged.
  */
 class SessionRunQueueExpiryTest {
+    @Test fun aRejectedResponsibilityTurnDoesNotBlockTheNextTurn() = runTest {
+        val rig = Rig(this)
+        rig.occupy()
+        advanceUntilIdle()
+        rig.queue.submit(QueuedTurn(sessionId = "two", prompt = "stale responsibility", automationRuleId = "held"))
+        rig.queue.submit(QueuedTurn(sessionId = "two", prompt = "fresh user request"))
+        rig.allow = false
+        rig.release()
+        advanceUntilIdle()
+        assertEquals(listOf("occupying", "fresh user request"), rig.sent)
+        assertEquals(listOf("stale responsibility"), rig.rejected.map { it.prompt })
+        rig.close()
+    }
+
+    @Test fun anAutomationForTheActiveChatQueuesInsteadOfSteeringItsRunningTurn() = runTest {
+        val rig = Rig(this)
+        rig.occupy()
+        advanceUntilIdle()
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "automated task", automationRuleId = "rule"))
+        assertEquals(1, rig.queue.turns.value.size)
+        assertEquals(listOf("occupying"), rig.sent)
+        rig.close()
+    }
 
     @Test fun aTurnWithNoDeadlineIsNeverDropped() = runTest {
         val rig = Rig(this)
@@ -96,6 +119,8 @@ class SessionRunQueueExpiryTest {
         val store = QuietStore()
         val sent = mutableListOf<String>()
         val expired = mutableListOf<QueuedTurn>()
+        val rejected = mutableListOf<QueuedTurn>()
+        var allow = true
         var clock = 1_000_000L
         val coordinator = AgentCoordinator(scope, engine, store, QuietTools(), QuietOverlay())
         val queue = SessionRunQueue(
@@ -104,6 +129,8 @@ class SessionRunQueueExpiryTest {
             store,
             clock = { clock },
             onExpired = { expired += it },
+            guardFor = { turn -> { if (turn.automationRuleId != null) check(allow) } },
+            onRejected = { rejected += it },
         )
 
         init {

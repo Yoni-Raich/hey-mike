@@ -36,6 +36,7 @@ import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.QueuedTurn
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.core.SessionStore
+import dev.androidagent.core.ResponsibilityPermit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
@@ -80,6 +81,36 @@ class AndroidAutomationActions(
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    override fun forRun(ruleId: String, permit: ResponsibilityPermit?, check: () -> Unit): AutomationActions =
+        object : AutomationActions by this {
+            override suspend fun runWorkflow(workflow: String, parameters: JsonObject): AutomationActionResult {
+                check()
+                val arguments = buildJsonObject {
+                    put("mode", "run")
+                    put("workflow", workflow)
+                    if (parameters.isNotEmpty()) put("parameters", parameters)
+                }
+                return device("Automation · $workflow", check) { tools().invoke("workflow_runner", arguments) }
+            }
+            override suspend fun openIntent(arguments: JsonObject): AutomationActionResult {
+                check()
+                return device("Automation · open", check) { tools().invoke("open_intent", arguments) }
+            }
+            override suspend fun notify(title: String?, text: String): AutomationActionResult {
+                check()
+                return this@AndroidAutomationActions.notify(title, text)
+            }
+            override suspend fun agentTurn(prompt: String, ruleId: String, validUntil: Long): AutomationActionResult {
+                check()
+                return enqueue(prompt, ruleId, validUntil, permit)
+            }
+            override suspend fun voiceCall(opening: String): AutomationActionResult {
+                if (permit == null) { check(); return this@AndroidAutomationActions.voiceCall(opening) }
+                // Voice owns a separate lifecycle; a responsibility cannot transfer its permit yet.
+                return AutomationActionResult.failed("Voice is not available for responsibilities yet.")
+            }
+        }
+
     override suspend fun runWorkflow(workflow: String, parameters: JsonObject): AutomationActionResult {
         if (workflow.isBlank()) return AutomationActionResult.failed("no workflow was named")
         val arguments = buildJsonObject {
@@ -101,9 +132,9 @@ class AndroidAutomationActions(
      * moment has usually passed, and the guard would refuse a second attempt
      * anyway.
      */
-    private suspend fun device(label: String, call: suspend () -> dev.androidagent.core.ToolResult): AutomationActionResult {
+    private suspend fun device(label: String, guard: () -> Unit = {}, call: suspend () -> dev.androidagent.core.ToolResult): AutomationActionResult {
         val workspace = File(context.filesDir, "automations").apply { mkdirs() }
-        val result = coordinator().runAutomation(label, workspace) {
+        val result = coordinator().runAutomation(label, workspace, guard = guard) {
             runCatching { call() }
         } ?: return AutomationActionResult.failed(
             "the phone was busy with another run, so this did not start",
@@ -157,11 +188,16 @@ class AndroidAutomationActions(
      * rather than running it long after its moment.
      */
     override suspend fun agentTurn(prompt: String, ruleId: String, validUntil: Long): AutomationActionResult {
+        return enqueue(prompt, ruleId, validUntil, null)
+    }
+
+    private suspend fun enqueue(prompt: String, ruleId: String, validUntil: Long, permit: ResponsibilityPermit?): AutomationActionResult {
         if (prompt.isBlank()) return AutomationActionResult.failed("the prompt was empty")
         val sessionId = sessionFor(ruleId) ?: return AutomationActionResult.failed("no chat could be opened for the rule")
         return runCatching {
             queue().submit(
-                QueuedTurn(sessionId = sessionId, prompt = prompt, validUntil = validUntil),
+                QueuedTurn(sessionId = sessionId, prompt = prompt, validUntil = validUntil,
+                    automationRuleId = ruleId, responsibilityPermit = permit),
             )
             AutomationActionResult.ok("queued in the \"$ruleId\" chat")
         }.getOrElse { AutomationActionResult.failed(it.message ?: "the turn could not be queued") }

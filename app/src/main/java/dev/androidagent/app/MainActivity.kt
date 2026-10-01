@@ -251,6 +251,17 @@ class MainActivity : ComponentActivity() {
             model.editUi { it.copy(isAutomationsOpen = true) }
         },
         onCloseAutomations = { model.editUi { it.copy(isAutomationsOpen = false) } },
+        onOpenResponsibilities = {
+            model.refreshAutomations()
+            model.editUi { it.copy(isResponsibilitiesOpen = true) }
+        },
+        onCloseResponsibilities = { model.editUi { it.copy(isResponsibilitiesOpen = false) } },
+        onCreateResponsibility = model::createResponsibility,
+        onResponsibilityState = { id, operation ->
+            if (operation == "activate") ensureService()
+            model.responsibilityState(id, operation)
+        },
+        onResponsibilityNotes = model::responsibilityNotes,
         onToggleRule = { id, enabled -> model.setRuleEnabled(id, enabled) },
         onRunRule = { id -> ensureService(); model.runRule(id) },
         onDeleteRule = { id -> model.deleteRule(id) },

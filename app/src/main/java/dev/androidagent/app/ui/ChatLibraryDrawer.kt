@@ -218,6 +218,14 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                             onClick = newChat,
                         )
                     }
+                    item(key = "responsibilities", contentType = "quiet") {
+                        TextButton(
+                            onClick = { dismiss(); actions.onOpenResponsibilities() },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Responsibilities · ${state.responsibilities.responsibilities.count { it.state == dev.androidagent.core.ResponsibilityState.ACTIVE }} active", color = LibraryAmber)
+                        }
+                    }
                     if (computer != null) {
                         item(key = "connection", contentType = "connection") { LibraryConnection(state, computer.id, actions, dismiss) }
                         item(key = "projects-label", contentType = "label") {
