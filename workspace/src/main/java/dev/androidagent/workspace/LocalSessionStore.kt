@@ -133,5 +133,9 @@ class LocalSessionStore(context: Context) : SessionStore {
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
         }
+        // A newer build (v3 adds sessions.engine, with a default) may have written this
+        // file. Its extra columns are harmless here, so keep the history instead of
+        // letting SQLite refuse to open it.
+        override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
     }
 }
