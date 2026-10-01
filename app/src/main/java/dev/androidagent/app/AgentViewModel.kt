@@ -296,7 +296,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     // The chat on screen, if nobody has written in it yet, is already a new chat.
     fun newChat() = task {
         val id = current.value
-        val blank = id != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.let { !it.hasMessages && it.engineThreadId == null } == true
+        val blank = id != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.let(::isBlank) == true
         if (!blank) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
     }
 
@@ -312,7 +312,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (isBlank(session) && session.engine != kind && graph.computers.binding(id) == null) useEngine(kind)
     }
 
-    private fun isBlank(session: ChatSession): Boolean = !session.hasMessages && session.engineThreadId == null
+    /** Nobody wrote in it and no engine holds a thread for it, in use or parked. */
+    private fun isBlank(session: ChatSession): Boolean =
+        !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty()
 
     private fun rememberDefaultEngine(kind: EngineKind) {
         preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
@@ -363,7 +365,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Delete a chat that has no message and no thread, unless something is still using it. */
     private suspend fun discardIfUnstarted(id: String) = runCatching {
         val session = graph.sessions.getSession(id) ?: return@runCatching
-        if (session.hasMessages || session.engineThreadId != null || id in mutable.value.pcChatLoading) return@runCatching
+        if (!isBlank(session) || id in mutable.value.pcChatLoading) return@runCatching
         if (graph.coordinator.phaseOf(id) != null) return@runCatching
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) return@runCatching
         graph.queue.cancelSession(id)
@@ -452,6 +454,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(binding.importedFromPc != false) { "This conversation belongs to Mike; it does not need a copy." }
         mutable.update { it.copy(pcForking = it.pcForking + sessionId) }
         try {
+            // The copy is a Codex thread, so it goes where the chat keeps its Codex thread.
+            graph.sessions.setEngine(sessionId, EngineKind.CODEX)
             val copy = graph.remote.forkThread(binding.computerId, binding.cwd, thread)
             withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.copy(threadId = copy, importedFromPc = false)) }
             graph.sessions.setThread(sessionId, copy)
