@@ -35,10 +35,14 @@ Wireless ADB connection is live and the installed dev app is 0.14.0 (28).
 The matching debug-signed dev APK from code commit `da7bdc4` was transferred
 to Downloads; its SHA-256 matches the computer copy:
 `80c3fd2d0b98405349a198625877a05d24f832f14aefb1cb5945fdc6d5c7787d`.
-The user authorized an in-place update as the last action because it stops
-this chat, and will reopen Mike to test and continue. This records the
-pre-install handoff, not an installation or runtime success. No second app,
-connected instrumentation or data removal was used.
+The user installed the update and reopened this computer chat. `app_info`
+reports the expected package/version and the new trusted runtime context
+reports Responsibilities with 0 active owners. This confirms the updated
+feature is running; the installed APK hash has not been independently read.
+The download hash was verified before installation. The phone is currently
+locked, so the actual Responsibilities UI and physical background/restart
+behavior are still unverified. No second app, connected instrumentation or
+data removal was used.
 
 Remaining design scope: goal-driven planning, inferred/shared memory,
 scoped permission grants, rollback-resistant state, voice permits and
