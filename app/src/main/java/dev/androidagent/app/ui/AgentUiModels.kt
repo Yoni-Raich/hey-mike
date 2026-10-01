@@ -104,7 +104,10 @@ data class AgentUiState(
     val attachments: List<PendingAttachment> = emptyList(),
     val workspaceFiles: List<WorkspaceFileItem> = emptyList(),
     val discoveredEndpoints: List<AdbEndpoint> = emptyList(),
+    /** The open chat's run. Other chats may be running beside it: see [runs]. */
     val runState: RunState = RunState(),
+    /** Every chat running now, by chat. */
+    val runs: Map<String, RunState> = emptyMap(),
     val queuedTurns: List<dev.androidagent.core.QueuedTurn> = emptyList(),
     val queuePaused: Boolean = false,
     val tokenUsage: dev.androidagent.core.TokenUsage? = null,
@@ -250,7 +253,10 @@ data class AgentUiActions(
     val onDrawerChanged: (Boolean) -> Unit = {},
     val onNewChat: () -> Unit = {},
     val onSelectSession: (String) -> Unit = {},
+    /** The "+" menu: any file, pictures from the gallery, or one picture from the camera. */
     val onAttach: () -> Unit = {},
+    val onAttachPhoto: () -> Unit = {},
+    val onTakePhoto: () -> Unit = {},
     val onRemoveAttachment: (String) -> Unit = {},
     val onSend: (String, List<PendingAttachment>) -> Unit = { _, _ -> },
     val onSteer: (String) -> Unit = {},

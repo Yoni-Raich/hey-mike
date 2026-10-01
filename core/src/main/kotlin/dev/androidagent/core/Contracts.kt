@@ -65,7 +65,8 @@ interface AdbTransport {
 }
 
 @Serializable
-data class ChatSession(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val engineThreadId: String? = null, val engine: EngineKind = EngineKind.CODEX)
+/** [hasMessages] is false for a chat nobody has written in yet: it is not history, and it is not kept. */
+data class ChatSession(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val engineThreadId: String? = null, val hasMessages: Boolean = true, val engine: EngineKind = EngineKind.CODEX)
 @Serializable
 data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
 interface SessionStore {

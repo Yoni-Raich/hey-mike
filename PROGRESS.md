@@ -1,5 +1,93 @@
 # Progress
 
+### Chats run in parallel; the phone goes to one at a time — 2026-10-01
+
+A new chat opened while another ran showed that run's "Working · Stop active
+task" and queued its first message behind it. Now `AgentRuns` runs any number
+of chats at once, each with its own `AgentCoordinator`, and `DeviceLease` gives
+the phone's screen to one at a time: a run that reads or acts on the screen
+keeps it to its end, any other tool call holds it for that call only (a waiting
+run says "Waiting for the phone"). Engine events are routed by thread. The chat
+screen shows the open chat's run; the drawer marks every running chat. New chat
+no longer asks to confirm while a chat runs. See ARCHITECTURE "Parallel chats,
+one phone".
+
+Also: a chat nobody wrote in is not shown in history and is deleted on leaving
+it or at the next start; the "Where should Mike work?" list folds to the chosen
+place, with a chevron for the rest.
+
+Evidence: `AgentRunsTest` (10: a new chat starts while another runs, each chat
+gets only its own words, the phone to one chat at a time, a thinking chat leaves
+the other's card alone, stopping one leaves the other running and the engine
+open, a stray tool call is refused, six chats start at once and a finished
+chat's coordinator is reused, a non-screen call does not keep the phone, a chat
+that read the screen keeps it to its end, a chat's second turn waits for that
+chat), `:core:test` 579, `:app:testDevDebugUnitTest`
+92, 0 failures; `:app:assembleDevDebug`, `:app:lintDevDebug`,
+`:app:compileDevDebugAndroidTestKotlin`.
+
+Not tested yet: two chats at once on a phone with the real app-server; a
+phone-driving chat beside a computer chat; approvals in two chats at once; the
+overlay hand-over between two chats on a device; voice beside a running chat
+(refused by design). A turn whose start races a stop, with another chat
+running, is not interrupted (the engine is not closed); its tool calls are
+refused.
+
+### Model menu, and Codex 0.159.2 for GPT-6.1 — 2026-09-30
+
+GPT-6.1 Sol arrives in the model list only with a newer app-server: the list
+comes from `model/list` of the pinned Codex, and upstream added it to the
+bundled catalog (default model) in rust-v0.159.1. The pin moved 0.156.0 ->
+0.159.2 (the latest stable; its only change over 0.159.1 is a Windows console
+fix, which matters to the computers we install on). Changed together, because
+the phone and the computer must speak one protocol: `tools/prepare_runtime.py`
+(ARM64 and x86_64), `LinuxHost.kt`, `WindowsHost.kt` (version and hashes), the
+license file name, NOTICE, README. The hashes are the GitHub release digests of
+`codex-app-server-package-*`. `prepare_runtime.py` ran clean: layout unchanged,
+two code-mode host strings, patch applied. A computer that has 0.156.0 installed
+has no 0.159.2 yet, because the install path carries the version: connecting it
+from the Computers sheet installs the new one (about 120 MB).
+
+The model choice is a small menu over its chip instead of a bottom sheet:
+Intelligence levels (Low ... Max, a check on the one in effect), then a Model
+row that opens the list. The chip reads "6 Luna Extra High". Picking a model's
+own default level stores Auto again.
+
+Evidence: `python -m unittest tools.test_prepare_runtime`,
+`python tools/prepare_runtime.py`, `:remote:testDebugUnitTest
+:engine-codex:testDebugUnitTest :app:testDevDebugUnitTest` 172 tests, 0
+failures, `:app:assembleDevDebug`, `:app:lintDevDebug` 0 errors,
+`:app:assembleDevDebugAndroidTest` compiles.
+
+On a Redmi 23053RN02Y (HyperOS, Android 15; `install -r` with
+`versionCodeOverride=1018`, because the phone had the nightly 1017): the model
+list shows GPT-6.1 Sol first, then 6 Astra, 6 Sol, 6 Luna, 5.6 Sol, 5.6 Terra,
+5.6 Luna and 5.5; 6.1 Sol offers Low to Ultra (Ultra is new) and defaults to
+Low. A turn with a picture on 6.1 Sol answered correctly, and the session log
+says `"model":"gpt-6.1-sol"`, `"cli_version":"0.159.2"`. Not run: a computer
+install of 0.159.2, and `ChatUiTest`.
+
+### The plus attaches a photo, a camera shot or a file, also on a computer — 2026-09-30
+
+The plus was one "Attach file" button into the system file browser, and a
+computer chat refused anything but pictures. Now it opens Photo / Camera / File,
+and a file attached in a computer chat is copied to the project folder on the
+computer (`.hey-mike/attachments/<time>/`) before the turn is queued.
+
+Evidence: `:remote:testDebugUnitTest :app:testDevDebugUnitTest` 127 tests, 0
+failures (new: file names safe on Windows and Linux, the path a file lands on,
+and `RemoteHub.sendAttachments` against an in-process SFTP server: two files
+land whole in one `.hey-mike/attachments/<time>/` folder, no `.part` left);
+`:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors.
+
+On the Redmi: the plus opens Photo, Camera and File. Photo opens the system
+picker and several can be chosen; the picture is attached and a turn with it
+answered. Camera opens the system one-shot camera, the shot returns as
+"Photo <date>.jpg" and `cache/captures` is empty afterwards. File opens the
+system file picker (nothing was picked). Long press on the answer gives Copy
+and Select text. Not run: the activity being recreated while the camera is
+open, and an upload from a real computer chat (the Redmi has no saved computer).
+
 ### Claude usage before the first message (fix-2) — 2026-09-30
 
 Found on a phone: the usage sheet was empty for Claude until a message was
@@ -151,6 +239,7 @@ the sign-in link and a real subscription sign-in with a pasted code, a Claude
 chat turn, MCP tools reaching `claude`, stop during a tool call, compact after
 a restart, the Compose screens themselves (no screenshot exists), Android 16,
 and TalkBack on the new controls.
+
 ### Wireless ADB: the real state, a dropped pairing, a one-tap switch — 2026-09-30
 
 Reported: Mike showed Wireless ADB as off while the switch was on, and turning
@@ -172,9 +261,16 @@ after 7 days without a connection. Fixed in `:adb`, `:core` and the UI:
 Evidence: `:core:test :adb:testDebugUnitTest :app:testDevDebugUnitTest` 672
 tests, 0 failures; `:app:assembleDevDebug`; `:app:lintDevDebug` 0 errors. On
 the Nothing, logcat showed `SSLProtocolException ... SSLV3_ALERT_CERTIFICATE_UNKNOWN`
-recognised and a single burst of handshakes, then none. Not yet verified:
-pairing again, the self-grant, and the one-tap switch; they need the user to
-pair on the phone.
+recognised and a single burst of handshakes, then none.
+
+On the Redmi (paired and connected): the status sheet read "Connected · port
+46333"; `WRITE_SECURE_SETTINGS` was `granted=true`, so Mike had granted itself
+over its own ADB. With `settings put global adb_wifi_enabled 0` the row became
+"Wireless debugging is off" with a Turn on button within three seconds and the
+orb went amber; tapping Turn on set the switch back to 1, the row showed "Looking
+for this phone…" and then "Connected · port 39617", the sheet staying open
+throughout. Not verified: pairing again after a dropped pairing (the Redmi's
+pairing was still good), and the same flow on the Nothing.
 
 ### Computer chat panel: activity as one row, a plainer header — 2026-09-29
 

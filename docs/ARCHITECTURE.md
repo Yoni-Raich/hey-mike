@@ -94,7 +94,7 @@ DNS, TLS and connection failures remain diagnosable without exposing tokens or
 device codes. Proxy lifecycle follows the supervised app-server and closes on
 stop or failed startup.
 
-The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.156.0,
+The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.159.2,
 ChatGPT account sessions use `https://chatgpt.com/backend-api/codex` for
 models and responses. Allowing only auth.openai.com and api.openai.com lets
 device-code login succeed while blocking signed-in chat. The runtime sets
@@ -104,7 +104,7 @@ The model list is never hard-coded. `model/list` returns what the OpenAI
 backend sends the app-server, and the backend filters by the client version
 the app-server reports. New models therefore appear only after the pinned
 package is bumped in `tools/prepare_runtime.py` (0.153.4 -> 0.156.0 on
-2026-09-22 for the GPT-6 models). Cached archives are named with the version,
+2026-09-22 for the GPT-6 models, then 0.156.0 -> 0.159.2 on 2026-09-30 for GPT-6.1 Sol). Cached archives are named with the version,
 so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
@@ -478,13 +478,42 @@ state. Its Android calls live behind `CapabilityPlatform`, while policy and
 dispatch are JVM-testable without a phone. Provider behavior, OEM intent
 handlers and the permission dialog still need physical-device proof.
 
-## Session queue and exclusive device ownership
+## Parallel chats, one phone
 
-The MVP still allows one active run per phone, because one phone screen cannot
-be shared. `SessionRunQueue` makes that limit a queue instead of a rejection:
-the UI accepts a turn for any chat, and `AgentCoordinator` publishes an
-`available` flag that gates dispatch. Sending into the chat that is already
-running still steers it. FIFO order is durable in a `run_queue` SQLite table,
+Chats run at once, with no cap, as Codex does on a computer: `AgentRuns`
+gives each running chat an `AgentCoordinator` of its own, reusing an idle one
+before making another, so a new chat started while others work starts straight
+away. Each coordinator is unchanged in what it does for one run. What they
+share:
+
+- The phone. It has one screen and one foreground app, so two runs cannot both
+  drive it: one would open an app and the other's tap would land in it.
+  `DeviceLease` gives the device gateway to one run at a time. A run takes it at
+  a tool call, not at its start, so a chat that only thinks, or one whose agent
+  works on a computer, never waits. A call that leaves the screen alone (files,
+  contacts, calendar, a computer, knowledge) holds it for that call only. Once a
+  run reads or acts on the screen it keeps the lease to its end: the handles a
+  read returns are what its next tap uses, re-arming the gateway clears them,
+  and the tap needs the screen it was planned on. A run waiting for it says
+  "Waiting for the phone". The gateway's `beginRun`/`revoke` follow the lease,
+  so the gateway always serves exactly the run that holds it; making the
+  gateways per run would let non-screen calls overlap too.
+- The floating card. Only the lease holder (or anyone, when nobody holds it)
+  updates or finishes it, so a thinking chat never relabels or closes another
+  chat's control card. Its Stop, like the notification's, stops every chat:
+  stopping only the chat on the phone would hand the phone to the next one.
+- The engine. Events are routed by thread to the coordinator that owns it; a
+  coordinator collecting them itself would refuse every other chat's tool calls
+  and approvals. A thread nobody owns has its tool calls and approvals refused.
+  A stop never closes the engine while another chat runs; a turn that cannot be
+  interrupted is then left to finish, with its tool calls refused.
+
+Voice still needs every chat idle. Approvals are per chat; a yes typed into a
+chat answers that chat's card. The chat screen shows the open chat's run only.
+
+`SessionRunQueue` holds a turn only while its own chat is still running; any
+other turn starts at once.
+Sending into the chat that is already running still steers it. FIFO order is durable in a `run_queue` SQLite table,
 and a turn is dequeued before it starts, so a process crash cannot replay a
 side effect. A queue restored at startup is paused and needs an explicit
 Resume, and a local stop pauses the queue rather than releasing the next run at
@@ -1676,7 +1705,7 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
   and PowerShell default shells. The computer downloads the official
   `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
-  pinned on the phone (0.156.0), checks its sha256 against hashes compiled
+  pinned on the phone (0.159.2), checks its sha256 against hashes compiled
   into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
   The phone and computer therefore speak one protocol version.
 - **Access is the user's choice per computer.** *Ask me first*:
@@ -1694,8 +1723,18 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   Keystore key (`KeystoreSecretBox`). An edited file does not open, so it
   cannot point a saved password at another host or move a chat onto a
   computer; the app then trusts none of it and asks for the computers again.
-- **Pictures** are sent inline as data URLs; other attachments are refused in
-  a computer chat because their paths are on the phone.
+- **Pictures** are sent inline as data URLs. Any other attachment is copied to
+  the computer over SFTP first (`RemoteHub.sendAttachments`), into
+  `.hey-mike/attachments/<time>/` in the chat's project folder, and the prompt
+  names where it landed ("Attached files on this computer"). They used to be
+  refused, because their paths are on the phone. A failed copy sends nothing
+  and keeps the attachments. The folder shows up in `git status` of a project
+  that is a repository.
+- **The composer's plus** opens Photo (system photo picker, several at once, no
+  storage permission), Camera (one shot written to `cache/captures/` through
+  the app's FileProvider, copied into the chat, then deleted; no CAMERA
+  permission, because the system camera app takes the picture) and File. All
+  three feed the same pending attachments, in phone chats and computer chats.
 - **Files: places, one copy tool, a skill for use cases.** A file lives in
   one of three kinds of place, and every address names one: `chat:<path>`
   (this chat's folder on the phone), `phone:<path>` (shared storage, or a

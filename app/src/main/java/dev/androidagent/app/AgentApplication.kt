@@ -29,6 +29,7 @@ import dev.androidagent.automations.AutomationHost
 import dev.androidagent.automations.AutomationHostOwner
 import dev.androidagent.core.AccountUsageBook
 import dev.androidagent.core.AgentCoordinator
+import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.AutomationJournal
 import dev.androidagent.core.AutomationLibrary
 import dev.androidagent.core.AutomationToolGateway
@@ -137,13 +138,13 @@ class AgentGraph(private val app: Application) {
     // Claude's last 5-hour and weekly limits, so the usage sheet has them after a restart.
     val claudeUsage = LastUsageStore(java.io.File(runtime.runtimeRoot, "claude-usage.json"))
     val adb = AndroidAdbTransport(app)
-    private lateinit var runCoordinator: AgentCoordinator
+    private lateinit var runCoordinator: AgentRuns
     // Declared before the gateways: they take `overlay` as a constructor argument,
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
         onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
-        onSend = { text -> runCoordinator.steer(text) },
+        onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
     )
     // One counter for every backend, so an observation revision never moves
@@ -298,21 +299,25 @@ class AgentGraph(private val app: Application) {
         listOf(workflowTools, knowledgeTools, automationTools, computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
-    val coordinator: AgentCoordinator
+    /** Every chat's run: several at once, with the phone to one of them at a time. */
+    val coordinator: AgentRuns
         get() = runCoordinator
     val queue: SessionRunQueue
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
-        runCoordinator = AgentCoordinator(
-            scope, engine, sessions, tools, overlay,
-            sendGrants = sendGrants,
-            adbStatus = { adb.status.value },
-            // An approval card lives only in the app, and device control means
-            // the app is not in front. Raising it is what makes the approval
-            // answerable at all.
-            bringToForeground = ::bringAppForward,
-        )
+        runCoordinator = AgentRuns(scope, engine) { share ->
+            AgentCoordinator(
+                scope, engine, sessions, tools, overlay,
+                sendGrants = sendGrants,
+                adbStatus = { adb.status.value },
+                // An approval card lives only in the app, and device control means
+                // the app is not in front. Raising it is what makes the approval
+                // answerable at all.
+                bringToForeground = ::bringAppForward,
+                share = share,
+            )
+        }
         queue = SessionRunQueue(
             scope,
             coordinator,

@@ -63,6 +63,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     val ui: StateFlow<AgentUiState> = mutable.asStateFlow()
     private val usageByThread = mutableMapOf<String, TokenUsage>()
     private var setupJob: Job? = null
+    private var purgedUnstarted = false
+    private var previousChat: String? = null
 
     init {
         viewModelScope.launch {
@@ -77,11 +79,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     current.value = list.firstOrNull { it.id == saved }?.id ?: list.firstOrNull()?.id
                 }
                 if (list.isEmpty()) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
+                // Chats nobody wrote in last run are not history: drop them once, at start.
+                if (!purgedUnstarted) {
+                    purgedUnstarted = true
+                    list.filter { it.id != current.value }.forEach { discardIfUnstarted(it.id) }
+                }
                 updateTitle()
                 project()
             }
         }
         viewModelScope.launch { current.filterNotNull().collectLatest { id ->
+            // Leaving a chat nobody wrote in: it was a place to start, not history.
+            previousChat?.takeIf { it != id }?.let { old -> viewModelScope.launch { discardIfUnstarted(old) } }
+            previousChat = id
             // A computer conversation may be held open by Codex on the computer.
             checkPcChatBusy(id)
             preferences.edit().putString("session", id).apply()
@@ -139,7 +149,13 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 graph.computerRequests.value = null
             }
         }
-        viewModelScope.launch { graph.coordinator.state.collect { state -> mutable.update { it.copy(runState = state) } } }
+        // The open chat shows its own run; another chat running beside it is
+        // not this chat's "Working", and the drawer marks it instead.
+        viewModelScope.launch {
+            combine(graph.coordinator.sessionStates, current) { states, id -> states to id }.collect { (states, id) ->
+                mutable.update { it.copy(runState = id?.let(states::get) ?: RunState(), runs = states.filterValues { run -> run.active }) }
+            }
+        }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
         viewModelScope.launch { graph.adb.status.collect { state -> mutable.update { it.copy(adbStatus = state) } } }
@@ -184,7 +200,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     event.limits?.let(::recordUsage)
                 }
                 EngineEvent.SkillsChanged -> runCatching { loadSkills(forceReload = false) }
-                is EngineEvent.Failure -> if (!graph.coordinator.state.value.active) error(event.message)
+                is EngineEvent.Failure -> if (!graph.coordinator.anyActive) error(event.message)
                 else -> Unit
             }
         } }
@@ -261,8 +277,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
-    /** A new phone chat on the default engine. */
-    fun newChat() = task { current.value = graph.sessions.createSession(mutable.value.defaultEngine).id }
+    // The chat on screen, if nobody has written in it yet, is already a new chat.
+    fun newChat() = task {
+        val id = current.value
+        val blank = id != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.let { !it.hasMessages && it.engineThreadId == null } == true
+        if (!blank) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
+    }
 
     /** The engine new chats start on. Chats that exist keep theirs. */
     fun setDefaultEngine(kind: EngineKind) {
@@ -309,6 +329,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.queue.cancelSession(id)
         graph.sessions.deleteSession(id)
         return fresh.id
+    }
+
+    /** Delete a chat that has no message and no thread, unless something is still using it. */
+    private suspend fun discardIfUnstarted(id: String) = runCatching {
+        val session = graph.sessions.getSession(id) ?: return@runCatching
+        if (session.hasMessages || session.engineThreadId != null || id in mutable.value.pcChatLoading) return@runCatching
+        if (graph.coordinator.phaseOf(id) != null) return@runCatching
+        if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) return@runCatching
+        graph.queue.cancelSession(id)
+        withContext(Dispatchers.IO) { graph.computers.unbind(id) }
+        graph.sessions.deleteSession(id)
     }
 
     /** Save a new or edited computer, then connect to it straight away. */
@@ -485,8 +516,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Remove a computer and the chats that run on it. Nothing on the computer changes. */
     fun removeComputer(id: String) = task {
         val chats = graph.computers.state.value.bindings.filterValues { it.computerId == id }.keys
-        val running = graph.coordinator.state.value
-        check(!(running.active && running.sessionId in chats)) { "Stop the chat running on this computer first." }
+        check(chats.none { graph.coordinator.phaseOf(it) != null }) { "Stop the chat running on this computer first." }
         graph.remote.disconnect(id)
         chats.forEach { chat -> graph.queue.cancelSession(chat); graph.sessions.deleteSession(chat) }
         withContext(Dispatchers.IO) { graph.computers.remove(id) }
@@ -592,7 +622,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun select(id: String) { current.value = id }
     fun rename(id: String, title: String) = task { graph.sessions.rename(id, title) }
     fun delete(id: String) {
-        if (graph.coordinator.state.value.sessionId == id && graph.coordinator.state.value.active) { error("Stop this chat before deleting it."); return }
+        if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End the voice conversation before deleting it."); return }
         task { graph.queue.cancelSession(id); graph.sessions.deleteSession(id) }
     }
@@ -601,20 +631,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (graph.voice.state.value.active) {
             if (id != graph.voiceConversation.sessionId.value) { error("End voice before sending in another chat."); return }
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
-            if (graph.coordinator.answerApprovalByReply(text)) return
+            if (graph.coordinator.answerApprovalByReply(text, sessionId = id)) return
             task { graph.voiceConversation.type(text) }
             return
         }
-        val active = graph.coordinator.state.value
-        if (graph.computers.binding(id) != null && attachments.any { it.mimeType?.startsWith("image/") != true }) {
-            error("A computer chat can take pictures only. Copy other files to the computer first.")
-            return
-        }
+        val onComputer = graph.computers.binding(id) != null
         val paths = attachments.mapNotNull { it.path?.let(::File) }
         val images = attachments.filter { it.mimeType?.startsWith("image/") == true }.mapNotNull { it.path?.let(::File) }
         val otherFiles = paths.filter { it !in images }
-        val promptText = text
-        val prompt = if (otherFiles.isEmpty()) promptText else promptText + "\n\nAttached files in this session:\n" + otherFiles.joinToString("\n") { it.absolutePath }
+        val otherNames = attachments.filter { it.path != null && it.mimeType?.startsWith("image/") != true }.map { it.name }
         val snapshot = mutable.value
         val invokedSkillName = text.trimStart()
             .takeIf { it.startsWith("\$") }
@@ -630,6 +655,28 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val model = choice.modelFor(snapshot.planMode)
         if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return }
         task {
+            // Pictures travel inside the turn. Any other file has to be on the
+            // machine the agent runs on, so a computer chat copies it there
+            // first and names where it landed. A failed copy sends nothing and
+            // keeps the attachments, so the user can try again.
+            val where = if (onComputer && otherFiles.isNotEmpty()) {
+                mutable.update { it.copy(infoMessage = "Sending ${otherFiles.size} file${if (otherFiles.size == 1) "" else "s"} to the computer…", errorMessage = null) }
+                try {
+                    graph.remote.sendAttachments(id, otherNames.zip(otherFiles))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    mutable.update { it.copy(infoMessage = null, errorMessage = "Could not send the file to the computer: ${e.message ?: e.javaClass.simpleName}") }
+                    return@task
+                }
+            } else {
+                otherFiles.map { it.absolutePath }
+            }
+            val prompt = if (where.isEmpty()) text else {
+                val place = if (onComputer) "Attached files on this computer" else "Attached files in this session"
+                text + "\n\n$place:\n" + where.joinToString("\n")
+            }
+            mutable.update { it.copy(infoMessage = null) }
             graph.queue.submit(QueuedTurn(sessionId = id, prompt = prompt, imagePaths = images.map { it.absolutePath },
                 model = model, effort = choice.turnEffort, skill = invokedSkill, planMode = snapshot.planMode))
             mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
@@ -642,7 +689,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun compact() {
         val id = current.value ?: return
-        if (graph.coordinator.state.value.active) { error("Wait for the agent to finish before compacting."); return }
+        if (graph.coordinator.phaseOf(id) != null) { error("Wait for the agent to finish before compacting."); return }
         task {
             val session = graph.sessions.getSession(id)
             val thread = checkNotNull(session?.engineThreadId) { "There is nothing to compact yet. Send a message first." }
@@ -677,7 +724,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             assistantVoiceJob?.cancel()
             return
         }
-        if (graph.voice.state.value.active) stopVoice() else graph.coordinator.stop()
+        if (graph.voice.state.value.active) stopVoice() else current.value?.let(graph.coordinator::stop)
+    }
+
+    /** Words for the open chat's run, which may not be the only one running. */
+    fun steer(text: String) {
+        current.value?.let { graph.coordinator.steer(it, text) }
     }
     fun toggleVoice() {
         if (graph.voice.state.value.active) stopVoice() else startVoice()
@@ -1249,11 +1301,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.adb.forgetPairing()
         mutable.update { it.copy(infoMessage = "Pairing removed. Pair again to connect.") }
     }
-    fun addAttachment(uri: Uri) = task {
-        val id = current.value ?: return@task
+    /**
+     * [deleteAfter] is a temporary file the copy came from, such as a camera
+     * shot, and [name] replaces the name the source gives (a shot's is a UUID).
+     */
+    fun addAttachment(uri: Uri, deleteAfter: File? = null, name: String? = null) = task {
+        try {
+            copyAttachment(uri, name)
+        } finally {
+            deleteAfter?.delete()
+        }
+    }
+
+    private suspend fun copyAttachment(uri: Uri, givenName: String?) {
+        val id = current.value ?: return
         val resolver = getApplication<Application>().contentResolver
         val type = resolver.getType(uri) ?: "application/octet-stream"
-        val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "attachment"
+        val name = givenName ?: resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "attachment"
         val safeName = name.replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").take(100).ifBlank { "attachment" }
         val target = File(File(graph.sessions.workspace(id), "attachments").apply { mkdirs() }, "${UUID.randomUUID()}-$safeName")
         withContext(Dispatchers.IO) {

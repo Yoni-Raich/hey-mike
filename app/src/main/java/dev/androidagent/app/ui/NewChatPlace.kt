@@ -23,6 +23,8 @@ package dev.androidagent.app.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,12 +40,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -82,6 +90,8 @@ internal fun WhereMikeWorks(state: AgentUiState, binding: dev.androidagent.remot
     val labels = state.computers.associate { it.id to it.label }
     val target = state.defaultComputerId ?: state.computers.first().id
     val targetLabel = labels[target].orEmpty()
+    // Folded to the one place the chat is going; the rest of the list is one tap away.
+    var open by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 24.dp)) {
         Text(
             "Where should Mike work?",
@@ -104,41 +114,80 @@ internal fun WhereMikeWorks(state: AgentUiState, binding: dev.androidagent.remot
             color = PlaceGround,
             border = BorderStroke(1.dp, PlaceLine),
         ) {
-            Column {
-                PlaceRow(
-                    title = "This phone",
-                    subtitle = "Ask, plan, or act on your phone",
-                    selected = binding == null,
-                    choice = true,
-                    onClick = { actions.onMoveNewChat(null, null) },
-                ) { ink -> Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, Modifier.size(18.dp), tint = ink) }
-                recent.forEach { project ->
-                    HorizontalDivider(color = PlaceLine)
-                    val computer = labels[project.computerId].orEmpty()
+            Column(Modifier.animateContentSize()) {
+                if (!open) {
+                    // One row: where this chat is going. The rest is one tap away.
+                    val expand: @Composable () -> Unit = {
+                        Icon(Icons.Outlined.ExpandMore, contentDescription = "Show all places", Modifier.size(24.dp), tint = PlaceMuted)
+                    }
+                    if (binding == null) {
+                        PlaceRow(
+                            title = "This phone",
+                            subtitle = "Ask, plan, or act on your phone",
+                            selected = true,
+                            choice = false,
+                            trailing = expand,
+                            onClick = { open = true },
+                        ) { ink -> Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, Modifier.size(18.dp), tint = ink) }
+                    } else {
+                        val computer = labels[binding.computerId].orEmpty()
+                        val known = recent.firstOrNull { it.computerId == binding.computerId && PcChats.pathKey(it.path) == PcChats.pathKey(binding.cwd) }
+                        val folder = binding.cwd.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
+                        PlaceRow(
+                            title = known?.name ?: folder.ifEmpty { binding.cwd },
+                            subtitle = computer,
+                            selected = true,
+                            choice = false,
+                            trailing = expand,
+                            onClick = { open = true },
+                        ) { ink -> Text(monogram(computer), fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = ink) }
+                    }
+                } else {
                     PlaceRow(
-                        title = project.name,
-                        subtitle = computer,
-                        selected = binding != null && binding.computerId == project.computerId &&
-                            PcChats.pathKey(binding.cwd) == PcChats.pathKey(project.path),
+                        title = "This phone",
+                        subtitle = "Ask, plan, or act on your phone",
+                        selected = binding == null,
                         choice = true,
-                        onClick = { actions.onMoveNewChat(project.computerId, project.path) },
-                    ) { ink -> Text(monogram(computer), fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = ink) }
+                        onClick = { actions.onMoveNewChat(null, null); open = false },
+                    ) { ink -> Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, Modifier.size(18.dp), tint = ink) }
+                    recent.forEach { project ->
+                        HorizontalDivider(color = PlaceLine)
+                        val computer = labels[project.computerId].orEmpty()
+                        PlaceRow(
+                            title = project.name,
+                            subtitle = computer,
+                            selected = binding != null && binding.computerId == project.computerId &&
+                                PcChats.pathKey(binding.cwd) == PcChats.pathKey(project.path),
+                            choice = true,
+                            onClick = { actions.onMoveNewChat(project.computerId, project.path); open = false },
+                        ) { ink -> Text(monogram(computer), fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = ink) }
+                    }
+                    HorizontalDivider(color = PlaceLine)
+                    PlaceRow(
+                        title = if (recent.isEmpty()) "Pick a folder" else "Another folder",
+                        subtitle = if (recent.isEmpty()) "On $targetLabel" else "Pick one on $targetLabel",
+                        selected = false,
+                        choice = false,
+                        accent = true,
+                        onClick = { open = false; actions.onNewProject(target) },
+                    ) { ink -> Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, Modifier.size(18.dp), tint = ink) }
+                    HorizontalDivider(color = PlaceLine)
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable { open = false },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(Icons.Outlined.ExpandLess, contentDescription = "Show fewer places", Modifier.size(24.dp), tint = PlaceMuted)
+                    }
                 }
-                HorizontalDivider(color = PlaceLine)
-                PlaceRow(
-                    title = if (recent.isEmpty()) "Pick a folder" else "Another folder",
-                    subtitle = if (recent.isEmpty()) "On $targetLabel" else "Pick one on $targetLabel",
-                    selected = false,
-                    choice = false,
-                    accent = true,
-                    onClick = { actions.onNewProject(target) },
-                ) { ink -> Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, Modifier.size(18.dp), tint = ink) }
             }
         }
-        Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, Modifier.size(14.dp), tint = PlaceMuted)
-            Spacer(Modifier.width(8.dp))
-            Text("On a computer, Mike can still use this phone.", fontSize = 12.sp, lineHeight = 16.sp, color = PlaceMuted)
+        if (open) {
+            Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, Modifier.size(14.dp), tint = PlaceMuted)
+                Spacer(Modifier.width(8.dp))
+                Text("On a computer, Mike can still use this phone.", fontSize = 12.sp, lineHeight = 16.sp, color = PlaceMuted)
+            }
         }
         // On this phone the chat can also run on Claude; computers run Codex.
         if (binding == null) {
@@ -160,6 +209,7 @@ private fun PlaceRow(
     selected: Boolean,
     choice: Boolean,
     accent: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
     badge: @Composable (ink: Color) -> Unit,
 ) {
@@ -191,7 +241,8 @@ private fun PlaceRow(
                 )
                 Text(subtitle, fontSize = 12.sp, lineHeight = 16.sp, color = PlaceMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", Modifier.size(22.dp), tint = PlaceTeal)
+            if (trailing != null) trailing()
+            else if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", Modifier.size(22.dp), tint = PlaceTeal)
         }
     }
 }

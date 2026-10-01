@@ -21,6 +21,7 @@
 package dev.androidagent.app
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -33,6 +34,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.*
@@ -42,11 +44,31 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.androidagent.app.assist.AssistLaunch
 import dev.androidagent.app.ui.*
 import dev.androidagent.core.KeepAwakePolicy
+import java.io.File
+import java.util.UUID
+
+private const val MAX_PHOTOS = 10
+private const val STATE_PENDING_SHOT = "pending_shot"
 
 class MainActivity : ComponentActivity() {
     private val model: AgentViewModel by viewModels()
     private var askedForNotifications = false
-    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::addAttachment) }
+    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> uris.forEach(model::addAttachment) }
+    // The system photo picker needs no storage permission: Android hands over
+    // only the pictures the user taps.
+    private val photoPicker = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_PHOTOS)) { uris -> uris.forEach(model::addAttachment) }
+    // Where the camera is told to write. Kept across recreation: the camera
+    // app can push this activity out of memory while it is open.
+    private var pendingShot: File? = null
+    private val camera = registerForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        val shot = pendingShot.also { pendingShot = null } ?: return@registerForActivityResult
+        if (taken && shot.length() > 0) {
+            val at = java.text.SimpleDateFormat("yyyy-MM-dd HH.mm.ss", java.util.Locale.US).format(java.util.Date())
+            model.addAttachment(FileProvider.getUriForFile(this, "$packageName.files", shot), deleteAfter = shot, name = "Photo $at.jpg")
+        } else {
+            shot.delete()
+        }
+    }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPermissions() }
     private val capabilityPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         model.graph.runtimePermissions.complete(result)
@@ -61,8 +83,26 @@ class MainActivity : ComponentActivity() {
         if (granted) { ensureService(); if (forAssistant) model.startAssistantVoice() else model.toggleVoice() }
         else model.error("Microphone permission is required for voice.")
     }
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        pendingShot?.let { outState.putString(STATE_PENDING_SHOT, it.absolutePath) }
+    }
+
+    /** Open the camera for one picture, written to a file only this app can hand out. */
+    private fun takePhoto() {
+        val shot = File(File(cacheDir, "captures").apply { mkdirs() }, "${UUID.randomUUID()}.jpg")
+        pendingShot = shot
+        try {
+            camera.launch(FileProvider.getUriForFile(this, "$packageName.files", shot))
+        } catch (_: ActivityNotFoundException) {
+            pendingShot = null
+            model.error("This phone has no camera app to take a picture with.")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingShot = savedInstanceState?.getString(STATE_PENDING_SHOT)?.let(::File)
         model.graph.runtimePermissions.attach(this, capabilityPermissions)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK))
@@ -192,9 +232,11 @@ class MainActivity : ComponentActivity() {
         onNewChat = { model.newChat() },
         onSelectSession = model::select,
         onAttach = { filePicker.launch(arrayOf("*/*")) },
+        onAttachPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+        onTakePhoto = ::takePhoto,
         onRemoveAttachment = model::removeAttachment,
         onSend = { text, attachments -> ensureService(); model.send(text, attachments) },
-        onSteer = { model.graph.coordinator.steer(it) },
+        onSteer = { model.steer(it) },
         onStop = model::stop,
         onCancelQueued = model::cancelQueued,
         onResumeQueue = { model.resumeQueue() },

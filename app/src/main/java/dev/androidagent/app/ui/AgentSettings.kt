@@ -867,7 +867,7 @@ private fun ColumnScope.WirelessAdbSettings(state: AgentUiState, actions: AgentU
 
     var confirmMike by rememberSaveable { mutableStateOf(false) }
     val canHandOff = state.adbStatus.phase != ConnectionPhase.CONNECTED && !busy &&
-        state.a11yStatus.connected && state.permissions.overlay && !state.runState.active
+        state.a11yStatus.connected && state.permissions.overlay && state.runs.isEmpty()
     if (adbFix(state.adbStatus) == AdbFix.TURN_ON) {
         // Paired and only switched off: one tap, no pairing, no hand-off.
         Button(onClick = actions.onTurnOnWireless, modifier = Modifier.fillMaxWidth()) {

@@ -49,7 +49,7 @@ class LocalSessionStore(context: Context) : SessionStore {
 
     override suspend fun createSession(engine: EngineKind): ChatSession = mutate {
         val now = System.currentTimeMillis()
-        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now, engine = engine)
+        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now, hasMessages = false, engine = engine)
         db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now); put("engine", engine.name) })
         workspace(session.id).mkdirs()
         refresh()
@@ -119,7 +119,7 @@ class LocalSessionStore(context: Context) : SessionStore {
     }
     private suspend fun <T> mutate(block: () -> T): T = withContext(Dispatchers.IO) { lock.withLock { block() } }
     private fun refresh(sessionId: String? = null) { sessionStream.value = loadSessions(); sessionId?.let { streams[it]?.value = loadMessages(it) } }
-    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread,engine FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4), engineOf(c.getString(5)))) } }
+    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread,EXISTS(SELECT 1 FROM messages WHERE session=sessions.id),engine FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4), c.getInt(5) == 1, engineOf(c.getString(6)))) } }
     // A value this release does not know (a newer app, a bad write) must not
     // lose the chat, so it reads as the engine every chat had before.
     private fun engineOf(stored: String?): EngineKind = EngineKind.entries.firstOrNull { it.name == stored } ?: EngineKind.CODEX
@@ -138,5 +138,9 @@ class LocalSessionStore(context: Context) : SessionStore {
             // Every chat before v3 ran on Codex; the default fills existing rows in place.
             if (oldVersion < 3) db.execSQL("ALTER TABLE sessions ADD COLUMN engine TEXT NOT NULL DEFAULT 'CODEX'")
         }
+        // A newer build (v3 adds sessions.engine, with a default) may have written this
+        // file. Its extra columns are harmless here, so keep the history instead of
+        // letting SQLite refuse to open it.
+        override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
     }
 }

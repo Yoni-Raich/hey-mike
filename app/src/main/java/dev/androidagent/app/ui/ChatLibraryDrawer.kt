@@ -124,15 +124,17 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     var searching by rememberSaveable { mutableStateOf(false) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     val showAll = remember { mutableStateMapOf<String, Boolean>() }
-    val sections = remember(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, state.sessions, state.pcThreads) {
-        PcChats.sections(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, state.sessions, state.pcThreads)
+    // A chat nobody has written in is not history.
+    val started = remember(state.sessions) { state.sessions.filter { it.hasMessages } }
+    val sections = remember(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, started, state.pcThreads) {
+        PcChats.sections(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, started, state.pcThreads)
     }
     val hasComputers = state.computers.isNotEmpty()
     val scope = location.takeIf { it in setOf(ChatLibrary.ALL, ChatLibrary.PHONE) || state.computers.any { c -> c.id == it } }
         ?.takeIf { hasComputers } ?: ChatLibrary.ALL
     val computer = state.computers.firstOrNull { it.id == scope }
-    val chats = remember(state.sessions, state.remoteBindings, sections, scope, query) {
-        ChatLibrary.chats(state.sessions, state.remoteBindings, sections, scope, null, query)
+    val chats = remember(started, state.remoteBindings, sections, scope, query) {
+        ChatLibrary.chats(started, state.remoteBindings, sections, scope, null, query)
     }
     val projects = remember(sections, scope, query) { if (computer == null) emptyList() else ChatLibrary.projects(sections, scope, query) }
     var limit by remember(scope, query) { mutableStateOf(40) }
@@ -555,7 +557,7 @@ private fun LibraryChatRow(
 ) {
     val local = (entry as? PcChatEntry.Local)?.session
     if (local != null) {
-        val running = state.runState.active && local.id == state.runState.sessionId
+        val running = state.runs[local.id]?.active == true
         SessionRow(
             session = local, onComputer = false, selected = local.id == state.activeSessionId,
             running = running,

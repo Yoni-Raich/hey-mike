@@ -1,4 +1,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="sessions" path="sessions/" />
     <cache-path name="updates" path="updates/" />
+    <cache-path name="captures" path="captures/" />
 </paths>

@@ -64,7 +64,7 @@ fun AccountSwitcher(
     allowRemove: Boolean = false,
 ) {
     val saved = state.savedAccounts
-    val busy = state.isSwitchingAccount || state.runState.active || state.voiceState.active
+    val busy = state.isSwitchingAccount || state.runs.isNotEmpty() || state.voiceState.active
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         saved.accounts.forEach { account ->
             val live = account.id == saved.activeId
