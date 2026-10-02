@@ -1,5 +1,19 @@
 # Progress
 
+### The plus sheet is lighter, and a waiting attachment shows itself — 2026-10-02
+
+The "Add context" sheet had a title row with its own close button over three
+outlined tiles. Now it is only the three tiles (Camera, Photos, Files), filled,
+each with its icon in a circle and a word on what it opens; the handle, a tap
+outside or Back close it, as they do the Skills sheet. A waiting attachment was
+a paperclip and a name whatever it was. Now a picture shows a thumbnail, any
+other file a file icon, and both show their size.
+
+Evidence: pushed for CI (`:app:assembleDevDebug :app:lintDevDebug`); the cloud
+session that made it has no Android SDK, so nothing was built locally. Not run:
+anything on a phone, the sheet and chips on a real screen, a thumbnail for a
+picture attached in a computer chat.
+
 ### Chats run in parallel; the phone goes to one at a time — 2026-10-01
 
 A new chat opened while another ran showed that run's "Working · Stop active

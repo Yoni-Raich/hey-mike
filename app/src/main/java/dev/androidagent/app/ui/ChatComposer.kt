@@ -30,6 +30,11 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import java.io.File
+import coil.compose.SubcomposeAsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -61,7 +66,6 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddComment
-import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Checklist
@@ -276,7 +280,7 @@ internal fun AgentComposer(
                     if (state.attachments.isNotEmpty()) {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(state.attachments, key = { it.id }) { attachment ->
-                                AttachmentChip(attachment.name) { actions.onRemoveAttachment(attachment.id) }
+                                AttachmentChip(attachment) { actions.onRemoveAttachment(attachment.id) }
                             }
                         }
                     }
@@ -887,11 +891,12 @@ internal fun CommandNote(text: String) {
 }
 
 /**
- * The plus opens "Add context": the three things worth attaching as three
- * equal tiles, each with its picture, in a sheet like the app's other sheets.
- * A single "Attach file" button sent everyone through the system file browser,
- * where a photo from the gallery is three taps deep and the camera is not
- * offered at all.
+ * The plus opens a short sheet: the three things worth attaching as three
+ * equal tiles, each with its picture and a word on what it opens. No title
+ * and no close button: the handle, a tap outside or Back close it, as they do
+ * the Skills sheet. A single "Attach file" button sent everyone through the
+ * system file browser, where a photo from the gallery is three taps deep and
+ * the camera is not offered at all.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -903,70 +908,87 @@ private fun AttachMenu(enabled: Boolean, onPhoto: () -> Unit, onCamera: () -> Un
     if (!open) return
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = { open = false }, sheetState = sheet, containerColor = SheetFill) {
-        Column(
+        Row(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
-                IconButton(onClick = { open = false }, modifier = Modifier.align(Alignment.CenterStart)) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Close")
-                }
-                Text("Add context", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                AttachTile("Camera", Icons.Outlined.PhotoCamera, Modifier.weight(1f)) { open = false; onCamera() }
-                AttachTile("Photos", Icons.Outlined.Image, Modifier.weight(1f)) { open = false; onPhoto() }
-                AttachTile("Files", Icons.Outlined.UploadFile, Modifier.weight(1f)) { open = false; onFile() }
-            }
+            AttachTile("Camera", "Take a photo", Icons.Outlined.PhotoCamera, Modifier.weight(1f)) { open = false; onCamera() }
+            AttachTile("Photos", "From gallery", Icons.Outlined.Image, Modifier.weight(1f)) { open = false; onPhoto() }
+            AttachTile("Files", "Any document", Icons.Outlined.UploadFile, Modifier.weight(1f)) { open = false; onFile() }
         }
     }
 }
 
 @Composable
-private fun AttachTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
-        color = Color.Transparent,
-        border = BorderStroke(1.dp, ChipBorder),
-        modifier = modifier.heightIn(min = 104.dp),
-    ) {
+private fun AttachTile(label: String, hint: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(18.dp), color = OptionFill, modifier = modifier) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 18.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp), tint = ChipInk)
-            Text(label, fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+            Box(Modifier.size(48.dp).background(TileFill, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp), tint = TileInk)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+            Text(hint, fontSize = 12.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
+/**
+ * A waiting attachment: a picture shows itself, anything else shows what kind
+ * of file it is, and both say how big they are, so a wrong pick is caught
+ * before it is sent.
+ */
 @Composable
-private fun AttachmentChip(name: String, onRemove: () -> Unit) {
+private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) {
+    val image = attachment.mimeType?.startsWith("image/") == true
     Surface(shape = RoundedCornerShape(12.dp), color = AttachmentFill) {
         Row(
-            Modifier.heightIn(min = 36.dp).padding(start = 12.dp, end = 2.dp),
+            Modifier.heightIn(min = 40.dp).padding(start = 4.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp), tint = ChipInk)
-            Text(
-                name,
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 180.dp),
-            )
+            val thumb = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp))
+            val path = attachment.path
+            if (image && path != null) {
+                SubcomposeAsyncImage(
+                    model = File(path),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = thumb,
+                    error = { AttachmentKind(Icons.Outlined.Image) },
+                )
+            } else {
+                Box(thumb.background(TileFill), contentAlignment = Alignment.Center) {
+                    AttachmentKind(if (image) Icons.Outlined.Image else Icons.Outlined.InsertDriveFile)
+                }
+            }
+            Column(Modifier.widthIn(max = 160.dp)) {
+                Text(
+                    attachment.name,
+                    fontSize = 13.sp,
+                    lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                attachment.sizeBytes?.let { Text(formatBytes(it), fontSize = 11.sp, lineHeight = 14.sp, color = MutedInk, maxLines = 1) }
+            }
             IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Outlined.Close, "Remove $name", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(Icons.Outlined.Close, "Remove ${attachment.name}", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
+}
+
+@Composable
+private fun AttachmentKind(icon: ImageVector) {
+    Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = ChipInk)
 }
 
 @Composable
