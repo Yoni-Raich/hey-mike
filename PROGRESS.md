@@ -9,8 +9,10 @@ outside or Back close it, as they do the Skills sheet. A waiting attachment was
 a paperclip and a name whatever it was. Now a picture shows a thumbnail, any
 other file a file icon, and both show their size.
 
-Evidence: pushed for CI (`:app:assembleDevDebug :app:lintDevDebug`); the cloud
-session that made it has no Android SDK, so nothing was built locally. Not run:
+Evidence: CI run 37009847787 green on 246e504 (`:app:assembleDevDebug
+:app:lintDevDebug` and the unit suites; its first attempt failed
+`readUiTimeoutIsTypedAndNeverFallsBack`, a 10 ms timing test in device-tools,
+and passed on re-run). Nothing was built locally: no Android SDK there. Not run:
 anything on a phone, the sheet and chips on a real screen, a thumbnail for a
 picture attached in a computer chat.
 
