@@ -43,6 +43,8 @@ object SecretRedactor {
     private val colorRemainderPattern = Regex("""\[(?:\d{1,3};)*\d{1,3}m""")
 
     private val bearerPattern = Regex("""(?i)\bBearer\s+[A-Za-z0-9\-._~+/=]{8,}""")
+    /** Anthropic API keys and Claude OAuth tokens: `sk-ant-api03-…`, `sk-ant-oat01-…`, `sk-ant-ort01-…`. */
+    private val anthropicKeyPattern = Regex("""\bsk-ant-[A-Za-z0-9\-_]{4,}""")
     private val apiKeyPattern = Regex("""\bsk-[A-Za-z0-9\-_]{8,}""")
     private val jwtPattern = Regex("""\beyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}[A-Za-z0-9\-_.]*""")
     private val keyValuePattern = Regex(
@@ -61,6 +63,7 @@ object SecretRedactor {
         out = cookieHeaderPattern.replace(out, "Cookie: [REDACTED]")
         out = bearerPattern.replace(out, "Bearer [REDACTED]")
         out = jwtPattern.replace(out, "[REDACTED_JWT]")
+        out = anthropicKeyPattern.replace(out, "[REDACTED_API_KEY]")
         out = apiKeyPattern.replace(out, "[REDACTED_API_KEY]")
         out = keyValuePattern.replace(out, "\$1[REDACTED]")
         out = deviceCodePattern.replace(out, "\$1 [REDACTED]")
@@ -82,6 +85,7 @@ object SecretRedactor {
         out = cookieHeaderPattern.replace(out, "Cookie: [REDACTED]")
         out = bearerPattern.replace(out, "Bearer [REDACTED]")
         out = jwtPattern.replace(out, "[REDACTED_JWT]")
+        out = anthropicKeyPattern.replace(out, "[REDACTED_API_KEY]")
         out = apiKeyPattern.replace(out, "[REDACTED_API_KEY]")
         out = keyValuePattern.replace(out, "$1[REDACTED]")
         out = deviceCodePattern.replace(out, "$1 [REDACTED]")

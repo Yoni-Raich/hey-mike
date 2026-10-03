@@ -1,5 +1,135 @@
 # Progress
 
+### Usage widget shows the Claude account — 2026-10-01
+
+Asked: the home screen usage widget should show the Claude account too.
+
+- The widget draws the signed-in Claude account as the last orb, marked
+  "Claude" with the age of its reading. It is a saved reading: Claude reports
+  its quota only while a Claude process runs, and the widget cannot start one.
+- `LastUsageStore` also keeps the account's name (`saveAccount`,
+  `clearAccount`); the view model saves it from the Claude sign-in status and
+  refreshes the widget on a new reading, a new name and a sign-out.
+  `readSaved()` gives the widget the reading with its expired windows, which
+  it draws as empty like the Codex rows.
+- With more than four orbs the Claude row stays and Codex accounts make room.
+
+Checks (Windows 11): `./gradlew.bat :core:test :app:testDevDebugUnitTest
+--tests "*UsageWidgetTest" :app:lintDevDebug --no-daemon`: passed (new:
+`UsageWidgetTest` 4, `AccountUsageBookTest` +4, `LastUsageStoreTest` +3; lint
+0 errors).
+
+Not tested: the widget on a phone, so the real look of the fifth row and its
+text width are unchecked. The full gate was not re-run after this change.
+
+### Claude as a full engine: switch mid-chat, one model menu, computers, voice — 2026-10-01
+
+Asked: Claude should be part of the whole system, not a separate kind of
+chat. Built on PR #99 after merging `dev` (parallel chats, the model menu)
+into it. On a phone only the install and the database upgrade ran so far;
+see "On a phone" and "Not tested".
+
+What changed:
+
+- A chat can change engine at any point. It keeps one thread per engine
+  (`ChatSession.parked`, `sessions.db` v4) and the engine it moves to is told
+  what it missed as text built from the chat's own messages (`EngineSwitch`,
+  `ChatHandoff`). The turn names its engine (`QueuedTurn.engine`).
+- One model menu: ChatGPT (Codex) models, then Claude models. Picking one of
+  the other engine moves the open chat there and adds a note to the chat.
+- A chat on a computer can run on that computer's own Claude Code (the
+  user's install and sign-in there; no sign-in is copied either way). The
+  phone tools travel on the process's own streams (`StdioMcp`), and a tool
+  that needs permission asks on the phone (`can_use_tool`).
+- Voice in a Claude chat: Claude Code has no speech-to-speech mode (its
+  `/voice` is dictation in the interactive terminal, no SSH, no `-p`, no
+  Hebrew; https://code.claude.com/docs/en/voice-dictation). So voice stays
+  Codex's; a Claude chat talks on its own Codex thread and goes back after.
+- `sessions.db` upgrades add a column only when missing. Found while reading
+  the merge: `dev` keeps a newer file open by ignoring the downgrade, which
+  sets the version back and keeps the columns, and the next upgrade then
+  failed on `duplicate column name: engine`.
+
+Checks (Windows 11, this worktree):
+
+- Full gate: `./gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+  :voice:lintDebug :app:lintDevDebug --no-daemon --console=plain --continue`:
+  BUILD SUCCESSFUL in 1m 39s. 1953 unit tests over debug and release, 0
+  failures, 16 skipped (remote 4, workspace 12).
+  Lint: 0 errors (app 21 warnings, voice 2). `python -m unittest
+  tools.test_prepare_runtime`: 15 OK. `git diff --check`: clean.
+- APK: `app-dev-release-unsigned.apk` holds `lib/arm64-v8a/libld_musl.so`
+  (723,480 bytes) and no file named `claude`.
+- New unit tests: `EngineSwitchTest`, `ChatHandoffTest`, three coordinator
+  tests (a turn for the other engine moves the chat and carries the chat; an
+  engine that is up to date gets the prompt as typed; a lost thread is given
+  the chat again), three `LocalSessionStoreTest` cases (one thread per engine
+  across reopen, an empty chat owes nothing, a file an older build opened in
+  between), `ClaudeComputerTest` (9), `ClaudeOnComputerTest` (11), and model
+  menu, approval card and engine choice cases in `:app`.
+- Against the real CLI on this PC (Claude Code 2.1.286, the user's own
+  sign-in, two short Haiku turns):
+  - `--mcp-config {"mcpServers":{"mike":{"type":"sdk","name":"mike"}}}` with
+    `initialize {sdkMcpServers:["mike"]}`: the CLI sent `mcp_message`
+    `initialize`, `notifications/initialized`, `tools/list` and `tools/call`;
+    `mcp_status` then read `mike: connected, source sdk`. The model called the
+    tool and got the answer sent back as `mcp_response`.
+  - `--permission-mode acceptEdits --permission-prompt-tool stdio`: `echo hi`
+    ran without a prompt; `curl -s https://example.com -o out.html` sent
+    `can_use_tool`, and the `deny` answer reached the model as the tool error.
+  - With `ENABLE_TOOL_SEARCH=false` the tool was called directly; without it
+    the model first used `ToolSearch`.
+- Launch scripts against the real CLI, with stdin and stdout as pipes:
+  - The `.cmd` shape, in a folder named `פרויקט 100%` under a path with a
+    space, under `cmd.exe /c` and under `powershell -c "& '...'"`: `initialize`
+    answered in both, and the process ended when stdin closed.
+  - Hebrew through that `.cmd` in both directions, with and without
+    `chcp 65001`, under both shells: bytes intact.
+  - The POSIX shape (`cd -- '…it'\''s פרויקט'`, `export`, `exec`, an empty
+    argument) under Git Bash `sh`: `initialize` answered, and it ended when
+    stdin closed.
+
+On a phone (Redmi 23053RN02Y, Android 15, serial `cd4928027d76`, dev debug
+of `f1a07d0`, run by a Sonnet subagent with the owner's approval):
+
+- The phone had the automated dev build (versionCode 1018, `sessions.db`
+  `user_version` 2, no `engine` column). `adb install -r` was refused as a
+  downgrade (this build is versionCode 28); `adb install -r -d` succeeded.
+  No Xiaomi install dialog appeared.
+- First launch: the process stayed up and the log had no `FATAL EXCEPTION`
+  or `SQLiteException`. `sessions.db` then read `user_version` 4 with the
+  columns `engine`, `parked`, `catch_up` added; 60 chats and 968 messages
+  were still there, all `CODEX`. Only schema and counts were read from a
+  pulled copy, which was deleted.
+- The app opened on the consent screen, as it should for consent version 2,
+  with the new sentence about a chat that changes model. The test stopped
+  there: accepting it is the owner's to do.
+- The accessibility service was already off before the install
+  (`enabled_accessibility_services` was `null`) and still is.
+
+Not tested:
+
+- **On a phone, everything after the consent screen.** Switching a real chat
+  between Codex and Claude and back, the hand-over text as the models read
+  it, the model menu on a screen, and voice in a Claude chat (needs sound).
+- **A real computer over SSH.** The Claude probe scripts were not run on a
+  computer (the Linux one not at all), the launch was not run through JSch
+  and SFTP, and no Claude turn ran from the phone on a PC. The `.sh` script
+  was run only under Git Bash, not on Linux.
+- A permission prompt answered with Allow on a real CLI (only Deny was), and
+  `bypassPermissions` for a full-access computer.
+- A queued turn that crosses an engine switch, outside unit tests.
+
+Known gaps, by choice:
+
+- A computer must still be set up through Codex, so with a ChatGPT sign-in,
+  before its Claude can be used.
+- Claude conversations kept on a computer are not listed or imported.
+- The computer's Claude skills are not listed in the composer.
+- A Claude session file the CLI itself removed starts again under the same
+  id, and the chat's history is not sent again in that case.
+- The hand-over carries text only: no tool results, and pictures by path.
+
 ### Chats run in parallel; the phone goes to one at a time — 2026-10-01
 
 A new chat opened while another ran showed that run's "Working · Stop active
@@ -87,6 +217,158 @@ answered. Camera opens the system one-shot camera, the shot returns as
 system file picker (nothing was picked). Long press on the answer gives Copy
 and Select text. Not run: the activity being recreated while the camera is
 open, and an upload from a real computer chat (the Redmi has no saved computer).
+
+### Claude usage before the first message (fix-2) — 2026-09-30
+
+Found on a phone: the usage sheet was empty for Claude until a message was
+sent, and Refresh usage did nothing. Unit tests only; not yet on a phone.
+
+- `ClaudeCodeEngine.refreshUsage()` sends `get_usage` (shape from
+  `sdk.d.ts` of `@anthropic-ai/claude-agent-sdk` 0.3.285) to a running
+  chat, or else to a probe process that gets no message and writes no
+  transcript. The reply maps to the same `5-hour` / `weekly` rows; its
+  utilization is a percent, not a fraction. A refusal emits nothing.
+- The last Claude reading is kept in app-private `claude-usage.json` with
+  the time it was seen; the sheet shows "Updated 3h ago" and drops a window
+  past its reset time. Sign-out clears it. The refresh button spins for
+  Claude too, and the start refresh reads usage and models in one probe.
+
+Gaps: that CLI 2.1.285 on the phone answers `get_usage` and accepts
+`--no-session-persistence`, and that the usage endpoint passes the proxy.
+
+Checked on the Galaxy Tab S7 afterwards, with the signed-in official
+binary run through the app's loader (`run-as`, a local CONNECT proxy via
+`adb reverse`), sending `initialize` then `get_usage` and no message:
+the CLI answers `get_usage` with `"subscription_type":"max",
+"rate_limits_available":true,"rate_limits":null`. A fresh process has no
+limits until its first model request, so a probe can never fill the sheet.
+Changed: with no chat running, `refreshUsage()` asks nothing (it only fills
+a missing model list); a running chat still answers, and the saved last
+reading covers restarts. The empty sheet now says the limits appear after
+the first message. The same probe, without `--strict-mcp-config`, retried
+`mcp-proxy.anthropic.com` (the account's claude.ai connectors) over 30
+times in 20 s against the proxy; the app's own processes pass that flag,
+and the host now also sets `ENABLE_CLAUDEAI_MCP_SERVERS=false`.
+
+### Claude tablet findings fixed (fix-1) — 2026-09-30
+
+From real use on a Galaxy Tab S7 (Android 13, Hebrew) with a Claude
+subscription. Unit tests only; not yet checked on the tablet.
+
+- Model picker and chip: Claude chats show the CLI's names ("Sonnet 5.5",
+  "Opus 5.5", "Fable 5.1", "Haiku 4.5") with its description; a pinned
+  alias table covers a missing name. Fable's row says "May use extra
+  usage". `--model` still gets the CLI's value. Codex is unchanged.
+- Binary check: `claude.verified` next to the binary records version,
+  size, mtime and sha256 after a good hash; a start skips the 232 MB hash
+  only when all of them still match. A download is always hashed.
+- RTL: every Material text style uses `TextDirection.Content`, so English
+  reads left to right on a Hebrew phone; the layout stays mirrored.
+- Usage rows: the bar fills with the used part (as the ring does), so the
+  label now says "31% used" instead of "69% left". Both engines.
+- Proxy log: a denial names the requested host and port; the
+  `verifyListening()` probe no longer logs `unreadable-head`.
+- Stop note: not changed. `AgentCoordinator.stop()` bumps the run epoch,
+  so `finalizeRun` never appends "Stopped. Actions already completed were
+  not undone." after a user stop, for Codex or Claude. The reply streamed
+  so far is kept and marked interrupted; the note only appears when an
+  engine ends a turn as interrupted by itself.
+
+Gaps: the tablet check of each item above.
+
+### Claude engine on a real phone, without a sign-in (WP-F) — 2026-09-30
+
+On `wp-f` (from `feat/claude-subscription` at `14e1828`), `dev` debug
+0.14.0 (versionCode 28) on the Redmi Note 12 `PVRWC6JJJN8P9LPR` (Android 15,
+HyperOS, arm64, Wi-Fi, no SIM). Built with `./gradlew.bat
+:app:assembleDevDebug :app:assembleDevDebugAndroidTest`, installed with
+`adb -s PVRWC6JJJN8P9LPR install -r -t` (the Xiaomi USB-install dialog
+tapped; it only appears once the keyguard is dismissed with `wm
+dismiss-keyguard`). The UI was driven with `adb input` and read with
+`uiautomator dump`. Screenshots stay off the repo.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Onboarding and Settings > Accounts: "ChatGPT (Codex)" / "Claude subscription" choice, the Claude card with the required notice, 232 MB size, confirm dialog, Anthropic privacy link | Pass |
+| 2 | Download from the card: cancel at 46.7 MB deletes `claude.part` and the card shows Download again; a full download plus hash took 7.25 s (232 MB, about 32 MB/s); `run-as … sha256sum` on the phone gives `31efc413…cd62ee8` (the pin) | Pass |
+| 3 | Force-stop and reopen: "Claude Code is ready" within 1 s, same file (inode, 16:22 mtime), no `claude.part`, nothing downloaded | Pass |
+| 4 | "Sign in to Claude": `claude auth login` gave a link and Chrome opened `claude.ai/login?…returnTo=/oauth/authorize…redirect_uri=https://platform.claude.com/oauth/code/callback`. Back to the app: the card shows the masked code field, "Finish sign-in", "Open the sign-in page again". Not signed in further | Pass |
+| 5 | Unsigned Claude chat, one message: "The task could not finish. Sign in to Claude in Settings first." within 2 s, send button back, no overlay | Pass |
+| 6 | From the app process (`ClaudeEngineDeviceTest`, real `ClaudeCodeEngine` + `AndroidClaudeHost` + `LoopbackMcpServer`, no sign-in): `system/init` has `claude_code_version` 2.1.285, `mcp_servers` mike `connected`, 32 `mcp__mike__*` tools (all 32 phone tool definitions), built-ins `Edit, Glob, Read, Skill, Write`, `permissionMode` dontAsk, `apiKeySource` none, `model` claude-sonnet-5-5. The turn ends `failed` in 1.1–1.2 s with "Not logged in · Please run /login" | Pass |
+| 7 | Proxy during 4–6: no CONNECT at all (unsigned `claude` makes no network request), so nothing was denied. Every `claude` launch logs one `denied unknown: unreadable-head`: that is the proxy's own `verifyListening()` probe, not traffic | Pass, log noise |
+| 8 | Stop: the UI cannot reach a starting Claude turn without a sign-in (the coordinator refuses first, item 5). At engine level a stop right after sending took 3.0 s and ended `interrupted` via the kill fallback; the CLI never answers an interrupt that arrives while the message is still queued. The next message then failed with "Claude is not running for this chat." (the killed process still read as alive): fixed in `938622e`, after which it gets its answer in 0.4 s | Fixed |
+| 9 | Codex: a new chat can switch to "ChatGPT (Codex)"; an unsigned Codex message says "Sign in to Codex in Settings first."; the Codex account block (Sign in to Codex, Log in, Refresh) is unchanged, now under its own "ChatGPT (Codex)" heading | Pass |
+| 10 | Claude chat: header "Claude subscription", no mic (send button only); a Codex chat shows "Start voice conversation" | Pass |
+
+Commands for 6 and 8: `adb -s PVRWC6JJJN8P9LPR shell am instrument -w -e
+class dev.androidagent.app.ClaudeEngineDeviceTest
+dev.androidagent.app.dev.test/androidx.test.runner.AndroidJUnitRunner`: OK
+(2 tests). `./gradlew.bat :engine-claude:testDebugUnitTest`: 50 tests, 0
+failures (new: `aTurnRightAfterAKilledStopStartsANewProcess`, which failed
+before the fix). To get past onboarding without an account for 5, 9 and 10,
+`onboardingFinished` in the app's `ui` preferences was set to true and set
+back to false afterwards. The androidTest package was uninstalled; the app
+stays installed with the verified binary.
+
+Found, not fixed: the proxy's denial log never names the host
+(`LocalhostConnectProxy` passes `""` to `onDenied` for every reason), so a
+host missing from the allowlist during a real sign-in shows only as
+`denied unknown: host-not-allowed`; the liveness probe adds a false denial
+per launch. With the phone in Hebrew the chrome is mirrored and English
+sentences show their end punctuation on the wrong side ("?Which account
+should I use").
+
+Needs the user's sign-in (not done): the code paste and `claude auth
+status` after it, a real reply, a `mcp__mike__*` tool call round trip,
+steer `priority:"next"`, `/compact`, the `5-hour` / `weekly` usage
+windows, stop during a tool call, `Grep`/`Bash`, hosts the real sign-in
+and chat reach (watch `adb logcat -s AndroidClaudeHost`), Android 16.
+
+### Claude subscription chats wired into the app (WP-E) — 2026-09-30
+
+On `wp-e` (from `feat/claude-subscription`, WP-A..D merged), the Claude engine
+is now reachable from the app. Decisions are in `docs/ARCHITECTURE.md`,
+"Claude subscription chats: one engine per chat".
+
+- `AgentGraph` builds `AndroidClaudeHost` and `ClaudeCodeEngine` with a
+  `LoopbackMcpServer` adapter, passes the Claude home to
+  `installDefaultSkills`, and re-checks an already downloaded binary at start
+  (hash only, never a download).
+- `RoutingAgentEngine` routes by the chat's engine, remembers Claude threads,
+  finds them again through their chat after a restart, tags Claude request
+  ids `claude|`, and refuses voice in Claude chats. The coordinator checks the
+  chat's own engine and says "Starting Claude", "Sign in to Claude in Settings
+  first.", "Claude could not finish".
+- The view model keeps model, effort and quota per engine; the chips,
+  `/status` and the usage sheet follow the open chat. The widget stays Codex.
+- Onboarding and Settings > Accounts: "ChatGPT (Codex)" / "Claude
+  subscription" choice (the default for new chats), and the Claude card: size
+  first (232 MB) and a confirm, progress, cancel, errors, "Not available on
+  this device", sign-in page opened with `ACTION_VIEW`, a masked paste field
+  cleared on submit, sign-out, the required notice, Anthropic's privacy link.
+  An empty phone chat can switch engine; the top bar names the account.
+- No mic in Claude chats; the assistant press and voice start use a Codex
+  chat. `/compact` on a Claude chat opens it first and notes before waiting.
+- The consent text names Anthropic, so `CONSENT_VERSION` is 2. A 300-minute
+  quota window now reads "5-hour" instead of "Daily" (Codex too).
+- CI also runs `:engine-claude`, `:mcp-loopback`, `:runtime` and `:workspace`
+  unit tests.
+
+Checked on 2026-09-30 on Windows, JDK 17 (Android Studio jbr):
+`./gradlew.bat test assembleDevDebug assembleDevRelease
+assembleDevDebugAndroidTest :app:lintDevDebug` BUILD SUCCESSFUL (1761 unit
+tests, 0 failures, 20 skipped; new: 4 coordinator, 5 router, 12
+`EngineChoicesTest`, 7 `ClaudeSetupTest`, 1 `UsageSummaryTest`); lint 0
+errors, 21 warnings, none in touched files; `python -m unittest
+tools.test_prepare_runtime` 15 tests OK; `git diff --check` clean. The dev
+debug APK carries `lib/arm64-v8a/libld_musl.so` and `musl-COPYRIGHT` and no
+`claude` binary.
+
+Not tested: anything on a phone (WP-F): the real download and hash check,
+the sign-in link and a real subscription sign-in with a pasted code, a Claude
+chat turn, MCP tools reaching `claude`, stop during a tool call, compact after
+a restart, the Compose screens themselves (no screenshot exists), Android 16,
+and TalkBack on the new controls.
 
 ### Wireless ADB: the real state, a dropped pairing, a one-tap switch — 2026-09-30
 

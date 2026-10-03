@@ -20,8 +20,12 @@
 
 package dev.androidagent.app.ui
 
+import dev.androidagent.core.AgentModel
 import dev.androidagent.core.AgentSkill
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.UsageLimit
+import dev.androidagent.runtime.ClaudeInstallPhase
+import dev.androidagent.runtime.ClaudeInstallState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -100,5 +104,61 @@ class ComposerCommandsTest {
         )
         assertEquals("5.6-luna · low · Plan mode · Hourly 72% left · Phone control off", statusSummary(state, nowSeconds = 0))
         assertEquals("Default model · Phone control off", statusSummary(AgentUiState(), nowSeconds = 0))
+    }
+
+    private val claudeCatalog = listOf(
+        AgentModel("sonnet", "Sonnet 5.5", description = "Efficient for routine tasks", engine = EngineKind.CLAUDE),
+        AgentModel("claude-fable-5-1", "Fable 5.1", description = "May use extra usage · Most capable", engine = EngineKind.CLAUDE),
+    )
+
+    @Test fun claudeModelsShowTheirNameAndVersion() {
+        val state = AgentUiState(
+            activeEngine = EngineKind.CLAUDE,
+            modelCatalog = claudeCatalog,
+            availableModels = claudeCatalog.map { it.id },
+            selectedModel = "sonnet",
+        )
+        assertEquals("Sonnet 5.5", modelLabel(state, "sonnet"))
+        assertEquals("Fable 5.1", modelLabel(state, "claude-fable-5-1"))
+        assertTrue(modelNote(state, "claude-fable-5-1").startsWith("May use extra usage"))
+        assertEquals("unknown-id", modelLabel(state, "unknown-id"))
+        assertEquals("Sonnet 5.5 · Phone control off", statusSummary(state, nowSeconds = 0))
+    }
+
+    @Test fun aChatOfferedBothEnginesNamesEachModelByItsOwnEngine() {
+        // A Codex chat whose menu also lists Claude: the names do not depend on where the chat runs now.
+        val state = AgentUiState(
+            activeEngine = EngineKind.CODEX,
+            modelCatalog = listOf(AgentModel("gpt-5.6-luna")) + claudeCatalog,
+            selectedModel = "gpt-5.6-luna",
+        )
+        assertEquals("5.6-luna", modelLabel(state, "gpt-5.6-luna"))
+        assertEquals("Sonnet 5.5", modelLabel(state, "sonnet"))
+        assertTrue(modelNote(state, "claude-fable-5-1").startsWith("May use extra usage"))
+        assertEquals(
+            listOf(EngineKind.CODEX to listOf("gpt-5.6-luna"), EngineKind.CLAUDE to listOf("sonnet", "claude-fable-5-1")),
+            modelGroups(state.modelCatalog).map { (kind, models) -> kind to models.map { it.id } },
+        )
+    }
+
+    @Test fun theClaudeSetupRowShowsOnlyWhereClaudeCouldRun() {
+        val notSetUp = AgentUiState(activeSessionId = "chat", modelCatalog = listOf(AgentModel("gpt-5.6-luna")))
+        assertTrue(offersClaudeSetup(notSetUp))
+        // Already listed: nothing to set up.
+        assertFalse(offersClaudeSetup(notSetUp.copy(modelCatalog = notSetUp.modelCatalog + claudeCatalog)))
+        // A phone that cannot run Claude.
+        val unsupported = ClaudeUiState(install = ClaudeInstallState(ClaudeInstallPhase.UNSUPPORTED))
+        assertFalse(offersClaudeSetup(notSetUp.copy(claude = unsupported)))
+    }
+
+    @Test fun codexModelsKeepTheirIds() {
+        val state = AgentUiState(
+            activeEngine = EngineKind.CODEX,
+            modelCatalog = listOf(AgentModel("gpt-5.6-luna", "GPT-5.6 Luna", description = "ignored")),
+            selectedModel = "gpt-5.6-luna",
+        )
+        assertEquals("5.6-luna", modelLabel(state, "gpt-5.6-luna"))
+        assertNull(claudeModelName(state, "gpt-5.6-luna"))
+        assertEquals("", modelNote(state, "gpt-5.6-luna"))
     }
 }

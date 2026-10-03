@@ -2,6 +2,7 @@ package dev.androidagent.remote
 
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ChatSession
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.SessionStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,7 +33,7 @@ class ComputerToolGatewayTest {
 
     private object NoSessions : SessionStore {
         override val sessions: StateFlow<List<ChatSession>> = MutableStateFlow(emptyList())
-        override suspend fun createSession() = error("not used")
+        override suspend fun createSession(engine: EngineKind) = error("not used")
         override suspend fun getSession(id: String): ChatSession? = null
         override fun messages(sessionId: String): Flow<List<ChatMessage>> = flowOf(emptyList())
         override suspend fun append(message: ChatMessage) = Unit

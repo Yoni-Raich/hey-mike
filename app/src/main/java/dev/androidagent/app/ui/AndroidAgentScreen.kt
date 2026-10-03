@@ -198,15 +198,43 @@ private val AgentDarkColors = darkColorScheme(
 )
 
 
+/**
+ * Every text style takes its direction from its own words, not from the
+ * phone's language. On a Hebrew phone the layout is still mirrored, but an
+ * English sentence reads left to right with its "?" at the end, and a Hebrew
+ * reply still reads right to left. Unspecified would follow the layout.
+ */
+internal fun agentTypography(): androidx.compose.material3.Typography {
+    val base = androidx.compose.material3.Typography().copy(
+        bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 17.sp, lineHeight = 27.sp),
+        bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
+        labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+    )
+    fun androidx.compose.ui.text.TextStyle.byContent() = copy(textDirection = TextDirection.Content)
+    return base.copy(
+        displayLarge = base.displayLarge.byContent(),
+        displayMedium = base.displayMedium.byContent(),
+        displaySmall = base.displaySmall.byContent(),
+        headlineLarge = base.headlineLarge.byContent(),
+        headlineMedium = base.headlineMedium.byContent(),
+        headlineSmall = base.headlineSmall.byContent(),
+        titleLarge = base.titleLarge.byContent(),
+        titleMedium = base.titleMedium.byContent(),
+        titleSmall = base.titleSmall.byContent(),
+        bodyLarge = base.bodyLarge.byContent(),
+        bodyMedium = base.bodyMedium.byContent(),
+        bodySmall = base.bodySmall.byContent(),
+        labelLarge = base.labelLarge.byContent(),
+        labelMedium = base.labelMedium.byContent(),
+        labelSmall = base.labelSmall.byContent(),
+    )
+}
+
 @Composable
 fun AndroidAgentTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = AgentDarkColors,
-        typography = androidx.compose.material3.Typography().copy(
-            bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 17.sp, lineHeight = 27.sp, textDirection = TextDirection.Content),
-            bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 21.sp, textDirection = TextDirection.Content),
-            labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-        ),
+        typography = remember { agentTypography() },
         content = content,
     )
 }

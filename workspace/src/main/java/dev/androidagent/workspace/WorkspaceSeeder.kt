@@ -34,6 +34,7 @@ import java.io.File
  *   created once. It used to live in each chat's workspace, so a preference
  *   saved in one chat was gone in the next.
  * - skills under `$HOME/.agents/skills` — everything detailed, loaded on demand.
+ *   Claude chats get the same skills under `<claudeHome>/.claude/skills`.
  *
  * The bundled asset is the only source of `AGENTS.md`. An embedded copy used to
  * be written after it, and silently replaced the current `AGENTS.md` with a
@@ -135,9 +136,12 @@ object WorkspaceSeeder {
         global.writeBytes(customized?.readBytes() ?: defaults)
     }
 
-    /** Install the app-managed defaults in Codex's standard user-skill root. */
-    fun installDefaultSkills(homeDir: File, context: Context) {
-        installDefaultSkills(homeDir) { relativePath ->
+    /**
+     * Install the app-managed defaults in Codex's standard user-skill root and,
+     * when [claudeHome] is given, in Claude's `<claudeHome>/.claude/skills`.
+     */
+    fun installDefaultSkills(homeDir: File, context: Context, claudeHome: File? = null) {
+        installDefaultSkills(homeDir, claudeHome) { relativePath ->
             context.assets.open("$ASSET_PREFIX/skills/$relativePath").use { it.readBytes() }
         }
     }
@@ -145,8 +149,21 @@ object WorkspaceSeeder {
     /** Where quick-actions keeps the contacts and intents the agent saved. Never touched by an install. */
     fun quickActionsDir(homeDir: File): File = File(homeDir, QUICK_ACTIONS_DIR)
 
-    internal fun installDefaultSkills(homeDir: File, readAsset: (String) -> ByteArray) {
-        val skillsDir = File(homeDir, ".agents/skills").apply { mkdirs() }
+    internal fun installDefaultSkills(homeDir: File, claudeHome: File? = null, readAsset: (String) -> ByteArray) {
+        installSkillsInto(File(homeDir, ".agents/skills"), homeDir, readAsset)
+
+        // Remove only paths created by older releases. Keep all
+        // unrelated user and repository skills untouched.
+        removeManagedSkills(File(homeDir, ".codex/skills"))
+
+        // Claude reads the same skills from its own root. The data they point
+        // at (preferences, quick actions, workflows) stays in [homeDir], so
+        // both engines share one copy.
+        claudeHome?.let { installSkillsInto(File(it, ".claude/skills"), homeDir, readAsset) }
+    }
+
+    private fun installSkillsInto(skillsDir: File, homeDir: File, readAsset: (String) -> ByteArray) {
+        skillsDir.mkdirs()
         val placeholders = mapOf(
             PREFERENCES_PATH_PLACEHOLDER to preferencesFile(homeDir).absolutePath,
             QUICK_ACTIONS_DIR_PLACEHOLDER to quickActionsDir(homeDir).absolutePath,
@@ -172,10 +189,6 @@ object WorkspaceSeeder {
             require(staging.renameTo(target)) { "Could not install bundled skill $name" }
         }
         for (name in RETIRED_SKILL_NAMES) File(skillsDir, name).deleteRecursively()
-
-        // Remove only paths created by older releases. Keep all
-        // unrelated user and repository skills untouched.
-        removeManagedSkills(File(homeDir, ".codex/skills"))
     }
 
     private fun fill(bytes: ByteArray, placeholders: Map<String, String>): String =

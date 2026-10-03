@@ -190,6 +190,52 @@ class WorkspaceSeederTest {
     }
 
     @Test
+    fun installDefaultSkillsAlsoFillsTheClaudeSkillsDir() {
+        val home = tempFolder.newFolder("home_both")
+        val claudeHome = tempFolder.newFolder("claude_home")
+        val claudeSkills = File(claudeHome, ".claude/skills")
+        val stale = File(claudeSkills, "device-automation/old-notes.md")
+        stale.parentFile!!.mkdirs()
+        stale.writeText("stale managed file")
+        val retired = File(claudeSkills, "recovery-and-safety/SKILL.md")
+        retired.parentFile!!.mkdirs()
+        retired.writeText("retired")
+        val userOwn = File(claudeSkills, "my-skill/SKILL.md")
+        userOwn.parentFile!!.mkdirs()
+        userOwn.writeText("mine")
+
+        WorkspaceSeeder.installDefaultSkills(home, claudeHome, fakeSkills)
+
+        for (root in listOf(File(home, ".agents/skills"), claudeSkills)) {
+            for (name in listOf("device-capabilities", "device-automation", "app-cards", "user-preferences", "quick-actions", "workflows")) {
+                assertTrue("$name should be installed in $root", File(root, "$name/SKILL.md").isFile)
+            }
+            assertTrue(File(root, "quick-actions/scripts/intents.tsv").isFile)
+        }
+        // Data paths are shared with Codex; only the skills root is Claude's own.
+        val preferencesSkill = File(claudeSkills, "user-preferences/SKILL.md").readText()
+        assertTrue(preferencesSkill.contains(WorkspaceSeeder.preferencesFile(home).absolutePath))
+        assertFalse(preferencesSkill.contains(WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER))
+        assertTrue(File(claudeSkills, "quick-actions/SKILL.md").readText().contains(claudeSkills.absolutePath))
+        val script = File(claudeSkills, "quick-actions/scripts/act.sh").readText()
+        assertFalse(script.contains('\r'))
+        assertTrue(script.contains(WorkspaceSeeder.quickActionsDir(home).absolutePath))
+        assertFalse("a stale file in a managed skill must go", stale.exists())
+        assertFalse("retired skill must be removed", retired.exists())
+        assertEquals("the user's own skills stay", "mine", userOwn.readText())
+    }
+
+    @Test
+    fun withoutAClaudeHomeOnlyTheCodexSkillsAreInstalled() {
+        val home = tempFolder.newFolder("home_codex_only")
+
+        WorkspaceSeeder.installDefaultSkills(home, null, fakeSkills)
+
+        assertTrue(File(home, ".agents/skills/device-automation/SKILL.md").isFile)
+        assertFalse(File(home, ".claude").exists())
+    }
+
+    @Test
     fun seedRemovesOnlyManagedWorkspaceSkillDuplicates() {
         val ws = tempFolder.newFolder("workspace_cleanup")
         val oldManaged = File(ws, ".agents/skills/device-automation/SKILL.md")
@@ -211,6 +257,16 @@ class WorkspaceSeederTest {
         file.parentFile!!.mkdirs()
         file.writeText(content)
         file.setLastModified(modified)
+    }
+
+    private val fakeSkills: (String) -> ByteArray = { relativePath ->
+        val name = relativePath.substringBefore('/')
+        when {
+            relativePath.endsWith(".sh") -> "#!/system/bin/sh\r\nDATA=\"${WorkspaceSeeder.QUICK_ACTIONS_DIR_PLACEHOLDER}\"\r\n"
+            relativePath.endsWith(".tsv") -> "a\tb\r\n"
+            else -> "---\nname: $name\ndescription: d\n---\n\n$name at ${WorkspaceSeeder.PREFERENCES_PATH_PLACEHOLDER} " +
+                "${WorkspaceSeeder.SKILLS_DIR_PLACEHOLDER}\n"
+        }.toByteArray()
     }
 
     private val bundled: (String) -> ByteArray = { path ->

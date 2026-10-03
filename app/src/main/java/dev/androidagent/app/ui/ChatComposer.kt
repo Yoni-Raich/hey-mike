@@ -119,6 +119,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.androidagent.app.ChatEngines
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
@@ -142,7 +143,22 @@ private val OptionFill = Color(0xFF252525)
 private val AttachmentFill = Color(0xFF2A2A2A)
 private val MutedInk = Color(0xFF8F8F8F)
 
-private enum class ComposerAction { VOICE, SEND, STEER, STOP }
+internal enum class ComposerAction { VOICE, SEND, STEER, STOP }
+
+/**
+ * The composer's main button. Voice when idle, except in a chat whose engine
+ * has no voice: there the button stays Send, disabled until there is text.
+ */
+internal fun composerAction(active: Boolean, hasDraft: Boolean, runActive: Boolean, voiceActive: Boolean, voiceAllowed: Boolean): ComposerAction = when {
+    active && hasDraft -> ComposerAction.STEER
+    active -> ComposerAction.STOP
+    hasDraft -> ComposerAction.SEND
+    voiceActive -> ComposerAction.VOICE
+    !runActive && voiceAllowed -> ComposerAction.VOICE
+    // Another chat is running, or this chat has no voice; a message typed
+    // here is sent, or waits for that chat.
+    else -> ComposerAction.SEND
+}
 
 @Composable
 internal fun AgentComposer(
@@ -173,14 +189,13 @@ internal fun AgentComposer(
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)
     val hasDraft = draft.isNotBlank()
     val canSend = state.activeSessionId != null && hasDraft && !state.isLoadingMessages && !stopping && !voiceStopping
-    val action = when {
-        active && hasDraft -> ComposerAction.STEER
-        active -> ComposerAction.STOP
-        hasDraft -> ComposerAction.SEND
-        !state.runState.active || voiceActive -> ComposerAction.VOICE
-        // Another chat is running; a message typed here waits for it.
-        else -> ComposerAction.SEND
-    }
+    val action = composerAction(
+        active = active,
+        hasDraft = hasDraft,
+        runActive = state.runState.active,
+        voiceActive = voiceActive,
+        voiceAllowed = ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
+    )
     val runCommand: (ComposerCommand) -> Unit = { command ->
         draft = ""
         when (command) {
@@ -976,7 +991,7 @@ private fun ModelChip(state: AgentUiState, enabled: Boolean, onClick: () -> Unit
     val effort = effectiveEffort(state.modelCatalog.firstOrNull { it.id == state.selectedModel }, state.selectedReasoningEffort)
     val label = state.selectedModel?.let { id ->
         buildAnnotatedString {
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(shortModelName(id)) }
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(claudeModelName(state, id) ?: shortModelName(id)) }
             effort?.let { append(" " + effortLabel(it)) }
         }
     } ?: AnnotatedString("Choose model")

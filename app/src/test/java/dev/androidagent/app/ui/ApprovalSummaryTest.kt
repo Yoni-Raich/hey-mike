@@ -67,6 +67,44 @@ class ApprovalSummaryTest {
         )
     }
 
+    @Test fun claudeOnAComputerAsksInTheSameWordsAsCodex() {
+        val command = EngineEvent.Approval(
+            requestId = "remote-claude|pc|claude-ask-1",
+            method = "claude/can_use_tool",
+            details = buildJsonObject {
+                put("tool", "Bash")
+                put("kind", "command")
+                put("command", "curl -s https://example.com -o out.html")
+                put("reason", "Fetch https://example.com and save to out.html")
+                put("cwd", "C:\\src\\app")
+            },
+        ).summary()
+        assertEquals("Run this on the computer?", command.headline)
+        assertEquals(
+            listOf(
+                "Command" to "curl -s https://example.com -o out.html",
+                "In" to "C:\\src\\app",
+                "Why" to "Fetch https://example.com and save to out.html",
+            ),
+            command.lines,
+        )
+
+        val file = EngineEvent.Approval(
+            requestId = "remote-claude|pc|claude-ask-2",
+            method = "claude/can_use_tool",
+            details = buildJsonObject { put("tool", "Write"); put("kind", "file"); put("path", "C:\\Windows\\notes.txt") },
+        ).summary()
+        assertEquals("Change this file on the computer?", file.headline)
+        assertEquals(listOf("File" to "C:\\Windows\\notes.txt"), file.lines)
+
+        val other = EngineEvent.Approval(
+            requestId = "remote-claude|pc|claude-ask-3",
+            method = "claude/can_use_tool",
+            details = buildJsonObject { put("tool", "WebFetch"); put("kind", "tool"); put("input", "{\"url\":\"https://example.com\"}") },
+        ).summary()
+        assertEquals("Let Mike use WebFetch on the computer?", other.headline)
+    }
+
     @Test fun anIntentWithNoUriNamesItsAction() {
         val summary = EngineEvent.Approval(
             requestId = "p",

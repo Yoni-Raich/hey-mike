@@ -193,8 +193,9 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
         val preferences = context.getSharedPreferences(AssistLaunch.UI_PREFERENCES, 0)
         val saved = preferences.getString(AssistLaunch.KEY_SESSION, null)
             ?.takeIf { graph.sessions.getSession(it) != null }
+        // Voice is Codex's, so a chat made for it starts there.
         val id = if (saved != null && graph.sessions.messages(saved).first().isEmpty()) saved
-        else graph.sessions.createSession().id
+        else graph.sessions.createSession(dev.androidagent.core.EngineKind.CODEX).id
         preferences.edit().putString(AssistLaunch.KEY_SESSION, id).apply()
         return id
     }

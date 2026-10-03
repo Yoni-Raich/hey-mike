@@ -43,6 +43,12 @@ data class QueuedTurn(
     /** Run in plan mode: agree a plan before acting. */
     val planMode: Boolean = false,
     /**
+     * The engine [model] belongs to. The chat moves to it before the turn
+     * runs, so a model picked for one engine is never sent to the other.
+     * Null keeps the chat's own engine.
+     */
+    val engine: EngineKind? = null,
+    /**
      * Epoch millis after which this turn is stale and must not start.
      *
      * Null for anything a person just sent: they are waiting for it, however
@@ -144,7 +150,7 @@ class SessionRunQueue(
             // Dequeue durably before starting, so a process crash cannot replay side effects.
             save(pending.value - next)
             submittedNow -= next.id
-            coordinator.send(next.sessionId, next.prompt, next.imagePaths.map(::File), next.model, next.effort, next.skill, next.planMode)
+            coordinator.send(next.sessionId, next.prompt, next.imagePaths.map(::File), next.model, next.effort, next.skill, next.planMode, next.engine)
         }
     }
 }

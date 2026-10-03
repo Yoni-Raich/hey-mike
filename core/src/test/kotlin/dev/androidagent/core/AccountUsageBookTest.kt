@@ -126,4 +126,37 @@ class AccountUsageBookTest {
         assertEquals("Updated 5m ago", AccountUsageOverview.readText(nowMillis - 5 * 60_000L, nowMillis))
         assertEquals("Updated 2d ago", AccountUsageOverview.readText(nowMillis - 2 * 86_400_000L, nowMillis))
     }
+
+    @Test fun theClaudeAccountIsTheLastRowWithItsOwnReading() {
+        val vault = AccountVaultState(listOf(work, home), activeId = "home")
+        val claude = ClaudeAccountUsage("yoni@example.com", UsageReading(listOf(weekly(18.0)), nowMillis - 2 * 3_600_000L))
+        val rows = AccountUsageOverview.rows(vault, emptyMap(), nowMillis, claude)
+        assertEquals(listOf("home", "work", "yoni"), rows.map { it.name })
+        val row = rows.last()
+        assertEquals(EngineKind.CLAUDE, row.engine)
+        assertEquals(AccountUsageOverview.CLAUDE_ID, row.accountId)
+        assertFalse(row.live)
+        assertEquals("Updated 2h ago", row.readText)
+        assertEquals(0.18f, row.window?.fraction ?: -1f, 0.001f)
+        assertTrue(rows.dropLast(1).all { it.engine == EngineKind.CODEX })
+    }
+
+    @Test fun claudeAloneStillMakesARow() {
+        val claude = ClaudeAccountUsage("yoni@example.com", null)
+        val row = AccountUsageOverview.rows(AccountVaultState(), emptyMap(), nowMillis, claude).single()
+        assertNull("signed in, never read", row.window)
+        assertNull(row.readText)
+        assertEquals("yoni", row.name)
+    }
+
+    @Test fun aClaudeWindowThatResetSinceTheReadingIsEmptyAgain() {
+        val claude = ClaudeAccountUsage("yoni@example.com", UsageReading(listOf(weekly(95.0, resetsIn = -60)), nowMillis - 86_400_000L))
+        val row = AccountUsageOverview.rows(AccountVaultState(), emptyMap(), nowMillis, claude).single()
+        assertEquals(0f, row.window?.fraction ?: -1f, 0.001f)
+    }
+
+    @Test fun noClaudeAccountAddsNoRow() {
+        val vault = AccountVaultState(listOf(work), activeId = "work")
+        assertEquals(1, AccountUsageOverview.rows(vault, emptyMap(), nowMillis, claude = null).size)
+    }
 }

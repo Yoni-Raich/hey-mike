@@ -578,6 +578,16 @@ catches up. Other accounts show their last reading and its age, and a window
 whose reset time has passed since then is drawn empty. The widget is redrawn on
 every reading and account change, and by the platform every 30 minutes.
 
+The signed-in Claude account is the last orb, marked "Claude". Claude has one
+sign-in and reports its quota only while a Claude process runs, so its row is
+always a reading with an age: `LastUsageStore` (`claude-usage.json`) already
+keeps the reading, and now also the account's name (`claude-usage.json.account`,
+written when the status says signed in, deleted when it says signed out or on
+logout) so the widget can name the account without starting Claude. The widget
+shapes the raw reading with the same reset rule as the Codex rows
+(`readSaved`, `AccountUsageOverview.rows(..., claude)`). When there are more
+than four orbs the Claude row keeps its place and the Codex accounts make room.
+
 ## Rich chat presentation
 
 Assistant markdown is rendered with Markwon (tables, strikethrough, prism4j
@@ -1827,3 +1837,164 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   session available for the turn interrupt and future transfers. A cancelled
   copy never advances to phone installation or sharing. Bytes already written
   are not rolled back.
+
+## Claude subscription chats: the engine belongs to the turn
+
+First design: `docs/superpowers/specs/2026-09-30-claude-subscription-design.md`
+(phone only, engine fixed per chat). The section "Claude as a full engine"
+below records what changed since: a chat can change engine at any point,
+both engines' models share one menu, a computer chat can run on Claude, and
+voice works in a Claude chat.
+
+- **Engine per turn.** `ChatSession.engine` is the engine the chat's next turn
+  runs on (`CODEX` or `CLAUDE`; old chats read as Codex). A new chat takes the
+  default engine chosen in onboarding or Settings > Accounts, and after that
+  the last model picked. The top bar names the chat's account.
+- **Routing.** `RoutingAgentEngine` reads the chat's engine from the session
+  store in `openSession` (via the `<sessions>/<id>/workspace` folder) every
+  time, keeps Claude thread ids, and finds one again through its chat after a
+  restart, whether the chat runs on it now or keeps it parked.
+  Claude tool and approval request ids get a `claude|` tag, as computer ids
+  get `remote|`, so ids cannot collide. The plain account calls stay Codex's;
+  `connect(kind, workspace)` and `account(kind, workspace)` reach the engine
+  that will run the chat's turn, and the coordinator uses them, so its
+  messages name Claude or Codex. `codexEvents` is the Codex-only stream the
+  view model reads for Codex sign-in, quota and the home screen widget, which
+  stays Codex-only.
+- **Per-engine state in the view model.** Model pick, effort and quota are
+  kept per engine (`EngineChoices`); the chip, `/status` and the usage sheet
+  show the engine the open chat runs on. Claude reports `5-hour` and `weekly`
+  limits.
+- **Claude usage without a message.** `refreshUsage()` sends the SDK's
+  experimental `get_usage` control request (`skip_behaviors: true`) to a
+  running chat, or to a throwaway probe (`--no-session-persistence`, no
+  tools, no settings) that also answers `initialize`, so the refresh on start
+  costs one process. A refusal or timeout emits nothing. The app keeps the
+  last reading in `claude-usage.json` (`LastUsageStore`), shows its age, and
+  drops a window once its reset time has passed; sign-out clears it.
+- **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
+  `claude` binary through the pinned Alpine musl loader, packaged as
+  `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
+  W^X does not apply. The binary (2.1.285, pinned sha256 and size) is never
+  bundled: it is downloaded from `downloads.claude.ai` only after the user
+  saw its size (232 MB) and tapped Download, with progress and cancel, and
+  hashed before use. At app start the host only re-checks a binary that is
+  already there. On other ABIs the card says "Not available on this device".
+- **Phone tools over loopback MCP.** Each chat process gets its own
+  `LoopbackMcpServer` (127.0.0.1, fresh port and bearer token per start), so
+  a tool call is always tied to the chat that made it. A `tools/call` becomes
+  `EngineEvent.ToolCall` and waits for `answerTool`, so approvals, overlay
+  states, revoke-before-interrupt and the trace are the same as for Codex.
+- **How `claude` runs (WP-C decisions).** One `claude -p` stream-json process
+  per open chat, started lazily by the first turn and restarted with
+  `--resume` when model, effort or tools change; at most two chat processes
+  live at once, the idle ones stopped first. `--setting-sources user` so the
+  skills installed in `<claudeHome>/.claude/skills` load; built-in tools are
+  `Read,Edit,Write,Glob,Skill`, with `Read` and `Edit` allowed only inside the
+  chat workspace; `Grep` and `Bash` stay off until proven on a phone.
+- **Sign-in.** `claude auth login` runs inside the app's private
+  `CLAUDE_CONFIG_DIR`; the app opens its link with `ACTION_VIEW` and hands the
+  pasted code to that process's stdin. The paste field is masked, is not saved
+  across configuration changes and is cleared on submit; the code is not
+  logged or stored. Sign-in state comes only from `claude auth status`.
+- **Compliance rules** (from the spec): official unmodified binary checked
+  against its pinned hash; never bundled; sign-in only inside `claude`; the
+  app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
+  excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
+  headers or `--bare`; API keys and base-URL variables are scrubbed from the
+  child environment; the UI says "Use your own Claude subscription (runs
+  Anthropic's Claude Code). Not affiliated with Anthropic." and never uses
+  "Claude Code" as a feature name.
+- **What Claude chats do not have.** API-key mode and several Claude
+  accounts. `/compact` works: after a restart the view model opens the chat
+  before compacting, and the note shows before the call, which waits for
+  Claude to finish.
+- **Privacy and consent.** The consent text and the privacy page name both
+  providers, with OpenAI's and Anthropic's policy links, and say that a chat
+  which changes model, or uses voice in a Claude chat, gives its earlier
+  messages to the other AI too. Naming Anthropic changed the consent in
+  substance, so `Onboarding.CONSENT_VERSION` is 2 and existing users confirm
+  again.
+
+## Claude as a full engine: switching, one model menu, computers, voice
+
+Decided 2026-10-01, on top of the section above.
+
+- **A chat can change engine between turns.** Codex and Claude each keep
+  their own thread and neither can read the other's, so a chat holds one
+  thread per engine: `engineThreadId` for the engine it runs on, and
+  `ChatSession.parked` for the other, with the message time up to which that
+  thread saw the chat. `EngineSwitch.switch` is the whole rule, and
+  `SessionStore.setEngine` applies it (`sessions.db` v4: `parked`,
+  `catch_up`). Nothing is copied between the engines' own stores.
+- **What the other engine missed is carried as text.** `catchUpFrom` marks
+  the messages the chat's engine has not seen. On the next turn the
+  coordinator builds `ChatHandoff` from the chat's own messages (what the
+  user and Mike said, one short line per device action, newest kept when it
+  is long) and puts it before the prompt it sends; the stored user message
+  stays as typed. It says that device actions listed were already carried
+  out. Tool results and run details are not replayed. A thread the engine
+  lost and replaced (it hands back another id than the stored one) is given
+  the chat again the same way.
+- **The turn names its engine.** `QueuedTurn.engine` and `TurnRunner.send`
+  carry it, and the coordinator moves the chat there before the turn, so a
+  model picked for one engine never reaches the other, also for a turn that
+  waited in the queue.
+- **One model menu.** `AgentModel.engine` tags each model; the menu lists
+  ChatGPT (Codex) first, then Claude. Picking a model of the other engine
+  calls `useEngine`, which is allowed whenever the chat is idle, adds a note
+  to the chat, and becomes the default for new chats. While Claude is not set
+  up on the phone the menu ends with a row that opens Settings. The model
+  chip is disabled during a run and during voice, so the engine never changes
+  under a running turn.
+- **Claude on a computer.** A chat bound to a computer can run on that
+  computer's own Claude Code, installed and signed in there by the user.
+  Mike never moves a Claude sign-in: Codex on a computer is handed the
+  phone's ChatGPT account for each run, Claude uses the computer's own. The
+  compliance rules above therefore hold unchanged; the binary is the user's
+  own install, started unmodified.
+  - `RemoteHub.claude(computerId)` is a `ClaudeCodeEngine` whose host starts
+    `claude` over the computer's SSH link. `ClaudeLaunch.probe` finds it on
+    `PATH` or in the usual install places (an SSH command gets a bare `PATH`);
+    `claude auth status` gives the sign-in and `initialize` the models, kept
+    per computer in `RemoteHub.claudeState`. Nothing is installed for the
+    user: a computer without Claude Code offers no Claude models.
+  - A launch writes a small script under `~/.hey-mike/claude` on the computer
+    and runs it by path. The arguments include an empty string and paths with
+    spaces, which cmd, PowerShell and a POSIX shell each quote differently;
+    a script file in the computer's own language avoids all three. Checked on
+    Windows under both cmd and PowerShell with a real `claude`: the streams
+    pass through, Hebrew survives both ways, and the process ends when stdin
+    closes.
+  - The phone tools cannot use a loopback port from another machine. They
+    travel on the process's own streams as an Agent SDK `sdk` MCP server:
+    declared in `--mcp-config`, named in `initialize` (`sdkMcpServers`), and
+    each MCP message arrives as an `mcp_message` control request (`StdioMcp`).
+    A `tools/call` still becomes `EngineEvent.ToolCall`, so approvals, the
+    overlay, Stop and the trace are unchanged.
+  - Claude Code keeps its own tools, settings, skills and MCP servers there:
+    no `--tools`, `--setting-sources` or `--strict-mcp-config`, and Mike's
+    text is appended (`--append-system-prompt-file`,
+    `RemoteInstructions.forComputer(.., CLAUDE)`). The computer's access
+    setting maps to `--permission-mode acceptEdits` plus
+    `--permission-prompt-tool stdio` for "ask", so a `can_use_tool` request
+    becomes an approval card on the phone, and to `bypassPermissions` for full
+    access. A prompt nobody answered is refused when the turn ends.
+  - `connect(kind, workspace)` and `account(kind, workspace)` check the
+    computer's Claude for such a chat, never the phone's, which need not be
+    set up. Request ids are tagged `remote-claude|<computer>|`.
+- **Voice in a Claude chat.** Claude Code has no speech-to-speech mode: its
+  `/voice` is dictation in the interactive terminal, needs a local microphone,
+  does not work over SSH or in `-p` mode, and has no Hebrew. So voice stays
+  Codex's realtime session. A chat that runs on Claude talks on its own Codex
+  thread: `VoiceConversation.begin` moves it to Codex, gives the voice session
+  the chat so far as context (as conversation text, not as an instruction),
+  and moves it back when voice ends; Claude is told what was said on its next
+  turn. This needs the ChatGPT sign-in; without it a Claude chat has no voice
+  button.
+- **Not done.** A computer still has to be set up through Codex (and so with
+  a ChatGPT sign-in) before its Claude can be used. Claude conversations kept
+  on a computer are not listed or imported the way Codex's are. The
+  computer's Claude skills are not listed in the composer. A Claude session
+  file the CLI removed (its own clean-up of old sessions) starts again under
+  the same id without the chat's history being sent again.

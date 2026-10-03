@@ -72,6 +72,23 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
             },
         )
     }
+    // Claude Code on a computer asks before a tool that needs permission.
+    if (method == "claude/can_use_tool") {
+        return ApprovalSummary(
+            headline = when (detail("kind")) {
+                "command" -> "Run this on the computer?"
+                "file" -> "Change this file on the computer?"
+                else -> "Let Mike use ${detail("tool") ?: "this tool"} on the computer?"
+            },
+            lines = buildList {
+                detail("command")?.let { add("Command" to it) }
+                detail("path")?.let { add("File" to it) }
+                detail("input")?.let { add("With" to it) }
+                detail("cwd")?.let { add("In" to it) }
+                detail("reason")?.let { add("Why" to it) }
+            },
+        )
+    }
     // Codex on a computer asks through its own protocol; say what it wants
     // to do there in words, with the command itself when there is one.
     when (method) {

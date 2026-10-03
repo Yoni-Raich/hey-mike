@@ -83,8 +83,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.a11y.A11yStatus
+import dev.androidagent.core.AccountUsageOverview
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ConnectionPhase
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.SetupChecklist
 import dev.androidagent.core.UsageSummary
@@ -179,6 +181,14 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
                 val computer = binding?.let { b -> state.computers.firstOrNull { it.id == b.computerId } }
                 if (binding != null && computer != null) {
                     RemotePlace(computer.label, remoteFolderLabel(binding.cwd, state.activeSessionTitle))
+                } else if (state.activeSessionId != null) {
+                    // Which account answers here, since each chat keeps its own.
+                    Text(
+                        providerName(state.activeEngine),
+                        maxLines = 1,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },
@@ -357,15 +367,32 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
                     },
                 )
             }
-            StatusLabel("USAGE")
+            // The open chat's own account: Codex, or the Claude subscription.
+            StatusLabel("USAGE · ${providerName(state.activeEngine).uppercase()}")
             if (windows.isEmpty()) {
-                Text("Account quota is not available for this account yet.", fontSize = 13.sp, lineHeight = 18.sp, color = StatusMuted)
+                Text(
+                    if (state.activeEngine == EngineKind.CLAUDE) "Claude shares its 5-hour and weekly limits after your first message."
+                    else "Account quota is not available for this account yet.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = StatusMuted,
+                )
             }
             windows.forEach { window -> UsageWindowRow(window) }
-            TextButton(onClick = actions.onRefreshAccount, enabled = !state.isRefreshingAccount) {
+            // Claude's limits can be a reading saved before a restart: say how old it is.
+            val readAt = state.claude.usageReadAtMillis
+            if (state.activeEngine == EngineKind.CLAUDE && windows.isNotEmpty() && readAt != null) {
+                Text(
+                    AccountUsageOverview.readText(readAt, System.currentTimeMillis()),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = StatusMuted,
+                )
+            }
+            TextButton(onClick = actions.onRefreshUsage, enabled = !state.isRefreshingAccount) {
                 LoadingButtonContent(loading = state.isRefreshingAccount, icon = Icons.Outlined.Refresh, label = "Refresh usage", loadingLabel = "Refreshing…")
             }
-            if (state.savedAccounts.accounts.isNotEmpty()) {
+            if (state.savedAccounts.accounts.isNotEmpty() && state.activeEngine == EngineKind.CODEX) {
                 StatusLabel("ACCOUNT")
                 AccountSwitcher(state, actions)
             }
