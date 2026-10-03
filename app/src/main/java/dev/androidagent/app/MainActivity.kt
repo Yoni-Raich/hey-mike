@@ -130,6 +130,7 @@ class MainActivity : ComponentActivity() {
         // Not on recreation: a rotation must not reopen a conversation the
         // user already ended.
         val fromAssistant = savedInstanceState == null && handleAssistantPress(intent)
+        if (savedInstanceState == null) openAskedChat(intent)
         val fromCapabilityRequest = intent.getBooleanExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST, false)
         intent.removeExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST)
         // First launch asks for this on its own screen, with a reason; asking
@@ -143,6 +144,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleAssistantPress(intent)
+        openAskedChat(intent)
+    }
+
+    /** A tap on a question's notification opens the chat that asked. */
+    private fun openAskedChat(intent: Intent?) {
+        val chat = intent?.getStringExtra(QuestionNotifier.EXTRA_OPEN_CHAT) ?: return
+        intent.removeExtra(QuestionNotifier.EXTRA_OPEN_CHAT)
+        model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false) }
+        model.select(chat)
     }
 
     /**
@@ -170,9 +180,11 @@ class MainActivity : ComponentActivity() {
         // The app owns the foreground surface. Keep the run state in the
         // overlay, but remove its window until another app is visible.
         model.graph.overlay.setAppForeground(true)
+        model.graph.appInFront.value = true
     }
     override fun onStop() {
         model.graph.overlay.setAppForeground(false)
+        model.graph.appInFront.value = false
         super.onStop()
     }
     // Every grant the checklist tracks is flipped in a system Settings screen,
@@ -307,6 +319,7 @@ class MainActivity : ComponentActivity() {
         onShareWorkspaceFile = { item -> shareFile(item) },
         onCloseWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = false) } },
         onApproval = { requestId, allow -> model.graph.coordinator.approve(requestId, allow) },
+        onAnswerQuestion = { questionId, answer -> model.graph.coordinator.answerQuestion(questionId, answer) },
         onApproveAlways = { requestId, scope ->
             val before = model.graph.sendGrants.grants.value.size
             model.graph.coordinator.approve(requestId, true, scope)

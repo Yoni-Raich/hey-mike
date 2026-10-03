@@ -72,6 +72,31 @@ class CopyFileGatewayTest {
         assertEquals("Pc", meter.current.value?.from)
     }
 
+    @Test fun mediaToShowIsCopiedIntoTheChatOnceAndAChatFileIsUsedWhereItIs() = runBlocking {
+        File(pcRoot, "clips").mkdirs()
+        File(pcRoot, "clips/demo.mp4").writeText("video")
+        val workspace = temp.newFolder("sessions", "show", "workspace")
+        // Never armed with beginRun: a chat that does not hold the phone can still show media.
+        val gateway = CopyFileGateway(phone, { listOf(pc) }, { null }, meter, File(temp.root, "scratch"))
+
+        val first = gateway.chatCopy("Pc:/clips/demo.mp4", workspace)
+        assertEquals(File(workspace, "media/demo.mp4").absoluteFile, first.absoluteFile)
+        assertEquals("video", first.readText())
+        // The same name again does not replace what an earlier message shows.
+        val second = gateway.chatCopy("Pc:/clips/demo.mp4", workspace)
+        assertEquals("demo-1.mp4", second.name)
+        assertTrue(File(workspace, "media").listFiles()!!.none { it.name.endsWith(".part") })
+
+        File(workspace, "shot.png").writeText("png")
+        assertEquals(File(workspace, "shot.png").absoluteFile, gateway.chatCopy("chat:shot.png", workspace).absoluteFile)
+        assertEquals(2, pc.downloads.size)
+
+        val missing = runCatching { gateway.chatCopy("chat:nothing.png", workspace) }.exceptionOrNull()
+        assertTrue(missing.toString(), missing is IllegalArgumentException)
+        val outside = runCatching { gateway.chatCopy("chat:../../secret.png", workspace) }.exceptionOrNull()
+        assertTrue(outside.toString(), outside is IllegalArgumentException)
+    }
+
     @Test fun theIdIsAnotherNameForAComputer() {
         File(pcRoot, "a.txt").writeText("a")
         val (gateway, ws) = gateway()

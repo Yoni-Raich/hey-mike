@@ -162,6 +162,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 mutable.update { it.copy(runState = id?.let(states::get) ?: RunState(), runs = states.filterValues { run -> run.active }) }
             }
         }
+        viewModelScope.launch { current.collect { graph.openChat.value = it } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
         viewModelScope.launch { graph.adb.status.collect { state -> mutable.update { it.copy(adbStatus = state) } } }
@@ -685,6 +686,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             if (id != graph.voiceConversation.sessionId.value) { error("End voice before sending in another chat."); return }
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
             if (graph.coordinator.answerApprovalByReply(text, sessionId = id)) return
+            if (graph.coordinator.answerQuestionByReply(text, sessionId = id)) return
             task { graph.voiceConversation.type(text) }
             return
         }

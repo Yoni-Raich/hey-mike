@@ -297,9 +297,20 @@ class AgentGraph(private val app: Application) {
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
+        listOf(
+            workflowTools, knowledgeTools, automationTools, computerTools, copyFiles,
+            // ask_user and show_media: listed here, answered by each chat's own coordinator.
+            dev.androidagent.core.ChatToolGateway(),
+            capabilityTools, a11yTools, adbTools,
+        ),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
+    /** The app's own window is on screen. */
+    val appInFront = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** The chat the app shows, so a question for it is not also sent as a notification. */
+    val openChat = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** A question a chat asked while its card is not on screen goes to the notification shade. */
+    val questions: QuestionNotifier
     /** Every chat's run: several at once, with the phone to one of them at a time. */
     val coordinator: AgentRuns
         get() = runCoordinator
@@ -317,8 +328,11 @@ class AgentGraph(private val app: Application) {
                 // answerable at all.
                 bringToForeground = ::bringAppForward,
                 share = share,
+                // show_media reads addresses as copy_file does: this chat, the phone, a computer.
+                chatMedia = { address, workspace -> copyFiles.chatCopy(address, workspace) },
             )
         }
+        questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)
         queue = SessionRunQueue(
             scope,
             coordinator,

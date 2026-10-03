@@ -1,5 +1,43 @@
 # Progress
 
+### `ask_user` and `show_media` — 2026-10-03
+
+Asked: a way for Mike to ask the user (pick an answer or type one), answered
+from a notification when the app is not open; and pictures and videos shown
+in the chat, from the phone or from a computer.
+
+- Branch `feat/ask-tool-and-media-ui`, on top of `feat/claude-subscription`
+  (PR #99), so both engines get the tools. Design: "The chat's own tools" in
+  `docs/ARCHITECTURE.md`.
+- Checked on Windows with offline Gradle: `./gradlew.bat test
+  assembleDevDebugAndroidTest` passes for every module (`:core` 624 tests,
+  `:app` dev debug 130, `:remote` 55), `:app:assembleDevDebug` builds,
+  `:app:lintDevDebug` reports 0 errors and 14 warnings (none in the new
+  files), and `git diff --check` is clean. The full gate
+  (`assembleDevRelease`, `:voice:lintDebug`, `tools.test_prepare_runtime`)
+  was not run.
+  New tests: the coordinator asks without taking the phone, takes an option
+  number, a typed reply, a skip and a timeout, and drops the question on Stop;
+  `show_media` leaves out a non-media file and one that cannot be fetched;
+  `chatCopy` copies once per call and refuses a path outside the chat; the
+  notification rule and the numbered body.
+- On a Nothing Phone (A059), 2026-10-03: the dev debug APK was installed
+  over 0.14.0 with `adb -s <serial> install -r`; the sign-in and the
+  accessibility service survived. In a chat that was already open, on a
+  computer (Claude), the runtime context listed `ask_user` and `show_media`.
+  `ask_user` with three options was answered from the notification, by the
+  user, outside the app. `show_media` showed a PNG and then a 6 second MP4,
+  both copied from the computer over SFTP; both calls returned `ok`.
+- Not checked: the user did not report back on the video tile and the
+  full-screen player. The in-app question card, Skip, a free-text reply, the
+  timeout, opening the chat from the notification, a question on a phone with
+  notifications blocked, and a Codex chat calling the tools were not run on a
+  phone. The Redmi was not used.
+- Open: a question in a voice conversation is shown on the voice screen but
+  cannot be answered by speaking. A chat thread opened before this build gets
+  the tools the way "A resumed thread gets the tools this version has"
+  describes; that was not re-checked for these two.
+
 ### Usage widget shows the Claude account — 2026-10-01
 
 Asked: the home screen usage widget should show the Claude account too.

@@ -112,7 +112,8 @@ class AgentRuns(
      */
     val state: StateFlow<RunState> = eachSlot({ it.state }) { states ->
         val active = states.filter { it.active }
-        active.firstOrNull { it.controlling } ?: active.firstOrNull { it.approval != null } ?: active.firstOrNull() ?: RunState()
+        active.firstOrNull { it.controlling } ?: active.firstOrNull { it.approval != null }
+            ?: active.firstOrNull { it.question != null } ?: active.firstOrNull() ?: RunState()
     }.stateIn(scope, SharingStarted.Eagerly, RunState())
 
     /** No chat is running. */
@@ -183,6 +184,15 @@ class AgentRuns(
         } ?: return false
         return slot.answerApprovalByReply(reply, record)
     }
+
+    /** The user's answer to an `ask_user` question, or null for "not answering". */
+    fun answerQuestion(questionId: String, reply: String?): Boolean =
+        slots.firstOrNull { it.state.value.question?.id == questionId }?.answerQuestion(questionId, reply) ?: false
+
+    /** What the user typed in [sessionId] while a question waits there is its answer. */
+    fun answerQuestionByReply(reply: String, sessionId: String): Boolean =
+        slots.firstOrNull { it.state.value.question != null && it.state.value.sessionId == sessionId }
+            ?.answerQuestionByReply(reply) ?: false
 
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {
         val slot = freeSlot()

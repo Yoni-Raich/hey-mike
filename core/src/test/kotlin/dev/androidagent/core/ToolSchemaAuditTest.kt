@@ -68,6 +68,7 @@ class ToolSchemaAuditTest {
                 library = AutomationLibrary(File(temp.root, "automations")),
                 history = InMemoryAutomationHistory(),
             ).definitions +
+            ChatTools.DEFINITIONS +
             listOf(ACT_AND_OBSERVE_DEFINITION)
 
     @Test fun everyAdvertisedToolSaysWhatItTakes() {
