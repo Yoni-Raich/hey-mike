@@ -149,6 +149,49 @@ class CopyFileGateway(
         }
     }
 
+    /**
+     * A file in [workspace] holding what [address] names, for the chat to
+     * show. A file already in the chat's folder is used where it is; one from
+     * the phone's storage or a computer is copied into `media/`, under a name
+     * no earlier copy has. Does not depend on the run the gateway is armed
+     * for, so a chat that does not hold the phone can call it.
+     */
+    suspend fun chatCopy(address: String, workspace: File): File {
+        val ws = workspace.absoluteFile
+        return try {
+            when (val spot = resolve(address, ws)) {
+                is Spot.Chat -> spot.file.also { require(it.isFile) { "No file at chat:${spot.relative}." } }
+                is Spot.Away -> {
+                    val dir = File(ws, MEDIA_FOLDER).apply { mkdirs() }
+                    val part = File(dir, ".copy-${UUID.randomUUID()}.part")
+                    val name = spot.path.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\').ifBlank { "file" }
+                    try {
+                        val fetch: suspend ((Long, Long) -> Unit) -> FilePlace.Fetched = { progress ->
+                            spot.place.download(spot.path, spot.base, part, progress)
+                        }
+                        val fetched = meter?.track(name, spot.label, "this chat", fetch) ?: fetch { _, _ -> }
+                        val final = freeName(dir, fetched.name.ifBlank { name })
+                        check(part.renameTo(final)) { "Could not finish the copy at ${final.name}." }
+                        final
+                    } finally {
+                        part.delete()
+                    }
+                }
+            }
+        } catch (refused: Refused) {
+            throw IllegalArgumentException(refused.message)
+        }
+    }
+
+    private fun freeName(dir: File, name: String): File {
+        val safe = name.replace(Regex("[\\\\/:*?\"<>|\\u0000]"), "_")
+        val stem = safe.substringBeforeLast('.', safe)
+        val dot = if (safe.contains('.')) "." + safe.substringAfterLast('.') else ""
+        return generateSequence(0) { it + 1 }
+            .map { n -> File(dir, if (n == 0) safe else "$stem-$n$dot") }
+            .first { !it.exists() }
+    }
+
     internal fun resolve(address: String, ws: File): Spot {
         val text = address.trim()
         if (text.isEmpty()) throw Refused("blank_address", "An address is empty.")
@@ -294,6 +337,9 @@ class CopyFileGateway(
 
     companion object {
         const val NAME = "copy_file"
+
+        /** Where [chatCopy] keeps what a chat shows, inside the chat's folder. */
+        const val MEDIA_FOLDER = "media"
 
         private fun JsonObject.text(key: String) = (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
 

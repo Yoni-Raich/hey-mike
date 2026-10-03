@@ -23,7 +23,9 @@ package dev.androidagent.core
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -787,6 +789,116 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aQuestionWaitsForTheUsersChoiceWithoutTakingThePhone() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Book a table")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject {
+            put("question", "Which evening?")
+            put("options", kotlinx.serialization.json.buildJsonArray {
+                add(kotlinx.serialization.json.JsonPrimitive("Friday")); add(kotlinx.serialization.json.JsonPrimitive("Saturday"))
+            })
+        }, "thread", "turn"))
+        runCurrent()
+
+        val question = rig.coordinator.state.value.question!!
+        assertEquals("Which evening?", question.question)
+        assertEquals(listOf("Friday", "Saturday"), question.options)
+        assertEquals("Waiting for your answer", rig.coordinator.state.value.status)
+        // The gateway was never armed: a question must not hold the phone.
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        assertTrue(rig.engine.answers.isEmpty())
+
+        // "2" is how the notification lists the second option.
+        assertTrue(rig.coordinator.answerQuestion(question.id, "2"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.question)
+        val answer = rig.engine.answers.single()
+        assertTrue(answer.success)
+        assertEquals("Saturday", Json.parseToJsonElement(answer.text).jsonObject["answer"]!!.jsonPrimitive.content)
+        // Asked and answered, in the chat's own words.
+        assertEquals(listOf("assistant" to "Which evening?", "user" to "Saturday"), rig.store.messages.takeLast(2).map { it.role to it.text })
+        rig.close()
+    }
+
+    @Test fun whatTheUserTypesWhileAQuestionWaitsIsItsAnswerNotASteer() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Rename the file")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject { put("question", "What name?") }, "thread", "turn"))
+        runCurrent()
+        rig.coordinator.steer("report-final.pdf")
+        runCurrent()
+        assertTrue(rig.engine.steers.isEmpty())
+        assertTrue(rig.engine.answers.single().text.contains("report-final.pdf"))
+        rig.close()
+    }
+
+    @Test fun aQuestionNobodyAnswersOrThatIsSkippedSaysWhich() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Plan")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q1", "ask_user", buildJsonObject { put("question", "Go on?") }, "thread", "turn"))
+        runCurrent()
+        val first = rig.coordinator.state.value.question!!.id
+        assertFalse(rig.coordinator.answerQuestion("not-this-one", "yes"))
+        assertFalse(rig.coordinator.answerQuestion(first, "   "))
+        assertTrue(rig.coordinator.answerQuestion(first, null))
+        runCurrent()
+        assertTrue(rig.engine.answers.single().text.contains("skipped"))
+
+        rig.engine.emit(EngineEvent.ToolCall("q2", "ask_user", buildJsonObject { put("question", "Still there?") }, "thread", "turn"))
+        runCurrent()
+        advanceTimeBy(ChatTools.ASK_TIMEOUT_MS + 1_000)
+        runCurrent()
+        assertNull(rig.coordinator.state.value.question)
+        assertTrue(rig.engine.answers.last().text.contains("no_answer"))
+        assertTrue(rig.coordinator.state.value.active)
+        rig.close()
+    }
+
+    @Test fun stoppingARunTakesItsQuestionDown() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Plan")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject { put("question", "Go on?") }, "thread", "turn"))
+        runCurrent()
+        val id = rig.coordinator.state.value.question!!.id
+        rig.coordinator.stop()
+        assertNull(rig.coordinator.state.value.question)
+        assertFalse(rig.coordinator.answerQuestion(id, "yes"))
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(rig.engine.answers.isEmpty())
+        rig.close()
+    }
+
+    @Test fun showMediaPutsTheFilesInOneMessageAndLeavesOutWhatIsNotMedia() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Show me the clip")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("m", "show_media", buildJsonObject {
+            put("files", kotlinx.serialization.json.buildJsonArray {
+                listOf("Server:/clips/demo.mp4", "chat:shot.png", "notes.txt", "phone:gone.jpg").forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+            })
+            put("caption", "Here it is")
+        }, "thread", "turn"))
+        runCurrent()
+
+        // notes.txt is refused by its name, before anything is fetched.
+        assertEquals(listOf("Server:/clips/demo.mp4", "chat:shot.png", "phone:gone.jpg"), rig.fetched)
+        val message = rig.store.messages.last()
+        assertEquals("assistant", message.role)
+        assertEquals("Here it is", message.text)
+        assertEquals(listOf("demo.mp4", "shot.png"), message.attachmentPaths.map { File(it).name })
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals(2, result["shown"]!!.jsonArray.size)
+        assertEquals(2, result["notShown"]!!.jsonArray.size)
+        assertTrue(rig.tools.revoked)
+        rig.close()
+    }
+
     private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore()) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
@@ -795,6 +907,8 @@ class AgentCoordinatorTest {
         val tools = FakeTools(overlay)
         val adbStatus = MutableStateFlow(AdbStatus())
         var foregroundRequests = 0
+        /** Addresses show_media asked for, in order. */
+        val fetched = mutableListOf<String>()
         val coordinator = AgentCoordinator(
             scope, engine, store, tools, overlay,
             sendGrants = grants,
@@ -802,6 +916,11 @@ class AgentCoordinatorTest {
             // The test's own clock, so a reported duration is exactly the time
             // the test advanced rather than how fast the machine ran.
             nowNanos = { test.testScheduler.currentTime * 1_000_000 },
+            chatMedia = { address, workspace ->
+                fetched += address
+                require(!address.contains("gone")) { "No such file." }
+                File(workspace, address.substringAfterLast(':').substringAfterLast('/'))
+            },
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }

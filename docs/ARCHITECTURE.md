@@ -607,6 +607,62 @@ new last row appears below the viewport. Scrolling up pauses following, and
 the jump-to-latest button resumes it. Streaming text does not restart a scroll
 animation on each update.
 
+## The chat's own tools: `ask_user` and `show_media`
+
+Decided 2026-10-03. Two tools put something in the conversation instead of
+acting on the phone: `ask_user` asks the user one question and waits, and
+`show_media` shows pictures and videos in the chat.
+
+- **Served by the coordinator, not a gateway.** `ChatToolGateway` only puts the
+  two definitions in the list every engine is given, so a thread on Codex or
+  Claude, on the phone or a computer, has them. `AgentCoordinator` answers the
+  call itself, before `claimDevice`. Every other tool takes the phone's lease
+  for at least one call; a question can wait minutes, and a chat holding the
+  lease that long would stop every other chat's tools. It also needs no armed
+  gateway: the workspace comes from the run.
+- **`ask_user(question, options?)`.** Up to six options; with or without them
+  the user can type an answer. The question is `RunState.question`; the chat
+  screen pins `QuestionCard` above the composer, as it does an approval,
+  because a card in the list scrolls away. An option is one tap. Free text is
+  typed in the composer that is already there: `steer` hands what the user
+  types to the waiting question before it would steer the turn. Skip tells the
+  model the user is not answering. The question and the answer are stored as
+  an assistant and a user message, so the history reads as asked and answered.
+- **Outside the app it is a notification.** `QuestionNotifier` posts one for
+  every waiting question whose card is not on screen (the app is in the
+  background, or shows another chat) and cancels it when the question goes
+  away. It is a `MessagingStyle` notification with a reply field
+  (`RemoteInput`) that offers the options as choices; one or two options also
+  get a button each, since Android shows three actions at most. The body
+  numbers the options, and `UserQuestion.resolve` reads a reply that is only a
+  number as that option, so the reply field works on a phone that does not draw
+  the choices. A tap on the notification opens the asking chat. With
+  notifications blocked the app comes to the front on that chat instead.
+- **It does not raise the app.** An approval brings Hey Mike forward because
+  its card exists only there. A question can be answered where the user is, so
+  it leaves the app they are in alone.
+- **Eight minutes, then the model is told.** Claude Code gives an MCP tool call
+  ten minutes (`MCP_TOOL_TIMEOUT`), so the wait ends before that with
+  `no_answer` and the instruction to say what it is waiting for and end the
+  turn. A skipped question is `skipped`. The wait counts as approval time in
+  `RunMetrics`, not tool time. Stop cancels the question with the run.
+- **`show_media(files, caption?)`.** Addresses are `copy_file`'s: `chat:`,
+  `phone:` or a `content://` uri, `<computer>:`, or a bare path where the
+  chat's shell runs, so a computer chat names a file by its path there.
+  `CopyFileGateway.chatCopy` uses a file already in the chat's folder where it
+  is and copies any other into `media/` there (over SFTP for a computer, with
+  the transfer banner), under a name no earlier copy has, so an older message
+  keeps its picture. The files become one assistant message with the caption.
+  A name that is not a picture or a video is refused before any byte moves.
+  It is a tool and not a markdown image because the bytes may be on another
+  machine: the renderer would have to open SSH to draw a message.
+- **How media is drawn.** `InlineMedia` replaces `InlineImages`. One file is
+  shown whole; several share a two-column grid of square tiles. A video tile
+  shows a frame and its length from `MediaMetadataRetriever` with a play mark;
+  a tap plays it full screen in the platform `VideoView` with its own
+  controls. No player library was added. Formats the phone cannot decode say
+  so instead of showing a black box.
+
 ## What the agent says on the floating card
 
 The agent's own words reach the card, not only the chat. `ControlOverlay.say`

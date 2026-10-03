@@ -263,6 +263,14 @@ internal fun VoiceModeLayer(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
+            state.runState.question?.let { question ->
+                QuestionCard(
+                    question = question,
+                    onAnswer = actions.onAnswerQuestion,
+                    typeHint = false,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
             VoiceStatus(voice, state.voiceMuted, Modifier.voiceStage(motion.status, lift = 10.dp))
             VoiceCaption(
                 transcript = state.voiceTranscript,

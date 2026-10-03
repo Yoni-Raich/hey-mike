@@ -155,7 +155,7 @@ private fun ActionStep(step: ChatMessage) {
                     )
                 }
             }
-            InlineImages(step.attachmentPaths)
+            InlineMedia(step.attachmentPaths)
         }
     }
 }

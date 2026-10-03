@@ -344,6 +344,13 @@ fun AndroidAgentScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
+                        state.runState.question?.let { question ->
+                            QuestionCard(
+                                question = question,
+                                onAnswer = actions.onAnswerQuestion,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
                         Box(Modifier.voiceStage(voiceMode.composer, lift = 56.dp)) {
                             AgentComposer(
                                 state = state,
@@ -898,7 +905,7 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
                 detail = dev.androidagent.core.SecretRedactor.redact(message.text),
                 key = message.id,
             )
-            InlineImages(message.attachmentPaths)
+            InlineMedia(message.attachmentPaths)
         }
         return
     }
@@ -985,13 +992,14 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
                         AgentOrb(modifier = Modifier.size(28.dp))
                         Text("Working…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                } else {
+                } else if (message.attachmentPaths.none(::isMediaPath)) {
+                    // Media shown without a caption speaks for itself.
                     Text("No text returned.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                InlineImages(message.attachmentPaths)
-                if (message.attachmentPaths.any { !isImagePath(it) }) {
+                InlineMedia(message.attachmentPaths)
+                if (message.attachmentPaths.any { !isMediaPath(it) }) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(message.attachmentPaths.filterNot(::isImagePath), key = { it }) { path ->
+                        items(message.attachmentPaths.filterNot(::isMediaPath), key = { it }) { path ->
                             AssistChip(
                                 onClick = {},
                                 label = { Text(path.substringAfterLast('/').substringAfterLast('\\'), maxLines = 1) },
