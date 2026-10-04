@@ -30,7 +30,6 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
 import java.util.Base64
-import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -57,6 +56,8 @@ data class ExternalChatgptTokens(val accessToken: String, val accountId: String,
 class CodexEngine(
     private val runtime: RuntimeHost,
     private val profile: EngineProfile = PHONE_PROFILE,
+    /** Process diagnostics have no turn scope; keep them out of conversation failures. */
+    private val diagnosticSink: (String) -> Unit = { android.util.Log.w("CodexEngine", it) },
 ) : AgentEngine, RealtimeVoiceEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectLock = Mutex()
@@ -82,8 +83,6 @@ class CodexEngine(
     private var externalAuth: ExternalChatgptTokens? = null
     private var externalRefresh: (suspend (String?) -> ExternalChatgptTokens)? = null
     private val json = Json { ignoreUnknownKeys = true }
-    private val stderrLock = Any()
-    private val stderrTail = ArrayDeque<String>()
 
     override suspend fun connect() = connectLock.withLock {
         if (initialized && process?.isAlive == true) return@withLock
@@ -102,10 +101,7 @@ class CodexEngine(
                 }
             } catch (error: Exception) {
                 if (error !is CancellationException) {
-                    val detail = SecretRedactor.redact(
-                        listOfNotNull("Codex connection ended: ${error.message}", stderrSnapshot())
-                            .joinToString(" | ")
-                    )
+                    val detail = SecretRedactor.redact("Codex connection ended: ${error.message}")
                     stream.emit(EngineEvent.Failure(detail))
                 }
             } finally {
@@ -115,10 +111,7 @@ class CodexEngine(
                 approvals.clear()
                 val stoppedVoiceThreadId = voiceThreadId
                 if (stoppedVoiceThreadId != null) {
-                    val detail = SecretRedactor.redact(
-                        listOfNotNull("Codex process stopped during voice", stderrSnapshot().takeIf { it.isNotBlank() })
-                            .joinToString(" | ")
-                    )
+                    val detail = "Codex process stopped during voice"
                     voiceClosedSignal?.complete(Unit)
                     voiceClosedSignal = null
                     voiceThreadId = null
@@ -132,7 +125,13 @@ class CodexEngine(
             // That is the normal end of stderr, not an error: uncaught, it kills the app.
             try {
                 started.errorStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                    lines.forEach { if (isActive) recordStderr(it) }
+                    lines.forEach { line ->
+                        if (isActive) {
+                            val safe = SecretRedactor.redactStderrLine(line)
+                            // Logging must not take down the app-server reader.
+                            if (safe.isNotBlank()) runCatching { diagnosticSink(safe) }
+                        }
+                    }
                 }
             } catch (_: IOException) {
             }
@@ -684,11 +683,20 @@ class CodexEngine(
                 val type = item?.string("type").orEmpty()
                 if (type !in setOf("agentMessage", "userMessage", "")) stream.emit(EngineEvent.Activity(when (type) { "reasoning" -> "Working"; "commandExecution" -> "Working in session files"; "fileChange" -> "Updating session files"; else -> "Working" }, params.string("threadId"), params.string("turnId")))
             }
-            method == "error" -> stream.emit(
-                EngineEvent.Failure(
-                    (params["error"] as? JsonObject)?.let(::rpcErrorMessage) ?: "Codex reported an error"
-                )
-            )
+            method == "error" -> {
+                val error = params["error"] as? JsonObject
+                val threadId = params.string("threadId").ifBlank { null }
+                val turnId = params.string("turnId").ifBlank { null }
+                if ((params["willRetry"] as? JsonPrimitive)?.booleanOrNull == true) {
+                    // Codex still owns the turn and will retry or change transport itself.
+                    val status = error?.string("message").orEmpty().ifBlank { "Reconnecting to Codex" }
+                    stream.emit(EngineEvent.Activity(SecretRedactor.redact(status).take(500), threadId, turnId))
+                } else {
+                    stream.emit(EngineEvent.Failure(
+                        error?.let(::rpcErrorMessage) ?: "Codex reported an error", threadId, turnId,
+                    ))
+                }
+            }
         }
     }
 
@@ -703,33 +711,19 @@ class CodexEngine(
         voiceStream.emit(VoiceEvent.Failure(safeMessage, threadId))
     }
 
-    /** Keep a redacted, bounded stderr tail so RPC failures retain their cause chain. */
-    private fun recordStderr(line: String) {
-        val safe = SecretRedactor.redactStderrLine(line)
-        if (safe.isBlank()) return
-        synchronized(stderrLock) {
-            if (stderrTail.size >= MAX_STDERR_LINES) stderrTail.removeFirst()
-            stderrTail.addLast(safe)
-        }
-    }
-
-    private fun stderrSnapshot(maxLines: Int = 3): String = synchronized(stderrLock) {
-        if (stderrTail.isEmpty()) return ""
-        val count = minOf(stderrTail.size, maxLines)
-        stderrTail.toList().takeLast(count).joinToString("; ")
-    }
-
     private fun rpcErrorMessage(error: JsonObject): String {
         val code = error["code"]?.jsonPrimitive?.longOrNull
         val pieces = mutableListOf<String>()
         val message = error.string("message").takeIf { it.isNotBlank() }
         if (message != null) pieces.add(message)
-        // `data` can contain a nested cause. Redaction happens before it is
-        // combined with stderr, and bodies/tokens are never displayed.
+        // Only details carried by this error belong to this failure. Process
+        // stderr can describe another thread or an earlier account refresh.
         error["data"]?.let { pieces += SecretRedactor.redact(it.toString()) }
         error["cause"]?.let { pieces += SecretRedactor.redact(it.toString()) }
-        val recentStderr = stderrSnapshot(if (message != null) 2 else 5)
-        if (recentStderr.isNotBlank()) pieces.add(recentStderr)
+        (error["additionalDetails"] as? JsonPrimitive)?.contentOrNull
+            ?.takeIf { it.isNotBlank() }?.let { pieces += SecretRedactor.redact(it) }
+        error["codexErrorInfo"]?.takeIf { it !is JsonNull }
+            ?.let { pieces += SecretRedactor.redact(it.toString()) }
         val raw = pieces.ifEmpty { listOf("Codex reported an RPC error") }.joinToString(" | ")
         return SecretRedactor.describe(raw, code)
     }
@@ -781,7 +775,6 @@ class CodexEngine(
         }
         private val BRAND_COLOR = Regex("#[0-9A-Fa-f]{6}")
 
-        private const val MAX_STDERR_LINES = 80
         private fun JsonObject.string(name: String) = (get(name) as? JsonPrimitive)?.contentOrNull.orEmpty()
 
         internal fun parseTokenUsage(value: JsonObject?): TokenUsage? {

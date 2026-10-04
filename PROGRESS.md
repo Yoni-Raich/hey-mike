@@ -1,5 +1,32 @@
 # Progress
 
+### Codex retries stay active and errors keep their chat — 2026-10-05
+
+- A Codex `error` notification with `willRetry=true` updates that turn's
+  activity instead of ending the run. Terminal notifications retain their
+  thread and turn IDs, so an error in one chat does not end another chat.
+- Process stderr goes to the redacted `CodexEngine` logcat diagnostic sink,
+  separately from conversation errors. RPC and turn errors retain only their
+  own data, cause, additionalDetails and codexErrorInfo. Transport failures
+  still affect every turn sharing the broken connection.
+- Checked on Windows/JDK 21: `./gradlew.bat :engine-codex:testDebugUnitTest
+  :core:test --no-daemon --console=plain` (46 engine, 634 core tests), then
+  `./gradlew.bat :remote:testDebugUnitTest :app:testDevDebugUnitTest
+  :app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain`
+  (55 remote, 137 app tests; 0 failures, 2 remote skips; app lint 0 errors,
+  21 warnings). `git diff --check` is clean.
+- Final source check: `./gradlew.bat :engine-codex:testDebugUnitTest
+  :app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain` passes.
+- Seven new regression tests cover retry-to-completion, scoped terminal and
+  legacy errors, redacted current error details, unrelated stderr kept out of
+  RPC/turn/JSON failures, and two parallel chats recovering/failing separately
+  while a shared transport failure still ends both.
+- Not tested: this fix on a phone, real backend retry/fallback over SSH,
+  realtime voice, release builds or the full release gate. No APK was
+  installed. The source of the observed image JSON truncation and the cause
+  of backend WebSocket closure remain unresolved; this change does not claim
+  to fix either or bypass usage limits.
+
 ### Media from a computer is loaded when looked at — 2026-10-03
 
 Asked: when Mike shows a picture or video from a computer, do not copy it into
