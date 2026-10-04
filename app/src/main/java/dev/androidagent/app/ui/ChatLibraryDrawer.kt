@@ -633,7 +633,7 @@ private fun AddComputerCard(onClick: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("Add a computer", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                Text("Let Mike work on your Windows or Ubuntu PC", style = MaterialTheme.typography.bodySmall, color = LibraryMuted)
+                Text("Let Mike work on your computer", style = MaterialTheme.typography.bodySmall, color = LibraryMuted)
             }
             Icon(Icons.Outlined.Add, null, Modifier.size(20.dp), tint = LibraryMuted)
         }

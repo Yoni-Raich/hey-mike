@@ -162,14 +162,19 @@ private fun stepsText(os: dev.androidagent.remote.HostOs) =
  */
 @Composable
 internal fun ComputersSheet(state: AgentUiState, actions: AgentUiActions) {
-    var draft by remember { mutableStateOf<ComputerDraft?>(null) }
+    // With no computer yet, opening this screen means "add one": go straight to the
+    // setup steps instead of a list that holds a single button.
+    val firstRun = state.computers.isEmpty() && !state.computersUnreadable
+    var draft by remember { mutableStateOf(if (firstRun) ComputerDraft(isDefault = true) else null) }
     // A new computer starts on the PC's setup steps; an edit skips them.
-    var onSetupStep by remember { mutableStateOf(false) }
+    var onSetupStep by remember { mutableStateOf(firstRun) }
     var guideOs by remember { mutableStateOf(dev.androidagent.remote.HostOs.WINDOWS) }
     val back: () -> Unit = {
         when {
             state.folderBrowser != null -> actions.onCloseFolderBrowser()
             draft != null && !onSetupStep && draft?.id == null -> onSetupStep = true
+            // The first computer's steps are the screen's start: Back leaves it.
+            draft != null && onSetupStep && draft?.id == null && state.computers.isEmpty() -> actions.onCloseComputers()
             draft != null -> draft = null
             else -> actions.onCloseComputers()
         }
