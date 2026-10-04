@@ -122,6 +122,10 @@ object ChatTools {
     fun namesOtherKind(address: String): Boolean =
         !address.startsWith("content://") && extension(address).let { it.isNotEmpty() && !isMedia(address) }
 
+    /** The name to show for an attachment: a local file's, or the file a [RemoteMediaRef] names. */
+    fun displayName(attachment: String): String =
+        RemoteMediaRef.parse(attachment)?.name ?: attachment.substringAfterLast('/').substringAfterLast('\\')
+
     private fun extension(path: String): String =
         path.substringAfterLast('/').substringAfterLast('\\').substringAfterLast('.', "").lowercase()
 
@@ -152,10 +156,17 @@ object ChatTools {
     )
 
     /** [failed] are the files left out, each with why. */
-    fun shown(names: List<String>, failed: List<String> = emptyList()): ToolResult = ToolResult(
+    fun shown(names: List<String>, failed: List<String> = emptyList(), remote: List<String> = emptyList()): ToolResult = ToolResult(
         buildJsonObject {
             put("ok", true)
             put("shown", buildJsonArray { names.forEach { add(JsonPrimitive(it)) } })
+            if (remote.isNotEmpty()) {
+                put("notCopied", buildJsonArray { remote.forEach { add(JsonPrimitive(it)) } })
+                put(
+                    "note",
+                    "Those stay on their computer: the chat loads each when the user looks at it, and offers a button to save it on the phone.",
+                )
+            }
             if (failed.isNotEmpty()) put("notShown", buildJsonArray { failed.forEach { add(JsonPrimitive(it)) } })
         }.toString(),
     )

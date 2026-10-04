@@ -157,6 +157,17 @@ class SshLink(private val target: SshTarget) : Closeable {
         return SshProcess(channel, stdin, stdout, stderr)
     }
 
+    /** The size in bytes of the file at [remotePath], without copying it. Fails for a folder or a missing file. */
+    suspend fun size(remotePath: String): Long = withSftp(remotePath) { sftp ->
+        val attributes = try {
+            sftp.stat(sftpPath(remotePath))
+        } catch (missing: com.jcraft.jsch.SftpException) {
+            throw IllegalArgumentException("No file at $remotePath.")
+        }
+        require(!attributes.isDir) { "$remotePath is a folder, not a file." }
+        attributes.size
+    }
+
     /**
      * Copy a file from the computer to [target], refusing one over [maxBytes].
      * [progress] hears (bytes so far, total) as the copy goes.

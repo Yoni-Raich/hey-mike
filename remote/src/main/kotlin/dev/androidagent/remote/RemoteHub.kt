@@ -244,6 +244,11 @@ class RemoteHub(
         connection(computerId).link.download(remotePath, target, maxBytes, progress)
     }
 
+    /** The size of a file on the computer, without copying it. */
+    suspend fun size(computerId: String, remotePath: String): Long = withContext(Dispatchers.IO) {
+        connection(computerId).link.size(remotePath)
+    }
+
     /** Copy a file from this phone to the computer. */
     suspend fun upload(
         computerId: String,

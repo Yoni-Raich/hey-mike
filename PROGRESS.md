@@ -1,5 +1,35 @@
 # Progress
 
+### Media from a computer is loaded when looked at — 2026-10-03
+
+Asked: when Mike shows a picture or video from a computer, do not copy it into
+the chat; load it from there when the user looks, and add a download button.
+
+- `show_media` on a computer file now only measures it and stores a
+  `RemoteMediaRef` in the message. The tile loads it from the computer when
+  looked at (pictures up to 20 MB on appearing, the rest on a tap) into a
+  400 MB cache, and a corner button saves it to `Pictures/Hey Mike/` or
+  `Movies/Hey Mike/`. Design: "Remote media loads when it is looked at" in
+  `docs/ARCHITECTURE.md`.
+- Checked on Windows with offline Gradle: `:core:test`, `:app:testDevDebugUnitTest`,
+  `:remote:testDebugUnitTest` pass; `:app:assembleDevDebug` builds;
+  `:app:lintDevDebug` 0 errors, 14 warnings. New tests cover the reference
+  round trip, that a computer file is measured and not downloaded, the loader's
+  cache, retry, save and trimming. The full gate was not run.
+- On a Nothing Phone (A059), 2026-10-04: the dev debug APK was installed with
+  `adb -s <serial> install -r`. `show_media` with a PNG and an MP4 on the
+  computer returned both under `notCopied`. Seconds later
+  `cache/remote-media/` held the PNG at its exact size on the computer
+  (27,899 bytes) and no video, so the picture loaded on its own over SFTP and
+  the video waited.
+- Not seen on the phone: the tiles themselves (the app's window is left out of
+  its own screenshots, and the user did not report on them), the progress
+  ring, a video loaded and played by a tap, the Save button and the gallery
+  showing the saved file, and a failure with the computer off.
+- Not done: a video's thumbnail and length appear only after it is loaded,
+  since a frame cannot be read without the bytes. A message made before this
+  change keeps its copied files.
+
 ### `ask_user` and `show_media` — 2026-10-03
 
 Asked: a way for Mike to ask the user (pick an answer or type one), answered

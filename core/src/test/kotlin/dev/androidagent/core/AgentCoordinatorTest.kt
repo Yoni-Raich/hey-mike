@@ -891,9 +891,13 @@ class AgentCoordinatorTest {
         val message = rig.store.messages.last()
         assertEquals("assistant", message.role)
         assertEquals("Here it is", message.text)
-        assertEquals(listOf("demo.mp4", "shot.png"), message.attachmentPaths.map { File(it).name })
+        assertEquals(listOf("demo.mp4", "shot.png"), message.attachmentPaths.map(ChatTools::displayName))
+        // The computer's file is held as a reference with its size; only the chat's own file is a path.
+        assertEquals(RemoteMediaRef("Server", "/clips/demo.mp4", 2_048), RemoteMediaRef.parse(message.attachmentPaths[0]))
+        assertNull(RemoteMediaRef.parse(message.attachmentPaths[1]))
         val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
         assertEquals(2, result["shown"]!!.jsonArray.size)
+        assertEquals(listOf("demo.mp4"), result["notCopied"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(2, result["notShown"]!!.jsonArray.size)
         assertTrue(rig.tools.revoked)
         rig.close()
@@ -919,7 +923,9 @@ class AgentCoordinatorTest {
             chatMedia = { address, workspace ->
                 fetched += address
                 require(!address.contains("gone")) { "No such file." }
-                File(workspace, address.substringAfterLast(':').substringAfterLast('/'))
+                // A file on a computer is a reference, not a copy.
+                if (address.startsWith("Server:")) RemoteMediaRef("Server", address.removePrefix("Server:"), 2_048).encode()
+                else File(workspace, address.substringAfterLast(':').substringAfterLast('/')).path
             },
         ) { adbStatus.value }
         fun close() { scope.cancel() }

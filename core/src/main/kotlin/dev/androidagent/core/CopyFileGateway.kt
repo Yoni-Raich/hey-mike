@@ -41,6 +41,16 @@ interface FilePlace {
 
     /** What [download] copied: its size and the file's own name. */
     data class Fetched(val size: Long, val name: String)
+
+    /**
+     * Size and full path of the file [path] names, without copying it. Null
+     * when this place cannot tell without a copy; throws when there is no
+     * such file or the place cannot be reached.
+     */
+    suspend fun stat(path: String, base: String?): Stat? = null
+
+    /** A file seen in place: its size, its absolute [path] here, and its name. */
+    data class Stat(val size: Long, val path: String, val name: String)
 }
 
 /** Where bare paths point in a chat whose shell runs on a computer: that computer, in the project folder. */
@@ -191,6 +201,41 @@ class CopyFileGateway(
             .map { n -> File(dir, if (n == 0) safe else "$stem-$n$dot") }
             .first { !it.exists() }
     }
+
+    /**
+     * What a chat message should hold to show [address]: a file in the chat's
+     * folder for one that is there already or on the phone, and for a file on a
+     * computer a [RemoteMediaRef] that is not copied at all. The computer is
+     * asked only that the file exists and how big it is; the bytes move when
+     * the user opens it, and [fetchRemote] brings them.
+     */
+    suspend fun chatMedia(address: String, workspace: File): String {
+        val ws = workspace.absoluteFile
+        val spot = try { resolve(address, ws) } catch (refused: Refused) { throw IllegalArgumentException(refused.message) }
+        if (spot is Spot.Away && spot.place !== phone) {
+            val seen = try {
+                spot.place.stat(spot.path, spot.base)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: IllegalArgumentException) {
+                throw error
+            } catch (error: Exception) {
+                throw IllegalArgumentException("${spot.place.name}: ${error.message ?: "could not be read"}")
+            }
+            if (seen != null) return RemoteMediaRef(spot.place.name, seen.path, seen.size).encode()
+        }
+        return chatCopy(address, workspace).absolutePath
+    }
+
+    /** Copy the file [ref] names from its computer to [target], reporting (bytes, total). */
+    suspend fun fetchRemote(ref: RemoteMediaRef, target: File, progress: (Long, Long) -> Unit) {
+        val place = placeNamed(ref.place) ?: throw IllegalArgumentException("${ref.place} is no longer saved.")
+        place.download(ref.path, null, target, progress)
+    }
+
+    /** Save [source] on the phone at the shared [path] (such as `Pictures/Hey Mike/a.png`); returns its `phone:` address. */
+    suspend fun saveToPhone(source: File, path: String, progress: (Long, Long) -> Unit = { _, _ -> }): String =
+        (phone ?: throw IllegalStateException(noPhone().message)).upload(source, path, null, true, progress)
 
     internal fun resolve(address: String, ws: File): Spot {
         val text = address.trim()

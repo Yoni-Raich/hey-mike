@@ -72,11 +72,12 @@ class AgentCoordinator(
     /** The phone shared with other chats' runs; on its own by default. */
     private val share: PhoneShare = PhoneShare(),
     /**
-     * A file in the chat's folder for an address `show_media` was given, as
-     * `copy_file` reads addresses. Null on a host with nowhere to copy from;
-     * the tool then says so.
+     * What a message should hold to show an address `show_media` was given, as
+     * `copy_file` reads addresses: a path to a file in the chat's folder, or a
+     * [RemoteMediaRef] for one that stays on a computer. Null on a host with
+     * nowhere to read from; the tool then says so.
      */
-    private val chatMedia: (suspend (address: String, workspace: File) -> File)? = null,
+    private val chatMedia: (suspend (address: String, workspace: File) -> String)? = null,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -1407,7 +1408,7 @@ class AgentCoordinator(
             overlay.updateState(OverlayState(OverlayPhase.RUNNING, "show media"))
             runWorkspace
         } ?: sessions.workspace(sessionId)
-        val shown = mutableListOf<File>()
+        val shown = mutableListOf<String>()
         val failed = mutableListOf<String>()
         for (address in show.files) {
             // A name that says what the file is, is checked before any byte moves.
@@ -1416,8 +1417,8 @@ class AgentCoordinator(
                 continue
             }
             try {
-                val file = fetch(address, work)
-                if (ChatTools.isMedia(file.name)) shown += file else failed += "$address: not a picture or a video"
+                val attachment = fetch(address, work)
+                if (ChatTools.isMedia(attachment)) shown += attachment else failed += "$address: not a picture or a video"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -1426,7 +1427,7 @@ class AgentCoordinator(
         }
         ensureCurrentTurn(token, threadId, turnId)
         if (shown.isEmpty()) return ChatTools.refused("nothing_shown", "Nothing was shown. " + failed.joinToString("; "))
-        val paths = shown.map { it.absolutePath }
+        val paths = shown
         sessions.append(message(sessionId, "assistant", show.caption, paths))
         trace(sessionId, "assistant", buildJsonObject {
             put("text", show.caption)
@@ -1434,7 +1435,10 @@ class AgentCoordinator(
             put("threadId", threadId)
             put("turnId", turnId)
         })
-        return ChatTools.shown(shown.map { it.name }, failed)
+        return ChatTools.shown(
+            shown.map(ChatTools::displayName), failed,
+            remote = shown.filter(RemoteMediaRef::isRemote).map(ChatTools::displayName),
+        )
     }
 
     private fun ensureCurrentTurn(token: Long, threadId: String, turnId: String) {

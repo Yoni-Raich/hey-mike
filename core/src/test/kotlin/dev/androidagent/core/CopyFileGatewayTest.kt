@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -22,6 +23,14 @@ class CopyFileGatewayTest {
     /** A place backed by a folder, standing in for the phone's storage or a computer. */
     private class FolderPlace(override val name: String, val root: File, override val aliases: Set<String> = emptySet()) : FilePlace {
         val downloads = mutableListOf<String>()
+        val stats = mutableListOf<String>()
+        override suspend fun stat(path: String, base: String?): FilePlace.Stat {
+            stats += path
+            val full = if (path.startsWith("/")) path else "/${base.orEmpty()}/$path"
+            val file = File(root, full)
+            require(file.isFile) { "No file at $full." }
+            return FilePlace.Stat(file.length(), full, file.name)
+        }
         override suspend fun download(path: String, base: String?, target: File, progress: (Long, Long) -> Unit): FilePlace.Fetched {
             downloads += path
             val file = if (path.startsWith("/")) File(root, path) else File(root, "${base.orEmpty()}/$path")
@@ -95,6 +104,50 @@ class CopyFileGatewayTest {
         assertTrue(missing.toString(), missing is IllegalArgumentException)
         val outside = runCatching { gateway.chatCopy("chat:../../secret.png", workspace) }.exceptionOrNull()
         assertTrue(outside.toString(), outside is IllegalArgumentException)
+    }
+
+    @Test fun aComputersMediaIsNotCopiedOnlyMeasured() = runBlocking {
+        File(pcRoot, "clips").mkdirs()
+        File(pcRoot, "clips/demo.mp4").writeText("video bytes")
+        File(pcRoot, "proj").mkdirs()
+        File(pcRoot, "proj/shot.png").writeText("png")
+        val workspace = temp.newFolder("sessions", "lazy", "workspace")
+        val gateway = CopyFileGateway(phone, { listOf(pc) }, { FileHome("Pc", "proj") }, meter, File(temp.root, "scratch"))
+
+        val named = RemoteMediaRef.parse(gateway.chatMedia("Pc:/clips/demo.mp4", workspace))!!
+        assertEquals(RemoteMediaRef("Pc", "/clips/demo.mp4", 11), named)
+        // A bare path in a computer chat means that computer's project folder, and the reference says where exactly.
+        val bare = RemoteMediaRef.parse(gateway.chatMedia("shot.png", workspace))!!
+        assertEquals(RemoteMediaRef("Pc", "/proj/shot.png", 3), bare)
+        assertTrue("nothing moved", pc.downloads.isEmpty())
+        assertTrue(File(workspace, "media").listFiles().orEmpty().isEmpty())
+
+        val missing = runCatching { gateway.chatMedia("Pc:/clips/none.mp4", workspace) }.exceptionOrNull()
+        assertTrue(missing.toString(), missing is IllegalArgumentException)
+
+        // The bytes move when the user looks: fetchRemote reads exactly the file the reference names.
+        val target = File(temp.root, "cache/demo.mp4")
+        gateway.fetchRemote(named, target) { _, _ -> }
+        assertEquals("video bytes", target.readText())
+        assertEquals(listOf("/clips/demo.mp4"), pc.downloads)
+        val gone = runCatching { gateway.fetchRemote(named.copy(place = "Nowhere"), target) { _, _ -> } }.exceptionOrNull()
+        assertTrue(gone.toString(), gone is IllegalArgumentException)
+
+        // Save puts it on the phone, in the folder the reference picks.
+        val saved = gateway.saveToPhone(target, named.savePath)
+        assertTrue(saved, saved.startsWith("phone:"))
+        assertEquals("video bytes", File(phoneRoot, "Movies/Hey Mike/demo.mp4").readText())
+    }
+
+    @Test fun phoneMediaStillComesIntoTheChatAsAFile() = runBlocking {
+        File(phoneRoot, "Pictures").mkdirs()
+        File(phoneRoot, "Pictures/p.png").writeText("png")
+        val workspace = temp.newFolder("sessions", "phonefile", "workspace")
+        val gateway = CopyFileGateway(phone, { listOf(pc) }, { null }, meter, File(temp.root, "scratch"))
+        val path = gateway.chatMedia("phone:/Pictures/p.png", workspace)
+        assertNull(RemoteMediaRef.parse(path))
+        assertEquals("png", File(path).readText())
+        assertTrue(phone.stats.isEmpty())
     }
 
     @Test fun theIdIsAnotherNameForAComputer() {
