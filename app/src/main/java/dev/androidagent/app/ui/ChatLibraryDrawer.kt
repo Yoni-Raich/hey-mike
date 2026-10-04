@@ -220,6 +220,12 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                             onClick = newChat,
                         )
                     }
+                    // The rail holds the only other way in, and it shows once a computer exists.
+                    if (!hasComputers && query.isBlank()) {
+                        item(key = "add-computer", contentType = "add-computer") {
+                            AddComputerCard(onClick = { dismiss(); actions.onOpenComputers() })
+                        }
+                    }
                     if (computer != null) {
                         item(key = "connection", contentType = "connection") { LibraryConnection(state, computer.id, actions, dismiss) }
                         item(key = "projects-label", contentType = "label") {
@@ -605,6 +611,32 @@ private fun LibraryEmpty(icon: ImageVector, title: String, detail: String) {
         }
         Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp), textAlign = TextAlign.Center)
         Text(detail, style = MaterialTheme.typography.bodySmall, color = LibraryMuted, modifier = Modifier.padding(top = 4.dp), textAlign = TextAlign.Center)
+    }
+}
+
+/** The way to the first computer, for a library that has none and so no rail. */
+@Composable
+private fun AddComputerCard(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = LibraryTile,
+        contentColor = LibraryLight,
+        border = BorderStroke(1.dp, LibraryLine),
+        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp)
+            .semantics { contentDescription = "Add a computer, let Mike work on your Windows or Ubuntu computer" },
+    ) {
+        Row(Modifier.heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(36.dp).background(LibraryTeal.copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Computer, null, Modifier.size(20.dp), tint = LibraryTeal)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Add a computer", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                Text("Let Mike work on your Windows or Ubuntu PC", style = MaterialTheme.typography.bodySmall, color = LibraryMuted)
+            }
+            Icon(Icons.Outlined.Add, null, Modifier.size(20.dp), tint = LibraryMuted)
+        }
     }
 }
 

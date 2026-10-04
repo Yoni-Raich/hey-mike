@@ -90,6 +90,25 @@ class ChatLibraryUiTest {
         compose.runOnIdle { assertEquals(true, openedAutomations) }
     }
 
+    @Test fun withoutComputersTheLibraryOffersToAddOne() {
+        var opened = false
+        show(
+            AgentUiActions(onOpenComputers = { opened = true }),
+            fixture.copy(computers = emptyList(), pcThreads = emptyMap(), computerSetup = emptyMap()),
+        )
+        compose.onNodeWithText("New chat").assertIsDisplayed()
+        compose.onNodeWithText("Add a computer").assertIsDisplayed()
+        screenshot("library-add-computer")
+        compose.onNodeWithText("Add a computer").performClick()
+        compose.runOnIdle { assertEquals(true, opened) }
+    }
+
+    @Test fun withAComputerTheAddCardGivesWayToTheRail() {
+        show()
+        compose.onNodeWithText("Add a computer").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Manage computers").assertIsDisplayed()
+    }
+
     private fun screenshot(name: String) {
         compose.waitForIdle()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
