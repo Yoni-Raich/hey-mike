@@ -649,13 +649,34 @@ acting on the phone: `ask_user` asks the user one question and waits, and
 - **`show_media(files, caption?)`.** Addresses are `copy_file`'s: `chat:`,
   `phone:` or a `content://` uri, `<computer>:`, or a bare path where the
   chat's shell runs, so a computer chat names a file by its path there.
-  `CopyFileGateway.chatCopy` uses a file already in the chat's folder where it
-  is and copies any other into `media/` there (over SFTP for a computer, with
-  the transfer banner), under a name no earlier copy has, so an older message
-  keeps its picture. The files become one assistant message with the caption.
-  A name that is not a picture or a video is refused before any byte moves.
-  It is a tool and not a markdown image because the bytes may be on another
-  machine: the renderer would have to open SSH to draw a message.
+  `CopyFileGateway.chatMedia` returns what the message should hold. A file
+  already in the chat's folder is used where it is, and one from the phone's
+  storage is copied into `media/` there, under a name no earlier copy has. A
+  file on a computer is **not copied**: the computer is asked only that it
+  exists and how big it is (`FilePlace.stat`, one SFTP `stat`), and the message
+  holds a `RemoteMediaRef`, text of the form `remote:<computer>:<bytes>:<path
+  there>` in the ordinary attachment list, so messages and the session store
+  did not change. The call returns at once, however big the file, and a file
+  that is missing or a computer that cannot be reached is reported to the
+  model before anything is shown. The files become one assistant message with
+  the caption. A name that is not a picture or a video is refused before any
+  byte moves. It is a tool and not a markdown image because the bytes may be on
+  another machine: the renderer would have to open SSH to draw a message.
+- **Remote media loads when it is looked at.** `RemoteMediaLoader` (`:app`)
+  fetches a reference into `cache/remote-media/` the first time a tile needs
+  it: a picture up to 20 MB when its message comes on screen, a bigger one or
+  any video on a tap. The fetch belongs to the loader, not to the tile, so
+  scrolling away does not stop it and two tiles for one file share one
+  transfer. Until then the tile says where the file is and how big. The cache
+  is keyed by computer, path and size and keeps 400 MB, oldest first; the
+  system may clear it too, and a tile then offers the file again. A tile shows
+  Retry and the reason when the computer cannot be reached.
+  A button in each tile's corner, and in the full-screen view, saves the file
+  on the phone: it loads it if needed, then `PhoneStoragePlace` stores it under
+  `Pictures/Hey Mike/` or `Movies/Hey Mike/` (Downloads for other files), where
+  the gallery finds it. Streaming a video over SFTP was not attempted: the
+  platform player needs a seekable source, and a full fetch is simpler and
+  works offline afterwards.
 - **How media is drawn.** `InlineMedia` replaces `InlineImages`. One file is
   shown whole; several share a two-column grid of square tiles. A video tile
   shows a frame and its length from `MediaMetadataRetriever` with a play mark;

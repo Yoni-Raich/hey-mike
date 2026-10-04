@@ -305,6 +305,16 @@ class AgentGraph(private val app: Application) {
         ),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
+    /**
+     * Pictures and videos Mike showed from a computer: loaded when looked at,
+     * kept in a cache the system may clear, saved to the phone on request.
+     */
+    val remoteMedia = RemoteMediaLoader(
+        scope = scope,
+        cacheDir = java.io.File(app.cacheDir, "remote-media"),
+        fetch = { ref, target, progress -> copyFiles.fetchRemote(ref, target, progress) },
+        save = { ref, file -> copyFiles.saveToPhone(file, ref.savePath) },
+    )
     /** The app's own window is on screen. */
     val appInFront = kotlinx.coroutines.flow.MutableStateFlow(false)
     /** The chat the app shows, so a question for it is not also sent as a notification. */
@@ -329,7 +339,7 @@ class AgentGraph(private val app: Application) {
                 bringToForeground = ::bringAppForward,
                 share = share,
                 // show_media reads addresses as copy_file does: this chat, the phone, a computer.
-                chatMedia = { address, workspace -> copyFiles.chatCopy(address, workspace) },
+                chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
             )
         }
         questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)

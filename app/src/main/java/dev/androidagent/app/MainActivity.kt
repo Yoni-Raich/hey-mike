@@ -123,7 +123,9 @@ class MainActivity : ComponentActivity() {
             // change without recomposing the screen.
             val voiceLevel = model.graph.voice.level.collectAsStateWithLifecycle()
             val readVoiceLevel = remember(voiceLevel) { { voiceLevel.value } }
-            AndroidAgentScreen(state, actions(), voiceLevel = readVoiceLevel)
+            androidx.compose.runtime.CompositionLocalProvider(dev.androidagent.app.ui.LocalRemoteMedia provides model.graph.remoteMedia) {
+                AndroidAgentScreen(state, actions(), voiceLevel = readVoiceLevel)
+            }
         }
         ensureService()
         model.prepare()

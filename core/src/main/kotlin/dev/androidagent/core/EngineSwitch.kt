@@ -107,7 +107,7 @@ object ChatHandoff {
     }
 
     private fun attachments(message: ChatMessage): String =
-        if (message.attachmentPaths.isEmpty()) "" else message.attachmentPaths.joinToString(prefix = " [attached: ", postfix = "]")
+        if (message.attachmentPaths.isEmpty()) "" else message.attachmentPaths.joinToString(prefix = " [attached: ", postfix = "]", transform = { RemoteMediaRef.parse(it)?.name ?: it })
 
     private fun clip(text: String, max: Int): String = if (text.length <= max) text else text.take(max) + "…"
 }

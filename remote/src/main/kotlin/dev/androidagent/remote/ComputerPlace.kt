@@ -17,6 +17,11 @@ class ComputerPlace(private val hub: RemoteHub, private val computer: RemoteComp
         return FilePlace.Fetched(target.length(), fileName(full))
     }
 
+    override suspend fun stat(path: String, base: String?): FilePlace.Stat {
+        val full = fullPath(path, base, computer.label)
+        return FilePlace.Stat(hub.size(computer.id, full), full, fileName(full))
+    }
+
     override suspend fun upload(source: File, path: String, base: String?, replace: Boolean, progress: (Long, Long) -> Unit): String {
         val full = fullPath(path, base, computer.label)
         hub.upload(computer.id, source, full, replace, progress)
