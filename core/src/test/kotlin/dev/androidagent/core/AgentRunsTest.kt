@@ -12,6 +12,58 @@ import java.io.File
 /** Several chats at once: each runs on its own, and the phone goes to one of them at a time. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentRunsTest {
+    @Test fun reconnectingOneChatKeepsBothChatsRunningUntilTheirOwnCompletion() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "First")
+        rig.runs.send("two", "Second")
+        runCurrent()
+        val otherStatus = rig.runs.stateOf("two")!!.status
+        rig.engine.emit(EngineEvent.Activity("Reconnecting... 2/5", "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertEquals("Reconnecting... 2/5", rig.runs.stateOf("one")!!.status)
+        assertEquals(otherStatus, rig.runs.stateOf("two")!!.status)
+        assertTrue(rig.runs.stateOf("one")!!.active)
+        assertTrue(rig.runs.stateOf("two")!!.active)
+        assertTrue(rig.store.assistant("one").isEmpty())
+        rig.engine.emit(EngineEvent.MessageCompleted("Recovered", "thread-one", "turn-thread-one", "a", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-one", turnId = "turn-thread-one"))
+        runCurrent()
+        assertEquals(listOf("Recovered"), rig.store.assistant("one"))
+        assertTrue(rig.runs.stateOf("two")!!.active)
+        rig.close()
+    }
+
+    @Test fun aTurnFailureLeavesTheOtherChatAndTheSharedEngineRunning() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "First")
+        rig.runs.send("two", "Second")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Failure("Usage limit", "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertFalse(rig.runs.slots.first { it.state.value.sessionId == "one" }.state.value.active)
+        assertTrue(rig.runs.stateOf("two")!!.active)
+        assertFalse(rig.engine.closed)
+        assertTrue(rig.store.assistant("two").isEmpty())
+        rig.engine.emit(EngineEvent.MessageCompleted("Still running", "thread-two", "turn-thread-two", "b", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-two", turnId = "turn-thread-two"))
+        runCurrent()
+        assertEquals(listOf("Still running"), rig.store.assistant("two"))
+        rig.close()
+    }
+
+    @Test fun aSharedConnectionFailureStillEndsBothChats() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "First")
+        rig.runs.send("two", "Second")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Failure("Codex connection ended"))
+        runCurrent()
+        assertTrue(rig.runs.slots.none { it.state.value.active })
+        assertTrue(rig.store.assistant("one").single().contains("Codex connection ended"))
+        assertTrue(rig.store.assistant("two").single().contains("Codex connection ended"))
+        rig.close()
+    }
+
     @Test fun aNewChatStartsWhileAnotherIsRunning() = runTest {
         val rig = Rig(this)
         rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "Long task"))

@@ -89,10 +89,12 @@ The APK contains a hash-pinned Mozilla-derived PEM bundle. Runtime copies and
 validates it under app-private files and passes both `SSL_CERT_FILE` and
 `CODEX_CA_CERTIFICATE`. `HTTPS_PROXY` and `HTTP_PROXY` are set in both cases,
 `NO_PROXY` keeps stdio/local traffic direct, and `CODEX_SANDBOX` is removed.
-The engine retains a short redacted stderr tail and redacted RPC error data so
-DNS, TLS and connection failures remain diagnosable without exposing tokens or
-device codes. Proxy lifecycle follows the supervised app-server and closes on
-stop or failed startup.
+The engine drains stderr to a separate redacted, bounded-per-line diagnostic
+sink (the `CodexEngine` logcat tag). Process logs have no reliable turn scope
+and are never appended to RPC, turn or transport failures. Error messages keep
+only their own redacted data, cause, additionalDetails and codexErrorInfo.
+Proxy lifecycle follows the supervised app-server and closes on stop or failed
+startup.
 
 The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.159.2,
 ChatGPT account sessions use `https://chatgpt.com/backend-api/codex` for
@@ -518,6 +520,17 @@ and a turn is dequeued before it starts, so a process crash cannot replay a
 side effect. A queue restored at startup is paused and needs an explicit
 Resume, and a local stop pauses the queue rather than releasing the next run at
 the user unannounced. Deleting a chat cancels its queued turns.
+
+## Codex retries and turn failures
+
+An app-server `error` notification with `willRetry=true` is a scoped activity
+update, not a failed run. Codex keeps the turn and performs its own retries or
+transport fallback. A non-retry error keeps `threadId` and `turnId` on the
+failure, so only that turn ends; a missing retry flag keeps the legacy terminal
+behavior. `AgentRuns` routes both events by thread, and the coordinator checks
+the turn before changing state. A broken shared JSON/stdio connection remains
+an unscoped failure because every turn on that connection is affected. This
+does not repair or hide malformed/truncated JSON or backend usage limits.
 
 ## Assistant message segmentation
 
