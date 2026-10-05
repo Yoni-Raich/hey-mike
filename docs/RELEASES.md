@@ -3,21 +3,28 @@
 Hey Mike releases are Developer Preview artifacts until production signing
 and complete phone E2E are established.
 
-## Current public artifact
+## 0.15.0 release artifact
 
-The latest published artifact is v0.14.0:
+The validated v0.15.0 artifact is:
 
 - flavor and label: `prod`, `Hey Mike`;
 - package: `dev.androidagent.app`;
-- versionCode: `1019`;
-- APK: `hey-mike-0.14.0.apk`;
-- SHA-256: `abc894688e9303c002c62f47a9618d547023d4a05328eb06b89681d9dd78dce9`;
+- versionCode: `1100`;
+- APK: `hey-mike-0.15.0.apk`;
+- SHA-256: `ef3506026fac20687a514f45ffba9927738a53cba219a10679776bfdeb4dc8b4`;
 - signing: APK Signature Scheme v3 with the local Android debug key.
 
 This is test-only signing. It is installable for local testing, not a production
 release. The public release page is
-[v0.14.0 on GitHub](https://github.com/Yoni-Raich/hey-mike/releases/tag/v0.14.0).
+[v0.15.0 on GitHub](https://github.com/Yoni-Raich/hey-mike/releases/tag/v0.15.0).
 v0.10.0 was the first release named Hey Mike.
+
+The exact signed 0.15.0 Prod APK updated the regular 0.14.0 app on a Nothing
+A059 (Android 16). The installed APK hash matches the asset; all eight ARM64
+native libraries were extracted. An on-device Codex task successfully opened
+Settings through `apps_settings/open_app` and made eight device calls. Its
+Android-version answer was incomplete. See `PROGRESS.md` for the checked
+scope and remaining account, voice, updater and hardware gaps.
 
 Assets are named `hey-mike-X.Y.Z.apk` from v0.10.0; earlier releases used
 `android-agent-X.Y.Z.apk`. v0.6.1 to v0.7.2 cannot control the phone: their

@@ -1,6 +1,6 @@
 # Progress
 
-## 0.15.0 release preparation — 2026-10-05
+## 0.15.0 release validation — 2026-10-05
 
 Release candidate: versionName `0.15.0`, versionCode `1100`, **Prod Release**,
 package `dev.androidagent.app`, label `Hey Mike`. Public releases use the Prod
@@ -45,11 +45,20 @@ of the installed base APK has the same SHA-256 as the candidate; its package
 is not debuggable, and all eight packaged ARM64 libraries are present in
 `nativeLibraryDir`, including the app-server and code-mode helper.
 
-Still open when this was written: the device-tool task is waiting at the
-updated three-part consent screen, which the user must accept. Production-key
-signing, the phone updater flow, first launch and account switching, broad
-device tools, voice, and the computer and Claude paths on real hardware are
-not established by these checks.
+After the user accepted the updated consent screen, the regular app showed
+the existing Codex account and an existing chat. A new on-device GPT-6 Luna
+(medium) task, "Open the Settings app and tell me the Android version.",
+ran eight device calls in 29 seconds. The expanded tool record reports
+`apps_settings/open_app` with `ok=true` and `opened=true`; Settings was
+observed in the foreground. The task also used screen reads, a sequence and
+a tap. This proves device-tool dispatch and phone control in this exact
+non-debuggable Prod APK. The reply stopped before reporting the Android
+version number, so the full requested reading task is not claimed as passed.
+
+Remaining gaps: production-key signing, the updater flow, first launch and
+account switching, broad phone UI and device-tool tasks (including the
+incomplete Android-version answer), voice, and the computer and Claude paths
+on real hardware. These are not established by the build or smoke checks.
 
 ### Codex retries stay active and errors keep their chat — 2026-10-05
 
