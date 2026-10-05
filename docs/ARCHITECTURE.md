@@ -222,6 +222,13 @@ version.properties before building. Release tag, asset filename and embedded
 APK version must match. Previously published assets remain available. 0.1.1 is
 versionCode 2; the older 0.1.0 fix releases all used versionCode 1.
 
+Public releases build the `prod` flavor: package `dev.androidagent.app`,
+label `Hey Mike`, and the normal GitHub releases channel. The `dev` flavor
+uses `dev.androidagent.app.dev`, label `Hey Mike Dev`, and `dev-nightly`.
+Version 0.15.0 retains the Android test certificate used by the public
+0.14.0 Prod APK so existing installs can update in place. Production-key
+signing remains a separate, uncompleted requirement.
+
 ## On-device agent instruction and skill stack
 
 The on-device agent uses progressive disclosure and Codex's standard skill

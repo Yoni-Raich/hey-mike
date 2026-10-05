@@ -1,15 +1,12 @@
 # Progress
 
-## 0.15.0 release preparation — 2026-10-05
+## 0.15.0 release validation — 2026-10-05
 
-Release candidate: versionName `0.15.0`, versionCode `1100`, Dev flavor and
-package `dev.androidagent.app.dev`, the same Developer Preview path as
-v0.13.0 and v0.14.0. Code 1100 is above the Dev Nightly codes (1031 on the
-dev tip `a0e17f9d`, and rising by one per nightly), so the exact release APK
-can update a nightly install in place without removing app data. This is a
-test-only, debug-key-signed Developer Preview; it is not production-key
-signed, and the package and migration question in `docs/RELEASES.md` is still
-open.
+Release candidate: versionName `0.15.0`, versionCode `1100`, **Prod Release**,
+package `dev.androidagent.app`, label `Hey Mike`. Public releases use the Prod
+flavor, as the actual v0.14.0 APK does (code 1019); Dev stays on its separate
+nightly channel. Code 1100 upgrades v0.14.0 in place. The existing Android
+test certificate is retained, so this is not production-key signing.
 
 What changed since v0.14.0 (102 commits on `dev`): chats on Windows and Linux
 computers over SSH with projects, conversations, voice and a file bridge;
@@ -20,30 +17,48 @@ exclusive; the searchable chat library with a device rail; `ask_user` and
 `show_media`; the Add context sheet and model menu; Codex 0.159.2. Details
 are in the sections below.
 
-`dev` was merged into `main` on branch `release/0.15.0` (one conflict, in
-this file, resolved by keeping dev's newer sections above main's 0.14.0
-record). The candidate was built from that merge commit on 2026-10-05 and
-passed the full local gate:
+`dev` was merged into `main` through PR #110 at
+`ee98514545a3c37f21be0debb1930b37139255e0`. Android CI passed on that main
+commit. The full local gate passed on the same application source:
 `test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
 :app:lintDevDebug --no-daemon` (1151 tasks, all executed, `BUILD
-SUCCESSFUL`); all five runtime staging Python tests passed; `git diff
---check` passed. The Dev Release APK was zip-aligned (4 bytes, 16 KB page
-alignment), signed with the local Android debug key (APK Signature Scheme v3
-verified), and read back with `aapt2` as package `dev.androidagent.app.dev`,
+SUCCESSFUL`). Local Gradle XML reports contain 2,044 test executions across
+variants, zero failures/errors and 16 skips. All 15 runtime staging Python
+tests passed on recheck; `git diff --check` passed. The Prod-specific gate,
+`:app:assembleProdRelease :app:lintProdRelease :app:testProdReleaseUnitTest
+--no-daemon --console=plain`, also passed: 137 unit tests, no skips/failures,
+and lint with 0 errors / 20 warnings. The Prod Release APK was zip-aligned
+(4 bytes, 16 KB page alignment), signed with the existing Android debug key
+(APK Signature Scheme v3 verified), and read back with `aapt2` as package
+`dev.androidagent.app`, label `Hey Mike`, not debuggable,
 version `0.15.0`, code 1100, `arm64-v8a` and `x86_64`. Its `lib/` holds only
 `lib*.so` files, including `libcodex_app_server.so`, `libcodex_codemode.so`,
 `libcodex_bwrap.so`, `libcodex_rg.so`, `libcodex_zsh.so` and `libld_musl.so`
 for arm64. Signer certificate SHA-256
 `f65c3469483d5b059543c7a67d369578bf3627a02795d77fc76a244444dda1ee`; APK
-SHA-256 `5a2a2cfa02740b01b85611d496462acc1260438a24574944635557c4d275e2dd`
+SHA-256 `ef3506026fac20687a514f45ffba9927738a53cba219a10679776bfdeb4dc8b4`
 (289,543,565 bytes).
 
-Still open when this was written: the exact APK has not been installed on a
-physical phone, and no device-tool task has run on it. Wireless ADB was off
-and no phone was approved for the install. Also open: production signing and
-package, the phone updater flow, first launch and account switching, broad
-device tools, voice, and the computer and Claude paths on real hardware. A
-passing build and gate do not establish these.
+The exact signed Prod APK was installed in place on a Nothing A059 (Android
+16), upgrading the regular app from 0.14.0 / 1019 to 0.15.0 / 1100. Read-back
+of the installed base APK has the same SHA-256 as the candidate; its package
+is not debuggable, and all eight packaged ARM64 libraries are present in
+`nativeLibraryDir`, including the app-server and code-mode helper.
+
+After the user accepted the updated consent screen, the regular app showed
+the existing Codex account and an existing chat. A new on-device GPT-6 Luna
+(medium) task, "Open the Settings app and tell me the Android version.",
+ran eight device calls in 29 seconds. The expanded tool record reports
+`apps_settings/open_app` with `ok=true` and `opened=true`; Settings was
+observed in the foreground. The task also used screen reads, a sequence and
+a tap. This proves device-tool dispatch and phone control in this exact
+non-debuggable Prod APK. The reply stopped before reporting the Android
+version number, so the full requested reading task is not claimed as passed.
+
+Remaining gaps: production-key signing, the updater flow, first launch and
+account switching, broad phone UI and device-tool tasks (including the
+incomplete Android-version answer), voice, and the computer and Claude paths
+on real hardware. These are not established by the build or smoke checks.
 
 ### Codex retries stay active and errors keep their chat — 2026-10-05
 
