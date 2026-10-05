@@ -103,6 +103,18 @@ class SetupChecklistTest {
         assertEquals(SetupState.BLOCKED, row(ready.copy(adbPhase = ConnectionPhase.ERROR), SetupItem.WIRELESS_ADB).state)
     }
 
+    @Test fun theAdbRowSaysWhetherTheSwitchOrThePairingIsMissing() {
+        val paired = ready.copy(adbPhase = ConnectionPhase.DISCONNECTED, adbPort = null, adbPaired = true)
+        // On but not connected yet is progress, not "off".
+        val on = row(paired.copy(adbWirelessDebugging = true), SetupItem.WIRELESS_ADB)
+        assertEquals(SetupState.WORKING, on.state)
+        assertEquals("Wireless debugging is on · connecting…", on.summary)
+        assertEquals("Wireless debugging is off", row(paired.copy(adbWirelessDebugging = false), SetupItem.WIRELESS_ADB).summary)
+        val dropped = row(paired.copy(adbPhase = ConnectionPhase.ERROR, adbPairingRejected = true), SetupItem.WIRELESS_ADB)
+        assertEquals(SetupState.BLOCKED, dropped.state)
+        assertEquals("Android dropped the pairing · pair again", dropped.summary)
+    }
+
     @Test fun aConnectedAdbRowNamesItsPort() {
         assertEquals("Connected · port 41231", row(ready, SetupItem.WIRELESS_ADB).summary)
         assertEquals("Connected", row(ready.copy(adbPort = null), SetupItem.WIRELESS_ADB).summary)

@@ -266,9 +266,14 @@ class AndroidRealtimeVoiceController(
         }
     }
 
-    suspend fun appendText(text: String) {
-        val threadId = activeThreadId ?: error("Voice is not active.")
-        engine.appendText(text, "user")
+    /**
+     * Add text to the live conversation. `user` is something the person typed;
+     * `developer` is context the app supplies, such as the screen behind the
+     * assistant panel, which the model should use but not answer.
+     */
+    suspend fun appendText(text: String, role: String = "user") {
+        activeThreadId ?: error("Voice is not active.")
+        engine.appendText(text, role)
     }
 
     /** Silence or restore the microphone without ending the conversation. */

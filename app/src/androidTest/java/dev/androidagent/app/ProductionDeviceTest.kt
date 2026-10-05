@@ -94,7 +94,7 @@ class ProductionDeviceTest {
                 graph.coordinator.send(session.id, "Open Android Settings and tell me which main settings sections you can see. Do not change any settings. Use the device tools, verify the result, then give a short final answer.", model = model, reasoningEffort = effort)
             }
             try {
-                withTimeout(180_000) { graph.coordinator.available.first { ready -> ready } }
+                withTimeout(180_000) { graph.coordinator.sessionStates.first { runs -> runs[session.id]?.active == false } }
                 val messages = graph.sessions.messages(session.id).first()
                 assertTrue(messages.any { it.role == "tool" })
                 val final = messages.last()

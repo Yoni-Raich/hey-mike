@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -45,7 +47,6 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Terminal
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -82,9 +83,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.a11y.A11yStatus
+import dev.androidagent.core.AccountUsageOverview
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ConnectionPhase
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
+import dev.androidagent.core.SetupChecklist
 import dev.androidagent.core.UsageSummary
 
 // The chat's top bar. The title opens the chats; the agent's sphere is the
@@ -126,13 +130,24 @@ internal fun a11yNote(status: A11yStatus): String = when {
     else -> "Off"
 }
 
-internal fun adbNote(status: AdbStatus): String = when (status.phase) {
-    ConnectionPhase.CONNECTED -> status.port?.let { "Connected · port $it" } ?: "Connected"
-    ConnectionPhase.DISCOVERING -> "Searching"
-    ConnectionPhase.PAIRING -> "Pairing"
-    ConnectionPhase.CONNECTING -> "Reconnecting"
-    ConnectionPhase.ERROR -> "Could not connect"
-    ConnectionPhase.DISCONNECTED -> "Not connected"
+internal fun adbNote(status: AdbStatus): String = SetupChecklist.adbSummary(status)
+
+/** What the Wireless ADB row's button does, when it has one. */
+internal enum class AdbFix { TURN_ON, PAIR, SET_UP }
+
+/**
+ * The one step that moves Wireless ADB forward. Switched off but paired:
+ * turn it on, from here when Mike can write the switch. Pairing dropped or
+ * never made: pair. Null while a connection is on its way.
+ */
+internal fun adbFix(status: AdbStatus): AdbFix? = when {
+    status.phase == ConnectionPhase.CONNECTED -> null
+    status.phase in setOf(ConnectionPhase.DISCOVERING, ConnectionPhase.PAIRING, ConnectionPhase.CONNECTING) -> null
+    status.pairingRejected -> AdbFix.PAIR
+    status.wirelessDebugging == false && status.paired -> AdbFix.TURN_ON
+    !status.paired -> AdbFix.PAIR
+    status.wirelessDebugging == true && status.phase == ConnectionPhase.DISCONNECTED -> null
+    else -> AdbFix.SET_UP
 }
 
 private val ReadyTeal = Color(0xFF83D9CA)
@@ -147,31 +162,40 @@ private val BackendTileInk = Color(0xFFE6E6E6)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDrawer: () -> Unit) {
-    var confirmNew by remember { mutableStateOf(false) }
     var showStatus by remember { mutableStateOf(false) }
-    if (confirmNew) {
-        AlertDialog(
-            onDismissRequest = { confirmNew = false },
-            title = { Text("Start a new chat?") },
-            text = { Text("The current task will keep running. New tasks will wait in the queue.") },
-            confirmButton = { TextButton(onClick = { confirmNew = false; actions.onNewChat() }) { Text("New chat") } },
-            dismissButton = { TextButton(onClick = { confirmNew = false }) { Text("Cancel") } },
-        )
-    }
     val title = state.activeSessionTitle?.takeIf { it.isNotBlank() } ?: "Hey Mike"
     TopAppBar(
         navigationIcon = { PanelButton(state, onOpenDrawer) },
         title = {
-            Text(
-                title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
-            )
+            Column {
+                Text(
+                    title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+                )
+                // Which machine this chat acts on, so a command is never sent
+                // to the computer by someone who thought it was the phone.
+                // It also says the phone is still in reach from there.
+                val binding = state.activeSessionId?.let(state.remoteBindings::get)
+                val computer = binding?.let { b -> state.computers.firstOrNull { it.id == b.computerId } }
+                if (binding != null && computer != null) {
+                    RemotePlace(computer.label, remoteFolderLabel(binding.cwd, state.activeSessionTitle))
+                } else if (state.activeSessionId != null) {
+                    // Which account answers here, since each chat keeps its own.
+                    Text(
+                        providerName(state.activeEngine),
+                        maxLines = 1,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         },
         actions = {
             AgentStatusButton(state) { showStatus = true }
-            IconButton(onClick = { if (state.runState.active) confirmNew = true else actions.onNewChat() }) {
+            // A running chat keeps running beside the new one, so there is nothing to confirm.
+            IconButton(onClick = actions.onNewChat) {
                 Icon(Icons.Outlined.EditNote, contentDescription = "New chat")
             }
         },
@@ -179,6 +203,43 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
     )
     if (showStatus) StatusSheet(state, actions) { showStatus = false }
 }
+
+/**
+ * Where a computer chat works, in words, each place with its icon: the
+ * computer and its folder, then this phone. It used to read "Server · name +"
+ * with a bare phone icon: the chat's own name said twice, and a plus sign that
+ * looked like a button.
+ */
+@Composable
+private fun RemotePlace(computer: String, folder: String?) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp)
+    val where = listOfNotNull(computer, folder).joinToString(" · ")
+    Row(
+        Modifier.semantics(mergeDescendants = true) { contentDescription = "Works on $where, and can also use this phone" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Computer, contentDescription = null, tint = muted, modifier = Modifier.size(14.dp))
+        Text(" $where", maxLines = 1, overflow = TextOverflow.Ellipsis, style = style, color = muted, modifier = Modifier.weight(1f, fill = false))
+        Text("  ·  ", style = style, color = muted)
+        Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, tint = muted, modifier = Modifier.size(14.dp))
+        Text(" This phone", maxLines = 1, style = style, color = muted)
+    }
+}
+
+/**
+ * The folder a computer chat works in, or null when it is the chat's own name:
+ * a subtitle that repeats its title says nothing. Compared by letters and
+ * digits only, so "stremio-cli-downloader" and "Stremio CLI downloader" match.
+ */
+internal fun remoteFolderLabel(cwd: String, chatTitle: String?): String? {
+    val folder = folderName(cwd).trim().takeIf { it.isNotEmpty() } ?: return null
+    if (chatTitle != null && sameName(folder, chatTitle)) return null
+    return folder
+}
+
+private fun sameName(a: String, b: String): Boolean =
+    a.filter(Char::isLetterOrDigit).equals(b.filter(Char::isLetterOrDigit), ignoreCase = true)
 
 // The way into the panel is a button of its own, so the chat name is only a
 // name. It also carries the panel's one urgent fact: a rule that is switched
@@ -216,7 +277,7 @@ private fun PanelButton(state: AgentUiState, onOpenDrawer: () -> Unit) {
 
 @Composable
 private fun AgentStatusButton(state: AgentUiState, onClick: () -> Unit) {
-    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runState.active)
+    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runs.isNotEmpty())
     val windows = remember(state.usageLimits) { UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L) }
     val primary = remember(windows) { UsageSummary.primary(windows) }
     val spoken = "${control.sentence()}. ${UsageSummary.spoken(primary)}. Open status and usage"
@@ -255,14 +316,14 @@ private fun AgentStatusButton(state: AgentUiState, onClick: () -> Unit) {
 @Composable
 private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss: () -> Unit) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runState.active)
+    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runs.isNotEmpty())
     val windows = remember(state.usageLimits) { UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L) }
     val dot = when (control.state) {
         ControlState.WORKING -> WorkingBlue
         ControlState.READY -> ReadyTeal
         ControlState.BLOCKED -> BlockedAmber
     }
-    val adbBusy = state.adbStatus.phase in setOf(ConnectionPhase.DISCOVERING, ConnectionPhase.PAIRING, ConnectionPhase.CONNECTING)
+    val adbFix = adbFix(state.adbStatus)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = StatusSheetFill) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 20.dp),
@@ -292,21 +353,46 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
                     title = "Wireless ADB",
                     note = adbNote(state.adbStatus),
                     on = state.adbStatus.phase == ConnectionPhase.CONNECTED,
-                    busy = adbBusy,
-                    fixLabel = "Set up",
-                    // Pairing lives in the app's settings; Wireless Debugging alone is not enough.
-                    onFix = { onDismiss(); actions.onOpenSettings() },
+                    busy = adbFix == null,
+                    fixLabel = when (adbFix) {
+                        AdbFix.TURN_ON -> "Turn on"
+                        AdbFix.PAIR -> "Pair"
+                        else -> "Set up"
+                    },
+                    onFix = when (adbFix) {
+                        // Stays open: the row turns into a spinner, then a check.
+                        AdbFix.TURN_ON -> actions.onTurnOnWireless
+                        // Pairing lives in the app's settings; the switch alone is not enough.
+                        else -> ({ onDismiss(); actions.onOpenSettings() })
+                    },
                 )
             }
-            StatusLabel("USAGE")
+            // The open chat's own account: Codex, or the Claude subscription.
+            StatusLabel("USAGE · ${providerName(state.activeEngine).uppercase()}")
             if (windows.isEmpty()) {
-                Text("Account quota is not available for this account yet.", fontSize = 13.sp, lineHeight = 18.sp, color = StatusMuted)
+                Text(
+                    if (state.activeEngine == EngineKind.CLAUDE) "Claude shares its 5-hour and weekly limits after your first message."
+                    else "Account quota is not available for this account yet.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = StatusMuted,
+                )
             }
             windows.forEach { window -> UsageWindowRow(window) }
-            TextButton(onClick = actions.onRefreshAccount, enabled = !state.isRefreshingAccount) {
+            // Claude's limits can be a reading saved before a restart: say how old it is.
+            val readAt = state.claude.usageReadAtMillis
+            if (state.activeEngine == EngineKind.CLAUDE && windows.isNotEmpty() && readAt != null) {
+                Text(
+                    AccountUsageOverview.readText(readAt, System.currentTimeMillis()),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = StatusMuted,
+                )
+            }
+            TextButton(onClick = actions.onRefreshUsage, enabled = !state.isRefreshingAccount) {
                 LoadingButtonContent(loading = state.isRefreshingAccount, icon = Icons.Outlined.Refresh, label = "Refresh usage", loadingLabel = "Refreshing…")
             }
-            if (state.savedAccounts.accounts.isNotEmpty()) {
+            if (state.savedAccounts.accounts.isNotEmpty() && state.activeEngine == EngineKind.CODEX) {
                 StatusLabel("ACCOUNT")
                 AccountSwitcher(state, actions)
             }

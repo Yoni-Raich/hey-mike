@@ -27,7 +27,29 @@ import kotlinx.serialization.json.JsonObject
 import java.io.File
 
 enum class ConnectionPhase { DISCONNECTED, DISCOVERING, PAIRING, CONNECTING, CONNECTED, ERROR }
-data class AdbStatus(val phase: ConnectionPhase = ConnectionPhase.DISCONNECTED, val message: String = "Not connected", val port: Int? = null)
+/**
+ * Mike's own ADB connection, plus what Android says about it. [phase] is the
+ * connection; the rest is why it is or is not there, so a phone whose
+ * Wireless debugging is on is never shown as "off" just because Mike is not
+ * connected yet.
+ */
+data class AdbStatus(
+    val phase: ConnectionPhase = ConnectionPhase.DISCONNECTED,
+    val message: String = "Not connected",
+    val port: Int? = null,
+    /** Android's Wireless debugging switch; null when it cannot be read. */
+    val wirelessDebugging: Boolean? = null,
+    /** Mike holds a pairing identity. */
+    val paired: Boolean = false,
+    /**
+     * adbd refused that identity: Android dropped the pairing, which it does
+     * after 7 days without a connection or when authorizations are revoked.
+     * Only pairing again fixes it, so retrying is pointless.
+     */
+    val pairingRejected: Boolean = false,
+    /** Mike can flip Wireless debugging on itself, without opening Settings. */
+    val canSwitchOn: Boolean = false,
+)
 data class AdbEndpoint(val port: Int, val pairing: Boolean, val host: String = "127.0.0.1")
 data class CommandResult(val output: String, val exitCode: Int)
 interface AdbTransport {
@@ -43,17 +65,50 @@ interface AdbTransport {
 }
 
 @Serializable
-data class ChatSession(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val engineThreadId: String? = null)
+/**
+ * [hasMessages] is false for a chat nobody has written in yet: it is not history, and it is not kept.
+ *
+ * [engine] runs the chat's next turn and [engineThreadId] is that engine's
+ * thread. A chat can change engine between turns: the thread it leaves waits
+ * in [parked], and [catchUpFrom] says what the engine it moves to has missed.
+ */
+data class ChatSession(
+    val id: String,
+    val title: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val engineThreadId: String? = null,
+    val hasMessages: Boolean = true,
+    val engine: EngineKind = EngineKind.CODEX,
+    /** The thread of each engine this chat is not running on now. */
+    val parked: Map<EngineKind, ParkedThread> = emptyMap(),
+    /** Messages newer than this have not reached [engine]'s thread yet. Null when it has seen them all. */
+    val catchUpFrom: Long? = null,
+)
+
+/** An engine's thread for a chat that now runs on another engine, and the time up to which it saw the chat. */
+@Serializable
+data class ParkedThread(val threadId: String, val seenUntil: Long)
 @Serializable
 data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
 interface SessionStore {
     val sessions: StateFlow<List<ChatSession>>
-    suspend fun createSession(): ChatSession
+    /** A new chat that starts on [engine]. */
+    suspend fun createSession(engine: EngineKind): ChatSession
+    suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
     suspend fun getSession(id: String): ChatSession?
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
     suspend fun setThread(sessionId: String, threadId: String)
+    /**
+     * Run the chat's next turn on [engine]. The thread of the engine it leaves
+     * is kept, and the one it had on [engine] before, if any, comes back; see
+     * [EngineSwitch]. Nothing changes when the chat already runs on [engine].
+     */
+    suspend fun setEngine(sessionId: String, engine: EngineKind) {}
+    /** The chat's engine has now been given everything said so far. */
+    suspend fun markCaughtUp(sessionId: String) {}
     suspend fun rename(sessionId: String, title: String)
     suspend fun deleteSession(sessionId: String)
     fun workspace(sessionId: String): File
@@ -71,6 +126,37 @@ interface RuntimeHost {
     suspend fun prepare()
     suspend fun startAppServer(): Process
     suspend fun stop()
+}
+
+/** Which agent engine runs a turn. A chat can change it between turns. */
+@Serializable
+enum class EngineKind { CODEX, CLAUDE }
+
+/** The engine's short name in the app's own words: "Codex" or "Claude". */
+val EngineKind.label: String
+    get() = when (this) {
+        EngineKind.CODEX -> "Codex"
+        EngineKind.CLAUDE -> "Claude"
+    }
+
+/**
+ * Launches the official, unmodified Claude Code binary on this phone.
+ *
+ * The binary is downloaded at first run and never bundled or patched. The
+ * host owns the loader, the private config dir, the network proxy and the
+ * environment; engines only pass `claude` arguments.
+ */
+interface ClaudeProcessHost {
+    /** Install state of the pinned binary; READY once it is present and verified. */
+    val status: StateFlow<RuntimeStatus>
+    /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its files. */
+    val homeDirectory: File
+    /** Download and verify the pinned binary if needed. Fails closed on any mismatch. */
+    suspend fun prepare()
+    /** Start `claude <args>` in [workingDirectory] with [extraEnv] on top of the host environment. */
+    suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String> = emptyMap()): Process
+    /** Stop every process this host started. */
+    suspend fun stopAll()
 }
 
 data class ToolDefinition(val name: String, val description: String, val inputSchema: JsonObject)
@@ -92,6 +178,10 @@ data class AgentModel(
     val displayName: String = id,
     val reasoningEfforts: List<ReasoningEffortOption> = emptyList(),
     val defaultReasoningEffort: String? = null,
+    /** A short line shown under the name in the picker; empty when the engine gives none. */
+    val description: String = "",
+    /** The engine that runs this model. Picking the model picks the engine. */
+    val engine: EngineKind = EngineKind.CODEX,
 )
 
 /** Skill metadata returned by Codex's native skills/list catalog. */
@@ -143,6 +233,11 @@ sealed interface EngineEvent {
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    /** One Codex item. The router marks it remote before it reaches chat history. */
+    data class ItemActivity(
+        val itemId: String, val title: String, val detail: String, val state: String,
+        val threadId: String, val turnId: String, val remote: Boolean = false,
+    ) : EngineEvent
     data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent
@@ -152,9 +247,31 @@ interface AgentEngine {
     val events: Flow<EngineEvent>
     suspend fun connect()
     suspend fun account(): AccountStatus
+    /**
+     * Get ready to run chats of [kind]. An engine that runs one kind ignores
+     * it; a router connects only the engine that kind needs.
+     */
+    suspend fun connect(kind: EngineKind) = connect()
+    /** The sign-in that runs chats of [kind]. */
+    suspend fun account(kind: EngineKind): AccountStatus = account()
+    /**
+     * [connect] for the chat whose folder is [workspace]. A chat that runs
+     * somewhere else, such as on a computer, may need a different engine of
+     * the same kind than a chat on this phone.
+     */
+    suspend fun connect(kind: EngineKind, workspace: File) = connect(kind)
+    /** [account] for the chat whose folder is [workspace]: the sign-in its turn will run on. */
+    suspend fun account(kind: EngineKind, workspace: File): AccountStatus = account(kind)
     suspend fun refreshUsage() {}
     suspend fun login(): AccountStatus
     suspend fun logout()
+    /**
+     * Finish a sign-in that needs the user to paste a code back, as Claude
+     * Code's browser login does. The engine only relays the code to its own
+     * login process; it never keeps it.
+     */
+    suspend fun completeLogin(code: String): AccountStatus =
+        throw UnsupportedOperationException("This engine does not take a pasted sign-in code.")
     suspend fun models(): List<String>
     /**
      * Return model metadata when the engine can provide it. The default keeps
@@ -292,7 +409,11 @@ interface RealtimeVoiceEngine {
 }
 
 enum class RunPhase { IDLE, STARTING, THINKING, TOOL, CONTROLLING, STOPPING, ERROR }
-data class RunState(val phase: RunPhase = RunPhase.IDLE, val sessionId: String? = null, val status: String = "Ready", val controlling: Boolean = false, val approval: EngineEvent.Approval? = null, val toolName: String? = null) {
+data class RunState(
+    val phase: RunPhase = RunPhase.IDLE, val sessionId: String? = null, val status: String = "Ready", val controlling: Boolean = false, val approval: EngineEvent.Approval? = null, val toolName: String? = null,
+    /** What the agent asked with `ask_user` and is waiting on. */
+    val question: UserQuestion? = null,
+) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
 
     /**

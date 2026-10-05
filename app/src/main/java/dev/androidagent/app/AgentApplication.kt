@@ -29,6 +29,7 @@ import dev.androidagent.automations.AutomationHost
 import dev.androidagent.automations.AutomationHostOwner
 import dev.androidagent.core.AccountUsageBook
 import dev.androidagent.core.AgentCoordinator
+import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.AutomationJournal
 import dev.androidagent.core.AutomationLibrary
 import dev.androidagent.core.AutomationToolGateway
@@ -36,6 +37,7 @@ import dev.androidagent.core.CodexAccountVault
 import dev.androidagent.core.CompositeDeviceToolGateway
 import dev.androidagent.core.KnowledgeStore
 import dev.androidagent.core.KnowledgeToolGateway
+import dev.androidagent.core.LastUsageStore
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.WorkflowConfirmationOutcome
 import dev.androidagent.core.WorkflowCallMetadata
@@ -46,7 +48,13 @@ import dev.androidagent.core.WorkflowToolGateway
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.devicetools.AndroidDeviceTools
 import dev.androidagent.devicetools.AndroidCapabilityTools
+import dev.androidagent.devicetools.PhoneStoragePlace
+import dev.androidagent.engineclaude.ClaudeCodeEngine
+import dev.androidagent.engineclaude.McpToolServer
+import dev.androidagent.engineclaude.McpToolServerFactory
 import dev.androidagent.enginecodex.CodexEngine
+import dev.androidagent.mcp.LoopbackMcpServer
+import dev.androidagent.runtime.AndroidClaudeHost
 import dev.androidagent.overlay.FloatingControlOverlay
 import dev.androidagent.runtime.AndroidRuntimeHost
 import dev.androidagent.workspace.LocalSessionStore
@@ -70,33 +78,102 @@ class AgentApplication : Application(), AutomationHostOwner {
 }
 
 class AgentGraph(private val app: Application) {
+    private fun bringAppForward() {
+        runCatching {
+            app.startActivity(
+                android.content.Intent(app, MainActivity::class.java).addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+                ),
+            )
+        }
+    }
+
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
-    val engine = CodexEngine(runtime)
+    /** The phone's own Codex. */
+    val phoneEngine = CodexEngine(runtime)
+    /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
+    val computers = dev.androidagent.remote.RemoteStore(
+        java.io.File(app.filesDir, "remote/computers.bin"),
+        dev.androidagent.remote.KeystoreSecretBox(),
+    )
+    val remote = dev.androidagent.remote.RemoteHub(
+        computers,
+        authTokens = { refresh, previous ->
+            dev.androidagent.remote.PhoneAccountTokens(
+                phoneEngine,
+                java.io.File(runtime.codexHomeDirectory, "auth.json"),
+            ).current(refresh, previous)
+        },
+        claudeScratch = java.io.File(runtime.runtimeRoot, "claude-computers"),
+    )
+    /**
+     * Anthropic's Claude Code on this phone. Never bundled: it is downloaded
+     * only when the user asks in Settings or onboarding, then run unmodified
+     * through the packaged musl loader.
+     */
+    val claudeHost = AndroidClaudeHost(app)
+    /**
+     * Claude chats. One `claude` process per open chat, each with its own
+     * loopback MCP server for the phone tools; the engine itself never
+     * downloads anything.
+     */
+    val claudeEngine = ClaudeCodeEngine(
+        claudeHost,
+        toolServers = McpToolServerFactory { name, tools, call ->
+            val server = LoopbackMcpServer(name, tools, call)
+            object : McpToolServer {
+                override fun start() = server.start().claudeMcpConfig(name)
+                override fun stop() = server.stop()
+            }
+        },
+    )
+    /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
+    val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     // The last quota of every saved account, for the home screen widget.
     val usageBook = AccountUsageBook(java.io.File(runtime.runtimeRoot, "accounts/usage.json"))
+    // Claude's last 5-hour and weekly limits, so the usage sheet has them after a restart.
+    val claudeUsage = LastUsageStore(java.io.File(runtime.runtimeRoot, "claude-usage.json"))
     val adb = AndroidAdbTransport(app)
-    private lateinit var runCoordinator: AgentCoordinator
+    private lateinit var runCoordinator: AgentRuns
     // Declared before the gateways: they take `overlay` as a constructor argument,
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
         onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
-        onSend = { text -> runCoordinator.steer(text) },
+        onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
     )
     // One counter for every backend, so an observation revision never moves
     // backwards when a call falls through from one gateway to another.
     private val observations = ObservationState()
+    /** The copy moving between places now, for the progress banner. */
+    val transfers = dev.androidagent.core.TransferMeter(scope)
+    /**
+     * copy_file: this chat's folder, the phone's shared storage and every
+     * saved computer as places. A use case is a recipe in the
+     * files-across-devices skill, never another tool.
+     */
+    val copyFiles = dev.androidagent.core.CopyFileGateway(
+        phone = PhoneStoragePlace(app, adb),
+        computers = { remote.filePlaces() },
+        home = { workspace -> remote.fileHome(workspace) },
+        meter = transfers,
+        scratch = java.io.File(app.cacheDir, "copies"),
+    )
     val adbTools = AndroidDeviceTools(
         adb,
         BuildConfig.APPLICATION_ID + "/dev.androidagent.app.ime.AgentInputMethodService",
         observations,
         { x, y -> overlay.avoidTouch(x, y) },
-    ) { hidden -> overlay.setCaptureHidden(hidden) }
+        { hidden -> overlay.setCaptureHidden(hidden) },
+        // install_apk takes a file already on the phone, named as copy_file names it.
+        phoneFile = { address, workspace -> copyFiles.phoneFile(address, workspace) },
+    )
     val a11yTools = A11yDeviceTools(
         app,
         observations,
@@ -210,34 +287,62 @@ class AgentGraph(private val app: Application) {
         // next due; without this it waited for an unrelated firing to be armed.
         onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
     )
+    /** What the computers tool asks the screen to show; the view model clears it. */
+    val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
+    /** The user's computers, from any chat. Passwords and bindings stay with the app. */
+    val computerTools = dev.androidagent.remote.ComputerToolGateway(
+        remote, sessions, computerRequests,
+        bringToForeground = ::bringAppForward,
+    )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, capabilityTools, a11yTools, adbTools),
+        listOf(
+            workflowTools, knowledgeTools, automationTools, computerTools, copyFiles,
+            // ask_user and show_media: listed here, answered by each chat's own coordinator.
+            dev.androidagent.core.ChatToolGateway(),
+            capabilityTools, a11yTools, adbTools,
+        ),
     )
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
-    val coordinator: AgentCoordinator
+    /**
+     * Pictures and videos Mike showed from a computer: loaded when looked at,
+     * kept in a cache the system may clear, saved to the phone on request.
+     */
+    val remoteMedia = RemoteMediaLoader(
+        scope = scope,
+        cacheDir = java.io.File(app.cacheDir, "remote-media"),
+        fetch = { ref, target, progress -> copyFiles.fetchRemote(ref, target, progress) },
+        save = { ref, file -> copyFiles.saveToPhone(file, ref.savePath) },
+    )
+    /** The app's own window is on screen. */
+    val appInFront = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** The chat the app shows, so a question for it is not also sent as a notification. */
+    val openChat = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** A question a chat asked while its card is not on screen goes to the notification shade. */
+    val questions: QuestionNotifier
+    /** Every chat's run: several at once, with the phone to one of them at a time. */
+    val coordinator: AgentRuns
         get() = runCoordinator
     val queue: SessionRunQueue
+    /** The live voice conversation, shared by the chat screen and the assistant panel. */
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
-        runCoordinator = AgentCoordinator(
-            scope, engine, sessions, tools, overlay,
-            sendGrants = sendGrants,
-            adbStatus = { adb.status.value },
-            // An approval card lives only in the app, and device control means
-            // the app is not in front. Raising it is what makes the approval
-            // answerable at all.
-            bringToForeground = {
-                runCatching {
-                    app.startActivity(
-                        android.content.Intent(app, MainActivity::class.java).addFlags(
-                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
-                        ),
-                    )
-                }
-            },
-        )
+        runCoordinator = AgentRuns(scope, engine) { share ->
+            AgentCoordinator(
+                scope, engine, sessions, tools, overlay,
+                sendGrants = sendGrants,
+                adbStatus = { adb.status.value },
+                // An approval card lives only in the app, and device control means
+                // the app is not in front. Raising it is what makes the approval
+                // answerable at all.
+                bringToForeground = ::bringAppForward,
+                share = share,
+                // show_media reads addresses as copy_file does: this chat, the phone, a computer.
+                chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
+            )
+        }
+        questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)
         queue = SessionRunQueue(
             scope,
             coordinator,
@@ -272,8 +377,12 @@ class AgentGraph(private val app: Application) {
         // now, so the first arming happens here rather than at the first event.
         runCatching { automationHost.start() }
         runCatching {
-            WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app)
+            // Claude reads the same skills from its own home.
+            WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app, claudeHost.homeDirectory)
         }
+        // Report a binary downloaded in an earlier run as ready. This checks
+        // its hash and never downloads.
+        scope.launch(Dispatchers.IO) { runCatching { claudeHost.installer.refresh() } }
         // Separate from the skills so a failed skill install cannot leave the
         // user without their preferences, or the reverse.
         runCatching {

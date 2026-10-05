@@ -23,7 +23,9 @@ package dev.androidagent.core
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -107,6 +109,104 @@ class AgentCoordinatorTest {
         rig.coordinator.send("one", "Clean up my inbox", model = "gpt-5.6-luna", planMode = true)
         runCurrent()
         assertEquals("gpt-5.6-luna", rig.engine.planModel)
+        rig.close()
+    }
+
+    @Test fun aClaudeChatChecksTheClaudeSignInAndSaysClaude() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("claude", "Read my screen")
+        assertEquals("Starting Claude", rig.coordinator.state.value.status)
+        runCurrent()
+        assertEquals(listOf(EngineKind.CLAUDE), rig.engine.connectedKinds)
+        assertEquals(listOf(EngineKind.CLAUDE), rig.engine.accountKinds)
+        assertEquals(1, rig.engine.turns)
+        rig.close()
+    }
+
+    @Test fun aCodexChatStillChecksTheCodexSignIn() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read my screen")
+        assertEquals("Starting Codex", rig.coordinator.state.value.status)
+        runCurrent()
+        assertEquals(listOf(EngineKind.CODEX), rig.engine.accountKinds)
+        rig.close()
+    }
+
+    @Test fun aTurnForTheOtherEngineMovesTheChatAndCarriesWhatWasSaid() = runTest {
+        val rig = Rig(this)
+        rig.engine.threads = mapOf(EngineKind.CODEX to "codex-thread", EngineKind.CLAUDE to "claude-thread")
+        rig.coordinator.send("one", "Open my alarms")
+        runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("Your alarms are open.", "codex-thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "codex-thread", turnId = "turn"))
+        advanceUntilIdle()
+        assertEquals(listOf("Open my alarms"), rig.engine.prompts)
+
+        rig.coordinator.send("one", "Now set one for 7", model = "sonnet", engineKind = EngineKind.CLAUDE)
+        assertEquals("Starting Claude", rig.coordinator.state.value.status)
+        runCurrent()
+
+        val session = rig.store.getSession("one")!!
+        assertEquals(EngineKind.CLAUDE, session.engine)
+        assertEquals("claude-thread", session.engineThreadId)
+        assertEquals("codex-thread", session.parked[EngineKind.CODEX]?.threadId)
+        assertEquals(listOf(EngineKind.CODEX, EngineKind.CLAUDE), rig.engine.accountKinds)
+        // Claude never saw the chat: it is told what was said, then the new message.
+        val prompt = rig.engine.prompts.last()
+        assertTrue(prompt.startsWith("[Earlier in this chat]"))
+        assertTrue("User: Open my alarms\nMike: Your alarms are open.\n" in prompt)
+        assertTrue(prompt.endsWith("[End of earlier messages]\n\nNow set one for 7"))
+        // The chat shows only what the user typed.
+        assertEquals(listOf("Open my alarms", "Now set one for 7"), rig.store.messages.filter { it.role == "user" }.map { it.text })
+        assertNull(session.catchUpFrom)
+        rig.close()
+    }
+
+    @Test fun anEngineThatIsUpToDateGetsThePromptAsTyped() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "First")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        advanceUntilIdle()
+        rig.coordinator.send("one", "Second", engineKind = EngineKind.CODEX)
+        runCurrent()
+        assertEquals(listOf("First", "Second"), rig.engine.prompts)
+        rig.close()
+    }
+
+    @Test fun aThreadTheEngineLostIsGivenTheChatAgain() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "First")
+        runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("Done.", "thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        advanceUntilIdle()
+        // The engine cannot resume the stored thread and hands back a new one.
+        rig.engine.threads = mapOf(EngineKind.CODEX to "fresh-thread")
+        rig.coordinator.send("one", "Second")
+        runCurrent()
+        assertTrue(rig.engine.prompts.last().startsWith("[Earlier in this chat]"))
+        assertTrue("User: First\nMike: Done.\n" in rig.engine.prompts.last())
+        rig.close()
+    }
+
+    @Test fun aSignedOutClaudeChatAsksForTheClaudeSignIn() = runTest {
+        val rig = Rig(this)
+        rig.engine.signedOut += EngineKind.CLAUDE
+        rig.coordinator.send("claude", "Read my screen")
+        runCurrent()
+        assertEquals(0, rig.engine.turns)
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text == "Sign in to Claude in Settings first." })
+        rig.close()
+    }
+
+    @Test fun aClaudeTurnThatFailsWithoutAReasonNamesClaude() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("claude", "Read my screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("failed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text == "Claude could not finish" })
         rig.close()
     }
 
@@ -689,6 +789,120 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aQuestionWaitsForTheUsersChoiceWithoutTakingThePhone() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Book a table")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject {
+            put("question", "Which evening?")
+            put("options", kotlinx.serialization.json.buildJsonArray {
+                add(kotlinx.serialization.json.JsonPrimitive("Friday")); add(kotlinx.serialization.json.JsonPrimitive("Saturday"))
+            })
+        }, "thread", "turn"))
+        runCurrent()
+
+        val question = rig.coordinator.state.value.question!!
+        assertEquals("Which evening?", question.question)
+        assertEquals(listOf("Friday", "Saturday"), question.options)
+        assertEquals("Waiting for your answer", rig.coordinator.state.value.status)
+        // The gateway was never armed: a question must not hold the phone.
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        assertTrue(rig.engine.answers.isEmpty())
+
+        // "2" is how the notification lists the second option.
+        assertTrue(rig.coordinator.answerQuestion(question.id, "2"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.question)
+        val answer = rig.engine.answers.single()
+        assertTrue(answer.success)
+        assertEquals("Saturday", Json.parseToJsonElement(answer.text).jsonObject["answer"]!!.jsonPrimitive.content)
+        // Asked and answered, in the chat's own words.
+        assertEquals(listOf("assistant" to "Which evening?", "user" to "Saturday"), rig.store.messages.takeLast(2).map { it.role to it.text })
+        rig.close()
+    }
+
+    @Test fun whatTheUserTypesWhileAQuestionWaitsIsItsAnswerNotASteer() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Rename the file")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject { put("question", "What name?") }, "thread", "turn"))
+        runCurrent()
+        rig.coordinator.steer("report-final.pdf")
+        runCurrent()
+        assertTrue(rig.engine.steers.isEmpty())
+        assertTrue(rig.engine.answers.single().text.contains("report-final.pdf"))
+        rig.close()
+    }
+
+    @Test fun aQuestionNobodyAnswersOrThatIsSkippedSaysWhich() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Plan")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q1", "ask_user", buildJsonObject { put("question", "Go on?") }, "thread", "turn"))
+        runCurrent()
+        val first = rig.coordinator.state.value.question!!.id
+        assertFalse(rig.coordinator.answerQuestion("not-this-one", "yes"))
+        assertFalse(rig.coordinator.answerQuestion(first, "   "))
+        assertTrue(rig.coordinator.answerQuestion(first, null))
+        runCurrent()
+        assertTrue(rig.engine.answers.single().text.contains("skipped"))
+
+        rig.engine.emit(EngineEvent.ToolCall("q2", "ask_user", buildJsonObject { put("question", "Still there?") }, "thread", "turn"))
+        runCurrent()
+        advanceTimeBy(ChatTools.ASK_TIMEOUT_MS + 1_000)
+        runCurrent()
+        assertNull(rig.coordinator.state.value.question)
+        assertTrue(rig.engine.answers.last().text.contains("no_answer"))
+        assertTrue(rig.coordinator.state.value.active)
+        rig.close()
+    }
+
+    @Test fun stoppingARunTakesItsQuestionDown() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Plan")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject { put("question", "Go on?") }, "thread", "turn"))
+        runCurrent()
+        val id = rig.coordinator.state.value.question!!.id
+        rig.coordinator.stop()
+        assertNull(rig.coordinator.state.value.question)
+        assertFalse(rig.coordinator.answerQuestion(id, "yes"))
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(rig.engine.answers.isEmpty())
+        rig.close()
+    }
+
+    @Test fun showMediaPutsTheFilesInOneMessageAndLeavesOutWhatIsNotMedia() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Show me the clip")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("m", "show_media", buildJsonObject {
+            put("files", kotlinx.serialization.json.buildJsonArray {
+                listOf("Server:/clips/demo.mp4", "chat:shot.png", "notes.txt", "phone:gone.jpg").forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+            })
+            put("caption", "Here it is")
+        }, "thread", "turn"))
+        runCurrent()
+
+        // notes.txt is refused by its name, before anything is fetched.
+        assertEquals(listOf("Server:/clips/demo.mp4", "chat:shot.png", "phone:gone.jpg"), rig.fetched)
+        val message = rig.store.messages.last()
+        assertEquals("assistant", message.role)
+        assertEquals("Here it is", message.text)
+        assertEquals(listOf("demo.mp4", "shot.png"), message.attachmentPaths.map(ChatTools::displayName))
+        // The computer's file is held as a reference with its size; only the chat's own file is a path.
+        assertEquals(RemoteMediaRef("Server", "/clips/demo.mp4", 2_048), RemoteMediaRef.parse(message.attachmentPaths[0]))
+        assertNull(RemoteMediaRef.parse(message.attachmentPaths[1]))
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals(2, result["shown"]!!.jsonArray.size)
+        assertEquals(listOf("demo.mp4"), result["notCopied"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(2, result["notShown"]!!.jsonArray.size)
+        assertTrue(rig.tools.revoked)
+        rig.close()
+    }
+
     private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore()) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
@@ -697,6 +911,8 @@ class AgentCoordinatorTest {
         val tools = FakeTools(overlay)
         val adbStatus = MutableStateFlow(AdbStatus())
         var foregroundRequests = 0
+        /** Addresses show_media asked for, in order. */
+        val fetched = mutableListOf<String>()
         val coordinator = AgentCoordinator(
             scope, engine, store, tools, overlay,
             sendGrants = grants,
@@ -704,6 +920,13 @@ class AgentCoordinatorTest {
             // The test's own clock, so a reported duration is exactly the time
             // the test advanced rather than how fast the machine ran.
             nowNanos = { test.testScheduler.currentTime * 1_000_000 },
+            chatMedia = { address, workspace ->
+                fetched += address
+                require(!address.contains("gone")) { "No such file." }
+                // A file on a computer is a reference, not a copy.
+                if (address.startsWith("Server:")) RemoteMediaRef("Server", address.removePrefix("Server:"), 2_048).encode()
+                else File(workspace, address.substringAfterLast(':').substringAfterLast('/')).path
+            },
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }
@@ -720,14 +943,26 @@ class AgentCoordinatorTest {
         var waitForInterrupt: CompletableDeferred<Unit>? = null
         val answers = mutableListOf<ToolResult>()
         val approvalAnswers = mutableListOf<Pair<String, Boolean>>()
+        val connectedKinds = mutableListOf<EngineKind>()
+        val accountKinds = mutableListOf<EngineKind>()
+        val signedOut = mutableSetOf<EngineKind>()
+        /** The thread each engine opens; "thread" when not set. */
+        var threads = emptyMap<EngineKind, String>()
+        val prompts = mutableListOf<String>()
+        private var kind = EngineKind.CODEX
         suspend fun emit(value: EngineEvent) = stream.emit(value)
         override suspend fun connect() = Unit
+        override suspend fun connect(kind: EngineKind) { connectedKinds += kind; this.kind = kind }
         override suspend fun account() = AccountStatus(true, "Test")
+        override suspend fun account(kind: EngineKind): AccountStatus {
+            accountKinds += kind
+            return AccountStatus(kind !in signedOut, "Test")
+        }
         override suspend fun login() = account()
         override suspend fun logout() = Unit
         override suspend fun models() = listOf("test")
-        override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>) = "thread"
-        override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String { turns++; return "turn" }
+        override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>) = threads[kind] ?: "thread"
+        override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String { turns++; prompts += prompt; return "turn" }
         override suspend fun startTurn(threadId: String, prompt: String, images: List<File>, reasoningEffort: String?): String {
             this.reasoningEffort = reasoningEffort
             return startTurn(threadId, prompt, images)
@@ -778,16 +1013,24 @@ class AgentCoordinatorTest {
         var queued = emptyList<QueuedTurn>()
         override suspend fun loadQueuedTurns() = queued
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
-        override val sessions = MutableStateFlow(listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0)))
+        override val sessions = MutableStateFlow(
+            listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0), ChatSession("claude", "Claude", 0, 0, engine = EngineKind.CLAUDE)),
+        )
         val messages = mutableListOf<ChatMessage>()
         val traces = mutableListOf<JsonObject>()
-        override suspend fun createSession() = sessions.value.first()
+        override suspend fun createSession(engine: EngineKind) = sessions.value.first()
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }
         override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
-        override suspend fun setThread(sessionId: String, threadId: String) = Unit
+        private fun change(sessionId: String, change: (ChatSession) -> ChatSession) {
+            sessions.value = sessions.value.map { if (it.id == sessionId) change(it) else it }
+        }
+        override suspend fun setThread(sessionId: String, threadId: String) = change(sessionId) { it.copy(engineThreadId = threadId) }
+        override suspend fun setEngine(sessionId: String, engine: EngineKind) =
+            change(sessionId) { EngineSwitch.switch(it.copy(hasMessages = messages.any { m -> m.sessionId == sessionId }), engine, now = messages.size.toLong()) }
+        override suspend fun markCaughtUp(sessionId: String) = change(sessionId) { it.copy(catchUpFrom = null) }
         override suspend fun rename(sessionId: String, title: String) = Unit
         override suspend fun deleteSession(sessionId: String) = Unit
         override fun workspace(sessionId: String) = File("session-$sessionId")

@@ -202,7 +202,7 @@ class ChatUiTest {
             )
         }
         compose.onNodeWithContentDescription("Choose model and reasoning").performClick()
-        compose.onNodeWithText("high").performClick()
+        compose.onNodeWithText("High").performClick()
         compose.runOnIdle { assertEquals("high", selected) }
     }
     @Test fun markdownAndCopyControlAreVisible() {

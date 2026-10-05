@@ -22,6 +22,8 @@ package dev.androidagent.app.ui
 
 import dev.androidagent.core.EngineEvent
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -48,6 +50,61 @@ class ApprovalSummaryTest {
         assertEquals(listOf("To" to "+972587160002", "Message" to "היי"), summary.lines)
     }
 
+    @Test fun aComputerCommandShowsTheCommandAndWhere() {
+        val summary = EngineEvent.Approval(
+            requestId = "remote|pc|4",
+            method = "item/commandExecution/requestApproval",
+            details = buildJsonObject {
+                put("command", "npm install")
+                put("cwd", "C:\\src\\app")
+                put("reason", "Install the project's packages")
+            },
+        ).summary()
+        assertEquals("Run this on the computer?", summary.headline)
+        assertEquals(
+            listOf("Command" to "npm install", "In" to "C:\\src\\app", "Why" to "Install the project's packages"),
+            summary.lines,
+        )
+    }
+
+    @Test fun claudeOnAComputerAsksInTheSameWordsAsCodex() {
+        val command = EngineEvent.Approval(
+            requestId = "remote-claude|pc|claude-ask-1",
+            method = "claude/can_use_tool",
+            details = buildJsonObject {
+                put("tool", "Bash")
+                put("kind", "command")
+                put("command", "curl -s https://example.com -o out.html")
+                put("reason", "Fetch https://example.com and save to out.html")
+                put("cwd", "C:\\src\\app")
+            },
+        ).summary()
+        assertEquals("Run this on the computer?", command.headline)
+        assertEquals(
+            listOf(
+                "Command" to "curl -s https://example.com -o out.html",
+                "In" to "C:\\src\\app",
+                "Why" to "Fetch https://example.com and save to out.html",
+            ),
+            command.lines,
+        )
+
+        val file = EngineEvent.Approval(
+            requestId = "remote-claude|pc|claude-ask-2",
+            method = "claude/can_use_tool",
+            details = buildJsonObject { put("tool", "Write"); put("kind", "file"); put("path", "C:\\Windows\\notes.txt") },
+        ).summary()
+        assertEquals("Change this file on the computer?", file.headline)
+        assertEquals(listOf("File" to "C:\\Windows\\notes.txt"), file.lines)
+
+        val other = EngineEvent.Approval(
+            requestId = "remote-claude|pc|claude-ask-3",
+            method = "claude/can_use_tool",
+            details = buildJsonObject { put("tool", "WebFetch"); put("kind", "tool"); put("input", "{\"url\":\"https://example.com\"}") },
+        ).summary()
+        assertEquals("Let Mike use WebFetch on the computer?", other.headline)
+    }
+
     @Test fun anIntentWithNoUriNamesItsAction() {
         val summary = EngineEvent.Approval(
             requestId = "p",
@@ -61,6 +118,21 @@ class ApprovalSummaryTest {
         assertEquals("Open this?", summary.headline)
         assertEquals(
             listOf("What" to "Start a payment. (AMOUNT=10)", "Action" to "CHECKOUT", "App" to "com.example.pay"),
+            summary.lines,
+        )
+    }
+
+    @Test fun computerPermissionsNameTheRequestedAccessAndItsDuration() {
+        val summary = EngineEvent.Approval(
+            requestId = "remote|pc|4",
+            method = "item/permissions/requestApproval",
+            details = Json.parseToJsonElement(
+                """{"reason":"Copy the report","cwd":"C:\\project","permissions":{"network":{"enabled":true},"fileSystem":{"read":["C:\\reports"],"write":["C:\\shared"],"entries":[{"path":{"type":"path","path":"D:\\output"},"access":"write"}]}}}""",
+            ).jsonObject,
+        ).summary()
+        assertEquals(
+            listOf("Why" to "Copy the report", "In" to "C:\\project", "Network" to "Allow access",
+                "Read files" to "C:\\reports", "Change files" to "C:\\shared", "Change files" to "D:\\output", "For" to "This turn only"),
             summary.lines,
         )
     }

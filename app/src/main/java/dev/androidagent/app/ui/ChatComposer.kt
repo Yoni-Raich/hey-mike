@@ -69,7 +69,10 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,6 +87,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -115,8 +119,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.androidagent.app.ChatEngines
 import dev.androidagent.core.AgentSkill
-import dev.androidagent.core.ReasoningEffortOption
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
 import dev.androidagent.core.VoicePhase
@@ -127,16 +131,34 @@ import dev.androidagent.core.VoicePhase
 // Stop is never more than one tap away. Model and reasoning share one chip
 // under the field, which opens a sheet.
 
-private val FieldBorder = Color(0xFF383838)
-private val FieldBorderFocused = Color(0xFF4A4A4A)
-private val ChipBorder = Color(0xFF333333)
+// Outlines are what mark a field or a chip as one, so they need 3:1 against
+// the black behind them (WCAG 1.4.11). The old #383838, #4A4A4A and #333333
+// measured 1.8, 2.4 and 1.7, and the chips read as disabled.
+private val FieldBorder = Color(0xFF5C5C5C)
+private val FieldBorderFocused = Color(0xFF9A9A9A)
+private val ChipBorder = Color(0xFF5C5C5C)
 private val ChipInk = Color(0xFFCFCFCF)
 private val SheetFill = Color(0xFF1B1B1B)
 private val OptionFill = Color(0xFF252525)
 private val AttachmentFill = Color(0xFF2A2A2A)
 private val MutedInk = Color(0xFF8F8F8F)
 
-private enum class ComposerAction { VOICE, SEND, STEER, STOP }
+internal enum class ComposerAction { VOICE, SEND, STEER, STOP }
+
+/**
+ * The composer's main button. Voice when idle, except in a chat whose engine
+ * has no voice: there the button stays Send, disabled until there is text.
+ */
+internal fun composerAction(active: Boolean, hasDraft: Boolean, runActive: Boolean, voiceActive: Boolean, voiceAllowed: Boolean): ComposerAction = when {
+    active && hasDraft -> ComposerAction.STEER
+    active -> ComposerAction.STOP
+    hasDraft -> ComposerAction.SEND
+    voiceActive -> ComposerAction.VOICE
+    !runActive && voiceAllowed -> ComposerAction.VOICE
+    // Another chat is running, or this chat has no voice; a message typed
+    // here is sent, or waits for that chat.
+    else -> ComposerAction.SEND
+}
 
 @Composable
 internal fun AgentComposer(
@@ -146,6 +168,15 @@ internal fun AgentComposer(
     onVoiceButtonPlaced: (Offset) -> Unit = {},
 ) {
     var draft by rememberSaveable(state.activeSessionId) { mutableStateOf("") }
+    // A task Mike wrote for this chat waits here for the user to send.
+    val seed = state.activeSessionId?.let(state.composerSeeds::get)
+    LaunchedEffect(state.activeSessionId, seed) {
+        val id = state.activeSessionId ?: return@LaunchedEffect
+        if (seed != null) {
+            draft = seed
+            actions.onComposerSeedUsed(id)
+        }
+    }
     var choosingModel by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     // A skill picked from the menu rides as a chip until the message is sent.
@@ -158,14 +189,13 @@ internal fun AgentComposer(
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)
     val hasDraft = draft.isNotBlank()
     val canSend = state.activeSessionId != null && hasDraft && !state.isLoadingMessages && !stopping && !voiceStopping
-    val action = when {
-        active && hasDraft -> ComposerAction.STEER
-        active -> ComposerAction.STOP
-        hasDraft -> ComposerAction.SEND
-        !state.runState.active || voiceActive -> ComposerAction.VOICE
-        // Another chat is running; a message typed here waits for it.
-        else -> ComposerAction.SEND
-    }
+    val action = composerAction(
+        active = active,
+        hasDraft = hasDraft,
+        runActive = state.runState.active,
+        voiceActive = voiceActive,
+        voiceAllowed = ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
+    )
     val runCommand: (ComposerCommand) -> Unit = { command ->
         draft = ""
         when (command) {
@@ -223,8 +253,11 @@ internal fun AgentComposer(
             .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (state.runState.active) {
-            RunStatusRow(state.runState, showStop = !active && !voiceActive, onStop = actions.onStop)
+        // This chat's own run is shown in the chat, under its last line; only a
+        // run somewhere else (another chat, a voice call) is reported here,
+        // with its Stop.
+        if (state.runState.active && !active) {
+            RunStatusRow(state.runState, showStop = !voiceActive, onStop = actions.onStop)
         }
         if (state.queuedTurns.isNotEmpty()) QueuedTurns(state, actions)
         if (query != null) {
@@ -243,12 +276,12 @@ internal fun AgentComposer(
         val border by animateColorAsState(if (focused) FieldBorderFocused else FieldBorder, tween(200), label = "composer-border")
         Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, border)) {
             Row(Modifier.padding(4.dp), verticalAlignment = Alignment.Bottom) {
-                IconButton(
-                    onClick = actions.onAttach,
+                AttachMenu(
                     enabled = !active && !voiceActive && state.activeSessionId != null,
-                ) {
-                    Icon(Icons.Outlined.Add, "Attach file")
-                }
+                    onPhoto = actions.onAttachPhoto,
+                    onCamera = actions.onTakePhoto,
+                    onFile = actions.onAttach,
+                )
                 Column(
                     Modifier
                         .weight(1f)
@@ -304,13 +337,16 @@ internal fun AgentComposer(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SkillsChip(enabled = state.activeSessionId != null && !voiceActive) { browsing = true }
-            ModelChip(state, enabled = !active && !voiceActive) {
-                if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
+            // The menu hangs off the chip it was opened from, and opens above it.
+            Box {
+                ModelChip(state, enabled = !active && !voiceActive) {
+                    if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
+                }
+                ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
             }
             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
         }
     }
-    if (choosingModel) ModelSheet(state, actions, onDismiss = { choosingModel = false })
     if (browsing) {
         SkillsSheet(
             skills = state.availableSkills,
@@ -474,11 +510,18 @@ private fun ComposerButton(
 
 @Composable
 private fun RunStatusRow(runState: RunState, showStop: Boolean, onStop: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        RunStatusLine(runState, Modifier.weight(1f))
+        if (showStop) TextButton(onClick = onStop) { Text("Stop active task") }
+    }
+}
+
+/** The agent's orb and what it is doing, "Working" or the tool it is on. */
+@Composable
+internal fun RunStatusLine(runState: RunState, modifier: Modifier = Modifier) {
     Row(
-        Modifier
-            .fillMaxWidth()
+        modifier
             .heightIn(min = 32.dp)
-            .padding(start = 8.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -493,7 +536,6 @@ private fun RunStatusRow(runState: RunState, showStop: Boolean, onStop: () -> Un
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (showStop) TextButton(onClick = onStop) { Text("Stop active task") }
     }
 }
 
@@ -859,6 +901,65 @@ internal fun CommandNote(text: String) {
     }
 }
 
+/**
+ * The plus opens "Add context": the three things worth attaching as three
+ * equal tiles, each with its picture, in a sheet like the app's other sheets.
+ * A single "Attach file" button sent everyone through the system file browser,
+ * where a photo from the gallery is three taps deep and the camera is not
+ * offered at all.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AttachMenu(enabled: Boolean, onPhoto: () -> Unit, onCamera: () -> Unit, onFile: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    IconButton(onClick = { open = true }, enabled = enabled) {
+        Icon(Icons.Outlined.Add, "Add a photo, a camera shot or a file")
+    }
+    if (!open) return
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = { open = false }, sheetState = sheet, containerColor = SheetFill) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+                IconButton(onClick = { open = false }, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close")
+                }
+                Text("Add context", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AttachTile("Camera", Icons.Outlined.PhotoCamera, Modifier.weight(1f)) { open = false; onCamera() }
+                AttachTile("Photos", Icons.Outlined.Image, Modifier.weight(1f)) { open = false; onPhoto() }
+                AttachTile("Files", Icons.Outlined.UploadFile, Modifier.weight(1f)) { open = false; onFile() }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, ChipBorder),
+        modifier = modifier.heightIn(min = 104.dp),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(vertical = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp), tint = ChipInk)
+            Text(label, fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+        }
+    }
+}
+
 @Composable
 private fun AttachmentChip(name: String, onRemove: () -> Unit) {
     Surface(shape = RoundedCornerShape(12.dp), color = AttachmentFill) {
@@ -885,9 +986,15 @@ private fun AttachmentChip(name: String, onRemove: () -> Unit) {
 
 @Composable
 private fun ModelChip(state: AgentUiState, enabled: Boolean, onClick: () -> Unit) {
-    val model = state.selectedModel?.removePrefix("gpt-")
-    val label = if (model == null) "Choose model" else "$model · ${state.selectedReasoningEffort ?: "default"}"
     val ink = if (enabled) ChipInk else DisabledInk
+    // "6 Luna Extra High": the model in bold, then the level it will run at.
+    val effort = effectiveEffort(state.modelCatalog.firstOrNull { it.id == state.selectedModel }, state.selectedReasoningEffort)
+    val label = state.selectedModel?.let { id ->
+        buildAnnotatedString {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(claudeModelName(state, id) ?: shortModelName(id)) }
+            effort?.let { append(" " + effortLabel(it)) }
+        }
+    } ?: AnnotatedString("Choose model")
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -911,101 +1018,6 @@ private fun ModelChip(state: AgentUiState, enabled: Boolean, onClick: () -> Unit
                 modifier = Modifier.widthIn(max = 220.dp),
             )
             Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp), tint = ink)
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ModelSheet(state: AgentUiState, actions: AgentUiActions, onDismiss: () -> Unit) {
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val efforts = state.modelCatalog.firstOrNull { it.id == state.selectedModel }?.reasoningEfforts.orEmpty()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = SheetFill) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            SheetLabel("MODEL")
-            state.availableModels.forEach { model ->
-                val selected = model == state.selectedModel
-                Surface(
-                    onClick = { actions.onModelSelected(model) },
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (selected) OptionFill else Color.Transparent,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(model.removePrefix("gpt-"), Modifier.weight(1f), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                        if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.secondary)
-                    }
-                }
-            }
-            if (efforts.isNotEmpty()) {
-                SheetLabel("REASONING")
-                (listOf<ReasoningEffortOption?>(null) + efforts).chunked(3).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { option ->
-                            EffortOption(
-                                option = option,
-                                selected = option?.value == state.selectedReasoningEffort,
-                                modifier = Modifier.weight(1f),
-                            ) { actions.onReasoningEffortSelected(option?.value) }
-                        }
-                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SheetLabel(text: String) {
-    Text(
-        text,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.8.sp,
-        color = MutedInk,
-        modifier = Modifier.padding(top = 6.dp),
-    )
-}
-
-@Composable
-private fun EffortOption(option: ReasoningEffortOption?, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val note = option?.description?.takeIf { it.isNotBlank() } ?: if (option == null) "Model default" else ""
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        color = if (selected) Color.White else Color.Transparent,
-        border = if (selected) null else BorderStroke(1.dp, ChipBorder),
-        modifier = modifier.heightIn(min = 60.dp),
-    ) {
-        Column(
-            Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                option?.value ?: "Default",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (selected) Color.Black else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-            if (note.isNotEmpty()) {
-                Text(
-                    note,
-                    fontSize = 12.sp,
-                    color = if (selected) Color(0xFF4A4A4A) else MutedInk,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
     }
 }
