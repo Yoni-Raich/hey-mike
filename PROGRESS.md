@@ -1,5 +1,41 @@
 # Progress
 
+### Local central build storage — 2026-10-06
+
+- Added a Windows Gradle init hook and installer under `tools/build-storage/`.
+  This PC's saved config routes only this Git repository's worktrees to the
+  main checkout's `build/<worktree-id>/<module>`, with a 5 GiB cleanup target.
+  Oldest completed, inactive buckets go first; active/current output is kept.
+  Runtime archives, extraction, generated native libraries and assets follow
+  the same routing while keeping each worktree's own pinned runtime script.
+  Existing module build folders and dirty source worktrees were left alone.
+- `python -m unittest tools.test_build_storage tools.test_prepare_runtime -v`
+  passes: 24 tests. Cleanup tests use disposable folders and cover age order,
+  active handles, current output, start reservations, unmarked files, invalid
+  roots, foreign repositories, unmarked bucket adoption and junction refusal.
+  Runtime checks cover both ABI output paths and
+  pin preservation. `git diff --check` passes.
+- Windows/JDK 21/Gradle 8.9: `:core:test :app:assembleDevDebug --no-daemon
+  --max-workers=2 --console=plain` passes in 1m 14s. The APK was 329,447,729
+  bytes in central bucket `7277d467120b4c91`; total storage was 3,703,225,656
+  bytes. Gradle daemon `71084` logged `BUILD SUCCESSFUL` at 00:51:42 local.
+- The main checkout's `help` invocation also passes and uses its own bucket.
+  An unrelated concurrent Hey Mike worktree build automatically used another
+  bucket. With both outputs present, real cleanup removed the older validation
+  bucket above and kept the other worktree's newer output. Root storage then
+  reported 2,929,616,504 bytes, below the saved target. The validation APK is
+  therefore no longer retained; this is expected build-cache cleanup.
+- A disposable, unrelated Git/Gradle project ran `verifyOutput` and confirmed
+  its default local build path (`UNRELATED_OUTPUT_UNCHANGED`). Skill validation
+  passes after quoting the guard's existing YAML description. Final hook
+  verification with `help` passes; configuration cache is explicitly refused
+  because it would skip the active-build lifecycle tracking.
+- See `docs/BUILD_STORAGE.md` for setup, output paths and limits. This is a
+  local PC setting, not a release or phone change. The 5 GiB target can be
+  exceeded during active builds, or if current/unmanaged output alone exceeds
+  it. Shared Gradle caches and old local build folders are outside the target.
+  No phone install/runtime test or full release gate was performed.
+
 ### Real Bluetooth and Wi-Fi connection conditions — 2026-10-05
 
 - Source audit confirmed the previous host supplied only `power` and `screen`.

@@ -2,6 +2,13 @@
 
 One Android project, with replaceable modules and small core contracts.
 
+Windows developer build output can use the local, repository-scoped storage
+hook in `tools/build-storage/`. It shares one main-checkout `build` root across
+worktrees, keeps module/worktree output separate and bounds inactive output
+with oldest-completed cleanup. Runtime staging uses the source worktree's
+pinned script with redirected output. See [BUILD_STORAGE.md](BUILD_STORAGE.md).
+This changes PC build storage only; it does not change APK runtime behavior.
+
 | Module | Responsibility |
 |---|---|
 | app | Compose chat, setup, foreground lifecycle, dependency wiring |
