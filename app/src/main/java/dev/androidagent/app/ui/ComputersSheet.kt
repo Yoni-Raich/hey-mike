@@ -269,6 +269,8 @@ private fun ColumnScope.ComputerList(
                 computer = computer,
                 isDefault = computer.id == state.defaultComputerId,
                 setup = state.computerSetup[computer.id],
+                claude = state.computerClaude[computer.id],
+                claudeSignIn = state.computerClaudeSignIn[computer.id],
                 actions = actions,
                 onEdit = onEdit,
             )
@@ -309,6 +311,8 @@ private fun ComputerCard(
     computer: RemoteComputer,
     isDefault: Boolean,
     setup: RemoteSetup?,
+    claude: dev.androidagent.remote.ComputerClaude?,
+    claudeSignIn: dev.androidagent.remote.ComputerClaudeSignInState?,
     actions: AgentUiActions,
     onEdit: (RemoteComputer) -> Unit,
 ) {
@@ -356,6 +360,7 @@ private fun ComputerCard(
             }
         }
         SetupLine(computer, setup, actions)
+        ComputerClaudeSetup(computer, claude, claudeSignIn, actions, enabled = !busy)
         Button(
             onClick = { actions.onConnectComputer(computer.id) },
             enabled = !busy,

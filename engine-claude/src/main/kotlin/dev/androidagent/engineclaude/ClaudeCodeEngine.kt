@@ -42,6 +42,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -182,22 +183,32 @@ class ClaudeCodeEngine(
             loginProcess?.destroyForcibly()
             loginProcess = null
             accountCache = null
-            val process = host.start(ClaudeProtocol.AUTH_LOGIN_ARGS, home(), emptyMap())
+            val process = host.start(ClaudeProtocol.AUTH_LOGIN_ARGS, home(), mapOf("BROWSER" to "true"))
+            loginProcess = process
             val url = CompletableDeferred<String>()
             scope.launch { readLoginOutput(process.inputStream, url) }
             scope.launch { drain(process.errorStream) }
-            val found = try {
-                withTimeoutOrNull(LOGIN_URL_TIMEOUT_MS) { url.await() }
-            } catch (error: IllegalStateException) {
-                null
-            }
-            if (found == null) {
+            try {
+                val found = try {
+                    withTimeoutOrNull(LOGIN_URL_TIMEOUT_MS) { url.await() }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: IllegalStateException) {
+                    null
+                } ?: error("Claude did not give a sign-in link. Try again.")
+                AccountStatus(false, ClaudeProtocol.SIGN_IN_LABEL, loginUrl = found)
+            } catch (failure: Throwable) {
                 process.destroyForcibly()
-                error("Claude did not give a sign-in link. Try again.")
+                loginProcess = null
+                throw failure
             }
-            loginProcess = process
-            AccountStatus(false, ClaudeProtocol.SIGN_IN_LABEL, loginUrl = found)
         }
+    }
+
+    /** Stop a waiting login without logging out or stopping any chat. */
+    suspend fun cancelLogin() = loginLock.withLock {
+        loginProcess?.destroyForcibly()
+        loginProcess = null
     }
 
     /** Write the pasted code to the waiting login process, then read the result from `claude auth status`. */
@@ -208,18 +219,27 @@ class ClaudeCodeEngine(
         }
         loginLock.withLock {
             val process = loginProcess?.takeIf { it.isAlive } ?: error("The sign-in expired. Start it again.")
-            withContext(Dispatchers.IO) {
-                try {
-                    process.outputStream.write((clean + "\n").toByteArray(Charsets.UTF_8))
-                    process.outputStream.flush()
-                } catch (error: IOException) {
-                    throw IllegalStateException("The sign-in expired. Start it again.")
+            try {
+                withContext(Dispatchers.IO) {
+                    try {
+                        process.outputStream.write((clean + "\n").toByteArray(Charsets.UTF_8))
+                        process.outputStream.flush()
+                    } catch (error: IOException) {
+                        throw IllegalStateException("The sign-in expired. Start it again.")
+                    }
+                    val finished = withTimeoutOrNull(LOGIN_EXIT_TIMEOUT_MS) {
+                        while (process.isAlive) delay(50)
+                        true
+                    } == true
+                    check(finished && process.exitValue() == 0) { "Sign-in did not finish. Start it again." }
                 }
-                if (!process.waitFor(LOGIN_EXIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) process.destroyForcibly()
+            } finally {
+                if (process.isAlive) process.destroyForcibly()
+                loginProcess = null
             }
-            loginProcess = null
         }
         accountCache = null
+        models = null
         val status = account().let { if (it.signedIn) it else AccountStatus(false, "Sign-in did not finish. Try again.") }
         stream.emit(EngineEvent.AccountChanged(status))
         return status

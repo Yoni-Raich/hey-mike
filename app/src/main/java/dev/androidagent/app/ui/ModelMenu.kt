@@ -63,12 +63,17 @@ internal fun modelGroups(catalog: List<AgentModel>): List<Pair<EngineKind, List<
 
 /**
  * Whether the model page ends with a row that leads to the Claude setup: a
- * phone chat on a phone that can run Claude, while Claude is not ready yet.
+ * chat where Claude is not ready yet, on its phone or its computer.
  */
-internal fun offersClaudeSetup(state: AgentUiState): Boolean =
-    state.claude.install.phase != ClaudeInstallPhase.UNSUPPORTED && !state.claude.ready &&
-        state.activeSessionId?.let(state.remoteBindings::get) == null &&
-        state.modelCatalog.none { it.engine == EngineKind.CLAUDE }
+internal fun offersClaudeSetup(state: AgentUiState): Boolean {
+    if (state.modelCatalog.any { it.engine == EngineKind.CLAUDE }) return false
+    val computer = claudeSetupComputerId(state)
+    return if (computer != null) state.computerClaude[computer]?.ready != true
+    else state.claude.install.phase != ClaudeInstallPhase.UNSUPPORTED && !state.claude.ready
+}
+
+internal fun claudeSetupComputerId(state: AgentUiState): String? =
+    state.activeSessionId?.let(state.remoteBindings::get)?.computerId
 
 /** "xhigh" as it reads in a menu: "Extra High". */
 internal fun effortLabel(value: String): String = when (value.trim().lowercase()) {
@@ -168,11 +173,16 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                     }
                 }
                 if (setup) {
+                    val computerId = claudeSetupComputerId(state)
+                    val computerName = state.computers.firstOrNull { it.id == computerId }?.label ?: "computer"
                     MenuHeader(providerName(EngineKind.CLAUDE))
                     DropdownMenuItem(
-                        text = { Text("Set up in Settings", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface) },
+                        text = { Text(if (computerId != null) "Set up on $computerName" else "Set up in Settings", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface) },
                         trailingIcon = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) },
-                        onClick = { onDismiss(); actions.onOpenSettings() },
+                        onClick = {
+                            onDismiss()
+                            if (computerId != null) actions.onOpenComputers() else actions.onOpenSettings()
+                        },
                     )
                 }
             }

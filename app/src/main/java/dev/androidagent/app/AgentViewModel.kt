@@ -123,6 +123,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
         // A computer's own Claude Code decides whether its chats are offered Claude models.
         viewModelScope.launch { graph.remote.claudeState.collect { found -> mutable.update { it.copy(computerClaude = found) }; project() } }
+        viewModelScope.launch { graph.remote.claudeSignIn.state.collect { found -> mutable.update { it.copy(computerClaudeSignIn = found) } } }
+        viewModelScope.launch { graph.remote.claudeSignIn.loginLinks.collect(::openInBrowser) }
         viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
         viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
         viewModelScope.launch { graph.transfers.current.collect { move -> mutable.update { it.copy(fileTransfer = move) } } }
@@ -373,7 +375,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // being set up, as onboarding does; its first message then says what is missing.
         val computer = graph.computers.binding(id)?.let { graph.computers.computer(it.computerId) }
         check(kind in enginesFor(id, session.engine, mutable.value) || (isBlank(session) && computer == null)) {
-            if (computer != null) "Claude Code is not set up on ${computer.label}. Install it there and sign in with `claude`, then connect the computer again."
+            if (computer != null) "Set up Claude on ${computer.label} from Computers."
             else "Set up ${kind.label} in Settings first."
         }
         graph.sessions.setEngine(id, kind)
@@ -422,6 +424,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun connectComputer(id: String) = task { setUpComputer(id) }
 
     fun openComputers() = mutable.update { it.copy(isComputersOpen = true) }
+
+    fun computerClaudeLogin(id: String) = graph.remote.claudeSignIn.start(id)
+    fun computerClaudeCode(id: String, code: String) = graph.remote.claudeSignIn.submit(id, code)
+    fun cancelComputerClaudeLogin(id: String) = task { graph.remote.claudeSignIn.cancel(id) }
+    fun checkComputerClaude(id: String) = graph.remote.claudeSignIn.check(id)
 
     /** Connect to the computer, then pick the folder of a new project. */
     fun newProject(id: String) {

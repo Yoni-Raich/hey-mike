@@ -2141,6 +2141,20 @@ Decided 2026-10-01, on top of the section above.
     `claude auth status` gives the sign-in and `initialize` the models, kept
     per computer in `RemoteHub.claudeState`. Nothing is installed for the
     user: a computer without Claude Code offers no Claude models.
+  - **Sign in from the phone (2026-10-06).** The Computers card offers
+    `Connect Claude to <computer>` when Claude is installed but signed out.
+    A computer chat's model menu also links to this setup. `ComputerClaudeSignIn`
+    runs the computer's unmodified `claude auth login --claudeai`, opens the
+    official link on the phone, and relays the pasted code to that process's
+    stdin. `BROWSER=true` keeps the computer from opening a browser. After a
+    successful process exit, `auth status` verifies the account and the model
+    catalog refreshes for that computer. Credentials remain on the computer;
+    no phone login or token is copied. The masked code field is not saveable
+    and clears before submission. Progress and errors are in memory and keyed
+    by computer; repeated taps cannot start two logins on one computer. Cancel
+    or disconnect stops the waiting login without signing out an existing
+    account. Raw login output never becomes a UI error. A failed connection
+    check is shown separately from a missing Claude installation.
   - A launch writes a small script under `~/.hey-mike/claude` on the computer
     and runs it by path. The arguments include an empty string and paths with
     spaces, which cmd, PowerShell and a POSIX shell each quote differently;

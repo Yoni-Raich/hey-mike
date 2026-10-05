@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -360,6 +361,7 @@ class ClaudeCodeEngineTest {
         val login = host.started.single()
         assertEquals(listOf("auth", "login", "--claudeai"), login.args)
         assertEquals(home, login.cwd)
+        assertEquals("true", login.env["BROWSER"])
 
         try {
             engine.completeLogin("a\nb")
@@ -372,6 +374,63 @@ class ClaudeCodeEngineTest {
         assertEquals("user@example.com", status.label)
         assertEquals(status, awaitEvent<EngineEvent.AccountChanged>().status)
         assertEquals(listOf("auth", "status", "--json"), host.started.last().args)
+    }
+
+    @Test fun cancelLoginStopsOnlyTheWaitingProcessAndTheCodeCannotBeSubmittedAfterwards() = runBlocking {
+        val url = "https://claude.ai/oauth/authorize?state=xyz"
+        host.script = { it.send("If the browser didn't open, visit: $url") }
+        val engine = engine()
+        engine.login()
+        val process = host.started.single()
+        engine.cancelLogin()
+        assertFalse(process.isAlive)
+        assertEquals(0, host.stopAllCalls)
+        try {
+            engine.completeLogin("unused-code")
+            fail("cancelled login must reject the code")
+        } catch (_: IllegalStateException) { }
+        assertEquals(1, host.started.size)
+    }
+
+    @Test fun cancellingWhileWaitingForTheLinkDestroysTheStartedProcess() = runBlocking {
+        host.script = { }
+        val engine = engine()
+        val pending = launch { engine.login() }
+        withTimeout(5_000) { while (host.started.isEmpty()) kotlinx.coroutines.delay(10) }
+        val process = host.started.single()
+        pending.cancelAndJoin()
+        assertFalse(process.isAlive)
+        engine.cancelLogin()
+    }
+
+    @Test fun aFailedLoginDoesNotReportAnOlderSavedAccountAsSuccessful() = runBlocking {
+        host.script = { process ->
+            if (process.args.take(2) == listOf("auth", "login")) {
+                process.send("If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=xyz")
+                process.onLine = { p, _ -> p.finish(1) }
+            } else {
+                process.send("""{"loggedIn":true,"email":"older@example.com"}""")
+                process.finish(0)
+            }
+        }
+        val engine = engine()
+        engine.login()
+        try {
+            engine.completeLogin("bad-code")
+            fail("nonzero login exit must not report success")
+        } catch (_: IllegalStateException) { }
+        assertEquals(1, host.started.size)
+    }
+
+    @Test fun cancellationDuringCodeSubmissionDoesNotWaitForTheLoginTimeout() = runBlocking {
+        host.script = { it.send("If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=xyz") }
+        val engine = engine()
+        engine.login()
+        val process = host.started.single()
+        val pending = launch { engine.completeLogin("code") }
+        withTimeout(5_000) { while (process.lines.isEmpty()) kotlinx.coroutines.delay(10) }
+        withTimeout(5_000) { pending.cancelAndJoin() }
+        assertFalse(process.isAlive)
     }
 
     @Test fun nothingRunsBeforeTheBinaryIsDownloaded() = runBlocking {

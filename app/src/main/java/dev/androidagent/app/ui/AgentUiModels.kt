@@ -184,6 +184,8 @@ data class AgentUiState(
     val remoteBindings: Map<String, dev.androidagent.remote.RemoteBinding> = emptyMap(),
     /** Per computer, its own Claude Code as last checked: whether a chat there can run on Claude, and with which models. */
     val computerClaude: Map<String, dev.androidagent.remote.ComputerClaude> = emptyMap(),
+    /** Temporary login progress for each computer; no pasted codes or saved credentials. */
+    val computerClaudeSignIn: Map<String, dev.androidagent.remote.ComputerClaudeSignInState> = emptyMap(),
     /** Folders the user picked on each computer. */
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */
@@ -380,6 +382,10 @@ data class AgentUiActions(
     val onShareText: (String) -> Unit = {},
     /** Connect, install Codex if needed, and use Mike's active account. */
     val onConnectComputer: (String) -> Unit = {},
+    val onComputerClaudeLogin: (computerId: String) -> Unit = {},
+    val onComputerClaudeCode: (computerId: String, code: String) -> Unit = { _, _ -> },
+    val onCancelComputerClaudeLogin: (computerId: String) -> Unit = {},
+    val onCheckComputerClaude: (computerId: String) -> Unit = {},
     val onOpenUrl: (String) -> Unit = {},
     /** Show the folders in one folder of a computer; blank is its home folder. */
     val onBrowseFolder: (computerId: String, path: String) -> Unit = { _, _ -> },
