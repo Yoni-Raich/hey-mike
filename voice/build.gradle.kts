@@ -9,7 +9,7 @@ android {
 dependencies {
     api(project(":core"))
     implementation("androidx.core:core-ktx:1.15.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("io.github.webrtc-sdk:android:144.7559.09")
     testImplementation("junit:junit:4.13.2")
 }
