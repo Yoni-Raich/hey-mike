@@ -77,13 +77,17 @@ class MainActivity : ComponentActivity() {
     // Set while the permission dialog is up for an assistant press, so the
     // grant starts voice the assistant way rather than toggling it.
     private var voiceForAssistant = false
+    private var pendingAutomationVoice: dev.androidagent.core.AutomationVoiceRequest? = null
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         model.refreshPermissions()
         val forAssistant = voiceForAssistant.also { voiceForAssistant = false }
-        if (granted) { ensureService(); if (forAssistant) model.startAssistantVoice() else model.toggleVoice() }
+        val automation = pendingAutomationVoice.also { pendingAutomationVoice = null }
+        if (granted) { ensureService(); if (forAssistant) model.startAssistantVoice(automation) else model.toggleVoice() }
         else model.error("Microphone permission is required for voice.")
     }
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(AssistLaunch.EXTRA_START_VOICE, voiceForAssistant)
+        pendingAutomationVoice?.let { outState.putString(AssistLaunch.EXTRA_AUTOMATION_VOICE, it.toJson()) }
         super.onSaveInstanceState(outState)
         pendingShot?.let { outState.putString(STATE_PENDING_SHOT, it.absolutePath) }
     }
@@ -102,6 +106,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        voiceForAssistant = savedInstanceState?.getBoolean(AssistLaunch.EXTRA_START_VOICE) == true
+        pendingAutomationVoice = savedInstanceState?.getString(AssistLaunch.EXTRA_AUTOMATION_VOICE)?.let {
+            runCatching { dev.androidagent.core.AutomationVoiceRequest.fromJson(it) }.getOrNull()
+        }
         pendingShot = savedInstanceState?.getString(STATE_PENDING_SHOT)?.let(::File)
         model.graph.runtimePermissions.attach(this, capabilityPermissions)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
@@ -164,15 +172,24 @@ class MainActivity : ComponentActivity() {
      */
     private fun handleAssistantPress(intent: Intent?): Boolean {
         if (intent?.getBooleanExtra(AssistLaunch.EXTRA_START_VOICE, false) != true) return false
+        val automationJson = intent.getStringExtra(AssistLaunch.EXTRA_AUTOMATION_VOICE)
+        intent.removeExtra(AssistLaunch.EXTRA_START_VOICE)
+        intent.removeExtra(AssistLaunch.EXTRA_AUTOMATION_VOICE)
         // Reopening from Recents replays the press that created the task.
         if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return false
-        intent.removeExtra(AssistLaunch.EXTRA_START_VOICE)
+        val automation = if (automationJson == null) null else try {
+            dev.androidagent.core.AutomationVoiceRequest.fromJson(automationJson).also { it.requireCurrent() }
+        } catch (failure: Exception) {
+            model.error(failure.message ?: "The voice automation could not start.")
+            return true
+        }
         model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false) }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             ensureService()
-            model.startAssistantVoice()
+            model.startAssistantVoice(automation)
         } else {
             voiceForAssistant = true
+            pendingAutomationVoice = automation
             microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
         }
         return true

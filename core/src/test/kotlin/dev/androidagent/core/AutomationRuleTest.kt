@@ -122,11 +122,24 @@ class AutomationRuleTest {
         assertEquals(setOf("now.time", "now.day"), rule.exportedFields)
     }
 
-    @Test fun aNotificationTriggerMustNameItsApp() {
-        // No package means every notification on the phone, which is both
-        // never what was meant and the widest possible read of the user.
-        val message = refusal("""{"id":"any","when":{"type":"notification"},"then":[{"type":"notify","text":"hi"}]}""")
-        assertTrue(message, message.contains("package"))
+    @Test fun aNotificationTriggerMustChooseItsScopeExplicitly() {
+        for (scope in listOf("", ",\"package\":\"\"", ",\"package\":null")) {
+            val message = refusal("""{"id":"any","when":{"type":"notification"$scope},"then":[{"type":"notify","text":"hi"}]}""")
+            assertTrue(message, message.contains("package"))
+            assertTrue(message, message.contains("all apps"))
+        }
+    }
+
+    @Test fun anAllAppsNotificationTriggerSurvivesSavingAndReloading() {
+        val original = parse("""{"id":"any","when":{"type":"notification","package":"*"},"then":[{"type":"notify","text":"hi"}]}""")
+        val restored = AutomationRule.parse(original.toJson())
+        assertEquals("*", restored.trigger.packageName)
+        assertEquals("a notification from any app", restored.trigger.describe().content)
+    }
+
+    @Test fun voiceContextMustBeText() {
+        val message = refusal("""{"id":"any","when":{"type":"manual"},"then":[{"type":"voice_call","opening":"Hi","context":{"text":"bad"}}]}""")
+        assertTrue(message, message.contains("context"))
     }
 
     @Test fun aRuleWithNoActionsIsRefused() {

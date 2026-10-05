@@ -1,5 +1,88 @@
 # Progress
 
+### Real Bluetooth and Wi-Fi connection conditions — 2026-10-05
+
+- Source audit confirmed the previous host supplied only `power` and `screen`.
+  Device conditions accepted arbitrary names and silently ignored `is`; a
+  `bluetooth_headphones` rule could be saved without any Android source.
+  Dry runs previously used an empty signal map unless the caller simulated it.
+- Added a closed signal/value vocabulary and strict connection selectors:
+  `bluetooth_headphones` and `bluetooth_device` accept `deviceAddress` and
+  `profile`; `wifi` accepts exact `ssid` and optional `bssid`. `mode:signals`
+  discovers current names/identifiers. Wi-Fi and Bluetooth callbacks refresh
+  real snapshots; names, paired lists and broadcast extras never prove identity
+  or connection. Unknown state fails closed, including negated conditions.
+- Headphones use Android audio endpoints plus device class; watches and speakers
+  are excluded. Generic device conditions separately cover connected GATT,
+  HFP/A2DP/LE Audio profiles. This is not arbitrary Bluetooth transport support.
+  Bluetooth needs Nearby devices permission on Android 12+; Wi-Fi identity
+  needs precise Location permission and the Location toggle. Missing signal
+  permissions are reported by the tool and rule summary. No scan or grant is
+  hidden in discovery. SSID/BSSID are selectors, not network authentication.
+- Device selectors survive voice startup and are rechecked before launch,
+  context/opening and throughout the call. Protected headphone output selects
+  the matching communication route, mutes locally before asynchronous stop on
+  loss, and does not replay on reconnection. Local voice errors release ownership
+  even when the remote stop fails. Protected voice requires Android 12+; an
+  A2DP-only connection without a communication route is refused.
+- Windows/JDK 21: `./gradlew.bat :core:test :voice:testDebugUnitTest
+  :automations:testDebugUnitTest :device-tools:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:lintDevDebug :voice:lintDebug
+  -x :app:prepareCodexRuntime --no-daemon --no-parallel --max-workers=2
+  --console=plain` passes: 672 core, 11 voice, 104 device-tools and 137 app tests
+  (924 total, zero failures/errors/skips). The automations test task compiles the
+  Android wiring but has no test sources. App lint: zero errors, 21 warnings;
+  voice lint: zero errors, 2 dependency warnings. `git diff --check` passes.
+  Logs are ignored under `Temps_and_logs/connections-20261005/`.
+- Twenty-five new tests cover invalid signals/typos/selectors, no-write failed
+  updates, live-vs-simulated tests, discovery, missing permissions, exact device
+  and profile/SSID/BSSID matching, watch exclusion, selected-device loss while
+  another stays connected, launch payloads and no replay after reconnection.
+- Read-only phone checks show `all-notifications-voice` remains disabled, with
+  no experimental condition. Hey Mike Dev is still the previously installed
+  `0.15.0-notification-test` (1101); these new connection changes were not built
+  into or installed as an APK. No rule was changed or fired during this audit.
+- Not tested: real Bluetooth/GATT/Wi-Fi discovery, permission dialogs/revocation,
+  background Location redaction, classic/BLE audio, audible disconnect timing,
+  two-device handoff, cold startup/Stop, Android 11, Wi-Fi roaming/VPN or the
+  full release gate. Android callbacks and buffered audio are not a guarantee
+  of instantaneous silence; physical validation remains necessary. Screen-on/
+  unlocked attention gating is unchanged. This does not add locked driving mode.
+
+### Notification rules for all apps, with voice context and first speech — 2026-10-05
+
+- A notification trigger can choose `package:"*"` for all apps, while an
+  omitted, null or empty package is still refused. The listener admits the
+  wildcard only from an enabled rule, before reading notification content;
+  own, ongoing and group-summary notifications remain excluded. Named-app
+  rules, sender filters, conditions, exports and rate limits keep their scope.
+- `voice_call` now carries its bound `opening` and optional `context`, rule ID
+  and expiry through Android startup. After the voice connection is ready,
+  context is sent as quoted data, then the opening is dispatched through
+  `appendSpeech` without microphone input. Later firings use the live call.
+  Intent consumption, pending microphone permission and Recents handling
+  preserve the startup payload without replaying an ended call.
+- Checked on Windows/JDK 21: `./gradlew.bat :core:test
+  :voice:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug :voice:lintDebug -x :app:prepareCodexRuntime --no-daemon
+  --no-parallel --max-workers=2 --console=plain` passes (651 core, 7 voice,
+  137 app tests; no failures or skips). App lint: 0 errors, 21 warnings;
+  voice lint: 0 errors, 2 warnings. `git diff --check` passes.
+- The initial Android check staged and verified the pinned runtime, then
+  failed during APK packaging because the disk was full. Task-created duplicate
+  archives and extracted runtime binaries were removed; retries reused the
+  already-staged runtime with `-x :app:prepareCodexRuntime`. The final source
+  check rebuilt the dev debug APK successfully.
+- Seventeen added regression tests cover wildcard persistence and matching,
+  disabled wildcard filtering, sender/condition isolation, context disclosure
+  and binding, editable context, payload round trips, exact text preservation,
+  context-before-speech dispatch, expiry and failed context injection.
+- Not tested: a phone, real first speech or follow-up understanding, background
+  activity startup, microphone dialogs/recreation/Recents, Bluetooth, Stop
+  during startup, release APKs or the full release gate. No APK was installed.
+  The current screen-on/unlocked voice gate remains; this is not locked-screen
+  driving support.
+
 ### Codex retries stay active and errors keep their chat — 2026-10-05
 
 - A Codex `error` notification with `willRetry=true` updates that turn's

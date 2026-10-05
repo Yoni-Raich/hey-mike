@@ -22,6 +22,7 @@ package dev.androidagent.core
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -78,11 +79,17 @@ class AutomationToolGateway(
      * next unrelated firing or restart to be noticed at all.
      */
     private val onChanged: () -> Unit = {},
+    /** A fresh Android snapshot; test overrides never change this live source. */
+    private val deviceState: () -> Map<String, String> = { emptyMap() },
+    private val supportedDeviceStates: () -> Set<String> = { AutomationDeviceStates.values.keys },
+    private val liveDeviceSnapshot: (() -> AutomationDeviceSnapshot)? = null,
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
 
     private val evaluator = AutomationEvaluator(history)
+    private fun isSupported(rule: AutomationRule) = rule.trigger.kind in supportedTriggers() &&
+        AutomationDeviceStates.missing(rule, supportedDeviceStates()).isEmpty()
 
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
 
@@ -105,7 +112,7 @@ class AutomationToolGateway(
         val all = library.all()
         if (all.isEmpty()) return "Automations: none"
         val on = all.count { it.enabled }
-        val dormant = all.count { it.enabled && it.trigger.kind !in supportedTriggers() }
+        val dormant = all.count { it.enabled && !isSupported(it) }
         return buildString {
             append("Automations: $on on")
             if (all.size > on) append(", ${all.size - on} off")
@@ -133,6 +140,7 @@ class AutomationToolGateway(
                 "delete" -> delete(arguments)
                 "test" -> test(arguments)
                 "run" -> run(arguments)
+                "signals" -> signals()
                 else -> refusal("unknown_mode", "\"$mode\" is not a mode.")
             }
         } catch (invalid: AutomationFormatException) {
@@ -142,6 +150,18 @@ class AutomationToolGateway(
 
     override suspend fun cancel() {
         // Every mode is a bounded file read, a file write, or an in-memory decision.
+    }
+
+    private fun devices() = liveDeviceSnapshot?.invoke() ?: AutomationDeviceSnapshot(deviceState())
+    private fun signals(): ToolResult {
+        val snapshot = devices()
+        return ToolResult(buildJsonObject {
+            put("ok", true)
+            put("deviceState", JsonObject(snapshot.states.mapValues { JsonPrimitive(it.value) }))
+            put("connections", JsonArray(snapshot.connections.map { it.toJson() }))
+            put("supported", JsonArray(supportedDeviceStates().sorted().map(::JsonPrimitive)))
+            put("note", "Current connections only. Use deviceAddress/profile for Bluetooth, ssid/bssid for Wi-Fi. Display names are not identifiers. Bluetooth needs Nearby devices; Wi-Fi identity needs precise Location permission and Location enabled. No scan or passwords.")
+        }.toString())
     }
 
     /**
@@ -175,7 +195,7 @@ class AutomationToolGateway(
             return refusal("rule_limit", full.message ?: "No room for another rule.")
         }
         runCatching { onChanged() }
-        val supported = rule.trigger.kind in supportedTriggers()
+        val supported = isSupported(rule)
         return ToolResult(
             buildJsonObject {
                 put("ok", true)
@@ -186,9 +206,9 @@ class AutomationToolGateway(
                 if (!supported) {
                     put(
                         "dormantBecause",
-                        "This phone cannot serve a \"${rule.trigger.kind.wire}\" trigger yet — the " +
-                            "permission it needs is not granted. The rule is saved and will start " +
-                            "working once it is; tell the user rather than reporting it as live.",
+                        "This phone cannot serve the trigger or a required device signal. Missing signals: " +
+                            AutomationDeviceStates.missing(rule, supportedDeviceStates()).joinToString() +
+                            ". Bluetooth needs Nearby devices (BLUETOOTH_CONNECT) permission on Android 12+. Wi-Fi identity needs precise Location permission and Location enabled. Tell the user rather than reporting it as live.",
                     )
                 }
                 put(
@@ -220,10 +240,10 @@ class AutomationToolGateway(
                         ),
                     )
                 }
-                val unsupported = rules.filter { it.enabled && it.trigger.kind !in supportedTriggers() }
+                val unsupported = rules.filter { it.enabled && !isSupported(it) }
                 if (unsupported.isNotEmpty()) {
                     put("dormant", JsonArray(unsupported.map { JsonPrimitive(it.id) }))
-                    put("dormantMeans", "Saved and turned on, but this phone cannot serve their trigger yet.")
+                    put("dormantMeans", "Saved and turned on, but this phone cannot serve their trigger or required device signal yet.")
                 }
                 if (rules.isEmpty()) {
                     put(
@@ -310,7 +330,7 @@ class AutomationToolGateway(
         if (changes.isEmpty()) return refusal("changes_required", "\"changes\" is empty: there is nothing to change.")
         val updated = library.update(rule.id, changes)
         runCatching { onChanged() }
-        val supported = updated.trigger.kind in supportedTriggers()
+        val supported = isSupported(updated)
         return ToolResult(
             buildJsonObject {
                 put("ok", true)
@@ -352,6 +372,8 @@ class AutomationToolGateway(
                 )
         } ?: now()
         val event = AutomationEventFormat.parse(eventJson, at)
+        val live = devices()
+        val simulated = arguments["deviceState"] is JsonObject || arguments["connections"] is JsonArray
         val context = AutomationContext(
             now = at,
             places = (arguments["places"] as? JsonArray)
@@ -360,9 +382,12 @@ class AutomationToolGateway(
                 .orEmpty(),
             deviceState = (arguments["deviceState"] as? JsonObject)
                 ?.mapValues { (_, value) -> value.jsonPrimitive.content }
-                .orEmpty(),
+                ?: live.states,
             userReachable = arguments.bool("userReachable") ?: true,
             agentAvailable = arguments.bool("agentAvailable") ?: true,
+            connections = (arguments["connections"] as? JsonArray)?.map {
+                AutomationConnection.parse(it.jsonObject)
+            } ?: if (simulated) emptyList() else live.connections,
         )
         val named = arguments.str("rule")
         val rules = (
@@ -377,6 +402,8 @@ class AutomationToolGateway(
         return ToolResult(
             buildJsonObject {
                 put("at", at.toString())
+                put("deviceStateSource", if (simulated) "simulated" else "live")
+                put("deviceState", JsonObject(context.deviceState.mapValues { JsonPrimitive(it.value) }))
                 put("event", event.kind.wire)
                 put("firing", firing.size)
                 put("outcomes", JsonArray(outcomes.map { AutomationEvaluator.toJson(it) }))
@@ -479,7 +506,7 @@ class AutomationToolGateway(
     )
 
     private companion object {
-        val MODES = listOf("create", "update", "list", "describe", "enable", "disable", "delete", "test", "run")
+        val MODES = listOf("create", "update", "list", "describe", "enable", "disable", "delete", "test", "run", "signals")
 
         private fun enumOf(values: List<String>): JsonArray = JsonArray(values.map { JsonPrimitive(it) })
 
@@ -519,6 +546,10 @@ class AutomationToolGateway(
                                 put("type", "string")
                                 put("enum", enumOf(AutomationTriggerKind.WIRE_NAMES))
                             })
+                            put("package", buildJsonObject {
+                                put("type", "string")
+                                put("description", "For notification: an app package, or \"*\" to listen to all apps. Required for notification triggers.")
+                            })
                         })
                         put("required", enumOf(listOf("type")))
                         put("additionalProperties", true)
@@ -553,6 +584,14 @@ class AutomationToolGateway(
                                 put("type", buildJsonObject {
                                     put("type", "string")
                                     put("enum", enumOf(AutomationActionKind.WIRE_NAMES))
+                                })
+                                put("opening", buildJsonObject {
+                                    put("type", "string")
+                                    put("description", "For voice_call: the words Mike speaks first, before microphone input. Event placeholders are supported.")
+                                })
+                                put("context", buildJsonObject {
+                                    put("type", "string")
+                                    put("description", "For voice_call: optional quoted context for follow-up, with event placeholders such as {{notification.text}}.")
                                 })
                             })
                             put("required", enumOf(listOf("type")))
@@ -647,10 +686,15 @@ class AutomationToolGateway(
                                 "deviceState",
                                 buildJsonObject {
                                     put("type", "object")
-                                    put("description", "test only: device signals by name, e.g. {\"charging\":\"true\"}.")
+                                    put("description", "test only: simulated signals. Omit to use live state. Names: power (charging/discharging), screen (on/off), bluetooth_headphones, bluetooth_device and wifi (connected/disconnected). Use mode:signals to discover real connection identifiers.")
                                     put("additionalProperties", buildJsonObject { put("type", "string") })
                                 },
                             )
+                            put("connections", buildJsonObject {
+                                put("type", "array")
+                                put("description", "test only: simulated connections; objects from mode:signals. Never evidence of a live connection.")
+                                put("items", buildJsonObject { put("type", "object"); put("additionalProperties", true) })
+                            })
                             put(
                                 "userReachable",
                                 buildJsonObject {
@@ -675,12 +719,16 @@ class AutomationToolGateway(
         const val DESCRIPTION: String =
             "Standing rules: when something happens, and the conditions hold, do this. " +
                 "A rule is when/if/then. \"when\" is one of schedule (at:\"19:00\", days, or " +
-                "everyMinutes), place (enter/exit a named place), notification (a named package, " +
-                "optionally from someone), device_state, or manual. \"if\" is any number of " +
+                "everyMinutes), place (enter/exit a named place), notification (package names an app " +
+                "or \"*\" for all apps, optionally from someone), device_state, or manual. \"if\" is any number of " +
                 "time_between (wraps past midnight), day_of_week, at_place, text (on a field such " +
-                "as notification.text) and device_state tests, all of which must hold. \"then\" is " +
+                "as notification.text) and device_state tests, all of which must hold. Device conditions use equals, not is. " +
+                "Bluetooth selectors: deviceAddress and profile (hfp/a2dp/le_audio, also gatt for bluetooth_device). " +
+                "bluetooth_headphones excludes watches and speakers. bluetooth_device covers supported connected profiles, not every Bluetooth transport. Wi-Fi selectors: ssid and bssid. " +
+                "Use mode:signals to discover current connections before writing a device-specific condition. \"then\" is " +
                 "up to four actions from run_workflow, open_intent, notify, agent_turn, voice_call " +
-                "and ask. Use {{notification.text}} and the other event fields in an action to pass " +
+                "and ask. Voice_call opening is spoken first; its optional context carries event details for follow-up. " +
+                "Use {{notification.text}} and the other event fields in an action to pass " +
                 "what happened into it — and only the fields you actually write are ever sent " +
                 "anywhere, so do not interpolate a message body you do not need. " +
                 "The action kinds carry the cost: run_workflow, open_intent and notify run on " +

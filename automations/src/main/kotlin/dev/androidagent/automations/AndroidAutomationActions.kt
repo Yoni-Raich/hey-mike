@@ -75,7 +75,7 @@ class AndroidAutomationActions(
      */
     private val openAppIntent: () -> Intent?,
     /** Opens the app straight into a voice conversation, as the assist gesture does. */
-    private val voiceIntent: () -> Intent?,
+    private val voiceIntent: (dev.androidagent.core.AutomationVoiceRequest) -> Intent?,
 ) : AutomationActions {
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -185,11 +185,23 @@ class AndroidAutomationActions(
         }.getOrNull()
     }
 
-    override suspend fun voiceCall(opening: String): AutomationActionResult {
-        val intent = voiceIntent() ?: return AutomationActionResult.failed("voice is not wired on this host")
+    override suspend fun voiceCall(request: dev.androidagent.core.AutomationVoiceRequest): AutomationActionResult {
         return runCatching {
+            request.requireCurrent()
+            if (request.outputConditions.isNotEmpty()) {
+                val snapshot = context.automationHost()?.deviceSnapshot() ?: return AutomationActionResult.failed("Automation signals are unavailable.")
+                val now = java.time.ZonedDateTime.now()
+                val current = dev.androidagent.core.AutomationContext(now, deviceState = snapshot.states, connections = snapshot.connections)
+                check(request.outputConditions.all { it.holds(dev.androidagent.core.AutomationEvent.Clock(now), current) }) {
+                    "A required connection changed before voice launch."
+                }
+            }
+            if (request.bluetoothHeadphonesOnly) check(
+                dev.androidagent.voice.BluetoothHeadphones(context).state() == "connected"
+            ) { "Bluetooth headphones disconnected or permission is missing; voice did not start." }
+            val intent = voiceIntent(request) ?: return AutomationActionResult.failed("voice is not wired on this host")
             context.startActivity(intent)
-            AutomationActionResult.ok()
+            AutomationActionResult.ok("voice startup requested with the rule's opening and context")
         }.getOrElse { AutomationActionResult.failed(it.message ?: "the voice screen could not be opened") }
     }
 

@@ -53,6 +53,9 @@ class AutomationToolGatewayTest {
     private fun gateway(
         supported: Set<AutomationTriggerKind> = AutomationTriggerKind.entries.toSet(),
         canFire: Boolean = true,
+        deviceState: () -> Map<String, String> = { emptyMap() },
+        deviceSignals: Set<String> = AutomationDeviceStates.values.keys,
+        snapshot: (() -> AutomationDeviceSnapshot)? = null,
     ) = AutomationToolGateway(
         library = library(),
         history = history,
@@ -61,6 +64,9 @@ class AutomationToolGatewayTest {
         supportedTriggers = { supported },
         fireNow = if (canFire) ({ id -> fired += id }) else null,
         onChanged = { changes++ },
+        deviceState = deviceState,
+        supportedDeviceStates = { deviceSignals },
+        liveDeviceSnapshot = snapshot,
     ).also { it.beginRun("run", temp.root) }
 
     private fun call(gateway: AutomationToolGateway, json: String): JsonObject = runBlocking {
@@ -75,6 +81,57 @@ class AutomationToolGatewayTest {
          "then":[{"type":"agent_turn","prompt":"Tell {{notification.title}} I cannot talk."}]}
     """
 
+    private val headphonesRule = """{"id":"headphones","when":{"type":"notification","package":"*"},
+        "if":[{"type":"device_state","state":"bluetooth_headphones","equals":"connected"}],
+        "then":[{"type":"voice_call","opening":"New notification"}]}"""
+
+    @Test fun signalsDiscoversCurrentIdentifiersWithoutChangingOrFiringARule() {
+        val device = AutomationConnection("bluetooth_headphones", "AA:BB:CC:DD:EE:01", "My buds", setOf("hfp", "a2dp"))
+        val wifi = AutomationConnection("wifi", ssid = " My Home ", bssid = "AA:BB:CC:DD:EE:99")
+        val gateway = gateway(snapshot = { AutomationDeviceSnapshot(mapOf("bluetooth_headphones" to "connected", "wifi" to "connected"), listOf(device, wifi)) })
+        val reply = call(gateway, """{"mode":"signals"}""")
+        val connections = reply["connections"]!!.jsonArray
+        assertEquals(device, AutomationConnection.parse(connections[0].jsonObject))
+        assertEquals(wifi, AutomationConnection.parse(connections[1].jsonObject))
+        assertTrue(library().all().isEmpty())
+        assertTrue(fired.isEmpty())
+        assertEquals(0, changes)
+    }
+
+    @Test fun dryRunReadsFreshRealSignalsUnlessSimulationIsExplicit() {
+        var state = "connected"
+        val gateway = gateway(deviceState = { mapOf("bluetooth_headphones" to state) })
+        create(gateway, headphonesRule)
+        val test = """{"mode":"test","rule":"headphones","event":{"type":"notification","package":"com.example"}}"""
+        val connected = call(gateway, test)
+        assertEquals("live", connected.str("deviceStateSource"))
+        assertEquals("1", connected["firing"]!!.jsonPrimitive.content)
+        state = "disconnected"
+        assertEquals("0", call(gateway, test)["firing"]!!.jsonPrimitive.content)
+        val simulated = call(gateway, test.dropLast(1) + """, "deviceState":{"bluetooth_headphones":"connected"}}""")
+        assertEquals("simulated", simulated.str("deviceStateSource"))
+        assertEquals("1", simulated["firing"]!!.jsonPrimitive.content)
+        assertTrue(fired.isEmpty())
+        assertEquals("0", call(gateway, test)["firing"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun missingBluetoothPermissionIsReportedDormant() {
+        val gateway = gateway(deviceSignals = setOf("power", "screen"))
+        val reply = create(gateway, headphonesRule)
+        assertTrue(reply["dormant"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(reply.str("dormantBecause")!!.contains("BLUETOOTH_CONNECT"))
+    }
+
+    @Test fun invalidDeviceStateUpdateDoesNotChangeSavedRule() {
+        val gateway = gateway()
+        create(gateway, headphonesRule)
+        val before = library().get("headphones")!!.toJson()
+        val result = call(gateway, """{"mode":"update","rule":"headphones", "changes":{
+            "if":[{"type":"device_state","state":"fictional","equals":"connected"}]}}""")
+        assertFalse(result["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(before, library().get("headphones")!!.toJson())
+    }
+
     private fun create(gateway: AutomationToolGateway, rule: String = dadRule) =
         call(gateway, """{"mode":"create","rule":${rule.trimIndent()}}""")
 
@@ -87,6 +144,30 @@ class AutomationToolGatewayTest {
         assertEquals("model", summary["attention"]!!.jsonPrimitive.content)
         // The reply names what leaves the phone, so the model can repeat it.
         assertEquals("notification.title", summary["sendsToTheModel"]!!.jsonArray.single().jsonPrimitive.content)
+    }
+
+    @Test fun creatingAnAllAppsVoiceRuleAndDryRunningItKeepsContextAndDisclosure() {
+        val gateway = gateway()
+        val reply = create(gateway,
+            """{"id":"all-notifications","when":{"type":"notification","package":"*"},
+             "then":[{"type":"voice_call","opening":"Hi, Yoni, you have a new notification.",
+             "context":"{{notification.package}}: {{notification.title}}: {{notification.text}}"}]}""",
+        )
+        assertTrue(reply["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("a notification from any app", reply["summary"]!!.jsonObject.str("when"))
+        assertEquals(setOf("notification.package", "notification.title", "notification.text"),
+            reply["summary"]!!.jsonObject["sendsToTheModel"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet())
+        assertEquals("*", library().get("all-notifications")!!.trigger.packageName)
+        for (pkg in listOf("com.whatsapp", "com.example.mail")) {
+            val test = call(gateway,
+                """{"mode":"test","rule":"all-notifications","event":{"type":"notification",
+                 "package":"$pkg","title":"Dad","text":"Meet at eight"}}""",
+            )
+            assertEquals(1, test["firing"]!!.jsonPrimitive.content.toInt())
+            val action = test["outcomes"]!!.jsonArray.single().jsonObject["then"]!!.jsonArray.single().jsonObject
+            assertEquals("$pkg: Dad: Meet at eight", action.str("context"))
+        }
+        assertEquals(0, history.firedOn("all-notifications", now.toLocalDate()))
     }
 
     @Test fun aRuleWhoseTriggerThisPhoneCannotServeIsSavedAndReportedDormant() {

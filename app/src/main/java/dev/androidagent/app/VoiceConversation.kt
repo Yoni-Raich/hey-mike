@@ -21,6 +21,7 @@
 package dev.androidagent.app
 
 import dev.androidagent.core.AgentRuns
+import dev.androidagent.core.AutomationVoiceRequest
 import dev.androidagent.core.ChatHandoff
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.DeviceToolGateway
@@ -38,6 +39,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 /** The line being spoken right now, before it is final. */
@@ -62,6 +65,7 @@ class VoiceConversation(
     private val mutableTranscript = MutableStateFlow(VoiceTranscript())
     private val mutableFailures = MutableSharedFlow<String>(extraBufferCapacity = 4)
     private val pendingTypedTexts = java.util.ArrayDeque<String>()
+    private val announcementLock = Mutex()
     /** The chat that left its engine for this voice conversation, and the engine to give it back. */
     @Volatile private var returnTo: Pair<String, EngineKind>? = null
 
@@ -73,6 +77,16 @@ class VoiceConversation(
 
     init {
         scope.launch { engine.voiceEvents.collect(::handle) }
+        scope.launch {
+            voice.state.collect { state ->
+                // Local route/permission loss ends ownership even if the network stop fails.
+                if (state.phase == dev.androidagent.core.VoicePhase.ERROR && mutableSessionId.value != null) {
+                    coordinator().endVoice()
+                    clear()
+                    mutableFailures.tryEmit(state.message)
+                }
+            }
+        }
     }
 
     /**
@@ -83,7 +97,8 @@ class VoiceConversation(
      * side is told what the other said: Codex here, as context for the voice
      * session, and the chat's engine on its next turn (see [EngineSwitch]).
      */
-    suspend fun begin(sessionId: String, model: String?) {
+    suspend fun begin(sessionId: String, model: String?, automation: AutomationVoiceRequest? = null) {
+        automation?.requireCurrent()
         check(!coordinator().state.value.active) { "Stop the current agent run before starting voice." }
         val opened = sessions.getSession(sessionId) ?: error("Chat no longer exists.")
         val guest = opened.engine.takeIf { it != EngineKind.CODEX }
@@ -96,6 +111,7 @@ class VoiceConversation(
             sessions.setEngine(sessionId, EngineKind.CODEX)
             returnTo = sessionId to guest
         }
+        var voiceStarted = false
         try {
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists.")
             val workspace = sessions.workspace(sessionId)
@@ -107,7 +123,9 @@ class VoiceConversation(
             try {
                 // Realtime selects its own compatible voice model. The normal Codex
                 // model remains a thread setting and is not forced into this RPC.
-                voice.start(threadId)
+                voice.start(threadId, bluetoothHeadphonesOnly = automation?.bluetoothHeadphonesOnly == true,
+                    outputConditions = automation?.outputConditions.orEmpty())
+                voiceStarted = true
             } catch (failure: Throwable) {
                 coordinator().endVoice()
                 throw failure
@@ -120,10 +138,27 @@ class VoiceConversation(
                     ?.let { addContext(HANDOFF_GUIDANCE, it) }
                 sessions.markCaughtUp(sessionId)
             }
+            automation?.let { announce(it) }
         } catch (failure: Throwable) {
+            if (voiceStarted) {
+                coordinator().endVoice()
+                runCatching { voice.stop() }
+            }
             clear()
             throw failure
         }
+    }
+
+    /** Add a rule's context, then speak its opening without waiting for microphone input. */
+    suspend fun announce(request: AutomationVoiceRequest) = announcementLock.withLock {
+        check(mutableSessionId.value != null) { "Voice is not active." }
+        voice.requireAutomationConnections(request.outputConditions)
+        if (request.bluetoothHeadphonesOnly) voice.requireBluetoothHeadphones()
+        request.deliver(
+            addContext = { guidance, quoted -> addContext(guidance, quoted) },
+            speak = { opening -> voice.appendSpeech(opening) },
+            checkOutput = { voice.checkAutomationOutput() },
+        )
     }
 
     suspend fun stop() {

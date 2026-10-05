@@ -1408,9 +1408,12 @@ rule's own actions interpolate (`AutomationRule.exportedFields`). A rule that
 matches on the body of a message and writes only `{{notification.title}}` never
 sends that body anywhere, and the `create` reply lists the exported fields back
 so the model can tell the user exactly what will be transmitted. A
-`notification` trigger must also name its package: no package would mean every
-notification on the phone, which is never what was meant and is the widest
-possible read of a person.
+`notification` trigger must choose its package scope explicitly: a named app,
+or `package:"*"` when the user asks for all apps. An omitted, empty or null
+package is still refused, so an incomplete rule cannot silently widen access.
+The wildcard round-trips as `"*"`, matches notification events from any actual
+package, and reads as "Any app" in the rules panel. Sender filters, conditions,
+exported fields, attention gates and rate limits apply to either scope.
 
 **The clock is verified, not trusted.** Android coalesces, delays and batches
 alarms. Whether a schedule is due is re-checked against the event's own
@@ -1525,10 +1528,99 @@ checks are written.** Our own notifications are dropped first, so a rule's
 notifications are dropped as status rather than events; then **the package is
 checked before the title or body is touched**, against
 `AutomationWakeups.watchedPackages` — the union over enabled notification
-rules. An app no rule names is never read, and with no notification rule at all
-the service reads nothing. Only then are title and text extracted, and they go
+rules, with `"*"` included only by an enabled all-apps rule. An app outside that
+scope is never read, and with no notification rule at all the service reads
+nothing. Only then are title and text extracted, and they go
 no further than the evaluator unless the rule's own actions interpolate them.
 Nothing is stored: there is no notification log and no tool that can ask for one.
+
+**A voice rule carries its context through startup and speaks first.**
+`voice_call.opening` is the first utterance; optional `context` carries the
+rule's event details for follow-up. The evaluator binds placeholders in both
+fields and reports their exports. The runner packages them with the rule ID
+and expiry in `AutomationVoiceRequest`, and the Android action sends that
+payload through `AssistLaunch` to `MainActivity`. Intent extras are consumed
+once, ignored when reopening from Recents, and a pending microphone grant
+keeps the payload through recreation.
+
+`VoiceConversation` waits for the realtime connection, sends fixed developer
+guidance plus JSON-quoted rule/event data through its existing context path,
+then calls the existing app-server `thread/realtime/appendSpeech` boundary for
+the opening. No microphone turn is required by this dispatch. Notification
+text never becomes developer instructions or a user reply; the context echo
+is not recorded as something the user said. A failed context injection stops
+the opening; expiry is checked before launch, before context and before speech.
+A later rule firing is serialized into the live voice conversation rather
+than restarting it. Normal mic and assistant starts have no automation payload.
+
+The current screen-on/unlocked attention gate remains. Requesting activity
+startup is not evidence of audible output: background activity restrictions,
+microphone permission, cold starts, Bluetooth audio, interruption, expiry and
+real first speech still need physical-device verification on this change.
+
+### Device and network connection conditions
+
+`AutomationDeviceStates` is the closed list of real signal names and values:
+power, screen, Bluetooth headphones, Bluetooth devices and Wi-Fi. Conditions
+require `equals`; unknown names, values and fields (including a mistaken `is`)
+are refused when saved or updated. Missing/unavailable state fails closed even
+for a negated condition. Screen `unlocked` is a transition, not a persistent
+condition value. The host reads a fresh `AutomationDeviceSnapshot` under the
+run lock; test overrides never enter this live firing path.
+
+`automation_rule(mode:"signals")` returns current connection identifiers and
+display names on an explicit request. Bluetooth conditions can name
+`deviceAddress` and `profile`; Wi-Fi conditions can name an exact `ssid` and/or
+`bssid`. Names do not act as Bluetooth identity. MAC address comparison ignores
+case; SSID comparison preserves case and whitespace. Identity fields are not
+added to event exports or voice model context automatically. These identifiers
+select connections; they do not authenticate a device or access point.
+
+The `:voice` module's `BluetoothHeadphones` class uses connected Android audio
+endpoints (SCO/HFP, A2DP and BLE headset), plus the remote classic device class.
+Watches, speakers, wired audio and paired-only devices do not qualify. BLE
+headsets can lack a classic class; Android's BLE-headset endpoint type is then
+the evidence. An unclassified classic device fails closed. `:automations`
+reuses this reader rather than maintaining a second audio classifier.
+
+`AutomationBluetooth` separately reads connected HFP/A2DP/LE Audio profile
+proxies and the system's connected GATT list. It can identify a watch by an
+explicit device condition without calling it headphones. Profile proxy startup
+or binder/permission failure is unknown; it never substitutes the bonded list.
+Only the supported public profiles are promised, not arbitrary Bluetooth
+transports. Broadcast extras are ignored; current state and identifiers are
+queried again, and an unchanged snapshot does not emit another state event.
+
+`AutomationWifi` reads the current Wi-Fi association without scanning, querying
+credentials or connecting. Network callbacks refresh it, including a switch
+between access points while still connected. Redacted SSID/BSSID and missing
+precise Location permission or Location toggle are unknown. Android documents
+these redactions in [WifiInfo](https://developer.android.com/reference/android/net/wifi/WifiInfo).
+Bluetooth identity uses Nearby devices (`BLUETOOTH_CONNECT`) on Android 12+;
+Android 11 uses the normal Bluetooth permission. The capability gateway can
+request the new runtime permissions visibly. Missing signal permissions are
+reported dormant by the tool and blocked by the rules summary. The Location
+permissions support Wi-Fi identity here, not a geofence or coordinates source.
+
+The runner carries device conditions in `AutomationVoiceRequest`. They are
+checked again before activity launch, during startup, before context and speech,
+and throughout voice. A positive connected-headphones condition also restricts
+the communication route to the matching address/profile. Local WebRTC playback
+is muted (or PCM playback paused/flushed) before asynchronous stop on loss; no
+speaker fallback or automatic replay is selected. Route callbacks and a bounded
+100 ms watchdog check route, identity and permission changes. HFP may take up
+to three seconds to become the active route, before new voice media starts.
+The output gate latches a lost condition until a new call.
+
+Protected voice needs Android 12+ and a usable Bluetooth communication route:
+A2DP-only headphones can satisfy the connection condition but cannot safely
+serve this realtime communication route. They are refused rather than routed
+to the speaker. Android callback delivery and buffered physical audio are not
+instantaneous guarantees. Required physical tests include classic HFP and BLE
+audio, two headphones with the same name, selected-device/profile loss while
+another device stays connected, watch-only and speaker-only connections,
+permission revocation, cold starts, stop/reconnection, A2DP-only refusal, Wi-Fi
+roaming, VPN, redacted identity and foreground/background Location behavior.
 
 **A rule takes the device the way a turn does.** `run_workflow` and
 `open_intent` go through `AgentCoordinator.runAutomation`, which claims the same

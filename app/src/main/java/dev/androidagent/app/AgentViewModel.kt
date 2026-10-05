@@ -800,7 +800,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * already has messages is left alone and voice opens in a new one, the way
      * a fresh assistant press starts over.
      */
-    fun startAssistantVoice() {
+    fun startAssistantVoice(automation: dev.androidagent.core.AutomationVoiceRequest? = null) {
+        if (automation != null && (graph.voice.state.value.active || assistantVoiceJob?.isActive == true)) {
+            // A later notification belongs in the live conversation; do not
+            // restart the call or silently discard its context.
+            val starting = assistantVoiceJob
+            task {
+                starting?.join()
+                graph.voiceConversation.announce(automation)
+            }
+            return
+        }
         if (graph.voice.state.value.active || assistantVoiceJob?.isActive == true) return
         // The voice screen comes up now, not when the call starts: on a cold
         // start the runtime and the chat take seconds, and a press that shows
@@ -816,7 +826,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     current.value = graph.sessions.createSession(EngineKind.CODEX).id
                 }
                 mutable.update { it.copy(voiceSummon = "Opening your conversation") }
-                beginVoice()
+                beginVoice(automation)
             } finally {
                 // Voice is already active by here when it started, so the
                 // screen stays up; on a failure or a cancel it goes away.
@@ -829,11 +839,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(isDefaultAssistant = isDefault) }
     }
     private fun startVoice() = task { beginVoice() }
-    private suspend fun beginVoice() {
+    private suspend fun beginVoice(automation: dev.androidagent.core.AutomationVoiceRequest? = null) {
+        automation?.requireCurrent()
         graph.queue.pause()
         val sessionId = current.value ?: kotlin.error("Choose a chat first.")
         mutable.update { it.copy(errorMessage = null) }
-        graph.voiceConversation.begin(sessionId, engines.of(EngineKind.CODEX).model)
+        graph.voiceConversation.begin(sessionId, engines.of(EngineKind.CODEX).model, automation)
     }
     private fun stopVoice() = task { graph.voiceConversation.stop() }
     fun prepare() {
@@ -1126,6 +1137,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 supported = supported,
                 now = java.time.ZonedDateTime.now(),
                 appLabel = ::appLabel,
+                supportedDeviceStates = host.supportedDeviceStates(),
             )
         }.getOrDefault(dev.androidagent.core.AutomationOverview.EMPTY)
         mutable.update { state ->
