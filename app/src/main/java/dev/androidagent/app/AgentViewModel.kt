@@ -1137,6 +1137,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 supported = supported,
                 now = java.time.ZonedDateTime.now(),
                 appLabel = ::appLabel,
+                supportedDeviceStates = host.supportedDeviceStates(),
             )
         }.getOrDefault(dev.androidagent.core.AutomationOverview.EMPTY)
         mutable.update { state ->

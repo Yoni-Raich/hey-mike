@@ -172,7 +172,10 @@ data class AutomationTrigger(
                 }
 
                 AutomationTriggerKind.DEVICE_STATE -> {
+                    val unknown = json.keys - setOf("type", "state", "is")
+                    if (unknown.isNotEmpty()) bad("unknown fields ${unknown.joinToString()}; put deviceAddress/profile/ssid/bssid in an if condition.")
                     val name = json.str("state") ?: bad("a \"device_state\" trigger needs \"state\".")
+                    AutomationDeviceStates.validate(name, json.str("is"), trigger = true)
                     AutomationTrigger(kind, stateName = name, stateValue = json.str("is"))
                 }
 

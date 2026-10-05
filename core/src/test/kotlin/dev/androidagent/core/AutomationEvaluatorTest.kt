@@ -339,16 +339,16 @@ class AutomationEvaluatorTest {
         val charging = rule(
             """
             {"id":"charging","when":{"type":"device_state","state":"power","is":"charging"},
-             "if":[{"type":"device_state","state":"wifi","equals":"home-net"}],
+             "if":[{"type":"device_state","state":"screen","equals":"on"}],
              "then":[{"type":"run_workflow","workflow":"nightly-backup"}]}
             """,
         )
         val now = at("2026-09-15T23:00:00")
         val event = AutomationEvent.DeviceState("power", "charging", now)
-        assertTrue(evaluate(charging, event, context(now, deviceState = mapOf("wifi" to "home-net"))) is AutomationEvaluator.Outcome.Fired)
+        assertTrue(evaluate(charging, event, context(now, deviceState = mapOf("screen" to "on"))) is AutomationEvaluator.Outcome.Fired)
         assertEquals(
             AutomationEvaluator.Skip.CONDITION,
-            skip(evaluate(charging, event, context(now, deviceState = mapOf("wifi" to "cafe")))),
+            skip(evaluate(charging, event, context(now, deviceState = mapOf("screen" to "off")))),
         )
     }
 

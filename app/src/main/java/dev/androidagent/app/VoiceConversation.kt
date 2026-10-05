@@ -77,6 +77,16 @@ class VoiceConversation(
 
     init {
         scope.launch { engine.voiceEvents.collect(::handle) }
+        scope.launch {
+            voice.state.collect { state ->
+                // Local route/permission loss ends ownership even if the network stop fails.
+                if (state.phase == dev.androidagent.core.VoicePhase.ERROR && mutableSessionId.value != null) {
+                    coordinator().endVoice()
+                    clear()
+                    mutableFailures.tryEmit(state.message)
+                }
+            }
+        }
     }
 
     /**
@@ -113,7 +123,8 @@ class VoiceConversation(
             try {
                 // Realtime selects its own compatible voice model. The normal Codex
                 // model remains a thread setting and is not forced into this RPC.
-                voice.start(threadId)
+                voice.start(threadId, bluetoothHeadphonesOnly = automation?.bluetoothHeadphonesOnly == true,
+                    outputConditions = automation?.outputConditions.orEmpty())
                 voiceStarted = true
             } catch (failure: Throwable) {
                 coordinator().endVoice()
@@ -141,9 +152,12 @@ class VoiceConversation(
     /** Add a rule's context, then speak its opening without waiting for microphone input. */
     suspend fun announce(request: AutomationVoiceRequest) = announcementLock.withLock {
         check(mutableSessionId.value != null) { "Voice is not active." }
+        voice.requireAutomationConnections(request.outputConditions)
+        if (request.bluetoothHeadphonesOnly) voice.requireBluetoothHeadphones()
         request.deliver(
             addContext = { guidance, quoted -> addContext(guidance, quoted) },
             speak = { opening -> voice.appendSpeech(opening) },
+            checkOutput = { voice.checkAutomationOutput() },
         )
     }
 

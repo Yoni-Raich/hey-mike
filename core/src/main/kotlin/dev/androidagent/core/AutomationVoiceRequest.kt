@@ -35,10 +35,13 @@ data class AutomationVoiceRequest(
     val opening: String,
     val context: String? = null,
     val validUntil: Long,
+    val bluetoothHeadphonesOnly: Boolean = false,
+    val outputConditions: List<AutomationCondition> = emptyList(),
 ) {
     init {
         require(ruleId.isNotBlank()) { "A voice automation needs a rule id." }
         require(opening.isNotBlank()) { "A voice automation needs an opening message." }
+        require(outputConditions.all { it.kind == AutomationCondition.Kind.DEVICE_STATE })
     }
 
     fun requireCurrent(now: Long = System.currentTimeMillis()) {
@@ -50,6 +53,8 @@ data class AutomationVoiceRequest(
         put("opening", opening)
         context?.let { put("context", it) }
         put("validUntil", validUntil)
+        if (bluetoothHeadphonesOnly) put("bluetoothHeadphonesOnly", true)
+        if (outputConditions.isNotEmpty()) put("outputConditions", kotlinx.serialization.json.JsonArray(outputConditions.map { it.toJson() }))
     }.toString()
 
     /**
@@ -60,8 +65,10 @@ data class AutomationVoiceRequest(
         addContext: suspend (guidance: String, quoted: String) -> Unit,
         speak: suspend (String) -> Unit,
         now: () -> Long = System::currentTimeMillis,
+        checkOutput: () -> Unit = {},
     ) {
         requireCurrent(now())
+        checkOutput()
         val quoted = buildJsonObject {
             put("ruleId", ruleId)
             put("opening", opening)
@@ -69,6 +76,7 @@ data class AutomationVoiceRequest(
         }.toString()
         addContext(CONTEXT_GUIDANCE, quoted)
         requireCurrent(now())
+        checkOutput()
         speak(opening)
     }
 
@@ -82,6 +90,10 @@ data class AutomationVoiceRequest(
                 validUntil = requireNotNull(json["validUntil"]?.jsonPrimitive?.longOrNull) {
                     "The voice automation deadline is missing."
                 },
+                bluetoothHeadphonesOnly = json.bool("bluetoothHeadphonesOnly") ?: false,
+                outputConditions = (json["outputConditions"] as? kotlinx.serialization.json.JsonArray)?.mapIndexed { index, condition ->
+                    AutomationCondition.parse(condition.jsonObject, index, requireNotNull(json.text("ruleId")))
+                }.orEmpty(),
             )
         }
 

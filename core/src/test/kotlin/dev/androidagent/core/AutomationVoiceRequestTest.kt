@@ -29,6 +29,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AutomationVoiceRequestTest {
+    @Test fun specificConnectionSelectorsSurviveTheVoiceLaunchPayload() {
+        val condition = AutomationCondition(AutomationCondition.Kind.DEVICE_STATE, stateName = "bluetooth_headphones", equals = "connected",
+            deviceAddress = "AA:BB:CC:DD:EE:01", profile = "hfp")
+        val request = AutomationVoiceRequest("headphones", "Hi", validUntil = 1_000, bluetoothHeadphonesOnly = true, outputConditions = listOf(condition))
+        assertEquals(request, AutomationVoiceRequest.fromJson(request.toJson()))
+    }
+    @Test fun disconnectWhileContextLoadsStopsSpeechAndGuardSurvivesLaunch() = runBlocking {
+        val guarded = AutomationVoiceRequest("headphones", "Private message", validUntil = 1_000, bluetoothHeadphonesOnly = true)
+        assertEquals(guarded, AutomationVoiceRequest.fromJson(guarded.toJson()))
+        var connected = true
+        var spoken = false
+        val result = runCatching {
+            guarded.deliver({ _, _ -> connected = false }, { spoken = true }, { 900 }, {
+                check(connected) { "Headphones disconnected" }
+            })
+        }
+        assertTrue(result.isFailure)
+        assertFalse(spoken)
+    }
     private val request = AutomationVoiceRequest(
         "notification-voice", "Hi, Yoni, you have a new notification. Do you want me to do something about that?",
         "Dad: meet at eight", validUntil = 1_000,

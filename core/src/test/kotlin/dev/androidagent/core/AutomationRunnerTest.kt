@@ -32,6 +32,19 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 class AutomationRunnerTest {
+    @Test fun connectedHeadphonesConditionIsCarriedAsVoiceOutputRequirement() {
+        val rule = AutomationRule.parse(Json.parseToJsonElement(
+            """{"id":"headphones","when":{"type":"notification","package":"*"},
+            "if":[{"type":"device_state","state":"bluetooth_headphones","equals":"connected"}],
+            "then":[{"type":"voice_call","opening":"Hi"}]}"""
+        ).jsonObject)
+        val actions = Recorder()
+        val report = runBlocking { AutomationRunner(actions, history, { now }).run(
+            AutomationEvaluator.Outcome.Fired(rule, rule.actions, emptyMap())
+        ) }
+        assertTrue(report.ok)
+        assertTrue(actions.lastVoiceRequest!!.bluetoothHeadphonesOnly)
+    }
 
     private val zone = ZoneId.of("Asia/Jerusalem")
     private val now = ZonedDateTime.parse("2026-09-15T19:00:00+03:00[Asia/Jerusalem]")

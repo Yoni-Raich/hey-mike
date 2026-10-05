@@ -121,6 +121,7 @@ data class AutomationContext(
     val userReachable: Boolean = false,
     /** True when a turn could run right now: signed in, runtime up, no other run. */
     val agentAvailable: Boolean = true,
+    val connections: List<AutomationConnection> = emptyList(),
 ) {
     /** Always-available fields, on top of whatever the event carries. */
     fun fields(): Map<String, String> = mapOf(

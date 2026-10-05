@@ -286,6 +286,9 @@ class AgentGraph(private val app: Application) {
         // A rule the agent writes, edits or deletes changes when the alarm is
         // next due; without this it waited for an unrelated firing to be armed.
         onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
+        deviceState = { if (::automationHost.isInitialized) automationHost.readDeviceState() else emptyMap() },
+        supportedDeviceStates = { if (::automationHost.isInitialized) automationHost.supportedDeviceStates() else emptySet() },
+        liveDeviceSnapshot = { if (::automationHost.isInitialized) automationHost.deviceSnapshot() else dev.androidagent.core.AutomationDeviceSnapshot() },
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
@@ -304,7 +307,9 @@ class AgentGraph(private val app: Application) {
             capabilityTools, a11yTools, adbTools,
         ),
     )
-    val voice = AndroidRealtimeVoiceController(app, engine, scope)
+    val voice = AndroidRealtimeVoiceController(app, engine, scope, automationSnapshot = {
+        if (::automationHost.isInitialized) automationHost.deviceSnapshot() else dev.androidagent.core.AutomationDeviceSnapshot()
+    })
     /**
      * Pictures and videos Mike showed from a computer: loaded when looked at,
      * kept in a cache the system may clear, saved to the phone on request.

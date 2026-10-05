@@ -31,6 +31,17 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 class AutomationOverviewTest {
+    @Test fun missingHeadphonesPermissionIsVisibleButOffRuleStaysOff() {
+        val rule = rule("""{"id":"headphones","when":{"type":"notification","package":"*"},
+            "if":[{"type":"device_state","state":"bluetooth_headphones","equals":"connected"}],
+            "then":[{"type":"voice_call","opening":"Hi"}]}""")
+        val summary = AutomationSummaries.of(rule, history, everything, now, setOf("power", "screen"))
+        assertEquals(AutomationSummary.Status.BLOCKED, summary.status)
+        assertTrue(summary.blockedReason!!.contains("Nearby devices"))
+        assertEquals(listOf("Bluetooth headphones are connected"), summary.conditions)
+        assertEquals(AutomationSummary.Status.OFF,
+            AutomationSummaries.of(rule.copy(enabled = false), history, everything, now, emptySet()).status)
+    }
 
     private val zone = ZoneId.of("Asia/Jerusalem")
     private val now = ZonedDateTime.parse("2026-09-15T13:00:00+03:00[Asia/Jerusalem]")

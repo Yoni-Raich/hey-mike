@@ -126,10 +126,11 @@ data class AutomationOverview(
             history: AutomationHistory,
             supported: Set<AutomationTriggerKind>,
             now: ZonedDateTime,
+            supportedDeviceStates: Set<String> = AutomationDeviceStates.values.keys,
             appLabel: (String) -> String? = { null },
         ): AutomationOverview {
             val summaries = rules
-                .map { rule -> AutomationSummaries.of(rule, history, supported, now, appLabel) }
+                .map { rule -> AutomationSummaries.of(rule, history, supported, now, supportedDeviceStates, appLabel) }
                 .sortedWith(compareBy({ it.status.ordinal.sortKey() }, { it.name.lowercase(Locale.ROOT) }))
 
             val blocked = summaries.filter { it.status == AutomationSummary.Status.BLOCKED }
@@ -192,16 +193,22 @@ object AutomationSummaries {
         history: AutomationHistory,
         supported: Set<AutomationTriggerKind>,
         now: ZonedDateTime,
+        supportedDeviceStates: Set<String> = AutomationDeviceStates.values.keys,
         appLabel: (String) -> String? = { null },
     ): AutomationSummary {
         val chipName = chipName(rule.id)
-        val servable = rule.trigger.kind in supported
+        val missing = AutomationDeviceStates.missing(rule, supportedDeviceStates)
+        val servable = rule.trigger.kind in supported && missing.isEmpty()
         val status = when {
             !rule.enabled -> AutomationSummary.Status.OFF
             !servable -> AutomationSummary.Status.BLOCKED
             else -> AutomationSummary.Status.ON
         }
-        val blockedReason = if (status == AutomationSummary.Status.BLOCKED) blockedReason(rule.trigger.kind) else null
+        val blockedReason = if (status == AutomationSummary.Status.BLOCKED) {
+            if (AutomationDeviceStates.BLUETOOTH_HEADPHONES in missing || "bluetooth_device" in missing) "allow Nearby devices for Bluetooth connections"
+            else if ("wifi" in missing) "allow precise Location and turn Location on for Wi-Fi identity"
+            else blockedReason(rule.trigger.kind)
+        } else null
         return AutomationSummary(
             id = rule.id,
             name = rule.description.ifBlank { chipName },
@@ -368,7 +375,13 @@ object AutomationSummaries {
             }
             AutomationCondition.Kind.DEVICE_STATE -> {
                 val what = condition.equals ?: condition.contains
-                (condition.stateName ?: "the phone") + (what?.let { " is $it" } ?: " is set")
+                if (condition.stateName in setOf(AutomationDeviceStates.BLUETOOTH_HEADPHONES, "bluetooth_device")) {
+                    val identity = condition.deviceAddress?.let { " ($it)" }.orEmpty()
+                    val connection = condition.profile?.let { " using $it" }.orEmpty()
+                    if (condition.stateName == "bluetooth_device") "Bluetooth device$identity$connection is $what"
+                    else "Bluetooth headphones$identity$connection are $what"
+                } else if (condition.stateName == "wifi") "Wi-Fi ${condition.ssid ?: condition.bssid ?: "network"} is $what"
+                else (condition.stateName ?: "the phone") + (what?.let { " is $it" } ?: " is set")
             }
         }
         return if (condition.negate) "not $body" else body
