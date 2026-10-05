@@ -5,17 +5,18 @@ and complete phone E2E are established.
 
 ## Current public artifact
 
-The latest public artifact is v0.13.0:
+The latest published artifact is v0.14.0:
 
-- package: `dev.androidagent.app.dev`;
-- versionCode: `27`;
-- APK: `hey-mike-0.13.0.apk`;
-- SHA-256: `B965F9EC93A16873DB2E95B433006DD05BF9A9A7264C09ADB027A91D7C5BBDD7`;
+- flavor and label: `prod`, `Hey Mike`;
+- package: `dev.androidagent.app`;
+- versionCode: `1019`;
+- APK: `hey-mike-0.14.0.apk`;
+- SHA-256: `abc894688e9303c002c62f47a9618d547023d4a05328eb06b89681d9dd78dce9`;
 - signing: APK Signature Scheme v3 with the local Android debug key.
 
 This is test-only signing. It is installable for local testing, not a production
 release. The public release page is
-[v0.13.0 on GitHub](https://github.com/Yoni-Raich/hey-mike/releases/tag/v0.13.0).
+[v0.14.0 on GitHub](https://github.com/Yoni-Raich/hey-mike/releases/tag/v0.14.0).
 v0.10.0 was the first release named Hey Mike.
 
 Assets are named `hey-mike-X.Y.Z.apk` from v0.10.0; earlier releases used
@@ -46,12 +47,11 @@ The downloaded APK must also have that package, a higher versionCode, and the
 installed app's signing certificate before the installer opens. Keep the
 metadata, APK manifest, and actual signing certificate aligned.
 
-The current public v0.13.0 APK uses the **dev** package, while the latest Dev
-Nightly also uses it with version codes above 1000. Before another public dev
-preview, pick a versionCode higher than the latest Nightly and the target
-phones. A first `prod` package release installs beside the existing dev app;
-it will not upgrade that package or move its private account and chat data.
-Choose the package and migration plan before cutting the next artifact.
+Public releases use **Prod Release**, package `dev.androidagent.app`, as the
+published v0.14.0 APK does. Dev is a separate app and nightly channel. Do not
+publish a Dev APK as the normal release. Version 0.15.0 uses code 1100 and
+the same certificate as v0.14.0, so it updates the regular app in place.
+It does not move private account or chat data between the two packages.
 
 Release candidates should be built from the validated `main` history. Keep
 `dev` builds for integration and testing. A flavor named `prod` does not by
@@ -61,6 +61,7 @@ itself provide production signing or production readiness.
 
 ```powershell
 .\gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug --no-daemon
+.\gradlew.bat :app:assembleProdRelease :app:lintProdRelease :app:testProdReleaseUnitTest --no-daemon
 python -m unittest tools.test_prepare_runtime
 git diff --check
 ```
