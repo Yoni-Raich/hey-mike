@@ -519,6 +519,10 @@ class AutomationToolGateway(
                                 put("type", "string")
                                 put("enum", enumOf(AutomationTriggerKind.WIRE_NAMES))
                             })
+                            put("package", buildJsonObject {
+                                put("type", "string")
+                                put("description", "For notification: an app package, or \"*\" to listen to all apps. Required for notification triggers.")
+                            })
                         })
                         put("required", enumOf(listOf("type")))
                         put("additionalProperties", true)
@@ -553,6 +557,14 @@ class AutomationToolGateway(
                                 put("type", buildJsonObject {
                                     put("type", "string")
                                     put("enum", enumOf(AutomationActionKind.WIRE_NAMES))
+                                })
+                                put("opening", buildJsonObject {
+                                    put("type", "string")
+                                    put("description", "For voice_call: the words Mike speaks first, before microphone input. Event placeholders are supported.")
+                                })
+                                put("context", buildJsonObject {
+                                    put("type", "string")
+                                    put("description", "For voice_call: optional quoted context for follow-up, with event placeholders such as {{notification.text}}.")
                                 })
                             })
                             put("required", enumOf(listOf("type")))
@@ -675,12 +687,13 @@ class AutomationToolGateway(
         const val DESCRIPTION: String =
             "Standing rules: when something happens, and the conditions hold, do this. " +
                 "A rule is when/if/then. \"when\" is one of schedule (at:\"19:00\", days, or " +
-                "everyMinutes), place (enter/exit a named place), notification (a named package, " +
-                "optionally from someone), device_state, or manual. \"if\" is any number of " +
+                "everyMinutes), place (enter/exit a named place), notification (package names an app " +
+                "or \"*\" for all apps, optionally from someone), device_state, or manual. \"if\" is any number of " +
                 "time_between (wraps past midnight), day_of_week, at_place, text (on a field such " +
                 "as notification.text) and device_state tests, all of which must hold. \"then\" is " +
                 "up to four actions from run_workflow, open_intent, notify, agent_turn, voice_call " +
-                "and ask. Use {{notification.text}} and the other event fields in an action to pass " +
+                "and ask. Voice_call opening is spoken first; its optional context carries event details for follow-up. " +
+                "Use {{notification.text}} and the other event fields in an action to pass " +
                 "what happened into it — and only the fields you actually write are ever sent " +
                 "anywhere, so do not interpolate a message body you do not need. " +
                 "The action kinds carry the cost: run_workflow, open_intent and notify run on " +

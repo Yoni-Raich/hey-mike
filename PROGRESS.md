@@ -1,5 +1,39 @@
 # Progress
 
+### Notification rules for all apps, with voice context and first speech — 2026-10-05
+
+- A notification trigger can choose `package:"*"` for all apps, while an
+  omitted, null or empty package is still refused. The listener admits the
+  wildcard only from an enabled rule, before reading notification content;
+  own, ongoing and group-summary notifications remain excluded. Named-app
+  rules, sender filters, conditions, exports and rate limits keep their scope.
+- `voice_call` now carries its bound `opening` and optional `context`, rule ID
+  and expiry through Android startup. After the voice connection is ready,
+  context is sent as quoted data, then the opening is dispatched through
+  `appendSpeech` without microphone input. Later firings use the live call.
+  Intent consumption, pending microphone permission and Recents handling
+  preserve the startup payload without replaying an ended call.
+- Checked on Windows/JDK 21: `./gradlew.bat :core:test
+  :voice:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug :voice:lintDebug -x :app:prepareCodexRuntime --no-daemon
+  --no-parallel --max-workers=2 --console=plain` passes (651 core, 7 voice,
+  137 app tests; no failures or skips). App lint: 0 errors, 21 warnings;
+  voice lint: 0 errors, 2 warnings. `git diff --check` passes.
+- The initial Android check staged and verified the pinned runtime, then
+  failed during APK packaging because the disk was full. Task-created duplicate
+  archives and extracted runtime binaries were removed; retries reused the
+  already-staged runtime with `-x :app:prepareCodexRuntime`. The final source
+  check rebuilt the dev debug APK successfully.
+- Seventeen added regression tests cover wildcard persistence and matching,
+  disabled wildcard filtering, sender/condition isolation, context disclosure
+  and binding, editable context, payload round trips, exact text preservation,
+  context-before-speech dispatch, expiry and failed context injection.
+- Not tested: a phone, real first speech or follow-up understanding, background
+  activity startup, microphone dialogs/recreation/Recents, Bluetooth, Stop
+  during startup, release APKs or the full release gate. No APK was installed.
+  The current screen-on/unlocked voice gate remains; this is not locked-screen
+  driving support.
+
 ### Codex retries stay active and errors keep their chat — 2026-10-05
 
 - A Codex `error` notification with `willRetry=true` updates that turn's

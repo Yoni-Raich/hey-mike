@@ -67,8 +67,10 @@ class AutomationRunnerTest {
             return AutomationActionResult.ok()
         }
 
-        override suspend fun voiceCall(opening: String): AutomationActionResult {
-            calls += "voiceCall:$opening"
+        var lastVoiceRequest: AutomationVoiceRequest? = null
+        override suspend fun voiceCall(request: AutomationVoiceRequest): AutomationActionResult {
+            lastVoiceRequest = request
+            calls += "voiceCall:${request.opening}"
             return AutomationActionResult.ok()
         }
 
@@ -102,6 +104,26 @@ class AutomationRunnerTest {
         assertTrue(report.ok)
         assertEquals(listOf("runWorkflow:post-to-facebook", "notify:Posted"), actions.calls)
         assertEquals(2, report.completed.size)
+    }
+
+    @Test fun aNotificationVoiceActionKeepsItsOpeningContextAndDeadline() {
+        val rule = AutomationRule.parse(Json.parseToJsonElement(
+            """{"id":"notification-voice","when":{"type":"notification","package":"*"},
+             "then":[{"type":"voice_call","opening":"Hi, Yoni, you have a new notification.",
+             "context":"{{notification.package}}: {{notification.title}}: {{notification.text}}"}]}""",
+        ).jsonObject)
+        val event = AutomationEvent.Notification("com.example", "Dad", "Meet at eight", now)
+        val fired = AutomationEvaluator(history).evaluate(
+            listOf(rule), event, AutomationContext(now, userReachable = true),
+        ).single() as AutomationEvaluator.Outcome.Fired
+        val actions = Recorder()
+        val result = runBlocking { AutomationRunner(actions, history, { now }).run(fired) }
+        assertTrue(result.ok)
+        assertEquals(
+            AutomationVoiceRequest("notification-voice", "Hi, Yoni, you have a new notification.",
+                "com.example: Dad: Meet at eight", now.toInstant().toEpochMilli() + rule.guard.validForMs),
+            actions.lastVoiceRequest,
+        )
     }
 
     @Test fun theFireIsRecordedBeforeTheFirstAction() {

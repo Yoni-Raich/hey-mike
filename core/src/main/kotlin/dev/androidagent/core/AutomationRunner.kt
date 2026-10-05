@@ -46,7 +46,7 @@ interface AutomationActions {
      * [AutomationGuard.validForMs].
      */
     suspend fun agentTurn(prompt: String, ruleId: String, validUntil: Long): AutomationActionResult
-    suspend fun voiceCall(opening: String): AutomationActionResult
+    suspend fun voiceCall(request: AutomationVoiceRequest): AutomationActionResult
 
     /**
      * Ask the user a yes/no question and wait for the answer.
@@ -208,7 +208,9 @@ class AutomationRunner(
                 validUntil,
             )
 
-            AutomationActionKind.VOICE_CALL -> actions.voiceCall(action.raw.str("opening").orEmpty())
+            AutomationActionKind.VOICE_CALL -> actions.voiceCall(
+                AutomationVoiceRequest.fromAction(ruleId, action.raw, validUntil),
+            )
 
             // Handled by the approval gate above; reaching here means it was approved.
             AutomationActionKind.ASK -> AutomationActionResult.ok()

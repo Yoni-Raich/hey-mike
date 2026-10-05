@@ -92,6 +92,37 @@ class AutomationEvaluatorTest {
         assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(evaluate(dadAfterSeven, other, context(now))))
     }
 
+    @Test fun anExplicitAllAppsRuleUsesEachNotificationsActualContext() {
+        val all = rule(
+            """{"id":"any","when":{"type":"notification","package":"*"},
+             "then":[{"type":"voice_call","opening":"Hi, {{notification.title}} sent a notification.",
+             "context":"{{notification.package}}: {{notification.text}}"}]}""",
+        )
+        val now = at("2026-09-15T21:40:00")
+        for (pkg in listOf("com.whatsapp", "com.instagram.android", "com.other.app")) {
+            val event = AutomationEvent.Notification(pkg, "Dad", "Meet at eight", now)
+            val fired = evaluate(all, event, context(now)) as AutomationEvaluator.Outcome.Fired
+            assertEquals("Hi, Dad sent a notification.", fired.actions.single().raw.str("opening"))
+            assertEquals("$pkg: Meet at eight", fired.actions.single().raw.str("context"))
+        }
+        assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(evaluate(all, AutomationEvent.Clock(now), context(now))))
+        assertEquals(AutomationEvaluator.Skip.NEEDS_USER, skip(evaluate(all, whatsapp(at = now), context(now, userReachable = false))))
+    }
+
+    @Test fun anAllAppsRuleStillRespectsItsSenderAndConditions() {
+        val all = rule(
+            """{"id":"any","when":{"type":"notification","package":"*","from":"Dad"},
+             "if":[{"type":"text","field":"notification.text","contains":"dinner"}],
+             "then":[{"type":"notify","text":"From {{notification.title}}"}]}""",
+        )
+        val now = at("2026-09-15T21:40:00")
+        assertTrue(evaluate(all, whatsapp(text = "dinner", at = now), context(now)) is AutomationEvaluator.Outcome.Fired)
+        assertEquals(AutomationEvaluator.Skip.TRIGGER, skip(evaluate(all, whatsapp(title = "Work", text = "dinner", at = now), context(now))))
+        assertEquals(AutomationEvaluator.Skip.CONDITION, skip(evaluate(all, whatsapp(text = "hello", at = now), context(now))))
+        val fired = evaluate(all, whatsapp(text = "dinner", at = now), context(now)) as AutomationEvaluator.Outcome.Fired
+        assertEquals(mapOf("notification.title" to "Dad"), fired.exported)
+    }
+
     @Test fun anotherSenderInTheRightAppDoesNotMatch() {
         val now = at("2026-09-15T21:40:00")
         assertEquals(

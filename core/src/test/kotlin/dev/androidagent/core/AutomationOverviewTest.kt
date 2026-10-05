@@ -102,6 +102,11 @@ class AutomationOverviewTest {
         assertEquals("Android", AutomationSummaries.triggerLine(other))
     }
 
+    @Test fun anAllAppsRuleShowsItsScopeInPlainWords() {
+        val all = rule("""{"id":"any","when":{"type":"notification","package":"*","from":"Dad"},"then":[{"type":"notify","text":"x"}]}""")
+        assertEquals("Any app from Dad", AutomationSummaries.triggerLine(all) { error("A wildcard is not an app to resolve.") })
+    }
+
     @Test fun theChipNameComesFromTheIdSoItIsAlwaysShort() {
         // A description is a sentence; a chip has room for two or three words.
         assertEquals("Home lights", AutomationSummaries.chipName("home-lights"))

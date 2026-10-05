@@ -86,6 +86,18 @@ class AutomationEditorTest {
         assertTrue(AutomationEditor.changes(evening, values).isEmpty())
     }
 
+    @Test fun editingAOneAppVoiceRuleCanChooseAllAppsAndAddFollowUpContext() {
+        val voice = rule("""{"id":"voice","when":{"type":"notification","package":"com.whatsapp"},
+         "then":[{"type":"voice_call","opening":"Hi, Yoni"}]}""")
+        val edited = saved(voice, mapOf("when.package" to "*", "then.0.context" to "{{notification.title}}: {{notification.text}}"))
+        assertEquals("*", edited.trigger.packageName)
+        assertEquals(setOf("notification.title", "notification.text"), edited.exportedFields)
+        assertEquals("Hi, Yoni", edited.actions.single().raw.str("opening"))
+        val cleared = saved(edited, mapOf("then.0.context" to ""))
+        assertFalse(cleared.actions.single().raw.containsKey("context"))
+        assertTrue(cleared.exportedFields.isEmpty())
+    }
+
     @Test fun movingTheTimeChangesOnlyTheTime() {
         val changes = AutomationEditor.changes(evening, mapOf("when.at" to "20:30"))
         assertEquals(setOf("when"), changes.keys)

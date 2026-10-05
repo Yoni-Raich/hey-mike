@@ -244,7 +244,8 @@ object AutomationSummaries {
                 if (trigger.transition == AutomationTrigger.PlaceTransition.EXIT) "Leaving $place" else "Arriving at $place"
             }
             AutomationTriggerKind.NOTIFICATION -> {
-                val app = trigger.packageName?.let { appLabel(it) ?: prettyPackage(it) } ?: "an app"
+                val app = if (trigger.packageName == AutomationTrigger.ALL_PACKAGES) "Any app"
+                    else trigger.packageName?.let { appLabel(it) ?: prettyPackage(it) } ?: "an app"
                 trigger.from?.let { "$app from $it" } ?: app
             }
             AutomationTriggerKind.DEVICE_STATE -> {

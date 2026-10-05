@@ -276,6 +276,12 @@ class AndroidRealtimeVoiceController(
         engine.appendText(text, role)
     }
 
+    /** Speak a rule's opening immediately, without needing a microphone turn. */
+    suspend fun appendSpeech(text: String) {
+        check(state.value.active && state.value.phase != VoicePhase.STOPPING) { "Voice is not active." }
+        engine.appendSpeech(text)
+    }
+
     /** Silence or restore the microphone without ending the conversation. */
     fun setMuted(muted: Boolean) {
         if (!state.value.active) return

@@ -89,6 +89,30 @@ class AutomationToolGatewayTest {
         assertEquals("notification.title", summary["sendsToTheModel"]!!.jsonArray.single().jsonPrimitive.content)
     }
 
+    @Test fun creatingAnAllAppsVoiceRuleAndDryRunningItKeepsContextAndDisclosure() {
+        val gateway = gateway()
+        val reply = create(gateway,
+            """{"id":"all-notifications","when":{"type":"notification","package":"*"},
+             "then":[{"type":"voice_call","opening":"Hi, Yoni, you have a new notification.",
+             "context":"{{notification.package}}: {{notification.title}}: {{notification.text}}"}]}""",
+        )
+        assertTrue(reply["ok"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("a notification from any app", reply["summary"]!!.jsonObject.str("when"))
+        assertEquals(setOf("notification.package", "notification.title", "notification.text"),
+            reply["summary"]!!.jsonObject["sendsToTheModel"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet())
+        assertEquals("*", library().get("all-notifications")!!.trigger.packageName)
+        for (pkg in listOf("com.whatsapp", "com.example.mail")) {
+            val test = call(gateway,
+                """{"mode":"test","rule":"all-notifications","event":{"type":"notification",
+                 "package":"$pkg","title":"Dad","text":"Meet at eight"}}""",
+            )
+            assertEquals(1, test["firing"]!!.jsonPrimitive.content.toInt())
+            val action = test["outcomes"]!!.jsonArray.single().jsonObject["then"]!!.jsonArray.single().jsonObject
+            assertEquals("$pkg: Dad: Meet at eight", action.str("context"))
+        }
+        assertEquals(0, history.firedOn("all-notifications", now.toLocalDate()))
+    }
+
     @Test fun aRuleWhoseTriggerThisPhoneCannotServeIsSavedAndReportedDormant() {
         // The point of failure is when it is written, not the first night it
         // quietly does not fire.

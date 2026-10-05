@@ -27,6 +27,7 @@ import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import dev.androidagent.core.AutomationEvent
+import dev.androidagent.core.AutomationWakeups
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -44,9 +45,9 @@ import java.time.ZonedDateTime
  * 2. ongoing notifications (the foreground-service card, a media player) are
  *    dropped: they are status, not events, and they repost constantly,
  * 3. **the package is checked before the title or the body is touched.** An app
- *    no enabled rule names is dropped without ever being read. When no rule
- *    names any package, `watched` is empty and this service reads nothing at
- *    all,
+ *    no enabled rule names is dropped without ever being read, unless an
+ *    enabled rule explicitly chooses all apps. With no notification rules,
+ *    `watched` is empty and this service reads nothing at all,
  * 4. only then are the title and text extracted, and they travel no further
  *    than the evaluator unless a rule's own actions interpolate them.
  *
@@ -66,7 +67,7 @@ class AutomationNotificationListener : NotificationListenerService() {
         val host = automationHost() ?: return
         val watched = host.watchedNotificationPackages()
         if (watched.isEmpty()) return
-        if (posted.packageName.lowercase() !in watched) return
+        if (!AutomationWakeups.isPackageWatched(posted.packageName, watched)) return
 
         // Only now is anything read.
         val extras = notification.extras

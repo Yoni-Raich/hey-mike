@@ -269,7 +269,7 @@ class AgentGraph(private val app: Application) {
             Intent(app, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         },
-        voiceIntent = { dev.androidagent.app.assist.AssistLaunch.voiceIntent(app) },
+        voiceIntent = { request -> dev.androidagent.app.assist.AssistLaunch.voiceIntent(app, request) },
     )
     lateinit var automationHost: AutomationHost
         private set

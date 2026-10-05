@@ -75,7 +75,7 @@ data class AutomationTrigger(
     /** PLACE: which place, and whether entering or leaving. */
     val place: String? = null,
     val transition: PlaceTransition = PlaceTransition.ENTER,
-    /** NOTIFICATION: which app, and optionally which sender. */
+    /** NOTIFICATION: which app, or [ALL_PACKAGES], and optionally which sender. */
     val packageName: String? = null,
     val from: String? = null,
     /** DEVICE_STATE: which signal, and the value that wakes the rule. */
@@ -102,7 +102,7 @@ data class AutomationTrigger(
 
         AutomationTriggerKind.NOTIFICATION ->
             event is AutomationEvent.Notification &&
-                (packageName == null || event.packageName.equals(packageName, ignoreCase = true)) &&
+                (packageName == ALL_PACKAGES || event.packageName.equals(packageName, ignoreCase = true)) &&
                 (from == null || event.title.contains(from, ignoreCase = true))
 
         AutomationTriggerKind.DEVICE_STATE ->
@@ -130,13 +130,17 @@ data class AutomationTrigger(
             AutomationTriggerKind.SCHEDULE -> schedule?.describe() ?: "on a schedule"
             AutomationTriggerKind.PLACE -> "${transition.wire}ing \"$place\""
             AutomationTriggerKind.NOTIFICATION ->
-                "a notification from " + (packageName ?: "any app") + (from?.let { " by \"$it\"" } ?: "")
+                "a notification from " + (if (packageName == ALL_PACKAGES) "any app" else packageName ?: "an app") +
+                    (from?.let { " by \"$it\"" } ?: "")
             AutomationTriggerKind.DEVICE_STATE -> "$stateName becomes ${stateValue ?: "anything"}"
             AutomationTriggerKind.MANUAL -> "only when run by name"
         },
     )
 
     companion object {
+        /** An explicit choice to listen to notifications from all apps. */
+        const val ALL_PACKAGES = "*"
+
         fun parse(json: JsonObject, ruleId: String): AutomationTrigger {
             fun bad(reason: String): Nothing =
                 throw AutomationFormatException("automation_invalid", "Rule \"$ruleId\": $reason")
@@ -160,11 +164,10 @@ data class AutomationTrigger(
                 }
 
                 AutomationTriggerKind.NOTIFICATION -> {
-                    // No package means every app on the phone, which is almost
-                    // never what was meant and always the widest possible read
-                    // of the user's notifications. Named explicitly or refused.
+                    // All apps must be chosen explicitly; an omitted scope
+                    // must never silently widen access to notifications.
                     val pkg = json.str("package")
-                        ?: bad("a \"notification\" trigger needs \"package\": name the app it listens to.")
+                        ?: bad("a \"notification\" trigger needs \"package\": name an app or use \"*\" for all apps.")
                     AutomationTrigger(kind, packageName = pkg, from = json.str("from"))
                 }
 
@@ -382,7 +385,8 @@ object AutomationWakeups {
 
     /**
      * Packages the notification listener may look at: the union over enabled
-     * notification rules.
+     * notification rules, including [AutomationTrigger.ALL_PACKAGES] when an
+     * enabled rule explicitly listens to all apps.
      *
      * The listener checks this before it reads a title or a body, so a
      * notification from an app no rule names is dropped without being looked
@@ -393,4 +397,8 @@ object AutomationWakeups {
             .filter { it.enabled && it.trigger.kind == AutomationTriggerKind.NOTIFICATION }
             .mapNotNull { it.trigger.packageName?.lowercase() }
             .toSet()
+
+    /** Checked by the listener before any notification title or body is read. */
+    fun isPackageWatched(packageName: String, watched: Set<String>): Boolean =
+        AutomationTrigger.ALL_PACKAGES in watched || packageName.lowercase() in watched
 }
