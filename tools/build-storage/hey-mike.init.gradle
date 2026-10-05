@@ -1,0 +1,77 @@
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import java.nio.channels.OverlappingFileLockException
+
+// Installed in this user's init.d. Only the configured Git repository matches.
+def home = new File(gradle.gradleUserHomeDir, 'hey-mike-build-storage')
+def configFile = new File(home, 'config.json')
+if (!configFile.isFile()) { return }
+def config = new JsonSlurper().parse(configFile)
+def repository = new File(config.repository.toString()).canonicalFile
+def root = new File(config.buildRoot.toString()).canonicalFile
+if (root != new File(repository, 'build').canonicalFile) {
+    throw new GradleException('Invalid Hey Mike build storage root')
+}
+def gitCommon = { File folder ->
+    def process = new ProcessBuilder('git', '-C', folder.path, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+        .redirectErrorStream(true).start()
+    def output = process.inputStream.getText('UTF-8').trim()
+    return process.waitFor() == 0 ? new File(output).canonicalFile : null
+}
+def owner = gitCommon(repository)
+if (owner == null) { throw new GradleException('Hey Mike storage repository is missing') }
+def leaseFile = null
+def lease = null
+def bucket = null
+def worktree = null
+def manage = { String mode ->
+    def process = new ProcessBuilder('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', new File(home, 'manage.ps1').path, '-Mode', mode, '-Config', configFile.path,
+        '-Worktree', worktree.path, '-Bucket', bucket.name).redirectErrorStream(true).start()
+    def output = process.inputStream.getText('UTF-8').trim()
+    if (process.waitFor() != 0) { throw new GradleException('Hey Mike build storage: ' + output) }
+    println('Hey Mike build storage: ' + output)
+}
+gradle.settingsEvaluated { settings ->
+    worktree = settings.settingsDir.canonicalFile
+    if (gitCommon(worktree) != owner) { worktree = null; return }
+    if (gradle.startParameter.isConfigurationCacheRequested()) {
+        throw new GradleException('Hey Mike build storage needs --no-configuration-cache to track active builds safely')
+    }
+    def id = MessageDigest.getInstance('SHA-256').digest(worktree.path.toLowerCase(Locale.ROOT).getBytes('UTF-8')).encodeHex().toString().take(16)
+    bucket = new File(root, id)
+    // Validate paths and marker before opening the lease. The manager never
+    // removes the current bucket; all other builders hold their own lease.
+    manage('begin')
+    leaseFile = new RandomAccessFile(new File(bucket, '.active.lock'), 'rw')
+    try { lease = leaseFile.channel.tryLock() }
+    catch (OverlappingFileLockException ignored) { lease = null }
+    if (lease == null) {
+        leaseFile.close()
+        throw new GradleException('Another Hey Mike build uses this worktree. Wait for it to finish.')
+    }
+}
+gradle.beforeProject { project ->
+    if (bucket == null || worktree == null) { return }
+    def module = project.path == ':' ? '_root' : project.path.substring(1).replace(':', '/')
+    project.layout.buildDirectory.set(new File(bucket, module))
+    project.afterEvaluate {
+        project.tasks.withType(Exec).matching { it.name == 'prepareCodexRuntime' }.configureEach { task ->
+            def original = task.commandLine.collect { it.toString() }
+            if (original.size() != 2 || new File(original[1]).canonicalFile != new File(worktree, 'tools/prepare_runtime.py').canonicalFile) {
+                throw new GradleException('Unknown runtime staging command; central build storage refuses to change it')
+            }
+            def wrapper = new File(home, 'stage_runtime.py')
+            task.commandLine(original[0], wrapper.path, '--config', configFile.path,
+                '--worktree', worktree.path, '--bucket', bucket.name)
+            task.inputs.file(wrapper)
+            task.inputs.file(configFile)
+        }
+    }
+}
+gradle.buildFinished {
+    if (lease == null) { return }
+    try { manage('finish') }
+    catch (Exception error) { logger.warn(error.message) }
+    finally { lease.release(); leaseFile.close(); lease = null }
+}

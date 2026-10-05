@@ -1,6 +1,6 @@
 ---
 name: repo-structure-guard
-description: Use this skill whenever an agent works inside the Hey Mike repository: before coding, reviewing, adding files, building, releasing, cleaning, or creating another skill. It explains the exact repository layout, module ownership, safe file paths, generated-output rules, branch flow, release gates, and evidence rules so agents do not scatter files or damage another worktree.
+description: "Use this skill whenever an agent works inside the Hey Mike repository: before coding, reviewing, adding files, building, releasing, cleaning, or creating another skill. It explains the exact repository layout, module ownership, safe file paths, generated-output rules, branch flow, release gates, and evidence rules so agents do not scatter files or damage another worktree."
 ---
 
 # Hey Mike repository guard
@@ -138,6 +138,17 @@ Generated, local, private, or downloaded files stay out of Git:
 Use a temporary directory outside the repository for experiments. Do not use
 `git clean -fdX`: ignored files can include runtime caches, local settings,
 release evidence, and user data.
+
+### Hey Mike build storage on this PC
+
+Read `docs/BUILD_STORAGE.md` when building or cleaning on Windows. This PC's
+Gradle init script routes all worktrees of this Git repository to the main
+checkout's `build/<worktree-id>/<module>` folders. The saved target is 5 GiB;
+cleanup removes the oldest completed, inactive bucket and keeps the current
+build. Check the installed config before changing the target or cleanup policy.
+Use actual Gradle output paths, not a guessed local `app/build` path. Do not
+copy the PC path into CI or other repositories. Old build folders are separate
+and need explicit cleanup approval; installing the setting does not delete them.
 
 ## Safe work flow
 
