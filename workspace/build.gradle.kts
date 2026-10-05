@@ -9,7 +9,7 @@ android {
 dependencies {
     api(project(":core"))
     implementation("androidx.core:core-ktx:1.15.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     testImplementation("junit:junit:4.13.2")
     // Real SQLite for the session schema migration tests.
     testImplementation("org.robolectric:robolectric:4.14.1")
