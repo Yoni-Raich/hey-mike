@@ -28,6 +28,8 @@ data class ComputerClaude(
     /** The account `claude auth status` names, when signed in. */
     val account: String = "",
     val models: List<AgentModel> = emptyList(),
+    /** A failed check is different from a computer without Claude Code. */
+    val error: String? = null,
 ) {
     /** A chat on this computer can run on Claude. */
     val ready: Boolean get() = installed && signedIn

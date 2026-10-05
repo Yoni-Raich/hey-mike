@@ -248,6 +248,10 @@ class MainActivity : ComponentActivity() {
                 .onFailure { model.error("No app on this phone can share text.") }
         },
         onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
+        onComputerClaudeLogin = { id -> ensureService(); model.computerClaudeLogin(id) },
+        onComputerClaudeCode = { id, code -> model.computerClaudeCode(id, code) },
+        onCancelComputerClaudeLogin = { id -> model.cancelComputerClaudeLogin(id) },
+        onCheckComputerClaude = { id -> ensureService(); model.checkComputerClaude(id) },
         onOpenTailscaleApproval = { id, url ->
             model.openedTailscaleApproval(id)
             runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }

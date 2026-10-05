@@ -16,6 +16,7 @@ import dev.androidagent.enginecodex.CodexThreadMessage
 import dev.androidagent.enginecodex.EngineProfile
 import dev.androidagent.enginecodex.ExternalChatgptTokens
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -58,7 +60,8 @@ data class RemoteRoute(val host: String, val viaVpn: Boolean)
  * A computer that has its own Claude Code, signed in by its user, can run
  * chats on Claude too ([claude]). That is the computer's install and sign-in:
  * unlike Codex, which is handed the phone's ChatGPT account for each run,
- * nothing about a Claude sign-in travels in either direction.
+ * Claude credentials stay on that computer. Its official login link and
+ * the user's pasted code can be relayed through the phone.
  */
 class RemoteHub(
     val store: RemoteStore,
@@ -111,6 +114,17 @@ class RemoteHub(
     /** Per computer, its own Claude Code as last checked. A computer not checked yet has no entry. */
     val claudeState: StateFlow<Map<String, ComputerClaude>> = mutableClaude.asStateFlow()
 
+    val claudeSignIn = ComputerClaudeSignIn(
+        scope = scope,
+        begin = { claude(it).login() },
+        complete = { id, code -> claude(id).completeLogin(code) },
+        stop = { id -> claudeEngines[id]?.first?.cancelLogin() },
+        refresh = { id ->
+            val found = checkClaude(id)
+            check(found.error == null) { "Could not check Claude" }
+        },
+    )
+
     /**
      * The Claude Code of [computerId]. Its first use looks for `claude` on the
      * computer and fails with words for the user when there is none.
@@ -144,8 +158,12 @@ class RemoteHub(
                 account = account.label.takeIf { account.signedIn }.orEmpty(),
                 models = if (account.signedIn) engine.modelCatalog() else emptyList(),
             )
-        }.getOrElse { ComputerClaude(installed = false) }
-        mutableClaude.value = mutableClaude.value + (computerId to found)
+        }.getOrElse {
+            if (it is CancellationException) throw it
+            (mutableClaude.value[computerId] ?: ComputerClaude(installed = false))
+                .copy(error = "Could not check Claude. Check the computer connection and try again.")
+        }
+        mutableClaude.update { it + (computerId to found) }
         return found
     }
 
@@ -299,10 +317,11 @@ class RemoteHub(
 
     /** Close the computer's Codex and its connection. Chats on it stay bound. */
     suspend fun disconnect(computerId: String) {
+        claudeSignIn.cancel(computerId)
         val engine = lock.withLock { engines.remove(computerId) }
         engine?.let { (codex, job) -> runCatching { codex.close() }; job.cancel() }
         lock.withLock { claudeEngines.remove(computerId) }?.let { (claude, _, job) -> runCatching { claude.close() }; job.cancel() }
-        mutableClaude.value = mutableClaude.value - computerId
+        mutableClaude.update { it - computerId }
         links.remove(computerId)?.let { withContext(Dispatchers.IO) { runCatching { it.link.close() } } }
         mutableSetup.value = mutableSetup.value - computerId
         if (store.computer(computerId) == null) mutableThreads.value = mutableThreads.value - computerId
@@ -499,7 +518,7 @@ class RemoteHub(
                 launchOnce(name, cwd, files, env, args)
             } catch (error: Exception) {
                 // The link may have dropped while idle; one fresh connection, then the error stands.
-                if (error is IllegalArgumentException) throw error
+                if (error is IllegalArgumentException || error is CancellationException) throw error
                 dropLink(computerId)
                 cached = null
                 launchOnce(name, cwd, files, env, args)

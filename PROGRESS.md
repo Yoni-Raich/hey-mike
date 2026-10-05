@@ -1,5 +1,35 @@
 # Progress
 
+### Computer Claude sign-in from the phone — 2026-10-06
+
+- Added `Connect Claude to <computer>` in Computers and a setup link in the
+  model menu of a computer chat. Mike runs the computer's official login,
+  opens the link on the phone and relays the masked pasted code to stdin.
+  Successful login verifies `auth status` and refreshes that computer's models.
+  Codes are not saved or logged; Claude credentials stay on the computer.
+- Sign-in progress is separate for each computer. Duplicate taps, failed or
+  expired logins, cancellation before the link or during code submission,
+  and disconnect have cleanup paths. Failed connection checks no longer
+  look like a missing Claude installation. Cancellation exceptions propagate;
+  a nonzero login exit cannot report an older saved account as success.
+- On Windows/JDK 21, `:engine-claude:testDebugUnitTest
+  :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:assembleDevDebugAndroidTest :app:lintDevDebug --no-daemon
+  --console=plain` passed. XML reports: 73 engine, 61 remote and 139 app tests,
+  zero failures/errors, two remote skips. App lint: zero errors, 21 warnings.
+  A first rerun hit disk space while stripping native libraries; the same
+  build passed once space was available. No user files were deleted.
+- A real Windows batch launch of `claude auth login --claudeai` with
+  `BROWSER=true` returned an official HTTPS login link without a TTY. The
+  probe was stopped before authentication; no account was changed.
+- Test APK: Dev Debug, `dev.androidagent.app.dev`, code 1102,
+  `0.15.0-claude-login-test`, signed with the existing Android debug key.
+  SHA-256 `7950cda4d4498d326c904c28f491f892fcfac2d3c41b9fc5afa5f8bffb01d485`.
+  This is a test build, not a release. No release tag or asset was published.
+- Pending: physical Compose fixture checks and installed-screen review.
+  Real account login completion, a Claude turn after login, Linux SSH login,
+  process restart during sign-in, and the full release gate remain untested.
+
 ### Real Bluetooth and Wi-Fi connection conditions — 2026-10-05
 
 - Source audit confirmed the previous host supplied only `power` and `screen`.
