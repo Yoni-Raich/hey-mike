@@ -22,8 +22,14 @@ package dev.androidagent.adb
 
 import dev.androidagent.core.AdbEndpoint
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLProtocolException
 
 class AdbReconnectPolicyTest {
     @Test fun savedConnectPortWinsOverDiscoveredPairingAndConnectPorts() {
@@ -53,5 +59,23 @@ class AdbReconnectPolicyTest {
         assertEquals("Wireless Debugging is off", AdbReconnectPolicy.noServiceMessage(false))
         assertEquals("Wireless Debugging is on; waiting for the ADB service", AdbReconnectPolicy.noServiceMessage(true))
         assertEquals("Wireless Debugging status unavailable; waiting for the ADB service", AdbReconnectPolicy.noServiceMessage(null))
+    }
+
+    @Test fun aRefusedKeyIsToldApartFromAClosedPort() {
+        assertTrue(AdbReconnectPolicy.isPairingRejected(com.flyfishxu.kadb.exception.AdbPairAuthException()))
+        // Wrapped, the way connect() rethrows it.
+        assertTrue(AdbReconnectPolicy.isPairingRejected(IOException("Connection failed", com.flyfishxu.kadb.exception.AdbAuthException())))
+        // What a Nothing A059 on Android 16 threw once adbd had dropped the key.
+        assertTrue(
+            AdbReconnectPolicy.isPairingRejected(
+                SSLProtocolException(
+                    "Read error: ssl=0xb400007878f6c3d8: Failure in SSL library, usually a protocol error\n" +
+                        "error:10000416:SSL routines:OPENSSL_internal:SSLV3_ALERT_CERTIFICATE_UNKNOWN",
+                ),
+            ),
+        )
+        // The stale port after Wireless debugging restarts, and a slow adbd.
+        assertFalse(AdbReconnectPolicy.isPairingRejected(ConnectException("failed to connect to /127.0.0.1 (port 33453)")))
+        assertFalse(AdbReconnectPolicy.isPairingRejected(IOException("TLS handshake timeout", SocketTimeoutException())))
     }
 }

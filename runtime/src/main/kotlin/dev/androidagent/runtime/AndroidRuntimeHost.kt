@@ -101,10 +101,10 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
         get() = File(appContext.applicationInfo.nativeLibraryDir)
 
     /** App-private CA bundle staged from the APK asset (never a credential). */
-    val caBundleFile: File get() = File(runtimeRoot, "cacert.pem")
+    val caBundleFile: File get() = BundledCaFile.file(runtimeRoot)
 
     /** APK asset path of the pinned CA bundle (see tools/prepare_runtime.py). */
-    val caBundleAssetPath: String get() = "runtime/cacert.pem"
+    val caBundleAssetPath: String get() = BundledCaFile.ASSET_PATH
 
     private val lock = Mutex()
     private var process: Process? = null
@@ -287,27 +287,7 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
     }
 
     /** Copy and validate the bundled PEM into app-private storage atomically. */
-    private fun stagedCaPath(): String {
-        if (caBundleFile.isFile && caBundleFile.length() > 0L &&
-            NetDiagnostics.validateCaPem(caBundleFile.readBytes()) != null
-        ) return caBundleFile.absolutePath
-        // A truncated file can remain after a killed process. Remove only this
-        // known app-private path and rebuild it from the verified APK asset.
-        caBundleFile.delete()
-        val partial = File(runtimeRoot, "cacert.pem.part")
-        runCatching {
-            appContext.assets.open(caBundleAssetPath).use { input ->
-                partial.outputStream().use { output -> input.copyTo(output) }
-            }
-            val bytes = partial.readBytes()
-            require(NetDiagnostics.validateCaPem(bytes) != null) { "Bundled CA file is invalid" }
-            require(partial.renameTo(caBundleFile)) { "Could not install bundled CA file" }
-        }.getOrElse {
-            partial.delete()
-            throw IllegalStateException("Could not stage bundled CA file", it)
-        }
-        return caBundleFile.absolutePath
-    }
+    private fun stagedCaPath(): String = BundledCaFile.stage(appContext, runtimeRoot, caBundleAssetPath)
 
     private fun recordProxyEvent(event: String) {
         val snapshot = synchronized(proxyEvents) {

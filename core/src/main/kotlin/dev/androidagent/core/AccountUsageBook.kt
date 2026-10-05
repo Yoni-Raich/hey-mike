@@ -111,12 +111,45 @@ data class AccountUsageRow(
     val window: UsageWindow?,
     /** "Updated 3h ago" for an account that is not live; null for the live one. */
     val readText: String?,
+    /** Which engine the account signs in to. */
+    val engine: EngineKind = EngineKind.CODEX,
 )
+
+/** The signed-in Claude account and the last quota Claude reported for it. */
+data class ClaudeAccountUsage(val label: String, val reading: UsageReading?)
 
 /** Pure shaping for the usage widget, kept here so it is tested without Android. */
 object AccountUsageOverview {
 
-    fun rows(vault: AccountVaultState, readings: Map<String, AccountUsage>, nowMillis: Long): List<AccountUsageRow> {
+    /** Id of the Claude row. A Codex account id is a generated one, so it cannot be this. */
+    const val CLAUDE_ID = "claude"
+
+    /**
+     * One row per saved Codex account, then the Claude account when one is
+     * signed in. Claude has a single sign-in, and its quota can only be read
+     * while a Claude process runs, so its row is always a reading with an age.
+     */
+    fun rows(
+        vault: AccountVaultState,
+        readings: Map<String, AccountUsage>,
+        nowMillis: Long,
+        claude: ClaudeAccountUsage? = null,
+    ): List<AccountUsageRow> = codexRows(vault, readings, nowMillis) + listOfNotNull(claude?.let { claudeRow(it, nowMillis) })
+
+    private fun claudeRow(claude: ClaudeAccountUsage, nowMillis: Long): AccountUsageRow {
+        val reading = claude.reading
+        val windows = reading?.let { UsageSummary.windows(sinceReset(it.limits, nowMillis / 1000L), nowMillis / 1000L) }.orEmpty()
+        return AccountUsageRow(
+            accountId = CLAUDE_ID,
+            name = shortName(claude.label),
+            live = false,
+            window = UsageSummary.primary(windows) ?: windows.firstOrNull(),
+            readText = reading?.let { readText(it.readAtMillis, nowMillis) },
+            engine = EngineKind.CLAUDE,
+        )
+    }
+
+    private fun codexRows(vault: AccountVaultState, readings: Map<String, AccountUsage>, nowMillis: Long): List<AccountUsageRow> {
         val nowSeconds = nowMillis / 1000L
         // The live account first: it is the one the next run will spend.
         return vault.accounts.sortedByDescending { it.id == vault.activeId }.map { account ->

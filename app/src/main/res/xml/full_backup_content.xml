@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 11 and below. Same rule as data_extraction_rules.xml: the Claude
+    sign-in and the downloaded Claude Code binary are never backed up.
+-->
+<full-backup-content>
+    <exclude domain="file" path="runtime/claude-home" />
+    <exclude domain="file" path="runtime/claude-tmp" />
+    <exclude domain="file" path="runtime/claude" />
+</full-backup-content>

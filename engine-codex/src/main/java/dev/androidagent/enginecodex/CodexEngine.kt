@@ -30,15 +30,42 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
 import java.util.Base64
-import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoiceEngine {
+/**
+ * What one app-server connection is for.
+ *
+ * The phone's own Codex runs with the phone profile. A Codex started on a
+ * computer over SSH gets its own instructions and the access the user picked
+ * for that computer, and cannot read a picture by a path on this phone.
+ */
+data class EngineProfile(
+    val developerInstructions: String,
+    val sandbox: String = "danger-full-access",
+    val approvalPolicy: String = "never",
+    /** Send attached pictures as data URLs rather than phone paths. */
+    val inlineImages: Boolean = false,
+)
+
+/** Short-lived phone credential sent only over the encrypted SSH app-server stream. */
+data class ExternalChatgptTokens(val accessToken: String, val accountId: String, val planType: String? = null) {
+    override fun toString(): String = "ExternalChatgptTokens(<redacted>)"
+}
+
+class CodexEngine(
+    private val runtime: RuntimeHost,
+    private val profile: EngineProfile = PHONE_PROFILE,
+    /** Process diagnostics have no turn scope; keep them out of conversation failures. */
+    private val diagnosticSink: (String) -> Unit = { android.util.Log.w("CodexEngine", it) },
+) : AgentEngine, RealtimeVoiceEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectLock = Mutex()
+    private val externalAuthLock = Mutex()
     private val writeLock = Mutex()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
+    private val approvals = ConcurrentHashMap<String, EngineEvent.Approval>()
+    private val selectedModels = ConcurrentHashMap<String, String>()
     private val ids = AtomicLong()
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 128)
     override val events: Flow<EngineEvent> = stream.asSharedFlow()
@@ -53,14 +80,15 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
     private var writer: BufferedWriter? = null
     private var readerJob: Job? = null
     private var initialized = false
+    private var externalAuth: ExternalChatgptTokens? = null
+    private var externalRefresh: (suspend (String?) -> ExternalChatgptTokens)? = null
     private val json = Json { ignoreUnknownKeys = true }
-    private val stderrLock = Any()
-    private val stderrTail = ArrayDeque<String>()
 
     override suspend fun connect() = connectLock.withLock {
         if (initialized && process?.isAlive == true) return@withLock
         runtime.prepare()
         val started = runtime.startAppServer()
+        externalAuth = null
         process = started
         writer = started.outputStream.bufferedWriter(Charsets.UTF_8)
         readerJob = scope.launch {
@@ -73,22 +101,17 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                 }
             } catch (error: Exception) {
                 if (error !is CancellationException) {
-                    val detail = SecretRedactor.redact(
-                        listOfNotNull("Codex connection ended: ${error.message}", stderrSnapshot())
-                            .joinToString(" | ")
-                    )
+                    val detail = SecretRedactor.redact("Codex connection ended: ${error.message}")
                     stream.emit(EngineEvent.Failure(detail))
                 }
             } finally {
                 initialized = false
                 pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex process stopped")) }
                 pending.clear()
+                approvals.clear()
                 val stoppedVoiceThreadId = voiceThreadId
                 if (stoppedVoiceThreadId != null) {
-                    val detail = SecretRedactor.redact(
-                        listOfNotNull("Codex process stopped during voice", stderrSnapshot().takeIf { it.isNotBlank() })
-                            .joinToString(" | ")
-                    )
+                    val detail = "Codex process stopped during voice"
                     voiceClosedSignal?.complete(Unit)
                     voiceClosedSignal = null
                     voiceThreadId = null
@@ -102,7 +125,13 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             // That is the normal end of stderr, not an error: uncaught, it kills the app.
             try {
                 started.errorStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                    lines.forEach { if (isActive) recordStderr(it) }
+                    lines.forEach { line ->
+                        if (isActive) {
+                            val safe = SecretRedactor.redactStderrLine(line)
+                            // Logging must not take down the app-server reader.
+                            if (safe.isNotBlank()) runCatching { diagnosticSink(safe) }
+                        }
+                    }
                 }
             } catch (_: IOException) {
             }
@@ -152,8 +181,90 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
         return parseSkillCatalog(result, workspace)
     }
 
-    override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
+    /**
+     * The skills Codex finds from [cwd] on the machine it runs on. The path
+     * is that machine's, so it stays a string: a Windows path is not a
+     * [File] on this phone.
+     */
+    suspend fun skillCatalogAt(cwd: String, forceReload: Boolean): List<AgentSkill> {
         connect()
+        val result = request("skills/list", buildJsonObject {
+            put("cwds", buildJsonArray { add(cwd) })
+            put("forceReload", forceReload)
+        })
+        return parseSkillCatalogAt(result, cwd)
+    }
+
+    /**
+     * The conversations Codex keeps on the machine it runs on, newest first:
+     * the ones its own apps and CLI started, not only this app's. Summaries
+     * only; [readThreadMessages] fetches one conversation's text.
+     */
+    suspend fun listThreads(max: Int = 200): List<CodexThread> {
+        connect()
+        val threads = mutableListOf<CodexThread>()
+        var cursor: String? = null
+        do {
+            val result = request("thread/list", threadListParams(cursor, minOf(100, max - threads.size)))
+            threads += parseThreadList(result)
+            cursor = (result["nextCursor"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        } while (cursor != null && threads.size < max)
+        return threads
+    }
+
+    /**
+     * A new thread carrying [threadId]'s whole history, on the machine Codex
+     * runs on. It only reads the original, so it works while another Codex
+     * process holds that one open. Returns the new thread's id.
+     */
+    suspend fun forkThreadAt(cwd: String, threadId: String): String {
+        connect()
+        val result = request("thread/fork", buildJsonObject {
+            put("threadId", threadId)
+            put("cwd", cwd)
+            put("approvalPolicy", profile.approvalPolicy)
+            put("sandbox", profile.sandbox)
+            put("developerInstructions", profile.developerInstructions)
+            put("excludeTurns", true)
+        })
+        return result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread for the copy")
+    }
+
+    /**
+     * The threads this app-server has open. Any string in the answer counts,
+     * so a list of ids and a list of thread objects read the same.
+     */
+    suspend fun loadedThreadIds(): Set<String> {
+        connect()
+        val result = request("thread/loaded/list", buildJsonObject {})
+        return collectStrings(result)
+    }
+
+    /** The user and agent messages of one conversation, oldest first. */
+    suspend fun readThreadMessages(threadId: String): List<CodexThreadMessage> {
+        connect()
+        val result = request("thread/read", buildJsonObject { put("threadId", threadId); put("includeTurns", true) })
+        return parseThreadMessages(result)
+    }
+
+    override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
+        openSessionAt(workspace.absolutePath, threadId, model, tools)
+
+    /**
+     * [openSession] for a working directory on the machine Codex runs on.
+     * With [freshIfLost] false, a thread that will not resume is an error
+     * rather than a new, empty thread: a conversation brought over from a
+     * computer must continue or say why it cannot.
+     */
+    suspend fun openSessionAt(
+        cwd: String,
+        threadId: String?,
+        model: String?,
+        tools: List<ToolDefinition>,
+        freshIfLost: Boolean = true,
+    ): String {
+        connect()
+        var lastError: Exception? = null
         if (!threadId.isNullOrBlank()) {
             // Tools first. A thread binds the tool list it was started with, so
             // a chat opened before an app update could never call a tool that
@@ -164,9 +275,12 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             // extra round trip instead of the user's conversation.
             for (attempt in listOf(tools, null)) {
                 try {
-                    val result = request("thread/resume", resumeSessionParams(workspace, threadId, model, attempt))
+                    val result = request("thread/resume", resumeSessionParams(cwd, threadId, model, attempt, profile))
                     val resumedId = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() }
-                    if (resumedId != null) return resumedId
+                    if (resumedId != null) {
+                        if (!model.isNullOrBlank()) selectedModels[resumedId] = model else selectedModels.remove(resumedId)
+                        return resumedId
+                    }
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     // If thread/resume fails (e.g. "no rollout found for thread id",
@@ -174,14 +288,20 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                     // fall back to starting a fresh thread so the user is never locked out.
                     // Note: request() withTimeout(60_000) throws TimeoutCancellationException (a CancellationException),
                     // which deliberately propagates to the caller rather than triggering an unwanted fallback.
+                    lastError = error
                     val carrying = if (attempt == null) "" else " with its tool list"
                     System.err.println("CodexEngine: Failed to resume thread $threadId$carrying: ${SecretRedactor.redact(error.message ?: error.toString())}")
                 }
             }
+            if (!freshIfLost) {
+                error("This conversation could not be continued: ${lastError?.message ?: "Codex did not reopen it"}")
+            }
         }
-        val startParams = startSessionParams(workspace, model, tools)
+        val startParams = startSessionParams(cwd, model, tools, profile)
         val result = request("thread/start", startParams)
-        return result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread ID")
+        val opened = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread ID")
+        if (!model.isNullOrBlank()) selectedModels[opened] = model else selectedModels.remove(opened)
+        return opened
     }
 
     override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String =
@@ -229,7 +349,11 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
         capabilities: DeviceCapabilities,
         planModel: String?,
     ): String {
-        val result = request("turn/start", turnStartParams(threadId, prompt, images, reasoningEffort, skill, capabilities, planModel))
+        val result = request(
+            "turn/start",
+            turnStartParams(threadId, prompt, images, reasoningEffort, skill, capabilities, planModel, profile.inlineImages,
+                selectedModels[threadId]),
+        )
         return result["turn"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no turn ID")
     }
 
@@ -347,10 +471,48 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
         })
     }
 
-    override suspend fun answerApproval(requestId: String, allow: Boolean) { respond(requestId, buildJsonObject { put("decision", if (allow) "accept" else "decline") }) }
+    override suspend fun answerApproval(requestId: String, allow: Boolean) {
+        val approval = approvals[requestId] ?: return
+        val result = buildJsonObject {
+            if (approval.method == "item/permissions/requestApproval") {
+                // Grant only the requested profile, for this turn. A rejection
+                // is an empty profile, not a command-approval decision.
+                put("permissions", if (allow) approval.details["permissions"] as? JsonObject ?: buildJsonObject {} else buildJsonObject {})
+                put("scope", "turn")
+            } else {
+                put("decision", if (allow) "accept" else "decline")
+            }
+        }
+        respond(requestId, result)
+        approvals.remove(requestId, approval)
+    }
+
+    /** Use Mike's current ChatGPT account in a remote app-server, without saving it on the PC. */
+    suspend fun ensureExternalAuth(
+        tokens: ExternalChatgptTokens,
+        refresh: suspend (String?) -> ExternalChatgptTokens,
+    ) = externalAuthLock.withLock {
+        connect()
+        externalRefresh = refresh
+        if (externalAuth == tokens) return@withLock
+        request("account/login/start", buildJsonObject {
+            put("type", "chatgptAuthTokens")
+            put("accessToken", tokens.accessToken)
+            put("chatgptAccountId", tokens.accountId)
+            tokens.planType?.let { put("chatgptPlanType", it) }
+        })
+        externalAuth = tokens
+    }
+
+    /** Refresh the phone's managed credential before handing out a new short-lived token. */
+    suspend fun refreshAccountToken() {
+        connect()
+        request("account/read", buildJsonObject { put("refreshToken", true) })
+    }
 
     override suspend fun close() {
         initialized = false
+        approvals.clear()
         val closedVoiceThreadId = voiceThreadId
         voiceThreadId = null
         voiceClosedSignal?.cancel()
@@ -392,12 +554,38 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             return
         }
         when {
+            method == "account/chatgptAuthTokens/refresh" && id != null -> {
+                try {
+                    val updated = (externalRefresh ?: error("Remote account is not connected"))(
+                        params.string("previousAccountId").ifBlank { null },
+                    )
+                    externalAuth = updated
+                    respond(id, buildJsonObject {
+                        put("accessToken", updated.accessToken)
+                        put("chatgptAccountId", updated.accountId)
+                        updated.planType?.let { put("chatgptPlanType", it) }
+                    })
+                } catch (_: Exception) {
+                    write(buildJsonObject {
+                        put("id", json.parseToJsonElement(id))
+                        put("error", buildJsonObject {
+                            put("code", -32000)
+                            put("message", "Mike could not refresh the phone account. Sign in again on the phone.")
+                        })
+                    })
+                }
+            }
             method == "item/tool/call" && id != null -> {
                 val args = params["arguments"]
                 val value = when (args) { is JsonObject -> args; is JsonPrimitive -> runCatching { json.parseToJsonElement(args.content).jsonObject }.getOrDefault(buildJsonObject {}); else -> buildJsonObject {} }
                 stream.emit(EngineEvent.ToolCall(id, params.string("tool"), value, params.string("threadId"), params.string("turnId")))
             }
-            id != null && method.endsWith("requestApproval") -> stream.emit(EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId")))
+            id != null && method.endsWith("requestApproval") -> {
+                val approval = EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId"))
+                approvals[id] = approval
+                stream.emit(approval)
+            }
+            method == "serverRequest/resolved" -> params["requestId"]?.toString()?.let { approvals.remove(it) }
             method == "thread/realtime/started" -> {
                 val threadId = params.string("threadId")
                 val sessionId = params.string("realtimeSessionId").ifBlank { null }
@@ -464,6 +652,7 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             method == "item/agentMessage/delta" -> stream.emit(EngineEvent.TextDelta(params.string("delta"), params.string("threadId"), params.string("turnId"), params.string("itemId").ifBlank { null }))
             method == "item/completed" -> {
                 val item = params["item"] as? JsonObject
+                item?.let { itemActivity(it, params, complete = true) }?.let { stream.emit(it) }
                 if (item?.string("type") == "agentMessage") stream.emit(EngineEvent.MessageCompleted(
                     item.string("text"), params.string("threadId"), params.string("turnId"),
                     item.string("id"), item.string("phase").ifBlank { null },
@@ -489,14 +678,25 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             method == "account/updated" -> scope.launch { runCatching { account() }.onSuccess { stream.emit(EngineEvent.AccountChanged(it)) } }
             method == "skills/changed" -> stream.emit(EngineEvent.SkillsChanged)
             method == "item/started" -> {
-                val type = (params["item"] as? JsonObject)?.string("type").orEmpty()
+                val item = params["item"] as? JsonObject
+                item?.let { itemActivity(it, params, complete = false) }?.let { stream.emit(it) }
+                val type = item?.string("type").orEmpty()
                 if (type !in setOf("agentMessage", "userMessage", "")) stream.emit(EngineEvent.Activity(when (type) { "reasoning" -> "Working"; "commandExecution" -> "Working in session files"; "fileChange" -> "Updating session files"; else -> "Working" }, params.string("threadId"), params.string("turnId")))
             }
-            method == "error" -> stream.emit(
-                EngineEvent.Failure(
-                    (params["error"] as? JsonObject)?.let(::rpcErrorMessage) ?: "Codex reported an error"
-                )
-            )
+            method == "error" -> {
+                val error = params["error"] as? JsonObject
+                val threadId = params.string("threadId").ifBlank { null }
+                val turnId = params.string("turnId").ifBlank { null }
+                if ((params["willRetry"] as? JsonPrimitive)?.booleanOrNull == true) {
+                    // Codex still owns the turn and will retry or change transport itself.
+                    val status = error?.string("message").orEmpty().ifBlank { "Reconnecting to Codex" }
+                    stream.emit(EngineEvent.Activity(SecretRedactor.redact(status).take(500), threadId, turnId))
+                } else {
+                    stream.emit(EngineEvent.Failure(
+                        error?.let(::rpcErrorMessage) ?: "Codex reported an error", threadId, turnId,
+                    ))
+                }
+            }
         }
     }
 
@@ -511,41 +711,70 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
         voiceStream.emit(VoiceEvent.Failure(safeMessage, threadId))
     }
 
-    /** Keep a redacted, bounded stderr tail so RPC failures retain their cause chain. */
-    private fun recordStderr(line: String) {
-        val safe = SecretRedactor.redactStderrLine(line)
-        if (safe.isBlank()) return
-        synchronized(stderrLock) {
-            if (stderrTail.size >= MAX_STDERR_LINES) stderrTail.removeFirst()
-            stderrTail.addLast(safe)
-        }
-    }
-
-    private fun stderrSnapshot(maxLines: Int = 3): String = synchronized(stderrLock) {
-        if (stderrTail.isEmpty()) return ""
-        val count = minOf(stderrTail.size, maxLines)
-        stderrTail.toList().takeLast(count).joinToString("; ")
-    }
-
     private fun rpcErrorMessage(error: JsonObject): String {
         val code = error["code"]?.jsonPrimitive?.longOrNull
         val pieces = mutableListOf<String>()
         val message = error.string("message").takeIf { it.isNotBlank() }
         if (message != null) pieces.add(message)
-        // `data` can contain a nested cause. Redaction happens before it is
-        // combined with stderr, and bodies/tokens are never displayed.
+        // Only details carried by this error belong to this failure. Process
+        // stderr can describe another thread or an earlier account refresh.
         error["data"]?.let { pieces += SecretRedactor.redact(it.toString()) }
         error["cause"]?.let { pieces += SecretRedactor.redact(it.toString()) }
-        val recentStderr = stderrSnapshot(if (message != null) 2 else 5)
-        if (recentStderr.isNotBlank()) pieces.add(recentStderr)
+        (error["additionalDetails"] as? JsonPrimitive)?.contentOrNull
+            ?.takeIf { it.isNotBlank() }?.let { pieces += SecretRedactor.redact(it) }
+        error["codexErrorInfo"]?.takeIf { it !is JsonNull }
+            ?.let { pieces += SecretRedactor.redact(it.toString()) }
         val raw = pieces.ifEmpty { listOf("Codex reported an RPC error") }.joinToString(" | ")
         return SecretRedactor.describe(raw, code)
     }
 
     companion object {
+        internal fun itemActivity(item: JsonObject, params: JsonObject, complete: Boolean): EngineEvent.ItemActivity? {
+            val type = item.string("type")
+            val id = item.string("id")
+            if (id.isBlank()) return null
+            val title = when (type) {
+                "reasoning" -> "Thinking"
+                "commandExecution" -> "Command execution"
+                "fileChange" -> "File change"
+                "mcpToolCall", "dynamicToolCall" -> "Tool: " +
+                    listOf(item.string("server").ifBlank { item.string("namespace") }, item.string("tool"))
+                        .filter { it.isNotBlank() }.joinToString(".").ifBlank { "Call" }
+                "webSearch" -> "Web search"
+                "collabAgentToolCall", "subAgentActivity" -> "Agent work"
+                "imageGeneration" -> "Image generation"
+                "imageView" -> "Image view"
+                "sleep" -> "Waiting"
+                "plan" -> "Plan"
+                "enteredReviewMode" -> "Review started"
+                "exitedReviewMode" -> "Review finished"
+                "contextCompaction" -> "Making room in context"
+                else -> return null
+            }
+            val detail = when (type) {
+                "commandExecution" -> listOfNotNull(item.string("command").takeIf { it.isNotBlank() },
+                    item.string("exitCode").takeIf { complete && it.isNotBlank() }?.let { "Exit code: $it" })
+                    .joinToString("\n")
+                "fileChange" -> (item["changes"] as? JsonArray)?.mapNotNull {
+                    (it as? JsonObject)?.string("path")?.takeIf(String::isNotBlank)
+                }?.joinToString("\n").orEmpty()
+                "reasoning" -> (item["summary"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                    ?.joinToString("\n").orEmpty()
+                "webSearch" -> item.string("query")
+                "imageView" -> item.string("path")
+                "plan" -> item.string("text")
+                "enteredReviewMode", "exitedReviewMode" -> item.string("review")
+                "collabAgentToolCall" -> item.string("tool")
+                "subAgentActivity" -> listOf(item.string("agentPath"), item.string("kind"))
+                    .filter { it.isNotBlank() }.joinToString(" · ")
+                else -> ""
+            }
+            val status = item.string("status")
+            val state = if (!complete) "streaming" else if (status in setOf("failed", "declined", "interrupted")) "failed" else "complete"
+            return EngineEvent.ItemActivity(id, title, detail, state, params.string("threadId"), params.string("turnId"))
+        }
         private val BRAND_COLOR = Regex("#[0-9A-Fa-f]{6}")
 
-        private const val MAX_STDERR_LINES = 80
         private fun JsonObject.string(name: String) = (get(name) as? JsonPrimitive)?.contentOrNull.orEmpty()
 
         internal fun parseTokenUsage(value: JsonObject?): TokenUsage? {
@@ -611,11 +840,19 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             threadId: String,
             model: String?,
             tools: List<ToolDefinition>? = null,
+        ): JsonObject = resumeSessionParams(workspace.absolutePath, threadId, model, tools, PHONE_PROFILE)
+
+        internal fun resumeSessionParams(
+            cwd: String,
+            threadId: String,
+            model: String?,
+            tools: List<ToolDefinition>?,
+            profile: EngineProfile,
         ): JsonObject = buildJsonObject {
-            put("cwd", workspace.absolutePath)
-            put("approvalPolicy", "never")
-            put("sandbox", "danger-full-access")
-            put("developerInstructions", AGENT_INSTRUCTIONS)
+            put("cwd", cwd)
+            put("approvalPolicy", profile.approvalPolicy)
+            put("sandbox", profile.sandbox)
+            put("developerInstructions", profile.developerInstructions)
             put("config", buildJsonObject { put("features.image_generation", true) })
             if (!model.isNullOrBlank()) put("model", model)
             put("threadId", threadId)
@@ -627,11 +864,18 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             workspace: File,
             model: String?,
             tools: List<ToolDefinition>,
+        ): JsonObject = startSessionParams(workspace.absolutePath, model, tools, PHONE_PROFILE)
+
+        internal fun startSessionParams(
+            cwd: String,
+            model: String?,
+            tools: List<ToolDefinition>,
+            profile: EngineProfile,
         ): JsonObject = buildJsonObject {
-            put("cwd", workspace.absolutePath)
-            put("approvalPolicy", "never")
-            put("sandbox", "danger-full-access")
-            put("developerInstructions", AGENT_INSTRUCTIONS)
+            put("cwd", cwd)
+            put("approvalPolicy", profile.approvalPolicy)
+            put("sandbox", profile.sandbox)
+            put("developerInstructions", profile.developerInstructions)
             put("config", buildJsonObject { put("features.image_generation", true) })
             if (!model.isNullOrBlank()) put("model", model)
             put("dynamicTools", dynamicTools(tools))
@@ -658,6 +902,8 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             skill: AgentSkill? = null,
             capabilities: DeviceCapabilities? = null,
             planModel: String? = null,
+            inlineImages: Boolean = false,
+            selectedModel: String? = null,
         ): JsonObject = buildJsonObject {
             put("threadId", threadId)
             put("input", buildJsonArray {
@@ -673,10 +919,21 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                     put("name", skill.name)
                     put("path", skill.path)
                 })
-                images.forEach { file -> add(buildJsonObject { put("type", "localImage"); put("path", file.absolutePath) }) }
+                images.forEach { file ->
+                    add(buildJsonObject {
+                        if (inlineImages) {
+                            put("type", "image")
+                            put("url", imageDataUrl(file))
+                        } else {
+                            put("type", "localImage")
+                            put("path", file.absolutePath)
+                        }
+                    })
+                }
             })
             // Omitting effort keeps the app-server's model default in control.
             if (!reasoningEffort.isNullOrBlank()) put("effort", reasoningEffort)
+            if (!selectedModel.isNullOrBlank()) put("model", selectedModel)
             // Plan mode is a collaboration mode; its settings take precedence over
             // the turn's model and effort, so they are restated here. A null
             // developer_instructions keeps Codex's own plan-mode instructions.
@@ -804,6 +1061,77 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
             if (!model.isNullOrBlank()) put("model", model)
         }
 
+        /** A picture the app-server cannot open by path, carried in the request. */
+        internal fun imageDataUrl(file: File): String {
+            val mime = when (file.extension.lowercase()) {
+                "jpg", "jpeg" -> "image/jpeg"
+                "webp" -> "image/webp"
+                "gif" -> "image/gif"
+                else -> "image/png"
+            }
+            return "data:$mime;base64," + Base64.getEncoder().encodeToString(file.readBytes())
+        }
+
+        /**
+         * [parseSkillCatalog] for a path on another machine. Paths are compared
+         * as text with either slash and any case, which is how Windows reads
+         * them; one entry is the answer to the one cwd asked for.
+         */
+        /** Interactive conversations only: sub-agent threads belong to their parent. */
+        internal fun threadListParams(cursor: String?, limit: Int): JsonObject = buildJsonObject {
+            cursor?.let { put("cursor", it) }
+            put("limit", limit.coerceIn(1, 100))
+            put("sourceKinds", buildJsonArray { add("cli"); add("vscode"); add("appServer") })
+        }
+
+        internal fun parseThreadList(result: JsonObject): List<CodexThread> =
+            (result["data"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val thread = element as? JsonObject ?: return@mapNotNull null
+                val id = thread.string("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val cwd = thread.string("cwd").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val title = thread.string("name").ifBlank { thread.string("preview") }
+                    .lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(120).orEmpty()
+                val updated = (thread["updatedAt"] as? JsonPrimitive)?.longOrNull
+                    ?: (thread["createdAt"] as? JsonPrimitive)?.longOrNull ?: 0L
+                // The protocol counts seconds; the phone counts milliseconds.
+                CodexThread(id, title, cwd, if (updated in 1 until 100_000_000_000L) updated * 1000 else updated)
+            }
+
+        internal fun collectStrings(element: JsonElement): Set<String> = when (element) {
+            is JsonPrimitive -> setOfNotNull(element.contentOrNull?.takeIf { element.isString })
+            is JsonArray -> element.flatMapTo(mutableSetOf()) { collectStrings(it) }
+            is JsonObject -> element.values.flatMapTo(mutableSetOf()) { collectStrings(it) }
+            else -> emptySet()
+        }
+
+        internal fun parseThreadMessages(result: JsonObject): List<CodexThreadMessage> {
+            val turns = (result["thread"] as? JsonObject)?.get("turns") as? JsonArray ?: return emptyList()
+            return turns.flatMap { turn ->
+                ((turn as? JsonObject)?.get("items") as? JsonArray).orEmpty().mapNotNull { element ->
+                    val item = element as? JsonObject ?: return@mapNotNull null
+                    when (item.string("type")) {
+                        "userMessage" -> {
+                            val text = (item["content"] as? JsonArray).orEmpty()
+                                .mapNotNull { part -> (part as? JsonObject)?.takeIf { it.string("type") == "text" }?.string("text") }
+                                .joinToString("\n").trim()
+                            text.takeIf { it.isNotEmpty() }?.let { CodexThreadMessage("user", it) }
+                        }
+                        "agentMessage" -> item.string("text").trim().takeIf { it.isNotEmpty() }?.let { CodexThreadMessage("assistant", it) }
+                        else -> null
+                    }
+                }
+            }
+        }
+
+        internal fun parseSkillCatalogAt(result: JsonObject, cwd: String): List<AgentSkill> {
+            val entries = (result["data"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            fun norm(path: String) = path.replace('\\', '/').trimEnd('/').lowercase()
+            val entry = entries.firstOrNull { norm(it.string("cwd")) == norm(cwd) }
+                ?: entries.singleOrNull()
+                ?: return emptyList()
+            return skillsOf(entry)
+        }
+
         internal fun parseSkillCatalog(result: JsonObject, workspace: File): List<AgentSkill> {
             val entries = result["data"] as? JsonArray ?: return emptyList()
             val expectedPath = workspace.absoluteFile.normalize().path
@@ -812,7 +1140,11 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                     path.isNotBlank() && File(path).absoluteFile.normalize().path == expectedPath
                 }
             } ?: return emptyList()
-            return (entry["skills"] as? JsonArray).orEmpty()
+            return skillsOf(entry)
+        }
+
+        private fun skillsOf(entry: JsonObject): List<AgentSkill> =
+            (entry["skills"] as? JsonArray).orEmpty()
                 .mapNotNull { it as? JsonObject }
                 .mapNotNull { skill ->
                     val name = skill.string("name").trim()
@@ -834,7 +1166,6 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
                 }
                 .filter { it.enabled }
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
-        }
 
         /** Map the pinned thread/realtime/sdp notification without retaining SDP. */
         internal fun parseRealtimeSdp(params: JsonObject): VoiceEvent.SdpAnswer {
@@ -926,6 +1257,9 @@ class CodexEngine(private val runtime: RuntimeHost) : AgentEngine, RealtimeVoice
          * skills, never here. Two copies of the same guidance is how a stale
          * one kept telling the agent that device control needed ADB.
          */
+        /** The phone's own Codex: full access on the phone, no approval prompts. */
+        val PHONE_PROFILE: EngineProfile by lazy { EngineProfile(AGENT_INSTRUCTIONS) }
+
         private const val AGENT_INSTRUCTIONS = """You are Mike, the AI agent inside the Hey Mike app, running directly on the user's Android phone and using it for them.
 
 Identity: Your name is Mike. Write it as מייק only when you reply in Hebrew; in any other language write just Mike, with no Hebrew spelling beside it. The user may call you "Mike" or "Hey Mike", typed or spoken; that is them talking to you, not a task. When asked who you are, introduce yourself as Mike, an AI agent that runs on their phone and uses it for them. You are software, not a person: never claim to be human. If asked what powers you, say you run on OpenAI's Codex models through the Codex app-server on the phone. Always answer in the language of the user's latest message; your name does not change that.

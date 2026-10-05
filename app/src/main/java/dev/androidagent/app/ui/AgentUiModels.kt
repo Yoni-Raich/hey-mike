@@ -32,7 +32,11 @@ import dev.androidagent.core.AutomationOverview
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunState
+import dev.androidagent.runtime.ClaudeBinaryPin
+import dev.androidagent.runtime.ClaudeInstallPhase
+import dev.androidagent.runtime.ClaudeInstallState
 import dev.androidagent.core.RuntimeStatus
 import dev.androidagent.core.SetupChecklist
 import dev.androidagent.core.SetupRow
@@ -100,7 +104,10 @@ data class AgentUiState(
     val attachments: List<PendingAttachment> = emptyList(),
     val workspaceFiles: List<WorkspaceFileItem> = emptyList(),
     val discoveredEndpoints: List<AdbEndpoint> = emptyList(),
+    /** The open chat's run. Other chats may be running beside it: see [runs]. */
     val runState: RunState = RunState(),
+    /** Every chat running now, by chat. */
+    val runs: Map<String, RunState> = emptyMap(),
     val queuedTurns: List<dev.androidagent.core.QueuedTurn> = emptyList(),
     val queuePaused: Boolean = false,
     val tokenUsage: dev.androidagent.core.TokenUsage? = null,
@@ -162,6 +169,86 @@ data class AgentUiState(
     val isUpdateBannerVisible: Boolean = true,
     /** First-launch progress and the consent the user gave. Stored on the phone only. */
     val onboarding: dev.androidagent.core.OnboardingProgress = dev.androidagent.core.OnboardingProgress(),
+    /** Computers Mike can work on over SSH. */
+    val computers: List<dev.androidagent.remote.RemoteComputer> = emptyList(),
+    /** The saved computers could not be opened: changed outside the app, so none is trusted. */
+    val computersUnreadable: Boolean = false,
+    /** The computer used when the user does not pick one. */
+    val defaultComputerId: String? = null,
+    /** The latest connect step per computer. */
+    val computerSetup: Map<String, dev.androidagent.remote.RemoteSetup> = emptyMap(),
+    val isComputersOpen: Boolean = false,
+    /** Picking the folder a computer chat opens in. */
+    val folderBrowser: FolderBrowserState? = null,
+    /** Which computer and folder each computer chat runs in. */
+    val remoteBindings: Map<String, dev.androidagent.remote.RemoteBinding> = emptyMap(),
+    /** Per computer, its own Claude Code as last checked: whether a chat there can run on Claude, and with which models. */
+    val computerClaude: Map<String, dev.androidagent.remote.ComputerClaude> = emptyMap(),
+    /** Folders the user picked on each computer. */
+    val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
+    /** Per computer, the conversations Codex keeps there, as last listed. */
+    val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
+    /** Computer chats whose conversation another Codex on the computer holds open. */
+    val pcBusyChats: Set<String> = emptySet(),
+    /** Computer chats being copied so Mike can continue them. */
+    val pcForking: Set<String> = emptySet(),
+    /** A file moving between a computer and this phone, for the progress banner. */
+    val fileTransfer: dev.androidagent.core.FileTransfer? = null,
+    /** Computers whose conversations are being listed right now. */
+    val pcRefreshing: Set<String> = emptySet(),
+    /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
+    val pcChatLoading: Map<String, String> = emptyMap(),
+    /** A computer Mike filled in for the user to check and finish. */
+    val computerProposal: ComputerDraft? = null,
+    /** Text to put in a chat's composer, unsent, once: chat id to text. */
+    val composerSeeds: Map<String, String> = emptyMap(),
+    /**
+     * The engine the open chat runs on now. [selectedModel] and [usageLimits]
+     * are this engine's. [modelCatalog] holds every engine's models the chat
+     * can pick, and picking one of another engine moves the chat to it.
+     */
+    val activeEngine: EngineKind = EngineKind.CODEX,
+    /** The engine a new chat starts on, chosen in onboarding or Settings. */
+    val defaultEngine: EngineKind = EngineKind.CODEX,
+    /** Claude subscription setup. [accountStatus] stays the Codex sign-in. */
+    val claude: ClaudeUiState = ClaudeUiState(),
+)
+
+/** Claude subscription setup: the one-time download and the sign-in. */
+data class ClaudeUiState(
+    val install: ClaudeInstallState = ClaudeInstallState(ClaudeInstallPhase.NOT_INSTALLED, totalBytes = ClaudeBinaryPin.CURRENT.size),
+    val account: AccountStatus? = null,
+    /** A sign-in step is running. */
+    val busy: Boolean = false,
+    /** When Claude last reported its limits, shown as their age; null when never. */
+    val usageReadAtMillis: Long? = null,
+) {
+    /** Downloaded and signed in: Claude models can be picked in a chat on this phone. */
+    val ready: Boolean get() = install.phase == ClaudeInstallPhase.INSTALLED && account?.signedIn == true
+}
+
+/** A computer as the add or edit form holds it, before it is saved. */
+data class ComputerDraft(
+    val id: String? = null,
+    val label: String = "",
+    val host: String = "",
+    /** Optional second address, such as Tailscale, tried when [host] does not answer. */
+    val vpnHost: String = "",
+    val port: String = "22",
+    val user: String = "",
+    /** Blank on an edit keeps the saved password. */
+    val password: String = "",
+    val access: dev.androidagent.remote.RemoteAccess = dev.androidagent.remote.RemoteAccess.ASK,
+    val isDefault: Boolean = false,
+    /** Mike filled this in: the address must be checked before a password is typed. */
+    val proposedByMike: Boolean = false,
+)
+
+data class FolderBrowserState(
+    val computerId: String,
+    val listing: dev.androidagent.remote.FolderListing? = null,
+    val loading: Boolean = true,
+    val error: String? = null,
 )
 
 /**
@@ -172,7 +259,10 @@ data class AgentUiActions(
     val onDrawerChanged: (Boolean) -> Unit = {},
     val onNewChat: () -> Unit = {},
     val onSelectSession: (String) -> Unit = {},
+    /** The "+" menu: any file, pictures from the gallery, or one picture from the camera. */
     val onAttach: () -> Unit = {},
+    val onAttachPhoto: () -> Unit = {},
+    val onTakePhoto: () -> Unit = {},
     val onRemoveAttachment: (String) -> Unit = {},
     val onSend: (String, List<PendingAttachment>) -> Unit = { _, _ -> },
     val onSteer: (String) -> Unit = {},
@@ -197,6 +287,8 @@ data class AgentUiActions(
     val onConnect: (port: String) -> Unit = {},
     val onDiscover: () -> Unit = {},
     val onOpenWirelessSettings: () -> Unit = {},
+    /** Switch Wireless debugging on from inside Mike; opens its Settings screen when Mike cannot. */
+    val onTurnOnWireless: () -> Unit = {},
     val onOpenAccessibilitySettings: () -> Unit = {},
     val onOpenAssistantSettings: () -> Unit = {},
     /** Notification access: the one permission no app can grant itself, and rules need it. */
@@ -234,6 +326,8 @@ data class AgentUiActions(
     val onShareWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onCloseWorkspaceFiles: () -> Unit = {},
     val onApproval: (requestId: String, allow: Boolean) -> Unit = { _, _ -> },
+    /** The user's answer to an `ask_user` question; null when they skip it. */
+    val onAnswerQuestion: (questionId: String, answer: String?) -> Unit = { _, _ -> },
     /** Allow a send and remember it for this contact or this whole app. */
     val onApproveAlways: (requestId: String, scope: dev.androidagent.core.ApprovalScope) -> Unit = { _, _ -> },
     val onRemoveSendGrant: (dev.androidagent.core.SendGrant) -> Unit = {},
@@ -256,6 +350,54 @@ data class AgentUiActions(
     val onWithdrawConsent: () -> Unit = {},
     /** Start a chat in which Mike turns on wireless debugging and pairs, asking first. */
     val onLetMikeSetUpWireless: () -> Unit = {},
+    val onOpenComputers: () -> Unit = {},
+    val onCloseComputers: () -> Unit = {},
+    /** Save a new or edited computer, then connect to it. */
+    val onSaveComputer: (ComputerDraft) -> Unit = {},
+    val onRemoveComputer: (String) -> Unit = {},
+    val onSetDefaultComputer: (String) -> Unit = {},
+    /** Connect to a computer and pick a folder: it becomes a project with a new chat. */
+    val onNewProject: (computerId: String) -> Unit = {},
+    /** A new chat in a project folder on a computer. */
+    val onNewChatInProject: (computerId: String, path: String) -> Unit = { _, _ -> },
+    /** Open a conversation Codex keeps on the computer as a chat here. */
+    val onOpenPcThread: (computerId: String, threadId: String) -> Unit = { _, _ -> },
+    /** List the computers' conversations again. */
+    val onRefreshPcThreads: () -> Unit = {},
+    /** Try the computer's connection again from the side panel. */
+    val onReconnectComputer: (computerId: String) -> Unit = {},
+    /** Open a computer's Tailscale approval page; coming back to the app connects again. */
+    val onOpenTailscaleApproval: (computerId: String, url: String) -> Unit = { _, _ -> },
+    /** Before the first message: run this chat on the phone (null) or in a computer folder. */
+    val onMoveNewChat: (computerId: String?, path: String?) -> Unit = { _, _ -> },
+    val onComputerProposalShown: () -> Unit = {},
+    /** Continue a computer conversation that is held open elsewhere in a copy with its history. */
+    val onForkPcChat: (sessionId: String) -> Unit = {},
+    /** Look again whether the computer still holds this chat's conversation open. */
+    val onCheckPcChatBusy: (sessionId: String) -> Unit = {},
+    val onComposerSeedUsed: (sessionId: String) -> Unit = {},
+    /** Hand text to another app, such as the PC setup steps to email to oneself. */
+    val onShareText: (String) -> Unit = {},
+    /** Connect, install Codex if needed, and use Mike's active account. */
+    val onConnectComputer: (String) -> Unit = {},
+    val onOpenUrl: (String) -> Unit = {},
+    /** Show the folders in one folder of a computer; blank is its home folder. */
+    val onBrowseFolder: (computerId: String, path: String) -> Unit = { _, _ -> },
+    val onCloseFolderBrowser: () -> Unit = {},
+    /** Start a chat that runs on the computer, in this folder. */
+    val onOpenFolderChat: (computerId: String, path: String) -> Unit = { _, _ -> },
+    /** The engine new chats start on. */
+    val onDefaultEngine: (EngineKind) -> Unit = {},
+    /** Download Claude Code, after the user saw its size. */
+    val onDownloadClaude: () -> Unit = {},
+    val onCancelClaudeDownload: () -> Unit = {},
+    /** Start `claude auth login` and open its page. */
+    val onClaudeLogin: () -> Unit = {},
+    /** Hand the pasted code to the waiting sign-in. The code is not kept anywhere. */
+    val onClaudeCode: (String) -> Unit = {},
+    val onClaudeLogout: () -> Unit = {},
+    /** Read the open chat's engine quota again. */
+    val onRefreshUsage: () -> Unit = {},
 )
 
 /** The setup checklist for this state, so no screen assembles the signals itself. */
@@ -267,8 +409,10 @@ internal fun AgentUiState.onboardingStep(): dev.androidagent.core.OnboardingStep
 
 internal fun AgentUiState.setupSignals(): SetupSignals = SetupSignals(
         runtimePhase = runtimeStatus.phase,
-        signedIn = accountStatus?.signedIn,
-        loginPending = accountStatus?.signedIn == false && accountStatus?.loginUrl != null,
+        // Either engine is enough to chat: a Claude-only user is signed in.
+        signedIn = if (claude.account?.signedIn == true) true else accountStatus?.signedIn,
+        loginPending = (accountStatus?.signedIn == false && accountStatus?.loginUrl != null) ||
+            (claude.account?.signedIn == false && claude.account?.loginUrl != null),
         a11yConnected = a11yStatus.connected,
         a11yDeclared = a11yStatus.declaredEnabled,
         overlayGranted = permissions.overlay,
@@ -277,6 +421,9 @@ internal fun AgentUiState.setupSignals(): SetupSignals = SetupSignals(
         microphoneGranted = permissions.microphone,
         adbPhase = adbStatus.phase,
         adbPort = adbStatus.port,
+        adbWirelessDebugging = adbStatus.wirelessDebugging,
+        adbPaired = adbStatus.paired,
+        adbPairingRejected = adbStatus.pairingRejected,
     )
 
 internal fun EngineEvent.Approval.detailsText(): String = details.toString().removeSurrounding("{", "}")

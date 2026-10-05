@@ -14,6 +14,7 @@ One Android project, with replaceable modules and small core contracts.
 | device-tools | Sole agent-facing device gateway, reads/control/shell/files |
 | a11y | Optional in-process accessibility screen observation and control |
 | overlay | Floating steering card, status and direct local stop |
+| remote | Computers over SSH: sealed profiles, Codex on Windows, chat routing |
 
 A model change is configuration. An engine change replaces the engine adapter. Runtime packaging must not affect chat or ADB APIs. The UI observes app events, never raw Codex JSON.
 
@@ -26,6 +27,26 @@ ignores pairing services. No arbitrary LAN scan is used. A missing service is
 reported as Wireless Debugging off/on-waiting when Android exposes that state;
 the loop stays idle until the app has a stored pairing identity, and pairing
 codes are never requested by reconnect.
+
+`AdbStatus` carries the switch (`adb_wifi_enabled`), whether Mike holds a
+pairing, and whether adbd refused it, next to the connection phase. The UI
+names what is missing ("Wireless debugging is on · connecting…", "is off",
+"Android dropped the pairing · pair again") rather than "Not connected", which
+read as "off" on a phone whose switch was on. Android forgets a wireless
+pairing after 7 days without a connection (`adb_allowed_connection_time`); adbd
+then fails the TLS handshake (`SSLV3_ALERT_CERTIFICATE_UNKNOWN` on the client).
+The loop recognises that, stops retrying (each try was five handshakes inside
+Kadb) and waits for a new pairing, the switch moving, or five minutes. A
+`ContentObserver` on the switch wakes the loop at once and drops a connection
+whose adbd went away. `discover()` no longer announces itself while connected:
+it used to overwrite CONNECTED, and the loop then closed a live connection.
+
+Mike switches Wireless debugging on itself by writing the same global setting
+the Settings switch writes, so Android still shows its own "allow on this
+network" prompt on a new network and keeps it off without Wi-Fi. That needs
+WRITE_SECURE_SETTINGS, which Mike grants itself with `pm grant` over its own
+ADB shell on its first connect: no power beyond the shell the user already
+paired. Until then the "Turn on" button opens the Settings screen.
 
 Immediately before each typed Codex turn, `AgentCoordinator` snapshots what
 device control can do (see "Per-operation device capability" below). The engine
@@ -68,12 +89,14 @@ The APK contains a hash-pinned Mozilla-derived PEM bundle. Runtime copies and
 validates it under app-private files and passes both `SSL_CERT_FILE` and
 `CODEX_CA_CERTIFICATE`. `HTTPS_PROXY` and `HTTP_PROXY` are set in both cases,
 `NO_PROXY` keeps stdio/local traffic direct, and `CODEX_SANDBOX` is removed.
-The engine retains a short redacted stderr tail and redacted RPC error data so
-DNS, TLS and connection failures remain diagnosable without exposing tokens or
-device codes. Proxy lifecycle follows the supervised app-server and closes on
-stop or failed startup.
+The engine drains stderr to a separate redacted, bounded-per-line diagnostic
+sink (the `CodexEngine` logcat tag). Process logs have no reliable turn scope
+and are never appended to RPC, turn or transport failures. Error messages keep
+only their own redacted data, cause, additionalDetails and codexErrorInfo.
+Proxy lifecycle follows the supervised app-server and closes on stop or failed
+startup.
 
-The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.156.0,
+The CONNECT allowlist includes `chatgpt.com:443`: in pinned Codex 0.159.2,
 ChatGPT account sessions use `https://chatgpt.com/backend-api/codex` for
 models and responses. Allowing only auth.openai.com and api.openai.com lets
 device-code login succeed while blocking signed-in chat. The runtime sets
@@ -83,7 +106,7 @@ The model list is never hard-coded. `model/list` returns what the OpenAI
 backend sends the app-server, and the backend filters by the client version
 the app-server reports. New models therefore appear only after the pinned
 package is bumped in `tools/prepare_runtime.py` (0.153.4 -> 0.156.0 on
-2026-09-22 for the GPT-6 models). Cached archives are named with the version,
+2026-09-22 for the GPT-6 models, then 0.156.0 -> 0.159.2 on 2026-09-30 for GPT-6.1 Sol). Cached archives are named with the version,
 so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
@@ -93,6 +116,17 @@ selectable assistant text, and expandable diagnostic/activity rows. The composer
 uses the existing send, steer, stop, model, and attachment action contracts.
 Stop remains reachable while a steering draft exists; STOPPING blocks dispatch
 and preserves that draft. Terminal formatting is removed before display.
+A Hebrew or Arabic word stays on the line of the number after it (a no-break
+space, `bindNumbersToLabels`), there is no copy button: a long press on a
+block opens Copy and Select text. A block is a user's prompt, or the agent's
+reply, which is everything after that prompt up to the next one. While this
+chat's own run works, its status line sits under the last line of the chat
+instead of above the composer. "Jump to latest" appears
+only 96dp or more from the end, in the corner on that same side. The composer's
+field and chip outlines are at least 3:1 against the black behind them.
+With computers saved, an empty new chat is one question, "Where should Mike
+work?", answered from a card of rows (this phone, recent projects, another
+folder) in `NewChatPlace.kt`; without computers it keeps the plain headline.
 Compose fixture tests exercise UI callbacks without starting or authenticating
 Codex. They do not establish real runtime, device-control, or network success.
 
@@ -132,6 +166,40 @@ may use the same device-tool gateway as typed chat. Local stop first revokes new
 tool calls, then interrupts an active delegated turn, stops microphone capture,
 and asks app-server to stop the realtime conversation. Completed side effects
 cannot be undone.
+
+
+### Assistant panel over the current app
+
+Holding the power button with Mike as the digital assistant opens a panel over
+the app the user is in, instead of switching to Mike. The
+`VoiceInteractionSession` draws it: a glow sweeps around the screen edge from
+the power button, then a card rises from the bottom with the voice orb, the
+live transcript, and Mute, Open Mike and End. Only the card takes touches, so
+the app underneath can still be read and scrolled. While Mike acts on the
+screen, the card fades and takes no touches, so Mike's taps reach the app.
+
+The screen comes from Android itself: `onHandleAssist` delivers the focused
+app's `AssistStructure`, which the system sends only while "Use text from
+screen" is on. `ScreenText` flattens it to at most 4,000 characters and never
+reads a password field; one view longer than that is cut, not dropped. It
+enters the realtime conversation as two messages. A `developer` message holds
+only the app's guidance: wait for the user, and treat the quoted screen as
+data. The screen text follows as a plain conversation message between
+`<<<SCREEN_TEXT>>>` markers, with markers inside the screen removed. Another
+app writes that text and can put instructions in it, so it must never carry
+developer weight. Neither message is saved in the chat. When no structure
+arrives within two seconds, only the guidance goes in, and it says the screen
+is unavailable; the model can then delegate to Codex, which reads the screen
+with its device tools.
+
+The panel has no activity, so the voice conversation moved out of the chat
+screen's view model into the app-scoped `VoiceConversation`. It owns the chat
+the conversation records into, the transcript and the typed-line echo check.
+The chat screen and the panel both drive it, so "Open Mike" hands a live
+conversation to the app without restarting it. Closing the panel (End, Back)
+ends a conversation that the panel started. Without microphone permission or
+consent, a press opens the app's voice mode as before, because the panel has
+nowhere to ask for either.
 
 ## Unicode input
 
@@ -412,17 +480,57 @@ state. Its Android calls live behind `CapabilityPlatform`, while policy and
 dispatch are JVM-testable without a phone. Provider behavior, OEM intent
 handlers and the permission dialog still need physical-device proof.
 
-## Session queue and exclusive device ownership
+## Parallel chats, one phone
 
-The MVP still allows one active run per phone, because one phone screen cannot
-be shared. `SessionRunQueue` makes that limit a queue instead of a rejection:
-the UI accepts a turn for any chat, and `AgentCoordinator` publishes an
-`available` flag that gates dispatch. Sending into the chat that is already
-running still steers it. FIFO order is durable in a `run_queue` SQLite table,
+Chats run at once, with no cap, as Codex does on a computer: `AgentRuns`
+gives each running chat an `AgentCoordinator` of its own, reusing an idle one
+before making another, so a new chat started while others work starts straight
+away. Each coordinator is unchanged in what it does for one run. What they
+share:
+
+- The phone. It has one screen and one foreground app, so two runs cannot both
+  drive it: one would open an app and the other's tap would land in it.
+  `DeviceLease` gives the device gateway to one run at a time. A run takes it at
+  a tool call, not at its start, so a chat that only thinks, or one whose agent
+  works on a computer, never waits. A call that leaves the screen alone (files,
+  contacts, calendar, a computer, knowledge) holds it for that call only. Once a
+  run reads or acts on the screen it keeps the lease to its end: the handles a
+  read returns are what its next tap uses, re-arming the gateway clears them,
+  and the tap needs the screen it was planned on. A run waiting for it says
+  "Waiting for the phone". The gateway's `beginRun`/`revoke` follow the lease,
+  so the gateway always serves exactly the run that holds it; making the
+  gateways per run would let non-screen calls overlap too.
+- The floating card. Only the lease holder (or anyone, when nobody holds it)
+  updates or finishes it, so a thinking chat never relabels or closes another
+  chat's control card. Its Stop, like the notification's, stops every chat:
+  stopping only the chat on the phone would hand the phone to the next one.
+- The engine. Events are routed by thread to the coordinator that owns it; a
+  coordinator collecting them itself would refuse every other chat's tool calls
+  and approvals. A thread nobody owns has its tool calls and approvals refused.
+  A stop never closes the engine while another chat runs; a turn that cannot be
+  interrupted is then left to finish, with its tool calls refused.
+
+Voice still needs every chat idle. Approvals are per chat; a yes typed into a
+chat answers that chat's card. The chat screen shows the open chat's run only.
+
+`SessionRunQueue` holds a turn only while its own chat is still running; any
+other turn starts at once.
+Sending into the chat that is already running still steers it. FIFO order is durable in a `run_queue` SQLite table,
 and a turn is dequeued before it starts, so a process crash cannot replay a
 side effect. A queue restored at startup is paused and needs an explicit
 Resume, and a local stop pauses the queue rather than releasing the next run at
 the user unannounced. Deleting a chat cancels its queued turns.
+
+## Codex retries and turn failures
+
+An app-server `error` notification with `willRetry=true` is a scoped activity
+update, not a failed run. Codex keeps the turn and performs its own retries or
+transport fallback. A non-retry error keeps `threadId` and `turnId` on the
+failure, so only that turn ends; a missing retry flag keeps the legacy terminal
+behavior. `AgentRuns` routes both events by thread, and the coordinator checks
+the turn before changing state. A broken shared JSON/stdio connection remains
+an unscoped failure because every turn on that connection is affected. This
+does not repair or hide malformed/truncated JSON or backend usage limits.
 
 ## Assistant message segmentation
 
@@ -483,6 +591,16 @@ catches up. Other accounts show their last reading and its age, and a window
 whose reset time has passed since then is drawn empty. The widget is redrawn on
 every reading and account change, and by the platform every 30 minutes.
 
+The signed-in Claude account is the last orb, marked "Claude". Claude has one
+sign-in and reports its quota only while a Claude process runs, so its row is
+always a reading with an age: `LastUsageStore` (`claude-usage.json`) already
+keeps the reading, and now also the account's name (`claude-usage.json.account`,
+written when the status says signed in, deleted when it says signed out or on
+logout) so the widget can name the account without starting Claude. The widget
+shapes the raw reading with the same reset rule as the Codex rows
+(`readSaved`, `AccountUsageOverview.rows(..., claude)`). When there are more
+than four orbs the Claude row keeps its place and the Codex accounts make room.
+
 ## Rich chat presentation
 
 Assistant markdown is rendered with Markwon (tables, strikethrough, prism4j
@@ -501,6 +619,83 @@ it moves by the pixels added to a visible row and jumps to the end only when a
 new last row appears below the viewport. Scrolling up pauses following, and
 the jump-to-latest button resumes it. Streaming text does not restart a scroll
 animation on each update.
+
+## The chat's own tools: `ask_user` and `show_media`
+
+Decided 2026-10-03. Two tools put something in the conversation instead of
+acting on the phone: `ask_user` asks the user one question and waits, and
+`show_media` shows pictures and videos in the chat.
+
+- **Served by the coordinator, not a gateway.** `ChatToolGateway` only puts the
+  two definitions in the list every engine is given, so a thread on Codex or
+  Claude, on the phone or a computer, has them. `AgentCoordinator` answers the
+  call itself, before `claimDevice`. Every other tool takes the phone's lease
+  for at least one call; a question can wait minutes, and a chat holding the
+  lease that long would stop every other chat's tools. It also needs no armed
+  gateway: the workspace comes from the run.
+- **`ask_user(question, options?)`.** Up to six options; with or without them
+  the user can type an answer. The question is `RunState.question`; the chat
+  screen pins `QuestionCard` above the composer, as it does an approval,
+  because a card in the list scrolls away. An option is one tap. Free text is
+  typed in the composer that is already there: `steer` hands what the user
+  types to the waiting question before it would steer the turn. Skip tells the
+  model the user is not answering. The question and the answer are stored as
+  an assistant and a user message, so the history reads as asked and answered.
+- **Outside the app it is a notification.** `QuestionNotifier` posts one for
+  every waiting question whose card is not on screen (the app is in the
+  background, or shows another chat) and cancels it when the question goes
+  away. It is a `MessagingStyle` notification with a reply field
+  (`RemoteInput`) that offers the options as choices; one or two options also
+  get a button each, since Android shows three actions at most. The body
+  numbers the options, and `UserQuestion.resolve` reads a reply that is only a
+  number as that option, so the reply field works on a phone that does not draw
+  the choices. A tap on the notification opens the asking chat. With
+  notifications blocked the app comes to the front on that chat instead.
+- **It does not raise the app.** An approval brings Hey Mike forward because
+  its card exists only there. A question can be answered where the user is, so
+  it leaves the app they are in alone.
+- **Eight minutes, then the model is told.** Claude Code gives an MCP tool call
+  ten minutes (`MCP_TOOL_TIMEOUT`), so the wait ends before that with
+  `no_answer` and the instruction to say what it is waiting for and end the
+  turn. A skipped question is `skipped`. The wait counts as approval time in
+  `RunMetrics`, not tool time. Stop cancels the question with the run.
+- **`show_media(files, caption?)`.** Addresses are `copy_file`'s: `chat:`,
+  `phone:` or a `content://` uri, `<computer>:`, or a bare path where the
+  chat's shell runs, so a computer chat names a file by its path there.
+  `CopyFileGateway.chatMedia` returns what the message should hold. A file
+  already in the chat's folder is used where it is, and one from the phone's
+  storage is copied into `media/` there, under a name no earlier copy has. A
+  file on a computer is **not copied**: the computer is asked only that it
+  exists and how big it is (`FilePlace.stat`, one SFTP `stat`), and the message
+  holds a `RemoteMediaRef`, text of the form `remote:<computer>:<bytes>:<path
+  there>` in the ordinary attachment list, so messages and the session store
+  did not change. The call returns at once, however big the file, and a file
+  that is missing or a computer that cannot be reached is reported to the
+  model before anything is shown. The files become one assistant message with
+  the caption. A name that is not a picture or a video is refused before any
+  byte moves. It is a tool and not a markdown image because the bytes may be on
+  another machine: the renderer would have to open SSH to draw a message.
+- **Remote media loads when it is looked at.** `RemoteMediaLoader` (`:app`)
+  fetches a reference into `cache/remote-media/` the first time a tile needs
+  it: a picture up to 20 MB when its message comes on screen, a bigger one or
+  any video on a tap. The fetch belongs to the loader, not to the tile, so
+  scrolling away does not stop it and two tiles for one file share one
+  transfer. Until then the tile says where the file is and how big. The cache
+  is keyed by computer, path and size and keeps 400 MB, oldest first; the
+  system may clear it too, and a tile then offers the file again. A tile shows
+  Retry and the reason when the computer cannot be reached.
+  A button in each tile's corner, and in the full-screen view, saves the file
+  on the phone: it loads it if needed, then `PhoneStoragePlace` stores it under
+  `Pictures/Hey Mike/` or `Movies/Hey Mike/` (Downloads for other files), where
+  the gallery finds it. Streaming a video over SFTP was not attempted: the
+  platform player needs a seekable source, and a full fetch is simpler and
+  works offline afterwards.
+- **How media is drawn.** `InlineMedia` replaces `InlineImages`. One file is
+  shown whole; several share a two-column grid of square tiles. A video tile
+  shows a frame and its length from `MediaMetadataRetriever` with a play mark;
+  a tap plays it full screen in the platform `VideoView` with its own
+  controls. No player library was added. Formats the phone cannot decode say
+  so instead of showing a black box.
 
 ## What the agent says on the floating card
 
@@ -1394,33 +1589,36 @@ status is re-read on every resume beside the other permissions. A rule that
 looks on and cannot run is the failure the user would otherwise only notice by
 the thing not happening, so it is counted on the hub row rather than buried.
 
-## The side panel: two kinds of thing Mike holds
+## The side panel: chats first
 
-A chat is something you did. A rule is something that keeps happening. The
-panel shows both, but not as equals: the rules sit **above** the chats as a
-strip, and the chats keep the rest of the panel.
+`ChatLibraryDrawer` opens on a flat list of recent chats across the phone and
+computers. A device picker narrows the list; search matches titles, folders and
+computer names. Each row shows its location, so equal titles on two computers
+remain distinct. Day headings provide time context; rows omit individual dates
+and times, so a row is one 48dp line unless it has a project name, "Running" or
+"In Codex" to add. Imported desktop conversations say "From Codex". Rename and
+delete on Mike's chats are a long press on the row only; the open chat has no
+separate menu button.
 
-That ordering is the design. The question people open this panel with is often
-not "which chat was that" but "is the standing stuff still working", and a
-strip answers it before anyone reads a list. The cost is that a strip has room
-for almost nothing, which is what the two constraints below are for.
+Projects have their own tab. Opening a folder shows only its chats, and Back
+restores the project search and scroll position while the panel stays composed.
+`ChatLibrary` builds these lists from `PcChats`, retaining its path rules and
+imported-thread deduplication. In a computer's projects list each project
+header carries one "+" that starts a chat in that project, replacing the
+"New chat here" row that sat under every open project.
+One New chat action uses the open project, offers a folder on the selected
+computer, or starts the normal new-chat flow when All devices or This phone is
+selected. Connection recovery appears only for the selected computer; managing
+computers is one entry in the device picker.
 
-**The strip may not grow.** At most `AutomationOverview.MAX_CHIPS` chips and
-exactly one sentence, however many rules exist. What overflows goes behind it,
-and the chips are sorted so that what needs you is what you see: blocked first,
-then running, then off.
-
-**The sentence is chosen, not listed.** `AutomationOverview` picks the most
-useful true thing in priority order — a rule that cannot run, then the next run
-that is due, then the honest nothing — and marks it as a warning or not. A
-strip that listed everything would fit nothing and help less.
-
-Both decisions live in `:core` (`AutomationOverview`, `AutomationSummaries`)
-rather than in a Composable, because they are the design and a Composable is
-not somewhere a test can reach. The same layer turns the rule format into
-sentences: the format is written for the model — ids, packages, 24-hour clocks,
-a closed vocabulary — and none of that belongs on a panel. `AutomationStrip`,
-`AutomationsSheet` and the top bar render strings and choose nothing.
+The title, New chat, close, Files and Settings stay reachable while the filters
+and list scroll on short screens. Large text moves New chat to its own row.
+Automations use one compact footer entry with a count and an attention dot.
+Its accessibility label states blocked or on/off status. The detailed rule list
+stays in `AutomationsSheet`; the hamburger
+still marks blocked rules, and Settings has its setup attention dot. Rule
+summaries and status counts come from `AutomationOverview` and
+`AutomationSummaries` in `:core`.
 
 **Three states, not two.** `AutomationSummary.Status` is ON, OFF or **BLOCKED**
 — on, and this phone cannot serve its trigger. Blocked looks identical to
@@ -1540,3 +1738,353 @@ On / Set up / Fix (screen control and the floating control are one row, since
 neither works alone), then *How Mike works*, *Account and privacy*, and
 *Advanced* (runtime, Jev, app updates). The side panel gained the orb with a
 one-line status, chat search, and chats grouped by day (`ChatDayGroups`).
+
+## Computers: Codex on the user's Windows PC, driven from the phone
+
+A chat can run on one of the user's computers instead of on the phone. The
+phone does not get an SSH tool; it runs **Codex itself on the computer** and
+talks to it over SSH with the same app-server protocol it already speaks to
+the phone's own Codex. `CodexEngine` only needs a `Process`, so the new
+`:remote` module hands it an SSH exec channel (`SshProcess`) instead of a local
+child. Everything Codex does there is native to that computer: its shell,
+`apply_patch`, git, the project's `AGENTS.md`, the user's `~/.codex` config,
+MCP servers, and skills from `~/.agents/skills` and the repo's
+`.agents/skills`, which also appear in the composer's skill picker.
+
+Why not a `remote_shell` tool for the phone's Codex: file edits, reads,
+skills and project instructions would all stay on the phone, and every step
+would be a mobile round trip wrapped in `cat` and heredocs.
+
+- **Routing.** `RoutingAgentEngine` is the one engine the coordinator sees. A
+  chat bound to a computer opens its thread there; later calls about that
+  thread go to the same place. Sign-in, models, usage and voice stay the
+  phone's. Both app-servers number requests from zero, so a computer's tool
+  and approval requests are tagged `remote|<computer>|<id>` before the
+  coordinator sees them. An unscoped failure from a computer that is not
+  running the current turn is dropped, because the coordinator ends any
+  active run on one.
+- **Account and model.** Before any remote app-server call, `RemoteHub`
+  supplies an externally managed ChatGPT access token from the active Mike
+  account on the phone. The phone's refresh token stays on the phone; the
+  app-server requests a fresh access token through the SSH stream when it
+  expires. An account change during refresh fails the remote turn. If Mike
+  cannot provide a ChatGPT token, the remote call stops before running under
+  the computer's saved Codex account. `CodexEngine` passes the model selected
+  in Mike to both `thread/start` or `thread/resume` and each `turn/start`.
+  The computer's Codex config, MCP servers and skills still come from that
+  computer.
+- **Live remote activity.** `item/started` and `item/completed` notifications
+  for reasoning, commands, file changes and other supported tool items become
+  `remote_activity` messages in the chat, updated from running to complete or
+  failed. Raw app-server JSON never reaches the UI. `chatRows` folds
+  back-to-back ones into one `RemoteActivityRow`, drawn like the phone's
+  actions group but with the computer's icon: a header that names the computer
+  and counts what ran ("Working on Server" while live, "Worked on Server · 4
+  commands" after) and steps that say what each one did ("Ran ls -la",
+  "Thought"), with the shell Codex wraps a command in taken off. A live group
+  nobody opened shows its newest four steps. A step still `streaming` after its
+  run ended shows as stopped, never as running. The computer's group and the
+  phone's never merge, so what ran where stays readable. The chat's top bar
+  says where the chat works as "Server · folder · This phone", each place
+  with its icon, and leaves the folder out when it is the chat's own name.
+- **The phone is still reachable.** The phone's device tools are advertised to
+  the computer's thread as well, so a task on the PC can still act on the
+  phone. The computer's thread instructions (`RemoteInstructions`) say which
+  is which.
+- **SSH.** JSch (pure Java, Android networking and DNS, no native binary).
+  Password login; the host key is trusted on first connect, shown as a
+  `SHA256:` fingerprint, and pinned in both the sealed store and the live
+  `SshLink`. Reconnecting that same link keeps its first key, even after a
+  disconnect. A different key refuses the connection before the password is
+  sent. A changed home address clears the
+  pin. A computer may have a home address, a VPN address (such as Tailscale),
+  or both. Connect tries the one that answered last first and moves on only
+  when an address does not answer at all; a refused password or a changed
+  key stops there. The pin holds for both addresses.
+- **Codex on Windows.** Setup runs short PowerShell scripts through
+  `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
+  and PowerShell default shells. The computer downloads the official
+  `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
+  pinned on the phone (0.159.2), checks its sha256 against hashes compiled
+  into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
+  The phone and computer therefore speak one protocol version.
+- **Access is the user's choice per computer.** *Ask me first*:
+  `workspace-write` with `on-request` approvals, answered on the phone's
+  approval card. *Full access*: `danger-full-access` with no approvals, as on
+  the phone. What *Ask* can enforce depends on the Codex Windows sandbox on
+  that PC; it is not set up by Hey Mike.
+  Permission requests retain their requested profile by request id. Allow
+  returns that profile with turn scope; Deny returns an empty profile.
+  Command and file-change requests still return accept/decline decisions.
+  The phone card names the requested network and file access and its duration.
+- **Secrets and bindings are sealed.** The agent's shell on the phone runs as
+  the app's own user and can rewrite any app file. Computers, their passwords
+  and which chat runs where are one AES-GCM blob under a non-exportable
+  Keystore key (`KeystoreSecretBox`). An edited file does not open, so it
+  cannot point a saved password at another host or move a chat onto a
+  computer; the app then trusts none of it and asks for the computers again.
+- **Pictures** are sent inline as data URLs. Any other attachment is copied to
+  the computer over SFTP first (`RemoteHub.sendAttachments`), into
+  `.hey-mike/attachments/<time>/` in the chat's project folder, and the prompt
+  names where it landed ("Attached files on this computer"). They used to be
+  refused, because their paths are on the phone. A failed copy sends nothing
+  and keeps the attachments. The folder shows up in `git status` of a project
+  that is a repository.
+- **The composer's plus** opens Photo (system photo picker, several at once, no
+  storage permission), Camera (one shot written to `cache/captures/` through
+  the app's FileProvider, copied into the chat, then deleted; no CAMERA
+  permission, because the system camera app takes the picture) and File. All
+  three feed the same pending attachments, in phone chats and computer chats.
+- **Files: places, one copy tool, a skill for use cases.** A file lives in
+  one of three kinds of place, and every address names one: `chat:<path>`
+  (this chat's folder on the phone), `phone:<path>` (shared storage, or a
+  `content://` uri), `<Computer>:<path>` (a saved computer, scp style). A
+  path with no place is where the chat's shell runs: the chat folder in a
+  phone chat, the project folder in a computer chat. `copy_file(from, to,
+  replace)` (`CopyFileGateway`, in `:core`) is the only tool that moves bytes
+  between places. `:core` owns the `FilePlace` contract; `:device-tools`
+  implements the phone (`PhoneStoragePlace`: MediaStore insert with
+  `IS_PENDING`, reads by uri or relative path, ADB `pull` only as a fallback
+  for a file media access cannot read); `:remote` implements each computer
+  (`ComputerPlace`, SFTP over the saved SSH link, relative paths joined to
+  the chat's folder in the computer's own style); `:app` wires them. Every
+  copy lands whole or not at all: a phone download is renamed from a part
+  file, an SFTP upload is written as `.<name>.part` and renamed, and a
+  MediaStore insert stays pending until the bytes are in. Nothing is
+  overwritten without `replace`. Between two outside places the file passes
+  through the phone's cache. `TransferMeter` reports every copy to the
+  progress banner, and Stop cancels it. Tools that act on a file take a
+  phone address and never copy on their own: `install_apk(file)` takes
+  `chat:` or `phone:`, and a computer address is refused with the copy that
+  brings it here, so a failed install is retried without copying again.
+  `files_media share` and `open` take the uri a `phone:` copy returns. Use
+  cases (install an APK built on a computer, send a computer file on
+  WhatsApp, a phone photo to a computer) are recipes in the
+  `files-across-devices` skill, not tools. A computer chat's instructions
+  carry the same recipes, since Codex there reads the computer's skills,
+  not the phone's. `push_file`, `pull_file` and `copy_to_phone` are gone:
+  one tool per kind of copy is how the tool list grew without order. The
+  thread instructions forbid using adb on the computer to reach the phone:
+  it can see other devices and skips the app's controls.
+- **The desktop.** Commands over SSH run in a Windows session with no screen.
+  For screenshots, windows and the clipboard, the instructions teach a
+  one-off scheduled task that runs as the signed-in user, interactively. It
+  works only while someone is signed in to Windows.
+- **Projects and the PC's own conversations.** A project is a folder on a
+  computer: one the user picked (sealed in the same store), one a chat here
+  runs in, or one Codex on the computer worked in. The side panel filters a
+  flat chat list by device, with projects in a separate tab. Codex's own
+  `thread/list` (sources `cli`, `vscode`, `appServer`) supplies the
+  conversations the PC started; summaries only, up to 200, refreshed when the
+  panel opens. Opening one binds a new chat to that thread and copies its
+  messages in once from `thread/read`. The binding records that the thread
+  came from desktop Codex. If that thread has a writer lock, Mike offers a
+  copy; it checks the app-server's loaded threads so its own lock is not
+  mistaken for desktop Codex. Resuming keeps the imported origin, so a later
+  desktop lock can still offer a copy. Only an explicit fork changes an
+  imported binding to Mike-owned. The panel connects
+  in the background once per app run, but never installs Codex on its own.
+- **Linux computers.** The first connection runs `uname -s` (Windows has no
+  `uname`; Git's says MINGW, still Windows; macOS is refused for now) and the
+  answer is kept with the computer. `LinuxHost` is the Linux side of the same
+  `HostScripts`: POSIX `sh` scripts sent base64 encoded (so the login shell
+  does not matter), the same `HEYMIKE {json}` answers, and the same pinned
+  `codex-app-server-package-<arch>-unknown-linux-musl` the phone runs,
+  checked against the phone build's sha256 pins and unpacked under
+  `~/.local/share/heymike`. Paths keep the computer's style everywhere:
+  Linux paths keep their case and use `/`. The thread instructions say
+  Linux, and for the desktop they point at the user's graphical session
+  (XDG_RUNTIME_DIR, DBus, Wayland or X11) instead of a scheduled task.
+- **Voice follows the thread.** `RoutingAgentEngine` starts realtime on the
+  app-server that owns the chat's thread, so voice in a computer chat runs on
+  the computer's Codex with Mike's active account. Audio does not cross SSH: the
+  transport is WebRTC, so only the SDP goes through the computer and the
+  media flows between the phone and OpenAI.
+- **No size cap on copies.** `copy_file` and `install_apk` take files of
+  any size; the user decides what is copied. Screenshots keep their cap
+  because they go to the model.
+- **The `computers` tool, from any chat.** One tool with modes: `status`,
+  `browse`, `new_project`, `open_chat`, `add`. It is a tool and not a skill
+  because it crosses the sealed store's line: the agent's shell has no SSH
+  and must never read a password or rebind a chat. Two modes only prepare
+  what the user finishes: `add` fills in the app's add-computer form, which
+  says Mike suggested the address (an injected address is how a password
+  would be sent to someone else), and the password is typed there, never
+  seen by the model; `open_chat` opens a chat in a project with the task in
+  the composer, unsent, so an instruction picked up elsewhere cannot reach a
+  PC that may have full access. A phone chat does not move to the computer;
+  `open_chat` starts a new chat there with what was decided.
+- **Where a new chat runs.** A new chat starts on the phone. Until its first
+  message it can be moved to a recent project on a computer, or to another
+  folder; after that its thread lives where it started. A computer chat's
+  title bar shows the computer and folder and that the phone is still in
+  reach.
+- **Stop** interrupts the turn on the computer. If that fails, the engines
+  are closed, which closes the SSH channel. A command Codex already started
+  there may keep running; the run summary must not claim it was undone.
+  File transfers have a separate cancellation path: cancellation closes the
+  active SFTP channel and interrupts its blocking I/O, leaving the shared SSH
+  session available for the turn interrupt and future transfers. A cancelled
+  copy never advances to phone installation or sharing. Bytes already written
+  are not rolled back.
+
+## Claude subscription chats: the engine belongs to the turn
+
+First design: `docs/superpowers/specs/2026-09-30-claude-subscription-design.md`
+(phone only, engine fixed per chat). The section "Claude as a full engine"
+below records what changed since: a chat can change engine at any point,
+both engines' models share one menu, a computer chat can run on Claude, and
+voice works in a Claude chat.
+
+- **Engine per turn.** `ChatSession.engine` is the engine the chat's next turn
+  runs on (`CODEX` or `CLAUDE`; old chats read as Codex). A new chat takes the
+  default engine chosen in onboarding or Settings > Accounts, and after that
+  the last model picked. The top bar names the chat's account.
+- **Routing.** `RoutingAgentEngine` reads the chat's engine from the session
+  store in `openSession` (via the `<sessions>/<id>/workspace` folder) every
+  time, keeps Claude thread ids, and finds one again through its chat after a
+  restart, whether the chat runs on it now or keeps it parked.
+  Claude tool and approval request ids get a `claude|` tag, as computer ids
+  get `remote|`, so ids cannot collide. The plain account calls stay Codex's;
+  `connect(kind, workspace)` and `account(kind, workspace)` reach the engine
+  that will run the chat's turn, and the coordinator uses them, so its
+  messages name Claude or Codex. `codexEvents` is the Codex-only stream the
+  view model reads for Codex sign-in, quota and the home screen widget, which
+  stays Codex-only.
+- **Per-engine state in the view model.** Model pick, effort and quota are
+  kept per engine (`EngineChoices`); the chip, `/status` and the usage sheet
+  show the engine the open chat runs on. Claude reports `5-hour` and `weekly`
+  limits.
+- **Claude usage without a message.** `refreshUsage()` sends the SDK's
+  experimental `get_usage` control request (`skip_behaviors: true`) to a
+  running chat, or to a throwaway probe (`--no-session-persistence`, no
+  tools, no settings) that also answers `initialize`, so the refresh on start
+  costs one process. A refusal or timeout emits nothing. The app keeps the
+  last reading in `claude-usage.json` (`LastUsageStore`), shows its age, and
+  drops a window once its reset time has passed; sign-out clears it.
+- **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
+  `claude` binary through the pinned Alpine musl loader, packaged as
+  `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
+  W^X does not apply. The binary (2.1.285, pinned sha256 and size) is never
+  bundled: it is downloaded from `downloads.claude.ai` only after the user
+  saw its size (232 MB) and tapped Download, with progress and cancel, and
+  hashed before use. At app start the host only re-checks a binary that is
+  already there. On other ABIs the card says "Not available on this device".
+- **Phone tools over loopback MCP.** Each chat process gets its own
+  `LoopbackMcpServer` (127.0.0.1, fresh port and bearer token per start), so
+  a tool call is always tied to the chat that made it. A `tools/call` becomes
+  `EngineEvent.ToolCall` and waits for `answerTool`, so approvals, overlay
+  states, revoke-before-interrupt and the trace are the same as for Codex.
+- **How `claude` runs (WP-C decisions).** One `claude -p` stream-json process
+  per open chat, started lazily by the first turn and restarted with
+  `--resume` when model, effort or tools change; at most two chat processes
+  live at once, the idle ones stopped first. `--setting-sources user` so the
+  skills installed in `<claudeHome>/.claude/skills` load; built-in tools are
+  `Read,Edit,Write,Glob,Skill`, with `Read` and `Edit` allowed only inside the
+  chat workspace; `Grep` and `Bash` stay off until proven on a phone.
+- **Sign-in.** `claude auth login` runs inside the app's private
+  `CLAUDE_CONFIG_DIR`; the app opens its link with `ACTION_VIEW` and hands the
+  pasted code to that process's stdin. The paste field is masked, is not saved
+  across configuration changes and is cleared on submit; the code is not
+  logged or stored. Sign-in state comes only from `claude auth status`.
+- **Compliance rules** (from the spec): official unmodified binary checked
+  against its pinned hash; never bundled; sign-in only inside `claude`; the
+  app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
+  excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
+  headers or `--bare`; API keys and base-URL variables are scrubbed from the
+  child environment; the UI says "Use your own Claude subscription (runs
+  Anthropic's Claude Code). Not affiliated with Anthropic." and never uses
+  "Claude Code" as a feature name.
+- **What Claude chats do not have.** API-key mode and several Claude
+  accounts. `/compact` works: after a restart the view model opens the chat
+  before compacting, and the note shows before the call, which waits for
+  Claude to finish.
+- **Privacy and consent.** The consent text and the privacy page name both
+  providers, with OpenAI's and Anthropic's policy links, and say that a chat
+  which changes model, or uses voice in a Claude chat, gives its earlier
+  messages to the other AI too. Naming Anthropic changed the consent in
+  substance, so `Onboarding.CONSENT_VERSION` is 2 and existing users confirm
+  again.
+
+## Claude as a full engine: switching, one model menu, computers, voice
+
+Decided 2026-10-01, on top of the section above.
+
+- **A chat can change engine between turns.** Codex and Claude each keep
+  their own thread and neither can read the other's, so a chat holds one
+  thread per engine: `engineThreadId` for the engine it runs on, and
+  `ChatSession.parked` for the other, with the message time up to which that
+  thread saw the chat. `EngineSwitch.switch` is the whole rule, and
+  `SessionStore.setEngine` applies it (`sessions.db` v4: `parked`,
+  `catch_up`). Nothing is copied between the engines' own stores.
+- **What the other engine missed is carried as text.** `catchUpFrom` marks
+  the messages the chat's engine has not seen. On the next turn the
+  coordinator builds `ChatHandoff` from the chat's own messages (what the
+  user and Mike said, one short line per device action, newest kept when it
+  is long) and puts it before the prompt it sends; the stored user message
+  stays as typed. It says that device actions listed were already carried
+  out. Tool results and run details are not replayed. A thread the engine
+  lost and replaced (it hands back another id than the stored one) is given
+  the chat again the same way.
+- **The turn names its engine.** `QueuedTurn.engine` and `TurnRunner.send`
+  carry it, and the coordinator moves the chat there before the turn, so a
+  model picked for one engine never reaches the other, also for a turn that
+  waited in the queue.
+- **One model menu.** `AgentModel.engine` tags each model; the menu lists
+  ChatGPT (Codex) first, then Claude. Picking a model of the other engine
+  calls `useEngine`, which is allowed whenever the chat is idle, adds a note
+  to the chat, and becomes the default for new chats. While Claude is not set
+  up on the phone the menu ends with a row that opens Settings. The model
+  chip is disabled during a run and during voice, so the engine never changes
+  under a running turn.
+- **Claude on a computer.** A chat bound to a computer can run on that
+  computer's own Claude Code, installed and signed in there by the user.
+  Mike never moves a Claude sign-in: Codex on a computer is handed the
+  phone's ChatGPT account for each run, Claude uses the computer's own. The
+  compliance rules above therefore hold unchanged; the binary is the user's
+  own install, started unmodified.
+  - `RemoteHub.claude(computerId)` is a `ClaudeCodeEngine` whose host starts
+    `claude` over the computer's SSH link. `ClaudeLaunch.probe` finds it on
+    `PATH` or in the usual install places (an SSH command gets a bare `PATH`);
+    `claude auth status` gives the sign-in and `initialize` the models, kept
+    per computer in `RemoteHub.claudeState`. Nothing is installed for the
+    user: a computer without Claude Code offers no Claude models.
+  - A launch writes a small script under `~/.hey-mike/claude` on the computer
+    and runs it by path. The arguments include an empty string and paths with
+    spaces, which cmd, PowerShell and a POSIX shell each quote differently;
+    a script file in the computer's own language avoids all three. Checked on
+    Windows under both cmd and PowerShell with a real `claude`: the streams
+    pass through, Hebrew survives both ways, and the process ends when stdin
+    closes.
+  - The phone tools cannot use a loopback port from another machine. They
+    travel on the process's own streams as an Agent SDK `sdk` MCP server:
+    declared in `--mcp-config`, named in `initialize` (`sdkMcpServers`), and
+    each MCP message arrives as an `mcp_message` control request (`StdioMcp`).
+    A `tools/call` still becomes `EngineEvent.ToolCall`, so approvals, the
+    overlay, Stop and the trace are unchanged.
+  - Claude Code keeps its own tools, settings, skills and MCP servers there:
+    no `--tools`, `--setting-sources` or `--strict-mcp-config`, and Mike's
+    text is appended (`--append-system-prompt-file`,
+    `RemoteInstructions.forComputer(.., CLAUDE)`). The computer's access
+    setting maps to `--permission-mode acceptEdits` plus
+    `--permission-prompt-tool stdio` for "ask", so a `can_use_tool` request
+    becomes an approval card on the phone, and to `bypassPermissions` for full
+    access. A prompt nobody answered is refused when the turn ends.
+  - `connect(kind, workspace)` and `account(kind, workspace)` check the
+    computer's Claude for such a chat, never the phone's, which need not be
+    set up. Request ids are tagged `remote-claude|<computer>|`.
+- **Voice in a Claude chat.** Claude Code has no speech-to-speech mode: its
+  `/voice` is dictation in the interactive terminal, needs a local microphone,
+  does not work over SSH or in `-p` mode, and has no Hebrew. So voice stays
+  Codex's realtime session. A chat that runs on Claude talks on its own Codex
+  thread: `VoiceConversation.begin` moves it to Codex, gives the voice session
+  the chat so far as context (as conversation text, not as an instruction),
+  and moves it back when voice ends; Claude is told what was said on its next
+  turn. This needs the ChatGPT sign-in; without it a Claude chat has no voice
+  button.
+- **Not done.** A computer still has to be set up through Codex (and so with
+  a ChatGPT sign-in) before its Claude can be used. Claude conversations kept
+  on a computer are not listed or imported the way Codex's are. The
+  computer's Claude skills are not listed in the composer. A Claude session
+  file the CLI removed (its own clean-up of old sessions) starts again under
+  the same id without the chat's history being sent again.

@@ -24,6 +24,7 @@ package dev.androidagent.app.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,6 +62,8 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
@@ -70,7 +73,6 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -110,9 +112,17 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -121,9 +131,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -142,7 +154,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
-import dev.androidagent.core.ChatDayGroups
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineEvent
@@ -187,15 +198,43 @@ private val AgentDarkColors = darkColorScheme(
 )
 
 
+/**
+ * Every text style takes its direction from its own words, not from the
+ * phone's language. On a Hebrew phone the layout is still mirrored, but an
+ * English sentence reads left to right with its "?" at the end, and a Hebrew
+ * reply still reads right to left. Unspecified would follow the layout.
+ */
+internal fun agentTypography(): androidx.compose.material3.Typography {
+    val base = androidx.compose.material3.Typography().copy(
+        bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 17.sp, lineHeight = 27.sp),
+        bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
+        labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+    )
+    fun androidx.compose.ui.text.TextStyle.byContent() = copy(textDirection = TextDirection.Content)
+    return base.copy(
+        displayLarge = base.displayLarge.byContent(),
+        displayMedium = base.displayMedium.byContent(),
+        displaySmall = base.displaySmall.byContent(),
+        headlineLarge = base.headlineLarge.byContent(),
+        headlineMedium = base.headlineMedium.byContent(),
+        headlineSmall = base.headlineSmall.byContent(),
+        titleLarge = base.titleLarge.byContent(),
+        titleMedium = base.titleMedium.byContent(),
+        titleSmall = base.titleSmall.byContent(),
+        bodyLarge = base.bodyLarge.byContent(),
+        bodyMedium = base.bodyMedium.byContent(),
+        bodySmall = base.bodySmall.byContent(),
+        labelLarge = base.labelLarge.byContent(),
+        labelMedium = base.labelMedium.byContent(),
+        labelSmall = base.labelSmall.byContent(),
+    )
+}
+
 @Composable
 fun AndroidAgentTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = AgentDarkColors,
-        typography = androidx.compose.material3.Typography().copy(
-            bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 17.sp, lineHeight = 27.sp, textDirection = TextDirection.Content),
-            bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 21.sp, textDirection = TextDirection.Content),
-            labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-        ),
+        typography = remember { agentTypography() },
         content = content,
     )
 }
@@ -216,7 +255,13 @@ fun AndroidAgentScreen(
         val scope = rememberCoroutineScope()
 
         LaunchedEffect(state.isDrawerOpen) {
-            if (state.isDrawerOpen) drawerState.open() else drawerState.close()
+            if (state.isDrawerOpen) {
+                // The computers' own conversations, fresh for the panel.
+                actions.onRefreshPcThreads()
+                drawerState.open()
+            } else {
+                drawerState.close()
+            }
         }
         LaunchedEffect(drawerState) {
             snapshotFlow { drawerState.currentValue }
@@ -235,8 +280,12 @@ fun AndroidAgentScreen(
                     modifier = Modifier
                         .fillMaxHeight()
                         .widthIn(max = 360.dp),
+                    drawerContainerColor = LibraryGround,
+                    // Named, because the drawer's own color is not in the scheme
+                    // and Compose then cannot tell which text color goes on it.
+                    drawerContentColor = MaterialTheme.colorScheme.onSurface,
                 ) {
-                    AgentDrawer(
+                    ChatLibraryDrawer(
                         state = state,
                         actions = actions,
                         close = { scope.launch { drawerState.close() } },
@@ -278,11 +327,27 @@ fun AndroidAgentScreen(
                         // Pinned above the composer, never in the chat list: the
                         // list follows the newest message, and a card placed in it
                         // sat above everything, out of sight in any long chat.
+                        state.activeSessionId?.takeIf { it in state.pcBusyChats }?.let { id ->
+                            PcBusyBanner(
+                                forking = id in state.pcForking,
+                                onFork = { actions.onForkPcChat(id) },
+                                onCheck = { actions.onCheckPcChatBusy(id) },
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
+                        TransferBanner(state.fileTransfer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                         state.runState.approval?.let { approval ->
                             ApprovalCard(
                                 approval = approval,
                                 onApproval = actions.onApproval,
                                 onApproveAlways = actions.onApproveAlways,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
+                        state.runState.question?.let { question ->
+                            QuestionCard(
+                                question = question,
+                                onAnswer = actions.onAnswerQuestion,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
@@ -319,269 +384,115 @@ fun AndroidAgentScreen(
         if (state.isWorkspaceOpen && !onboarding) {
             WorkspaceFilesSheet(state = state, actions = actions)
         }
+        if (state.isComputersOpen && !onboarding) {
+            ComputersSheet(state = state, actions = actions)
+        }
         OnboardingFlow(state = state, actions = actions)
     }
 }
 
-@Composable
-private fun AgentDrawer(
-    state: AgentUiState,
-    actions: AgentUiActions,
-    close: () -> Unit,
-) {
-    var query by rememberSaveable { mutableStateOf("") }
-    val running = state.runState.active
-    val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, running)
-    // A dot on Settings means something there needs the user, not that
-    // something optional is off.
-    val attention = SetupChecklist.outstanding(state.setupRows()) > 0
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .padding(horizontal = 16.dp, vertical = 20.dp),
-    ) {
-        // The orb and one plain sentence answer "can Mike act right now"
-        // before anything else; tapping it opens where to fix it.
-        Surface(
-            onClick = { close(); actions.onOpenSettings() },
-            shape = RoundedCornerShape(20.dp),
-            color = Color.Transparent,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(4.dp)) {
-                AgentOrb(
-                    modifier = Modifier.size(56.dp),
-                    phase = if (running) state.runState.phase else RunPhase.IDLE,
-                    controlling = state.runState.controlling,
-                    idleColor = if (control.state == ControlState.BLOCKED) DrawerAmber else DrawerTeal,
-                )
-                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                    Text("Hey Mike", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(
-                        when (control.state) {
-                            ControlState.WORKING -> "Working on your phone"
-                            ControlState.READY -> "Ready · can see and tap the screen"
-                            ControlState.BLOCKED -> "Can't reach the screen · tap to fix"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (control.state == ControlState.BLOCKED) DrawerAmber else DrawerTeal,
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(14.dp))
-        Button(
-            onClick = {
-                close()
-                actions.onNewChat()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp),
-        ) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("New chat")
-        }
-
-        Spacer(Modifier.height(12.dp))
-        TextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text("Search chats") },
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            trailingIcon = if (query.isNotEmpty()) ({
-                IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, contentDescription = "Clear search") }
-            }) else null,
-            singleLine = true,
-            shape = RoundedCornerShape(24.dp),
-            colors = TextFieldDefaults.colors(
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                focusedContainerColor = DrawerField,
-                unfocusedContainerColor = DrawerField,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        // Above the chats, because the question this panel is opened with is
-        // often "is the standing stuff still working", and that has to be
-        // answered before anyone reads a list.
-        Spacer(Modifier.height(14.dp))
-        AutomationStrip(
-            overview = state.automations.overview,
-            onOpen = {
-                close()
-                actions.onOpenAutomations()
-            },
-            onOpenRule = {
-                close()
-                actions.onOpenAutomations()
-            },
-        )
-        Spacer(Modifier.height(8.dp))
-
-        val shown = ChatDayGroups.filter(state.sessions, query)
-        when {
-            state.isLoadingSessions -> Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
-            }
-
-            shown.isEmpty() -> Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.TopStart,
-            ) {
-                Text(
-                    if (query.isBlank()) "No chats yet. Start a new chat to create one." else "No chat matches \"${query.trim()}\".",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-            }
-
-            else -> LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-                contentPadding = PaddingValues(vertical = 4.dp),
-            ) {
-                ChatDayGroups.group(shown, System.currentTimeMillis()).forEach { group ->
-                    item(key = "day-${group.label}") {
-                        Text(
-                            group.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
-                        )
-                    }
-                    items(group.sessions, key = { it.id }) { session ->
-                        SessionRow(
-                            session = session,
-                            selected = session.id == state.activeSessionId,
-                            running = running && session.id == state.runState.sessionId,
-                            onSelect = {
-                                close()
-                                actions.onSelectSession(session.id)
-                            },
-                            onRename = { title -> actions.onRenameSession(session.id, title) },
-                            onDelete = { actions.onDeleteSession(session.id) },
-                        )
-                    }
-                }
-            }
-        }
-
-        HorizontalDivider(color = DividerDefaults.color)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            TextButton(
-                onClick = { close(); actions.onOpenWorkspaceFiles() },
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Outlined.Folder, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Files")
-            }
-            TextButton(
-                onClick = { close(); actions.onOpenSettings() },
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .semantics { if (attention) contentDescription = "Settings, needs attention" },
-            ) {
-                Icon(Icons.Outlined.Settings, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Settings")
-                if (attention) {
-                    Spacer(Modifier.width(6.dp))
-                    StatusDot(color = MaterialTheme.colorScheme.error, size = 8.dp)
-                }
-            }
-        }
-    }
-}
-
-private val DrawerTeal = Color(0xFF83D9CA)
-private val DrawerAmber = Color(0xFFF6B86A)
-private val DrawerField = Color(0xFF2A2A2D)
 private val DrawerRunning = Color(0xFF69A7FF)
 
+/**
+ * One chat in the library. Rename and delete are a long press on any row. The
+ * open chat used to carry a visible menu button as well, which made its row
+ * the tallest and widest in the list for an action used rarely.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun SessionRow(
+internal fun SessionRow(
     session: dev.androidagent.core.ChatSession,
+    onComputer: Boolean,
     selected: Boolean,
     running: Boolean,
     onSelect: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    subtitle: String? = null,
+    subtitleIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    leading: (@Composable () -> Unit)? = null,
+    subtitleColor: Color? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleteOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var renameText by rememberSaveable(session.id) { mutableStateOf(session.title) }
+    val shape = RoundedCornerShape(12.dp)
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-        onClick = onSelect,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    Box(Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = shape,
+            // The open chat is lifted, not coloured: colour is kept for "running".
+            color = if (selected) Color(0xFF252422) else Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
-            if (running) {
-                StatusDot(color = DrawerRunning, size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    session.title.ifBlank { "Untitled chat" },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                )
-                Text(
-                    formatSessionTime(session.updatedAt),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Box {
-                IconButton(
-                    onClick = { menuOpen = true },
-                    modifier = Modifier.semantics { contentDescription = "Session actions" },
-                ) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = null)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Rename") },
-                        leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
-                        onClick = {
-                            menuOpen = false
-                            renameText = session.title
-                            renameOpen = true
-                        },
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .combinedClickable(
+                        onClick = onSelect,
+                        onLongClick = { menuOpen = true },
+                        onLongClickLabel = "Session actions",
                     )
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
-                        onClick = {
-                            menuOpen = false
-                            deleteOpen = true
-                        },
+                    .heightIn(min = 48.dp)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                leading?.let { it(); Spacer(Modifier.width(12.dp)) }
+                if (running && leading == null) {
+                    StatusDot(color = Color(0xFFE8C9A0), size = 8.dp, pulsing = true, modifier = Modifier.padding(end = 10.dp))
+                }
+                if (onComputer) {
+                    Icon(
+                        Icons.Outlined.Computer,
+                        contentDescription = "Runs on a computer",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 10.dp).size(18.dp),
                     )
                 }
+                Column(Modifier.weight(1f).padding(vertical = if (subtitle != null) 6.dp else 0.dp)) {
+                    Text(
+                        session.title.ifBlank { "Untitled chat" },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontSize = 15.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                    subtitle?.let {
+                        Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            val tint = subtitleColor ?: Color(0xFF8E8C85)
+                            subtitleIcon?.let { icon ->
+                                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(5.dp))
+                            }
+                            Text(it, style = MaterialTheme.typography.labelSmall, fontSize = 12.sp, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        }
+        Box(Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        renameText = session.title
+                        renameOpen = true
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete") },
+                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        deleteOpen = true
+                    },
+                )
             }
         }
     }
@@ -630,6 +541,9 @@ private fun SessionRow(
         )
     }
 }
+
+/** How far from the end the chat must be scrolled before "Jump to latest" appears. */
+private val JUMP_BUTTON_DISTANCE = 96.dp
 
 private data class ChatScrollSnapshot(
     val totalItemsCount: Int,
@@ -732,21 +646,46 @@ private fun AgentChatContent(
             items(state.toolCards, key = { "tool-${it.id}" }) { card -> ToolCard(card) }
         }
 
-        if (state.isLoadingMessages) {
+        // A conversation opened from a computer fills in from there; say so
+        // instead of showing an empty chat that looks finished.
+        val pcLoading = state.activeSessionId?.let(state.pcChatLoading::get)
+        if (pcLoading != null) {
+            item(key = "pc-loading") { PcConversationLoading(pcLoading) }
+        } else if (state.isLoadingMessages) {
             item(key = "loading-messages") {
                 LoadingMessagesCard()
             }
         } else if (state.messages.isEmpty()) {
             item(key = "empty-chat") {
-                EmptyChatCard(hasSession = state.activeSessionId != null)
+                EmptyChatCard(state, actions)
             }
         } else {
-            // Back-to-back device actions fold into one row.
+            // Back-to-back device actions fold into one row, and so do a
+            // computer's steps: seven identical rows hid the answer.
             val running = state.runState.active && state.runState.sessionId == state.activeSessionId
-            items(chatRows(state.messages, running), key = { it.key }) { row ->
+            val computerLabel = state.activeSessionId?.let(state.remoteBindings::get)
+                ?.let { binding -> state.computers.firstOrNull { it.id == binding.computerId }?.label }
+            // While this chat's own run works, one status line sits under the
+            // last line, always. A reply still empty used to show its own
+            // "Working" instead and the line came back once it had text, so
+            // the orb vanished for a moment at every new block: the empty
+            // reply is not drawn while the status line stands in for it.
+            val showStatus = running && !state.voiceState.active
+            val shown = if (showStatus) {
+                state.messages.filterNot {
+                    it.role.equals("assistant", true) && it.text.isBlank() && it.state.equals("streaming", true)
+                }
+            } else state.messages
+            items(chatRows(shown, running), key = { it.key }) { row ->
                 when (row) {
-                    is MessageRow -> MessageBubble(row.message)
+                    is MessageRow -> MessageBubble(row.message, row.copyText)
                     is ActionsRow -> DeviceActionsRow(row)
+                    is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
+                }
+            }
+            if (showStatus) {
+                item(key = "run-status", contentType = "run-status") {
+                    RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem())
                 }
             }
             if (offersWorkflowSuggestion(state.messages, running)) {
@@ -760,10 +699,26 @@ private fun AgentChatContent(
             }
         }
     }
-    // Shown once the user scrolls up; tapping it resumes following the reply.
+    // Shown once the user has scrolled a real distance up; tapping it resumes
+    // following the reply. "Can scroll forward" alone was true for the padding
+    // under the last line, so a nudge of a few pixels raised a button that
+    // promised more below where there was none.
+    val jumpDistance = with(LocalDensity.current) { JUMP_BUTTON_DISTANCE.toPx() }
+    val farFromEnd by remember(listState, jumpDistance) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            last != null && (last.index < info.totalItemsCount - 1 ||
+                last.offset + last.size - info.viewportEndOffset > jumpDistance)
+        }
+    }
+    // In a corner, on the side the text ends, so it stays off the column being read: a Hebrew reply starts at the right.
+    val textEndsRtl = state.messages.lastOrNull()?.text?.let(::endsRtl) == true
     androidx.compose.animation.AnimatedVisibility(
-        visible = !followLatest && listState.canScrollForward,
-        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+        visible = !followLatest && farFromEnd,
+        modifier = Modifier
+            .align(if (textEndsRtl) Alignment.BottomStart else Alignment.BottomEnd)
+            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
         enter = androidx.compose.animation.fadeIn(),
         exit = androidx.compose.animation.fadeOut(),
     ) {
@@ -808,17 +763,111 @@ private fun SetupPrompt(outstanding: Int, onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun EmptyChatCard(hasSession: Boolean) {
+private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
+    val hasSession = state.activeSessionId != null
+    val binding = state.activeSessionId?.let(state.remoteBindings::get)
+    val computer = binding?.let { b -> state.computers.firstOrNull { it.id == b.computerId } }
+    // Where this chat runs can change until its first message: with computers
+    // to choose from, that choice is the screen.
+    if (hasSession && state.computers.isNotEmpty() && !state.runState.active) {
+        WhereMikeWorks(state, binding, actions)
+        return
+    }
     Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 96.dp, bottom = 32.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 72.dp, bottom = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("What can I help with?", style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-        Text(if (hasSession) "Ask, plan, or do something on your phone." else "Create a chat to get started.",
+        Text(
+            when {
+                !hasSession -> "Create a chat to get started."
+                computer != null -> "Mike works in ${folderName(binding.cwd)} on ${computer.label}, and can still use this phone."
+                else -> "Ask, plan, or do something on your phone."
+            },
             style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * The conversation is held open by Codex on the computer, so Mike cannot
+ * write to it. A copy with the whole history can go on right away.
+ */
+@Composable
+private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(12.dp))
+                Text("Open in Codex on the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+            Text(
+                "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 32.dp, top = 6.dp),
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onCheck, enabled = !forking) { Text("Check again", color = MaterialTheme.colorScheme.onTertiaryContainer) }
+                Spacer(Modifier.width(4.dp))
+                Button(
+                    onClick = onFork,
+                    enabled = !forking,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary, contentColor = MaterialTheme.colorScheme.onSecondary),
+                ) {
+                    if (forking) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSecondary)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (forking) "Copying" else "Continue in a copy", maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+/** The earlier messages of a computer's conversation on their way, with placeholders where they will land. */
+@Composable
+private fun PcConversationLoading(computer: String) {
+    val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "pc-loading").animateFloat(
+        initialValue = 0.45f,
+        targetValue = 0.9f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(700),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "pc-loading-alpha",
+    )
+    val bar = Color(0xFF242427)
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+            color = MaterialTheme.colorScheme.secondary,
+            trackColor = Color(0xFF1A2B28),
+        )
+        Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF1B1B1E), modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
+                Spacer(Modifier.width(10.dp))
+                Text("Loading the conversation from $computer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Column(Modifier.fillMaxWidth().alpha(pulse), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Box(Modifier.align(Alignment.End).width(220.dp).height(44.dp).background(bar, RoundedCornerShape(22.dp)))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.fillMaxWidth(0.9f).height(12.dp).background(bar, RoundedCornerShape(6.dp)))
+                Box(Modifier.fillMaxWidth(0.8f).height(12.dp).background(bar, RoundedCornerShape(6.dp)))
+                Box(Modifier.fillMaxWidth(0.55f).height(12.dp).background(bar, RoundedCornerShape(6.dp)))
+            }
+            Box(Modifier.align(Alignment.End).width(160.dp).height(44.dp).background(bar, RoundedCornerShape(22.dp)))
+        }
     }
 }
 
@@ -841,7 +890,7 @@ private fun LoadingMessagesCard() {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
     val role = message.role.lowercase()
     val user = role == "user"
     val system = role == "system" || role == "tool"
@@ -856,7 +905,7 @@ private fun MessageBubble(message: ChatMessage) {
                 detail = dev.androidagent.core.SecretRedactor.redact(message.text),
                 key = message.id,
             )
-            InlineImages(message.attachmentPaths)
+            InlineMedia(message.attachmentPaths)
         }
         return
     }
@@ -897,21 +946,43 @@ private fun MessageBubble(message: ChatMessage) {
                     )
                 }
                 if (message.text.isNotBlank()) {
-                    if (user) {
-                        SelectionContainer { Text(withRtlLines(message.text), modifier = Modifier.fillMaxWidth(), color = textColor, style = MaterialTheme.typography.bodyLarge) }
-                    } else {
-                        MarkdownMessage(message.text, textColor)
-                        val clipboard = LocalClipboardManager.current
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                            IconButton(
-                                onClick = { clipboard.setText(AnnotatedString(message.text)) },
-                                modifier = Modifier.size(40.dp).semantics { contentDescription = "Copy message" },
-                            ) {
-                                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy message", modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                    // A long press on a block opens its menu. A user's prompt is
+                    // one block; an agent's reply is everything after that prompt.
+                    val clipboard = LocalClipboardManager.current
+                    val blockText = if (user) message.text else copyText ?: message.text
+                    var menuOpen by remember(message.id) { mutableStateOf(false) }
+                    var selectOpen by remember(message.id) { mutableStateOf(false) }
+                    Box(
+                        Modifier.semantics {
+                            customActions = listOf(
+                                CustomAccessibilityAction("Copy message") { clipboard.setText(AnnotatedString(blockText)); true },
+                            )
+                        },
+                    ) {
+                        if (user) {
+                            Text(
+                                withRtlLines(message.text),
+                                modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onLongPress = { menuOpen = true }) },
+                                color = textColor,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        } else {
+                            MarkdownMessage(message.text, textColor, onLongPress = { menuOpen = true })
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Copy") },
+                                leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+                                onClick = { menuOpen = false; clipboard.setText(AnnotatedString(blockText)) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Select text") },
+                                leadingIcon = { Icon(Icons.Outlined.SelectAll, contentDescription = null) },
+                                onClick = { menuOpen = false; selectOpen = true },
+                            )
                         }
                     }
+                    if (selectOpen) SelectTextDialog(blockText) { selectOpen = false }
                 } else if (message.state.equals("streaming", ignoreCase = true)) {
                     Row(
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -921,13 +992,14 @@ private fun MessageBubble(message: ChatMessage) {
                         AgentOrb(modifier = Modifier.size(28.dp))
                         Text("Working…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                } else {
+                } else if (message.attachmentPaths.none(::isMediaPath)) {
+                    // Media shown without a caption speaks for itself.
                     Text("No text returned.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                InlineImages(message.attachmentPaths)
-                if (message.attachmentPaths.any { !isImagePath(it) }) {
+                InlineMedia(message.attachmentPaths)
+                if (message.attachmentPaths.any { !isMediaPath(it) }) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(message.attachmentPaths.filterNot(::isImagePath), key = { it }) { path ->
+                        items(message.attachmentPaths.filterNot(::isMediaPath), key = { it }) { path ->
                             AssistChip(
                                 onClick = {},
                                 label = { Text(path.substringAfterLast('/').substringAfterLast('\\'), maxLines = 1) },
@@ -939,6 +1011,20 @@ private fun MessageBubble(message: ChatMessage) {
             }
         }
     }
+}
+
+/** The block's text where part of it can be selected, since a long press opens the menu instead. */
+@Composable
+private fun SelectTextDialog(text: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        text = {
+            SelectionContainer {
+                Text(text, Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodyLarge)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 @Composable
@@ -1016,8 +1102,10 @@ private fun ActivityDetail(title: String, detail: String, failed: Boolean = fals
                 Modifier.size(18.dp), tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             Text(title, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium)
+            // Tinted like its title: left at the default it is the brightest thing in the row.
             if (detail.isNotBlank()) Icon(Icons.Outlined.ExpandMore,
-                if (expanded) "Hide activity details" else "Show activity details", Modifier.size(18.dp))
+                if (expanded) "Hide activity details" else "Show activity details", Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (expanded && detail.isNotBlank()) SelectionContainer {
             Text(detail, style = MaterialTheme.typography.bodySmall,
@@ -1172,14 +1260,4 @@ internal fun formatBytes(bytes: Long): String = when {
     bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
     bytes < 1024L * 1024L * 1024L -> "${bytes / (1024L * 1024L)} MB"
     else -> "${bytes / (1024L * 1024L * 1024L)} GB"
-}
-
-private fun formatSessionTime(timestamp: Long): String {
-    if (timestamp <= 0L) return "No activity time"
-    return try {
-        val formatter = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
-        formatter.format(java.util.Date(timestamp))
-    } catch (_: Exception) {
-        "Updated"
-    }
 }

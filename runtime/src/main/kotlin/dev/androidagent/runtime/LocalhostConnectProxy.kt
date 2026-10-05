@@ -20,11 +20,13 @@
 
 package dev.androidagent.runtime
 
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.NetDiagnostics
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.PushbackInputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -44,7 +46,8 @@ import kotlin.concurrent.thread
  * Safety contract:
  * - Binds only 127.0.0.1 on an ephemeral port; never 0.0.0.0.
  * - Accepts CONNECT only, port 443 only, strict host allowlist
- *   ([NetDiagnostics.defaultAllowedHosts] plus observed additions).
+ *   ([NetDiagnostics.defaultAllowedHosts] for Codex; [forEngine] picks the
+ *   list for another engine, such as Claude).
  * - Tunnels bytes blindly: no TLS MITM, no decryption, no header/body/token
  *   logging. Log output is at most host:port plus allow/deny/error category.
  * - Supports long-lived streaming (no read timeout) and TCP half-close.
@@ -162,7 +165,13 @@ class LocalhostConnectProxy(
     private fun handleClient(client: Socket) {
         client.keepAlive = true
         client.soTimeout = 15_000
-        val head = readHead(client.getInputStream()) ?: run {
+        val input = PushbackInputStream(client.getInputStream(), 1)
+        // A connection closed before its first byte asked for nothing: that
+        // is [verifyListening]'s own probe, not a request to deny.
+        val first = runCatching { input.read() }.getOrElse { -2 }
+        if (first == -1) return
+        if (first >= 0) input.unread(first)
+        val head = (if (first >= 0) readHead(input) else null) ?: run {
             listener?.onDenied("", 0, "unreadable-head")
             return
         }
@@ -176,7 +185,8 @@ class LocalhostConnectProxy(
                     client.getOutputStream().write((status + "Connection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
                     client.getOutputStream().flush()
                 }
-                listener?.onDenied("", 0, check.reason)
+                // The host and port only, never the rest of the request.
+                listener?.onDenied(check.target?.host?.let(::loggableHost).orEmpty(), check.target?.port ?: 0, check.reason)
             }
             is NetDiagnostics.ConnectCheck.Allow -> {
                 val target = check.target
@@ -260,6 +270,18 @@ class LocalhostConnectProxy(
     }
 
     companion object {
+        /** A proxy limited to [engine]'s own hosts and ports. */
+        fun forEngine(engine: EngineKind, listener: ProxyEventListener? = null): LocalhostConnectProxy =
+            LocalhostConnectProxy(
+                allowedHosts = NetDiagnostics.allowedHostsFor(engine),
+                allowedPorts = NetDiagnostics.allowedPortsFor(engine),
+                listener = listener
+            )
+
+        /** A requested host as it may appear in a log line: host characters only, at most 253 of them. */
+        internal fun loggableHost(host: String): String =
+            host.take(253).map { if ((it.isLetterOrDigit() && it.code < 128) || it in ".-:_") it else '?' }.joinToString("")
+
         /**
          * Read HTTP request head bytes (headers only) up to 8 KiB.
          * Returns null when the head is missing, oversized, or unreadable.

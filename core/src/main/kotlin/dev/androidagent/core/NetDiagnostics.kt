@@ -54,8 +54,31 @@ object NetDiagnostics {
         "chatgpt.com"
     )
 
+    /**
+     * CONNECT allowlist for the on-phone Claude Code process: the API, and
+     * the sign-in and account hosts. Updates, telemetry and error reporting
+     * are switched off in its environment, so their hosts are not listed.
+     */
+    val claudeAllowedHosts: Set<String> = setOf(
+        "api.anthropic.com",
+        "claude.ai",
+        "claude.com",
+        "platform.claude.com"
+    )
+
     /** Only TLS is tunnelled. Plain HTTP through the proxy is never allowed. */
     val defaultAllowedPorts: Set<Int> = setOf(443)
+
+    /** Hosts one engine's proxy may reach. Engines never share a list. */
+    fun allowedHostsFor(engine: EngineKind): Set<String> = when (engine) {
+        EngineKind.CODEX -> defaultAllowedHosts
+        EngineKind.CLAUDE -> claudeAllowedHosts
+    }
+
+    /** Ports one engine's proxy may reach: TLS only for every engine. */
+    fun allowedPortsFor(engine: EngineKind): Set<Int> = when (engine) {
+        EngineKind.CODEX, EngineKind.CLAUDE -> defaultAllowedPorts
+    }
 
     /** Local bypasses that must never be proxied. */
     const val NO_PROXY_VALUE = "localhost,127.0.0.1"
@@ -64,7 +87,8 @@ object NetDiagnostics {
 
     sealed interface ConnectCheck {
         data class Allow(val target: ConnectTarget) : ConnectCheck
-        data class Deny(val reason: String) : ConnectCheck
+        /** [target] is the parsed host and port when the request named one, for the log. */
+        data class Deny(val reason: String, val target: ConnectTarget? = null) : ConnectCheck
     }
 
     /**
@@ -82,8 +106,8 @@ object NetDiagnostics {
         if (parts.size < 3) return ConnectCheck.Deny("malformed-request-line")
         if (!parts[0].equals("CONNECT", ignoreCase = false)) return ConnectCheck.Deny("method-not-allowed")
         val target = parseAuthority(parts[1]) ?: return ConnectCheck.Deny("malformed-authority")
-        if (target.port !in allowedPorts) return ConnectCheck.Deny("port-not-allowed")
-        if (!isHostAllowed(target.host, allowedHosts)) return ConnectCheck.Deny("host-not-allowed")
+        if (target.port !in allowedPorts) return ConnectCheck.Deny("port-not-allowed", target)
+        if (!isHostAllowed(target.host, allowedHosts)) return ConnectCheck.Deny("host-not-allowed", target)
         return ConnectCheck.Allow(target)
     }
 

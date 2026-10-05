@@ -22,28 +22,17 @@ package dev.androidagent.app.ui
 
 import android.view.View
 import android.widget.TextView
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import coil.compose.SubcomposeAsyncImage
 import io.noties.markwon.Markwon
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.MarkwonConfiguration
@@ -55,10 +44,9 @@ import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.syntax.Prism4jThemeDarkula
 import io.noties.markwon.syntax.SyntaxHighlightPlugin
 import io.noties.prism4j.Prism4j
-import java.io.File
 
 @Composable
-internal fun MarkdownMessage(value: String, textColor: Color) {
+internal fun MarkdownMessage(value: String, textColor: Color, onLongPress: (() -> Unit)? = null) {
     val context = LocalContext.current
     val accent = MaterialTheme.colorScheme.secondary.toArgb()
     val fontSize = MaterialTheme.typography.bodyLarge.fontSize.value
@@ -103,14 +91,15 @@ internal fun MarkdownMessage(value: String, textColor: Color) {
                 }
             }).build()
     }
-    val rendered = remember(renderer, value) { renderer.toMarkdown(keepListsTogether(value)) }
+    val rendered = remember(renderer, value) { renderer.toMarkdown(keepListsTogether(bindNumbersToLabels(value))) }
     AndroidView(
         modifier = Modifier.fillMaxWidth().semantics { text = AnnotatedString(rendered.toString()) },
         factory = { TextView(it).apply {
             // Follows the app's type scale; sp keeps the phone's font size setting.
             textSize = fontSize
             setLineSpacing(0f, 1.25f)
-            setTextIsSelectable(true)
+            // Not selectable: a long press opens the message's menu instead
+            // (copy, select text), so it must reach the view's own listener.
             // Decided per line: any Hebrew or Arabic letter makes the whole
             // line right-to-left, so "Yoni Raich (את/ה)" no longer flips a
             // Hebrew list to the left just because it starts with Latin.
@@ -118,6 +107,7 @@ internal fun MarkdownMessage(value: String, textColor: Color) {
         } },
         update = { view ->
             view.setTextColor(textColor.toArgb())
+            view.setOnLongClickListener(onLongPress?.let { press -> View.OnLongClickListener { press(); true } })
             if (view.tag != value) { renderer.setParsedMarkdown(view, rendered); view.tag = value }
         },
     )
@@ -129,37 +119,3 @@ private const val MarkdownBorder = 0xFF333333.toInt()
 private const val MarkdownInlineCode = 0xFF2A2A2A.toInt()
 private const val MarkdownCodeBlock = 0xFF0C0C0C.toInt()
 private const val MarkdownCodeInk = 0xFFE6E6E6.toInt()
-
-internal fun isImagePath(path: String): Boolean = File(path).extension.lowercase() in setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
-
-@Composable
-internal fun InlineImages(paths: List<String>) {
-    var selected by remember { mutableStateOf<String?>(null) }
-    paths.filter(::isImagePath).distinct().forEach { path ->
-        SubcomposeAsyncImage(
-            model = File(path), contentDescription = "Open image ${File(path).name}",
-            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 320.dp).clickable { selected = path },
-            contentScale = ContentScale.Fit,
-            loading = { Box(Modifier.height(120.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
-            error = { Text("Image is no longer available: ${File(path).name}", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        )
-    }
-    selected?.let { path ->
-        Dialog(onDismissRequest = { selected = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            var zoom by remember(path) { mutableFloatStateOf(1f) }
-            var x by remember(path) { mutableFloatStateOf(0f) }
-            var y by remember(path) { mutableFloatStateOf(0f) }
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
-                SubcomposeAsyncImage(model = File(path), contentDescription = "Expanded image", contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize().pointerInput(path) {
-                        detectTransformGestures { _, pan, scale, _ ->
-                            zoom = (zoom * scale).coerceIn(1f, 5f)
-                            x = if (zoom == 1f) 0f else (x + pan.x).coerceIn(-size.width * zoom, size.width * zoom)
-                            y = if (zoom == 1f) 0f else (y + pan.y).coerceIn(-size.height * zoom, size.height * zoom)
-                        }
-                    }.graphicsLayer { scaleX = zoom; scaleY = zoom; translationX = x; translationY = y })
-                TextButton(onClick = { selected = null }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding()) { Text("Close image", color = Color.White) }
-            }
-        }
-    }
-}

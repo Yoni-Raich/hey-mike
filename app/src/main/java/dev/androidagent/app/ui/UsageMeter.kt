@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import dev.androidagent.core.TokenUsage
 import dev.androidagent.core.UsageSummary
 import dev.androidagent.core.UsageWindow
+import kotlin.math.roundToInt
 
 // Quota lived only as text inside settings, so the number that decides whether
 // the next run will work at all was three taps away. This puts it in the top
@@ -147,6 +148,14 @@ fun UsageMeter(
     }
 }
 
+/**
+ * The words beside a quota bar. The bar, like the top-bar ring, fills with
+ * what is used and turns red as the window fills, so the words say "used"
+ * too; a "left" number beside a used bar read as the opposite.
+ */
+internal fun quotaLabel(fraction: Float?): String =
+    fraction?.let { "${(it.coerceIn(0f, 1f) * 100).roundToInt()}% used" } ?: "Unavailable"
+
 /** One quota window as a labelled bar. Shared by the popup and the settings page. */
 @Composable
 fun UsageWindowRow(window: UsageWindow) {
@@ -164,7 +173,7 @@ fun UsageWindowRow(window: UsageWindow) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                fraction?.let { "${((1f - it) * 100).toInt()}% left" } ?: "Unavailable",
+                quotaLabel(fraction),
                 style = MaterialTheme.typography.labelMedium,
                 color = fraction?.let { quotaColor(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
             )

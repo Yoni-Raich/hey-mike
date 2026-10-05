@@ -73,6 +73,12 @@ and artifacts are kept in app-private storage. The manifest disables Android
 backup for the app. Raw microphone audio and realtime SDP are not saved or
 logged; finalized transcripts can be stored in the session.
 
+When you hold the power button with Mike as the digital assistant, Android
+gives Mike the text of the app on screen, if "Use text from screen" is on in
+the assistant settings. Mike sends that text to the voice model as context for
+that one conversation, without password fields and cut to 4,000 characters. It
+is not saved in the chat. To stop it, turn that setting off.
+
 The app-managed on-device skills are copied into app-private storage at
 startup. A session workspace is organization, not an OS-level security
 sandbox. Treat files and model output as sensitive if the phone is shared.

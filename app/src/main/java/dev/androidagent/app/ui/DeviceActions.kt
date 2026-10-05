@@ -63,9 +63,10 @@ import androidx.compose.ui.unit.sp
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.SecretRedactor
 
-private val GroupBorder = Color(0xFF262626)
-private val StepInk = Color(0xFF8F8F8F)
-private val StepLine = Color(0xFF2E2E2E)
+// Shared with the computer's activity group, which has to look like this one.
+internal val GroupBorder = Color(0xFF262626)
+internal val StepInk = Color(0xFF8F8F8F)
+internal val StepLine = Color(0xFF2E2E2E)
 
 /**
  * A run of device actions as one row: "5 actions on your phone". It opens to
@@ -154,7 +155,7 @@ private fun ActionStep(step: ChatMessage) {
                     )
                 }
             }
-            InlineImages(step.attachmentPaths)
+            InlineMedia(step.attachmentPaths)
         }
     }
 }

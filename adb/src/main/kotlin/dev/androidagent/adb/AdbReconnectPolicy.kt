@@ -48,4 +48,32 @@ object AdbReconnectPolicy {
         true -> "Wireless Debugging is on; waiting for the ADB service"
         null -> "Wireless Debugging status unavailable; waiting for the ADB service"
     }
+
+    /**
+     * How long to wait before trying a pairing adbd has refused again. It will
+     * not start working by itself, so this is slow: the retry only covers a
+     * refusal that was not what it looked like. A new pairing or the switch
+     * being turned on wakes the loop sooner.
+     */
+    const val REJECTED_RETRY_MS = 5 * 60_000L
+
+    const val PAIRING_REJECTED_MESSAGE =
+        "Android no longer trusts this pairing. It drops pairings after 7 days without a connection. Pair again."
+
+    private val REJECTION_WORDS = listOf(
+        "certificate_unknown", "certificate_required", "unknown_ca", "access_denied",
+        "bad_certificate", "certificate_verify_failed", "certificate verify failed",
+    )
+
+    /**
+     * True when adbd refused Mike's key during the TLS handshake, as opposed to
+     * the port being closed or slow. Kadb maps the alerts it recognises to
+     * [AdbPairAuthException]; the rest are read off the message chain.
+     */
+    fun isPairingRejected(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.take(8).any { cause ->
+            cause is com.flyfishxu.kadb.exception.AdbPairAuthException ||
+                cause is com.flyfishxu.kadb.exception.AdbAuthException ||
+                cause.message.orEmpty().lowercase().let { text -> REJECTION_WORDS.any { text.contains(it) } }
+        }
 }

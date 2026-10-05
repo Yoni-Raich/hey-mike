@@ -21,6 +21,7 @@
 package dev.androidagent.app
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -33,6 +34,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.*
@@ -42,11 +44,31 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.androidagent.app.assist.AssistLaunch
 import dev.androidagent.app.ui.*
 import dev.androidagent.core.KeepAwakePolicy
+import java.io.File
+import java.util.UUID
+
+private const val MAX_PHOTOS = 10
+private const val STATE_PENDING_SHOT = "pending_shot"
 
 class MainActivity : ComponentActivity() {
     private val model: AgentViewModel by viewModels()
     private var askedForNotifications = false
-    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::addAttachment) }
+    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> uris.forEach(model::addAttachment) }
+    // The system photo picker needs no storage permission: Android hands over
+    // only the pictures the user taps.
+    private val photoPicker = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_PHOTOS)) { uris -> uris.forEach(model::addAttachment) }
+    // Where the camera is told to write. Kept across recreation: the camera
+    // app can push this activity out of memory while it is open.
+    private var pendingShot: File? = null
+    private val camera = registerForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        val shot = pendingShot.also { pendingShot = null } ?: return@registerForActivityResult
+        if (taken && shot.length() > 0) {
+            val at = java.text.SimpleDateFormat("yyyy-MM-dd HH.mm.ss", java.util.Locale.US).format(java.util.Date())
+            model.addAttachment(FileProvider.getUriForFile(this, "$packageName.files", shot), deleteAfter = shot, name = "Photo $at.jpg")
+        } else {
+            shot.delete()
+        }
+    }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPermissions() }
     private val capabilityPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         model.graph.runtimePermissions.complete(result)
@@ -61,8 +83,26 @@ class MainActivity : ComponentActivity() {
         if (granted) { ensureService(); if (forAssistant) model.startAssistantVoice() else model.toggleVoice() }
         else model.error("Microphone permission is required for voice.")
     }
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        pendingShot?.let { outState.putString(STATE_PENDING_SHOT, it.absolutePath) }
+    }
+
+    /** Open the camera for one picture, written to a file only this app can hand out. */
+    private fun takePhoto() {
+        val shot = File(File(cacheDir, "captures").apply { mkdirs() }, "${UUID.randomUUID()}.jpg")
+        pendingShot = shot
+        try {
+            camera.launch(FileProvider.getUriForFile(this, "$packageName.files", shot))
+        } catch (_: ActivityNotFoundException) {
+            pendingShot = null
+            model.error("This phone has no camera app to take a picture with.")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingShot = savedInstanceState?.getString(STATE_PENDING_SHOT)?.let(::File)
         model.graph.runtimePermissions.attach(this, capabilityPermissions)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK))
@@ -83,13 +123,16 @@ class MainActivity : ComponentActivity() {
             // change without recomposing the screen.
             val voiceLevel = model.graph.voice.level.collectAsStateWithLifecycle()
             val readVoiceLevel = remember(voiceLevel) { { voiceLevel.value } }
-            AndroidAgentScreen(state, actions(), voiceLevel = readVoiceLevel)
+            androidx.compose.runtime.CompositionLocalProvider(dev.androidagent.app.ui.LocalRemoteMedia provides model.graph.remoteMedia) {
+                AndroidAgentScreen(state, actions(), voiceLevel = readVoiceLevel)
+            }
         }
         ensureService()
         model.prepare()
         // Not on recreation: a rotation must not reopen a conversation the
         // user already ended.
         val fromAssistant = savedInstanceState == null && handleAssistantPress(intent)
+        if (savedInstanceState == null) openAskedChat(intent)
         val fromCapabilityRequest = intent.getBooleanExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST, false)
         intent.removeExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST)
         // First launch asks for this on its own screen, with a reason; asking
@@ -103,6 +146,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleAssistantPress(intent)
+        openAskedChat(intent)
+    }
+
+    /** A tap on a question's notification opens the chat that asked. */
+    private fun openAskedChat(intent: Intent?) {
+        val chat = intent?.getStringExtra(QuestionNotifier.EXTRA_OPEN_CHAT) ?: return
+        intent.removeExtra(QuestionNotifier.EXTRA_OPEN_CHAT)
+        model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false) }
+        model.select(chat)
     }
 
     /**
@@ -130,9 +182,11 @@ class MainActivity : ComponentActivity() {
         // The app owns the foreground surface. Keep the run state in the
         // overlay, but remove its window until another app is visible.
         model.graph.overlay.setAppForeground(true)
+        model.graph.appInFront.value = true
     }
     override fun onStop() {
         model.graph.overlay.setAppForeground(false)
+        model.graph.appInFront.value = false
         super.onStop()
     }
     // Every grant the checklist tracks is flipped in a system Settings screen,
@@ -141,6 +195,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         model.graph.runtimePermissions.resumed(this)
         model.graph.foregroundActivity = java.lang.ref.WeakReference(this)
+        model.appResumed()
         model.refreshAccount(); model.refreshPermissions(); model.refreshAssistantRole(); model.refreshAutomations()
     }
     override fun onPause() {
@@ -155,12 +210,47 @@ class MainActivity : ComponentActivity() {
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
         onDrawerChanged = { open -> model.editUi { it.copy(isDrawerOpen = open) } },
+        onOpenComputers = { ensureService(); model.openComputers() },
+        onCloseComputers = { model.editUi { it.copy(isComputersOpen = false, folderBrowser = null) } },
+        onSaveComputer = { draft -> ensureService(); model.saveComputer(draft) },
+        onRemoveComputer = { id -> model.removeComputer(id) },
+        onSetDefaultComputer = { id -> model.setDefaultComputer(id) },
+        onNewProject = { id -> ensureService(); model.newProject(id) },
+        onNewChatInProject = { id, path -> model.openFolderChat(id, path) },
+        onOpenPcThread = { id, thread -> ensureService(); model.openPcThread(id, thread) },
+        onRefreshPcThreads = { ensureService(); model.refreshPcThreads() },
+        onReconnectComputer = { id -> ensureService(); model.reconnectComputer(id) },
+        onMoveNewChat = { id, path -> model.moveNewChat(id, path) },
+        onComputerProposalShown = { model.editUi { it.copy(computerProposal = null) } },
+        onForkPcChat = { id -> model.forkPcChat(id) },
+        onCheckPcChatBusy = { id -> model.checkPcChatBusy(id) },
+        onComposerSeedUsed = { id -> model.editUi { it.copy(composerSeeds = it.composerSeeds - id) } },
+        onShareText = { text ->
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+            runCatching { startActivity(Intent.createChooser(send, "Send the setup steps")) }
+                .onFailure { model.error("No app on this phone can share text.") }
+        },
+        onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
+        onOpenTailscaleApproval = { id, url ->
+            model.openedTailscaleApproval(id)
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { model.error("No app on this phone can open $url") }
+        },
+        onOpenUrl = { url ->
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { model.error("No app on this phone can open $url") }
+        },
+        onBrowseFolder = { id, path -> model.browseFolder(id, path) },
+        onCloseFolderBrowser = { model.editUi { it.copy(folderBrowser = null) } },
+        onOpenFolderChat = { id, path -> model.openFolderChat(id, path) },
         onNewChat = { model.newChat() },
         onSelectSession = model::select,
         onAttach = { filePicker.launch(arrayOf("*/*")) },
+        onAttachPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+        onTakePhoto = ::takePhoto,
         onRemoveAttachment = model::removeAttachment,
         onSend = { text, attachments -> ensureService(); model.send(text, attachments) },
-        onSteer = { model.graph.coordinator.steer(it) },
+        onSteer = { model.steer(it) },
         onStop = model::stop,
         onCancelQueued = model::cancelQueued,
         onResumeQueue = { model.resumeQueue() },
@@ -188,6 +278,7 @@ class MainActivity : ComponentActivity() {
         onRemoveAccount = { id -> model.removeAccount(id) },
         onRefreshAccount = { model.refreshAccount() },
         onOpenWirelessSettings = ::openWirelessDebugging,
+        onTurnOnWireless = { if (!model.turnOnWireless()) openWirelessDebugging() },
         onOpenAccessibilitySettings = { openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
         onOpenAssistantSettings = {
             if (AssistLaunch.settingsIntents().none { openSettings(it, report = false) }) {
@@ -230,6 +321,7 @@ class MainActivity : ComponentActivity() {
         onShareWorkspaceFile = { item -> shareFile(item) },
         onCloseWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = false) } },
         onApproval = { requestId, allow -> model.graph.coordinator.approve(requestId, allow) },
+        onAnswerQuestion = { questionId, answer -> model.graph.coordinator.answerQuestion(questionId, answer) },
         onApproveAlways = { requestId, scope ->
             val before = model.graph.sendGrants.grants.value.size
             model.graph.coordinator.approve(requestId, true, scope)
@@ -265,6 +357,13 @@ class MainActivity : ComponentActivity() {
             model.editUi { it.copy(isSettingsOpen = false) }
             model.letMikeSetUpWireless()
         },
+        onDefaultEngine = model::setDefaultEngine,
+        onDownloadClaude = { ensureService(); model.downloadClaude() },
+        onCancelClaudeDownload = { model.cancelClaudeDownload() },
+        onClaudeLogin = { ensureService(); model.claudeLogin() },
+        onClaudeCode = { code -> model.claudeCompleteLogin(code) },
+        onClaudeLogout = { model.claudeLogout() },
+        onRefreshUsage = model::refreshUsage,
     )
 
     /**

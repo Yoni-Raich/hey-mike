@@ -22,12 +22,17 @@ package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatMessage
 
-/** One row of the conversation: a message, or a run of device actions folded together. */
+/** One row of the conversation: a message, or a run of device or computer actions folded together. */
 internal sealed interface ChatRow {
     val key: String
 }
 
-internal data class MessageRow(val message: ChatMessage) : ChatRow {
+/**
+ * [copyText] is what a long press on an agent block copies: the whole reply of
+ * its turn, from after the user's prompt to the end, however many blocks the
+ * activity between them split it into.
+ */
+internal data class MessageRow(val message: ChatMessage, val copyText: String? = null) : ChatRow {
     override val key: String get() = message.id
 }
 
@@ -41,28 +46,69 @@ internal data class ActionsRow(val steps: List<ChatMessage>, val live: Boolean) 
 }
 
 /**
- * Folds consecutive `tool` messages into one [ActionsRow], so five device
- * actions read as one line instead of five identical "Device activity" rows.
+ * Back-to-back `remote_activity` messages: the commands, file changes and
+ * thinking Codex did on a computer. [live] as for [ActionsRow].
+ */
+internal data class RemoteActivityRow(val steps: List<ChatMessage>, val live: Boolean) : ChatRow {
+    override val key: String get() = "remote-${steps.first().id}"
+}
+
+/**
+ * Folds consecutive `tool` messages into one [ActionsRow], and consecutive
+ * `remote_activity` messages into one [RemoteActivityRow], so five device
+ * actions read as one line instead of five identical "Device activity" rows,
+ * and a computer's seven steps as one row instead of seven. The two kinds do
+ * not merge: what ran on the computer stays apart from what ran on the phone.
  * [running] marks a trailing group as live.
  */
 internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatRow> {
+    val copyTexts = turnCopyTexts(messages)
     val rows = mutableListOf<ChatRow>()
     var pending = mutableListOf<ChatMessage>()
+    var pendingRemote = false
     fun flush(live: Boolean) {
         if (pending.isEmpty()) return
-        rows += ActionsRow(pending, live)
+        rows += if (pendingRemote) RemoteActivityRow(pending, live) else ActionsRow(pending, live)
         pending = mutableListOf()
     }
     for (message in messages) {
-        if (message.role.equals("tool", ignoreCase = true)) {
+        val remote = message.role.equals("remote_activity", ignoreCase = true)
+        if (remote || message.role.equals("tool", ignoreCase = true)) {
+            if (pending.isNotEmpty() && pendingRemote != remote) flush(live = false)
+            pendingRemote = remote
             pending += message
         } else {
             flush(live = false)
-            rows += MessageRow(message)
+            rows += MessageRow(message, copyTexts[message.id])
         }
     }
     flush(live = running)
     return rows
+}
+
+/**
+ * Agent message id to the text a long press on it copies: every agent block of
+ * its turn joined, a turn being everything after one user prompt up to the next.
+ */
+internal fun turnCopyTexts(messages: List<ChatMessage>): Map<String, String> {
+    val result = mutableMapOf<String, String>()
+    var blocks = mutableListOf<ChatMessage>()
+    fun close() {
+        if (blocks.isNotEmpty()) {
+            val whole = blocks.joinToString("\n\n") { it.text.trim() }
+            blocks.forEach { result[it.id] = whole }
+        }
+        blocks = mutableListOf()
+    }
+    for (m in messages) {
+        val role = m.role.lowercase()
+        when {
+            role == "user" -> close()
+            role == "assistant" && m.text.isNotBlank() -> blocks += m
+        }
+    }
+    close()
+    return result
 }
 
 /** What the "Suggest workflows" chip sends. Visible as the user's message, so the model's answer reads in context. */
@@ -125,8 +171,7 @@ private val TOOL_ACTIONS = mapOf(
     "wait_for_change" to ("Waited for the screen" to "Waiting for the screen"),
     "act_and_observe" to ("Acted on the screen" to "Working on the screen"),
     "shell" to ("Ran a command" to "Running a command"),
-    "push_file" to ("Sent a file" to "Sending a file"),
-    "pull_file" to ("Copied a file" to "Copying a file"),
+    "copy_file" to ("Copied a file" to "Copying a file"),
     "install_apk" to ("Installed an app" to "Installing an app"),
     "device_status" to ("Checked the phone" to "Checking the phone"),
     "run_workflow" to ("Ran a workflow" to "Running a workflow"),
@@ -155,6 +200,9 @@ internal const val RLM = '\u200F'
 
 /** True when [text] holds any Hebrew or Arabic letter. */
 internal fun containsRtl(text: String): Boolean = RTL_LETTER.containsMatchIn(text)
+
+/** True when the last line of [text] reads right to left: the side the reader's eye ends on. */
+internal fun endsRtl(text: String): Boolean = containsRtl(text.trimEnd().substringAfterLast('\n'))
 
 /**
  * Any line with a Hebrew or Arabic letter reads right to left, even when it
@@ -210,4 +258,28 @@ internal fun keepListsTogether(markdown: String): String {
         index = end + 1
     }
     return lines.joinToString("\n")
+}
+
+private val RTL_WORD_THEN_NUMBER = Regex("(?<=[֐-׿؀-ۿ]) (?=\\d)")
+
+/**
+ * Keeps a Hebrew or Arabic word on the same line as the number after it, so
+ * "עונה 1" is never split with "עונה" ending one line and "1:" starting the
+ * next. A no-break space does that and lays out like the space it replaces.
+ * Only lines with an RTL letter change, and never code: a fenced block or an
+ * inline span keeps its spaces.
+ */
+internal fun bindNumbersToLabels(markdown: String): String {
+    var inFence = false
+    return markdown.lines().joinToString("\n") { line ->
+        if (line.trimStart().startsWith("```")) inFence = !inFence
+        if (inFence || !containsRtl(line)) {
+            line
+        } else {
+            // Pieces at odd positions sit between backticks: inline code.
+            line.split('`').mapIndexed { at, piece ->
+                if (at % 2 == 1) piece else RTL_WORD_THEN_NUMBER.replace(piece, " ")
+            }.joinToString("`")
+        }
+    }
 }

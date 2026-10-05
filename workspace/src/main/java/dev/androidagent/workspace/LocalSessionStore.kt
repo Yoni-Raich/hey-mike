@@ -47,10 +47,10 @@ class LocalSessionStore(context: Context) : SessionStore {
     override val sessions: StateFlow<List<ChatSession>> = sessionStream.asStateFlow()
     init { db.execSQL("UPDATE messages SET state='interrupted' WHERE state='streaming'") }
 
-    override suspend fun createSession(): ChatSession = mutate {
+    override suspend fun createSession(engine: EngineKind): ChatSession = mutate {
         val now = System.currentTimeMillis()
-        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now)
-        db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now) })
+        val session = ChatSession(UUID.randomUUID().toString(), "New chat", now, now, hasMessages = false, engine = engine)
+        db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now); put("engine", engine.name) })
         workspace(session.id).mkdirs()
         refresh()
         session
@@ -76,6 +76,22 @@ class LocalSessionStore(context: Context) : SessionStore {
         Unit
     }
     override suspend fun setThread(sessionId: String, threadId: String) = mutate { db.execSQL("UPDATE sessions SET thread=? WHERE id=?", arrayOf(threadId, sessionId)); refresh() }
+    override suspend fun setEngine(sessionId: String, engine: EngineKind) = mutate {
+        val session = loadSessions().firstOrNull { it.id == sessionId } ?: return@mutate
+        val next = EngineSwitch.switch(session, engine, System.currentTimeMillis())
+        if (next == session) return@mutate
+        db.update("sessions", ContentValues().apply {
+            put("engine", next.engine.name)
+            if (next.engineThreadId == null) putNull("thread") else put("thread", next.engineThreadId)
+            put("parked", Json.encodeToString(next.parked))
+            if (next.catchUpFrom == null) putNull("catch_up") else put("catch_up", next.catchUpFrom)
+        }, "id=?", arrayOf(sessionId))
+        refresh()
+    }
+    override suspend fun markCaughtUp(sessionId: String) = mutate {
+        db.execSQL("UPDATE sessions SET catch_up=NULL WHERE id=?", arrayOf(sessionId))
+        refresh()
+    }
     override suspend fun loadQueuedTurns(): List<QueuedTurn> = mutate {
         db.rawQuery("SELECT payload FROM run_queue ORDER BY position", null).use { cursor ->
             buildList { while (cursor.moveToNext()) add(Json.decodeFromString<QueuedTurn>(cursor.getString(0))) }
@@ -119,19 +135,39 @@ class LocalSessionStore(context: Context) : SessionStore {
     }
     private suspend fun <T> mutate(block: () -> T): T = withContext(Dispatchers.IO) { lock.withLock { block() } }
     private fun refresh(sessionId: String? = null) { sessionStream.value = loadSessions(); sessionId?.let { streams[it]?.value = loadMessages(it) } }
-    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4))) } }
+    private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread,EXISTS(SELECT 1 FROM messages WHERE session=sessions.id),engine,parked,catch_up FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4), c.getInt(5) == 1, engineOf(c.getString(6)), parkedOf(c.getString(7)), if (c.isNull(8)) null else c.getLong(8))) } }
+    // An unreadable value only loses the thread waiting on the other engine;
+    // the chat still opens and that engine is given its text again.
+    private fun parkedOf(stored: String?): Map<EngineKind, ParkedThread> =
+        stored?.let { runCatching { Json.decodeFromString<Map<EngineKind, ParkedThread>>(it) }.getOrNull() }.orEmpty()
+    // A value this release does not know (a newer app, a bad write) must not
+    // lose the chat, so it reads as the engine every chat had before.
+    private fun engineOf(stored: String?): EngineKind = EngineKind.entries.firstOrNull { it.name == stored } ?: EngineKind.CODEX
     private fun loadMessages(sessionId: String): List<ChatMessage> = db.rawQuery("SELECT id,role,text,created,state,attachments FROM messages WHERE session=? ORDER BY created,rowid", arrayOf(sessionId)).use { c -> buildList { while (c.moveToNext()) add(ChatMessage(c.getString(0), sessionId, c.getString(1), c.getString(2), c.getLong(3), c.getString(4), runCatching { Json.decodeFromString<List<String>>(c.getString(5)) }.getOrDefault(emptyList()))) } }
 
-    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 2) {
+    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 4) {
         override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true); db.enableWriteAheadLogging() }
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT)")
+            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX',parked TEXT,catch_up INTEGER)")
             db.execSQL("CREATE TABLE messages(id TEXT PRIMARY KEY,session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,attachments TEXT NOT NULL)")
             db.execSQL("CREATE INDEX message_session ON messages(session,created)")
             db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            if (oldVersion < 2) db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            if (oldVersion < 2) db.execSQL("CREATE TABLE IF NOT EXISTS run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            // An older build may have opened this file since a newer one wrote
+            // it (see onDowngrade): the version went back but the columns
+            // stayed, so each one is added only when it is missing.
+            val columns = db.rawQuery("PRAGMA table_info(sessions)", null).use { c -> buildSet { while (c.moveToNext()) add(c.getString(1)) } }
+            // Every chat before v3 ran on Codex; the default fills existing rows in place.
+            if ("engine" !in columns) db.execSQL("ALTER TABLE sessions ADD COLUMN engine TEXT NOT NULL DEFAULT 'CODEX'")
+            // v4: a chat can change engine. The thread it leaves and what the other engine missed.
+            if ("parked" !in columns) db.execSQL("ALTER TABLE sessions ADD COLUMN parked TEXT")
+            if ("catch_up" !in columns) db.execSQL("ALTER TABLE sessions ADD COLUMN catch_up INTEGER")
         }
+        // A newer build may have written this file. Its extra columns are
+        // harmless here, so keep the history instead of letting SQLite refuse
+        // to open it.
+        override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
     }
 }

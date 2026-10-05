@@ -24,6 +24,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Test
@@ -84,6 +85,97 @@ class LocalhostConnectProxyTest {
         } finally {
             proxy.stop()
         }
+    }
+
+    @Test
+    fun `claude proxy refuses codex hosts`() {
+        val proxy = LocalhostConnectProxy.forEngine(dev.androidagent.core.EngineKind.CLAUDE)
+        try {
+            val port = proxy.start()
+            listOf("chatgpt.com", "auth.openai.com", "downloads.claude.ai").forEach { host ->
+                Socket("127.0.0.1", port).use { client ->
+                    client.soTimeout = 2_000
+                    client.getOutputStream().write("CONNECT $host:443 HTTP/1.1\r\n\r\n".toByteArray())
+                    client.getOutputStream().flush()
+                    assertTrue(host, readHead(client).startsWith("HTTP/1.1 403"))
+                }
+            }
+        } finally {
+            proxy.stop()
+        }
+    }
+
+    @Test
+    fun `codex proxy refuses claude hosts`() {
+        val proxy = LocalhostConnectProxy.forEngine(dev.androidagent.core.EngineKind.CODEX)
+        try {
+            val port = proxy.start()
+            Socket("127.0.0.1", port).use { client ->
+                client.soTimeout = 2_000
+                client.getOutputStream().write("CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n".toByteArray())
+                client.getOutputStream().flush()
+                assertTrue(readHead(client).startsWith("HTTP/1.1 403"))
+            }
+        } finally {
+            proxy.stop()
+        }
+    }
+
+    private class Denials : LocalhostConnectProxy.ProxyEventListener {
+        val seen = LinkedBlockingQueue<String>()
+        override fun onListening(port: Int) = Unit
+        override fun onAllowed(host: String, port: Int) = Unit
+        override fun onDenied(host: String, port: Int, reason: String) { seen.add("$host:$port:$reason") }
+        override fun onError(category: String) = Unit
+        override fun onStopped() = Unit
+    }
+
+    @Test
+    fun `a denial names the requested host and port`() {
+        val denials = Denials()
+        val proxy = LocalhostConnectProxy.forEngine(dev.androidagent.core.EngineKind.CLAUDE, denials)
+        try {
+            val port = proxy.start()
+            Socket("127.0.0.1", port).use { client ->
+                client.soTimeout = 2_000
+                client.getOutputStream().write("CONNECT evil.example:443 HTTP/1.1\r\nX-Secret: token\r\n\r\n".toByteArray())
+                client.getOutputStream().flush()
+                assertTrue(readHead(client).startsWith("HTTP/1.1 403"))
+            }
+            assertEquals("evil.example:443:host-not-allowed", denials.seen.poll(2, TimeUnit.SECONDS))
+        } finally {
+            proxy.stop()
+        }
+    }
+
+    @Test
+    fun `the liveness probe is not a denial`() {
+        val denials = Denials()
+        val proxy = LocalhostConnectProxy.forEngine(dev.androidagent.core.EngineKind.CLAUDE, denials)
+        try {
+            val port = proxy.start()
+            assertTrue(proxy.verifyListening())
+            assertTrue(proxy.verifyListening())
+            // A real refused request afterwards, so the probes had time to be handled.
+            Socket("127.0.0.1", port).use { client ->
+                client.soTimeout = 2_000
+                client.getOutputStream().write("CONNECT api.anthropic.com:80 HTTP/1.1\r\n\r\n".toByteArray())
+                client.getOutputStream().flush()
+                assertTrue(readHead(client).startsWith("HTTP/1.1 403"))
+            }
+            assertEquals("api.anthropic.com:80:port-not-allowed", denials.seen.poll(2, TimeUnit.SECONDS))
+            Thread.sleep(200)
+            assertEquals(emptyList<String>(), denials.seen.toList())
+        } finally {
+            proxy.stop()
+        }
+    }
+
+    @Test
+    fun `a logged host keeps only host characters`() {
+        assertEquals("api.anthropic.com", LocalhostConnectProxy.loggableHost("api.anthropic.com"))
+        assertEquals("evil?.example??", LocalhostConnectProxy.loggableHost("evil\u0007.example\"é"))
+        assertEquals(253, LocalhostConnectProxy.loggableHost("a".repeat(400)).length)
     }
 
     private fun readHead(socket: Socket): String {

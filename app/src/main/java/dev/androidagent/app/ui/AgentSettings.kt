@@ -114,6 +114,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.ConnectionPhase
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.SetupChecklist
@@ -147,7 +148,7 @@ private fun SetupItem.route(): SettingsRoute = when (this) {
 
 private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.RUNTIME -> "Local runtime"
-    SettingsRoute.ACCOUNT -> "Codex account"
+    SettingsRoute.ACCOUNT -> "Accounts"
     SettingsRoute.SCREEN_CONTROL -> "See and tap the screen"
     SettingsRoute.FLOATING_CONTROL -> "Floating Stop button"
     SettingsRoute.WIRELESS_ADB -> "Run commands and install apps"
@@ -335,7 +336,7 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
         SettingsHubRow(
             icon = SettingsRoute.MODEL.icon(),
             title = SettingsRoute.MODEL.title(),
-            summary = state.selectedModel ?: "Not chosen yet",
+            summary = state.selectedModel?.let { claudeModelName(state, it) ?: it } ?: "Not chosen yet",
             onClick = { onOpen(SettingsRoute.MODEL) },
         )
         SettingsHubRow(
@@ -351,7 +352,7 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
         SettingsHubRow(
             icon = SettingsRoute.ACCOUNT.icon(),
             title = SettingsRoute.ACCOUNT.title(),
-            summary = account.summary,
+            summary = accountsSummary(state),
             state = account.state.takeIf { it != SetupState.DONE },
             onClick = { onOpen(SettingsRoute.ACCOUNT) },
         )
@@ -431,11 +432,16 @@ private fun ColumnScope.PrivacySettings(state: AgentUiState, actions: AgentUiAct
     var confirmWithdraw by rememberSaveable { mutableStateOf(false) }
     Text("Where your data goes", fontWeight = FontWeight.Medium)
     Explanation(
-        "Hey Mike has no servers of its own. Chats, files and your sign-in stay on this phone. What Mike sees " +
-            "and what you type goes to Codex (OpenAI) to answer you, and is covered only by the Codex policies. " +
+        "Hey Mike has no servers of its own. Chats, files and your sign-ins stay on this phone. What Mike sees " +
+            "and what you type goes to the AI that answers in that chat, and is covered only by that provider's policies. " +
+            "When you change the model inside a chat, or talk by voice in a Claude chat, the other AI is given that " +
+            "chat's earlier messages too. " +
             "Update checks ask GitHub for the latest version and send nothing about you.",
     )
+    Explanation("ChatGPT (Codex) chats go to OpenAI.")
     TextButton(onClick = { uriHandler.openUri(POLICIES_URL) }) { Text("Read the Codex and OpenAI policies") }
+    Explanation("Claude chats go to Anthropic, through Anthropic's Claude Code running on this phone, or on your computer for a chat that runs there.")
+    TextButton(onClick = { uriHandler.openUri(ANTHROPIC_PRIVACY_URL) }) { Text("Read Anthropic's privacy policy") }
 
     val agreedAt = state.onboarding.consentAt
     Text(
@@ -574,8 +580,28 @@ private fun ColumnScope.RuntimeSettings(state: AgentUiState, actions: AgentUiAct
     }
 }
 
+/** "Codex signed in · Claude not set up": both accounts on one line of the hub. */
+internal fun accountsSummary(state: AgentUiState): String {
+    val codex = if (state.accountStatus?.signedIn == true) "signed in" else "not signed in"
+    return "Codex $codex · Claude ${claudeSummary(state.claude).lowercase()}"
+}
+
+/** Which account new chats use, then each account: ChatGPT (Codex) and the Claude subscription. */
 @Composable
 private fun ColumnScope.AccountSettings(state: AgentUiState, actions: AgentUiActions) {
+    Text("New chats use", fontWeight = FontWeight.Medium)
+    ProviderChoice(state.defaultEngine, actions.onDefaultEngine)
+    Explanation("A chat stays on its account until you pick a model of the other one in its model menu. You can do that at any point in a chat.")
+    Spacer(Modifier.height(8.dp))
+    Text(providerName(EngineKind.CODEX), style = MaterialTheme.typography.titleMedium)
+    CodexAccountSettings(state, actions)
+    Spacer(Modifier.height(8.dp))
+    Text(providerName(EngineKind.CLAUDE), style = MaterialTheme.typography.titleMedium)
+    ClaudeCard(state.claude, actions)
+}
+
+@Composable
+private fun ColumnScope.CodexAccountSettings(state: AgentUiState, actions: AgentUiActions) {
     val uriHandler = LocalUriHandler.current
     val account = state.accountStatus
     StatusLine(
@@ -843,8 +869,22 @@ private fun ColumnScope.WirelessAdbSettings(state: AgentUiState, actions: AgentU
 
     var confirmMike by rememberSaveable { mutableStateOf(false) }
     val canHandOff = state.adbStatus.phase != ConnectionPhase.CONNECTED && !busy &&
-        state.a11yStatus.connected && state.permissions.overlay && !state.runState.active
-    if (state.adbStatus.phase != ConnectionPhase.CONNECTED) {
+        state.a11yStatus.connected && state.permissions.overlay && state.runs.isEmpty()
+    if (adbFix(state.adbStatus) == AdbFix.TURN_ON) {
+        // Paired and only switched off: one tap, no pairing, no hand-off.
+        Button(onClick = actions.onTurnOnWireless, modifier = Modifier.fillMaxWidth()) {
+            LoadingButtonContent(
+                loading = false,
+                icon = Icons.Outlined.Wifi,
+                label = "Turn on Wireless debugging",
+                spinnerColor = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Explanation(
+            if (state.adbStatus.canSwitchOn) "Mike flips the switch itself and reconnects. You stay here."
+            else "Opens the Wireless debugging screen: turn the switch on there. After Mike connects once, this works from here.",
+        )
+    } else if (state.adbStatus.phase != ConnectionPhase.CONNECTED) {
         Explanation("With this, Mike can also run system commands for exact changes, move and organize files, and install or remove apps.")
         Button(onClick = { confirmMike = true }, enabled = canHandOff, modifier = Modifier.fillMaxWidth()) {
             LoadingButtonContent(
@@ -866,7 +906,7 @@ private fun ColumnScope.WirelessAdbSettings(state: AgentUiState, actions: AgentU
         }
     }
     StatusLine(
-        title = readableConnectionPhase(state.adbStatus.phase),
+        title = if (state.adbStatus.pairingRejected) "Pairing expired" else readableConnectionPhase(state.adbStatus.phase),
         detail = buildString {
             append(state.adbStatus.message)
             state.adbStatus.port?.let { append(" · port ").append(it) }
@@ -1078,13 +1118,17 @@ private fun ColumnScope.ModelSettings(state: AgentUiState, actions: AgentUiActio
     } else {
         Box {
             OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(state.selectedModel ?: "Choose a model", modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
+                Text(
+                    state.selectedModel?.let { claudeModelName(state, it) ?: it } ?: "Choose a model",
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Start,
+                )
                 Icon(Icons.Outlined.ExpandMore, contentDescription = "Choose model")
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 state.availableModels.forEach { model ->
                     DropdownMenuItem(
-                        text = { Text(model) },
+                        text = { Text(claudeModelName(state, model) ?: model) },
                         trailingIcon = if (model == state.selectedModel) ({ Icon(Icons.Outlined.Check, contentDescription = null) }) else null,
                         onClick = {
                             expanded = false
@@ -1118,7 +1162,7 @@ private fun ColumnScope.WorkspaceSettings(state: AgentUiState, actions: AgentUiA
 private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActions) {
     val usage = state.tokenUsage
     // The same bars the top-bar meter draws, so the two places can never
-    // disagree about what "74% left" looks like.
+    // disagree about what "26% used" looks like.
     val windows = remember(state.usageLimits) {
         UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L)
     }

@@ -20,12 +20,16 @@
 
 package dev.androidagent.app.assist
 
+import android.Manifest
 import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import dev.androidagent.app.MainActivity
+import dev.androidagent.core.Onboarding
 
 /** How an assistant press reaches the app, and whether the app holds the role. */
 object AssistLaunch {
@@ -39,6 +43,24 @@ object AssistLaunch {
     fun voiceIntent(context: Context): Intent = Intent(context, MainActivity::class.java)
         .putExtra(EXTRA_START_VOICE, true)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
+    /**
+     * True when an assistant press can open the live panel over the current
+     * app. Otherwise it opens the app, which asks for what is missing: the
+     * panel has no activity to show a permission dialog or the consent screen.
+     */
+    fun panelReady(context: Context): Boolean {
+        val microphone = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        val consent = context.getSharedPreferences(UI_PREFERENCES, 0).getInt(KEY_CONSENT_VERSION, 0)
+        return microphone && consent >= Onboarding.CONSENT_VERSION
+    }
+
+    // Written by AgentViewModel; the panel only reads them.
+    const val UI_PREFERENCES = "ui"
+    const val KEY_CONSENT_VERSION = "consentVersion"
+    const val KEY_SESSION = "session"
+    const val KEY_MODEL = "model"
 
     /**
      * True when this app answers the assist gesture.

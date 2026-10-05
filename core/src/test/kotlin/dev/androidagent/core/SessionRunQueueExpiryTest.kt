@@ -160,7 +160,7 @@ class SessionRunQueueExpiryTest {
         override val sessions = MutableStateFlow(
             listOf(ChatSession("one", "One", 0, 0), ChatSession("two", "Two", 0, 0)),
         )
-        override suspend fun createSession() = sessions.value.first()
+        override suspend fun createSession(engine: EngineKind) = sessions.value.first()
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(emptyList<ChatMessage>())
         override suspend fun append(message: ChatMessage) = Unit

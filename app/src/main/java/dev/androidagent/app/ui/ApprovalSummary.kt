@@ -22,6 +22,9 @@ package dev.androidagent.app.ui
 
 import dev.androidagent.core.EngineEvent
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.net.URI
 import java.net.URLDecoder
@@ -66,6 +69,67 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
                 detail("what")?.let { add("Step" to it) }
                 detail("package")?.let { add("In" to (detail("app") ?: it)) }
                 detail("workflow")?.let { add("Workflow" to it) }
+            },
+        )
+    }
+    // Claude Code on a computer asks before a tool that needs permission.
+    if (method == "claude/can_use_tool") {
+        return ApprovalSummary(
+            headline = when (detail("kind")) {
+                "command" -> "Run this on the computer?"
+                "file" -> "Change this file on the computer?"
+                else -> "Let Mike use ${detail("tool") ?: "this tool"} on the computer?"
+            },
+            lines = buildList {
+                detail("command")?.let { add("Command" to it) }
+                detail("path")?.let { add("File" to it) }
+                detail("input")?.let { add("With" to it) }
+                detail("cwd")?.let { add("In" to it) }
+                detail("reason")?.let { add("Why" to it) }
+            },
+        )
+    }
+    // Codex on a computer asks through its own protocol; say what it wants
+    // to do there in words, with the command itself when there is one.
+    when (method) {
+        "item/commandExecution/requestApproval", "execCommandApproval" -> return ApprovalSummary(
+            headline = "Run this on the computer?",
+            lines = buildList {
+                commandText()?.let { add("Command" to it) }
+                detail("cwd")?.let { add("In" to it) }
+                detail("reason")?.let { add("Why" to it) }
+            },
+        )
+        "item/fileChange/requestApproval", "applyPatchApproval" -> return ApprovalSummary(
+            headline = "Change files on the computer?",
+            lines = buildList {
+                detail("reason")?.let { add("Why" to it) }
+                detail("grantRoot")?.let { add("Folder" to it) }
+            },
+        )
+        "item/permissions/requestApproval" -> return ApprovalSummary(
+            headline = "Give Mike more access on the computer?",
+            lines = buildList {
+                detail("reason")?.let { add("Why" to it) }
+                detail("cwd")?.let { add("In" to it) }
+                val permissions = details["permissions"] as? JsonObject
+                val network = permissions?.get("network") as? JsonObject
+                if ((network?.get("enabled") as? JsonPrimitive)?.booleanOrNull == true) add("Network" to "Allow access")
+                val files = permissions?.get("fileSystem") as? JsonObject
+                for ((key, label) in listOf("read" to "Read files", "write" to "Change files")) {
+                    val paths = (files?.get(key) as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                    if (paths.isNotEmpty()) add(label to paths.joinToString("\n"))
+                }
+                (files?.get("entries") as? JsonArray).orEmpty().forEach { value ->
+                    val entry = value as? JsonObject ?: return@forEach
+                    val path = entry["path"] as? JsonObject
+                    val target = (path?.get("path") as? JsonPrimitive)?.contentOrNull
+                        ?: (path?.get("pattern") as? JsonPrimitive)?.contentOrNull
+                        ?: path?.toString().orEmpty()
+                    val access = (entry["access"] as? JsonPrimitive)?.contentOrNull
+                    add((when (access) { "read" -> "Read files"; "write" -> "Change files"; "deny" -> "No access"; else -> "Files" }) to target)
+                }
+                add("For" to "This turn only")
             },
         )
     }
@@ -117,6 +181,13 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
     }
     return ApprovalSummary(headline, lines)
 }
+
+/** The command as one line, whether it came as a string or as argv. */
+private fun EngineEvent.Approval.commandText(): String? = when (val command = details["command"]) {
+    is JsonPrimitive -> command.contentOrNull
+    is kotlinx.serialization.json.JsonArray -> command.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.joinToString(" ")
+    else -> null
+}?.takeIf { it.isNotBlank() }
 
 private fun decode(value: String): String =
     runCatching { URLDecoder.decode(value.replace("+", "%2B"), "UTF-8") }.getOrDefault(value)
