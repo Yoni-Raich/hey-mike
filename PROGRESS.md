@@ -1,5 +1,50 @@
 # Progress
 
+## 0.15.0 release preparation — 2026-10-05
+
+Release candidate: versionName `0.15.0`, versionCode `1100`, Dev flavor and
+package `dev.androidagent.app.dev`, the same Developer Preview path as
+v0.13.0 and v0.14.0. Code 1100 is above the Dev Nightly codes (1031 on the
+dev tip `a0e17f9d`, and rising by one per nightly), so the exact release APK
+can update a nightly install in place without removing app data. This is a
+test-only, debug-key-signed Developer Preview; it is not production-key
+signed, and the package and migration question in `docs/RELEASES.md` is still
+open.
+
+What changed since v0.14.0 (102 commits on `dev`): chats on Windows and Linux
+computers over SSH with projects, conversations, voice and a file bridge;
+`copy_file` between phone and computer with a transfer banner; Claude as a
+full engine on the user's subscription, on the phone and on a computer's own
+Claude Code, switchable between turns; chats in parallel with only the screen
+exclusive; the searchable chat library with a device rail; `ask_user` and
+`show_media`; the Add context sheet and model menu; Codex 0.159.2. Details
+are in the sections below.
+
+`dev` was merged into `main` on branch `release/0.15.0` (one conflict, in
+this file, resolved by keeping dev's newer sections above main's 0.14.0
+record). The candidate was built from that merge commit on 2026-10-05 and
+passed the full local gate:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:app:lintDevDebug --no-daemon` (1151 tasks, all executed, `BUILD
+SUCCESSFUL`); all five runtime staging Python tests passed; `git diff
+--check` passed. The Dev Release APK was zip-aligned (4 bytes, 16 KB page
+alignment), signed with the local Android debug key (APK Signature Scheme v3
+verified), and read back with `aapt2` as package `dev.androidagent.app.dev`,
+version `0.15.0`, code 1100, `arm64-v8a` and `x86_64`. Its `lib/` holds only
+`lib*.so` files, including `libcodex_app_server.so`, `libcodex_codemode.so`,
+`libcodex_bwrap.so`, `libcodex_rg.so`, `libcodex_zsh.so` and `libld_musl.so`
+for arm64. Signer certificate SHA-256
+`f65c3469483d5b059543c7a67d369578bf3627a02795d77fc76a244444dda1ee`; APK
+SHA-256 `5a2a2cfa02740b01b85611d496462acc1260438a24574944635557c4d275e2dd`
+(289,543,565 bytes).
+
+Still open when this was written: the exact APK has not been installed on a
+physical phone, and no device-tool task has run on it. Wireless ADB was off
+and no phone was approved for the install. Also open: production signing and
+package, the phone updater flow, first launch and account switching, broad
+device tools, voice, and the computer and Claude paths on real hardware. A
+passing build and gate do not establish these.
+
 ### Codex retries stay active and errors keep their chat — 2026-10-05
 
 - A Codex `error` notification with `willRetry=true` updates that turn's
