@@ -78,6 +78,7 @@ class AgentCoordinator(
      * nowhere to read from; the tool then says so.
      */
     private val chatMedia: (suspend (address: String, workspace: File) -> String)? = null,
+    private val chatTitles: ChatTitleManager = ChatTitleManager(sessions, engine),
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -435,8 +436,8 @@ class AgentCoordinator(
                 put("text", prompt)
                 put("attachments", buildJsonArray { images.forEach { add(it.absolutePath) } })
             })
+            chatTitles.seed(sessionId, prompt)
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
-            if (session.title == "New chat") sessions.rename(sessionId, prompt.take(48).ifBlank { "Image chat" })
             val work = sessions.workspace(sessionId)
             // The phone is taken at the first tool call, so a chat that only
             // thinks never waits for one that is driving it.
@@ -476,6 +477,8 @@ class AgentCoordinator(
             )
             if (session.catchUpFrom != null) sessions.markCaughtUp(sessionId)
             if (!activateTurn(token, startedTurn)) return
+            ensureCurrent(token)
+            if (session.engineThreadId != openedThread) chatTitles.nameNewThread(sessionId, openedThread)
             ensureCurrent(token)
             runCompletion.await()
         } catch (cancelled: CancellationException) {
@@ -1299,7 +1302,7 @@ class AgentCoordinator(
     }
 
     /**
-     * Answer `ask_user` or `show_media`. Neither takes the phone: a question
+     * Answer the chat's own tools. None takes the phone: a question
      * can wait minutes, and another chat's tools must not wait with it.
      */
     private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall) {
@@ -1316,8 +1319,16 @@ class AgentCoordinator(
         val started = nowNanos()
         val waitedBefore = approvalNanos.get()
         val result = try {
-            if (event.name == ChatTools.ASK) askUser(token, sessionId, threadId, turnId, event.arguments)
-            else showMedia(token, sessionId, threadId, turnId, event.arguments)
+            when (event.name) {
+                ChatTools.ASK -> askUser(token, sessionId, threadId, turnId, event.arguments)
+                ChatTools.TITLE -> {
+                    ensureCurrentTurn(token, threadId, turnId)
+                    val title = event.arguments["title"]?.let { it as? kotlinx.serialization.json.JsonPrimitive }
+                        ?.takeIf { it.isString }?.contentOrNull.orEmpty()
+                    chatTitles.refine(sessionId, threadId, title)
+                }
+                else -> showMedia(token, sessionId, threadId, turnId, event.arguments)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {

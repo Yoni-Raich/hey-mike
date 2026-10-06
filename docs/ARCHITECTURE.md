@@ -111,6 +111,29 @@ so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
 
+New chats keep a durable `titlePending` flag (`sessions.db` schema 5). The
+coordinator takes an initial name from the first real user message, before
+handoff text or the trusted runtime snapshot is added to the engine input.
+Computer folder labels are provisional too. During the ordinary task the
+agent calls `set_chat_title` once with a short topic name in the user's
+language; no separate model request or title-generation chat is started.
+This is a chat tool, handled without the phone's device lease.
+
+`ChatTitleManager` is shared by runs and the rename UI. It serializes naming,
+protects manual and finished titles, and leaves existing chosen names intact
+on migration. Before refinement it reads the explicit server name and keeps
+a different name already chosen in Codex. Codex names are saved with
+`thread/name/set`, routed to the
+thread's owning computer or phone. A new thread gets its provisional name
+after its first turn starts. Naming has a five-second budget; a provisional
+name's sync failure does not fail the user's task, and refinement remains
+available. A manual rename is saved locally even if the remote write fails.
+The computer catalog distinguishes an explicit `name` from an unnamed
+preview, so an already imported chat's row and header use the shared name
+after refresh, including a name chosen by another Mike. Existing sessions
+are not renamed in bulk. Claude receives local chat titles only; its adapter
+does not persist names in the computer's Claude history.
+
 Selecting a saved chat sets message loading before reading its history on IO.
 The first history emission clears it; skill discovery runs separately within
 the selection's coroutine scope. Computer imports keep their loading marker

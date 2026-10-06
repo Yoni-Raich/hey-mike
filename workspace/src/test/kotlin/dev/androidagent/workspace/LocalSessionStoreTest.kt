@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -83,7 +85,24 @@ class LocalSessionStoreTest {
         assertEquals("thread-1", old.engineThreadId)
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(4, it.version) }
+        assertFalse(old.titlePending)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(5, it.version) }
+    }
+
+    @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {
+        val store = LocalSessionStore(context)
+        val chat = store.createSession()
+        assertTrue(chat.titlePending)
+        assertTrue(store.setAutomaticTitle(chat.id, "First request", complete = false))
+        val reopened = LocalSessionStore(context)
+        assertEquals("First request", reopened.getSession(chat.id)!!.title)
+        assertTrue(reopened.getSession(chat.id)!!.titlePending)
+        assertTrue(reopened.setAutomaticTitle(chat.id, "A short topic", complete = true))
+        assertFalse(LocalSessionStore(context).getSession(chat.id)!!.titlePending)
+        assertFalse(reopened.setAutomaticTitle(chat.id, "A later topic", complete = true))
+        store.rename(chat.id, "שם שבחרתי")
+        assertFalse(reopened.setAutomaticTitle(chat.id, "An automatic override", complete = true))
+        assertEquals("שם שבחרתי", LocalSessionStore(context).getSession(chat.id)!!.title)
     }
 
     @Test

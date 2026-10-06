@@ -1,5 +1,51 @@
 # Progress
 
+### Shared topic names for Mike chats — 2026-10-06
+
+- New typed chats start with a name from the first real user request. The
+  agent can refine it once with `set_chat_title` during the ordinary task.
+  Codex stores it with `thread/name/set` on the thread's owning machine;
+  trusted runtime input and handoff text do not become the name.
+- Manual and finished names are protected by a shared naming lock and a
+  durable pending flag (session schema 5). Refinement keeps a different name
+  already chosen in Codex. Imported chats read the shared explicit name in
+  the drawer and header after refresh, including changes from another Mike.
+  Existing conversations are not renamed in bulk.
+- Windows/JDK 21: `:core:test :engine-codex:testDebugUnitTest
+  :remote:testDebugUnitTest :workspace:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:compileDevDebugKotlin :app:lintDevDebug
+  -x :app:prepareCodexRuntime --no-daemon --no-parallel --max-workers=2
+  --console=plain` passed. XML: 680 core, 46 engine, 62 remote, 28 workspace
+  and 140 app tests (956 total, zero failures/errors, eight existing skips).
+  All eight real SQLite session-store tests passed; skipped tests cover
+  optional Linux/SSH and shell-script fixtures. App lint: zero errors,
+  21 warnings. `git diff --check` passed.
+- An isolated, anonymous Windows app-server 0.159.2 accepted the name API
+  and read back the exact Hebrew name. No model turn was run. A second
+  server did not list the zero-turn thread; this does not prove shared
+  catalog visibility after a real task. Probe evidence stays outside Git.
+- Xiaomi install, 2026-10-06: `:app:assembleDevDebug
+  -PversionCodeOverride=1104 -PversionNameOverride=0.15.0-smart-titles-test
+  --no-daemon --no-parallel --max-workers=2 --console=plain` passed with
+  normal pinned runtime staging. APK: `dev.androidagent.app.dev`, code 1104,
+  `0.15.0-smart-titles-test`, ARM64/x86_64, 329,546,253 bytes. Debug v2 signing
+  verified and its certificate matched the installed code-1031 app.
+  SHA-256: `49da5e4601b783997da28108cbd342e31939bcfda41fd67ccbf85c10d788a2ec`.
+- `adb devices -l` and explicit-serial `getprop` identified Xiaomi
+  `23053RN02Y`, Android 15, state `device`. The selected serial stays in
+  private installation evidence outside Git.
+  `adb -s <selected serial> install -r <verified APK>` returned `Success`.
+  Package metadata read back code 1104 and the exact version name;
+  `am start -W` returned `Status: ok` and MainActivity was resumed.
+  The installed screen showed the new-chat UI and signed-in state.
+  The crash buffer contained no new entries after installation. This was
+  an in-place update; no uninstall, data clear or instrumentation was run.
+  APK and private screen evidence remain outside Git.
+- Not tested: actual model title choices, two real Mike clients, Codex
+  desktop refresh, voice, release APKs or the full release gate. Phone
+  evidence proves update/startup and retained sign-in, not a real naming
+  task or cross-client synchronization. Claude titles are local only.
+
 ### Saved conversation loading — 2026-10-06
 
 - Saved chats now set `isLoadingMessages` before loading history on IO and

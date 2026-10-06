@@ -38,6 +38,35 @@ import org.junit.rules.TemporaryFolder
 class RoutingAgentEngineTest {
     @get:Rule val temp = TemporaryFolder()
 
+    @Test fun aRenameAfterRestartIsPersistedOnTheCorrectComputerOnly() = runBlocking {
+        val box = object : SecretBox {
+            override fun seal(plain: ByteArray) = plain
+            override fun open(sealed: ByteArray) = sealed
+        }
+        val store = RemoteStore(File(temp.root, "computers.bin"), box)
+        val peers = mutableListOf<ReplyRuntime>()
+        val profiles = mutableListOf<dev.androidagent.enginecodex.EngineProfile>()
+        for (pc in listOf("one", "two")) {
+            store.save(RemoteComputer(pc, pc, "localhost", user = "test"), "test-only")
+            store.bind("chat-$pc", RemoteBinding(pc, "C:\\project", "thread-$pc"))
+        }
+        val local = ReplyRuntime()
+        val hub = RemoteHub(store, { _, _ -> ExternalChatgptTokens("test-token", "test-account") }) { _, profile ->
+            profiles += profile
+            CodexEngine(ReplyRuntime().also { peers += it }, profile)
+        }
+        val router = RoutingAgentEngine(CodexEngine(local), hub)
+        try {
+            router.renameThread("thread-two", "תיקון שמות הסשנים")
+            assertTrue(local.requests.isEmpty())
+            assertEquals(1, peers.size)
+            assertTrue(profiles.single().developerInstructions.contains("computer \"two\""))
+            val request = peers.single().requests.single { it["method"]?.jsonPrimitive?.content == "thread/name/set" }
+            assertEquals("thread-two", request["params"]?.jsonObject?.get("threadId")?.jsonPrimitive?.content)
+            assertEquals("תיקון שמות הסשנים", request["params"]?.jsonObject?.get("name")?.jsonPrimitive?.content)
+        } finally { router.close() }
+    }
+
     @Test fun resumingAnImportedThreadKeepsItsOriginAcrossReconnects() = runBlocking {
         val box = object : SecretBox {
             override fun seal(plain: ByteArray) = plain

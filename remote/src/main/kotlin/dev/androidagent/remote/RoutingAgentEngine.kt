@@ -216,6 +216,15 @@ class RoutingAgentEngine(
     ): String = route(threadId).startTurn(threadId, prompt, images, reasoningEffort, skill, capabilities, planModel)
 
     override suspend fun compact(threadId: String) = engineFor(threadId).compact(threadId)
+    override suspend fun renameThread(threadId: String, title: String) {
+        engineFor(threadId).renameThread(threadId, title)
+        if (!isClaude(threadId)) computerOf(threadId)?.let { hub.threadRenamed(it, threadId, title) }
+    }
+    override suspend fun threadName(threadId: String): String? {
+        val name = engineFor(threadId).threadName(threadId)
+        if (name != null && !isClaude(threadId)) computerOf(threadId)?.let { hub.threadRenamed(it, threadId, name) }
+        return name
+    }
     override suspend fun steer(threadId: String, turnId: String, prompt: String) = engineFor(threadId).steer(threadId, turnId, prompt)
     override suspend fun interrupt(threadId: String, turnId: String) = engineFor(threadId).interrupt(threadId, turnId)
 

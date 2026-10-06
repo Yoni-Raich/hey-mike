@@ -50,7 +50,7 @@ data class UserQuestion(val id: String, val question: String, val options: List<
 }
 
 /**
- * The tools a chat serves itself: `ask_user` and `show_media`.
+ * The tools a chat serves itself: questions, media and its provisional title.
  *
  * They put something in the conversation and never touch the phone's screen,
  * so [AgentCoordinator] answers them without taking the phone from another
@@ -60,7 +60,8 @@ data class UserQuestion(val id: String, val question: String, val options: List<
 object ChatTools {
     const val ASK = "ask_user"
     const val SHOW = "show_media"
-    val NAMES = setOf(ASK, SHOW)
+    const val TITLE = "set_chat_title"
+    val NAMES = setOf(ASK, SHOW, TITLE)
 
     const val MAX_OPTIONS = 6
     const val MAX_MEDIA = 10
@@ -71,6 +72,21 @@ object ChatTools {
     const val ASK_TIMEOUT_MS = 8L * 60 * 1_000
 
     val DEFINITIONS: List<ToolDefinition> = listOf(
+        ToolDefinition(
+            name = TITLE,
+            description = "Give a new chat a short topic name once you understand the user's request. Use 3 to 7 words " +
+                "in the user's language, up to 80 characters. Name the task, not Mike, the runtime context or a folder. " +
+                "This also saves the name in Codex on the computer. Already chosen or manually renamed titles are kept. " +
+                "Do this during the normal task; do not start another conversation or ask the user for a name.",
+            inputSchema = buildJsonObject {
+                put("type", "object")
+                put("properties", buildJsonObject {
+                    put("title", buildJsonObject { put("type", "string"); put("maxLength", ChatTitles.MAX_LENGTH) })
+                })
+                put("required", JsonArray(listOf(JsonPrimitive("title"))))
+                put("additionalProperties", false)
+            },
+        ),
         ToolDefinition(
             name = ASK,
             description = "Ask the user one question and wait for the answer. Use it when you cannot go on without a " +
@@ -180,7 +196,7 @@ object ChatTools {
 /**
  * Puts [ChatTools] in the tool list every engine is given.
  *
- * The list is what the composite gateway advertises, so this is how the two
+ * The list is what the composite gateway advertises, so this is how the
  * names reach a thread. The calls themselves are answered by the chat's
  * [AgentCoordinator] before they get here; one that does arrive came from
  * outside a chat turn (a workflow, a rule), where there is no chat to show

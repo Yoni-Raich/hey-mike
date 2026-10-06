@@ -789,6 +789,27 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aTopicNameIsSavedOnTheThreadWithoutTakingThePhone() = runTest {
+        val rig = Rig(this)
+        rig.store.sessions.value = rig.store.sessions.value.map {
+            if (it.id == "one") it.copy(title = "New chat", titlePending = true) else it
+        }
+        rig.coordinator.send("one", "Fix the session names")
+        runCurrent()
+        assertEquals("Fix the session names", rig.store.getSession("one")!!.title)
+        assertTrue(rig.tools.revoked)
+        rig.engine.emit(EngineEvent.ToolCall("title", ChatTools.TITLE,
+            buildJsonObject { put("title", "Smart session names") }, "thread", "turn"))
+        runCurrent()
+        assertEquals("Smart session names", rig.store.getSession("one")!!.title)
+        assertFalse(rig.store.getSession("one")!!.titlePending)
+        assertEquals("thread" to "Smart session names", rig.engine.names.last())
+        assertTrue(rig.engine.answers.single().success)
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        rig.close()
+    }
+
     @Test fun aQuestionWaitsForTheUsersChoiceWithoutTakingThePhone() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Book a table")
@@ -942,6 +963,8 @@ class AgentCoordinatorTest {
         var closed = false
         var waitForInterrupt: CompletableDeferred<Unit>? = null
         val answers = mutableListOf<ToolResult>()
+        val names = mutableListOf<Pair<String, String>>()
+        override suspend fun renameThread(threadId: String, title: String) { names += threadId to title }
         val approvalAnswers = mutableListOf<Pair<String, Boolean>>()
         val connectedKinds = mutableListOf<EngineKind>()
         val accountKinds = mutableListOf<EngineKind>()
@@ -1031,7 +1054,12 @@ class AgentCoordinatorTest {
         override suspend fun setEngine(sessionId: String, engine: EngineKind) =
             change(sessionId) { EngineSwitch.switch(it.copy(hasMessages = messages.any { m -> m.sessionId == sessionId }), engine, now = messages.size.toLong()) }
         override suspend fun markCaughtUp(sessionId: String) = change(sessionId) { it.copy(catchUpFrom = null) }
-        override suspend fun rename(sessionId: String, title: String) = Unit
+        override suspend fun rename(sessionId: String, title: String) = change(sessionId) { it.copy(title = title, titlePending = false) }
+        override suspend fun setAutomaticTitle(sessionId: String, title: String, complete: Boolean): Boolean {
+            if (getSession(sessionId)?.titlePending != true) return false
+            change(sessionId) { it.copy(title = title, titlePending = !complete) }
+            return true
+        }
         override suspend fun deleteSession(sessionId: String) = Unit
         override fun workspace(sessionId: String) = File("session-$sessionId")
     }
