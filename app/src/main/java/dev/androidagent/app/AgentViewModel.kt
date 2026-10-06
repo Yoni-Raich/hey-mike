@@ -136,7 +136,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.remote.claudeState.collect { found -> mutable.update { it.copy(computerClaude = found) }; project() } }
         viewModelScope.launch { graph.remote.claudeSignIn.state.collect { found -> mutable.update { it.copy(computerClaudeSignIn = found) } } }
         viewModelScope.launch { graph.remote.claudeSignIn.loginLinks.collect(::openInBrowser) }
-        viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
+        viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) }; updateTitle() } }
         viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
         viewModelScope.launch { graph.transfers.current.collect { move -> mutable.update { it.copy(fileTransfer = move) } } }
         viewModelScope.launch {
@@ -327,7 +327,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshWidget() = dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
-    private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
+    private fun updateTitle() {
+        mutable.update { state ->
+            val session = state.sessions.firstOrNull { it.id == current.value }
+            val binding = session?.let { graph.computers.binding(it.id) }
+            state.copy(
+                activeSessionTitle = session?.let { PcChats.title(it, binding, state.pcThreads[binding?.computerId].orEmpty()) },
+                tokenUsage = usageByThread[session?.engineThreadId],
+            )
+        }
+    }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
     // The chat on screen, if nobody has written in it yet, is already a new chat.
     fun newChat() = task {
@@ -628,8 +637,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             graph.computers.addProject(id, path)
             graph.computers.update(id) { it.copy(lastFolder = path) }
         }
-        // A title of its own, so the first message does not rename it.
-        graph.sessions.rename(session.id, folder)
+        // A location label until the first request supplies the chat's topic.
+        graph.sessions.setAutomaticTitle(session.id, folder, complete = false)
         current.value = session.id
         mutable.update { it.copy(folderBrowser = null, isComputersOpen = false) }
         note(session.id, "This chat runs on ${computer.label}, in $path. Mike works there with Codex (shell, files, git, skills) and can still use this phone.")
@@ -696,7 +705,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         send(WIRELESS_SETUP_PROMPT, emptyList())
     }
     fun select(id: String) { current.value = id }
-    fun rename(id: String, title: String) = task { graph.sessions.rename(id, title) }
+    fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
         if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End the voice conversation before deleting it."); return }

@@ -1,5 +1,33 @@
 # Progress
 
+### Shared topic names for Mike chats — 2026-10-06
+
+- New typed chats start with a name from the first real user request. The
+  agent can refine it once with `set_chat_title` during the ordinary task.
+  Codex stores it with `thread/name/set` on the thread's owning machine;
+  trusted runtime input and handoff text do not become the name.
+- Manual and finished names are protected by a shared naming lock and a
+  durable pending flag (session schema 5). Refinement keeps a different name
+  already chosen in Codex. Imported chats read the shared explicit name in
+  the drawer and header after refresh, including changes from another Mike.
+  Existing conversations are not renamed in bulk.
+- Windows/JDK 21: `:core:test :engine-codex:testDebugUnitTest
+  :remote:testDebugUnitTest :workspace:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:compileDevDebugKotlin :app:lintDevDebug
+  -x :app:prepareCodexRuntime --no-daemon --no-parallel --max-workers=2
+  --console=plain` passed. XML: 680 core, 46 engine, 62 remote, 28 workspace
+  and 140 app tests (956 total, zero failures/errors, eight existing skips).
+  All eight real SQLite session-store tests passed; skipped tests cover
+  optional Linux/SSH and shell-script fixtures. App lint: zero errors,
+  21 warnings. `git diff --check` passed.
+- An isolated, anonymous Windows app-server 0.159.2 accepted the name API
+  and read back the exact Hebrew name. No model turn was run. A second
+  server did not list the zero-turn thread; this does not prove shared
+  catalog visibility after a real task. Probe evidence stays outside Git.
+- Not tested: an installed phone, actual model title choices, two real Mike
+  clients, Codex desktop refresh, voice, release APKs or the full release
+  gate. No APK was packaged or installed. Claude titles are local only.
+
 ### Saved conversation loading — 2026-10-06
 
 - Saved chats now set `isLoadingMessages` before loading history on IO and

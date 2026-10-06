@@ -84,6 +84,8 @@ data class ChatSession(
     val parked: Map<EngineKind, ParkedThread> = emptyMap(),
     /** Messages newer than this have not reached [engine]'s thread yet. Null when it has seen them all. */
     val catchUpFrom: Long? = null,
+    /** A new chat's provisional name may be refined once by the agent. */
+    val titlePending: Boolean = false,
 )
 
 /** An engine's thread for a chat that now runs on another engine, and the time up to which it saw the chat. */
@@ -110,6 +112,8 @@ interface SessionStore {
     /** The chat's engine has now been given everything said so far. */
     suspend fun markCaughtUp(sessionId: String) {}
     suspend fun rename(sessionId: String, title: String)
+    /** Update a provisional name only; manual and finished names are protected. */
+    suspend fun setAutomaticTitle(sessionId: String, title: String, complete: Boolean): Boolean = false
     suspend fun deleteSession(sessionId: String)
     fun workspace(sessionId: String): File
     /** Append one visible, ordered session event to the user's private workspace. */
@@ -281,6 +285,10 @@ interface AgentEngine {
     suspend fun modelCatalog(): List<AgentModel> = models().map { AgentModel(id = it) }
     suspend fun skillCatalog(workspace: File, forceReload: Boolean = false): List<AgentSkill> = emptyList()
     suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String
+    /** Persist a name where the engine keeps the thread, when supported. */
+    suspend fun renameThread(threadId: String, title: String) {}
+    /** An explicitly saved name, excluding the engine's first-message preview. */
+    suspend fun threadName(threadId: String): String? = null
     suspend fun startTurn(threadId: String, prompt: String, images: List<File> = emptyList()): String
     /** Start a turn with an optional model-advertised reasoning effort. */
     suspend fun startTurn(threadId: String, prompt: String, images: List<File> = emptyList(), reasoningEffort: String?): String =

@@ -132,6 +132,7 @@ class AgentGraph(private val app: Application) {
     )
     /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
     val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
+    val chatTitles = dev.androidagent.core.ChatTitleManager(sessions, engine)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     // The last quota of every saved account, for the home screen widget.
@@ -345,6 +346,7 @@ class AgentGraph(private val app: Application) {
                 share = share,
                 // show_media reads addresses as copy_file does: this chat, the phone, a computer.
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
+                chatTitles = chatTitles,
             )
         }
         questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)

@@ -1,6 +1,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatSession
+import dev.androidagent.core.EngineKind
 import dev.androidagent.enginecodex.CodexThread
 import dev.androidagent.remote.RemoteBinding
 import dev.androidagent.remote.RemoteComputer
@@ -40,6 +41,12 @@ data class PcSection(val computer: RemoteComputer, val projects: List<PcProject>
  */
 object PcChats {
 
+    /** A saved PC name is shared across clients; an unnamed preview must not replace a local name. */
+    fun title(session: ChatSession, binding: RemoteBinding?, threads: List<CodexThread>): String =
+        if (session.engine == EngineKind.CODEX && binding?.threadId == session.engineThreadId && binding?.threadId != null)
+            threads.firstOrNull { it.id == binding.threadId }?.name?.takeIf { it.isNotBlank() } ?: session.title
+        else session.title
+
     /** Windows paths ignore case and may end in a separator; Linux paths keep their case. */
     fun pathKey(path: String): String =
         if (path.startsWith("/")) path.trimEnd('/') else path.replace('/', '\\').trimEnd('\\').lowercase()
@@ -66,7 +73,9 @@ object PcChats {
                 return entries.getOrPut(key) { mutableListOf() }
             }
             projects.filter { it.computerId == computer.id }.forEach { folder(it.path) }
-            bound.forEach { (chat, binding) -> byId[chat]?.let { folder(binding.cwd) += PcChatEntry.Local(it) } }
+            bound.forEach { (chat, binding) -> byId[chat]?.let {
+                folder(binding.cwd) += PcChatEntry.Local(it.copy(title = title(it, binding, threads[computer.id].orEmpty())))
+            } }
             threads[computer.id].orEmpty()
                 .filter { it.id !in followed }
                 .forEach { folder(it.cwd) += PcChatEntry.OnComputer(it) }

@@ -94,6 +94,14 @@ class RemoteHub(
     /** Per computer, the conversations Codex keeps there, as last listed. */
     val threads: StateFlow<Map<String, List<CodexThread>>> = mutableThreads.asStateFlow()
 
+    /** Reflect a successful rename at once; another Mike reads the same name on its next refresh. */
+    internal fun threadRenamed(computerId: String, threadId: String, title: String) {
+        mutableThreads.update { all ->
+            val list = all[computerId] ?: return@update all
+            all + (computerId to list.map { if (it.id == threadId) it.copy(title = title, name = title) else it })
+        }
+    }
+
     /**
      * List the computer's conversations again. Only while it is set up: this
      * never starts a connection the user did not ask for. A failure keeps

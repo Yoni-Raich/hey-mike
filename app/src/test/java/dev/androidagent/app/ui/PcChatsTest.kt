@@ -13,6 +13,18 @@ class PcChatsTest {
     private val phoneChat = ChatSession("p1", "Photos", 1, 10)
     private val deskChat = ChatSession("d1", "Fix picker", 1, 50)
 
+    @Test fun anotherMikesNameUpdatesAnAlreadyImportedChatAndSearch() {
+        val session = deskChat.copy(title = "[Trusted Android Agent runtime context]", engineThreadId = "t1")
+        val binding = RemoteBinding("desk", "C:\\src\\app", threadId = "t1")
+        val named = CodexThread("t1", "תיקון שמות סשנים", binding.cwd, 50, name = "תיקון שמות סשנים")
+        val sections = PcChats.sections(listOf(desk), "desk", emptyList(), mapOf("d1" to binding),
+            listOf(session), mapOf("desk" to listOf(named)), query = "שמות")
+        assertEquals("תיקון שמות סשנים", sections.single().projects.single().chats.single().title)
+        assertEquals("תיקון שמות סשנים", PcChats.title(session, binding, listOf(named)))
+        assertEquals(session.title, PcChats.title(session, binding, listOf(named.copy(name = null))))
+        assertEquals(session.title, PcChats.title(session, binding.copy(threadId = "another"), listOf(named)))
+    }
+
     @Test fun chatsGroupUnderTheirFolderAndPcOnlyThreadsJoinThem() {
         val sections = PcChats.sections(
             computers = listOf(desk),
