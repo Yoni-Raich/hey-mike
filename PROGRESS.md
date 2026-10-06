@@ -24,9 +24,26 @@
   and read back the exact Hebrew name. No model turn was run. A second
   server did not list the zero-turn thread; this does not prove shared
   catalog visibility after a real task. Probe evidence stays outside Git.
-- Not tested: an installed phone, actual model title choices, two real Mike
-  clients, Codex desktop refresh, voice, release APKs or the full release
-  gate. No APK was packaged or installed. Claude titles are local only.
+- Xiaomi install, 2026-10-06: `:app:assembleDevDebug
+  -PversionCodeOverride=1104 -PversionNameOverride=0.15.0-smart-titles-test
+  --no-daemon --no-parallel --max-workers=2 --console=plain` passed with
+  normal pinned runtime staging. APK: `dev.androidagent.app.dev`, code 1104,
+  `0.15.0-smart-titles-test`, ARM64/x86_64, 329,546,253 bytes. Debug v2 signing
+  verified and its certificate matched the installed code-1031 app.
+  SHA-256: `49da5e4601b783997da28108cbd342e31939bcfda41fd67ccbf85c10d788a2ec`.
+- `adb devices -l` and explicit-serial `getprop` identified Xiaomi
+  `23053RN02Y`, Android 15, serial `cd4928027d76`, state `device`.
+  `adb -s cd4928027d76 install -r <verified APK>` returned `Success`.
+  Package metadata read back code 1104 and the exact version name;
+  `am start -W` returned `Status: ok` and MainActivity was resumed.
+  The installed screen showed the new-chat UI and signed-in state.
+  The crash buffer contained no new entries after installation. This was
+  an in-place update; no uninstall, data clear or instrumentation was run.
+  APK and private screen evidence remain outside Git.
+- Not tested: actual model title choices, two real Mike clients, Codex
+  desktop refresh, voice, release APKs or the full release gate. Phone
+  evidence proves update/startup and retained sign-in, not a real naming
+  task or cross-client synchronization. Claude titles are local only.
 
 ### Saved conversation loading — 2026-10-06
 
