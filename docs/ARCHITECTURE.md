@@ -111,6 +111,12 @@ so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
 
+Selecting a saved chat sets message loading before reading its history on IO.
+The first history emission clears it; skill discovery runs separately within
+the selection's coroutine scope. Computer imports keep their loading marker
+from binding through history import, and clear it in `finally`. Send and voice
+start stay disabled while either kind of history loading is active.
+
 The app owns presentation only: a black conversation canvas, neutral user bubbles,
 selectable assistant text, and expandable diagnostic/activity rows. The composer
 uses the existing send, steer, stop, model, and attachment action contracts.

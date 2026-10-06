@@ -97,13 +97,24 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             // A computer conversation may be held open by Codex on the computer.
             checkPcChatBusy(id)
             preferences.edit().putString("session", id).apply()
-            mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false) }
+            mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false, isLoadingMessages = true) }
             updateTitle()
             project()
-            if (graph.runtime.status.value.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) {
-                runCatching { loadSkills(id) }
+            try {
+                // Reading a saved history can touch disk. Keep the loading card
+                // responsive, and do not hold the history behind skill discovery.
+                val messages = withContext(Dispatchers.IO) { graph.sessions.messages(id) }
+                coroutineScope {
+                    launch {
+                        if (graph.runtime.status.value.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) {
+                            runCatching { loadSkills(id) }
+                        }
+                    }
+                    messages.collect { items -> mutable.update { it.copy(messages = items, isLoadingMessages = false) } }
+                }
+            } finally {
+                mutable.update { if (it.activeSessionId == id) it.copy(isLoadingMessages = false) else it }
             }
-            graph.sessions.messages(id).collect { items -> mutable.update { it.copy(messages = items) } }
         } }
         viewModelScope.launch {
             graph.computers.state.collect { remote ->
@@ -522,24 +533,28 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val thread = graph.remote.threads.value[id]?.firstOrNull { it.id == threadId }
             ?: kotlin.error("That conversation is no longer on the computer.")
         val session = graph.sessions.createSession()
-        withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId, importedFromPc = true)) }
-        graph.sessions.setThread(session.id, threadId)
-        graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
-        current.value = session.id
         val label = graph.computers.computer(id)?.label ?: "the computer"
         mutable.update { it.copy(pcChatLoading = it.pcChatLoading + (session.id to label)) }
-        runCatching { graph.remote.readThread(id, threadId) }
-            .onSuccess { messages ->
+        try {
+            withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId, importedFromPc = true)) }
+            graph.sessions.setThread(session.id, threadId)
+            graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
+            current.value = session.id
+            try {
+                val messages = graph.remote.readThread(id, threadId)
                 // Oldest first, a millisecond apart, so the order survives sorting.
                 val start = System.currentTimeMillis() - messages.size
                 messages.forEachIndexed { index, message ->
                     graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), session.id, message.role, message.text, start + index))
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                note(session.id, "The earlier messages could not be read from the computer: ${failure.message}. Mike still continues this conversation there.")
             }
-            .onFailure {
-                note(session.id, "The earlier messages could not be read from the computer: ${it.message}. Mike still continues this conversation there.")
-            }
-        mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
+        } finally {
+            mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
+        }
         checkPcChatBusy(session.id)
     }
 

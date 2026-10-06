@@ -188,7 +188,8 @@ internal fun AgentComposer(
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)
     val hasDraft = draft.isNotBlank()
-    val canSend = state.activeSessionId != null && hasDraft && !state.isLoadingMessages && !stopping && !voiceStopping
+    val loading = state.isLoadingMessages || state.activeSessionId in state.pcChatLoading
+    val canSend = state.activeSessionId != null && hasDraft && !loading && !stopping && !voiceStopping
     val action = composerAction(
         active = active,
         hasDraft = hasDraft,
@@ -316,7 +317,7 @@ internal fun AgentComposer(
                 ComposerButton(
                     action = action,
                     enabled = when (action) {
-                        ComposerAction.VOICE -> state.activeSessionId != null && !state.isLoadingMessages && !voiceStopping
+                        ComposerAction.VOICE -> state.activeSessionId != null && !loading && !voiceStopping
                         ComposerAction.STOP -> !stopping
                         ComposerAction.SEND, ComposerAction.STEER -> canSend
                     },
