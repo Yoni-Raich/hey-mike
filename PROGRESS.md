@@ -32,8 +32,9 @@
   verified and its certificate matched the installed code-1031 app.
   SHA-256: `49da5e4601b783997da28108cbd342e31939bcfda41fd67ccbf85c10d788a2ec`.
 - `adb devices -l` and explicit-serial `getprop` identified Xiaomi
-  `23053RN02Y`, Android 15, serial `cd4928027d76`, state `device`.
-  `adb -s cd4928027d76 install -r <verified APK>` returned `Success`.
+  `23053RN02Y`, Android 15, state `device`. The selected serial stays in
+  private installation evidence outside Git.
+  `adb -s <selected serial> install -r <verified APK>` returned `Success`.
   Package metadata read back code 1104 and the exact version name;
   `am start -W` returned `Status: ok` and MainActivity was resumed.
   The installed screen showed the new-chat UI and signed-in state.
