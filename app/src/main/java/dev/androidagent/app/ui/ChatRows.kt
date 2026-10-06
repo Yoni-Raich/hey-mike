@@ -21,6 +21,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatMessage
+import dev.androidagent.core.MikeChatNote
 
 /** One row of the conversation: a message, or a run of device or computer actions folded together. */
 internal sealed interface ChatRow {
@@ -33,6 +34,17 @@ internal sealed interface ChatRow {
  * activity between them split it into.
  */
 internal data class MessageRow(val message: ChatMessage, val copyText: String? = null) : ChatRow {
+    override val key: String get() = message.id
+}
+
+/**
+ * Text the app wrote into the chat for the engine: a task's brief, a task's
+ * result handed to Mike, the line that records how a task settled. Shown as
+ * what it means, never as the prompt it is. [repeated] for a brief the chat
+ * has already shown once: a task that wakes five times is asked the same
+ * thing five times, and nobody needs to read it five times.
+ */
+internal data class MikeNoteRow(val message: ChatMessage, val note: MikeChatNote, val repeated: Boolean = false) : ChatRow {
     override val key: String get() = message.id
 }
 
@@ -66,6 +78,7 @@ internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatR
     val rows = mutableListOf<ChatRow>()
     var pending = mutableListOf<ChatMessage>()
     var pendingRemote = false
+    var briefed = false
     fun flush(live: Boolean) {
         if (pending.isEmpty()) return
         rows += if (pendingRemote) RemoteActivityRow(pending, live) else ActionsRow(pending, live)
@@ -79,7 +92,10 @@ internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatR
             pending += message
         } else {
             flush(live = false)
-            rows += MessageRow(message, copyTexts[message.id])
+            val note = MikeChatNote.of(message.role, message.text)
+            rows += if (note == null) MessageRow(message, copyTexts[message.id])
+            else MikeNoteRow(message, note, repeated = note is MikeChatNote.Brief && briefed)
+            if (note is MikeChatNote.Brief) briefed = true
         }
     }
     flush(live = running)

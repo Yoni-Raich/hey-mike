@@ -1,5 +1,73 @@
 # Progress
 
+### Persistent Mike: review fixes and the screens redrawn — 2026-10-07
+
+- On `codex/persistent-mike` after `b487aaa`. The teal drawer card, the tab
+  sheet and its dialogs are replaced: a drawer tile in the library's palette,
+  a two-level sheet (lists, then one page per memory or task), tasks grouped
+  by what they need from the person, and task briefs, results and reports
+  drawn as cards in the chat instead of raw prompt text and JSON.
+- Behaviour added with it: a task can be removed, a new task can start at
+  once, a refused change is shown inside the sheet, memory saved from the
+  sheet no longer names the open chat as its source, a task's chat is marked
+  in the library, and Stop holding every task is shown on the drawer and at
+  the top of Tasks with Resume beside it.
+- Review fixes: a thread is told Mike's state once and then only what
+  changed, instead of the whole memory on every turn; saved text cannot close
+  the block; `mike_memory` and `mike_task` name their modes, kinds and
+  decisions; a person's question to a waiting task no longer cancels its
+  wake; the composer's Resume also releases Mike's tasks; startup cancels
+  queued turns only for tasks that can hold one.
+- Windows/JDK 21: `:core:test :app:testDevDebugUnitTest
+  :workspace:testDebugUnitTest :app:lintDevDebug :app:assembleDevDebug
+  :app:assembleDevDebugAndroidTest -PversionCodeOverride=1108
+  -PversionNameOverride=0.15.0-persistent-mike-fix2 --max-workers=3` passed.
+  XML: 709 core, 148 app and 31 workspace tests, zero failures/errors, six
+  existing workspace skips. Lint: zero errors, 21 warnings, none in the new
+  files. `git diff --check` passed.
+- APK: Dev Debug, `dev.androidagent.app.dev`, code 1108,
+  `0.15.0-persistent-mike-fix2`, debug-key signed, a test build. SHA-256:
+  `f048580ff6d70f3701604fee65f692ffd393fe3321244bef5fe15fd9d0084059`.
+- Emulator, x86_64 API 35 `HeyMike_Phone_API_35`, explicit serial, direct
+  `am instrument`: `MikeUiTest` (12) and `ChatLibraryUiTest` (6) passed, 18
+  tests, zero failures. Synthetic data; the thirteen page captures and the
+  capture of the sheet in its own window were each looked at. `ChatUiTest`
+  fails 13 of 17 there, and fails the same 13 on untouched `b487aaa`: those
+  tests are stale and this change neither caused nor fixed them.
+- Xiaomi `23053RN02Y`, Android 15, over USB with an explicit serial. That
+  exact APK installed in place over code 1106 and read back code 1108; the
+  app started with its sign-in and chats, and no crash was logged during the
+  session. The first build put on it showed two faults the fixtures could
+  not, because they draw the pages outside the sheet's window: the title was
+  black on the dark fill, and the sheet was pinned to the top of the screen
+  under the status bar with the chat showing below it. Both were fixed, a
+  test of the sheet in its own window was added, and the fix was confirmed
+  on the phone, with the keyboard open as well.
+- On that phone, through the real UI: a memory was added, then corrected
+  (same key, revision 1 to 2 in `mike/state.json`), survived a process
+  restart, and was forgotten after the confirmation. With a real model
+  (Codex): "remember that my QA test word is banana" produced a
+  `mike_memory` save under `qa.test_word` in ten seconds, shown in the sheet
+  as saved by Mike in the conversation; the next turn answered from it. The
+  engine's own record of that thread shows what each turn carried: every
+  turn sent by the old build held the whole block, the first turn of this
+  build held everything (1,708 characters), the next held changes only (523,
+  the memories and no task list), and the one after held none.
+- A real task on that phone: created in the sheet with Start now, it went
+  RUNNING and then DONE with its recorded result in eight seconds, by the
+  model's own `mike_task` checkpoint. Mike's chat showed the report card,
+  the one-line note and his update, and no JSON; the task's chat opened from
+  the card and showed the brief as a card. The task was removed from the
+  sheet and its chat stayed in the library, as intended. The test memories,
+  the task and its chat were then deleted; a few test messages remain in
+  Mike's chat on that phone.
+- Untested: Claude and computer chats on this build, voice, a wait that
+  wakes by alarm on a phone, Stop and Resume on a phone, an interrupted task
+  on a phone, the Nothing phone, a right-to-left layout and a large font.
+  The Xiaomi's accessibility service is off, so no device tool ran there.
+  Mike's three tools still wait for the phone lease, and the state file is
+  still read and written on the main thread at startup and on Stop.
+
 ### Persistent Mike — 2026-10-06
 
 - Mike now has one permanent main chat, shared memory and saved task chats.

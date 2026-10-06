@@ -928,8 +928,8 @@ class AgentCoordinatorTest {
         val settled = mutableListOf<Pair<String, String>>()
         var began = 0
         val continuity = object : AgentContinuity {
-            override suspend fun context(sessionId: String) = "Current personal memory: Hebrew.\n"
-            override suspend fun started(sessionId: String) { began++ }
+            override suspend fun context(sessionId: String, threadId: String?) = "Current personal memory: Hebrew.\n"
+            override suspend fun started(sessionId: String, prompt: String?) { began++ }
             override suspend fun finished(sessionId: String, outcome: String, reply: String) { settled += sessionId to outcome }
         }
         val rig = Rig(this, continuity = continuity)

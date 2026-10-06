@@ -97,7 +97,10 @@ data class DevicePermissions(
 data class AgentUiState(
     val mike: dev.androidagent.core.MikeState = dev.androidagent.core.MikeState(),
     val mikeError: String? = null,
-    val isMikeStateOpen: Boolean = false,
+    /** Why the last change in Mike's sheet was refused. The sheet covers the chat's own error banner. */
+    val mikeActionError: String? = null,
+    /** Mike's sheet, on the side that was asked for; null while it is closed. */
+    val mikePanel: MikePanel? = null,
     val sessions: List<ChatSession> = emptyList(),
     val activeSessionId: String? = null,
     val activeSessionTitle: String? = null,
@@ -256,19 +259,24 @@ data class FolderBrowserState(
     val error: String? = null,
 )
 
+/** The two sides of Mike's sheet. */
+enum class MikePanel { MEMORY, TASKS }
+
 /**
  * UI events are callbacks so the root app can keep all device and engine
  * operations behind its core gateways.
  */
 data class AgentUiActions(
     val onOpenMike: () -> Unit = {},
-    val onOpenMikeState: () -> Unit = {},
+    val onOpenMikeState: (MikePanel) -> Unit = {},
     val onCloseMikeState: () -> Unit = {},
     val onSaveMikeMemory: (String, String, String, Long?) -> Unit = { _, _, _, _ -> },
     val onForgetMikeMemory: (String, Long) -> Unit = { _, _ -> },
-    val onCreateMikeTask: (String, String) -> Unit = { _, _ -> },
+    /** Title, instruction, and whether to start it now rather than keep it for later. */
+    val onCreateMikeTask: (String, String, Boolean) -> Unit = { _, _, _ -> },
     val onRunMikeTask: (String, Boolean) -> Unit = { _, _ -> },
     val onPauseMikeTask: (String) -> Unit = {},
+    val onRemoveMikeTask: (String) -> Unit = {},
     val onResumeMike: () -> Unit = {},
     val onDrawerChanged: (Boolean) -> Unit = {},
     val onNewChat: () -> Unit = {},

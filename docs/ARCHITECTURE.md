@@ -566,8 +566,15 @@ than appending contradictory facts; revisions reject stale tool and UI edits. Th
 Memory panel can add, correct or forget an entry. An unreadable state file is
 kept and shown as an error; ordinary chats still open, but state writes fail.
 
-`PersistentMike` supplies a fresh snapshot before each typed turn, on either
-engine, and at voice startup. Saved text is quoted advisory data, never
+`PersistentMike` reads the current state before each typed turn, on either
+engine, and at voice startup. An engine thread is told everything once and
+then only the part that changed (memories, or tasks), and nothing when nothing
+did: sending the whole block every turn put the entire memory into the thread
+once per message. What a thread was told is remembered by thread id, in memory
+only, so a restart tells each thread once more. An engine can compact a thread
+by itself and drop the block, so everything is told again every twelve turns,
+and at once after `/compact` or a turn that failed to start. Saved text cannot
+contain the block's closing marker. Saved text is quoted advisory data, never
 permission. `mike_memory` saves learning during the normal agent turn;
 `mike_recall` searches earlier user/assistant messages. This is durable agent
 memory, not model training or a promise that every turn learns something.
@@ -580,6 +587,16 @@ A successful turn without a done/wait decision pauses the task. Settled
 results are recorded in Mike's chat, then queued there as a separate turn
 for a brief report and verified lessons. Internal result turns wait behind
 a live main conversation; they never steer it.
+
+A person typing in a task's chat moves a paused, failed or unstarted task on:
+that is what "choose the next step in the task chat" asks for. A waiting task
+is different. A question to it is not the wake it waits for, so its status and
+wake time stand unless that turn records a decision, and nothing is reported
+to Mike's chat when it does not. The coordinator passes the turn's prompt to
+`started` so the task's own queued brief can be told from a person's message.
+
+Stop sets one more hold beside the queue's own. The composer's Resume and the
+sheet's Resume both release the two together.
 
 A wait checkpoint can set an epoch-millisecond wake time. `AutomationHost`
 includes these times in its existing alarm and catch-up path, so a task can
@@ -595,6 +612,34 @@ and task notes, but that task can no longer run from its deleted chat.
 All memory/task tools use the existing revocable dispatch, on both Codex and
 Claude. Device operations still use the sole device gateway and its lease;
 computer work still uses the existing computer tools and engine routing.
+
+### Mike on screen
+
+The drawer entry is a tile in the library's own palette: the orb, the name,
+and two figures (Memory, Tasks) that each open their side of the sheet. The
+tasks figure turns amber when a task needs the person or Stop is holding them
+all; the orb is drawn still while nobody can see it, because the drawer stays
+composed while closed. A chat Mike opened for a task says "Task · working" and
+the like under its name in the library.
+
+`MikeStateSheet` follows Settings and the rules sheet: two lists, and one page
+for a memory or a task, with back walking the page first. Editing is a page,
+not a dialog over the sheet. Tasks are grouped by what they need from the
+person (Needs you, Working, Waiting, Ready when you are, Done), not by raw
+status; `MikeGlance.kt` holds that wording apart from the drawing so it is
+unit-tested. An interrupted (UNKNOWN) task is retried only from its own page,
+beside the reason and the way to its chat. A memory says who put it there:
+the sheet saves with no source chat, so only what Mike saved during a chat
+names that chat. A refused change is shown in the sheet (`mikeActionError`);
+the chat's error banner is behind it. A task can be removed
+(`PersistentMike.removeTask`); its chat stays in the library.
+
+`MikeChatNote` owns the wording of what the app writes into a chat for the
+engine: a task's brief, the result handed to Mike, and the line that records
+how a task settled. The coordinator stores a queued prompt as a user message,
+so these were shown as a user bubble of instructions and JSON. `chatRows`
+now turns each into a `MikeNoteRow`, drawn as a brief, a one-line note or a
+report card with a link to the task's chat. The stored text is unchanged.
 
 ## Codex retries and turn failures
 

@@ -399,7 +399,8 @@ class AgentGraph(private val app: Application) {
         runCatching { automationHost.start() }
         scope.launch {
             mike.home()
-            mike.state.value.tasks.filter { it.status != dev.androidagent.core.MikeTaskStatus.QUEUED }
+            // Only tasks that can still hold a turn: each cancel is a write, and finished tasks pile up.
+            mike.state.value.tasks.filter { it.status != dev.androidagent.core.MikeTaskStatus.QUEUED && it.status !in dev.androidagent.core.MikeStateStore.TERMINAL }
                 .forEach { queue.cancelSession(it.sessionId) }
         }
         runCatching {

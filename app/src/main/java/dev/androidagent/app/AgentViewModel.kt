@@ -708,17 +708,34 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun select(id: String) { current.value = id }
     fun openMike() = task { current.value = graph.mike.home(mutable.value.defaultEngine).id }
-    fun openMikeState() { mutable.update { it.copy(isMikeStateOpen = true) } }
-    fun saveMikeMemory(key: String, text: String, kind: String, revision: Long?) = task {
-        withContext(Dispatchers.IO) { graph.mike.store.remember(key, text, kind, current.value, revision) }
+    fun openMikeState(panel: MikePanel) { mutable.update { it.copy(mikePanel = panel, mikeActionError = null) } }
+    // No source chat: what a person types into the sheet is theirs, and the
+    // sheet says so. Only what Mike saved during a chat names that chat.
+    fun saveMikeMemory(key: String, text: String, kind: String, revision: Long?) = mikeAction {
+        withContext(Dispatchers.IO) { graph.mike.store.remember(key, text, kind, null, revision) }
     }
-    fun forgetMikeMemory(key: String, revision: Long) = task {
+    fun forgetMikeMemory(key: String, revision: Long) = mikeAction {
         withContext(Dispatchers.IO) { graph.mike.store.forget(key, revision) }
     }
-    fun createMikeTask(title: String, instruction: String) = task { graph.mike.createTask(title, instruction, mutable.value.activeEngine) }
-    fun runMikeTask(id: String, checkedUnknown: Boolean = false) = task { graph.mike.runTask(id, checkedUnknown = checkedUnknown) }
-    fun pauseMikeTask(id: String) = task { graph.mike.pauseTask(id) }
-    fun resumeMike() = task { graph.mike.store.resume(); graph.queue.resume(); graph.automationHost.catchUp() }
+    fun createMikeTask(title: String, instruction: String, startNow: Boolean = false) = mikeAction {
+        val created = graph.mike.createTask(title, instruction, mutable.value.activeEngine)
+        if (startNow) graph.mike.runTask(created.id)
+    }
+    fun runMikeTask(id: String, checkedUnknown: Boolean = false) = mikeAction { graph.mike.runTask(id, checkedUnknown = checkedUnknown) }
+    fun pauseMikeTask(id: String) = mikeAction { graph.mike.pauseTask(id) }
+    fun removeMikeTask(id: String) = mikeAction { graph.mike.removeTask(id) }
+    fun resumeMike() = mikeAction { graph.mike.store.resume(); graph.queue.resume(); graph.automationHost.catchUp() }
+
+    /**
+     * A change made in Mike's sheet. A refusal is shown in the sheet: the
+     * chat's error banner is behind it, where a failed save would look like
+     * nothing happened.
+     */
+    private fun mikeAction(block: suspend () -> Unit): Job = viewModelScope.launch {
+        mutable.update { it.copy(mikeActionError = null) }
+        try { block() } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { mutable.update { it.copy(mikeActionError = failure.message ?: "Something went wrong.") } }
+    }
     fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
         if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
@@ -784,7 +801,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun cancelQueued(id: String) = task { graph.queue.cancel(id) }
-    fun resumeQueue() = task { graph.queue.resume() }
+    // One Stop holds both the queue and Mike's tasks, so one Resume releases both.
+    fun resumeQueue() = task { graph.mike.store.resume(); graph.queue.resume(); graph.automationHost.catchUp() }
 
     fun togglePlanMode() { mutable.update { it.copy(planMode = !it.planMode) } }
 
@@ -805,6 +823,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 graph.engine.compact(thread)
             }
+            // Compaction may drop what the thread was told about Mike; tell it again next turn.
+            graph.mike.forgot(thread)
         }
     }
 

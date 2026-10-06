@@ -10,6 +10,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -92,6 +94,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.core.ChatDayGroups
 import dev.androidagent.core.ChatSession
+import dev.androidagent.core.RunPhase
 import dev.androidagent.core.SetupChecklist
 import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteSetup
@@ -136,6 +139,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     val chats = remember(started, state.remoteBindings, sections, scope, query) {
         ChatLibrary.chats(started, state.remoteBindings, sections, scope, null, query)
     }
+    val taskLabels = remember(state.mike.tasks) { state.mike.tasks.associate { it.sessionId to it.chatLabel() } }
     val projects = remember(sections, scope, query) { if (computer == null) emptyList() else ChatLibrary.projects(sections, scope, query) }
     var limit by remember(scope, query) { mutableStateOf(40) }
     val listStates = remember { mutableMapOf<String, LazyListState>() }
@@ -210,8 +214,13 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                     modifier = Modifier.weight(1f).testTag("chat-library"),
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),
                 ) {
-                    if (computer == null && query.isBlank()) item(key = "mike-home") {
-                        MikeHomeCard(state, onOpen = { dismiss(); actions.onOpenMike() }, onManage = { dismiss(); actions.onOpenMikeState() })
+                    if (computer == null && query.isBlank()) item(key = "mike-home", contentType = "mike") {
+                        MikeEntry(
+                            state = state,
+                            onOpen = { dismiss(); actions.onOpenMike() },
+                            onMemory = { dismiss(); actions.onOpenMikeState(MikePanel.MEMORY) },
+                            onTasks = { dismiss(); actions.onOpenMikeState(MikePanel.TASKS) },
+                        )
                     }
                     item(key = "new-chat", contentType = "new-chat") {
                         NewChatCard(
@@ -304,6 +313,8 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                 // day headings carry the time, and a line under
                                 // every row doubled its height for a clock.
                                 val detail = listOfNotNull(
+                                    // A chat Mike opened for a task is not one the person started.
+                                    (row.entry as? PcChatEntry.Local)?.session?.id?.let(taskLabels::get),
                                     if (scope == ChatLibrary.ALL && owner != null) row.project?.name?.takeIf { !it.equals(row.entry.title, true) } else null,
                                     if (row.entry is PcChatEntry.OnComputer) "In Codex" else null,
                                 ).joinToString(" · ")
@@ -493,6 +504,90 @@ private fun LibraryStatus(state: AgentUiState, scope: String, computer: RemoteCo
             Spacer(Modifier.width(7.dp))
         }
         Text(text, style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/**
+ * Mike himself, above the chats: the one conversation that is always there,
+ * and under it what he keeps and what he is doing. A tile like the others on
+ * this ground, not a coloured block: teal here already means a computer in
+ * reach, and amber means something is live or needs the person.
+ */
+@Composable
+private fun MikeEntry(state: AgentUiState, onOpen: () -> Unit, onMemory: () -> Unit, onTasks: () -> Unit) {
+    val home = state.sessions.firstOrNull { it.isMike }
+    val open = home != null && home.id == state.activeSessionId
+    val running = home != null && state.runs[home.id]?.active == true
+    val glance = remember(state.mike) { mikeGlance(state.mike) }
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        // Lifted when it is the open chat, as a chat's row is.
+        color = if (open) LibraryRaised else LibraryTile,
+        contentColor = LibraryLight,
+        border = BorderStroke(1.dp, LibraryLine),
+        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 10.dp).testTag("mike-home"),
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable(onClickLabel = "Open Mike", role = Role.Button, onClick = onOpen)
+                    .padding(start = 10.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Still unless he is working and the drawer is in view: the
+                // drawer stays composed while it is closed.
+                AgentOrb(
+                    Modifier.size(44.dp),
+                    phase = if (running) RunPhase.THINKING else RunPhase.IDLE,
+                    idleColor = LibraryLight,
+                    still = !(running && state.isDrawerOpen),
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Mike", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 21.sp, letterSpacing = (-0.2).sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (running) {
+                            StatusDot(color = LibraryAmber, size = 6.dp, pulsing = true)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            if (running) "Working" else "Your ongoing conversation",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (running) LibraryAmber else LibraryMuted,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp), tint = LibraryFaint)
+            }
+            HorizontalDivider(color = LibraryLine)
+            Row(Modifier.height(IntrinsicSize.Min)) {
+                MikeFigure("Memory", glance.memory, LibraryLight, pulsing = false, Modifier.weight(1f).testTag("mike-memory"), onMemory)
+                Box(Modifier.width(1.dp).fillMaxHeight().background(LibraryLine))
+                MikeFigure(
+                    "Tasks", glance.tasks, if (glance.attention || glance.working) LibraryAmber else LibraryLight,
+                    pulsing = glance.working, Modifier.weight(1f).testTag("mike-tasks"), onTasks,
+                )
+            }
+        }
+    }
+}
+
+/** One of the two figures under Mike's name; each opens its side of his sheet. */
+@Composable
+private fun MikeFigure(label: String, value: String, color: Color, pulsing: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.clickable(onClickLabel = "Open $label", role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = "$label, $value" }
+            .padding(start = 14.dp, end = 10.dp, top = 9.dp, bottom = 10.dp),
+    ) {
+        Caps(label)
+        Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (pulsing) {
+                StatusDot(color = color, size = 6.dp, pulsing = true)
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(value, style = MaterialTheme.typography.bodyMedium, fontSize = 14.sp, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 

@@ -95,6 +95,9 @@ internal fun AgentOrb(
     controlling: Boolean = false,
     // At rest the top bar tints it by whether the agent can reach the phone.
     idleColor: Color = OrbIdle,
+    // Drawn once and left alone: the drawer stays composed while it is closed,
+    // and an orb nobody sees should not cost a frame.
+    still: Boolean = false,
 ) {
     val color by animateColorAsState(
         when {
@@ -131,7 +134,7 @@ internal fun AgentOrb(
         }
     }
     val frame = remember { mutableLongStateOf(0L) }
-    val moving = animationsEnabled()
+    val moving = animationsEnabled() && !still
     LaunchedEffect(moving) {
         if (!moving) return@LaunchedEffect
         var previous = 0L

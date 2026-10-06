@@ -439,7 +439,7 @@ class AgentCoordinator(
             })
             chatTitles.seed(sessionId, prompt)
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
-            continuity.started(sessionId)
+            continuity.started(sessionId, prompt)
             val work = sessions.workspace(sessionId)
             // The phone is taken at the first tool call, so a chat that only
             // thinks never waits for one that is driving it.
@@ -472,11 +472,18 @@ class AgentCoordinator(
             }
             overlay.updateState(OverlayState(OverlayPhase.THINKING))
             beginTurn(token)
-            val startedTurn = engine.startTurn(
-                openedThread, continuity.context(sessionId) + handoff.orEmpty() + prompt, images, reasoningEffort, skill,
-                DeviceCapabilities.of(tools, adbStatus()),
-                planModel = if (planMode) model else null,
-            )
+            val told = continuity.context(sessionId, openedThread)
+            val startedTurn = try {
+                engine.startTurn(
+                    openedThread, told + handoff.orEmpty() + prompt, images, reasoningEffort, skill,
+                    DeviceCapabilities.of(tools, adbStatus()),
+                    planModel = if (planMode) model else null,
+                )
+            } catch (failure: Throwable) {
+                // The thread never received it, so it is not told yet.
+                if (told.isNotEmpty()) continuity.forgot(openedThread)
+                throw failure
+            }
             if (session.catchUpFrom != null) sessions.markCaughtUp(sessionId)
             if (!activateTurn(token, startedTurn)) return
             ensureCurrent(token)

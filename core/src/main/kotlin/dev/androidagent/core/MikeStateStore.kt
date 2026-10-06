@@ -111,6 +111,12 @@ class MikeStateStore(private val file: File, private val now: () -> Long = Syste
         return result
     }
 
+    fun removeTask(id: String) = change { old ->
+        val task = old.tasks.find { it.id == id } ?: error("Task not found.")
+        require(!task.turnActive && task.status !in setOf(MikeTaskStatus.QUEUED, MikeTaskStatus.RUNNING)) { "Pause this task before removing it." }
+        old.copy(tasks = old.tasks.filterNot { it.id == id })
+    }
+
     fun pauseAll() = change { old -> old.copy(paused = true, tasks = old.tasks.map {
         if (it.status in setOf(MikeTaskStatus.READY, MikeTaskStatus.QUEUED))
             it.copy(status = MikeTaskStatus.PAUSED, wakeAt = null, completionRequested = false, updatedAt = now()) else it

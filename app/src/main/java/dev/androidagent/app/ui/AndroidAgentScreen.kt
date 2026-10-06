@@ -381,7 +381,7 @@ fun AndroidAgentScreen(
         if (state.isAutomationsOpen && !onboarding) {
             AutomationsSheet(state = state, actions = actions)
         }
-        if (state.isMikeStateOpen && !onboarding) {
+        if (state.mikePanel != null && !onboarding) {
             MikeStateSheet(state, actions)
         }
         if (state.isWorkspaceOpen && !onboarding) {
@@ -682,6 +682,7 @@ private fun AgentChatContent(
             items(chatRows(shown, running), key = { it.key }) { row ->
                 when (row) {
                     is MessageRow -> MessageBubble(row.message, row.copyText)
+                    is MikeNoteRow -> MikeChatNoteRow(row, state, actions)
                     is ActionsRow -> DeviceActionsRow(row)
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }
