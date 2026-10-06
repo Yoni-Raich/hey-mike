@@ -43,6 +43,35 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 class ChatUiTest {
+    @Test fun savedHistoryShowsLoadingUntilMessagesArrive() {
+        val state = androidx.compose.runtime.mutableStateOf(loadingFixture.copy(messages = emptyList(), isLoadingMessages = true))
+        compose.setContent { AndroidAgentScreen(state.value, AgentUiActions()) }
+        compose.onNodeWithText("Loading messages…").assertIsDisplayed()
+        compose.onNodeWithText("What can I help with?").assertDoesNotExist()
+        screenshot("chat-saved-loading")
+        compose.runOnIdle {
+            state.value = state.value.copy(isLoadingMessages = false, messages = listOf(
+                ChatMessage("loaded", "ui-fixture", "assistant", "Saved reply", 1),
+            ))
+        }
+        compose.onNodeWithText("Loading messages…").assertDoesNotExist()
+        compose.onNodeWithText("Saved reply").assertIsDisplayed()
+        screenshot("chat-saved-loaded")
+    }
+
+    @Test fun computerImportKeepsLoadingAfterLocalHistoryArrives() {
+        compose.setContent {
+            AndroidAgentScreen(loadingFixture.copy(
+                messages = emptyList(), isLoadingMessages = false,
+                pcChatLoading = mapOf("ui-fixture" to "Pc"),
+            ), AgentUiActions())
+        }
+        compose.onNodeWithText("Loading the conversation from Pc").assertIsDisplayed()
+        compose.onNodeWithText("Loading messages…").assertDoesNotExist()
+        compose.onNodeWithText("What can I help with?").assertDoesNotExist()
+        screenshot("chat-pc-loading")
+    }
+
     @Test fun localIntentApprovalShowsExactRequestAndForwardsItsId() {
         var answer: Pair<String, Boolean>? = null
         val approval = EngineEvent.Approval(
@@ -131,6 +160,9 @@ class ChatUiTest {
     }
 
     @get:Rule val compose = createComposeRule()
+    private val loadingFixture get() = fixture.copy(onboarding = dev.androidagent.core.OnboardingProgress(
+        welcomed = true, consentVersion = dev.androidagent.core.Onboarding.CONSENT_VERSION, finished = true,
+    ))
     private val fixture = AgentUiState(
         activeSessionId = "ui-fixture", activeSessionTitle = "תכנון היום",
         selectedModel = "gpt-5.6-luna", availableModels = listOf("gpt-5.6-luna"),

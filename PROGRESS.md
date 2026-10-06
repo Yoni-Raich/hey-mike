@@ -1,5 +1,29 @@
 # Progress
 
+### Saved conversation loading — 2026-10-06
+
+- Saved chats now set `isLoadingMessages` before loading history on IO and
+  clear it on the first history emission. Skill discovery no longer delays
+  history display. Computer imports mark loading before binding and clear the
+  marker in `finally`; send and voice start wait for history loading to end.
+- On Windows/JDK 21, `:app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug :app:assembleDevDebugAndroidTest --no-daemon
+  --max-workers=2 --console=plain` passed. App XML reports: 139 tests, zero
+  failures/errors/skips. Lint: zero errors, 20 warnings. `git diff --check`
+  passed. Earlier attempts failed from disk space and a concurrent build;
+  the sequential rerun passed without deleting user files.
+- UI fixtures cover saved-history loading, its transition to messages, and
+  computer-import loading after the local history has arrived. Fixture
+  onboarding is complete so first-launch UI does not cover the chat.
+  Direct `am instrument` on the x86_64 API 35 `HeyMike_Phone_API_35`
+  emulator passed both new tests. The three synthetic captures under
+  `artifacts/session-loading-20261006/` were visually reviewed; loading text,
+  the imported-chat skeleton and the loaded reply all appear correctly.
+- Test APK: Dev Debug, `dev.androidagent.app.dev`, code 28, version 0.14.0,
+  Android debug-key signed; no release version or published asset changed.
+- Not tested: real phone session switching, SSH history import end to end,
+  or the full release gate. Emulator fixtures prove presentation only.
+
 ### Computer Claude sign-in from the phone — 2026-10-06
 
 - Added `Connect Claude to <computer>` in Computers and a setup link in the
