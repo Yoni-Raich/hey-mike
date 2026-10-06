@@ -69,6 +69,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private var previousChat: String? = null
 
     init {
+        viewModelScope.launch { graph.mike.state.collect { value -> mutable.update { it.copy(mike = value) } } }
+        viewModelScope.launch { graph.mike.store.error.collect { value -> mutable.update { it.copy(mikeError = value) } } }
         viewModelScope.launch {
             try { checkForUpdates(manual = false) } catch (_: Exception) {}
         }
@@ -80,7 +82,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     val saved = preferences.getString("session", null)
                     current.value = list.firstOrNull { it.id == saved }?.id ?: list.firstOrNull()?.id
                 }
-                if (list.isEmpty()) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
+                if (list.isEmpty()) current.value = graph.mike.home(mutable.value.defaultEngine).id
                 // Chats nobody wrote in last run are not history: drop them once, at start.
                 if (!purgedUnstarted) {
                     purgedUnstarted = true
@@ -359,7 +361,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Nobody wrote in it and no engine holds a thread for it, in use or parked. */
     private fun isBlank(session: ChatSession): Boolean =
-        !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty()
+        !session.isMike && !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty()
 
     private fun rememberDefaultEngine(kind: EngineKind) {
         preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
@@ -705,6 +707,18 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         send(WIRELESS_SETUP_PROMPT, emptyList())
     }
     fun select(id: String) { current.value = id }
+    fun openMike() = task { current.value = graph.mike.home(mutable.value.defaultEngine).id }
+    fun openMikeState() { mutable.update { it.copy(isMikeStateOpen = true) } }
+    fun saveMikeMemory(key: String, text: String, kind: String, revision: Long?) = task {
+        withContext(Dispatchers.IO) { graph.mike.store.remember(key, text, kind, current.value, revision) }
+    }
+    fun forgetMikeMemory(key: String, revision: Long) = task {
+        withContext(Dispatchers.IO) { graph.mike.store.forget(key, revision) }
+    }
+    fun createMikeTask(title: String, instruction: String) = task { graph.mike.createTask(title, instruction, mutable.value.activeEngine) }
+    fun runMikeTask(id: String, checkedUnknown: Boolean = false) = task { graph.mike.runTask(id, checkedUnknown = checkedUnknown) }
+    fun pauseMikeTask(id: String) = task { graph.mike.pauseTask(id) }
+    fun resumeMike() = task { graph.mike.store.resume(); graph.queue.resume(); graph.automationHost.catchUp() }
     fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
         if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
@@ -805,6 +819,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), sessionId, "note", text, System.currentTimeMillis()))
 
     fun stop() {
+        runCatching { graph.mike.store.pauseAll() }
         graph.queue.pause()
         // End voice while an assistant press is still setting up cancels it.
         if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {
@@ -852,10 +867,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 setupJob?.join()
                 val id = current.filterNotNull().first()
                 if (graph.voice.state.value.active) return@task
-                if (!graph.coordinator.state.value.active && graph.sessions.messages(id).first().isNotEmpty()) {
-                    // Voice is Codex's, so a chat made for it starts there.
-                    current.value = graph.sessions.createSession(EngineKind.CODEX).id
-                }
+                if (!graph.coordinator.state.value.active) current.value = graph.mike.home().id
                 mutable.update { it.copy(voiceSummon = "Opening your conversation") }
                 beginVoice(automation)
             } finally {

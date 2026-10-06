@@ -86,6 +86,8 @@ data class ChatSession(
     val catchUpFrom: Long? = null,
     /** A new chat's provisional name may be refined once by the agent. */
     val titlePending: Boolean = false,
+    /** The permanent main conversation of this Mike identity. */
+    val isMike: Boolean = false,
 )
 
 /** An engine's thread for a chat that now runs on another engine, and the time up to which it saw the chat. */
@@ -98,6 +100,9 @@ interface SessionStore {
     /** A new chat that starts on [engine]. */
     suspend fun createSession(engine: EngineKind): ChatSession
     suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
+    suspend fun ensureMikeSession(engine: EngineKind): ChatSession =
+        sessions.value.firstOrNull { it.isMike } ?: createSession(engine)
+    suspend fun searchMessages(query: String, limit: Int): List<ChatMessage> = emptyList()
     suspend fun getSession(id: String): ChatSession?
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)

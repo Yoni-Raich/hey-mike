@@ -42,6 +42,7 @@ import java.io.File
  * busy or stopped. These cover the deadline that stops "post this at 19:00"
  * from running at 23:40; everything without a deadline is unchanged.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class SessionRunQueueExpiryTest {
 
     @Test fun aTurnWithNoDeadlineIsNeverDropped() = runTest {
@@ -87,6 +88,29 @@ class SessionRunQueueExpiryTest {
         advanceUntilIdle()
         assertEquals(listOf("occupying", "fresh"), rig.sent)
         assertEquals(listOf("stale"), rig.expired.map { it.prompt })
+        rig.close()
+    }
+
+    @Test fun anInternalResultWaitsBehindALiveChatWithoutSteeringIt() = runTest {
+        val rig = Rig(this)
+        rig.occupy(); advanceUntilIdle()
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "task result"))
+        advanceUntilIdle()
+        assertEquals(listOf("occupying"), rig.sent)
+        assertEquals(1, rig.queue.turns.value.size)
+        rig.release(); advanceUntilIdle()
+        assertEquals(listOf("occupying", "task result"), rig.sent)
+        rig.close()
+    }
+
+    @Test fun explicitTaskRunCanStartAfterStopWhileBackgroundWorkStaysHeld() = runTest {
+        val rig = Rig(this)
+        rig.queue.pause()
+        rig.queue.enqueue(QueuedTurn(sessionId = "two", prompt = "background"))
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "run now"), requestedNow = true)
+        advanceUntilIdle()
+        assertEquals(listOf("run now"), rig.sent)
+        assertEquals(listOf("background"), rig.queue.turns.value.map { it.prompt })
         rig.close()
     }
 

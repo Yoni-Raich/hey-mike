@@ -924,7 +924,26 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore()) {
+    @Test fun freshContinuityReachesTheEngineAndStopSettlesItExactlyOnce() = runTest {
+        val settled = mutableListOf<Pair<String, String>>()
+        var began = 0
+        val continuity = object : AgentContinuity {
+            override suspend fun context(sessionId: String) = "Current personal memory: Hebrew.\n"
+            override suspend fun started(sessionId: String) { began++ }
+            override suspend fun finished(sessionId: String, outcome: String, reply: String) { settled += sessionId to outcome }
+        }
+        val rig = Rig(this, continuity = continuity)
+        rig.coordinator.send("one", "Hello"); runCurrent()
+        assertEquals(1, began)
+        assertTrue(rig.engine.prompts.single().contains("Current personal memory: Hebrew."))
+        assertEquals("Hello", rig.store.messages.first { it.role == "user" }.text)
+        rig.coordinator.stop(); advanceUntilIdle()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", "thread", "turn")); advanceUntilIdle()
+        assertEquals(listOf("one" to "interrupted"), settled)
+        rig.close()
+    }
+
+    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore(), continuity: AgentContinuity = object : AgentContinuity {}) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
         val store = FakeStore()
@@ -937,6 +956,7 @@ class AgentCoordinatorTest {
         val coordinator = AgentCoordinator(
             scope, engine, store, tools, overlay,
             sendGrants = grants,
+            continuity = continuity,
             bringToForeground = { foregroundRequests++ },
             // The test's own clock, so a reported duration is exactly the time
             // the test advanced rather than how fast the machine ran.

@@ -84,7 +84,7 @@ class ChatLibraryUiTest {
         ))
         compose.onNodeWithText("New chat").assertIsDisplayed()
         compose.onNodeWithContentDescription("Close chats").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Settings", substring = true).assertIsDisplayed()
         screenshot("library-rail")
         compose.onNodeWithContentDescription("Automations, 1 needs you").performClick()
         compose.runOnIdle { assertEquals(true, openedAutomations) }
@@ -114,5 +114,51 @@ class ChatLibraryUiTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val output = File(context.getExternalFilesDir(null), "ui-review").apply { mkdirs() }
         File(output, "$name.png").outputStream().use { compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    @Test fun mikeHasOneStableEntryAndMemoryHasAnObviousEditPath() {
+        var opened = false
+        var managed = false
+        show(AgentUiActions(onOpenMike = { opened = true }, onOpenMikeState = { managed = true }), fixture.copy(
+            sessions = fixture.sessions + ChatSession("main", "Mike", now, now, isMike = true),
+        ))
+        compose.onAllNodesWithText("Mike").assertCountEquals(1)
+        compose.onNodeWithTag("mike-home").assertIsDisplayed()
+        compose.onNodeWithText("Your ongoing conversation").performClick()
+        compose.runOnIdle { assertEquals(true, opened) }
+        compose.onNodeWithTag("mike-manage").performClick()
+        compose.runOnIdle { assertEquals(true, managed) }
+        screenshot("persistent-mike-home")
+    }
+
+    @Test fun aMemoryCorrectionKeepsTheSameKeyAndRevision() {
+        var saved: List<Any?>? = null
+        val memory = dev.androidagent.core.MikeMemory("reply.language", "English", "preference", "chat", now, 4)
+        compose.setContent { AndroidAgentTheme {
+            MikeStateSheet(AgentUiState(mike = dev.androidagent.core.MikeState(memories = listOf(memory))), AgentUiActions(
+                onSaveMikeMemory = { key, text, kind, revision -> saved = listOf(key, text, kind, revision) },
+            ))
+        } }
+        compose.onNodeWithText("English").assertIsDisplayed()
+        compose.onNodeWithText("Correct").performClick()
+        compose.onNodeWithText("What should Mike remember?").performTextReplacement("Hebrew")
+        compose.onNodeWithText("Save", substring = false).performClick()
+        compose.runOnIdle { assertEquals(listOf("reply.language", "Hebrew", "preference", 4L), saved) }
+    }
+
+    @Test fun anUnknownTaskRequiresAVisibleCheckedRetry() {
+        var retry: Pair<String, Boolean>? = null
+        val task = dev.androidagent.core.MikeTask("task", "Check transfer", "Read file back", "chat", status = dev.androidagent.core.MikeTaskStatus.UNKNOWN, updatedAt = now)
+        compose.setContent { AndroidAgentTheme {
+            MikeStateSheet(AgentUiState(mike = dev.androidagent.core.MikeState(tasks = listOf(task))), AgentUiActions(
+                onRunMikeTask = { id, checked -> retry = id to checked },
+            ))
+        } }
+        compose.onNodeWithText("Tasks", substring = false).performClick()
+        compose.onNodeWithText("Result needs checking").assertIsDisplayed()
+        compose.onNodeWithText("Review retry").performClick()
+        compose.runOnIdle { assertEquals(null, retry) }
+        compose.onNodeWithText("Checked — retry").performClick()
+        compose.runOnIdle { assertEquals("task" to true, retry) }
     }
 }

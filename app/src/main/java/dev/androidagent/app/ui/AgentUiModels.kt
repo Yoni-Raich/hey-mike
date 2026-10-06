@@ -95,6 +95,9 @@ data class DevicePermissions(
  * engine references so the root app can map its own flows into this state.
  */
 data class AgentUiState(
+    val mike: dev.androidagent.core.MikeState = dev.androidagent.core.MikeState(),
+    val mikeError: String? = null,
+    val isMikeStateOpen: Boolean = false,
     val sessions: List<ChatSession> = emptyList(),
     val activeSessionId: String? = null,
     val activeSessionTitle: String? = null,
@@ -258,6 +261,15 @@ data class FolderBrowserState(
  * operations behind its core gateways.
  */
 data class AgentUiActions(
+    val onOpenMike: () -> Unit = {},
+    val onOpenMikeState: () -> Unit = {},
+    val onCloseMikeState: () -> Unit = {},
+    val onSaveMikeMemory: (String, String, String, Long?) -> Unit = { _, _, _, _ -> },
+    val onForgetMikeMemory: (String, Long) -> Unit = { _, _ -> },
+    val onCreateMikeTask: (String, String) -> Unit = { _, _ -> },
+    val onRunMikeTask: (String, Boolean) -> Unit = { _, _ -> },
+    val onPauseMikeTask: (String) -> Unit = {},
+    val onResumeMike: () -> Unit = {},
     val onDrawerChanged: (Boolean) -> Unit = {},
     val onNewChat: () -> Unit = {},
     val onSelectSession: (String) -> Unit = {},

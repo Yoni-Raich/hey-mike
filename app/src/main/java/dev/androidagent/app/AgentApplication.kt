@@ -92,6 +92,16 @@ class AgentGraph(private val app: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
+    val mike = dev.androidagent.core.PersistentMike(
+        dev.androidagent.core.MikeStateStore(File(runtime.homeDirectory, "mike/state.json")), sessions,
+        submit = { turn, requestedNow ->
+            app.startForegroundService(Intent(app, AgentService::class.java))
+            queue.enqueue(turn, requestedNow)
+        },
+        cancel = { id -> queue.cancelSession(id); runCoordinator.stop(id) },
+        onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
+    )
+    val mikeTools = dev.androidagent.core.MikeToolGateway(mike, sessions)
     /** The phone's own Codex. */
     val phoneEngine = CodexEngine(runtime)
     /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
@@ -145,7 +155,7 @@ class AgentGraph(private val app: Application) {
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
-        onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
+        onStop = { runCatching { mike.store.pauseAll() }; queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
         onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
     )
@@ -302,7 +312,7 @@ class AgentGraph(private val app: Application) {
     // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
         listOf(
-            workflowTools, knowledgeTools, automationTools, computerTools, copyFiles,
+            workflowTools, knowledgeTools, mikeTools, automationTools, computerTools, copyFiles,
             // ask_user and show_media: listed here, answered by each chat's own coordinator.
             dev.androidagent.core.ChatToolGateway(),
             capabilityTools, a11yTools, adbTools,
@@ -332,8 +342,9 @@ class AgentGraph(private val app: Application) {
         get() = runCoordinator
     val queue: SessionRunQueue
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
-    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools, continuity = mike) { runCoordinator }
     init {
+        runCatching { mike.store.recover() }
         runCoordinator = AgentRuns(scope, engine) { share ->
             AgentCoordinator(
                 scope, engine, sessions, tools, overlay,
@@ -347,6 +358,7 @@ class AgentGraph(private val app: Application) {
                 // show_media reads addresses as copy_file does: this chat, the phone, a computer.
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
+                continuity = mike,
             )
         }
         questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)
@@ -379,10 +391,17 @@ class AgentGraph(private val app: Application) {
             actions = automationActions,
             scope = scope,
             agentAvailable = { runCoordinator.available.value },
+            nextAgentWake = { mike.nextWakeAt() },
+            onAgentWake = { mike.wakeDue() },
         )
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.
         runCatching { automationHost.start() }
+        scope.launch {
+            mike.home()
+            mike.state.value.tasks.filter { it.status != dev.androidagent.core.MikeTaskStatus.QUEUED }
+                .forEach { queue.cancelSession(it.sessionId) }
+        }
         runCatching {
             // Claude reads the same skills from its own home.
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app, claudeHost.homeDirectory)

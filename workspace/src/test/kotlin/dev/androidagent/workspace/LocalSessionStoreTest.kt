@@ -40,6 +40,35 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class LocalSessionStoreTest {
 
+    @Test fun mikeChatIsUniqueAcrossReopenAndDoesNotAdoptAnOrdinaryChat() = runBlocking {
+        val first = LocalSessionStore(context)
+        val ordinary = first.createSession()
+        val main = first.ensureMikeSession(EngineKind.CODEX)
+        assertTrue(main.isMike)
+        assertFalse(ordinary.isMike)
+        assertEquals(main.id, LocalSessionStore(context).ensureMikeSession(EngineKind.CLAUDE).id)
+        assertEquals(1, LocalSessionStore(context).sessions.value.count { it.isMike })
+        assertEquals(2, LocalSessionStore(context).sessions.value.size)
+    }
+
+    @Test fun mainChatCannotBeDeletedOrRenamedByOrdinaryChatActions() = runBlocking {
+        val store = LocalSessionStore(context)
+        val main = store.ensureMikeSession(EngineKind.CODEX)
+        assertTrue(runCatching { store.deleteSession(main.id) }.isFailure)
+        assertTrue(runCatching { store.rename(main.id, "Task") }.isFailure)
+        assertEquals(main.id, LocalSessionStore(context).ensureMikeSession(EngineKind.CODEX).id)
+    }
+
+    @Test fun recallFindsSavedMessagesAndTreatsWildcardsAsText() = runBlocking {
+        val store = LocalSessionStore(context)
+        val one = store.createSession()
+        val two = store.createSession()
+        store.append(ChatMessage("recall-one", one.id, "user", "Remember 50% of this", 1))
+        store.append(ChatMessage("recall-two", two.id, "assistant", "A completely different reply", 2))
+        store.append(ChatMessage("recall-hidden", two.id, "system", "Remember 50%", 3))
+        assertEquals(listOf("recall-one"), LocalSessionStore(context).searchMessages("50%", 12).map { it.id })
+    }
+
     private val context: Context = RuntimeEnvironment.getApplication()
 
     @Test
@@ -86,7 +115,7 @@ class LocalSessionStoreTest {
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
         assertFalse(old.titlePending)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(5, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(6, it.version) }
     }
 
     @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {

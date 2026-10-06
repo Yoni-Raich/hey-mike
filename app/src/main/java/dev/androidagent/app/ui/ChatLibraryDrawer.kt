@@ -125,7 +125,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     val showAll = remember { mutableStateMapOf<String, Boolean>() }
     // A chat nobody has written in is not history.
-    val started = remember(state.sessions) { state.sessions.filter { it.hasMessages } }
+    val started = remember(state.sessions) { state.sessions.filter { it.hasMessages && !it.isMike } }
     val sections = remember(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, started, state.pcThreads) {
         PcChats.sections(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, started, state.pcThreads)
     }
@@ -210,6 +210,9 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                     modifier = Modifier.weight(1f).testTag("chat-library"),
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),
                 ) {
+                    if (computer == null && query.isBlank()) item(key = "mike-home") {
+                        MikeHomeCard(state, onOpen = { dismiss(); actions.onOpenMike() }, onManage = { dismiss(); actions.onOpenMikeState() })
+                    }
                     item(key = "new-chat", contentType = "new-chat") {
                         NewChatCard(
                             hint = when {

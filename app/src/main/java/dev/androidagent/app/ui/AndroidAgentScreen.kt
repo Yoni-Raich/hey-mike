@@ -381,6 +381,9 @@ fun AndroidAgentScreen(
         if (state.isAutomationsOpen && !onboarding) {
             AutomationsSheet(state = state, actions = actions)
         }
+        if (state.isMikeStateOpen && !onboarding) {
+            MikeStateSheet(state, actions)
+        }
         if (state.isWorkspaceOpen && !onboarding) {
             WorkspaceFilesSheet(state = state, actions = actions)
         }

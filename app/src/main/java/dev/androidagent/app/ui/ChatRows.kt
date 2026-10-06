@@ -151,11 +151,21 @@ internal fun actionsLabel(count: Int, live: Boolean): String = when {
     else -> "$count actions on your phone"
 }
 
+internal fun isMikeUpdate(row: ActionsRow): Boolean = row.steps.isNotEmpty() &&
+    row.steps.all { toolKey(toolNameOf(it)) in setOf("mike_memory", "mike_task", "mike_recall") }
+
+internal fun actionsLabel(row: ActionsRow): String = if (isMikeUpdate(row)) {
+    if (row.live) "Updating Mike" else if (row.steps.size == 1) "1 Mike update" else "${row.steps.size} Mike updates"
+} else actionsLabel(row.steps.size, row.live)
+
 /** The tool a stored tool message came from; it is saved as "name: result". */
 internal fun toolNameOf(message: ChatMessage): String = message.text.substringBefore(':').trim()
 
 private val TOOL_ACTIONS = mapOf(
     // tool name to (done, in progress)
+    "mike_memory" to ("Memory" to "Updating memory"),
+    "mike_task" to ("Tasks" to "Updating tasks"),
+    "mike_recall" to ("Earlier chats" to "Reading earlier chats"),
     "tap" to ("Tapped" to "Tapping"),
     "tap_node" to ("Tapped" to "Tapping"),
     "swipe" to ("Swiped" to "Swiping"),

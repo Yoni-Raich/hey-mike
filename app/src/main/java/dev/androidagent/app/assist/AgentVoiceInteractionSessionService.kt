@@ -185,17 +185,12 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
     }
 
     /**
-     * The chat the app has open when it is still empty, or a new one: a press
-     * starts over, and never talks into a conversation the user already had.
-     * The choice is saved so the app opens on this chat.
+     * Assistant presses return to the same Mike conversation. The choice is
+     * saved so the full app opens on that chat too.
      */
     private suspend fun chooseSession(): String {
         val preferences = context.getSharedPreferences(AssistLaunch.UI_PREFERENCES, 0)
-        val saved = preferences.getString(AssistLaunch.KEY_SESSION, null)
-            ?.takeIf { graph.sessions.getSession(it) != null }
-        // Voice is Codex's, so a chat made for it starts there.
-        val id = if (saved != null && graph.sessions.messages(saved).first().isEmpty()) saved
-        else graph.sessions.createSession(dev.androidagent.core.EngineKind.CODEX).id
+        val id = graph.mike.home().id
         preferences.edit().putString(AssistLaunch.KEY_SESSION, id).apply()
         return id
     }

@@ -550,6 +550,52 @@ side effect. A queue restored at startup is paused and needs an explicit
 Resume, and a local stop pauses the queue rather than releasing the next run at
 the user unannounced. Deleting a chat cancels its queued turns.
 
+## Persistent Mike
+
+`LocalSessionStore.ensureMikeSession` owns one permanent local chat (schema 6,
+unique `is_mike` index). The drawer has a stable Mike entry. It cannot be
+renamed or deleted. `/new` in this chat compacts the current engine context;
+ordinary chats still use `/new` to create a chat. Assistant button presses
+return to Mike too. Engine switches and lost-thread handoffs keep this chat's
+identity and saved history.
+
+`MikeStateStore` keeps personal facts, preferences, verified lessons and tasks
+in `$HOME/mike/state.json`, outside chat folders. Writes use a file lock,
+fsync and atomic replacement. Stable memory keys replace corrections rather
+than appending contradictory facts; revisions reject stale tool and UI edits. The
+Memory panel can add, correct or forget an entry. An unreadable state file is
+kept and shown as an error; ordinary chats still open, but state writes fail.
+
+`PersistentMike` supplies a fresh snapshot before each typed turn, on either
+engine, and at voice startup. Saved text is quoted advisory data, never
+permission. `mike_memory` saves learning during the normal agent turn;
+`mike_recall` searches earlier user/assistant messages. This is durable agent
+memory, not model training or a promise that every turn learns something.
+App procedures continue to use the existing knowledge/workflow tools.
+
+`mike_task` creates a separate task chat, queues it, pauses it or records its
+next decision. Creating a task does not run it. A `done` checkpoint needs a
+nonempty result and a successful engine finish before the app marks DONE.
+A successful turn without a done/wait decision pauses the task. Settled
+results are recorded in Mike's chat, then queued there as a separate turn
+for a brief report and verified lessons. Internal result turns wait behind
+a live main conversation; they never steer it.
+
+A wait checkpoint can set an epoch-millisecond wake time. `AutomationHost`
+includes these times in its existing alarm and catch-up path, so a task can
+repeatedly wait and continue without another scheduler. A wait cannot wake
+while its original turn is active. Android may delay background execution;
+durable state does not mean an always-running process. Stop holds future
+task work. Explicit Run can start one task while other queued work stays
+held. Resume scheduled tasks releases the hold. Pending task turns recovered
+at startup are canceled; a task whose turn was active becomes UNKNOWN and
+needs the visible checked-retry decision. Deleting a task chat keeps memory
+and task notes, but that task can no longer run from its deleted chat.
+
+All memory/task tools use the existing revocable dispatch, on both Codex and
+Claude. Device operations still use the sole device gateway and its lease;
+computer work still uses the existing computer tools and engine routing.
+
 ## Codex retries and turn failures
 
 An app-server `error` notification with `willRetry=true` is a scoped activity

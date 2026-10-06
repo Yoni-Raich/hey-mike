@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.Icon
@@ -79,7 +80,7 @@ internal fun DeviceActionsRow(row: ActionsRow) {
     var choice by rememberSaveable(row.key) { mutableStateOf<Boolean?>(null) }
     val expanded = choice ?: row.live
     val chevron by animateFloatAsState(if (expanded) 180f else 0f, tween(240), label = "actions-chevron")
-    val label = actionsLabel(row.steps.size, row.live)
+    val label = actionsLabel(row)
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = Color.Transparent,
@@ -105,7 +106,7 @@ internal fun DeviceActionsRow(row: ActionsRow) {
                         StatusDot(color = MaterialTheme.colorScheme.secondary, size = 8.dp, pulsing = true)
                     }
                 } else {
-                    Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp), tint = StepInk)
+                    Icon(if (isMikeUpdate(row)) Icons.Outlined.AutoAwesome else Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp), tint = StepInk)
                 }
                 Text(
                     label,
