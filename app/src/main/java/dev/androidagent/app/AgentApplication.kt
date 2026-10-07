@@ -359,6 +359,7 @@ class AgentGraph(private val app: Application) {
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
                 continuity = mike,
+                sessionTools = mikeTools,
             )
         }
         questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)

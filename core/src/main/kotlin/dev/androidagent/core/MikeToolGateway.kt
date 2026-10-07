@@ -25,9 +25,20 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 
+/**
+ * Tools answered for a chat by name. The caller says which chat is asking, so
+ * nothing has to be armed for one run at a time, and so they need not wait
+ * for the phone the way a device tool does.
+ */
+interface SessionTools {
+    val names: Set<String>
+    suspend fun invoke(sessionId: String, name: String, arguments: JsonObject): ToolResult
+}
+
 /** Memory and task decisions share the normal revocable tool dispatch. */
-class MikeToolGateway(private val mike: PersistentMike, private val sessions: SessionStore) : DeviceToolGateway {
-    @Volatile private var sessionId: String? = null
+class MikeToolGateway(private val mike: PersistentMike, private val sessions: SessionStore) : DeviceToolGateway, SessionTools {
+    // The chat a run armed, for a caller that reaches these tools through the phone's own dispatch.
+    @Volatile private var armedFor: String? = null
     override val definitions = listOf(
         tool("mike_memory", "Mike's durable personal memory, shared by all chats. Never store secrets or guesses.", "mode",
             "mode" to choice("list reads every memory with its revision; save adds or corrects one; forget removes one.", "list", "save", "forget"),
@@ -50,13 +61,19 @@ class MikeToolGateway(private val mike: PersistentMike, private val sessions: Se
             "query" to text("Words to look for, up to 200 characters."),
         ),
     )
-    override fun beginRun(runId: String, workspace: File) { sessionId = workspace.parentFile.name }
-    override fun revoke() { sessionId = null }
+    override val names: Set<String> = definitions.mapTo(mutableSetOf()) { it.name }
+    override fun beginRun(runId: String, workspace: File) { armedFor = workspace.parentFile.name }
+    override fun revoke() { armedFor = null }
     override suspend fun cancel() { revoke() }
     override fun needsControl(name: String) = false
     override fun deviceBackendLive() = false
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult {
-        val source = sessionId ?: return ToolResult("Mike tools are stopped.", success = false)
+        val chat = armedFor ?: return ToolResult("Mike tools are stopped.", success = false)
+        return invoke(chat, name, arguments)
+    }
+
+    override suspend fun invoke(sessionId: String, name: String, arguments: JsonObject): ToolResult {
+        val source = sessionId
         return try {
             check(sessions.getSession(source) != null) { "Chat no longer exists." }
             val text = when (name) {

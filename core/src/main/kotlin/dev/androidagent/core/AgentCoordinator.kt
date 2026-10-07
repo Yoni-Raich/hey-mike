@@ -80,6 +80,8 @@ class AgentCoordinator(
     private val chatMedia: (suspend (address: String, workspace: File) -> String)? = null,
     private val chatTitles: ChatTitleManager = ChatTitleManager(sessions, engine),
     private val continuity: AgentContinuity = object : AgentContinuity {},
+    /** Mike's notes and tasks: answered for the chat that asks, without the phone. */
+    private val sessionTools: SessionTools? = null,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -1126,7 +1128,11 @@ class AgentCoordinator(
                             serveChatTool(token, sessionId, event)
                             return@withLock
                         }
-                        if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        // Mike's notes and tasks leave the phone alone as well. They used
+                        // to queue for it, so a task that only had to record "done"
+                        // waited behind whichever chat was driving the screen.
+                        val own = sessionTools?.takeIf { event.name in it.names }
+                        if (own == null && !claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         if (usesScreen(event.name)) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
                         val visible = tools.needsControl(event.name)
                         val capture = tools.hidesOverlayDuringCapture(event.name)
@@ -1180,7 +1186,7 @@ class AgentCoordinator(
                             // so tool time stays device time.
                             val approvalsBefore = approvalNanos.get()
                             toolCalls++
-                            try { result = tools.invoke(event.name, event.arguments) }
+                            try { result = own?.invoke(sessionId, event.name, event.arguments) ?: tools.invoke(event.name, event.arguments) }
                             finally {
                                 val waited = approvalNanos.get() - approvalsBefore
                                 toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000

@@ -17,17 +17,22 @@
   the block; `mike_memory` and `mike_task` name their modes, kinds and
   decisions; a person's question to a waiting task no longer cancels its
   wake; the composer's Resume also releases Mike's tasks; startup cancels
-  queued turns only for tasks that can hold one.
+  queued turns only for tasks that can hold one; Mike's three tools are
+  answered for the chat that asks and no longer wait for the phone; `/new`
+  opens a new chat in Mike's conversation as it does everywhere.
 - Windows/JDK 21: `:core:test :app:testDevDebugUnitTest
   :workspace:testDebugUnitTest :app:lintDevDebug :app:assembleDevDebug
-  :app:assembleDevDebugAndroidTest -PversionCodeOverride=1108
-  -PversionNameOverride=0.15.0-persistent-mike-fix2 --max-workers=3` passed.
-  XML: 709 core, 148 app and 31 workspace tests, zero failures/errors, six
+  :app:assembleDevDebugAndroidTest -PversionCodeOverride=1109
+  -PversionNameOverride=0.15.0-persistent-mike-fix3 --max-workers=3` passed.
+  XML: 710 core, 148 app and 31 workspace tests, zero failures/errors, six
   existing workspace skips. Lint: zero errors, 21 warnings, none in the new
   files. `git diff --check` passed.
-- APK: Dev Debug, `dev.androidagent.app.dev`, code 1108,
-  `0.15.0-persistent-mike-fix2`, debug-key signed, a test build. SHA-256:
-  `f048580ff6d70f3701604fee65f692ffd393fe3321244bef5fe15fd9d0084059`.
+- APK: Dev Debug, `dev.androidagent.app.dev`, code 1109,
+  `0.15.0-persistent-mike-fix3`, debug-key signed, a test build. SHA-256:
+  `b4b6c7f36095e01114069282f636ff02f4425f75c6c840d85d5dcd31ba57c5df`.
+  The phone runs below were made on code 1108
+  (`f048580ff6d70f3701604fee65f692ffd393fe3321244bef5fe15fd9d0084059`), then
+  the last two changes were checked again on code 1109, as noted.
 - Emulator, x86_64 API 35 `HeyMike_Phone_API_35`, explicit serial, direct
   `am instrument`: `MikeUiTest` (12) and `ChatLibraryUiTest` (6) passed, 18
   tests, zero failures. Synthetic data; the thirteen page captures and the
@@ -61,12 +66,19 @@
   sheet and its chat stayed in the library, as intended. The test memories,
   the task and its chat were then deleted; a few test messages remain in
   Mike's chat on that phone.
+- Code 1109 on the same phone, installed in place over 1108: with the
+  tools now answered without the phone, the real model again saved a memory
+  in ten seconds and a second real task again went from RUNNING to DONE with
+  its result in eight. `/new` typed in Mike's conversation opened a new
+  chat. No crash was logged, and the emulator's 18 tests passed again on
+  this build. The second round of test data was deleted as well.
 - Untested: Claude and computer chats on this build, voice, a wait that
   wakes by alarm on a phone, Stop and Resume on a phone, an interrupted task
-  on a phone, the Nothing phone, a right-to-left layout and a large font.
-  The Xiaomi's accessibility service is off, so no device tool ran there.
-  Mike's three tools still wait for the phone lease, and the state file is
-  still read and written on the main thread at startup and on Stop.
+  on a phone, a right-to-left layout and a large font. The Xiaomi's
+  accessibility service is off, so no device tool ran there, and so a task
+  recording its result while another chat drives the screen is proven by
+  the unit test only. The state file is still read and written on the main
+  thread at startup and on Stop.
 
 ### Persistent Mike — 2026-10-06
 

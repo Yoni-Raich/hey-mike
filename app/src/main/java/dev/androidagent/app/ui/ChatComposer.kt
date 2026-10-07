@@ -200,7 +200,7 @@ internal fun AgentComposer(
     val runCommand: (ComposerCommand) -> Unit = { command ->
         draft = ""
         when (command) {
-            ComposerCommand.NEW -> if (state.sessions.any { it.id == state.activeSessionId && it.isMike }) actions.onCompact() else actions.onNewChat()
+            ComposerCommand.NEW -> actions.onNewChat()
             ComposerCommand.COMPACT -> actions.onCompact()
             ComposerCommand.PLAN -> actions.onTogglePlanMode()
             ComposerCommand.MODEL -> if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true

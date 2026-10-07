@@ -554,9 +554,11 @@ the user unannounced. Deleting a chat cancels its queued turns.
 
 `LocalSessionStore.ensureMikeSession` owns one permanent local chat (schema 6,
 unique `is_mike` index). The drawer has a stable Mike entry. It cannot be
-renamed or deleted. `/new` in this chat compacts the current engine context;
-ordinary chats still use `/new` to create a chat. Assistant button presses
-return to Mike too. Engine switches and lost-thread handoffs keep this chat's
+renamed or deleted. `/new` opens a new chat here as it does everywhere, and
+`/compact` is the way to free this chat's context: one word doing two things
+by where it is typed would surprise. Assistant button presses return to Mike
+too, since a spoken request is to Mike himself and his memory is what makes
+it one conversation. Engine switches and lost-thread handoffs keep this chat's
 identity and saved history.
 
 `MikeStateStore` keeps personal facts, preferences, verified lessons and tasks
@@ -610,8 +612,15 @@ needs the visible checked-retry decision. Deleting a task chat keeps memory
 and task notes, but that task can no longer run from its deleted chat.
 
 All memory/task tools use the existing revocable dispatch, on both Codex and
-Claude. Device operations still use the sole device gateway and its lease;
-computer work still uses the existing computer tools and engine routing.
+Claude: a call is answered only while its turn is current, so Stop ends them
+with the rest. They do not take the phone. `MikeToolGateway` is a
+`SessionTools`, answered for the chat that asks, so the coordinator skips the
+device lease for them; a task that only has to record "done" no longer waits
+behind a chat that is driving the screen. They stay tools rather than skills
+because a skill runs in the engine's own shell, and a chat on a computer has
+no shell on the phone where this state lives. Device operations still use the
+sole device gateway and its lease; computer work still uses the existing
+computer tools and engine routing.
 
 ### Mike on screen
 

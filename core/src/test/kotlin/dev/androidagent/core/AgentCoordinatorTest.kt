@@ -943,7 +943,31 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore(), continuity: AgentContinuity = object : AgentContinuity {}) {
+    @Test fun mikesOwnToolsAnswerForTheChatThatAsksWithoutTakingThePhone() = runTest {
+        val asked = mutableListOf<Pair<String, String>>()
+        val own = object : SessionTools {
+            override val names = setOf("mike_memory")
+            override suspend fun invoke(sessionId: String, name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
+                asked += sessionId to name
+                return ToolResult("saved")
+            }
+        }
+        val rig = Rig(this, sessionTools = own)
+        rig.coordinator.send("one", "Hello"); runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("1", "mike_memory", buildJsonObject {}, "thread", "turn")); advanceUntilIdle()
+        assertEquals(listOf("one" to "mike_memory"), asked)
+        assertEquals("saved", rig.engine.answers.single().text)
+        // The phone's gateway was never armed: nothing waited for the phone or took it.
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        assertTrue(rig.store.messages.any { it.role == "tool" && it.text.startsWith("mike_memory: saved") })
+        // A device tool in the same run still goes through the phone.
+        rig.engine.emit(EngineEvent.ToolCall("2", "read_ui", buildJsonObject {}, "thread", "turn")); advanceUntilIdle()
+        assertEquals(listOf("read_ui"), rig.tools.names)
+        rig.close()
+    }
+
+    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore(), continuity: AgentContinuity = object : AgentContinuity {}, sessionTools: SessionTools? = null) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
         val store = FakeStore()
@@ -957,6 +981,7 @@ class AgentCoordinatorTest {
             scope, engine, store, tools, overlay,
             sendGrants = grants,
             continuity = continuity,
+            sessionTools = sessionTools,
             bringToForeground = { foregroundRequests++ },
             // The test's own clock, so a reported duration is exactly the time
             // the test advanced rather than how fast the machine ran.
