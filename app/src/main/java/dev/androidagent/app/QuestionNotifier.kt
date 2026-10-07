@@ -33,6 +33,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.SessionStore
+import dev.androidagent.core.RunState
 import dev.androidagent.core.UserQuestion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +43,13 @@ import kotlinx.coroutines.launch
 
 /** Which questions need a notification: every waiting one whose card is not on screen. */
 internal object QuestionNotices {
+    fun waiting(states: Map<String, RunState>, owner: (String) -> String, order: (String) -> Int): Map<String, UserQuestion> {
+        val waiting = linkedMapOf<String, UserQuestion>()
+        states.entries.sortedWith(compareBy({ owner(it.key) != it.key }, { order(it.key) })).forEach { (chat, run) ->
+            run.question?.let { waiting.putIfAbsent(owner(chat), it) }
+        }
+        return waiting
+    }
     /** @return chat id to question, for the questions the user cannot see in the app right now. */
     fun due(waiting: Map<String, UserQuestion>, appInFront: Boolean, openChat: String?): Map<String, UserQuestion> =
         waiting.filterKeys { chat -> !(appInFront && chat == openChat) }
@@ -68,6 +76,9 @@ class QuestionNotifier(
     private val sessions: SessionStore,
     appInFront: StateFlow<Boolean>,
     openChat: StateFlow<String?>,
+    /** A delegated question belongs on its source screen, without changing its gate id. */
+    private val conversationOwner: (String) -> String = { it },
+    private val conversationOrder: (String) -> Int = { 0 },
 ) {
     /** Question ids with a notification up, or already raised in the app. */
     private val posted = mutableSetOf<String>()
@@ -75,7 +86,7 @@ class QuestionNotifier(
     init {
         scope.launch {
             combine(runs.sessionStates, appInFront, openChat) { states, front, open ->
-                val waiting = states.mapNotNull { (chat, run) -> run.question?.let { chat to it } }.toMap()
+                val waiting = QuestionNotices.waiting(states, conversationOwner, conversationOrder)
                 QuestionNotices.due(waiting, front, open)
             }.distinctUntilChanged().collect { due -> show(due) }
         }

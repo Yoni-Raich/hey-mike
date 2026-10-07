@@ -1881,9 +1881,14 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   thread go to the same place. Sign-in, models, usage and voice stay the
   phone's. Both app-servers number requests from zero, so a computer's tool
   and approval requests are tagged `remote|<computer>|<id>` before the
-  coordinator sees them. An unscoped failure from a computer that is not
-  running the current turn is dropped, because the coordinator ends any
-  active run on one.
+  coordinator sees them. An unscoped computer connection failure becomes
+  one scoped failure for each thread owned by that computer and engine.
+  Unrelated phone and computer runs stay active. A lost remote connection
+  marks the affected task outcome unknown; it cannot prove whether a command
+  completed. Phone Codex and Claude failures are scoped to their own threads
+  too, so they cannot end computer subagents. Unexpected clean stdio EOF is
+  a connection failure. Disconnecting or reloading a saved computer explicitly
+  reports its unfinished runs as unknown; app-wide intentional shutdown is silent.
 - **Account and model.** Before any remote app-server call, `RemoteHub`
   supplies an externally managed ChatGPT access token from the active Mike
   account on the phone. The phone's refresh token stays on the phone; the
@@ -2025,16 +2030,45 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   any size; the user decides what is copied. Screenshots keep their cap
   because they go to the model.
 - **The `computers` tool, from any chat.** One tool with modes: `status`,
-  `browse`, `new_project`, `open_chat`, `add`. It is a tool and not a skill
+  `browse`, `new_project`, `open_chat`, `start_task`, `task_status`,
+  `cancel_task`, `add`. It is a tool and not a skill
   because it crosses the sealed store's line: the agent's shell has no SSH
   and must never read a password or rebind a chat. Two modes only prepare
   what the user finishes: `add` fills in the app's add-computer form, which
   says Mike suggested the address (an injected address is how a password
   would be sent to someone else), and the password is typed there, never
   seen by the model; `open_chat` opens a chat in a project with the task in
-  the composer, unsent, so an instruction picked up elsewhere cannot reach a
-  PC that may have full access. A phone chat does not move to the computer;
+  the composer, unsent. A phone chat does not move to the computer;
   `open_chat` starts a new chat there with what was decided.
+- **Computer subagents.** `start_task` creates a separate Codex child session
+  bound to a saved computer/project and dispatches the exact authorized message
+  through `AgentRuns`, `RoutingAgentEngine` and the existing SSH app-server.
+  The source stays open. `ComputerTasks` records its source, request key,
+  destination, child session/thread, state, progress and result in the sealed
+  `RemoteStore`. A short task note in the source updates as it works and keeps
+  the final result; `task_status` reads the same receipt in later source turns.
+  It does not start an extra model turn to summarize a result. Ordinary child
+  history remains available as a computer chat. Subagents cannot dispatch
+  nested computer subagents.
+- **Retry and interruption.** A caller must reuse a stable `requestId` within
+  its source chat. It is reserved durably before creating a child or dispatching
+  a turn; conflicting arguments fail. Retries return that receipt, including
+  after completion, rather than sending again. A process restart makes unfinished
+  receipts `unknown`, never replayed. An unconfirmed Stop or a lost dispatch/
+  connection reply also leaves the outcome unknown. An uncertain outcome requires a
+  user decision and inspection of the computer session, not a replacement key.
+  `cancel_task` stops only that child; source Stop stops its children too, and
+  global Stop covers setup jobs and active coordinators, including setup before
+  a receipt exists. User Stop during voice also stops that source's children.
+  No completed actions
+  are undone. Pending setup is fenced against a Stop before dispatch.
+- **Subagent gates.** Children keep the saved computer's sandbox and approval
+  policy, host-key pin and phone-account exchange. Their existing approval or
+  question is also shown in the source chat and answered by the same child
+  coordinator, never by the agent. Source replies select the visible gate;
+  the source's own gate wins, then children in dispatch order. Results are
+  quoted task data, never authorization for another task. Coordinator outcomes
+  are retained only after history is flushed, so slot reuse cannot lose a result.
 - **Where a new chat runs.** A new chat starts on the phone. Until its first
   message it can be moved to a recent project on a computer, or to another
   folder; after that its thread lives where it started. A computer chat's

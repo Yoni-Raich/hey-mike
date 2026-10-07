@@ -173,4 +173,60 @@ class RemoteStoreTest {
         assertEquals("'HEYMIKE ' + 1", String(Base64.getDecoder().decode(encoded), Charsets.UTF_16LE))
         assertTrue(WindowsHost.powershell(WindowsHost.installScript()).length < 8_000)
     }
+
+    @Test fun computerSubagentReceiptsAndResultsSurviveInTheSealedStore() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "receipts.bin")
+        val store = RemoteStore(file, box)
+        store.save(computer, "secret")
+        val task = ComputerTask("task-1", "retry-key", "source", "pc", "C:\\src", "exact private request\n  ",
+            model = "model", sessionId = "child", threadId = "remote-thread", status = "completed",
+            progress = "Ready", result = "private final result", activity = "checked private file")
+        store.saveTask(task)
+        val reloaded = RemoteStore(file, box).state.value.tasks.getValue("task-1")
+        assertEquals(task, reloaded)
+        val sealed = file.readText(Charsets.ISO_8859_1)
+        assertFalse(sealed.contains("exact private request"))
+        assertFalse(sealed.contains("private final result"))
+        assertFalse(sealed.contains("retry-key"))
+        assertEquals("computer_subagent", reloaded.toJson()["kind"].toString().trim('"'))
+        assertEquals("source", reloaded.toJson()["parentSessionId"].toString().trim('"'))
+    }
+
+    @Test fun removalKeepsRetryReceiptsAndLateProgressCannotReviveThem() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "removed.bin")
+        val store = RemoteStore(file, box)
+        store.save(computer, "secret")
+        val task = ComputerTask("task-1", "key", "source", "pc", "C:\\src", "go", sessionId = "child", status = "running")
+        store.saveTask(task)
+        store.remove("pc")
+        val removed = store.state.value.tasks.getValue(task.id)
+        assertEquals("unknown", removed.status)
+        assertEquals(removed, store.saveTask(task.copy(progress = "late progress")))
+        assertEquals(removed, RemoteStore(file, box).state.value.tasks.getValue(task.id))
+    }
+
+    @Test fun aReceiptCannotChangeOwnershipDestinationOrExactMessage() {
+        val store = RemoteStore(File(temp.root, "immutable.bin"), SoftwareBox())
+        store.save(computer, "secret")
+        val task = ComputerTask("task-1", "key", "source", "pc", "C:\\src", " go ")
+        store.saveTask(task)
+        assertTrue(runCatching { store.saveTask(task.copy(originSessionId = "other")) }.isFailure)
+        assertTrue(runCatching { store.saveTask(task.copy(project = "C:\\other")) }.isFailure)
+        assertTrue(runCatching { store.saveTask(task.copy(message = "go")) }.isFailure)
+        assertTrue(runCatching { store.saveTask(task.copy(requestId = "new-key")) }.isFailure)
+        assertEquals(task, store.state.value.tasks.getValue(task.id))
+    }
+
+    @Test fun eachRetryKeyIsReservedOncePerSourceChat() {
+        val store = RemoteStore(File(temp.root, "unique.bin"), SoftwareBox())
+        store.save(computer, "secret")
+        val first = ComputerTask("task-1", "key", "source", "pc", "C:\\src", "go")
+        store.saveTask(first)
+        assertTrue(runCatching { store.saveTask(first.copy(id = "task-2")) }.isFailure)
+        val otherSource = first.copy(id = "task-3", originSessionId = "other-source")
+        store.saveTask(otherSource)
+        assertEquals(2, store.state.value.tasks.size)
+    }
 }

@@ -75,6 +75,7 @@ interface TurnRunner {
 class AgentRuns(
     scope: CoroutineScope,
     engine: AgentEngine,
+    private val onStopSession: (String?) -> Unit = {},
     private val create: (PhoneShare) -> AgentCoordinator,
 ) : TurnRunner {
     val lease = DeviceLease()
@@ -82,6 +83,32 @@ class AgentRuns(
     /** Every coordinator made so far; an idle one is reused before another is made. */
     val slots: List<AgentCoordinator> get() = slotList.value
     private var voiceSlot: AgentCoordinator? = null
+    /** Link order is also the order in which the source shows its children's gates. */
+    private val childParents = linkedMapOf<String, String>()
+    private val dispatchedChildren = mutableSetOf<String>()
+
+    /** An app-owned direct task can expose its gates and Stop in its source chat. */
+    fun linkChild(child: String, parent: String) = synchronized(this) {
+        require(child.isNotBlank() && parent.isNotBlank()) { "Child and source session IDs are required." }
+        require(child != parent && childParents[parent] == null && childParents.values.none { it == child }) {
+            "Nested computer tasks are not supported."
+        }
+        require(childParents[child] == null || childParents[child] == parent) {
+            "A computer task already belongs to another source chat."
+        }
+        childParents[child] = parent
+    }
+
+    fun childrenOf(sessionId: String): List<String> = synchronized(this) {
+        childParents.filterValues { it == sessionId }.keys.toList()
+    }
+
+    private fun family(sessionId: String): List<String> = listOf(sessionId) + childrenOf(sessionId)
+
+    /** The gate shown in the source chat: its own first, then its oldest waiting child. */
+    private fun waitingSlot(sessionId: String): AgentCoordinator? = family(sessionId).firstNotNullOfOrNull { id ->
+        slotFor(id)?.takeIf { it.state.value.approval != null || it.state.value.question != null }
+    }
 
     init { slotList.value = listOf(newSlot()) }
 
@@ -103,6 +130,10 @@ class AgentRuns(
     val sessionStates: StateFlow<Map<String, RunState>> = eachSlot({ it.state }) { states ->
         // An active run wins over the finished one a slot last held for the same chat.
         states.filter { it.sessionId != null }.sortedBy { it.active }.associateBy { it.sessionId!! }
+    }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    val outcomes: StateFlow<Map<String, RunState>> = eachSlot({ it.outcomes }) { maps ->
+        maps.fold(emptyMap<String, RunState>()) { all, one -> all + one }
     }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     /**
@@ -152,21 +183,56 @@ class AgentRuns(
         planMode: Boolean,
         engineKind: EngineKind?,
     ) {
-        val slot = synchronized(this) { slotFor(sessionId) ?: freeSlot() }
-        // A chat already running is steered by its own coordinator.
-        slot.send(sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind)
+        if (prompt.isBlank() && images.isEmpty()) return
+        synchronized(this) {
+            val active = slotFor(sessionId)
+            val slot = active ?: freeSlot()
+            if (active == null) slots.forEach { it.clearOutcome(sessionId) }
+            // Reserve the slot before releasing the same lock another sender uses.
+            // A chat already running is steered by its own coordinator.
+            slot.send(sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind)
+        }
+    }
+
+    /**
+     * Link and dispatch together with Stop. The app-owned receipt supplies
+     * [allowed], so a Stop during computer setup can refuse dispatch even
+     * before the child has a running coordinator.
+     */
+    fun sendChild(
+        sessionId: String,
+        originSessionId: String,
+        prompt: String,
+        model: String? = null,
+        allowed: () -> Boolean = { true },
+    ): Boolean = synchronized(this) {
+        if (!allowed()) return@synchronized false
+        require(prompt.isNotBlank()) { "A computer task needs a message." }
+        linkChild(sessionId, originSessionId)
+        // The receipt owns the exact-once boundary; a repeated dispatch must
+        // not become steering input on an already running child.
+        if (sessionId in dispatchedChildren || slotFor(sessionId) != null) return@synchronized false
+        dispatchedChildren += sessionId
+        send(sessionId, prompt, model = model, engineKind = EngineKind.CODEX)
+        true
     }
 
     override fun steer(sessionId: String, prompt: String) { slotFor(sessionId)?.steer(prompt) }
 
-    fun stop(sessionId: String) { slotFor(sessionId)?.stop() }
+    fun stop(sessionId: String) = synchronized(this) {
+        try { onStopSession(sessionId) }
+        finally { family(sessionId).forEach { slotFor(it)?.stop() } }
+    }
 
     /**
      * Stop every chat, as the notification's and the floating card's Stop do.
      * Stopping only the chat on the phone would hand it straight to the next
      * chat waiting for it, which is not what pressing Stop on it asks for.
      */
-    fun stop() { slots.forEach { it.stop() } }
+    fun stop() = synchronized(this) {
+        try { onStopSession(null) }
+        finally { slots.forEach { it.stop() } }
+    }
 
     /** Words typed on the floating card, for the chat it shows: the one on the phone. */
     fun steerPhone(prompt: String) {
@@ -179,9 +245,9 @@ class AgentRuns(
 
     /** A spoken or typed yes or no, for the approval waiting in [sessionId], or in any chat. */
     fun answerApprovalByReply(reply: String, record: Boolean = true, sessionId: String? = null): Boolean {
-        val slot = slots.firstOrNull { slot ->
-            slot.state.value.approval != null && (sessionId == null || slot.state.value.sessionId == sessionId)
-        } ?: return false
+        val slot = if (sessionId == null) slots.firstOrNull { it.state.value.approval != null }
+            else waitingSlot(sessionId)?.takeIf { it.state.value.approval != null }
+        if (slot == null) return false
         return slot.answerApprovalByReply(reply, record)
     }
 
@@ -191,7 +257,7 @@ class AgentRuns(
 
     /** What the user typed in [sessionId] while a question waits there is its answer. */
     fun answerQuestionByReply(reply: String, sessionId: String): Boolean =
-        slots.firstOrNull { it.state.value.question != null && it.state.value.sessionId == sessionId }
+        waitingSlot(sessionId)?.takeIf { it.state.value.question != null }
             ?.answerQuestionByReply(reply) ?: false
 
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {

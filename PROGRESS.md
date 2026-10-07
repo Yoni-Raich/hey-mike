@@ -1,5 +1,47 @@
 # Progress
 
+### Direct computer subagents from a source chat — 2026-10-07
+
+- Added `computers(start_task, task_status, cancel_task)`. A direct task
+  creates a Codex child session on a saved computer/project without switching
+  the source screen. IDs, progress, gates and the final result return to the
+  source. `open_chat` still prepares an unsent draft.
+- Children use the existing SSH connection, pinned host key, phone-account
+  exchange and saved computer access policy. Stable request keys are sealed
+  before dispatch. Retry returns the same receipt; restart or an unconfirmed
+  remote outcome becomes `unknown`, with no automatic replay. Source/global
+  Stop covers setup races and children, including a source in voice.
+- Server failures are scoped to the owning phone/computer and engine. Clean
+  app-server EOF and manual computer disconnect no longer strand child tasks
+  or end unrelated runs. Source replies answer the gate shown there.
+- Windows/JDK 21: `:core:test :engine-codex:testDebugUnitTest
+  :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug
+  :app:assembleDevDebug --no-daemon --no-parallel --max-workers=2
+  --console=plain` passed with normal pinned runtime staging. XML: 698 core,
+  48 engine, 102 remote and 142 app tests (990 total, zero failures/errors,
+  two existing optional Linux/SSH skips). All eight new stdio integration
+  scenarios passed: exact task and policy, single retry dispatch, result,
+  approval, cancellation, scoped errors and disconnect in both directions.
+  Lint: zero errors, 21 warnings. `python -m unittest
+  tools.test_prepare_runtime` passed all 15 tests. `git diff --check` passed.
+- The final rerun used `--offline`, an isolated Gradle user home and a
+  temporary init script with the existing output paths, runtime staging and
+  build lease, but read-only storage status. The normal cleanup hook failed
+  before tests on a locked lint-cache JAR in another build bucket. That work
+  and the global storage configuration were left alone; storage remains above
+  its 5 GiB target. No unrelated source changes were included.
+- Test APK: Dev Debug, `dev.androidagent.app.dev`, code 28, version 0.14.0,
+  ARM64/x86_64, 330,200,606 bytes, verified debug-key v2 signing. SHA-256:
+  `97d055a2f34cccb7885503edad4e644f07f91b962164e73c9dd26b66eaca410d`.
+  Outputs remain under ignored `build/6cec6ec9b6827655/` in the primary
+  repository, including `app/outputs/apk/dev/debug/app-dev-debug.apk`.
+- Not tested: installed phone UI, real saved-computer SSH, a live model task,
+  real approval/Stop over that connection, process loss with remote work still
+  running, or the full release gate. Integration uses the real routing,
+  coordinator and JSON-RPC code with an in-memory stdio peer; it does not prove
+  those physical/account paths. No APK was installed or release published.
+  After restart, unknown tasks require inspection; they are not reattached.
+
 ### Shared topic names for Mike chats — 2026-10-06
 
 - New typed chats start with a name from the first real user request. The

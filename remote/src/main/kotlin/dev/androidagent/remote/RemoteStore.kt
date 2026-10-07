@@ -16,6 +16,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 /**
@@ -86,6 +89,8 @@ data class RemoteState(
      * key is gone. Nothing from it is trusted.
      */
     val unreadable: Boolean = false,
+    /** Direct runs, sealed together with their destination and retry key. */
+    val tasks: Map<String, ComputerTask> = emptyMap(),
 ) {
     val defaultComputer: RemoteComputer? get() = computers.firstOrNull { it.id == defaultComputerId }
 }
@@ -177,6 +182,9 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     defaultComputerId = default,
                     bindings = stored.state.bindings.filterValues { it.computerId != id },
                     projects = stored.state.projects.filterNot { it.computerId == id },
+                    tasks = stored.state.tasks.mapValues { (_, task) ->
+                        if (task.computerId == id && !task.terminal) task.copy(status = "unknown", progress = "Computer removed; remote outcome is unknown.") else task
+                    },
                 ),
                 stored.passwords - id,
             ),
@@ -198,15 +206,34 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
         write(Stored(stored.state.copy(bindings = stored.state.bindings - sessionId), stored.passwords))
     }
 
+    @Synchronized fun saveTask(task: ComputerTask): ComputerTask {
+        require(computer(task.computerId) != null || task.id in stored.state.tasks) { "Unknown computer" }
+        val existing = stored.state.tasks[task.id]
+        if (existing != null) {
+            require(existing.requestId == task.requestId && existing.originSessionId == task.originSessionId &&
+                existing.computerId == task.computerId && existing.project == task.project &&
+                existing.message == task.message && existing.model == task.model) { "A computer task receipt cannot change destination or request." }
+            // Removal or recovery can race the last progress emission. A
+            // terminal receipt must never become live again.
+            if (existing.terminal && existing.status != task.status) return existing
+        } else require(stored.state.tasks.values.none { it.originSessionId == task.originSessionId && it.requestId == task.requestId }) {
+            "This source chat already reserved that requestId."
+        }
+        write(Stored(stored.state.copy(tasks = stored.state.tasks + (task.id to task)), stored.passwords))
+        return task
+    }
+
     private fun write(next: Stored) {
         val body = encode(next).toByteArray(Charsets.UTF_8)
         file.parentFile?.mkdirs()
         val temp = File(file.parentFile, file.name + ".tmp")
-        temp.writeBytes(box.seal(body))
-        if (!temp.renameTo(file)) {
-            file.delete()
-            check(temp.renameTo(file)) { "Could not save computers" }
+        FileOutputStream(temp).use {
+            it.write(box.seal(body))
+            it.fd.sync()
         }
+        // Never delete the previous sealed state to make room: a crash in
+        // that gap would lose the retry receipt and permit duplicate work.
+        Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         stored = next
         mutableState.value = next.state
     }
@@ -222,6 +249,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
 
         private fun encode(stored: Stored): String = buildJsonObject {
             put("version", 1)
+            put("tasks", buildJsonArray { stored.state.tasks.values.forEach { add(it.toJson()) } })
             stored.state.defaultComputerId?.let { put("default", it) }
             put("computers", buildJsonArray {
                 stored.state.computers.forEach { c ->
@@ -290,7 +318,9 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                 val computer = p.text("computer")?.takeIf { it in ids } ?: return@mapNotNull null
                 RemoteProject(computer, p.text("path") ?: return@mapNotNull null)
             }.distinct()
-            return Stored(RemoteState(computers, bindings, default, projects), passwords)
+            val tasks = (root["tasks"] as? JsonArray).orEmpty().map { ComputerTask.fromJson(it.jsonObject) }
+                .associateBy { it.id }
+            return Stored(RemoteState(computers, bindings, default, projects, tasks = tasks), passwords)
         }
 
         private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

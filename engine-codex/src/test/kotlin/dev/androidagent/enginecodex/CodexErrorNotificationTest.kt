@@ -88,6 +88,24 @@ class CodexErrorNotificationTest {
 
     private suspend fun Channel<EngineEvent>.next() = withTimeout(5_000) { receive() }
 
+    @Test fun cleanEndOfOutputReportsAnUncertainConnectionFailure() = runBlocking {
+        withServer { server, _, events ->
+            server.endOutput()
+            val failure = events.next() as EngineEvent.Failure
+            assertTrue(failure.message.contains("Codex connection ended"))
+            assertTrue(failure.uncertain)
+            assertNull(failure.threadId)
+            assertNull(failure.turnId)
+        }
+    }
+
+    @Test fun intentionalCloseDoesNotReportAConnectionFailure() = runBlocking {
+        withServer { _, engine, events ->
+            engine.close()
+            assertNull(withTimeoutOrNull(300) { events.receive() })
+        }
+    }
+
     private suspend fun withServer(
         stderr: String = "",
         diagnosticSink: (String) -> Unit = {},
@@ -155,6 +173,7 @@ class CodexErrorNotificationTest {
         }.toString())
 
         fun writeLine(line: String) = synchronized(lock) { writer.write(line); writer.newLine(); writer.flush() }
+        fun endOutput() = replies.close()
         override suspend fun prepare() = Unit
         override suspend fun startAppServer(): Process = process
         override suspend fun stop() {

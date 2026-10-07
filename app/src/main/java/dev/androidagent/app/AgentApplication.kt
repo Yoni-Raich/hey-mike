@@ -293,9 +293,20 @@ class AgentGraph(private val app: Application) {
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
+    val computerTasks = dev.androidagent.remote.ComputerTasks(
+        computers, sessions, scope,
+        runner = { dev.androidagent.remote.RunsComputerTaskRunner(runCoordinator) },
+        prepare = { id, path ->
+            val ready = remote.setup.value[id].takeIf { it is dev.androidagent.remote.RemoteSetup.Ready }
+                ?: remote.setUp(id, install = false)
+            check(ready is dev.androidagent.remote.RemoteSetup.Ready) { "The computer is not ready: $ready" }
+            remote.listFolders(id, path) // Validate the directory through the existing connection.
+        },
+    )
     /** The user's computers, from any chat. Passwords and bindings stay with the app. */
     val computerTools = dev.androidagent.remote.ComputerToolGateway(
         remote, sessions, computerRequests,
+        tasks = computerTasks,
         bringToForeground = ::bringAppForward,
     )
     // Explicit type: the workflow gateway's router lambda refers back to this
@@ -334,7 +345,10 @@ class AgentGraph(private val app: Application) {
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
-        runCoordinator = AgentRuns(scope, engine) { share ->
+        runCoordinator = AgentRuns(scope, engine, onStopSession = { id ->
+            if (id != null) computerTasks.stopOrigin(id)
+            else computerTasks.stopAll()
+        }, create = { share ->
             AgentCoordinator(
                 scope, engine, sessions, tools, overlay,
                 sendGrants = sendGrants,
@@ -348,8 +362,14 @@ class AgentGraph(private val app: Application) {
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
             )
-        }
-        questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)
+        })
+        questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat,
+            conversationOwner = { child -> computers.state.value.tasks.values.firstOrNull { it.sessionId == child }?.originSessionId ?: child },
+            conversationOrder = { child ->
+                val source = computers.state.value.tasks.values.firstOrNull { it.sessionId == child }?.originSessionId
+                if (source == null) -1 else runCoordinator.childrenOf(source).indexOf(child).takeIf { it >= 0 } ?: Int.MAX_VALUE
+            },
+        )
         queue = SessionRunQueue(
             scope,
             coordinator,
