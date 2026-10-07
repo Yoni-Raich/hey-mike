@@ -40,12 +40,12 @@ import kotlinx.coroutines.withContext
 /** The one Claude Code build the app runs. Bytes are checked against [sha256] and [size]. */
 data class ClaudeBinaryPin(val version: String, val url: String, val sha256: String, val size: Long) {
     companion object {
-        /** Pinned in docs/superpowers/specs/2026-09-30-claude-subscription-design.md. */
+        /** Official 2.1.293 linux-arm64-musl manifest, verified for Haiku 5.5. */
         val CURRENT = ClaudeBinaryPin(
-            version = "2.1.285",
-            url = "https://downloads.claude.ai/claude-code-releases/2.1.285/linux-arm64-musl/claude",
-            sha256 = "31efc4136bc678575f4c6730e248d34f89dbfea0468be1c5d012af199cd62ee8",
-            size = 232_077_120L,
+            version = "2.1.293",
+            url = "https://downloads.claude.ai/claude-code-releases/2.1.293/linux-arm64-musl/claude",
+            sha256 = "00755ae106b6925c1adb2b17e4c6d9b0c41eb4cc55bcad3581345b0aa3176c85",
+            size = 244_463_424L,
         )
     }
 }
@@ -71,7 +71,7 @@ data class ClaudeInstallState(
  *
  * After a good sha256 check, `claude.verified` next to the binary records the
  * version, size, modification time and sha256. A later start trusts it only
- * while all of those still match the pin and the file, so the 232 MB binary
+ * while all of those still match the pin and the file, so the 244 MB binary
  * is not hashed on every app start; anything else hashes it again.
  */
 class ClaudeRuntimeInstaller(
@@ -94,7 +94,7 @@ class ClaudeRuntimeInstaller(
     val versionDirectory: File get() = File(installRoot, pin.version)
     val binaryFile: File get() = File(versionDirectory, BINARY_NAME)
     private val partialFile: File get() = File(versionDirectory, PARTIAL_NAME)
-    /** The last good sha256 check, so an app start need not hash 232 MB again. */
+    /** The last good sha256 check, so an app start need not hash 244 MB again. */
     internal val verifiedRecordFile: File get() = File(versionDirectory, VERIFIED_NAME)
     private val verifiedRecordTemp: File get() = File(versionDirectory, "$VERIFIED_NAME.tmp")
 

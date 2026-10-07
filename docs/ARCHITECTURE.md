@@ -2086,11 +2086,18 @@ voice works in a Claude chat.
 - **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
   `claude` binary through the pinned Alpine musl loader, packaged as
   `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
-  W^X does not apply. The binary (2.1.285, pinned sha256 and size) is never
+  W^X does not apply. The binary (2.1.293, pinned sha256 and size) is never
   bundled: it is downloaded from `downloads.claude.ai` only after the user
-  saw its size (232 MB) and tapped Download, with progress and cancel, and
+  saw its size (244 MB) and tapped Download, with progress and cancel, and
   hashed before use. At app start the host only re-checks a binary that is
   already there. On other ABIs the card says "Not available on this device".
+  Claude Code 2.1.293 adds Haiku 5.5 (`claude-haiku-5-5`); the picker uses
+  the CLI's `initialize` catalog, including its effort options. Until a
+  catalog is available, the pinned Haiku alias is shown as "Haiku 5.5".
+  A computer's own CLI catalog still supplies its names, so an older
+  computer can keep showing Haiku 4.5. Updating Mike requires downloading
+  the new phone binary from Claude setup; Claude sign-in and chat files
+  live outside the versioned binary directory.
 - **Phone tools over loopback MCP.** Each chat process gets its own
   `LoopbackMcpServer` (127.0.0.1, fresh port and bearer token per start), so
   a tool call is always tied to the chat that made it. A `tools/call` becomes
