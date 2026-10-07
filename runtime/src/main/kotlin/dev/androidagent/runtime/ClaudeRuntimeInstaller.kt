@@ -37,7 +37,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** The one Claude Code build the app runs. Bytes are checked against [sha256] and [size]. */
+/** A Claude Code build, from the bundled pin or a verified official release manifest. */
 data class ClaudeBinaryPin(val version: String, val url: String, val sha256: String, val size: Long) {
     companion object {
         /** Official 2.1.293 linux-arm64-musl manifest, verified for Haiku 5.5. */
@@ -58,6 +58,7 @@ data class ClaudeInstallState(
     val bytesDownloaded: Long = 0,
     val totalBytes: Long = 0,
     val message: String = "",
+    val updateMessage: String? = null,
 )
 
 /**
@@ -66,7 +67,7 @@ data class ClaudeInstallState(
  * The binary is never bundled in the APK and never modified. The download
  * goes to `claude.part`, is hashed while it streams, must match the pinned
  * size and sha256, and is then renamed atomically. Any failure or cancel
- * deletes the partial file. Other versions are deleted. Nothing here reads
+ * deletes the partial file. Other versions are retained for running processes and rollback. Nothing here reads
  * the Claude config dir.
  *
  * After a good sha256 check, `claude.verified` next to the binary records the
@@ -76,7 +77,7 @@ data class ClaudeInstallState(
  */
 class ClaudeRuntimeInstaller(
     /** `filesDir/runtime/claude`: holds only version directories. */
-    private val installRoot: File,
+    val installRoot: File,
     val pin: ClaudeBinaryPin = ClaudeBinaryPin.CURRENT,
     /** False on devices without the arm64 loader; the state stays UNSUPPORTED. */
     private val supported: Boolean = true,
@@ -128,7 +129,6 @@ class ClaudeRuntimeInstaller(
             mutableState.value = ClaudeInstallState(ClaudeInstallPhase.UNSUPPORTED, totalBytes = pin.size, message = UNSUPPORTED_MESSAGE)
             return null
         }
-        removeOtherVersions()
         partialFile.delete()
         verifiedRecordTemp.delete()
         val binary = verifiedBinaryOrNull()
@@ -197,7 +197,7 @@ class ClaudeRuntimeInstaller(
         try {
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
-            connection.instanceFollowRedirects = true
+            connection.instanceFollowRedirects = false
             connection.useCaches = false
             val code = connection.responseCode
             check(code == HttpURLConnection.HTTP_OK) { "Claude Code download failed: HTTP $code" }
@@ -318,14 +318,6 @@ class ClaudeRuntimeInstaller(
             }
 
             private val SHA256_HEX = Regex("^[0-9a-fA-F]{64}$")
-        }
-    }
-
-    private fun removeOtherVersions() {
-        val entries = installRoot.listFiles() ?: return
-        for (entry in entries) {
-            if (entry.name == pin.version && entry.isDirectory) continue
-            entry.deleteRecursively()
         }
     }
 

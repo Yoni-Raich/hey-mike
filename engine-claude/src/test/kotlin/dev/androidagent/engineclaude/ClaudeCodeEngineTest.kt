@@ -69,8 +69,8 @@ class ClaudeCodeEngineTest {
     private val engines = mutableListOf<ClaudeCodeEngine>()
     private val tapTool = ToolDefinition("tap", "Tap the screen", buildJsonObject { put("type", "object") })
 
-    private fun engine(grace: Long = 3_000): ClaudeCodeEngine =
-        ClaudeCodeEngine(host, servers, interruptGraceMs = grace, clock = { ZonedDateTime.of(2026, 9, 30, 12, 0, 0, 0, ZoneId.of("UTC")) })
+    private fun engine(grace: Long = 3_000, catalogClock: () -> Long = System::nanoTime): ClaudeCodeEngine =
+        ClaudeCodeEngine(host, servers, interruptGraceMs = grace, clock = { ZonedDateTime.of(2026, 9, 30, 12, 0, 0, 0, ZoneId.of("UTC")) }, catalogClock = catalogClock)
             .also { engine ->
                 engines += engine
                 scope.launch(start = CoroutineStart.UNDISPATCHED) { engine.events.collect { events += it } }
@@ -457,6 +457,90 @@ class ClaudeCodeEngineTest {
         assertFalse("the probe never sends a message", probe.lines.any { it.contains("\"type\":\"user\"") })
         assertFalse(probe.isAlive)
     }
+
+    private fun catalogScript(name: String): (FakeClaude) -> Unit = { process ->
+        process.onLine = { p, line ->
+            val frame = Json.parseToJsonElement(line).jsonObject
+            if (frame.requestSubtype() == "initialize") {
+                val id = frame["request_id"]!!.jsonPrimitive.content
+                p.send(FakeClaude.initializeResponse(id).toString().replace("Haiku 4.5", name))
+            }
+        }
+    }
+
+    @Test fun modelCatalogExpiresAndDiscoversNewModelsWithoutAppRestart() = runBlocking {
+        var at = 0L
+        val engine = engine(catalogClock = { at })
+        assertEquals("Haiku 4.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        host.script = catalogScript("Haiku 5.5")
+        at = 59_000_000_000L
+        assertEquals("Haiku 4.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        assertEquals(1, host.started.size)
+        at = 60_000_000_000L
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        assertEquals(2, host.started.size)
+    }
+
+    @Test fun runtimeChangeRefreshesModelsImmediatelyWithoutWaitingForTtl() = runBlocking {
+        val engine = engine(catalogClock = { 0 })
+        engine.modelCatalog()
+        host.script = catalogScript("Haiku 5.5")
+        host.runtimeIdentity = "2.1.294"
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        assertEquals(2, host.started.size)
+    }
+
+    @Test fun failedCatalogRefreshKeepsLastGoodModelsAndBacksOff() = runBlocking {
+        var at = 0L
+        val engine = engine(catalogClock = { at })
+        val before = engine.modelCatalog()
+        host.script = { process ->
+            process.onLine = { p, line ->
+                val frame = Json.parseToJsonElement(line).jsonObject
+                p.send(ClaudeProtocol.controlError(frame["request_id"]!!.jsonPrimitive.content, "offline"))
+            }
+        }
+        at = 60_000_000_000L
+        assertEquals(before, engine.modelCatalog())
+        at += 29_000_000_000L
+        assertEquals(before, engine.modelCatalog())
+        assertEquals(2, host.started.size)
+        host.script = catalogScript("Haiku 5.5")
+        at += 1_000_000_000L
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+    }
+
+    @Test fun cancellingCatalogProbeStopsItAndAllowsImmediateRetry() = runBlocking {
+        val engine = engine(catalogClock = { 0 })
+        host.script = {}
+        val work = async(Dispatchers.IO) { engine.modelCatalog() }
+        waitUntil { host.started.size == 1 }
+        work.cancelAndJoin()
+        assertFalse(host.started.single().isAlive)
+        host.script = catalogScript("Haiku 5.5")
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+    }
+
+    @Test fun runtimeChangeKeepsActiveTurnAndResumesOnNewProcessAtNextTurn() = runBlocking {
+        val engine = engine()
+        val (id, turn) = engine.begin()
+        val old = host.chats().single()
+        old.nextFrame { it.type() == "user" }
+        host.runtimeIdentity = "2.1.294"
+        engine.modelCatalog()
+        assertTrue(old.isAlive)
+        assertEquals(1, host.chats().size)
+        old.send(result())
+        awaitEvent<EngineEvent.TurnFinished> { it.turnId == turn }
+        engine.startTurn(id, "next", emptyList())
+        assertFalse(old.isAlive)
+        val fresh = host.chats().last()
+        assertEquals(2, host.chats().size)
+        assertEquals(id, fresh.after("--resume"))
+        fresh.nextFrame { it.type() == "user" }
+        fresh.send(result())
+    }
+
 
     private fun usageAnswer(requestId: String, error: String? = null): JsonObject =
         if (error == null) ClaudeProtocol.controlSuccess(requestId, GET_USAGE_REPLY) else ClaudeProtocol.controlError(requestId, error)

@@ -3,3 +3,5 @@
 # package them, with CRLF.
 *.sh text eol=lf
 app/src/main/assets/agent_stack/**/*.tsv text eol=lf
+# The detached release signature covers these exact manifest bytes.
+runtime/src/test/resources/claude/manifest-*.json -text

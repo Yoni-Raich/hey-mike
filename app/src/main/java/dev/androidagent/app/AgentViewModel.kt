@@ -100,6 +100,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false, isLoadingMessages = true) }
             updateTitle()
             project()
+            refreshModels()
             try {
                 // Reading a saved history can touch disk. Keep the loading card
                 // responsive, and do not hold the history behind skill discovery.
@@ -258,9 +259,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // A binary already on the phone, or one just downloaded: read the sign-in.
         viewModelScope.launch {
             graph.claudeHost.installState
-                .map { it.phase == ClaudeInstallPhase.INSTALLED }
+                .map { if (it.phase == ClaudeInstallPhase.INSTALLED) graph.claudeHost.runtimeIdentity else null }
                 .distinctUntilChanged()
-                .collect { installed -> if (installed) runCatching { refreshClaude() } }
+                .collect { version -> if (version != null) {
+                    runCatching { refreshClaude() }
+                    graph.scope.launch { graph.claudeHost.checkForUpdates() }
+                } }
+        }
+        viewModelScope.launch {
+            graph.appInFront.collectLatest { foreground ->
+                if (foreground) while (true) {
+                    refreshModels()
+                    delay(60_000)
+                }
+            }
         }
     }
 
@@ -523,6 +535,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Back in the app after the approval page: connect again without being asked. */
     fun appResumed() {
+        refreshModels()
         val ids = synchronized(awaitingApproval) { awaitingApproval.toList().also { awaitingApproval.clear() } }
         ids.forEach { id ->
             if (graph.remote.setup.value[id] is RemoteSetup.NeedsTailscaleApproval) reconnectComputer(id)
@@ -931,7 +944,35 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun cancelClaudeDownload() = graph.claudeHost.installer.cancel()
+    fun cancelClaudeDownload() = graph.claudeHost.updates.cancel()
+
+    private var modelRefreshJob: Job? = null
+    private var modelRefreshAt: Long? = null
+    private var modelRefreshComputer: String? = null
+
+    /** Fresh catalog on chat/menu open and resume; per-runtime engine caches bound repeated work. */
+    fun refreshModels() {
+        val computer = current.value?.let(graph.computers::binding)?.computerId
+        val at = System.nanoTime()
+        if (modelRefreshJob?.isActive == true) return
+        if (computer == modelRefreshComputer && modelRefreshAt?.let { at - it < 30_000_000_000L } == true) return
+        modelRefreshComputer = computer
+        modelRefreshAt = at
+        modelRefreshJob = viewModelScope.launch {
+            try {
+                if (computer != null) {
+                    graph.remote.checkClaude(computer)
+                } else if (mutable.value.claude.account?.signedIn == true) {
+                    loadClaudeModels()
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Keep the last known catalog while offline. */ }
+            finally {
+                modelRefreshJob = null
+                if (current.value?.let(graph.computers::binding)?.computerId != computer) refreshModels()
+            }
+        }
+    }
 
     /** Start `claude auth login` and open its page in the browser. */
     fun claudeLogin() = claudeTask {

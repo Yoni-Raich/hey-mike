@@ -151,11 +151,13 @@ val EngineKind.label: String
  * environment; engines only pass `claude` arguments.
  */
 interface ClaudeProcessHost {
-    /** Install state of the pinned binary; READY once it is present and verified. */
+    /** Changes when new chat processes will use a different runtime. Existing turns keep their process. */
+    val runtimeIdentity: String get() = ""
+    /** Install state of the active binary; READY once it is present and verified. */
     val status: StateFlow<RuntimeStatus>
     /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its files. */
     val homeDirectory: File
-    /** Download and verify the pinned binary if needed. Fails closed on any mismatch. */
+    /** Explicit first installation, or use an already verified active build. */
     suspend fun prepare()
     /** Start `claude <args>` in [workingDirectory] with [extraEnv] on top of the host environment. */
     suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String> = emptyMap()): Process

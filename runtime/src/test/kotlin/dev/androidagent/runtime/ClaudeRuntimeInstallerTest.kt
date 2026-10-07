@@ -172,7 +172,7 @@ class ClaudeRuntimeInstallerTest {
     }
 
     @Test
-    fun `other versions and stale partials are removed`() = runBlocking<Unit> {
+    fun `other versions are retained and only this versions stale partial is removed`() = runBlocking<Unit> {
         File(root, "claude/2.0.0").mkdirs()
         File(root, "claude/2.0.0/claude").writeText("old")
         File(root, "claude/9.9.9").mkdirs()
@@ -181,12 +181,12 @@ class ClaudeRuntimeInstallerTest {
         val installer = installer()
 
         installer.install()
-        assertEquals(listOf("claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
-        assertFalse(File(root, "claude/2.0.0").exists())
+        assertEquals(listOf("claude/2.0.0/claude", "claude/9.9.9/claude", "claude/9.9.9/claude.verified", "claude/stray-file"), leftovers())
+        assertTrue(File(root, "claude/2.0.0").exists())
     }
 
     @Test
-    fun `refresh removes old versions and accepts a verified binary`() = runBlocking<Unit> {
+    fun `refresh keeps old versions and accepts a verified binary`() = runBlocking<Unit> {
         File(root, "claude/2.0.0").mkdirs()
         File(root, "claude/2.0.0/claude").writeText("old")
         File(root, "claude/9.9.9").mkdirs()
@@ -195,7 +195,7 @@ class ClaudeRuntimeInstallerTest {
 
         assertEquals(File(root, "claude/9.9.9/claude"), installer.refresh())
         assertEquals(ClaudeInstallPhase.INSTALLED, installer.state.value.phase)
-        assertEquals(listOf("claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
+        assertEquals(listOf("claude/2.0.0/claude", "claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
         assertTrue(opened.isEmpty())
         assertEquals(1, hashes)
     }

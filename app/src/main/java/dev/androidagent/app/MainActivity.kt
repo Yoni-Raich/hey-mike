@@ -329,6 +329,7 @@ class MainActivity : ComponentActivity() {
         onConnect = { model.connect(it) },
         onDiscover = { model.discover() },
         onModelSelected = model::model,
+        onRefreshModels = model::refreshModels,
         onReasoningEffortSelected = model::reasoningEffort,
         onRenameSession = { id, title -> model.rename(id, title) },
         onCompact = { ensureService(); model.compact() },
