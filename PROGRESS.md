@@ -24,6 +24,8 @@
   approval, cancellation, scoped errors and disconnect in both directions.
   Lint: zero errors, 21 warnings. `python -m unittest
   tools.test_prepare_runtime` passed all 15 tests. `git diff --check` passed.
+  After the retry receipt wording was corrected to follow its stored state,
+  `:remote:testDebugUnitTest :app:lintDevDebug :app:assembleDevDebug` passed again.
 - The final rerun used `--offline`, an isolated Gradle user home and a
   temporary init script with the existing output paths, runtime staging and
   build lease, but read-only storage status. The normal cleanup hook failed
@@ -31,8 +33,8 @@
   and the global storage configuration were left alone; storage remains above
   its 5 GiB target. No unrelated source changes were included.
 - Test APK: Dev Debug, `dev.androidagent.app.dev`, code 28, version 0.14.0,
-  ARM64/x86_64, 330,200,606 bytes, verified debug-key v2 signing. SHA-256:
-  `97d055a2f34cccb7885503edad4e644f07f91b962164e73c9dd26b66eaca410d`.
+  ARM64/x86_64, 330,200,642 bytes, verified debug-key v2 signing. SHA-256:
+  `0346f4a957ca93ca4bded80a05ce7d4d536539dbbf757086dbd2370fc3b05c76`.
   Outputs remain under ignored `build/6cec6ec9b6827655/` in the primary
   repository, including `app/outputs/apk/dev/debug/app-dev-debug.apk`.
 - Not tested: installed phone UI, real saved-computer SSH, a live model task,

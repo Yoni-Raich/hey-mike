@@ -226,7 +226,7 @@ class ComputerToolGateway(
         val requestId = arguments.text("requestId") ?: throw Refused("missing_request_id", "Give a stable requestId and reuse it on retries.")
         return try {
             val receipt = manager.start(origin, requestId, computer, path, message, arguments.text("model")) { !revoked }
-            ok { put("task", receipt.toJson()); put("note", "Computer subagent accepted, not yet completed. Its child session is linked to this source chat. Use task_status with taskId; progress, approval requests and the result also appear here. Reuse requestId on retries.") }
+            ok { put("task", receipt.toJson()); put("note", "Computer subagent receipt; task.status is its current state, including on retries. Its child session is linked to this source chat. Use task_status with taskId; progress, approval requests and the result also appear here. Reuse requestId on retries.") }
         } catch (error: IllegalArgumentException) {
             refusal("request_conflict", error.message ?: "Invalid request")
         }
