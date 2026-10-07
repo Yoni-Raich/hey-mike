@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -12,6 +13,263 @@ import java.io.File
 /** Several chats at once: each runs on its own, and the phone goes to one of them at a time. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentRunsTest {
+    @Test fun sourceStopFencesAChildThatHasNotDispatchedYet() = runTest {
+        var dispatchAllowed = true
+        val stopped = mutableListOf<String?>()
+        val rig = Rig(this, onStopSession = { id -> stopped += id; dispatchAllowed = false })
+        rig.runs.stop("one")
+        assertFalse(rig.runs.sendChild("two", "one", "Exact task", allowed = { dispatchAllowed }))
+        runCurrent()
+        assertEquals(listOf("one"), stopped)
+        assertTrue(rig.engine.started.isEmpty())
+        assertTrue(rig.runs.childrenOf("one").isEmpty())
+        rig.close()
+    }
+
+    @Test fun repeatedChildDispatchDoesNotBecomeSteering() = runTest {
+        val rig = Rig(this)
+        assertTrue(rig.runs.sendChild("two", "one", "Exact task"))
+        assertFalse(rig.runs.sendChild("two", "one", "Exact task"))
+        runCurrent()
+        assertEquals(listOf("thread-two"), rig.engine.started)
+        assertTrue(rig.engine.steered.isEmpty())
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-two", turnId = "turn-thread-two"))
+        runCurrent()
+        assertFalse(rig.runs.sendChild("two", "one", "Exact task"))
+        runCurrent()
+        assertEquals(listOf("thread-two"), rig.engine.started)
+        rig.close()
+    }
+
+    @Test fun childLinksAreIdempotentAndCannotBeReparentedOrNestedInEitherOrder() = runTest {
+        val rig = Rig(this)
+        rig.runs.linkChild("two", "one")
+        rig.runs.linkChild("two", "one")
+        assertEquals(listOf("two"), rig.runs.childrenOf("one"))
+        assertTrue(runCatching { rig.runs.linkChild("two", "three") }.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching { rig.runs.linkChild("three", "two") }.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching { rig.runs.linkChild("one", "three") }.exceptionOrNull() is IllegalArgumentException)
+        rig.close()
+    }
+
+    @Test fun sourceStopInterruptsItsChildAndLeavesUnrelatedChatsRunning() = runTest {
+        val rig = Rig(this)
+        rig.runs.linkChild("two", "one")
+        rig.runs.send("two", "Computer task")
+        rig.runs.send("three", "Unrelated task")
+        runCurrent()
+        rig.runs.stop("one")
+        runCurrent()
+        assertEquals(listOf("thread-two"), rig.engine.interrupted)
+        assertTrue(rig.runs.stateOf("three")!!.active)
+        assertFalse(rig.engine.closed)
+        assertEquals("Stopped", rig.runs.outcomes.value["two"]!!.status)
+        rig.close()
+    }
+
+    @Test fun userStopForAVoiceSourceStopsItsChildAndNotifiesPendingWorkWithoutStoppingAnotherChat() = runTest {
+        val stopped = mutableListOf<String?>()
+        val rig = Rig(this, onStopSession = { stopped += it })
+        rig.runs.beginVoice("one", "voice-thread", rig.store.workspace("one"))
+        rig.runs.sendChild("two", "one", "Computer task")
+        rig.runs.send("three", "Unrelated task")
+        runCurrent()
+        // No voice turn is active; the child owns the only turn to interrupt.
+        rig.runs.stop("one")
+        runCurrent()
+        assertEquals(listOf("one"), stopped)
+        assertEquals(listOf("thread-two"), rig.engine.interrupted)
+        assertNull(rig.runs.stateOf("one"))
+        assertNull(rig.runs.stateOf("two"))
+        assertTrue(rig.runs.stateOf("three")!!.active)
+        assertEquals(true, rig.runs.outcomes.value["two"]!!.stopConfirmed)
+        assertFalse(rig.engine.closed)
+        rig.close()
+    }
+
+    @Test fun sourceStopInterruptsAStartedChildBeforeTheStartReplyArrives() = runTest {
+        val rig = Rig(this)
+        rig.engine.startGates["thread-two"] = CompletableDeferred()
+        rig.runs.sendChild("two", "one", "Computer task")
+        rig.runs.send("three", "Unrelated task")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnStarted("thread-two", "turn-thread-two"))
+        rig.engine.emit(EngineEvent.ToolCall("early-tool", "tap", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        assertTrue(rig.engine.answered.isEmpty())
+        rig.runs.stop("one")
+        runCurrent()
+        assertEquals(listOf("thread-two"), rig.engine.interrupted)
+        assertEquals(true, rig.runs.outcomes.value["two"]!!.stopConfirmed)
+        assertTrue(rig.runs.stateOf("three")!!.active)
+        assertEquals(0, rig.tools.executions)
+        assertFalse(rig.engine.closed)
+        rig.close()
+    }
+
+    @Test fun aStartReplyAfterStopInterruptsTheOriginalTurnWithoutChangingAReusedSlot() = runTest {
+        val rig = Rig(this)
+        val gate = CompletableDeferred<Unit>()
+        rig.engine.startGates["thread-two"] = gate
+        rig.engine.nonCancellableStarts += "thread-two"
+        rig.runs.sendChild("two", "one", "Computer task")
+        rig.runs.send("three", "Unrelated task")
+        runCurrent()
+        rig.runs.stop("one")
+        runCurrent()
+        assertEquals(false, rig.runs.outcomes.value["two"]!!.stopConfirmed)
+        assertTrue(rig.engine.interrupted.isEmpty())
+        val newStart = CompletableDeferred<Unit>()
+        rig.engine.startGates["thread-one"] = newStart
+        rig.runs.send("one", "Use the stopped slot")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnStarted("thread-one", "turn-thread-one"))
+        rig.engine.emit(EngineEvent.ToolCall("new-tool", "contacts", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("thread-two"), rig.engine.interrupted)
+        newStart.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("new-tool"), rig.engine.answered)
+        assertTrue(rig.runs.stateOf("one")!!.active)
+        assertTrue(rig.runs.stateOf("three")!!.active)
+        assertFalse(rig.engine.closed)
+        rig.close()
+    }
+
+    @Test fun failedChildInterruptionDoesNotClaimConfirmedCancellationOrCloseAnotherChat() = runTest {
+        val rig = Rig(this)
+        rig.engine.failedInterrupts += "thread-two"
+        rig.runs.sendChild("two", "one", "Computer task")
+        rig.runs.send("three", "Unrelated task")
+        runCurrent()
+        rig.runs.stop("one")
+        runCurrent()
+        assertEquals(false, rig.runs.outcomes.value["two"]!!.stopConfirmed)
+        assertTrue(rig.runs.outcomes.value["two"]!!.status.contains("could not be confirmed"))
+        assertTrue(rig.runs.stateOf("three")!!.active)
+        assertFalse(rig.engine.closed)
+        rig.close()
+    }
+
+    @Test fun childApprovalCanBeAnsweredFromTheSourceWithoutAutoApproval() = runTest {
+        val rig = Rig(this)
+        rig.runs.linkChild("two", "one")
+        rig.runs.send("two", "Computer task")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Approval("request", "item/commandExecution/requestApproval", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        assertTrue(rig.engine.approvals.isEmpty())
+        assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "three"))
+        assertTrue(rig.runs.answerApprovalByReply("no", sessionId = "one"))
+        runCurrent()
+        assertEquals(listOf("request" to false), rig.engine.approvals)
+        rig.close()
+    }
+
+    @Test fun aSourceReplyAnswersItsOwnApprovalBeforeAnOlderChildSlot() = runTest {
+        val rig = Rig(this)
+        rig.runs.sendChild("two", "one", "Computer task")
+        rig.runs.send("one", "Source task")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Approval("child", "item/commandExecution/requestApproval", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        rig.engine.emit(EngineEvent.Approval("source", "item/commandExecution/requestApproval", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertTrue(rig.runs.answerApprovalByReply("yes", sessionId = "one"))
+        runCurrent()
+        assertEquals(listOf("source" to true), rig.engine.approvals)
+        assertEquals("child", rig.runs.stateOf("two")!!.approval!!.requestId)
+        rig.close()
+    }
+
+    @Test fun firstChildQuestionKeepsAReplyFromAnsweringAnotherChildApproval() = runTest {
+        val rig = Rig(this)
+        // Link order differs from coordinator slot order.
+        rig.runs.linkChild("three", "one")
+        rig.runs.linkChild("two", "one")
+        rig.runs.send("two", "Approval")
+        rig.runs.send("three", "Question")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Approval("child-approval", "item/commandExecution/requestApproval", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        rig.engine.emit(EngineEvent.ToolCall("child-question", ChatTools.ASK,
+            buildJsonObject { put("question", "Should I continue?") }, "thread-three", "turn-thread-three"))
+        runCurrent()
+        assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "one"))
+        assertTrue(rig.runs.answerQuestionByReply("yes", sessionId = "one"))
+        runCurrent()
+        assertTrue(rig.engine.approvals.isEmpty())
+        assertTrue("child-question" in rig.engine.answered)
+        assertEquals("yes", rig.store.messages.last { it.sessionId == "three" && it.role == "user" }.text)
+        rig.close()
+    }
+
+    @Test fun sourceQuestionKeepsAReplyFromAnsweringAChildApproval() = runTest {
+        val rig = Rig(this)
+        rig.runs.sendChild("two", "one", "Computer task")
+        rig.runs.send("one", "Source task")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Approval("child-approval", "item/commandExecution/requestApproval", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        rig.engine.emit(EngineEvent.ToolCall("source-question", ChatTools.ASK,
+            buildJsonObject { put("question", "Should I continue?") }, "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertFalse(rig.runs.answerApprovalByReply("no", sessionId = "one"))
+        assertTrue(rig.runs.answerQuestionByReply("no", sessionId = "one"))
+        runCurrent()
+        assertTrue(rig.engine.approvals.isEmpty())
+        assertTrue("source-question" in rig.engine.answered)
+        rig.close()
+    }
+
+    @Test fun finishedOutcomeSurvivesSlotReuse() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "First")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-one", turnId = "turn-thread-one"))
+        runCurrent()
+        rig.runs.send("two", "Next")
+        runCurrent()
+        assertEquals(1, rig.runs.slots.size)
+        assertEquals("Ready", rig.runs.outcomes.value["one"]!!.status)
+        rig.close()
+    }
+
+    @Test fun newRunDoesNotExposeAnOldOutcomeFromAnotherCoordinator() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "First")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-one", turnId = "turn-thread-one"))
+        runCurrent()
+        rig.runs.send("two", "Use the old slot")
+        rig.runs.send("one", "Next run in a new slot")
+        runCurrent()
+        assertEquals(2, rig.runs.slots.size)
+        assertFalse(rig.runs.outcomes.value.containsKey("one"))
+        rig.engine.emit(EngineEvent.Failure("Second run failed", "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertEquals(RunPhase.ERROR, rig.runs.outcomes.value["one"]!!.phase)
+        assertEquals("Second run failed", rig.runs.outcomes.value["one"]!!.status)
+        rig.close()
+    }
+
+    @Test fun anOutcomeIsPublishedAfterTheFinalHistoryWriteCompletes() = runTest {
+        val rig = Rig(this)
+        rig.runs.sendChild("two", "one", "Computer task")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TextDelta("Final result", "thread-two", "turn-thread-two", "answer"))
+        runCurrent()
+        val saved = CompletableDeferred<Unit>()
+        rig.store.updateGate = saved
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-two", turnId = "turn-thread-two"))
+        runCurrent()
+        assertFalse(rig.runs.outcomes.value.containsKey("two"))
+        saved.complete(Unit)
+        runCurrent()
+        assertEquals("Final result", rig.store.assistant("two").single())
+        assertEquals("Ready", rig.runs.outcomes.value["two"]!!.status)
+        rig.close()
+    }
+
     @Test fun reconnectingOneChatKeepsBothChatsRunningUntilTheirOwnCompletion() = runTest {
         val rig = Rig(this)
         rig.runs.send("one", "First")
@@ -48,6 +306,50 @@ class AgentRunsTest {
         rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-two", turnId = "turn-thread-two"))
         runCurrent()
         assertEquals(listOf("Still running"), rig.store.assistant("two"))
+        rig.close()
+    }
+
+    @Test fun uncertainComputerFailureRetainsUnknownOutcomeOnlyForItsChild() = runTest {
+        val rig = Rig(this)
+        rig.runs.sendChild("two", "one", "Computer task")
+        rig.runs.send("three", "Unrelated task")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Failure("Computer disconnected", "thread-two", uncertain = true))
+        runCurrent()
+        assertTrue(rig.runs.outcomes.value["two"]!!.outcomeUnknown)
+        assertEquals(RunPhase.ERROR, rig.runs.outcomes.value["two"]!!.phase)
+        assertTrue(rig.runs.stateOf("three")!!.active)
+        assertFalse(rig.engine.closed)
+        rig.close()
+    }
+
+    @Test fun uncertainDisconnectEndsAChildWhoseStartReplyIsStillPending() = runTest {
+        val rig = Rig(this)
+        rig.engine.startGates["thread-two"] = CompletableDeferred()
+        rig.runs.sendChild("two", "one", "Computer task")
+        runCurrent()
+        rig.engine.emit(EngineEvent.TurnStarted("thread-two", "turn-thread-two"))
+        rig.engine.emit(EngineEvent.Failure("Computer disconnected", "thread-two", uncertain = true))
+        runCurrent()
+        // The start call is still blocked. A transport normally fails it too.
+        assertEquals(RunPhase.ERROR, rig.runs.slots.first().state.value.phase)
+        assertTrue(rig.runs.slots.first().state.value.outcomeUnknown)
+        rig.engine.startGates.getValue("thread-two").complete(Unit)
+        runCurrent()
+        assertTrue(rig.runs.outcomes.value["two"]!!.outcomeUnknown)
+        rig.close()
+    }
+
+    @Test fun lostStartReplyIsUnknownButAFailureBeforeOpeningTheThreadIsKnown() = runTest {
+        val rig = Rig(this)
+        rig.engine.failedStarts += "thread-two"
+        rig.runs.sendChild("two", "one", "Computer task")
+        runCurrent()
+        assertTrue(rig.runs.outcomes.value["two"]!!.outcomeUnknown)
+        rig.engine.failedOpens += "session-three"
+        rig.runs.send("three", "Cannot open")
+        runCurrent()
+        assertFalse(rig.runs.outcomes.value["three"]!!.outcomeUnknown)
         rig.close()
     }
 
@@ -226,13 +528,13 @@ class AgentRunsTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope) {
+    private class Rig(test: TestScope, onStopSession: (String?) -> Unit = {}) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = Engine()
         val store = Store()
         val overlay = Overlay()
         val tools = Tools()
-        val runs = AgentRuns(scope, engine) { share ->
+        val runs = AgentRuns(scope, engine, onStopSession = onStopSession) { share ->
             AgentCoordinator(scope, engine, store, tools, overlay, share = share)
         }
         val queue = SessionRunQueue(scope, runs, store)
@@ -245,6 +547,13 @@ class AgentRunsTest {
         val started = mutableListOf<String>()
         val answered = mutableListOf<String>()
         val interrupted = mutableListOf<String>()
+        val steered = mutableListOf<String>()
+        val approvals = mutableListOf<Pair<String, Boolean>>()
+        val startGates = mutableMapOf<String, CompletableDeferred<Unit>>()
+        val nonCancellableStarts = mutableSetOf<String>()
+        val failedInterrupts = mutableSetOf<String>()
+        val failedStarts = mutableSetOf<String>()
+        val failedOpens = mutableSetOf<String>()
         var closed = false
         suspend fun emit(value: EngineEvent) = stream.emit(value)
         override suspend fun connect() = Unit
@@ -252,16 +561,26 @@ class AgentRunsTest {
         override suspend fun login() = account()
         override suspend fun logout() = Unit
         override suspend fun models() = listOf("test")
-        override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>) =
-            "thread-" + workspace.name.removePrefix("session-")
+        override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
+            check(workspace.name !in failedOpens) { "Project could not be opened" }
+            return "thread-" + workspace.name.removePrefix("session-")
+        }
         override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String {
             started += threadId
+            check(threadId !in failedStarts) { "Computer disconnected before the start reply" }
+            startGates[threadId]?.let { gate ->
+                if (threadId in nonCancellableStarts) withContext(NonCancellable) { gate.await() }
+                else gate.await()
+            }
             return "turn-$threadId"
         }
-        override suspend fun steer(threadId: String, turnId: String, prompt: String) = Unit
-        override suspend fun interrupt(threadId: String, turnId: String) { interrupted += threadId }
+        override suspend fun steer(threadId: String, turnId: String, prompt: String) { steered += prompt }
+        override suspend fun interrupt(threadId: String, turnId: String) {
+            interrupted += threadId
+            check(threadId !in failedInterrupts) { "Computer connection ended" }
+        }
         override suspend fun answerTool(requestId: String, result: ToolResult) { answered += requestId }
-        override suspend fun answerApproval(requestId: String, allow: Boolean) = Unit
+        override suspend fun answerApproval(requestId: String, allow: Boolean) { approvals += requestId to allow }
         override suspend fun close() { closed = true }
     }
 
@@ -271,12 +590,14 @@ class AgentRunsTest {
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
         override val sessions = MutableStateFlow(listOf("one", "two", "three").map { ChatSession(it, it, 0, 0) })
         val messages = mutableListOf<ChatMessage>()
+        var updateGate: CompletableDeferred<Unit>? = null
         fun assistant(sessionId: String) = messages.filter { it.sessionId == sessionId && it.role == "assistant" }.map { it.text }
         override suspend fun createSession(engine: EngineKind) = sessions.value.first()
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }
         override suspend fun updateMessage(id: String, text: String, state: String) {
+            updateGate?.await()
             val i = messages.indexOfFirst { it.id == id }
             if (i >= 0) messages[i] = messages[i].copy(text = text, state = state)
         }

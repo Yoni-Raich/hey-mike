@@ -183,7 +183,7 @@ internal fun AgentComposer(
     var skill by remember(state.activeSessionId) { mutableStateOf<AgentSkill?>(null) }
     var renaming by remember(state.activeSessionId) { mutableStateOf(false) }
     val voiceActive = state.voiceState.active
-    val active = state.runState.active && state.runState.sessionId == state.activeSessionId && !voiceActive
+    val active = state.runState.active && state.runState.sessionId == state.activeSessionId && !state.runState.delegated && !voiceActive
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)

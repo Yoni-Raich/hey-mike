@@ -98,6 +98,9 @@ class AgentCoordinator(
     }
     private val mutableState = MutableStateFlow(RunState())
     val state: StateFlow<RunState> = mutableState.asStateFlow()
+    private val mutableOutcomes = MutableStateFlow<Map<String, RunState>>(emptyMap())
+    /** Retained after a coordinator is reused, and only after history is flushed. */
+    val outcomes: StateFlow<Map<String, RunState>> = mutableOutcomes.asStateFlow()
     private val availableState = MutableStateFlow(true)
     val available = availableState.asStateFlow()
     private val epoch = AtomicLong()
@@ -173,6 +176,11 @@ class AgentCoordinator(
     /** Whether events of [threadId] belong to this coordinator's run. */
     internal fun ownsThread(threadId: String): Boolean = synchronized(lifecycleLock) { thread == threadId }
 
+    /** A new turn must not be mistaken for a retained result from an older one. */
+    internal fun clearOutcome(sessionId: String) = synchronized(lifecycleLock) {
+        mutableOutcomes.value = mutableOutcomes.value - sessionId
+    }
+
     override val freed: Flow<*> get() = available
     override fun canStart(): Boolean = availableState.value && !state.value.active
     override fun phaseOf(sessionId: String): RunPhase? = state.value.takeIf { it.active && it.sessionId == sessionId }?.phase
@@ -196,6 +204,7 @@ class AgentCoordinator(
             }
             if (!availableState.value) return
             availableState.value = false
+            mutableOutcomes.value = mutableOutcomes.value - sessionId
             val token = epoch.incrementAndGet()
             val runCompletion = CompletableDeferred<Unit>()
             // The chat's engine names every message this run shows; run() reads
@@ -475,8 +484,16 @@ class AgentCoordinator(
                 DeviceCapabilities.of(tools, adbStatus()),
                 planModel = if (planMode) model else null,
             )
+            if (!activateTurn(token, startedTurn)) {
+                // Some transports finish a sent request after cancellation.
+                // The returned ID still belongs to the original turn, so stop
+                // it without activating its tools or affecting another chat.
+                withContext(NonCancellable) {
+                    runCatching { withTimeout(2_000) { engine.interrupt(openedThread, startedTurn) } }
+                }
+                return
+            }
             if (session.catchUpFrom != null) sessions.markCaughtUp(sessionId)
-            if (!activateTurn(token, startedTurn)) return
             ensureCurrent(token)
             if (session.engineThreadId != openedThread) chatTitles.nameNewThread(sessionId, openedThread)
             ensureCurrent(token)
@@ -489,7 +506,10 @@ class AgentCoordinator(
                 synchronized(lifecycleLock) {
                     if (isCurrentLocked(token)) {
                         assistantOutcome = "error"
-                        mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = error.message ?: "Run failed", controlling = false)
+                        mutableState.value = state.value.copy(
+                            phase = RunPhase.ERROR, status = error.message ?: "Run failed", controlling = false,
+                            outcomeUnknown = awaitingTurn || turn != null,
+                        )
                     }
                 }
             }
@@ -612,6 +632,7 @@ class AgentCoordinator(
                 snapshot = snapshot,
                 threadId = thread,
                 turnId = turn,
+                dispatchPending = awaitingTurn,
                 assistantId = assistantId,
                 text = assistantText.toString(),
                 controls = controls,
@@ -639,15 +660,22 @@ class AgentCoordinator(
                 val engineStop = async {
                     val interrupted = runCatching {
                         withTimeout(2_000) {
-                            if (context.threadId != null && context.turnId != null) engine.interrupt(context.threadId, context.turnId)
-                            else if (!share.othersActive()) engine.close()
+                            when {
+                                context.threadId != null && context.turnId != null -> {
+                                    engine.interrupt(context.threadId, context.turnId)
+                                    true
+                                }
+                                !context.dispatchPending -> true // No turn/start was sent.
+                                !share.othersActive() -> { engine.close(); true }
+                                else -> false
+                            }
                         }
-                    }.isSuccess
-                    if (!interrupted && !share.othersActive()) runCatching { engine.close() }
+                    }.getOrDefault(false)
+                    interrupted || (!share.othersActive() && runCatching { withTimeout(2_000) { engine.close() } }.isSuccess)
                 }
                 deviceStop.await()
                 context.toolsInFlight.forEach { job -> runCatching { withTimeout(2_000) { job.join() } } }
-                engineStop.await()
+                val stopConfirmed = engineStop.await()
                 context.flush?.let { job -> runCatching { withTimeout(1_000) { job.join() } } }
                 context.assistantId?.let { id ->
                     runCatching {
@@ -665,7 +693,12 @@ class AgentCoordinator(
                         assistantText.clear()
                         assistantOutcome = "complete"
                         completion = null
-                        mutableState.value = RunState(sessionId = context.snapshot.sessionId, status = "Stopped")
+                        mutableState.value = RunState(
+                            sessionId = context.snapshot.sessionId,
+                            status = if (stopConfirmed) "Stopped" else "Stopped locally; computer interruption could not be confirmed",
+                            stopConfirmed = stopConfirmed,
+                        )
+                        context.snapshot.sessionId?.let { id -> mutableOutcomes.value = mutableOutcomes.value + (id to mutableState.value) }
                     }
                 }
                 runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, "Stopped")) }
@@ -937,8 +970,13 @@ class AgentCoordinator(
     private suspend fun activateTurn(token: Long, startedTurn: String): Boolean {
         val replay = synchronized(lifecycleLock) {
             if (!isCurrentLocked(token) || startedTurn.isBlank()) {
-                startupEvents.clear()
-                awaitingTurn = false
+                // A late reply may arrive after this coordinator was reused.
+                // Only the old turn's interruption may run; its reply must not
+                // clear the new turn's buffered calls or startup marker.
+                if (epoch.get() == token) {
+                    startupEvents.clear()
+                    awaitingTurn = false
+                }
                 null
             } else {
                 turn = startedTurn
@@ -954,12 +992,18 @@ class AgentCoordinator(
 
     private fun bufferStartupEvent(event: EngineEvent): Boolean = synchronized(lifecycleLock) {
         if (!awaitingTurn) return@synchronized false
+        // A lost connection also loses the start reply; waiting for that reply
+        // before handling its failure would strand the whole run.
+        if (event is EngineEvent.Failure && event.uncertain) return@synchronized false
         val expectedThread = thread
         val eventThread = threadIdOf(event)
         val eventTurn = turnIdOf(event)
         if (expectedThread.isNullOrBlank() || eventThread != expectedThread || eventTurn.isNullOrBlank()) {
             false
         } else {
+            // Keep the started ID only for Stop. All startup events still wait
+            // for the turn/start reply before any text or tool can be handled.
+            if (event is EngineEvent.TurnStarted) turn = eventTurn
             startupEvents.addLast(event)
             true
         }
@@ -979,7 +1023,7 @@ class AgentCoordinator(
     private fun failureMatches(event: EngineEvent.Failure): Boolean = synchronized(lifecycleLock) {
         if (!state.value.active || state.value.phase == RunPhase.STOPPING) return@synchronized false
         if (event.threadId.isNullOrBlank() && event.turnId.isNullOrBlank()) true
-        else event.threadId == thread && event.turnId == turn
+        else event.threadId == thread && (event.turnId == turn || (event.uncertain && event.turnId.isNullOrBlank()))
     }
 
     private fun isCurrent(token: Long): Boolean = synchronized(lifecycleLock) { isCurrentLocked(token) }
@@ -1292,7 +1336,9 @@ class AgentCoordinator(
                 } else {
                     synchronized(lifecycleLock) {
                         assistantOutcome = "error"
-                        mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = event.message)
+                        mutableState.value = state.value.copy(
+                            phase = RunPhase.ERROR, status = event.message, outcomeUnknown = event.uncertain,
+                        )
                     }
                     completion?.complete(Unit)
                 }
@@ -1646,6 +1692,7 @@ class AgentCoordinator(
                         status = if (final.outcome == "interrupted") "Interrupted" else "Ready",
                     )
                 }
+                mutableOutcomes.value = mutableOutcomes.value + (sessionId to mutableState.value)
                 thread = null
                 turn = null
                 assistantId = null
@@ -1791,6 +1838,7 @@ class AgentCoordinator(
         val snapshot: RunState,
         val threadId: String?,
         val turnId: String?,
+        val dispatchPending: Boolean,
         val assistantId: String?,
         val text: String,
         val controls: List<Job>,

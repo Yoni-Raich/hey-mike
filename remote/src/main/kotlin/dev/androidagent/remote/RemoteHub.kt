@@ -324,11 +324,21 @@ class RemoteHub(
     }
 
     /** Close the computer's Codex and its connection. Chats on it stay bound. */
-    suspend fun disconnect(computerId: String) {
+    suspend fun disconnect(computerId: String) = disconnect(computerId, reportInterruptedRuns = true)
+
+    private suspend fun disconnect(computerId: String, reportInterruptedRuns: Boolean) {
         claudeSignIn.cancel(computerId)
         val engine = lock.withLock { engines.remove(computerId) }
-        engine?.let { (codex, job) -> runCatching { codex.close() }; job.cancel() }
-        lock.withLock { claudeEngines.remove(computerId) }?.let { (claude, _, job) -> runCatching { claude.close() }; job.cancel() }
+        engine?.let { (codex, job) ->
+            if (reportInterruptedRuns) stream.emit(RemoteEvent(computerId,
+                EngineEvent.Failure("Computer disconnected; remote outcome is unknown.", uncertain = true)))
+            runCatching { codex.close() }; job.cancel()
+        }
+        lock.withLock { claudeEngines.remove(computerId) }?.let { (claude, _, job) ->
+            if (reportInterruptedRuns) stream.emit(RemoteEvent(computerId,
+                EngineEvent.Failure("Computer disconnected; remote outcome is unknown.", uncertain = true), EngineKind.CLAUDE))
+            runCatching { claude.close() }; job.cancel()
+        }
         mutableClaude.update { it - computerId }
         links.remove(computerId)?.let { withContext(Dispatchers.IO) { runCatching { it.link.close() } } }
         mutableSetup.value = mutableSetup.value - computerId
@@ -339,8 +349,8 @@ class RemoteHub(
     suspend fun reload(computerId: String) = disconnect(computerId)
 
     suspend fun closeAll() {
-        store.state.value.computers.forEach { disconnect(it.id) }
-        (engines.keys + claudeEngines.keys + links.keys).toSet().forEach { disconnect(it) }
+        store.state.value.computers.forEach { disconnect(it.id, reportInterruptedRuns = false) }
+        (engines.keys + claudeEngines.keys + links.keys).toSet().forEach { disconnect(it, reportInterruptedRuns = false) }
     }
 
     private fun report(computerId: String, step: RemoteSetup) {

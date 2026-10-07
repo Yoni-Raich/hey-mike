@@ -171,8 +171,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // The open chat shows its own run; another chat running beside it is
         // not this chat's "Working", and the drawer marks it instead.
         viewModelScope.launch {
-            combine(graph.coordinator.sessionStates, current) { states, id -> states to id }.collect { (states, id) ->
-                mutable.update { it.copy(runState = id?.let(states::get) ?: RunState(), runs = states.filterValues { run -> run.active }) }
+            combine(graph.coordinator.sessionStates, current, graph.computerTasks.state) { states, id, _ -> states to id }.collect { (states, id) ->
+                mutable.update { it.copy(runState = id?.let { source -> graph.computerTasks.sourceState(source, states) } ?: RunState(), runs = states.filterValues { run -> run.active }) }
             }
         }
         viewModelScope.launch { current.collect { graph.openChat.value = it } }
@@ -707,17 +707,22 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun select(id: String) { current.value = id }
     fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
+        if (graph.computers.state.value.tasks.values.any { it.originSessionId == id && !it.terminal }) {
+            error("Stop this chat's computer subagents before deleting it."); return
+        }
         if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End the voice conversation before deleting it."); return }
         task { graph.queue.cancelSession(id); graph.sessions.deleteSession(id) }
     }
     fun send(text: String, attachments: List<PendingAttachment>) {
         val id = current.value ?: return
+        // A subagent's existing gate is also answerable in its source chat.
+        if (attachments.isEmpty()) {
+            if (answerRunGate(id, text)) return
+        }
         if (graph.voice.state.value.active) {
             if (id != graph.voiceConversation.sessionId.value) { error("End voice before sending in another chat."); return }
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
-            if (graph.coordinator.answerApprovalByReply(text, sessionId = id)) return
-            if (graph.coordinator.answerQuestionByReply(text, sessionId = id)) return
             task { graph.voiceConversation.type(text) }
             return
         }
@@ -809,14 +814,34 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // End voice while an assistant press is still setting up cancels it.
         if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {
             assistantVoiceJob?.cancel()
-            return
         }
-        if (graph.voice.state.value.active) stopVoice() else current.value?.let(graph.coordinator::stop)
+        if (graph.voice.state.value.active) {
+            // User Stop covers the voice source's children too. Ending only
+            // the microphone through toggleVoice keeps its separate meaning.
+            (graph.voiceConversation.sessionId.value ?: current.value)?.let(graph.coordinator::stop)
+            stopVoice()
+        } else current.value?.let(graph.coordinator::stop)
     }
 
     /** Words for the open chat's run, which may not be the only one running. */
+    private fun answerRunGate(id: String, text: String): Boolean {
+        val own = graph.coordinator.stateOf(id)
+        val delegatedGate = own?.approval == null && own?.question == null
+        val handled = graph.coordinator.answerApprovalByReply(text, sessionId = id) ||
+            graph.coordinator.answerQuestionByReply(text, sessionId = id)
+        if (handled && delegatedGate) task {
+            graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), id, "user", text, System.currentTimeMillis()))
+        }
+        return handled
+    }
+
     fun steer(text: String) {
-        current.value?.let { graph.coordinator.steer(it, text) }
+        val id = current.value ?: return
+        if (answerRunGate(id, text)) return
+        // The source can be idle while its subagent works. A new instruction
+        // needs a source turn (to inspect/cancel it), not a missing coordinator.
+        if (graph.coordinator.phaseOf(id) == null) send(text, emptyList())
+        else graph.coordinator.steer(id, text)
     }
     fun toggleVoice() {
         if (graph.voice.state.value.active) stopVoice() else startVoice()

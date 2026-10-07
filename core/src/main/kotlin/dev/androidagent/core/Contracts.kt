@@ -245,7 +245,9 @@ sealed interface EngineEvent {
     data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent
-    data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null,
+        /** The transport failed after work may have reached the computer. */
+        val uncertain: Boolean = false) : EngineEvent
 }
 interface AgentEngine {
     val events: Flow<EngineEvent>
@@ -421,6 +423,12 @@ data class RunState(
     val phase: RunPhase = RunPhase.IDLE, val sessionId: String? = null, val status: String = "Ready", val controlling: Boolean = false, val approval: EngineEvent.Approval? = null, val toolName: String? = null,
     /** What the agent asked with `ask_user` and is waiting on. */
     val question: UserQuestion? = null,
+    /** This source screen shows a child run; its own composer can start a new turn. */
+    val delegated: Boolean = false,
+    /** False when local Stop could not confirm remote interruption or connection shutdown. */
+    val stopConfirmed: Boolean? = null,
+    /** A lost dispatch/connection reply cannot establish the remote task's outcome. */
+    val outcomeUnknown: Boolean = false,
 ) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
 
