@@ -8,11 +8,13 @@
     <cloud-backup>
         <exclude domain="file" path="runtime/claude-home" />
         <exclude domain="file" path="runtime/claude-tmp" />
+        <exclude domain="file" path="runtime/claude-update-probe" />
         <exclude domain="file" path="runtime/claude" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="runtime/claude-home" />
         <exclude domain="file" path="runtime/claude-tmp" />
+        <exclude domain="file" path="runtime/claude-update-probe" />
         <exclude domain="file" path="runtime/claude" />
     </device-transfer>
 </data-extraction-rules>

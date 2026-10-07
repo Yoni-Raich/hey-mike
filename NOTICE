@@ -27,11 +27,14 @@ research identifies that package as Apache-2.0 licensed. A copy of that license
 text is kept at
 third_party/licenses/openai-codex-app-server-0.159.2-Apache-2.0.txt.
 
+Bouncy Castle Java 1.86 verifies Anthropic's signed Claude release manifests.
+Copyright (c) 2000-2026 The Legion of the Bouncy Castle Inc.
+It is MIT licensed; the exact license from its published JAR is kept in
+third_party/licenses/bouncy-castle-1.86-MIT.txt and included as META-INF/LICENSE.md
+in generated APKs.
+
 Other dependencies and runtime components keep their own upstream licenses.
-This notice does not relicense them, and the licenses above do not apply to
-them. No additional attribution is listed here because the tracked project
-sources do not provide enough verified information to make a safe ownership or
-attribution claim.
+This notice does not relicense them, and the licenses above do not apply to them.
 
 The Gradle wrapper files (gradlew, gradlew.bat, gradle/wrapper) are distributed
 by the Gradle project under the Apache License 2.0 and keep that license.

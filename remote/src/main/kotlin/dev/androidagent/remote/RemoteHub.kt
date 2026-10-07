@@ -470,6 +470,7 @@ class RemoteHub(
      * computer, then one command that runs it.
      */
     private inner class ComputerClaudeHost(private val computerId: String) : ClaudeProcessHost, ClaudeComputer {
+        override val runtimeIdentity: String get() = cached?.let { "${it.path}|${it.version}" }.orEmpty()
         private val mutableStatus = MutableStateFlow(RuntimeStatus())
         override val status: StateFlow<RuntimeStatus> = mutableStatus
         // Nothing of the computer's lives here: the engine only looks for app-installed skills, and finds none.

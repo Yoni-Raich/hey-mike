@@ -1,5 +1,57 @@
 # Progress
 
+### Automatic Claude runtime and model catalog updates — 2026-10-07
+
+- Claude catalogs refresh on resume, chat/menu open and each foreground
+  minute. Engine caches expire after one minute, invalidate on a runtime
+  identity change, retain the last good list offline, and back off for 30
+  seconds after failure. Computer catalogs remain scoped to their own CLI.
+- After the explicit first installation, the phone checks official Claude
+  releases every 15 minutes while Mike is open, with a persisted throttle.
+  Binary downloads wait for an unmetered connection. Metadata is bounded,
+  HTTPS-only, without redirects, and the exact manifest must pass Anthropic's
+  detached GPG signature using its bundled, fingerprint-checked public key.
+  Bouncy Castle 1.86 supplies OpenPGP; its upstream MIT notice is retained
+  in the repo and APK. Unknown major versions/harness schemas fail closed.
+- A candidate is size/hash verified beside the working binary, then checked
+  through the real loader with `--version` and a message-free, tool-free
+  `initialize` using a separate HOME. Only a compatible build becomes active.
+  Previous files remain available to running turns and for restart rollback.
+  A runtime change resumes an idle chat on its next turn, without interrupting
+  a turn already running. Sign-in and session files are neither read nor moved.
+- Windows/JDK 21: `./gradlew.bat :core:test :runtime:testDebugUnitTest
+  :engine-claude:testDebugUnitTest :remote:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+  --no-daemon --no-parallel --max-workers=2 --console=plain` passed.
+  XML: 680 core, 64 runtime, 79 Claude, 62 remote, 140 app; 1,025 tests,
+  zero failures/errors, two existing optional remote skips. New tests cover
+  real signed public metadata, tampering, unsafe/malformed/oversized replies,
+  protocol rejection, retention, cancellation, persisted selection/throttle,
+  rollback, metered downloads, catalog expiry/runtime changes/offline retries,
+  and continuing a live turn before resuming on a new process. Python runtime
+  preparation tests: 15 passed. App lint: zero errors, 21 existing warnings.
+- A one-off Java audit invoked the production `ClaudeReleaseClient` against
+  the live official endpoint and authenticated release 2.1.293. The production
+  `ClaudeRuntimeProbe` also passed against the real official Windows 2.1.293
+  binary in an isolated HOME. No login, account change or model message occurred.
+  This proves the Windows probe and live metadata flow, not Android execution.
+- Dev Debug APK: `dev.androidagent.app.dev`, code 28, version 0.14.0,
+  333,499,367 bytes, existing Android debug-key v2 signing (test-only).
+  SHA-256 `92285bf95de805ab0a7ade13bca387196139a854a9faaabcf7d74d7b82917712`.
+  The release key and Bouncy Castle license are present in the APK. Logs,
+  public downloads, Java audit/config and verification JSON remain ignored
+  under `artifacts/claude-auto-update/`; Gradle outputs use the configured
+  central `build/0db2d29f53122413/` bucket. The global storage hook automatically
+  pruned the earlier completed Haiku build bucket; no source or user data was
+  deleted by task commands.
+- Not tested: installed Settings/menu text, real ARM64 candidate activation,
+  rollback across an Android process death, network transitions on Nothing,
+  retained real sign-in with a new binary, a model turn with phone tools, or
+  real SSH runtime changes. No phone install or full release gate was run.
+  Checks run while Mike is open; immediate closed-app updates and old-version
+  disk pruning are not implemented. This change is stacked on the Haiku 5.5
+  PR, preserves the original dirty checkout, and changes no release/tag/asset.
+
 ### Haiku 5.5 runtime update — 2026-10-07
 
 - Pin the phone's official Claude Code to 2.1.293, the minimum version

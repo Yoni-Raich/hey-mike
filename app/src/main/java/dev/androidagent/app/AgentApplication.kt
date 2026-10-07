@@ -389,7 +389,20 @@ class AgentGraph(private val app: Application) {
         }
         // Report a binary downloaded in an earlier run as ready. This checks
         // its hash and never downloads.
-        scope.launch(Dispatchers.IO) { runCatching { claudeHost.installer.refresh() } }
+        scope.launch(Dispatchers.IO) {
+            runCatching { claudeHost.refresh() }
+            appInFront.collect { foreground ->
+                if (foreground) scope.launch { claudeHost.checkForUpdates() }
+            }
+        }
+        scope.launch {
+            while (true) {
+                // The persisted 15-minute throttle owns network checks; a one-minute
+                // wake-up avoids missing its deadline after a foreground transition.
+                kotlinx.coroutines.delay(60_000)
+                if (appInFront.value) scope.launch { claudeHost.checkForUpdates() }
+            }
+        }
         // Separate from the skills so a failed skill install cannot leave the
         // user without their preferences, or the reverse.
         runCatching {

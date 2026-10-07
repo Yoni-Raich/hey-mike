@@ -112,7 +112,9 @@ private enum class ModelPage { MAIN, MODELS }
 internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: Boolean, onDismiss: () -> Unit) {
     var page by remember { mutableStateOf(ModelPage.MAIN) }
     // Reopen on the intelligence levels, not wherever it was last left.
-    LaunchedEffect(expanded) { if (!expanded) page = ModelPage.MAIN }
+    LaunchedEffect(expanded) {
+        if (!expanded) page = ModelPage.MAIN else actions.onRefreshModels()
+    }
     val model = state.modelCatalog.firstOrNull { it.id == state.selectedModel && it.engine == state.activeEngine }
     val efforts = model?.reasoningEfforts.orEmpty()
     val current = effectiveEffort(model, state.selectedReasoningEffort)

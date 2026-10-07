@@ -94,6 +94,7 @@ class ClaudeCodeEngine(
     private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
     /** Set when this engine runs the Claude Code of one of the user's computers, reached through [host]. */
     private val computer: ClaudeComputer? = null,
+    private val catalogClock: () -> Long = System::nanoTime,
 ) : AgentEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 256)
@@ -105,6 +106,9 @@ class ClaudeCodeEngine(
     private val pendingApprovals = ConcurrentHashMap<String, PendingApproval>()
     private val modelLock = Mutex()
     @Volatile private var models: List<AgentModel>? = null
+    @Volatile private var modelReadAt: Long? = null
+    @Volatile private var modelRuntime: String = ""
+    @Volatile private var modelAttemptAt: Long? = null
     private val usageLock = Mutex()
     private val loginLock = Mutex()
     @Volatile private var loginProcess: Process? = null
@@ -157,9 +161,7 @@ class ClaudeCodeEngine(
                 if (chat != null) {
                     withTimeoutOrNull(USAGE_TIMEOUT_MS) { chat.usage() }
                 } else {
-                    if (models == null) {
-                        probeModels().takeIf { it.isNotEmpty() }?.let { models = it }
-                    }
+                    modelCatalog()
                     null
                 }
             } catch (error: CancellationException) {
@@ -240,6 +242,8 @@ class ClaudeCodeEngine(
         }
         accountCache = null
         models = null
+        modelReadAt = null
+        modelAttemptAt = null
         val status = account().let { if (it.signedIn) it else AccountStatus(false, "Sign-in did not finish. Try again.") }
         stream.emit(EngineEvent.AccountChanged(status))
         return status
@@ -249,6 +253,9 @@ class ClaudeCodeEngine(
         connect()
         runCommand(ClaudeProtocol.AUTH_LOGOUT_ARGS, COMMAND_TIMEOUT_MS)
         accountCache = null
+        models = null
+        modelReadAt = null
+        modelAttemptAt = null
         chatsLock.withLock { chats.values.forEach { it.shutdown() } }
         stream.emit(EngineEvent.AccountChanged(AccountStatus(false, ClaudeProtocol.SIGN_IN_LABEL)))
     }
@@ -257,13 +264,30 @@ class ClaudeCodeEngine(
 
     override suspend fun models(): List<String> = modelCatalog().map { it.id }
 
-    /** The CLI's own list from `initialize`, read once; the fixed aliases until then. */
+    /** Refresh the CLI's catalog after a minute or a runtime change. Keep the last good list offline. */
     override suspend fun modelCatalog(): List<AgentModel> {
-        models?.let { return it }
         if (!installed()) return ClaudeProtocol.FALLBACK_MODELS
         return modelLock.withLock {
-            models ?: runCatching { probeModels() }.getOrNull()?.takeIf { it.isNotEmpty() }?.also { models = it }
-                ?: ClaudeProtocol.FALLBACK_MODELS
+            val at = catalogClock()
+            val identity = host.runtimeIdentity
+            val sameRuntime = modelRuntime == identity
+            val fresh = modelReadAt?.let { at >= it && at - it < 60_000_000_000L } == true
+            val retryWait = modelAttemptAt?.let { at >= it && at - it < 30_000_000_000L } == true
+            if (sameRuntime && (fresh || retryWait)) return@withLock models ?: ClaudeProtocol.FALLBACK_MODELS
+            if (!sameRuntime) modelReadAt = null
+            modelAttemptAt = at
+            // A runtime change allows an immediate retry, but repeated failures still back off.
+            modelRuntime = identity
+            try {
+                probeModels().takeIf { it.isNotEmpty() }?.let {
+                    models = it
+                    modelReadAt = catalogClock()
+                }
+            } catch (cancelled: CancellationException) {
+                modelAttemptAt = null
+                throw cancelled
+            } catch (_: Exception) { /* Keep the catalog while offline. */ }
+            models ?: ClaudeProtocol.FALLBACK_MODELS
         }
     }
 
@@ -483,7 +507,7 @@ class ClaudeCodeEngine(
 
     // ---- one chat process ---------------------------------------------------------
 
-    private data class RunningConfig(val model: String, val effort: String?, val toolNames: List<String>)
+    private data class RunningConfig(val model: String, val effort: String?, val toolNames: List<String>, val runtime: String)
 
     private class ChatStartException(message: String, val notFound: Boolean) : IllegalStateException(message)
 
@@ -517,7 +541,7 @@ class ClaudeCodeEngine(
 
         /** Start or restart the process when it is gone or its model, effort or tools changed. Caller holds [lock]. */
         suspend fun ensureRunning() {
-            val wanted = RunningConfig(model, effort, tools.map { it.name })
+            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity)
             if (alive && running == wanted) return
             check(idle()) { "A turn is already running in this chat." }
             stopProcess()
