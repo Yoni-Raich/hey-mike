@@ -213,4 +213,12 @@ class ChatRowsTest {
         val streaming = ChatMessage("a1", "s", "assistant", "partial", 0L, "streaming")
         assertEquals("partial", turnCopyTexts(listOf(message("u", "user"), streaming))["a1"])
     }
+
+    @Test fun memoryUpdatesDoNotClaimToControlThePhone() {
+        val row = chatRows(listOf(message("m", "tool", "mike_memory: saved")), running = false).single() as ActionsRow
+        assertEquals("1 Mike update", actionsLabel(row))
+        assertEquals("Memory", toolStepLabel("mike_memory"))
+        val mixed = chatRows(listOf(message("m", "tool", "mike_memory: saved"), message("t", "tool", "tap: ok")), running = false).single() as ActionsRow
+        assertEquals("2 actions on your phone", actionsLabel(mixed))
+    }
 }

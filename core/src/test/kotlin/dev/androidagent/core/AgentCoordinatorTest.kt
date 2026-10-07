@@ -924,7 +924,50 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore()) {
+    @Test fun freshContinuityReachesTheEngineAndStopSettlesItExactlyOnce() = runTest {
+        val settled = mutableListOf<Pair<String, String>>()
+        var began = 0
+        val continuity = object : AgentContinuity {
+            override suspend fun context(sessionId: String, threadId: String?) = "Current personal memory: Hebrew.\n"
+            override suspend fun started(sessionId: String, prompt: String?) { began++ }
+            override suspend fun finished(sessionId: String, outcome: String, reply: String) { settled += sessionId to outcome }
+        }
+        val rig = Rig(this, continuity = continuity)
+        rig.coordinator.send("one", "Hello"); runCurrent()
+        assertEquals(1, began)
+        assertTrue(rig.engine.prompts.single().contains("Current personal memory: Hebrew."))
+        assertEquals("Hello", rig.store.messages.first { it.role == "user" }.text)
+        rig.coordinator.stop(); advanceUntilIdle()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", "thread", "turn")); advanceUntilIdle()
+        assertEquals(listOf("one" to "interrupted"), settled)
+        rig.close()
+    }
+
+    @Test fun mikesOwnToolsAnswerForTheChatThatAsksWithoutTakingThePhone() = runTest {
+        val asked = mutableListOf<Pair<String, String>>()
+        val own = object : SessionTools {
+            override val names = setOf("mike_memory")
+            override suspend fun invoke(sessionId: String, name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
+                asked += sessionId to name
+                return ToolResult("saved")
+            }
+        }
+        val rig = Rig(this, sessionTools = own)
+        rig.coordinator.send("one", "Hello"); runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("1", "mike_memory", buildJsonObject {}, "thread", "turn")); advanceUntilIdle()
+        assertEquals(listOf("one" to "mike_memory"), asked)
+        assertEquals("saved", rig.engine.answers.single().text)
+        // The phone's gateway was never armed: nothing waited for the phone or took it.
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        assertTrue(rig.store.messages.any { it.role == "tool" && it.text.startsWith("mike_memory: saved") })
+        // A device tool in the same run still goes through the phone.
+        rig.engine.emit(EngineEvent.ToolCall("2", "read_ui", buildJsonObject {}, "thread", "turn")); advanceUntilIdle()
+        assertEquals(listOf("read_ui"), rig.tools.names)
+        rig.close()
+    }
+
+    private class Rig(test: TestScope, grants: SendGrantStore = InMemorySendGrantStore(), continuity: AgentContinuity = object : AgentContinuity {}, sessionTools: SessionTools? = null) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
         val store = FakeStore()
@@ -937,6 +980,8 @@ class AgentCoordinatorTest {
         val coordinator = AgentCoordinator(
             scope, engine, store, tools, overlay,
             sendGrants = grants,
+            continuity = continuity,
+            sessionTools = sessionTools,
             bringToForeground = { foregroundRequests++ },
             // The test's own clock, so a reported duration is exactly the time
             // the test advanced rather than how fast the machine ran.

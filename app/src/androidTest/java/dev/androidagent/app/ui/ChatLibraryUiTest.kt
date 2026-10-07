@@ -84,7 +84,7 @@ class ChatLibraryUiTest {
         ))
         compose.onNodeWithText("New chat").assertIsDisplayed()
         compose.onNodeWithContentDescription("Close chats").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Settings", substring = true).assertIsDisplayed()
         screenshot("library-rail")
         compose.onNodeWithContentDescription("Automations, 1 needs you").performClick()
         compose.runOnIdle { assertEquals(true, openedAutomations) }

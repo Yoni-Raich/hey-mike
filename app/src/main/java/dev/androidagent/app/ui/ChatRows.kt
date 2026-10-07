@@ -21,6 +21,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatMessage
+import dev.androidagent.core.MikeChatNote
 
 /** One row of the conversation: a message, or a run of device or computer actions folded together. */
 internal sealed interface ChatRow {
@@ -33,6 +34,17 @@ internal sealed interface ChatRow {
  * activity between them split it into.
  */
 internal data class MessageRow(val message: ChatMessage, val copyText: String? = null) : ChatRow {
+    override val key: String get() = message.id
+}
+
+/**
+ * Text the app wrote into the chat for the engine: a task's brief, a task's
+ * result handed to Mike, the line that records how a task settled. Shown as
+ * what it means, never as the prompt it is. [repeated] for a brief the chat
+ * has already shown once: a task that wakes five times is asked the same
+ * thing five times, and nobody needs to read it five times.
+ */
+internal data class MikeNoteRow(val message: ChatMessage, val note: MikeChatNote, val repeated: Boolean = false) : ChatRow {
     override val key: String get() = message.id
 }
 
@@ -66,6 +78,7 @@ internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatR
     val rows = mutableListOf<ChatRow>()
     var pending = mutableListOf<ChatMessage>()
     var pendingRemote = false
+    var briefed = false
     fun flush(live: Boolean) {
         if (pending.isEmpty()) return
         rows += if (pendingRemote) RemoteActivityRow(pending, live) else ActionsRow(pending, live)
@@ -79,7 +92,10 @@ internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatR
             pending += message
         } else {
             flush(live = false)
-            rows += MessageRow(message, copyTexts[message.id])
+            val note = MikeChatNote.of(message.role, message.text)
+            rows += if (note == null) MessageRow(message, copyTexts[message.id])
+            else MikeNoteRow(message, note, repeated = note is MikeChatNote.Brief && briefed)
+            if (note is MikeChatNote.Brief) briefed = true
         }
     }
     flush(live = running)
@@ -151,11 +167,21 @@ internal fun actionsLabel(count: Int, live: Boolean): String = when {
     else -> "$count actions on your phone"
 }
 
+internal fun isMikeUpdate(row: ActionsRow): Boolean = row.steps.isNotEmpty() &&
+    row.steps.all { toolKey(toolNameOf(it)) in setOf("mike_memory", "mike_task", "mike_recall") }
+
+internal fun actionsLabel(row: ActionsRow): String = if (isMikeUpdate(row)) {
+    if (row.live) "Updating Mike" else if (row.steps.size == 1) "1 Mike update" else "${row.steps.size} Mike updates"
+} else actionsLabel(row.steps.size, row.live)
+
 /** The tool a stored tool message came from; it is saved as "name: result". */
 internal fun toolNameOf(message: ChatMessage): String = message.text.substringBefore(':').trim()
 
 private val TOOL_ACTIONS = mapOf(
     // tool name to (done, in progress)
+    "mike_memory" to ("Memory" to "Updating memory"),
+    "mike_task" to ("Tasks" to "Updating tasks"),
+    "mike_recall" to ("Earlier chats" to "Reading earlier chats"),
     "tap" to ("Tapped" to "Tapping"),
     "tap_node" to ("Tapped" to "Tapping"),
     "swipe" to ("Swiped" to "Swiping"),

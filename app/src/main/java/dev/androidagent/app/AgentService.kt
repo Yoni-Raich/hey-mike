@@ -73,6 +73,7 @@ class AgentService : Service() {
         super.onDestroy()
     }
     private fun stopAll() {
+        runCatching { graph.mike.store.pauseAll() }
         graph.queue.pause()
         graph.coordinator.endVoice()
         graph.coordinator.stop()

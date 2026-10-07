@@ -90,6 +90,8 @@ class AutomationHost(
     private val agentAvailable: () -> Boolean = { false },
     /** Told about every run, for a log line or a settings screen. */
     private val onReport: (AutomationRunReport) -> Unit = {},
+    private val nextAgentWake: () -> Long? = { null },
+    private val onAgentWake: suspend () -> Unit = {},
 ) {
 
     private val evaluator = AutomationEvaluator(history)
@@ -181,6 +183,11 @@ class AutomationHost(
                     }
                 }
             }
+            if (event is AutomationEvent.Clock) {
+                try { onAgentWake() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Log.w(TAG, "Mike's scheduled task could not start", e) }
+            }
             // A rule that just fired has a new cooldown and a new next run.
             rearm()
         }
@@ -206,7 +213,9 @@ class AutomationHost(
      * and at boot — the alarm itself does not survive a restart.
      */
     fun rearm() {
-        val next = AutomationWakeups.nextRunAt(library.all(), ZonedDateTime.now(zone()), history)
+        val rule = AutomationWakeups.nextRunAt(library.all(), ZonedDateTime.now(zone()), history)
+        val agent = nextAgentWake()?.let { java.time.Instant.ofEpochMilli(it).atZone(zone()) }
+        val next = listOfNotNull(rule, agent).minOrNull()
         if (next == null) alarms.cancel() else alarms.armFor(next)
     }
 

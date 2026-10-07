@@ -119,6 +119,18 @@ class SessionRunQueue(
         dispatch()
     }
 
+    /** Internal work waits behind a live turn; it never steers a person's conversation. */
+    suspend fun enqueue(request: QueuedTurn, requestedNow: Boolean = false) {
+        loaded.join()
+        lock.withLock {
+            check(store.getSession(request.sessionId) != null) { "Chat no longer exists." }
+            check(pending.value.size < 32) { "The queue is full." }
+            if (requestedNow) submittedNow += request.id
+            if (pending.value.none { it.id == request.id }) save(pending.value + request)
+        }
+        dispatch()
+    }
+
     /** Hold everything waiting now; only turns submitted after this may start until [resume]. */
     fun pause() {
         submittedNow.clear()

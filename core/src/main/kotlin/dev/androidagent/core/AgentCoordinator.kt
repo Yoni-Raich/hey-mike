@@ -79,6 +79,9 @@ class AgentCoordinator(
      */
     private val chatMedia: (suspend (address: String, workspace: File) -> String)? = null,
     private val chatTitles: ChatTitleManager = ChatTitleManager(sessions, engine),
+    private val continuity: AgentContinuity = object : AgentContinuity {},
+    /** Mike's notes and tasks: answered for the chat that asks, without the phone. */
+    private val sessionTools: SessionTools? = null,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -438,6 +441,7 @@ class AgentCoordinator(
             })
             chatTitles.seed(sessionId, prompt)
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
+            continuity.started(sessionId, prompt)
             val work = sessions.workspace(sessionId)
             // The phone is taken at the first tool call, so a chat that only
             // thinks never waits for one that is driving it.
@@ -470,11 +474,18 @@ class AgentCoordinator(
             }
             overlay.updateState(OverlayState(OverlayPhase.THINKING))
             beginTurn(token)
-            val startedTurn = engine.startTurn(
-                openedThread, handoff.orEmpty() + prompt, images, reasoningEffort, skill,
-                DeviceCapabilities.of(tools, adbStatus()),
-                planModel = if (planMode) model else null,
-            )
+            val told = continuity.context(sessionId, openedThread)
+            val startedTurn = try {
+                engine.startTurn(
+                    openedThread, told + handoff.orEmpty() + prompt, images, reasoningEffort, skill,
+                    DeviceCapabilities.of(tools, adbStatus()),
+                    planModel = if (planMode) model else null,
+                )
+            } catch (failure: Throwable) {
+                // The thread never received it, so it is not told yet.
+                if (told.isNotEmpty()) continuity.forgot(openedThread)
+                throw failure
+            }
             if (session.catchUpFrom != null) sessions.markCaughtUp(sessionId)
             if (!activateTurn(token, startedTurn)) return
             ensureCurrent(token)
@@ -655,6 +666,9 @@ class AgentCoordinator(
                             sessions.updateMessage(id, context.text.ifBlank { "Stopped." }, "interrupted")
                         }
                     }
+                }
+                context.snapshot.sessionId?.let { id ->
+                    runCatching { continuity.finished(id, "interrupted", context.text) }
                 }
                 runCatching { overlay.setCaptureHidden(false) }
                 synchronized(lifecycleLock) {
@@ -1114,7 +1128,11 @@ class AgentCoordinator(
                             serveChatTool(token, sessionId, event)
                             return@withLock
                         }
-                        if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        // Mike's notes and tasks leave the phone alone as well. They used
+                        // to queue for it, so a task that only had to record "done"
+                        // waited behind whichever chat was driving the screen.
+                        val own = sessionTools?.takeIf { event.name in it.names }
+                        if (own == null && !claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         if (usesScreen(event.name)) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
                         val visible = tools.needsControl(event.name)
                         val capture = tools.hidesOverlayDuringCapture(event.name)
@@ -1168,7 +1186,7 @@ class AgentCoordinator(
                             // so tool time stays device time.
                             val approvalsBefore = approvalNanos.get()
                             toolCalls++
-                            try { result = tools.invoke(event.name, event.arguments) }
+                            try { result = own?.invoke(sessionId, event.name, event.arguments) ?: tools.invoke(event.name, event.arguments) }
                             finally {
                                 val waited = approvalNanos.get() - approvalsBefore
                                 toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
@@ -1666,6 +1684,9 @@ class AgentCoordinator(
             approvalMs = approvalNanos.get() / 1_000_000,
         )
         metricsState.value = metricsState.value + (sessionId to metrics)
+        try { continuity.finished(sessionId, final.outcome, final.text) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { sessions.append(message(sessionId, "system", "Mike could not save the task result: ${e.message}")) }
         // Into the chat, not a log: the run that felt slow is the one someone
         // will ask about, and the answer belongs where they are already looking.
         RunSummary.line(metrics)?.let { summary ->

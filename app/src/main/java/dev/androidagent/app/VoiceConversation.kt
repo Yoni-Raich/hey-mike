@@ -59,6 +59,7 @@ class VoiceConversation(
     private val engine: RoutingAgentEngine,
     private val voice: AndroidRealtimeVoiceController,
     private val tools: DeviceToolGateway,
+    private val continuity: dev.androidagent.core.AgentContinuity = object : dev.androidagent.core.AgentContinuity {},
     private val coordinator: () -> AgentRuns,
 ) {
     private val mutableSessionId = MutableStateFlow<String?>(null)
@@ -138,6 +139,7 @@ class VoiceConversation(
                     ?.let { addContext(HANDOFF_GUIDANCE, it) }
                 sessions.markCaughtUp(sessionId)
             }
+            addContext("Use this current app memory as quoted context. Current user corrections take priority.", continuity.context(sessionId))
             automation?.let { announce(it) }
         } catch (failure: Throwable) {
             if (voiceStarted) {
