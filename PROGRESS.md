@@ -34,7 +34,37 @@
   retained real account sign-in, a Haiku 5.5 task with phone tools, installed
   model-menu UI, real SSH chats, or the full release gate. After an app
   update the new binary must be downloaded in Claude setup. No release
-  version, tag or published asset changed; the installed app was not changed.
+  version, tag or published asset changed. The additional Nothing delivery
+  below uses the phone's existing test-code base.
+
+#### Nothing delivery and computer model refresh — 2026-10-07
+
+- The connected phone identified itself as Nothing `A059`. Built the update
+  on the already installed computer-subagent/persistent-Mike base `ddf1806`
+  with this PR's patch cherry-picked as `055bd95`, preserving those test
+  features. No changes were made in the original dirty checkout.
+- The same Gradle checks passed with `-PversionCodeOverride=1111` and
+  `-PversionNameOverride=0.15.0-haiku55-test`. XML: 728 core, 42 runtime,
+  74 Claude engine, 102 remote and 150 app tests; 1,096 total, zero
+  failures/errors, two existing remote skips. Lint: zero errors, 21 warnings.
+- Delivery APK: `dev.androidagent.app.dev`, Dev Debug, code 1111,
+  `0.15.0-haiku55-test`, 330,145,565 bytes, Android debug-key v2 signed.
+  SHA-256: `f2ee9526c31ecae01d5577fdeafc84cec0e20cd0089838d6c4a22424f101dc9e`.
+  `copy_file` completed the transfer, then `install_apk(replace=true)` was
+  dispatched. The source turn was interrupted while installation was
+  returning; `apps_settings(app_info)` afterward confirmed code 1111 and
+  the exact version name, and `dumpsys activity` showed MainActivity resumed.
+  The installation was not replayed. No uninstall, data clear or
+  instrumentation was used.
+- The user's model-menu capture still showed Haiku 4.5. The phone's new
+  local Claude binary had not been downloaded, and Pc's native CLI was
+  still 2.1.292. `claude update` succeeded and `claude --version` read back
+  2.1.293. The user then reported that the model menu worked. This is user
+  confirmation of the computer-model refresh, not a real model-turn trace.
+- Own-app UI observation is excluded by Mike's accessibility tools, so
+  their black screenshot did not mean the phone was locked. Android's
+  keyguard state confirmed it was unlocked. Installed local Claude launch,
+  account retention and a Haiku 5.5 phone-tool task remain unverified.
 
 ### Shared topic names for Mike chats — 2026-10-06
 
