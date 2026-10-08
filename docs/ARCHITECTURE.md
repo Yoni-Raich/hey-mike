@@ -750,6 +750,26 @@ action is what checks overlay permission and shows the card. Leaving the app
 manually during a read-only turn therefore shows nothing and does not reopen
 the app on completion.
 
+Screen use includes `read_ui` and `screenshot`: their first call attaches the
+controls before any capture hides them, and the run retains the phone until
+it finishes. `DeviceToolGateway.needsControl(name, arguments)` classifies
+operation-based tools. Provider queries, permission checks, workspace files
+and workflow library management leave the card closed; editors, app launches,
+permission requests and workflow execution activate it. Background calls
+return their transient phone lease. Leaving Mike alone never activates it.
+Capture restoration runs in `NonCancellable`, including tool failure and Stop,
+and hiding survives a window rebuild or a foreground transition.
+
+When accessibility is connected, `FloatingControlOverlay` uses the bound
+service's `WindowManager` and `TYPE_ACCESSIBILITY_OVERLAY`, with the token that
+Android supplies. Settings deliberately hides `TYPE_APPLICATION_OVERLAY`
+windows, but the accessibility window is part of the active screen controls
+and remains visible. Service connect/disconnect/rebind rehosts only an already
+active card, preserving its position, collapse state, draft and capture-hidden
+state. Without accessibility, ADB control retains the permission-gated app
+overlay fallback; Android can still hide that fallback in protected screens.
+No private window API or setting that disables Android's protection is used.
+
 ## Voice audio routing
 
 `CommunicationAudioRoute` owns only the route this voice session selected. On

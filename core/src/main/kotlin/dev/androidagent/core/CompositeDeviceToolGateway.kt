@@ -90,6 +90,9 @@ class CompositeDeviceToolGateway(
         // Unrouted names fail safe as visible control, matching the ADB gateway.
         routes[name]?.firstOrNull()?.needsControl(name) ?: true
 
+    override fun needsControl(name: String, arguments: JsonObject): Boolean =
+        routes[name]?.firstOrNull()?.needsControl(name, arguments) ?: true
+
     override fun hidesOverlayDuringCapture(name: String): Boolean =
         routes[name]?.firstOrNull()?.hidesOverlayDuringCapture(name) ?: false
 

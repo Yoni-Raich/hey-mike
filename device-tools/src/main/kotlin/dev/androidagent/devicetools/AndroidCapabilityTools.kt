@@ -80,11 +80,22 @@ class AndroidCapabilityTools private constructor(
 
     override fun revoke() = dispatcher.revoke()
 
-    /**
-     * Every tool can open a visible editor/settings screen or write a
-     * workspace file, so all of them show the control banner.
-     */
+    /** Without arguments, fail safe: each of these tools can launch a screen. */
     override fun needsControl(name: String): Boolean = true
+
+    override fun needsControl(name: String, arguments: JsonObject): Boolean {
+        val operation = (arguments["operation"] as? JsonPrimitive)?.contentOrNull?.trim()
+        // Keep unknown operations visible until their behavior is classified.
+        if (operation !in CapabilityPolicy.operationsFor(name)) return true
+        return operation !in when (name) {
+            "contacts" -> setOf("permission_status", "search", "list", "get")
+            "calendar" -> setOf("permission_status", "list", "get")
+            "files_media" -> setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text")
+            "communications" -> setOf("notification_access_status")
+            "apps_settings" -> setOf("list_apps", "app_info", "permission_status")
+            else -> emptySet()
+        }
+    }
 
     override fun statusLine(): String =
         "Capabilities: contacts, calendar, media, messaging drafts, apps and settings (on-device, no ADB needed)"

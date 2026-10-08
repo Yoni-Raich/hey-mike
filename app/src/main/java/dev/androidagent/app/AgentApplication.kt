@@ -23,6 +23,7 @@ package dev.androidagent.app
 import android.app.Application
 import android.content.Intent
 import dev.androidagent.a11y.A11yDeviceTools
+import dev.androidagent.a11y.A11yServiceHandle
 import dev.androidagent.adb.AndroidAdbTransport
 import dev.androidagent.automations.AndroidAutomationActions
 import dev.androidagent.automations.AutomationHost
@@ -148,6 +149,7 @@ class AgentGraph(private val app: Application) {
         onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
         onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
+        accessibilityService = { A11yServiceHandle.service.value },
     )
     // One counter for every backend, so an observation revision never moves
     // backwards when a call falls through from one gateway to another.
@@ -345,6 +347,9 @@ class AgentGraph(private val app: Application) {
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
+        scope.launch {
+            A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
+        }
         runCoordinator = AgentRuns(scope, engine, onStopSession = { id ->
             if (id != null) computerTasks.stopOrigin(id)
             else computerTasks.stopAll()

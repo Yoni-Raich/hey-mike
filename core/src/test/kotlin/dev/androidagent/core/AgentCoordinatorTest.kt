@@ -230,7 +230,7 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
-    @Test fun uiControlWaitsForOverlayAndBackendReadsDoNotShowIt() = runTest {
+    @Test fun screenReadShowsControlsBeforeCaptureAndKeepsThemForTheNextAction() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Read and tap")
         runCurrent()
@@ -238,7 +238,9 @@ class AgentCoordinatorTest {
         assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.THINKING })
         rig.engine.emit(EngineEvent.ToolCall("read", "read_ui", buildJsonObject {}, "thread", "turn"))
         runCurrent()
-        assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.RUNNING && it.detail == "read ui" })
+        assertEquals(1, rig.overlay.shown)
+        assertTrue(rig.overlay.captureWasAttached)
+        assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.CONTROLLING && it.detail == "read ui" })
         rig.engine.emit(EngineEvent.ToolCall("tap", "tap", buildJsonObject {}, "thread", "turn"))
         runCurrent()
         assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.CONTROLLING && it.detail == "tap" })
@@ -542,6 +544,49 @@ class AgentCoordinatorTest {
         runCurrent()
         // tap captures nothing, so the card stays where it is.
         assertTrue(rig.overlay.captureHistory.isEmpty())
+        rig.close()
+    }
+
+    @Test fun providerReadsStayInBackgroundButAnEditorTakesTheScreen() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Find a contact")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("read", "contacts", buildJsonObject { put("operation", "search") }, "thread", "turn"))
+        runCurrent()
+        assertEquals(listOf("contacts"), rig.tools.names)
+        assertEquals(0, rig.overlay.shown)
+        assertFalse(rig.overlay.visible)
+        assertTrue(rig.tools.revoked) // A background call returns the phone lease.
+
+        rig.engine.emit(EngineEvent.ToolCall("editor", "contacts", buildJsonObject { put("operation", "create_draft") }, "thread", "turn"))
+        runCurrent()
+        assertEquals(1, rig.overlay.shown)
+        assertTrue(rig.tools.controlWasVisible)
+        assertFalse(rig.tools.revoked) // Keep control across screen work.
+        rig.close()
+    }
+
+    @Test fun captureFailureAndStopRestoreEvenASuspendingOverlay() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read the screen")
+        runCurrent()
+        rig.tools.fail = true
+        rig.engine.emit(EngineEvent.ToolCall("failure", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertFalse(rig.overlay.captureHidden)
+        assertEquals(listOf(true, false), rig.overlay.captureHistory)
+
+        rig.tools.fail = false
+        rig.tools.workMs = 10_000
+        rig.overlay.restoreMs = 10
+        rig.engine.emit(EngineEvent.ToolCall("cancel", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertTrue(rig.overlay.captureHidden)
+        rig.coordinator.stop()
+        advanceUntilIdle()
+        assertFalse(rig.overlay.captureHidden)
+        assertFalse(rig.overlay.visible)
+        assertTrue(rig.tools.revoked)
         rig.close()
     }
 
@@ -1072,14 +1117,18 @@ class AgentCoordinatorTest {
         override fun beginRun(runId: String, workspace: File) { revoked = false }
         override fun revoke() { revoked = true }
         override fun needsControl(name: String) = name == "tap"
+        override fun needsControl(name: String, arguments: JsonObject) =
+            needsControl(name) || name == "contacts" && arguments["operation"]?.jsonPrimitive?.content == "create_draft"
         override fun hidesOverlayDuringCapture(name: String) = name == "read_ui"
         /** How long a call takes on this fake phone, on the test's clock. */
         var workMs = 0L
         var nextResult = ToolResult("Done")
+        var fail = false
         override suspend fun invoke(name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
             check(!revoked)
-            if (needsControl(name)) controlWasVisible = overlay.visible
+            if (needsControl(name, arguments)) controlWasVisible = overlay.visible
             executions++; names.add(name)
+            if (fail) error("Capture failed")
             if (workMs > 0) delay(workMs)
             return nextResult
         }
@@ -1091,6 +1140,8 @@ class AgentCoordinatorTest {
         var visible = false
         var fail = false
         var captureHidden = false
+        var captureWasAttached = false
+        var restoreMs = 0L
         val captureHistory = mutableListOf<Boolean>()
         val states = mutableListOf<OverlayState>()
         val finished = mutableListOf<OverlayState>()
@@ -1102,6 +1153,10 @@ class AgentCoordinatorTest {
         override fun finish(state: OverlayState) { finished += state; updateState(state); hide() }
         override fun hide() { visible = false }
         override fun say(text: String) { spoken += text }
-        override suspend fun setCaptureHidden(hidden: Boolean) { captureHidden = hidden; captureHistory += hidden }
+        override suspend fun setCaptureHidden(hidden: Boolean) {
+            if (hidden) captureWasAttached = visible
+            else if (restoreMs > 0) delay(restoreMs)
+            captureHidden = hidden; captureHistory += hidden
+        }
     }
 }
