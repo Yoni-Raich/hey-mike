@@ -59,6 +59,19 @@
   output under ignored `**/build/`, with runtime inputs in `.codex-work/`;
   the shared build cleanup policy was not run. No new phone operation,
   install or runtime verification was performed for the dev integration.
+- Phone follow-up, 2026-10-08: `apps_settings(app_info)` read back
+  `dev.androidagent.app.dev`, code 1113, `0.15.0-adb-access-preserved-test`.
+  Its matching local APK and preserved build source include the service-host
+  overlay, argument-aware capability classification and capture restoration;
+  DEX inspection confirmed `refreshWindowHost()` and the argument overload of
+  `needsControl`. This is build/metadata evidence, not an installed-byte hash.
+- With accessibility connected and Wireless ADB off, opened
+  `android.settings.SETTINGS` through the phone gateway. `read_ui` verified
+  `com.android.settings` in front; the user then confirmed "מופיע" (the card
+  appears). Settings visibility is therefore physically verified by the user
+  on the installed 1113 build. No ADB operation or reinstall was needed.
+  Background-only suppression remains covered by coordinator/gateway unit
+  tests; a real manual-exit background task and service rebind remain untested.
 
 ### Allow computer ADB for connected-device work — 2026-10-08
 
