@@ -1,5 +1,29 @@
 # Progress
 
+### Allow computer ADB for connected-device work — 2026-10-08
+
+- Removed the blanket computer-side ADB ban from `RemoteInstructions`.
+  A request to build, install, debug or test on a connected Android device,
+  or an explicit ADB request, authorizes ADB for that task without another
+  ADB permission question. This also covers the chat's own phone. Select
+  the requested target from `adb devices -l`, require state `device`, ask
+  if ambiguous, and use `adb -s <serial>` for every device command. Phone
+  tools keep their own target; phone Wireless ADB status does not describe
+  the computer's USB connection. Existing access, Stop and security rules stay.
+- Windows/JDK 21: `:remote:testDebugUnitTest --offline --no-daemon
+  --no-parallel --max-workers=2 --console=plain` passed on the final source.
+  XML: 104 tests, zero failures/errors, two existing optional Linux/SSH skips.
+  New regressions cover Codex/Claude, Windows/Linux and Ask/Full access.
+  The stdio integration verifies the new instructions reach a computer
+  child thread while its saved access policy stays intact. `git diff --check`
+  passed. Generated output: ignored `build/58541f01f3a310d7/` in the primary
+  repository. An isolated Gradle home kept the existing build paths and
+  leases but disabled cleanup of other buckets; global settings were untouched.
+- Not tested: APK build/install, a live model using ADB, physical Xiaomi
+  access or the full release gate. No phone or emulator operation was run.
+  The updated app must supply the new instructions; editing source does
+  not replace the instructions already loaded in an existing chat.
+
 ### Direct computer subagents from a source chat — 2026-10-07
 
 - Added `computers(start_task, task_status, cancel_task)`. A direct task

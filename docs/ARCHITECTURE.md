@@ -1990,8 +1990,17 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   carry the same recipes, since Codex there reads the computer's skills,
   not the phone's. `push_file`, `pull_file` and `copy_to_phone` are gone:
   one tool per kind of copy is how the tool list grew without order. The
-  thread instructions forbid using adb on the computer to reach the phone:
-  it can see other devices and skips the app's controls.
+  thread instructions allow computer-side ADB when the user requests a build,
+  install, debug or test task on a connected Android device, or explicitly
+  requests ADB. No separate ADB permission is needed for that authorized task,
+  including when the selected device is the chat's phone. First identify the
+  requested target in `adb devices -l`, use only state `device`, ask if the
+  target is ambiguous, and pass `adb -s <serial>` for every device command.
+  Phone tools still target the chat's phone; its Wireless ADB status says
+  nothing about the computer's USB or wireless ADB connection. Existing
+  sandbox, approval, Stop, deletion and Android security rules still apply.
+  A source change does not replace instructions already loaded into a chat;
+  the updated app must supply the new instructions.
 - **The desktop.** Commands over SSH run in a Windows session with no screen.
   For screenshots, windows and the clipboard, the instructions teach a
   one-off scheduled task that runs as the signed-in user, interactively. It
