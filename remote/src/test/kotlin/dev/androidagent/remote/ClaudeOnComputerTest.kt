@@ -130,6 +130,38 @@ class ClaudeOnComputerTest {
         assertTrue(RemoteInstructions.forComputer(computer).contains("you run as Codex on their Windows computer \"Studio\""))
     }
 
+    @Test fun aConnectedDeviceTestAuthorizesComputerAdbForBothEnginesAndHosts() {
+        for (os in HostOs.entries) for (engine in EngineKind.entries) for (access in RemoteAccess.entries) {
+            val computer = RemoteComputer("pc", "Studio", "10.0.0.2", user = "me", os = os, access = access)
+            val instructions = RemoteInstructions.forComputer(computer, engine)
+            assertTrue(instructions.contains("A user request to build, install, debug or test on a connected Android device authorizes computer-side ADB for that task"))
+            assertTrue(instructions.contains("An explicit request to use ADB also authorizes it"))
+            assertTrue(instructions.contains("Do not ask for separate ADB permission when the task is already authorized"))
+            assertTrue(instructions.contains("also applies when the selected device is the phone hosting this chat"))
+            assertTrue(instructions.contains("Wireless ADB being off on the phone does not tell you whether USB or wireless ADB on this computer is available"))
+            assertFalse(instructions.contains("Do not use adb on this computer to reach the phone"))
+        }
+    }
+
+    @Test fun computerAdbStillRequiresTheRightDeviceAndKeepsExistingAccessRules() {
+        for (os in HostOs.entries) for (engine in EngineKind.entries) for (access in RemoteAccess.entries) {
+            val computer = RemoteComputer("pc", "Studio", "10.0.0.2", user = "me", os = os, access = access)
+            val instructions = RemoteInstructions.forComputer(computer, engine)
+            assertTrue(instructions.contains("adb devices -l"))
+            assertTrue(instructions.contains("entry in state device"))
+            assertTrue(instructions.contains("if the target is ambiguous, ask the user to choose"))
+            assertTrue(instructions.contains("adb -s <serial> on every device command"))
+            assertTrue(instructions.contains("never use offline or unauthorized entries"))
+            assertTrue(instructions.contains("phone tools still act on the phone that hosts this chat, not the selected ADB device"))
+            assertTrue(instructions.contains("Keep the computer's sandbox and approval rules, Stop, and confirmation before deleting data or spending money"))
+            assertTrue(instructions.contains("Never use ADB to bypass an Android security restriction"))
+            when (access) {
+                RemoteAccess.ASK -> assertTrue(instructions.contains("asks the user first") || instructions.contains("ask the user first"))
+                RemoteAccess.FULL -> assertTrue(instructions.contains("full access to this computer without approval prompts"))
+            }
+        }
+    }
+
     // ---- routing ----------------------------------------------------------------
 
     @Test fun aClaudeChatOnAComputerRunsOnThatComputersClaudeNotThePhones() = runBlocking {

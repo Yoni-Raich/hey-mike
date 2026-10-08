@@ -40,7 +40,10 @@ class ComputerSubagentIntegrationTest {
                 assertEquals(access.sandbox, threadStart.getValue("sandbox").jsonPrimitive.content)
                 assertEquals(access.approvalPolicy, threadStart.getValue("approvalPolicy").jsonPrimitive.content)
                 assertEquals(access.approvalPolicy, rig.profiles.single().approvalPolicy)
-                assertTrue(threadStart.getValue("developerInstructions").jsonPrimitive.content.contains("Desk"))
+                val instructions = threadStart.getValue("developerInstructions").jsonPrimitive.content
+                assertTrue(instructions.contains("Desk"))
+                assertTrue(instructions.contains("A user request to build, install, debug or test on a connected Android device authorizes computer-side ADB for that task"))
+                assertFalse(instructions.contains("Do not use adb on this computer to reach the phone"))
                 val turnStart = rig.remote.onlyRequest("turn/start").getValue("params").jsonObject
                 val inputs = turnStart.getValue("input").jsonArray.map { it.jsonObject }
                 assertEquals(exact, inputs.last().getValue("text").jsonPrimitive.content)
