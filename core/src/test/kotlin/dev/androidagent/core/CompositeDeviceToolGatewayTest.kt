@@ -27,11 +27,28 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 
 class CompositeDeviceToolGatewayTest {
+    @Test fun operationArgumentsReachTheGatewayWhenDecidingScreenControl() {
+        val provider = object : DeviceToolGateway {
+            override val definitions = listOf(ToolDefinition("contacts", "Contacts", buildJsonObject {}))
+            override fun beginRun(runId: String, workspace: File) = Unit
+            override fun revoke() = Unit
+            override fun needsControl(name: String) = true
+            override fun needsControl(name: String, arguments: JsonObject) =
+                arguments["operation"]?.jsonPrimitive?.content != "search"
+            override suspend fun invoke(name: String, arguments: JsonObject) = ToolResult("OK")
+            override suspend fun cancel() = Unit
+        }
+        val composite = CompositeDeviceToolGateway(listOf(provider))
+        assertFalse(composite.needsControl("contacts", buildJsonObject { put("operation", "search") }))
+        assertTrue(composite.needsControl("contacts", buildJsonObject { put("operation", "create_draft") }))
+        assertTrue(composite.needsControl("shell", buildJsonObject {}))
+    }
 
     @Test fun aToolRoutesToTheFirstBackendThatDeclaresIt() = runBlocking {
         val first = FakeGateway("a11y", tools = listOf("read_ui", "tap"))

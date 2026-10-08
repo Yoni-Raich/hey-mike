@@ -23,6 +23,7 @@ package dev.androidagent.overlay
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.accessibilityservice.AccessibilityService
 import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.res.ColorStateList
@@ -81,19 +82,23 @@ import kotlin.coroutines.resume
  * and a field to steer; another tap on the pill shrinks it back. The pill is
  * the only touchable window, so other apps keep receiving their own input
  * outside its bounds.
- * There is no AccessibilityService dependency here; device actions stay in
- * the core gateways.
+ * A connected accessibility service supplies the window token; device actions
+ * stay in the core gateways. ADB-only control falls back to the app overlay.
  */
 class FloatingControlOverlay(
     context: Context,
     private val onStop: () -> Unit,
     private val onSend: (String) -> Unit,
     private val onOpenApp: () -> Unit,
+    private val accessibilityService: () -> AccessibilityService? = { null },
 ) : ControlOverlay {
 
     private val appContext = context.applicationContext
-    private val windowManager =
+    private val applicationWindowManager =
         appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private var windowService: AccessibilityService? = null
+    private var windowContext: Context = appContext
+    private var windowManager = applicationWindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var controlRoot: FrameLayout? = null
@@ -169,6 +174,7 @@ class FloatingControlOverlay(
                 // Every run starts as the pill, with nothing said yet.
                 collapsed = true
                 content = null
+                captureHidden = false
             }
             runActive = true
             if (appForeground) {
@@ -230,7 +236,16 @@ class FloatingControlOverlay(
     override fun hide() {
         runOnMain {
             runActive = false
+            captureHidden = false
             removeViews()
+        }
+    }
+
+    /** Reattach with the new service's token after connect, disconnect or rebind. */
+    fun refreshWindowHost() {
+        runOnMain {
+            if (!runActive || appForeground) return@runOnMain
+            runCatching { addViewsIfNeeded() }.onFailure { removeViews() }
         }
     }
 
@@ -267,16 +282,15 @@ class FloatingControlOverlay(
      */
     override suspend fun setCaptureHidden(hidden: Boolean) {
         withContext(Dispatchers.Main.immediate) {
+            captureHidden = hidden
             val control = controlRoot ?: return@withContext
             if (!control.isAttachedToWindow) waitForAttach(control)
-            if (captureHidden == hidden) return@withContext
             if (hidden) {
                 // Device actions must not leave the overlay IME focused while
                 // the card is hidden from the captured surface.
                 disableInputFocus()
                 hideKeyboard()
             }
-            captureHidden = hidden
             val visibility = if (hidden) View.INVISIBLE else View.VISIBLE
             // Visibility preserves EditText contents and the current focus
             // state while making the window absent from a screenshot.
@@ -323,14 +337,29 @@ class FloatingControlOverlay(
     // ---------- view construction; main thread only ----------
 
     private fun addViewsIfNeeded() {
-        if (showing && controlRoot != null) {
+        val service = accessibilityService()
+        if (service == null && !Settings.canDrawOverlays(appContext)) {
+            throw SecurityException("Overlay permission missing: enable Display over other apps before starting device control.")
+        }
+        if (showing && controlRoot?.isAttachedToWindow == true && windowService === service) {
             applyStatus(currentStatus)
             return
         }
+        val draft = inputView?.text?.toString()
+        val top = controlParams?.y
         if (controlRoot != null || controlParams != null) removeViews()
+        windowService = service
+        windowContext = service ?: appContext
+        // The service's WindowManager installs its accessibility window token.
+        // An application WindowManager cannot create this type of window.
+        windowManager = windowContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         buildViews()
         val control = controlRoot ?: error("Overlay controls were not created")
         val controlLayout = controlParams ?: error("Overlay control parameters were not created")
+        draft?.let { inputView?.setText(it) }
+        top?.let { controlLayout.y = it }
+        clampPosition(controlLayout)
+        control.visibility = if (captureHidden) View.INVISIBLE else View.VISIBLE
         try {
             windowManager.addView(control, controlLayout)
             showing = true
@@ -343,7 +372,7 @@ class FloatingControlOverlay(
     }
 
     private fun buildViews() {
-        val root = FrameLayout(appContext).apply {
+        val root = FrameLayout(windowContext).apply {
             // The window owns the shadow halo. Keep padding stable so IME
             // insets never create an invisible, touch-blocking strip.
             val pad = dp(ROOT_PAD_DP)
@@ -546,12 +575,12 @@ class FloatingControlOverlay(
 
         controlRoot = root
         inputFocusEnabled = false
-        captureHidden = false
 
         controlParams = WindowManager.LayoutParams(
             windowWidthPx(),
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            if (windowService != null) WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            else WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -784,7 +813,7 @@ class FloatingControlOverlay(
     // ---------- window lifecycle ----------
 
     private fun requireOverlayPermission() {
-        if (!Settings.canDrawOverlays(appContext)) {
+        if (accessibilityService() == null && !Settings.canDrawOverlays(appContext)) {
             throw SecurityException("Overlay permission missing: enable Display over other apps before starting device control.")
         }
     }
@@ -863,7 +892,9 @@ class FloatingControlOverlay(
         controlParams = null
         imeBottomInsetPx = 0
         showing = false
-        captureHidden = false
+        windowService = null
+        windowContext = appContext
+        windowManager = applicationWindowManager
     }
 
     private fun openAppAfterFinish() {
@@ -873,7 +904,9 @@ class FloatingControlOverlay(
     private fun removeWindow(view: View?) {
         if (view == null) return
         try {
-            if (view.isAttachedToWindow) windowManager.removeViewImmediate(view)
+            // A service token can detach a window before this callback. Remove
+            // its WindowManager registration too; an unregistered view is safe.
+            windowManager.removeViewImmediate(view)
         } catch (_: IllegalArgumentException) {
         } catch (_: Exception) {
         }

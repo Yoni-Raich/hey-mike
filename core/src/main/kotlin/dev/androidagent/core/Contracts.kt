@@ -452,6 +452,8 @@ interface DeviceToolGateway {
     fun beginRun(runId: String, workspace: File)
     fun revoke()
     fun needsControl(name: String): Boolean
+    /** Operation-based tools only need the floating controls when they use the screen. */
+    fun needsControl(name: String, arguments: JsonObject): Boolean = needsControl(name)
     suspend fun invoke(name: String, arguments: JsonObject): ToolResult
     suspend fun cancel()
 

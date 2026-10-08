@@ -1,5 +1,65 @@
 # Progress
 
+### Screen-control overlay and Android Settings — 2026-10-08
+
+- Isolated `fix/screen-control-overlay-20261008` from `055bd951`, matching the
+  installed persistent-Mike/computer-subagent/Haiku test build. The original
+  dirty checkout was left untouched.
+- Phone `dumpsys window` confirmed the same live `AndroidAgentControl`
+  application overlay had `mForceHideNonSystemOverlayWindow=true`,
+  `isOnScreen=false`, `isVisible=false` under Settings' hide-overlay flag;
+  Home restored its visibility and returning to Settings hid it again.
+- Active controls now use the connected accessibility service's public
+  `TYPE_ACCESSIBILITY_OVERLAY` window and service-owned token. Service changes
+  rehost an active card; ADB-only use keeps the app-overlay fallback, which
+  protected screens can still hide.
+- Classify provider and workflow operations by their arguments. Reads and
+  workspace/library work do not activate the overlay; screen reads and real
+  screen actions do. The first capture attaches before hiding; cancellation
+  and failures restore with `NonCancellable`.
+- First check passed: `:core:test :device-tools:testDebugUnitTest
+  :overlay:testDebugUnitTest --no-daemon --no-parallel --max-workers=2
+  --console=plain`. Regression coverage checks screen-read attachment,
+  operation routing, background lease release, editor takeover and capture
+  failure/Stop restoration. `python -m unittest tools.test_prepare_runtime`
+  passed all 15 tests.
+- Full Windows/JDK 21 gate passed: `test :app:assembleDevDebug
+  :app:assembleDevRelease :app:assembleDevDebugAndroidTest :app:lintDevDebug
+  :voice:lintDebug :overlay:lintDebug :a11y:lintDebug
+  -PversionCodeOverride=1112 -PversionNameOverride=0.15.0-overlay-fix-test
+  --no-daemon --no-parallel --max-workers=2 --console=plain` (3m51s).
+  Core/debug XML reports: 1,376 cases, zero failures/errors, eight existing
+  platform/remote skips; release and prod-flavor unit variants also passed.
+  App/overlay/a11y/voice lint: zero errors, 21/6/4/2 warnings respectively.
+  The instrumentation APK was built only; it was not run on the user's phone.
+- Final cleanup removes the obsolete takeover latch and removes a stale
+  WindowManager registration even if a service-token change detached its view.
+  Scoped core/overlay tests, Dev Debug/Release and instrumentation APK builds,
+  and app/overlay lint passed again after that cleanup (1m41s).
+- Test APK: `dev.androidagent.app.dev`, code 1112,
+  `0.15.0-overlay-fix-test`, 331,791,258 bytes; SHA-256
+  `330645f4ded8cd35da406904d5e1385d9769a70039a366d0fdab6506c6f9c581`.
+  Debug-key v2 signature and 16 KB zip alignment verified. Copy to the phone
+  completed. `install_apk` was interrupted before a receipt: installation and
+  post-fix Settings visibility are unverified; do not infer them from the build.
+
+- Dev integration starts at `c143425b` (PR #123). Only the overlay fix was
+  cherry-picked from `7d0a2aa`; conflict resolution keeps dev's existing
+  coordinator and app wiring. Persistent-Mike and Haiku changes from the
+  installed-build branch are not part of this integration.
+- Validation on the dev integration source passed (2m21s): `:core:test
+  :device-tools:testDebugUnitTest :overlay:testDebugUnitTest
+  :a11y:testDebugUnitTest :engine-codex:testDebugUnitTest
+  :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug :overlay:lintDebug --offline --no-daemon --no-parallel
+  --max-workers=2 --console=plain`. XML: 1,153 cases, zero failures/errors,
+  two existing optional remote skips. App/overlay lint have zero errors.
+  Python runtime-preparation tests (15) and `git diff --check` passed.
+  An isolated Gradle home reused dependency caches and kept this worktree's
+  output under ignored `**/build/`, with runtime inputs in `.codex-work/`;
+  the shared build cleanup policy was not run. No new phone operation,
+  install or runtime verification was performed for the dev integration.
+
 ### Allow computer ADB for connected-device work — 2026-10-08
 
 - Removed the blanket computer-side ADB ban from `RemoteInstructions`.

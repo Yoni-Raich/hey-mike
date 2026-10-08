@@ -139,7 +139,6 @@ class AgentCoordinator(
     private val traceFailureReported = AtomicBoolean(false)
     private val assistantText = StringBuilder()
     private var assistantOutcome = "complete"
-    private var controlTakeover = false
     private var awaitingTurn = false
     private var voiceMode = false
     private val startupEvents = ArrayDeque<EngineEvent>()
@@ -224,7 +223,6 @@ class AgentCoordinator(
             approvalNanos.set(0)
             assistantText.clear()
             assistantOutcome = "complete"
-            controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
             remoteItems.clear()
@@ -256,7 +254,6 @@ class AgentCoordinator(
             assistantId = null
             assistantText.clear()
             assistantOutcome = "complete"
-            controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
             overlaySpeech = null
@@ -375,7 +372,6 @@ class AgentCoordinator(
                 device = deviceHeld.also { deviceHeld = false },
             )
             turn = null
-            controlTakeover = false
             mutableState.value = state.value.copy(
                 phase = RunPhase.STOPPING,
                 status = "Ending voice",
@@ -643,7 +639,6 @@ class AgentCoordinator(
             )
             awaitingTurn = false
             startupEvents.clear()
-            controlTakeover = false
             mutableState.value = snapshot.copy(phase = RunPhase.STOPPING, status = "Stopping", controlling = false, approval = null, question = null)
             result
         }
@@ -1159,8 +1154,8 @@ class AgentCoordinator(
                             return@withLock
                         }
                         if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
-                        if (usesScreen(event.name)) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
-                        val visible = tools.needsControl(event.name)
+                        val visible = usesScreen(event.name, event.arguments)
+                        if (visible) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
                         val capture = tools.hidesOverlayDuringCapture(event.name)
                         // act_and_observe wraps the real action, so report that
                         // instead: callers care that a tap is happening, not
@@ -1180,21 +1175,17 @@ class AgentCoordinator(
                         var captureHidden = false
                         var result: ToolResult
                         try {
-                            if (capture) {
-                                overlay.setCaptureHidden(true)
-                                captureHidden = true
-                            }
                             if (visible) {
-                                val takeover = synchronized(lifecycleLock) { controlTakeover }
-                                if (takeover) overlay.updateState(overlayState)
-                                else {
-                                    overlay.showState(overlayState)
-                                    synchronized(lifecycleLock) {
-                                        if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) controlTakeover = true
-                                    }
-                                }
+                                // Idempotent show also checks a replaced/reconnected window host.
+                                overlay.showState(overlayState)
                             } else {
                                 overlay.updateState(overlayState)
+                            }
+                            // Attach before hiding: a first screen read must not create
+                            // a visible card after the capture has already hidden it.
+                            if (capture) {
+                                captureHidden = true
+                                overlay.setCaptureHidden(true)
                             }
                             ensureCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())
                             synchronized(lifecycleLock) {
@@ -1222,7 +1213,9 @@ class AgentCoordinator(
                         } catch (error: Exception) {
                             result = ToolResult(error.message ?: "Device action failed", success = false)
                         } finally {
-                            if (captureHidden) runCatching { overlay.setCaptureHidden(false) }
+                            if (captureHidden) withContext(NonCancellable) {
+                                runCatching { overlay.setCaptureHidden(false) }
+                            }
                             synchronized(lifecycleLock) {
                                 if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                                     mutableState.value = state.value.copy(phase = RunPhase.THINKING, controlling = false, status = "Working")
@@ -1647,7 +1640,6 @@ class AgentCoordinator(
                 awaitingTurn = false
                 voiceMode = false
                 startupEvents.clear()
-                controlTakeover = false
                 AssistantFinal(assistantId, assistantText.toString(), assistantOutcome, flush, deviceHeld.also { deviceHeld = false })
             }
         } ?: return
@@ -1767,8 +1759,8 @@ class AgentCoordinator(
         if (released) share.lease.release(this)
     }
 
-    private fun usesScreen(name: String): Boolean =
-        tools.needsControl(name) || tools.hidesOverlayDuringCapture(name) || name in SCREEN_READS
+    private fun usesScreen(name: String, arguments: JsonObject): Boolean =
+        tools.needsControl(name, arguments) || tools.hidesOverlayDuringCapture(name) || name in SCREEN_READS
 
     private fun launchControl(block: suspend CoroutineScope.() -> Unit): Job {
         val job = scope.launch(start = CoroutineStart.LAZY, block = block)

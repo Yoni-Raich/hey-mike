@@ -41,6 +41,26 @@ class CapabilityToolsTest {
 
     // ---- surface ----
 
+    @Test fun providerAndWorkspaceOperationsDoNotTakeTheScreen() {
+        val tools = AndroidCapabilityTools(FakePlatform())
+        val background = mapOf(
+            "contacts" to setOf("permission_status", "search", "list", "get"),
+            "calendar" to setOf("permission_status", "list", "get"),
+            "files_media" to setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text"),
+            "communications" to setOf("notification_access_status"),
+            "apps_settings" to setOf("list_apps", "app_info", "permission_status"),
+        )
+        for (name in CapabilityPolicy.TOOLS) {
+            for (operation in CapabilityPolicy.operationsFor(name)) {
+                assertEquals("$name:$operation", operation !in background.getValue(name),
+                    tools.needsControl(name, buildJsonObject { put("operation", operation) }))
+            }
+        }
+        assertFalse(tools.needsControl("contacts", buildJsonObject { put("operation", " search ") }))
+        assertTrue(tools.needsControl("contacts", buildJsonObject {}))
+        assertTrue(tools.needsControl("contacts", buildJsonObject { put("operation", "future_operation") }))
+    }
+
     @Test fun exactlyFiveOperationBasedTools() {
         val tools = AndroidCapabilityTools(FakePlatform())
         assertEquals(
