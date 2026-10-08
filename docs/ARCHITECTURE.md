@@ -1,5 +1,32 @@
 # Architecture
 
+## QA findings contracts — 2026-10-08
+
+- Workflow call text remains in its arguments. Save validates the serialized
+  definition before replacing a stored workflow, so acknowledged definitions
+  can be loaded again.
+- Session database v6 keeps exact unsent composer drafts per chat. Computer
+  `open_chat` stores and reads back the exact proposed message before returning
+  `draftSaved` and its session id. Opening is requested, not guaranteed by that
+  acknowledgement; reading the draft does not consume it.
+- A traced tool ends with `tool_result` or explicit `tool_cancelled`, including
+  monotonic elapsed time. Stop still revokes dispatch first. Cancellation
+  preserves a workflow's completed prefix and outputs without new screenshot
+  dispatch, success conversion or automatic replay. Completed side effects
+  are not undone. `turn_finished` records the engine's terminal status.
+- Own accessibility windows stay excluded from nodes/handles. Observations
+  and unchanged replies carry masking metadata; an active own window's image
+  reply is `captured:false`. Own streamed content does not reset the screen
+  settle clock; real window changes and other apps still do.
+- Media info reads duration/dimensions/rotation from the actual content URI;
+  unknown fields are omitted. `media-output-check` adds external final-frame
+  verification to export acceptance. Metadata is not visual or decode proof.
+- Debug QA evidence is read-only, requires Android DUMP permission and is absent
+  from release. The opt-in touch-to-next-draw probe records timings, never text
+  or coordinates. QA drivers refuse UI dumps during active runs and checkpoint
+  before uncertain actions. Physical results and limits are in
+  [the validation report](testing/e2e-findings-fixes-20261008/RESULTS.md).
+
 One Android project, with replaceable modules and small core contracts.
 
 | Module | Responsibility |

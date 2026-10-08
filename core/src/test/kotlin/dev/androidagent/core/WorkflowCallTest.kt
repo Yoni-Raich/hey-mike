@@ -112,6 +112,31 @@ class WorkflowCallTest {
 
     private fun parse(result: ToolResult): JsonObject = Json.parseToJsonElement(result.text).jsonObject
 
+    @Test fun cancellationKeepsCompletedPrefixOutputsAndDoesNotRunTheTailOrScreenshot() = runBlocking {
+        val seen = mutableListOf<String>()
+        invokeOverride = { name, _ ->
+            seen += name
+            if (seen.size == 2) throw kotlinx.coroutines.CancellationException("Stop")
+            ToolResult("{\"ok\":true,\"marker\":\"KEPT\"}")
+        }
+        val plan = definition(
+            """{"id":"first","action":"call","tool":"remember_capability","arguments":{},"output":"saved"}""",
+            """{"id":"interrupted","action":"call","tool":"device_status","arguments":{}}""",
+            """{"id":"tail","action":"call","tool":"remember_capability","arguments":{}}""",
+        )
+        try {
+            runner().run(plan, WorkflowRunner.Options(screenshotOnFailure = true))
+            org.junit.Assert.fail("Stop was swallowed")
+        } catch (cancelled: WorkflowCancelledException) {
+            val report = Json.parseToJsonElement(cancelled.report).jsonObject
+            assertEquals("first", report["steps"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
+            assertEquals("interrupted", report["failedStep"]!!.jsonPrimitive.content)
+            assertEquals("KEPT", report["outputs"]!!.jsonObject["saved"]!!.jsonObject["marker"]!!.jsonPrimitive.content)
+            assertEquals("cancelled", report["errorType"]!!.jsonPrimitive.content)
+        }
+        assertEquals(listOf("remember_capability", "device_status"), seen)
+    }
+
     // ---- v1 compatibility ----
 
     @Test fun existingActionsAndBehaviorStayUnchanged() {

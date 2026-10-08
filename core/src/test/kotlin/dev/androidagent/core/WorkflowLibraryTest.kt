@@ -22,6 +22,7 @@ package dev.androidagent.core
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,6 +37,32 @@ class WorkflowLibraryTest {
     @get:Rule val temp = TemporaryFolder()
 
     private fun library() = WorkflowLibrary(File(temp.root, "definitions"))
+
+    @Test fun textBearingCallWithParametersAndOutputsSurvivesSaveReloadBindAndDescribe() {
+        val definition = WorkflowDefinition.parse(Json.parseToJsonElement("""
+            {"id":"text-call","package":"com.example.app","parameters":{"marker":{"type":"string"}},"steps":[
+              {"id":"write","action":"call","tool":"files_media","arguments":{"operation":"ws_write_text","path":"qa.txt","text":"{{marker}}"},"output":"saved"}
+            ]}
+        """).jsonObject)
+        library().save(definition)
+        assertTrue(library().broken().isEmpty())
+        val loaded = (library().find("text-call") as WorkflowLibrary.Lookup.Found).definition
+        assertEquals(null, loaded.steps.single().text)
+        assertFalse(loaded.toJson()["steps"]!!.jsonArray.single().jsonObject.containsKey("text"))
+        val bound = loaded.bind(Json.parseToJsonElement("""{"marker":"EXACT_MARKER"}""").jsonObject)
+        assertEquals("EXACT_MARKER", bound.steps.single().arguments["text"].toString().trim('"'))
+        assertEquals("saved", bound.steps.single().output)
+        assertFalse(bound.outline().single().jsonObject.containsKey("text"))
+    }
+
+    @Test fun anInvalidProgrammaticDefinitionIsRejectedBeforeReplacingAnExistingFile() {
+        val valid = WorkflowDefinition.parse(Json.parseToJsonElement("""{"id":"valid","package":"com.example.app","steps":[{"action":"open_app"}]}""").jsonObject)
+        val file = library().save(valid)
+        val before = file.readText()
+        val invalid = valid.copy(steps = listOf(valid.steps.single().copy(action = WorkflowAction.CALL, callTool = "files_media", text = "bad")))
+        try { library().save(invalid); org.junit.Assert.fail("invalid save acknowledged") } catch (_: WorkflowFormatException) {}
+        assertEquals(before, file.readText())
+    }
 
     private fun definition(id: String, pkg: String = "com.android.settings", step: String = "open") = """
         {"id":"$id","package":"$pkg","steps":[{"id":"$step","action":"open_app"}]}

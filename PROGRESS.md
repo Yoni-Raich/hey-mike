@@ -1,5 +1,35 @@
 # Progress
 
+### E2E findings fixes and Xiaomi latency — 2026-10-08
+
+- Isolated from dev `72bbe603`; original dirty checkout and historical QA
+  ledger preserved. Workflow text save/reload, exact durable Pc drafts, typed
+  Stop trace/prefix evidence, own-UI masking, real video metadata and a shipped
+  export-check skill implemented. Debug QA driver/receiver and native fixture
+  added; detailed commands and gaps are in
+  [RESULTS](docs/testing/e2e-findings-fixes-20261008/RESULTS.md).
+- Full `test`, Dev Debug/Release, androidTest APK build, app/voice/a11y lint
+  gate passed (3m27s); 2,267 unit executions, zero failures/errors, 16 skips.
+  Python QA/runtime checks: 23 passed. No instrumentation run or uninstall.
+- Physical Xiaomi Redmi 12 / Android 15: debug 1121 proved Sonnet workflow
+  save/describe/run/read, masking, video metadata and exact Pc draft across
+  switch/reopen/restart. Debug 1122 installed and verified (test-only debug
+  key); SHA `04f9db8c440c962f592352592edff50c6c62a86e4b3fb98f2fa7467d72650dc2`.
+  Stop retained its prefix/output, cancelled the wait and never ran the tail;
+  independently checked 120 seconds later.
+- Warm idle drawer: 20 opens, median 16.544 ms, p95 19.565 ms, max 21.312 ms;
+  20 closes median 16.416 ms. These are touch dispatch to next draw, not display
+  or task completion. Android reported 111/4,238 janky frames across the reset
+  intervals. OEM flag-32 rows were excluded; parsed frame percentiles unavailable.
+- Completed live log interval 16:44:53–17:00:51 Jerusalem: no fatal/ANR/native
+  signal signature; expected update/force-stop exits. Earlier interrupted
+  capture is partial only. No whole-run or two-hour soak claim.
+- Remaining: human normal Xiaomi accessibility confirmation after restart;
+  live proof of new idle-event policy; native fixture install was rejected by
+  Xiaomi security; GPT quota exceeded before tools, so the three-repeat matched
+  engine benchmark and new CapCut validation remain blocked/unrun. Historical
+  55 NOT_RUN cases are not bulk-marked blocked or passed. User handles strong review.
+
 ### Screen-control overlay and Android Settings — 2026-10-08
 
 - Isolated `fix/screen-control-overlay-20261008` from `055bd951`, matching the

@@ -219,6 +219,24 @@ class CapabilityToolsTest {
         assertFailure(result, "files_media", "permission_denied")
     }
 
+    @Test fun exportedVideoInfoCarriesActualDurationDimensionsAndUnknownMetadataHonestly() {
+        val fake = FakePlatform().apply {
+            mediaGranted = true
+            media = listOf(MediaRow("content://media/1", "qa.mp4", "video/mp4", 99L,
+                durationMs = 4_000L, width = 720, height = 1280, rotationDegrees = 0, metadataStatus = "available"))
+        }
+        val tools = AndroidCapabilityTools(fake)
+        tools.beginRun("qa", Files.createTempDirectory("qa").toFile())
+        fun info() = Json.parseToJsonElement(runBlocking { tools.invoke("files_media", buildJsonObject {
+            put("operation", "info"); put("uri", "content://media/1")
+        }) }.text).jsonObject["file"]!!.jsonObject
+        assertEquals("4000", info()["durationMs"]!!.jsonPrimitive.content)
+        assertEquals("720", info()["width"]!!.jsonPrimitive.content)
+        fake.media = listOf(fake.media.single().copy(durationMs = null, width = null, height = null, metadataStatus = "unavailable"))
+        assertFalse(info().containsKey("durationMs"))
+        assertEquals("unavailable", info()["metadataStatus"]!!.jsonPrimitive.content)
+    }
+
     @Test fun requestPermissionsRejectsOutsideAllowlistWithoutCallback() {
         val fake = FakePlatform()
         var callbackCalls = 0

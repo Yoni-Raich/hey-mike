@@ -36,6 +36,7 @@ import dev.androidagent.remote.RemoteSetup
 import dev.androidagent.remote.RemoteStore
 import dev.androidagent.runtime.ClaudeInstallPhase
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import java.io.File
 import java.util.UUID
@@ -45,6 +46,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     val updateManager = AppUpdateManager(application)
     private val preferences = application.getSharedPreferences("ui", 0)
     private val current = MutableStateFlow<String?>(null)
+    private val draftWrites = Channel<Pair<String, String>>(Channel.UNLIMITED)
     /**
      * Each engine's model list, pick and quota. The open chat is offered the
      * models of every engine that can run in it, and shows the pick and the
@@ -69,6 +71,22 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private var previousChat: String? = null
 
     init {
+        viewModelScope.launch {
+            for ((id, text) in draftWrites) {
+                // Keep typing off disk and coalesce changes without reordering sessions.
+                val latest = mutableMapOf(id to text)
+                delay(150)
+                while (true) {
+                    val next = draftWrites.tryReceive().getOrNull() ?: break
+                    latest[next.first] = next.second
+                }
+                for ((sessionId, draft) in latest) {
+                    try { graph.sessions.saveComposerDraft(sessionId, draft) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) { mutable.update { it.copy(errorMessage = error.message ?: "Draft could not be saved") } }
+                }
+            }
+        }
         viewModelScope.launch {
             try { checkForUpdates(manual = false) } catch (_: Exception) {}
         }
@@ -101,6 +119,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             updateTitle()
             project()
             try {
+                val savedDraft = graph.sessions.composerDraft(id)
+                mutable.update {
+                    if (id in it.composerSeeds) it else it.copy(composerSeeds = it.composerSeeds + (id to savedDraft.orEmpty()))
+                }
                 // Reading a saved history can touch disk. Keep the loading card
                 // responsive, and do not hold the history behind skill discovery.
                 val messages = withContext(Dispatchers.IO) { graph.sessions.messages(id) }
@@ -410,6 +432,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Delete a chat that has no message and no thread, unless something is still using it. */
     private suspend fun discardIfUnstarted(id: String) = runCatching {
         val session = graph.sessions.getSession(id) ?: return@runCatching
+        if (mutable.value.composerSeeds[id]?.isNotEmpty() == true || !graph.sessions.composerDraft(id).isNullOrEmpty()) return@runCatching
         if (!isBlank(session) || id in mutable.value.pcChatLoading) return@runCatching
         if (graph.coordinator.phaseOf(id) != null) return@runCatching
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) return@runCatching
@@ -705,6 +728,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         send(WIRELESS_SETUP_PROMPT, emptyList())
     }
     fun select(id: String) { current.value = id }
+    fun composerDraftChanged(id: String, text: String) {
+        mutable.update { it.copy(composerSeeds = it.composerSeeds + (id to text)) }
+        draftWrites.trySend(id to text)
+    }
     fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
         if (graph.computers.state.value.tasks.values.any { it.originSessionId == id && !it.terminal }) {

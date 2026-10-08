@@ -120,11 +120,14 @@ class ComputerToolGatewayTest {
         markReady(hub, pc.id)
         val gateway = ComputerToolGateway(hub, sessions, requests, manager) { raised++ }
         gateway.beginRun("source-run", sessions.workspace("source"))
-        val message = "Please review the project"
+        val message = "  Please review\n בדיוק את הפרויקט  "
         val reply = invoke(gateway, "mode" to "open_chat", "project" to "project", "message" to message)
         runCurrent()
         assertEquals("true", reply["ok"]!!.jsonPrimitive.content)
         assertEquals(ComputerUiRequest.OpenChat("child-1", message), requests.value)
+        assertEquals(message, sessions.composerDraft("child-1"))
+        assertEquals("child-1", reply["sessionId"]!!.jsonPrimitive.content)
+        assertEquals("true", reply["draftSaved"]!!.jsonPrimitive.content)
         assertEquals(1, raised)
         assertEquals(RemoteBinding(pc.id, "C:\\src\\project"), store.binding("child-1"))
         assertTrue(store.state.value.tasks.isEmpty())
@@ -211,6 +214,9 @@ class ComputerToolGatewayTest {
     }
 
     private class Sessions(private val root: File) : SessionStore {
+        private val drafts = mutableMapOf<String, String>()
+        override suspend fun saveComposerDraft(sessionId: String, text: String) { drafts[sessionId] = text }
+        override suspend fun composerDraft(sessionId: String) = drafts[sessionId]
         override val sessions = MutableStateFlow(listOf("source", "other").map { ChatSession(it, it, 0, 0) })
         val history = MutableStateFlow<List<ChatMessage>>(emptyList())
         var created = 0

@@ -144,6 +144,21 @@ class LocalSessionStore(context: Context) : SessionStore {
         File(workspaceDirectory(sessionId).apply { mkdirs() }, "session-trace.jsonl")
             .appendText(entry.toString() + "\n", Charsets.UTF_8)
     }
+    override suspend fun saveComposerDraft(sessionId: String, text: String) = mutate {
+        if (text.isEmpty()) {
+            db.delete("composer_drafts", "session=?", arrayOf(sessionId))
+        } else {
+            db.insertWithOnConflict("composer_drafts", null, ContentValues().apply {
+                put("session", sessionId); put("text", text)
+            }, SQLiteDatabase.CONFLICT_REPLACE).also { check(it != -1L) { "Draft could not be saved" } }
+        }
+        Unit
+    }
+    override suspend fun composerDraft(sessionId: String): String? = mutate {
+        db.rawQuery("SELECT text FROM composer_drafts WHERE session=?", arrayOf(sessionId)).use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    }
     private suspend fun <T> mutate(block: () -> T): T = withContext(Dispatchers.IO) { lock.withLock { block() } }
     private fun refresh(sessionId: String? = null) { sessionStream.value = loadSessions(); sessionId?.let { streams[it]?.value = loadMessages(it) } }
     private fun loadSessions(): List<ChatSession> = db.rawQuery("SELECT id,title,created,updated,thread,EXISTS(SELECT 1 FROM messages WHERE session=sessions.id),engine,parked,catch_up,title_pending FROM sessions ORDER BY updated DESC", null).use { c -> buildList { while (c.moveToNext()) add(ChatSession(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4), c.getInt(5) == 1, engineOf(c.getString(6)), parkedOf(c.getString(7)), if (c.isNull(8)) null else c.getLong(8), c.getInt(9) == 1)) } }
@@ -156,15 +171,17 @@ class LocalSessionStore(context: Context) : SessionStore {
     private fun engineOf(stored: String?): EngineKind = EngineKind.entries.firstOrNull { it.name == stored } ?: EngineKind.CODEX
     private fun loadMessages(sessionId: String): List<ChatMessage> = db.rawQuery("SELECT id,role,text,created,state,attachments FROM messages WHERE session=? ORDER BY created,rowid", arrayOf(sessionId)).use { c -> buildList { while (c.moveToNext()) add(ChatMessage(c.getString(0), sessionId, c.getString(1), c.getString(2), c.getLong(3), c.getString(4), runCatching { Json.decodeFromString<List<String>>(c.getString(5)) }.getOrDefault(emptyList()))) } }
 
-    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 5) {
+    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 6) {
         override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true); db.enableWriteAheadLogging() }
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX',parked TEXT,catch_up INTEGER,title_pending INTEGER NOT NULL DEFAULT 0)")
             db.execSQL("CREATE TABLE messages(id TEXT PRIMARY KEY,session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,attachments TEXT NOT NULL)")
             db.execSQL("CREATE INDEX message_session ON messages(session,created)")
             db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE composer_drafts(session TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,text TEXT NOT NULL)")
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS composer_drafts(session TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,text TEXT NOT NULL)")
             if (oldVersion < 2) db.execSQL("CREATE TABLE IF NOT EXISTS run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
             // An older build may have opened this file since a newer one wrote
             // it (see onDowngrade): the version went back but the columns

@@ -118,6 +118,9 @@ interface SessionStore {
     fun workspace(sessionId: String): File
     /** Append one visible, ordered session event to the user's private workspace. */
     suspend fun appendTrace(sessionId: String, entry: JsonObject) {}
+    /** Exact, unsent composer text. Kept per chat across navigation and restarts. */
+    suspend fun saveComposerDraft(sessionId: String, text: String) {}
+    suspend fun composerDraft(sessionId: String): String? = null
     suspend fun loadQueuedTurns(): List<QueuedTurn> = emptyList()
     suspend fun saveQueuedTurns(turns: List<QueuedTurn>) {}
 }

@@ -32,6 +32,20 @@ import org.junit.Test
 
 class UiObservationSerializerTest {
 
+    @Test fun maskingIsExplainedOnFreshAndUnchangedResultsAndChangesInvalidateTheFingerprint() {
+        val observation = UiObservation(null, emptyList(), UiMasking("dev.androidagent.app.dev", 1, true))
+        fun render(screen: UiObservation, previous: ObservationFingerprint?) = UiObservationSerializer.render(
+            observation = screen, source = "accessibility", backend = "a11y", observationId = "ui-1",
+            revision = 1, elapsedMs = 2, previous = previous, force = false, stable = true,
+        )
+        val first = render(observation, null)
+        val second = render(observation, first.fingerprint)
+        assertTrue(second.unchanged)
+        assertEquals("agent_own_ui", Json.parseToJsonElement(second.text).jsonObject["masking"]!!.jsonObject["reason"]!!.jsonPrimitive.content)
+        assertFalse(render(observation.copy(masking = null), first.fingerprint).unchanged)
+        assertTrue(Json.parseToJsonElement(first.text).jsonObject["nodes"]!!.jsonArray.isEmpty())
+    }
+
     private fun node(
         id: String = "n0",
         text: String? = "Send",
