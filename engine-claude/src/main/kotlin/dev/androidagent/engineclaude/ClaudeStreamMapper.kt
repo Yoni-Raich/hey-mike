@@ -65,6 +65,8 @@ internal class ClaudeStreamMapper(
         @Volatile var interruptRequested = false
         var rejection: String? = null
         var syntheticError: String? = null
+        var workStarted = false
+        var authRetries = 0
         var ended = false
             internal set
         var error: String? = null
@@ -79,6 +81,7 @@ internal class ClaudeStreamMapper(
         data class ControlRequest(val requestId: String, val request: JsonObject) : Signal
         data class Init(val message: JsonObject) : Signal
         data class Ended(val turn: Turn, val status: String) : Signal
+        data class RetryAuth(val turn: Turn) : Signal
     }
 
     /** The turn the app considers running. */
@@ -108,6 +111,15 @@ internal class ClaudeStreamMapper(
     /** A steer or other extra frame that belongs to [turn]. */
     fun addFrame(turn: Turn, frameUuid: String) {
         turn.frames += frameUuid
+    }
+
+    /** Only an explicitly rejected pre-work authentication cycle may be replayed. */
+    fun replayAuth(turn: Turn, frameUuid: String): Boolean {
+        if (active !== turn || turn.ended || turn.interruptRequested || turn.workStarted) return false
+        turn.syntheticError = null
+        turn.frames += frameUuid
+        owner = turn
+        return true
     }
 
     /**
@@ -251,7 +263,10 @@ internal class ClaudeStreamMapper(
                 val index = (event["index"] as? JsonPrimitive)?.longOrNull?.toInt()
                 when (block?.string("type")) {
                     "text" -> { textIndex = index; emptyList() }
-                    "thinking", "redacted_thinking" -> listOf(Signal.Emit(EngineEvent.Activity("Working", threadId, turn.turnId)))
+                    "thinking", "redacted_thinking", "tool_use" -> {
+                        turn.workStarted = true
+                        listOf(Signal.Emit(EngineEvent.Activity("Working", threadId, turn.turnId)))
+                    }
                     else -> emptyList()
                 }
             }
@@ -259,6 +274,7 @@ internal class ClaudeStreamMapper(
                 val delta = event["delta"] as? JsonObject
                 if (delta?.string("type") != "text_delta") return emptyList()
                 val text = delta.string("text").ifEmpty { return emptyList() }
+                turn.workStarted = true
                 val index = (event["index"] as? JsonPrimitive)?.longOrNull?.toInt() ?: textIndex
                 listOf(Signal.Emit(EngineEvent.TextDelta(text, threadId, turn.turnId, itemId(index))))
             }
@@ -287,6 +303,8 @@ internal class ClaudeStreamMapper(
                 .trim().takeIf { it.isNotEmpty() }?.let { turn.syntheticError = SecretRedactor.redactUiText(it) }
             return emptyList()
         }
+        if (blocks.any { it.string("type") in setOf("tool_use", "thinking", "redacted_thinking") ||
+                it.string("type") == "text" && it.string("text").isNotBlank() }) turn.workStarted = true
         val bodyId = body.string("id").ifBlank { null }
         if (bodyId != null && bodyId != messageId) { messageId = bodyId; textIndex = null }
         val signals = mutableListOf<Signal>()
@@ -361,6 +379,15 @@ internal class ClaudeStreamMapper(
             else -> "completed"
         }
         val error = if (status == "failed") errorOf(message, turn) else null
+        if (status == "failed" && !turn.internal && !turn.workStarted && turn.authRetries == 0 &&
+            error?.startsWith("Failed to refresh OAuth token:", ignoreCase = true) == true &&
+            error.contains("Claude Code process is refreshing it", ignoreCase = true)) {
+            turn.authRetries++
+            retired += turn.frames
+            while (retired.size > MAX_RETIRED) retired.remove(retired.first())
+            turn.frames.clear()
+            return signals + Signal.RetryAuth(turn)
+        }
         return signals + end(turn, status, error)
     }
 

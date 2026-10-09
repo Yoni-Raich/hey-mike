@@ -1781,6 +1781,17 @@ computers is one entry in the device picker.
 
 The title, New chat, close, Files and Settings stay reachable while the filters
 and list scroll on short screens. Large text moves New chat to its own row.
+
+Opening the drawer uses a quiet computer-thread refresh. The view model keeps
+one refresh batch in flight, and `RemoteHub` serializes attempts per computer.
+Quiet attempts use a 15-second monotonic interval, including failed attempts;
+they retain the last list. An explicit connection/setup refresh skips the quiet
+interval, but joins the existing in-flight attempt by leaving it running.
+Refreshing flags and thread lists use atomic updates so two computers cannot
+overwrite each other's state. Cancellation propagates and releases the gate.
+This bounds repeated SSH list requests; it does not establish the cause of
+every slow drawer frame.
+
 Automations use one compact footer entry with a count and an attention dot.
 Its accessibility label states blocked or on/off status. The detailed rule list
 stays in `AutomationsSheet`; the hamburger
@@ -2210,6 +2221,17 @@ voice works in a Claude chat.
   accounts. `/compact` works: after a restart the view model opens the chat
   before compacting, and the note shows before the call, which waits for
   Claude to finish.
+- **One bounded retry for a rejected sign-in refresh (2026-10-09).** Only a
+  terminal CLI error explicitly saying another Claude Code process is refreshing
+  OAuth, before any visible text, thinking, tool request or steering, permits a
+  second user frame. After two seconds the same CLI receives the exact original
+  content under a new frame UUID, within the same app turn. It never changes or
+  copies credentials, restarts a competing process, or retries a tool. The next
+  failure ends normally; permanent sign-in errors, process loss and uncertain
+  outcomes are not replayed. Stop cancels the delayed attempt; steering discards
+  the old replay content. Replay content is also discarded at first work, turn
+  completion and process shutdown. Unit tests prove this policy; reproducing a
+  real competing OAuth refresh safely is still separate device evidence.
 - **Privacy and consent.** The consent text and the privacy page name both
   providers, with OpenAI's and Anthropic's policy links, and say that a chat
   which changes model, or uses voice in a Claude chat, gives its earlier

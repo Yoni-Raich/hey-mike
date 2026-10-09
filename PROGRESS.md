@@ -1,5 +1,62 @@
 # Progress
 
+### Stress findings fixes and final Xiaomi install — 2026-10-09
+
+- Coalesce in-flight computer thread listings; quiet drawer refresh interval
+  15 seconds, atomic per-computer state, cancellation propagated. Claude's
+  explicit pre-work transient OAuth error retries exact content once in the
+  same CLI/turn; no retry after text/thinking/tools/steering. Stop cancels the
+  retry, and steering/write ordering is serialized. Credentials untouched.
+- Final full Windows gate passed (1m48s): all unit variants, Dev Debug/Release,
+  androidTest APK build, app/voice/a11y lint. XML: 2,289 executions, zero
+  failures/errors, 16 skips; Python 23 passed. No instrumentation executed.
+- Xiaomi final debug install 1124 / `0.14.0-dev.e2e-fixes4` verified; debug-key
+  v2, 16 KiB aligned, SHA
+  `e91f8e1c0f894115185eed19b99a4a62fad9bbf753526cda764d438ebe2301f7`.
+  Release built unsigned, not installed. Accessibility remained bound.
+- New Sonnet/Pc flows on 1123 and final 1124: each 11 calls/results, exact
+  29-byte Unicode file round-trip independently checked at both ends, five
+  Settings reads including two unchanged replies. Completed 42.040/44.452 s.
+  Normal success path proved; real OAuth contention was not forced.
+- Initial 100-cycle latency run invalidated (wrong sheet, missing opening
+  events); burst preflight stopped before load. Fixed harness resolves fresh
+  selectors and checks every drawer state. Separate 1123 run: 20 opens/closes,
+  40 accounted draws; opening median 11.828 ms, p95 14.140 ms, max 16.627 ms.
+  Android counters 155/4,969 janky frames; strict OEM per-frame timing unavailable.
+  No matched speed-improvement claim or new passing 100-cycle burst claim.
+- Completed overlapping UID/system logs 07:30:54–08:00:54 and 08:00:47–08:05:25
+  Jerusalem; no fatal/ANR/native-signal/OOM signature, only expected update exits.
+  117 memory samples; retained PSS remains a finding, not a proven leak/fix.
+  Original exact draft restored, probe off, no active runs; collectors finished.
+- [Detailed final report](docs/testing/e2e-findings-fixes-20261008/STRESS-FIXES-20261009.md).
+  Original dirty checkout/ledger preserved. CapCut repeats, full model benchmark,
+  network/voice/concurrency/permission negatives and two-hour soak remain open.
+  User performs the strong review; no reviewer or merge was run.
+
+### Xiaomi stress follow-up — 2026-10-09
+
+- Existing debug 1122, accessibility confirmed bound. Completed 100 warmed
+  drawer cycles (200 draws), plus two 100-input fast bursts. Probed burst:
+  median 11.105 ms, p95 28.558 ms, max 58.961 ms, 100/100 draws; Android
+  reported 13.302% janky frames under burst navigation. These are dispatch
+  to next draw and Android frame counters, not full task/display latency.
+- GPT-6 Luna: six 16-step workflows, 96 completed writes/reads, eight final
+  files independently exact. Oversized plan correctly refused before action.
+  GPT Settings/own streamed UI and recovered Sonnet Settings: 38 real screen
+  reads; stable package/masking results and identical queries unchanged.
+- Initial Sonnet failed OAuth refresh before tools; a later attempt recovered
+  without credentials changes. One successful Settings sample per engine does
+  not establish a general speed ranking. Successful turns: 51 calls/results.
+- Complete live logs 05:13:26–05:37:07 Jerusalem (23m41s), no crash/ANR/native
+  signal signature; exit history unchanged. 87 memory samples, same main PID.
+  Pre/post PSS rose about 17.9 MiB and plateaued during cooldown; leak unproven.
+  Original visible/persisted draft restored; accessibility bound, no active runs.
+- Report: [stress evidence](docs/testing/e2e-findings-fixes-20261008/STRESS-20261009.md).
+  No new product changes, build, install or review. Raw ignored artifacts under
+  `artifacts/validation/stress-20261009/`; collectors finished. CapCut loops,
+  three-repeat engine comparison, network recovery, voice and two-hour soak
+  remain outside this bounded batch. Historical case statuses preserved.
+
 ### E2E findings fixes and Xiaomi latency — 2026-10-08
 
 - Isolated from dev `72bbe603`; original dirty checkout and historical QA

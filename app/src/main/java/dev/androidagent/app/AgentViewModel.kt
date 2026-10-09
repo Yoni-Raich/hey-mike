@@ -67,6 +67,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     val ui: StateFlow<AgentUiState> = mutable.asStateFlow()
     private val usageByThread = mutableMapOf<String, TokenUsage>()
     private var setupJob: Job? = null
+    private var pcThreadsRefreshJob: Job? = null
     private var purgedUnstarted = false
     private var previousChat: String? = null
 
@@ -486,10 +487,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * shows on the computer's own row.
      */
     fun refreshPcThreads() {
-        graph.computers.state.value.computers.forEach { computer ->
-            viewModelScope.launch {
-                if (graph.remote.setup.value[computer.id] == null) graph.remote.connectQuietly(computer.id)
-                else graph.remote.refreshThreads(computer.id)
+        if (pcThreadsRefreshJob?.isActive == true) return
+        pcThreadsRefreshJob = viewModelScope.launch {
+            coroutineScope {
+                graph.computers.state.value.computers.forEach { computer ->
+                    launch {
+                        if (graph.remote.setup.value[computer.id] == null) graph.remote.connectQuietly(computer.id)
+                        else graph.remote.refreshThreads(computer.id, force = false)
+                    }
+                }
             }
         }
     }

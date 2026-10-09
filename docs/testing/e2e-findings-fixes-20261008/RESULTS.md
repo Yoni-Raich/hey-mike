@@ -4,7 +4,15 @@ The workflow reload and computer draft defects are fixed and have physical-devic
 
 Work is isolated on `fix/e2e-validation-findings-20261008`, based on dev `72bbe603`. The original dirty checkout and its historical QA ledger were preserved. No reviewer was started; the user will do the strong-model review later.
 
+**9 October follow-up:** accessibility is now confirmed bound on the installed 1122 build. Real repeated screen/streaming checks and workflow/UI load have been exercised; the earlier accessibility blocker below is historical. See [stress evidence and remaining limits](STRESS-20261009.md). A full matched engine benchmark and new CapCut exports are still not complete.
+
 ## Implementation and evidence
+
+**Final follow-up:** [stress fixes and 1124 evidence](STRESS-FIXES-20261009.md)
+records bounded Claude auth recovery, coalesced Pc refresh, a guarded UI harness,
+two exact Pc/Xiaomi round-trips, complete log windows and the final installed
+debug 1124. The invalid 100-cycle attempt is retained and excluded from passing
+timing results. Full validation and CapCut repeats remain unfinished.
 
 | Proposal | Implementation | Actual validation | Remaining limit |
 |---|---|---|---|

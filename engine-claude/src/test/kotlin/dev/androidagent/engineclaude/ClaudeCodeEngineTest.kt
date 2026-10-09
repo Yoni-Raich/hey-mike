@@ -69,8 +69,8 @@ class ClaudeCodeEngineTest {
     private val engines = mutableListOf<ClaudeCodeEngine>()
     private val tapTool = ToolDefinition("tap", "Tap the screen", buildJsonObject { put("type", "object") })
 
-    private fun engine(grace: Long = 3_000): ClaudeCodeEngine =
-        ClaudeCodeEngine(host, servers, interruptGraceMs = grace, clock = { ZonedDateTime.of(2026, 9, 30, 12, 0, 0, 0, ZoneId.of("UTC")) })
+    private fun engine(grace: Long = 3_000, retryDelay: Long = 2_000): ClaudeCodeEngine =
+        ClaudeCodeEngine(host, servers, interruptGraceMs = grace, authRetryDelayMs = retryDelay, clock = { ZonedDateTime.of(2026, 9, 30, 12, 0, 0, 0, ZoneId.of("UTC")) })
             .also { engine ->
                 engines += engine
                 scope.launch(start = CoroutineStart.UNDISPATCHED) { engine.events.collect { events += it } }
@@ -107,6 +107,95 @@ class ClaudeCodeEngineTest {
         val id = openSession(workspace, threadId, "sonnet", listOf(tapTool))
         val turn = startTurn(id, prompt, emptyList(), effort, null, DeviceCapabilities(ready = setOf("tap")), null)
         return id to turn
+    }
+
+    private fun transientAuthFailure() = result(""""subtype":"error_during_execution","is_error":true,"errors":["Failed to refresh OAuth token: Another Claude Code process is refreshing it or exited mid-refresh. This is usually transient; retry in a minute."]""")
+
+    @Test fun transientPreWorkAuthFailureRetriesExactlyOnceWithTheSameContentAndTurn() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin("exact אבג\nkeep spaces  ")
+        val chat = host.chats().single()
+        val first = chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        val second = chat.nextFrame { it.type() == "user" }
+        assertEquals(first["message"], second["message"])
+        assertTrue(first["uuid"] != second["uuid"])
+        assertTrue(events.none { it is EngineEvent.TurnFinished })
+        chat.send(result())
+        assertEquals("completed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        assertEquals(1, events.filterIsInstance<EngineEvent.TurnStarted>().size)
+        assertEquals(1, events.filterIsInstance<EngineEvent.TurnFinished>().size)
+    }
+
+    @Test fun aSecondAuthFailureEndsTheTurnWithoutAThirdRequest() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(100)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun stopDuringAuthBackoffPreventsReplay() = runBlocking {
+        val engine = engine(grace = 20, retryDelay = 200)
+        val (threadId, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        awaitEvent<EngineEvent.Activity> { it.text.contains("retrying once") }
+        engine.interrupt(threadId, turnId)
+        assertEquals("interrupted", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(250)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun authLookingFailureAfterVisibleOutputIsNeverReplayed() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send("""{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Started work"}]}}""")
+        chat.send(transientAuthFailure())
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(100)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun authLookingFailureAfterAPhoneToolIsNeverReplayed() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        val tool = async(Dispatchers.Default) { servers.servers.single().call("tap", JsonObject(emptyMap())) }
+        val request = awaitEvent<EngineEvent.ToolCall>()
+        engine.answerTool(request.requestId, ToolResult("done"))
+        tool.await()
+        chat.send(transientAuthFailure())
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(100)
+        assertEquals(1, events.filterIsInstance<EngineEvent.ToolCall>().size)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun steeringDuringAuthBackoffDoesNotReplayTheEarlierPrompt() = runBlocking {
+        val engine = engine(retryDelay = 200)
+        val (threadId, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        awaitEvent<EngineEvent.Activity> { it.text.contains("retrying once") }
+        engine.steer(threadId, turnId, "changed intent")
+        val steer = chat.nextFrame { it.type() == "user" }
+        assertTrue(steer.toString().contains("changed intent"))
+        Thread.sleep(250)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+        chat.send("""{"type":"command_lifecycle","state":"started","command_uuid":${steer["uuid"]}}""")
+        chat.send(result())
+        assertEquals("completed", awaitEvent<EngineEvent.TurnFinished>().status)
     }
 
     @Test fun aTurnRunsInItsOwnProcessAndStreamsTheRecordedReply() = runBlocking {
