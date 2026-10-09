@@ -142,3 +142,48 @@ branch; no final strong-model review or merge was performed.
 
 Android callback/privacy contract reference:
 [VoiceInteractionSession](https://developer.android.com/reference/android/service/voice/VoiceInteractionSession).
+
+## Nothing opening-crash follow-up
+
+After the user requested the same build on Nothing, the exact 1127 APK
+completed its 329,778,916-byte transfer into phone Downloads. Opening that
+content URI launched APK Manager, which displayed its automatic silent-ADB
+installation flow. The turn was interrupted before installed package
+metadata could be read back. The last confirmed pre-transfer build was
+1113 / `0.15.0-adb-access-preserved-test`; the user then reported a crash on
+opening. Neither a completed 1127 install nor its crash stack is assumed.
+
+Read-only inspection of the preserved 1113 source found a concrete upgrade
+defect: its session database version 6 includes `sessions.is_mike` and the
+unique `mike_main_chat` index, but no `composer_drafts`. The validation
+branch also used version 6 and expected that table. SQLiteOpenHelper skips
+onUpgrade when both versions are 6. Opening a selected chat reads its draft,
+so this path can throw `no such table: composer_drafts` immediately.
+
+The new `persistentMikeSchemaSixWithoutDraftTableOpensWithoutLosingHistory`
+test created the old schema, history, queue and workspace fixture. Running it
+against the original implementation failed with SQLiteException for the
+missing table (`nothing-repro-before.log`). Database version 7 now invokes
+the existing additive migration. The same test passes and preserves title,
+thread, engine, messages, queued work, the old Mike column/index, exact
+Unicode/whitespace drafts and the workspace file. A second test checks that
+the other version-6 shape retains its existing draft and history.
+
+Build 1128 / `0.14.0-dev.assistant4`, package `dev.androidagent.app.dev`,
+Dev Debug, passed the full gate in 1m26s: all unit variants, Dev Debug and
+Release builds, androidTest APK compilation, and app/voice/a11y/workspace
+lint. XML totals: **2,325 executions, zero failures/errors, 16 skips** in
+221 suites/variants. Runtime Python tests: **15 passed**. Diff check,
+debug-key v2 signature verification and 16 KiB alignment passed. SHA-256:
+`04ca64576fcb19b69971823eaf65a45d2afbe24aafd7f7a5c17c6393ee603515`.
+Ignored build/test logs are under `artifacts/assistant-20261009/`.
+
+Only Xiaomi is currently attached to Pc. An advertised Nothing mDNS
+connection failed, and the previous phone tool gateway is unavailable in
+the current host. Nothing USB access was requested. Its installed version,
+actual crash stack, a replacement 1128 install and reopening with old data
+remain pending; the reproduced schema defect is not yet confirmed as the
+device's only failure. No app uninstall, data clearing or physical-phone
+mutation was performed during this repair. A separate driver error emitted
+an oversized screenshot-tool reply before the interruption; it is recorded
+as an unproven contributor, not as the crash diagnosis.

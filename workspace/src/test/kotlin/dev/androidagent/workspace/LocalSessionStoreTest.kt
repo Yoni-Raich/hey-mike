@@ -42,6 +42,61 @@ class LocalSessionStoreTest {
 
     private val context: Context = RuntimeEnvironment.getApplication()
 
+    @Test fun persistentMikeSchemaSixWithoutDraftTableOpensWithoutLosingHistory() = runBlocking {
+        // The Nothing's 1113 build used v6 for is_mike, before the separate
+        // dev branch used the same version for composer_drafts.
+        val file = context.getDatabasePath("sessions.db").apply { parentFile!!.mkdirs() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX',parked TEXT,catch_up INTEGER,title_pending INTEGER NOT NULL DEFAULT 0,is_mike INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("CREATE UNIQUE INDEX mike_main_chat ON sessions(is_mike) WHERE is_mike=1")
+            db.execSQL("CREATE TABLE messages(id TEXT PRIMARY KEY,session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,attachments TEXT NOT NULL)")
+            db.execSQL("CREATE INDEX message_session ON messages(session,created)")
+            db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            db.execSQL("INSERT INTO sessions(id,title,created,updated,thread,engine,is_mike) VALUES(?,?,?,?,?,?,?)", arrayOf<Any>(OLD_ID, "Saved Mike", 1L, 2L, "old-thread", "CLAUDE", 1))
+            db.execSQL("INSERT INTO messages VALUES('m1',?,'user','keep my history',1,'complete','[]')", arrayOf(OLD_ID))
+            db.execSQL("INSERT INTO run_queue VALUES(0,?)", arrayOf("{\"sessionId\":\"$OLD_ID\",\"prompt\":\"keep queued work\"}"))
+            db.version = 6
+        }
+        val keptFile = java.io.File(context.filesDir, "sessions/$OLD_ID/workspace/keep.txt").apply {
+            parentFile!!.mkdirs(); writeText("untouched")
+        }
+
+        val store = LocalSessionStore(context)
+        // Opening the main chat calls this immediately, even with no draft.
+        assertNull(store.composerDraft(OLD_ID))
+        assertEquals("Saved Mike", store.getSession(OLD_ID)!!.title)
+        assertEquals(EngineKind.CLAUDE, store.getSession(OLD_ID)!!.engine)
+        assertEquals("old-thread", store.getSession(OLD_ID)!!.engineThreadId)
+        assertEquals(listOf("keep my history"), store.messages(OLD_ID).first().map { it.text })
+        assertEquals("keep queued work", store.loadQueuedTurns().single().prompt)
+        val draft = "  שלום\nkeep this exact  "
+        store.saveComposerDraft(OLD_ID, draft)
+        assertEquals(draft, LocalSessionStore(context).composerDraft(OLD_ID))
+        assertEquals("untouched", keptFile.readText())
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            assertEquals(7, db.version)
+            db.rawQuery("SELECT is_mike FROM sessions WHERE id=?", arrayOf(OLD_ID)).use {
+                assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
+            }
+            db.rawQuery("SELECT name FROM sqlite_master WHERE name='mike_main_chat'", null).use { assertTrue(it.moveToFirst()) }
+        }
+    }
+
+    @Test fun schemaSixWithExistingDraftsKeepsThemDuringUpgrade() = runBlocking {
+        val previous = LocalSessionStore(context)
+        val chat = previous.createSession(EngineKind.CLAUDE)
+        previous.append(ChatMessage("kept", chat.id, "user", "existing history", 10))
+        previous.saveComposerDraft(chat.id, "  existing draft\nשלום  ")
+        // The other shipped v6 variant already contains composer_drafts.
+        val file = context.getDatabasePath("sessions.db")
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { it.version = 6 }
+        val upgraded = LocalSessionStore(context)
+        assertEquals("  existing draft\nשלום  ", upgraded.composerDraft(chat.id))
+        assertEquals(listOf("existing history"), upgraded.messages(chat.id).first().map { it.text })
+        assertEquals(EngineKind.CLAUDE, upgraded.getSession(chat.id)!!.engine)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(7, it.version) }
+    }
+
     @Test fun draftsSurviveReopenKeepExactWhitespaceAndStayUnsent() = runBlocking {
         val store = LocalSessionStore(context)
         val first = store.createSession()
@@ -102,7 +157,7 @@ class LocalSessionStoreTest {
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
         assertFalse(old.titlePending)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(6, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(7, it.version) }
     }
 
     @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {

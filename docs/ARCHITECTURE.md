@@ -1,11 +1,22 @@
 # Architecture
 
+## Session schema compatibility — 2026-10-09
+
+Session database v7 repairs two deployed v6 shapes. The preserved Nothing
+1113 build had `sessions.is_mike` and `mike_main_chat`, without
+`composer_drafts`; the validation branch used the same version for drafts.
+Moving between those v6 builds skipped SQLiteOpenHelper's upgrade callback,
+so opening a saved chat could query a missing draft table. The v7 upgrade
+uses the existing additive, idempotent migration. It keeps old columns,
+indexes, sessions, messages, queued turns and exact drafts; it never rebuilds
+the database or clears private files.
+
 ## QA findings contracts — 2026-10-08
 
 - Workflow call text remains in its arguments. Save validates the serialized
   definition before replacing a stored workflow, so acknowledged definitions
   can be loaded again.
-- Session database v6 keeps exact unsent composer drafts per chat. Computer
+- Session database v7 keeps exact unsent composer drafts per chat. Computer
   `open_chat` stores and reads back the exact proposed message before returning
   `draftSaved` and its session id. Opening is requested, not guaranteed by that
   acknowledgement; reading the draft does not consume it.

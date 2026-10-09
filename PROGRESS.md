@@ -1,5 +1,25 @@
 # Progress
 
+### Nothing opening-crash follow-up — 2026-10-09
+
+- Reproduced a source-level upgrade failure using the exact preserved 1113
+  schema: both old and new builds used database version 6, but the old one
+  lacked `composer_drafts`. Opening a saved chat raised SQLiteException
+  `no such table: composer_drafts`. The regression failed before the fix.
+- Database v7 now runs the existing additive migration. Two new regression
+  checks pass, including preserved chat/thread/engine, messages, queue,
+  Mike column/index, exact drafts and a workspace file.
+- Full 1128 gate passed (1m26s): unit variants, Dev Debug/Release,
+  androidTest compilation and app/voice/a11y/workspace lint. XML: 2,325
+  executions, zero failures/errors, 16 skips. Runtime Python: 15 passed.
+  Package/version readback, debug-key v2 signature and 16 KiB alignment pass.
+  APK SHA-256: `04ca64576fcb19b69971823eaf65a45d2afbe24aafd7f7a5c17c6393ee603515`.
+- The user reports crashing on opening after the 1127 transfer. Its install
+  outcome was interrupted, not read back. Nothing is not in Pc's live ADB
+  device list, so its actual crash stack, installed version, 1128 replacement
+  install and reopening remain unverified. No phone data was cleared.
+  Details: `docs/testing/assistant-screen-text-20261009/RESULTS.md`.
+
 ### Assistant screen preload and text panel — 2026-10-09
 
 - Each invocation freezes permitted Android screen text/screenshot before the
