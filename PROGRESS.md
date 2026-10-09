@@ -14,10 +14,20 @@
   executions, zero failures/errors, 16 skips. Runtime Python: 15 passed.
   Package/version readback, debug-key v2 signature and 16 KiB alignment pass.
   APK SHA-256: `04ca64576fcb19b69971823eaf65a45d2afbe24aafd7f7a5c17c6393ee603515`.
-- The user reports crashing on opening after the 1127 transfer. Its install
-  outcome was interrupted, not read back. Nothing is not in Pc's live ADB
-  device list, so its actual crash stack, installed version, 1128 replacement
-  install and reopening remain unverified. No phone data was cleared.
+- Nothing A059 / Android 16 USB follow-up confirmed the actual 1127 APK by
+  installed version and SHA-256. Its fatal stack is the same missing-table
+  exception. A private database/preferences backup was taken before replacing
+  it with exact 1128 (`adb install -r`); installed version and SHA-256 match.
+- MainActivity launch returned `Status: ok`. The live database is v7, with
+  `composer_drafts` and the original Mike index. Binary-safe row comparison
+  confirms all 430 chats and 28,583 messages unchanged; no original rows lost.
+  A complete 11:37:53–11:47:53 UID/system capture has no new fatal/ANR/native
+  signal/OOM signature. This is bounded opening/upgrade evidence, not stress
+  or live-model tool coverage. No uninstall or data clearing was used.
+- USB disconnected before the additional controlled cold reopen and saved
+  history UI check. Dev accessibility is not enabled (the prod service is);
+  the selected digital assistant is Dev. Device-tool and power-panel repeats
+  need manual Dev accessibility setup and a live connection.
   Details: `docs/testing/assistant-screen-text-20261009/RESULTS.md`.
 
 ### Assistant screen preload and text panel — 2026-10-09

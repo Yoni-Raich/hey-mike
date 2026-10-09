@@ -136,8 +136,9 @@ accepts screen text; screenshot image understanding is proven for typed
 questions. Protected/disabled screen-sharing policy is covered in logic
 tests; its OEM settings flow still needs physical coverage. Landscape, large
 font, a cold/unsigned-in assistant and an early Open Mike before chat selection
-need device coverage. The Nothing hosting the source chat was not attached
-and was not updated. This change is stacked on the previous validation-fixes
+need device coverage. At the end of the Xiaomi run, the Nothing hosting the
+source chat had not been attached or updated; its later repair is recorded
+below. This change is stacked on the previous validation-fixes
 branch; no final strong-model review or merge was performed.
 
 Android callback/privacy contract reference:
@@ -178,12 +179,69 @@ debug-key v2 signature verification and 16 KiB alignment passed. SHA-256:
 `04ca64576fcb19b69971823eaf65a45d2afbe24aafd7f7a5c17c6393ee603515`.
 Ignored build/test logs are under `artifacts/assistant-20261009/`.
 
-Only Xiaomi is currently attached to Pc. An advertised Nothing mDNS
-connection failed, and the previous phone tool gateway is unavailable in
-the current host. Nothing USB access was requested. Its installed version,
-actual crash stack, a replacement 1128 install and reopening with old data
-remain pending; the reproduced schema defect is not yet confirmed as the
-device's only failure. No app uninstall, data clearing or physical-phone
-mutation was performed during this repair. A separate driver error emitted
-an oversized screenshot-tool reply before the interruption; it is recorded
-as an unproven contributor, not as the crash diagnosis.
+Before the physical follow-up, Nothing mDNS discovery was visible but the
+connection failed. Pc's ADB log identified `SSLV3_ALERT_CERTIFICATE_UNKNOWN`;
+the advertised TCP endpoint was reachable. Discovery and enabled Wireless
+Debugging did not establish authenticated Pc access. USB then appeared as
+unauthorized and was used only after the user approved Android's prompt and
+the serial entered `device` state. A separate driver error had emitted an
+oversized screenshot-tool reply before the interruption. No causal link
+between that reply and the opening crash was established.
+
+## Nothing physical repair and preservation evidence
+
+Nothing A059 / Android 16, primary Android user 0, serial `00152154B002517`.
+The pre-install snapshot confirmed version 1127 / `0.14.0-dev.assistant3`,
+updated at 09:38:45. SHA-256 of the installed base APK matched the original
+1127 artifact exactly (`dadea901…13a7a`). The crash buffer contains repeated
+main-thread fatal exceptions at 09:48:47, 09:48:50 and 09:48:56:
+
+```text
+android.database.sqlite.SQLiteException: no such table: composer_drafts
+while compiling: SELECT text FROM composer_drafts WHERE session=?
+LocalSessionStore.composerDraft (LocalSessionStore.kt:158)
+```
+
+This confirms the missing-table diagnosis on the actual device, rather than
+only in the regression fixture. The previous schema was version 6, without
+`composer_drafts`, with 430 sessions, 28,583 messages and an empty run queue.
+A private database/preferences archive was taken after a scoped force-stop,
+before installation. Raw data stays in ignored local artifacts and was not
+committed or uploaded.
+
+`adb -s 00152154B002517 install -r` returned Success for the exact 1128 APK.
+Package metadata read back 1128 / `0.14.0-dev.assistant4`, updated at 11:39:18.
+The installed base APK SHA-256 matches
+`04ca64576fcb19b69971823eaf65a45d2afbe24aafd7f7a5c17c6393ee603515`.
+Dex inspection also confirms the packaged SQLiteOpenHelper constructor uses
+version 7. MainActivity start returned `Status: ok`, correct component,
+WARM launch and 1,102 ms total time. A running app PID was observed; a later
+process restart and database read were also captured. A native screenshot
+shows the Mike new-chat screen, but no model prompt was sent.
+
+An early post-install private snapshot still showed v6 and was not accepted
+as completion evidence. The subsequent live database copy shows v7,
+`composer_drafts`, and the preserved `mike_main_chat` index. Comparing original
+rows by primary key confirms **430/430 chats and 28,583/28,583 messages**,
+with zero missing, changed or added rows in those tables; the empty queue is
+unchanged. SQLite TEXT was compared as bytes to avoid imposing UTF-8
+normalization on legacy Android data. No database reset or uninstall occurred.
+
+The UID/system-event capture completed normally from **11:37:53–11:47:53**
+Jerusalem time: `complete:true`, no early termination, reader error or stderr.
+It has no new FATAL, ANR, native-signal or OutOfMemoryError signature. Expected
+process/update activity and a skipped-frame warning remain recorded; this
+short opening/upgrade run does not establish general performance or stability.
+
+USB disconnected before the extra controlled cold reopen and saved-history
+UI navigation. The second capture attempt refused dispatch because the
+selected serial was no longer in `device` state. Those extra checks are not
+passes. Dev's accessibility service is not enabled: the enabled Hey Mike
+component belongs to prod. Android's selected assistant belongs to Dev.
+Manual Dev accessibility setup and a live connection are still needed for
+device-tool/model and floating-panel repeats on Nothing.
+
+Evidence root: `artifacts/assistant-20261009/nothing-usb-1128-20261009/`,
+including `before-install/`, private backups, `installation.json`,
+`live/log-capture-status.json`, `context-check.json`,
+`live-database-check.json` and `data-preservation-final.json`.
