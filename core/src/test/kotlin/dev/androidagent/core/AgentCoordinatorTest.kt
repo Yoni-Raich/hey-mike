@@ -36,6 +36,16 @@ import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentCoordinatorTest {
+    @Test fun assistantContextReachesTheEngineButTheChatKeepsTheOriginalQuestion() = runTest {
+        val rig = Rig(this)
+        val question = "  סכם את הפוסט\nבמשפט אחד  "
+        val enriched = question + "\n\nQuoted screen data"
+        rig.coordinator.send(QueuedTurn(sessionId = "one", prompt = enriched, displayPrompt = question))
+        runCurrent()
+        assertEquals(question, rig.store.messages.first { it.role == "user" }.text)
+        assertEquals(enriched, rig.engine.prompts.single())
+        rig.close()
+    }
     @Test fun stopRevokesBeforeWaitingForEngineAndBlocksAnActionWaitingForOverlay() = runTest {
         val rig = Rig(this)
         rig.overlay.waitForShow = CompletableDeferred()

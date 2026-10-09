@@ -26,6 +26,9 @@ class QaEvidenceReceiver : BroadcastReceiver() {
                     graph.openChat.value?.let { put("activeSessionId", it) }
                     put("appInFront", graph.appInFront.value)
                     put("a11yBound", A11yServiceHandle.service.value != null)
+                    put("voicePhase", graph.voice.state.value.phase.name)
+                    put("voiceActive", graph.voice.state.value.active)
+                    graph.voiceConversation.sessionId.value?.let { put("voiceSessionId", it) }
                     put("runs", buildJsonObject {
                         graph.coordinator.sessionStates.value.forEach { (id, state) ->
                             if (state.active) put(id, state.phase.name)

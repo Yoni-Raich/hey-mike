@@ -54,6 +54,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
+import dev.androidagent.core.AssistantScreenText
+import android.view.accessibility.AccessibilityWindowInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Device gateway backed by the accessibility service, so observation and
@@ -120,6 +124,14 @@ class A11yDeviceTools(
     @Volatile private var handleObservationIds: Set<String> = emptySet()
 
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
+
+    override suspend fun assistantScreenText(): AssistantScreenText? = withContext(Dispatchers.Main.immediate) {
+        val service = A11yServiceHandle.service.value ?: return@withContext null
+        val windows = service.windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }.map {
+            A11yWindow(it.root?.let(::RealNodeView), it.isActive)
+        }
+        assistantScreenText(windows, context.packageName)
+    }
 
     override fun beginRun(runId: String, workspace: File) {
         require(runId.isNotBlank()) { "runId cannot be blank" }

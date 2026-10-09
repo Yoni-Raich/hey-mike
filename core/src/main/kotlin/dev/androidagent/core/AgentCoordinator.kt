@@ -196,6 +196,14 @@ class AgentCoordinator(
         skill: AgentSkill?,
         planMode: Boolean,
         engineKind: EngineKind?,
+    ) = sendRequest(sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind, null)
+
+    override fun send(turn: QueuedTurn) = sendRequest(turn.sessionId, turn.prompt, turn.imagePaths.map(::File),
+        turn.model, turn.effort, turn.skill, turn.planMode, turn.engine, turn.displayPrompt)
+
+    private fun sendRequest(
+        sessionId: String, prompt: String, images: List<File>, model: String?, reasoningEffort: String?,
+        skill: AgentSkill?, planMode: Boolean, engineKind: EngineKind?, displayPrompt: String?,
     ) {
         if (prompt.isBlank() && images.isEmpty()) return
         synchronized(lifecycleLock) {
@@ -232,7 +240,7 @@ class AgentCoordinator(
             overlaySpeech = null
             runWorkspace = null
             screenSticky = false
-            runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind) }
+            runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind, displayPrompt) }
         }
     }
 
@@ -428,6 +436,7 @@ class AgentCoordinator(
         skill: AgentSkill?,
         planMode: Boolean,
         engineKind: EngineKind?,
+        displayPrompt: String?,
     ) {
         try {
             traceFailureReported.set(false)
@@ -437,13 +446,14 @@ class AgentCoordinator(
             // The turn names its engine, and the chat moves to it first.
             val before = sessions.getSession(sessionId) ?: error("Chat no longer exists")
             if (engineKind != null && before.engine != engineKind) sessions.setEngine(sessionId, engineKind)
-            val sent = message(sessionId, "user", prompt, attachments = images.map { it.absolutePath })
+            val sent = message(sessionId, "user", displayPrompt ?: prompt, attachments = images.map { it.absolutePath })
             sessions.append(sent)
             trace(sessionId, "user", buildJsonObject {
                 put("text", prompt)
+                displayPrompt?.let { put("displayText", it) }
                 put("attachments", buildJsonArray { images.forEach { add(it.absolutePath) } })
             })
-            chatTitles.seed(sessionId, prompt)
+            chatTitles.seed(sessionId, displayPrompt ?: prompt)
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
             val work = sessions.workspace(sessionId)
             // The phone is taken at the first tool call, so a chat that only

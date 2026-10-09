@@ -23,6 +23,7 @@ package dev.androidagent.app.assist
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Bitmap
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.os.Handler
@@ -49,6 +50,19 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import dev.androidagent.core.AssistantScreenText
+import dev.androidagent.core.EngineKind
+import dev.androidagent.core.QueuedTurn
+import dev.androidagent.core.RunPhase
+import dev.androidagent.app.ChatEngines
+import java.io.File
+import java.util.UUID
 
 /** Starts one [AgentVoiceInteractionSession] per assistant press. */
 class AgentVoiceInteractionSessionService : VoiceInteractionSessionService() {
@@ -76,6 +90,20 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
     private var panel: AssistantPanelView? = null
     private var usePanel = false
     private var screen = CompletableDeferred<ScreenCapture?>()
+    private var screenshot = CompletableDeferred<Bitmap?>()
+    private var fallback: AssistantScreenText? = null
+    private var captured: Deferred<ScreenCapture?>? = null
+    private var chat: Deferred<String>? = null
+    private var chatId: String? = null
+    private var messagesJob: Job? = null
+    private var voiceStopFailure: String? = null
+    private var startVoice: Job? = null
+    private var stopVoice: Job? = null
+    private var closingVoice: Job? = null
+    private var inputMode = AssistantInputMode()
+    private val typedLine = MutableStateFlow("")
+    private val sending = MutableStateFlow(false)
+    private var image: File? = null
     private val waking = MutableStateFlow<String?>(null)
     private val failure = MutableStateFlow<String?>(null)
     /** This press started the conversation, so closing the panel ends it. */
@@ -89,6 +117,29 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
         super.onPrepareShow(args, showFlags)
         usePanel = AssistLaunch.panelReady(context)
         setUiEnabled(usePanel)
+        if (usePanel) {
+            scope.cancel()
+            scope = MainScope()
+            inputMode = AssistantInputMode()
+            screen = CompletableDeferred()
+            screenshot = CompletableDeferred()
+            fallback = null
+            image = null
+            chatId = null
+            typedLine.value = ""
+            sending.value = false
+            voiceStopFailure = null
+            // Respect Android's per-user context switches. Do not recapture the
+            // composited display after Mike or the keyboard has covered it.
+            val disabled = userDisabledShowContext or disabledShowContext
+            if (showFlags and SHOW_WITH_ASSIST == 0 || disabled and SHOW_WITH_ASSIST != 0) screen.complete(null)
+            if (showFlags and SHOW_WITH_SCREENSHOT == 0 || disabled and SHOW_WITH_SCREENSHOT != 0) screenshot.complete(null)
+            if (!screen.isCompleted && !screenshot.isCompleted) {
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    fallback = runCatching { graph.tools.assistantScreenText() }.getOrNull()
+                }
+            }
+        }
     }
 
     override fun onCreateContentView(): View = AssistantPanelView(
@@ -96,7 +147,9 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
         level = { graph.voice.level.value },
         onMute = { graph.voice.setMuted(!graph.voice.muted.value) },
         onOpen = ::openApp,
-        onEnd = { hide() },
+        onEnd = { chatId?.let { if (inputMode.typing) graph.coordinator.stop(it) }; hide() },
+        onTyping = ::startTyping,
+        onSend = ::sendText,
     ).also { panel = it }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
@@ -109,25 +162,39 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
             // A glow and a card over the app, not a sheet that hides it.
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
             setDecorFitsSystemWindows(false)
         }
-        scope.cancel()
-        scope = MainScope()
         failure.value = null
         waking.value = "Waking Mike"
         ownsVoice = false
         handedOff = false
+        panel?.resetDraft()
+        captured = scope.async {
+            withTimeoutOrNull(SCREEN_WAIT_MS) { screen.await(); screenshot.await() }
+            ScreenText.merge(if (screen.isCompleted) screen.await() else null, fallback,
+                screenshot.isCompleted && screenshot.await() != null).also {
+                Log.i(TAG, "screen ready: textChars=${it?.lines?.let(ScreenText::joined)?.length ?: 0} image=${screenshot.isCompleted && screenshot.await() != null}")
+            }
+        }
+        chat = scope.async { closingVoice?.join(); chooseSession().also { chatId = it; Log.i(TAG, "assistant chat: $it") } }
         // The panel shows what the floating card would, so the card waits.
         graph.overlay.setAppForeground(true)
         panel?.enter()
         observe()
-        scope.launch { start() }
+        startVoice = scope.launch { start() }
     }
 
     override fun onHandleAssist(state: AssistState) {
         super.onHandleAssist(state)
         // The app the user is looking at; other windows on screen report too.
         if (state.isFocused) screen.complete(state.assistStructure?.let(ScreenText::from))
+    }
+
+    override fun onHandleScreenshot(screenshot: Bitmap?) {
+        super.onHandleScreenshot(screenshot)
+        this.screenshot.complete(screenshot)
     }
 
     override fun onComputeInsets(outInsets: Insets) {
@@ -143,10 +210,13 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
         super.onHide()
         if (!usePanel) return
         scope.cancel()
+        if (inputMode.typing && !handedOff) chatId?.let { id ->
+            graph.coordinator.stop(id)
+            graph.scope.launch { graph.queue.cancelSession(id) }
+        }
         // Reset here, not on show: the screen can report before the panel does.
-        screen = CompletableDeferred()
         if (ownsVoice && !handedOff) {
-            graph.scope.launch { runCatching { graph.voiceConversation.stop() } }
+            closingVoice = graph.scope.launch { runCatching { graph.voiceConversation.stop() } }
         }
         ownsVoice = false
         if (!handedOff) graph.overlay.setAppForeground(false)
@@ -164,23 +234,28 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
                 .onFailure { Log.w(TAG, "agent service did not start: ${it.javaClass.simpleName}: ${it.message}") }
             if (!graph.voice.state.value.active) {
                 graph.queue.pause()
-                val sessionId = chooseSession()
+                val sessionId = checkNotNull(chat).await()
+                val capture = checkNotNull(captured).await()
+                if (inputMode.typing) return
                 waking.value = "Connecting"
                 ownsVoice = true
                 val model = context.getSharedPreferences(AssistLaunch.UI_PREFERENCES, 0).getString(AssistLaunch.KEY_MODEL, null)
-                graph.voiceConversation.begin(sessionId, model)
+                graph.voiceConversation.begin(sessionId, model, initialContext = ScreenText.context(capture))
+            } else {
+                // A running conversation also needs the new invocation's screen.
+                val wasMuted = graph.voice.muted.value
+                graph.voice.setMuted(true)
+                try {
+                    val context = ScreenText.context(checkNotNull(captured).await())
+                    graph.voiceConversation.addContext(context.guidance, context.quoted)
+                } finally { if (!inputMode.typing) graph.voice.setMuted(wasMuted) }
             }
             waking.value = null
-            // Usually here long before voice is up; a screen that never reports
-            // (a secure window, the setting off) must not hold the call.
-            val capture = withTimeoutOrNull(SCREEN_WAIT_MS) { screen.await() }
-            val context = ScreenText.context(capture)
-            graph.voiceConversation.addContext(context.guidance, context.quoted)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             Log.w(TAG, "panel voice did not start: ${error.javaClass.simpleName}: ${error.message}")
-            failure.value = error.message ?: "Mike could not start."
+            if (!inputMode.typing) failure.value = error.message ?: "Mike could not start."
         }
     }
 
@@ -194,10 +269,77 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
         val saved = preferences.getString(AssistLaunch.KEY_SESSION, null)
             ?.takeIf { graph.sessions.getSession(it) != null }
         // Voice is Codex's, so a chat made for it starts there.
-        val id = if (saved != null && graph.sessions.messages(saved).first().isEmpty()) saved
-        else graph.sessions.createSession(dev.androidagent.core.EngineKind.CODEX).id
+        val id = graph.voiceConversation.sessionId.value ?: if (saved != null &&
+            graph.sessions.messages(saved).first().isEmpty() && graph.sessions.composerDraft(saved).isNullOrEmpty() &&
+            graph.computers.binding(saved) == null) saved
+        else graph.sessions.createSession(ChatEngines.parse(preferences.getString("defaultEngine", null))).id
         preferences.edit().putString(AssistLaunch.KEY_SESSION, id).apply()
         return id
+    }
+
+    private fun startTyping() {
+        if (!inputMode.startTyping()) return
+        Log.i(TAG, "switching to text")
+        failure.value = null
+        waking.value = "Ending voice"
+        graph.voice.setMuted(true)
+        startVoice?.cancel()
+        // Local capture and playback stop before any remote acknowledgement.
+        // The startup job must finish cleaning up before a typed turn can run.
+        stopVoice = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                graph.voiceConversation.stop()
+                startVoice?.join()
+                ownsVoice = false
+                Log.i(TAG, "text ready: voice=${graph.voice.state.value.phase}")
+                waking.value = "Voice off"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                voiceStopFailure = "Could not end voice: ${error.message}"
+                failure.value = voiceStopFailure
+            }
+        }
+    }
+
+    private fun sendText(question: String) {
+        if (question.isBlank() || sending.value) return
+        startTyping()
+        sending.value = true
+        scope.launch {
+            try {
+                stopVoice?.join()
+                check(voiceStopFailure == null && !graph.voice.state.value.active) { voiceStopFailure ?: "Voice is still ending." }
+                failure.value = null
+                val id = checkNotNull(chat).await()
+                val capture = checkNotNull(captured).await()
+                val bitmap = if (screenshot.isCompleted) screenshot.await() else null
+                if (image == null && bitmap != null) image = withContext(Dispatchers.IO) {
+                    File(graph.sessions.workspace(id), "screenshots/assistant-${UUID.randomUUID()}.png").also { file ->
+                        file.parentFile?.mkdirs()
+                        file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+                    }
+                }
+                val kind = checkNotNull(graph.sessions.getSession(id)).engine
+                val preferences = context.getSharedPreferences(AssistLaunch.UI_PREFERENCES, 0)
+                val modelKey = if (kind == EngineKind.CLAUDE) "claudeModel" else AssistLaunch.KEY_MODEL
+                val effortKey = if (kind == EngineKind.CLAUDE) "claudeReasoningEffort" else "reasoningEffort"
+                graph.queue.submit(QueuedTurn(sessionId = id,
+                    prompt = ScreenText.typedPrompt(question, capture, image != null),
+                    displayPrompt = question,
+                    imagePaths = listOfNotNull(image?.absolutePath), engine = kind,
+                    model = preferences.getString(modelKey, null), effort = preferences.getString(effortKey, null)))
+                panel?.resetDraft()
+                typedLine.value = ""
+                messagesJob?.cancel()
+                messagesJob = scope.launch {
+                    graph.sessions.messages(id).collect { messages ->
+                        typedLine.value = messages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { failure.value = error.message ?: "Could not send. Your question is still here." }
+            finally { sending.value = false }
+        }
     }
 
     private fun observe() {
@@ -207,15 +349,26 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
                 graph.voice.state,
                 graph.voice.muted,
                 graph.voiceConversation.transcript,
-                graph.coordinator.state,
-                combine(waking, failure) { phase, error -> phase to error },
-            ) { voice, muted, line, run, (phase, error) -> content(voice, muted, line, run, phase, error) }
+                graph.coordinator.sessionStates,
+                combine(waking, failure, typedLine, sending) { phase, error, text, busy -> PanelState(phase, error, text, busy) },
+            ) { voice, muted, line, runs, state ->
+                val run = runs[chatId] ?: RunState()
+                if (inputMode.typing) PanelContent(state.error ?: if (run.active || run.phase == RunPhase.ERROR) run.status else state.phase ?: "Ask about this screen",
+                    state.text, when {
+                        state.error != null || run.phase == RunPhase.ERROR -> PanelTone.ERROR
+                        run.controlling -> PanelTone.CONTROLLING
+                        run.active -> PanelTone.WORKING
+                        else -> PanelTone.LISTENING
+                    },
+                    sending = state.busy || run.active)
+                else content(voice, muted, line, run, state.phase, state.error)
+            }
                 .collect { content ->
                     panel?.render(content)
                     val live = graph.voice.state.value.active
                     // Ended by voice, the notification or the app: nothing is
                     // left to show. A failure stays up so it can be read.
-                    if (wasLive && !live && failure.value == null) hide()
+                    if (wasLive && !live && failure.value == null && !inputMode.typing) hide()
                     wasLive = live
                 }
         }
@@ -237,6 +390,7 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
         handedOff = true
         graph.overlay.setAppForeground(false)
         val intent = Intent(context, MainActivity::class.java)
+            .apply { chatId?.let { putExtra("dev.androidagent.app.extra.OPEN_CHAT", it) } }
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
         runCatching { context.applicationContext.startActivity(intent) }
             .onFailure { runCatching { startAssistantActivity(intent) } }
@@ -266,4 +420,6 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
         const val HIDE_DELAY_MILLIS = 1_000L
         const val SCREEN_WAIT_MS = 2_000L
     }
+
+    private data class PanelState(val phase: String?, val error: String?, val text: String, val busy: Boolean)
 }

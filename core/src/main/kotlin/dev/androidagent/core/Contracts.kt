@@ -451,6 +451,8 @@ data class OverlayState(val phase: OverlayPhase, val detail: String? = null) {
         get() = if (this == OverlayPhase.THINKING || this == OverlayPhase.RUNNING) "Working" else name.lowercase().replaceFirstChar { it.uppercase() }
 }
 interface DeviceToolGateway {
+    /** Passive, read-only snapshot at an assistant press. Never arms a run or exports node handles. */
+    suspend fun assistantScreenText(): AssistantScreenText? = null
     val definitions: List<ToolDefinition>
     fun beginRun(runId: String, workspace: File)
     fun revoke()

@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
+import dev.androidagent.app.assist.ScreenContext
 
 /** The line being spoken right now, before it is final. */
 data class VoiceTranscript(val text: String = "", val role: String? = null)
@@ -97,7 +98,7 @@ class VoiceConversation(
      * side is told what the other said: Codex here, as context for the voice
      * session, and the chat's engine on its next turn (see [EngineSwitch]).
      */
-    suspend fun begin(sessionId: String, model: String?, automation: AutomationVoiceRequest? = null) {
+    suspend fun begin(sessionId: String, model: String?, automation: AutomationVoiceRequest? = null, initialContext: ScreenContext? = null) {
         automation?.requireCurrent()
         check(!coordinator().state.value.active) { "Stop the current agent run before starting voice." }
         val opened = sessions.getSession(sessionId) ?: error("Chat no longer exists.")
@@ -124,7 +125,8 @@ class VoiceConversation(
                 // Realtime selects its own compatible voice model. The normal Codex
                 // model remains a thread setting and is not forced into this RPC.
                 voice.start(threadId, bluetoothHeadphonesOnly = automation?.bluetoothHeadphonesOnly == true,
-                    outputConditions = automation?.outputConditions.orEmpty())
+                    outputConditions = automation?.outputConditions.orEmpty(),
+                    beforeAudio = { initialContext?.let { addContext(it.guidance, it.quoted) } })
                 voiceStarted = true
             } catch (failure: Throwable) {
                 coordinator().endVoice()
@@ -165,8 +167,7 @@ class VoiceConversation(
         // Revoke before the remote stop so no new device action can begin while
         // the voice session is ending. Completed side effects are not undone.
         coordinator().endVoice()
-        voice.stop()
-        clear()
+        try { voice.stop() } finally { clear() }
     }
 
     /** A line the user typed during voice: sent, and recorded once rather than again on its echo. */
@@ -246,13 +247,14 @@ class VoiceConversation(
         }
     }
 
-    private fun clear() {
+    private suspend fun clear() {
         // A chat that only came to Codex to talk goes back to its own engine.
-        returnTo?.let { (id, kind) -> scope.launch { runCatching { sessions.setEngine(id, kind) } } }
+        val previousEngine = returnTo
         returnTo = null
         mutableSessionId.value = null
         synchronized(pendingTypedTexts) { pendingTypedTexts.clear() }
         mutableTranscript.value = VoiceTranscript()
+        previousEngine?.let { (id, kind) -> sessions.setEngine(id, kind) }
     }
 }
 

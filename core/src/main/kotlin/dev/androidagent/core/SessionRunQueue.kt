@@ -48,6 +48,8 @@ data class QueuedTurn(
      * Null keeps the chat's own engine.
      */
     val engine: EngineKind? = null,
+    /** The user's original text when [prompt] also carries app-supplied context. */
+    val displayPrompt: String? = null,
     /**
      * Epoch millis after which this turn is stale and must not start.
      *
@@ -150,7 +152,7 @@ class SessionRunQueue(
             // Dequeue durably before starting, so a process crash cannot replay side effects.
             save(pending.value - next)
             submittedNow -= next.id
-            coordinator.send(next.sessionId, next.prompt, next.imagePaths.map(::File), next.model, next.effort, next.skill, next.planMode, next.engine)
+            coordinator.send(next)
         }
     }
 }

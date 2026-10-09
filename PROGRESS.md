@@ -1,5 +1,41 @@
 # Progress
 
+### Assistant screen preload and text panel — 2026-10-09
+
+- Each invocation freezes permitted Android screen text/screenshot before the
+  panel covers the app. A passive device-gateway accessibility snapshot keeps
+  visible posts intact. Screen data remains quoted and untrusted; passwords,
+  own windows and disabled/protected captures are excluded. Voice audio waits
+  for context delivery. The text budget is now 16,000 characters.
+- The floating card has an EditText, Send, a scrollable answer and IME insets.
+  First insertion/paste ends voice without hiding the panel; typed turns use
+  the original text/image and retain the selected chat engine. The exact user
+  question is displayed separately from internal context. Open Mike transfers
+  the same chat; failed Send keeps the draft.
+- Full final gate passed (1m28s): unit variants, Dev Debug/Release, androidTest
+  APK compilation, app/voice/a11y lint. XML: 2,321 executions, zero failures or
+  errors, 16 skips; Python 23 passed; diff check passed. No instrumentation run.
+- Xiaomi Redmi 12 / Android 15 replacement install verified: 1127 /
+  `0.14.0-dev.assistant3`, Dev Debug, debug-key v2, 16 KiB alignment. SHA-256:
+  `dadea9011bb9bef2469de4d7047c6970b88d05b2be4eea18b2bbc2c885a13a7a`.
+  Dev Release built unsigned and was not installed.
+- Actual assistant invocation over a synthetic Hebrew Chrome post captured
+  385 characters and the original image. Typing ended live voice; Gboard and
+  card position checked. Claude/Sonnet answered 10:30 and image-only 731 with
+  zero tools, 11.551 s recorded-turn-to-answer. Long answer scrolling and
+  Open Mike handoff passed. Earlier Codex/Claude candidates also answered
+  directly; 1126 exposed answer clipping, fixed and rechecked in 1127.
+- Complete UID/system captures 08:38:53–09:08:53 and 09:13:33–09:17:23 show no
+  fatal/ANR/native-signal/OOM signature; final crash buffer empty. Expected
+  package-update exits only during installs. Original chat/IME restored,
+  accessibility bound, voice/runs idle, own QA server and reverse port removed.
+- Physical hardware long press and spoken question remain unverified; current
+  voice context is text, whereas typed image understanding is proven. OEM
+  privacy negatives, landscape/large-font/cold-start and STARTING cancellation
+  need physical coverage. Native panel Markdown styling remains a polish item.
+  [Detailed evidence and gaps](docs/testing/assistant-screen-text-20261009/RESULTS.md).
+  Isolated branch stacks on PR #125; no strong-model review or merge was run.
+
 ### Stress findings fixes and final Xiaomi install — 2026-10-09
 
 - Coalesce in-flight computer thread listings; quiet drawer refresh interval

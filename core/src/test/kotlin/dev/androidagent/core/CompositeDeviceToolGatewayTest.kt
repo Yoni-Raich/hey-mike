@@ -33,6 +33,16 @@ import org.junit.Test
 import java.io.File
 
 class CompositeDeviceToolGatewayTest {
+    @Test fun assistantSnapshotRoutesReadOnlyWithoutArmingAnyGateway() = runBlocking {
+        val absent = FakeGateway("absent", emptyList())
+        val available = FakeGateway("a11y", listOf("read_ui"))
+        available.assistant = AssistantScreenText("reader", listOf("Post"))
+        val composite = CompositeDeviceToolGateway(listOf(absent, available))
+        assertEquals(available.assistant, composite.assistantScreenText())
+        assertEquals(0, available.runs)
+        assertTrue(available.invoked.isEmpty())
+        assertTrue(absent.invoked.isEmpty())
+    }
     @Test fun operationArgumentsReachTheGatewayWhenDecidingScreenControl() {
         val provider = object : DeviceToolGateway {
             override val definitions = listOf(ToolDefinition("contacts", "Contacts", buildJsonObject {}))
@@ -329,6 +339,8 @@ class CompositeDeviceToolGatewayTest {
         var runs = 0
         var revokes = 0
         var cancels = 0
+        var assistant: AssistantScreenText? = null
+        override suspend fun assistantScreenText() = assistant
 
         override val definitions: List<ToolDefinition> =
             tools.map { ToolDefinition(it, "$id $it", buildJsonObject { }) }

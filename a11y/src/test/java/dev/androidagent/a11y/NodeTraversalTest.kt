@@ -56,6 +56,26 @@ class NodeTraversalTest {
 
     private fun window(root: A11yNodeView?, active: Boolean = true) = A11yWindow(root, active)
 
+    @Test fun assistantSnapshotKeepsLongPostButDropsOwnHiddenAndPasswordTrees() {
+        val text = "שלום ".repeat(1_000)
+        val captured = assistantScreenText(listOf(
+            window(FakeNode(text = "Mike panel", packageName = OWN)),
+            window(FakeNode(children = listOf(
+                FakeNode(text = text),
+                FakeNode(text = "hidden", isVisibleToUser = false),
+                FakeNode(text = "password", isPassword = true, children = listOf(FakeNode(text = "secret child"))),
+            )), false),
+        ), OWN)!!
+        assertEquals(listOf(text), captured.lines)
+        assertEquals(APP, captured.packageName)
+    }
+
+    @Test fun assistantSnapshotIsBoundedEvenForOneHugePost() {
+        val captured = assistantScreenText(listOf(window(FakeNode(text = "x".repeat(100_000)))), OWN)!!
+        assertEquals(16_000, captured.lines.single().length)
+        assertNull(assistantScreenText(listOf(window(FakeNode(packageName = OWN))), OWN))
+    }
+
     @Test fun ownWindowReportsMaskingWithoutLeakingAnyNodeOrHandle() {
         val result = traverse(listOf(window(FakeNode(text = "Allow", packageName = OWN))), OWN)
         assertTrue(result.observation.nodes.isEmpty())
