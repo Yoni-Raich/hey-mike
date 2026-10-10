@@ -9,6 +9,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.util.Base64
+import dev.androidagent.core.EngineKind
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
@@ -54,6 +55,16 @@ class RemoteStoreTest {
         assertEquals(true, RemoteStore(file, box).binding("chat-1")?.importedFromPc)
         store.bind("chat-1", imported.copy(importedFromPc = false))
         assertEquals(false, RemoteStore(file, box).binding("chat-1")?.importedFromPc)
+    }
+
+    @Test fun claudeBindingKeepsItsNativeIdAndEngineAfterRestart() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "claude.bin")
+        val store = RemoteStore(file, box)
+        store.save(computer, "secret")
+        val binding = RemoteBinding("pc", "C:\\src", "native-id", true, EngineKind.CLAUDE)
+        store.bind("chat", binding)
+        assertEquals(binding, RemoteStore(file, box).binding("chat"))
     }
 
     @Test fun anEditedFileIsNotTrustedAtAll() {

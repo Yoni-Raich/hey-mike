@@ -1,7 +1,8 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatSession
-import dev.androidagent.enginecodex.CodexThread
+import dev.androidagent.core.EngineKind
+import dev.androidagent.remote.ComputerConversation as CodexThread
 import dev.androidagent.remote.RemoteBinding
 import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteProject
@@ -44,7 +45,7 @@ class PcChatsTest {
         )
         val projects = sections.single().projects
         assertEquals(listOf("app", "web", "empty"), projects.map { it.name })
-        assertEquals(listOf("thread-t2", "chat-d1"), projects[0].chats.map { it.key })
+        assertEquals(listOf("thread-CODEX:t2", "chat-d1"), projects[0].chats.map { it.key })
         assertEquals(emptyList<PcChatEntry>(), projects[2].chats)
         assertEquals(listOf(phoneChat), PcChats.phoneSessions(listOf(phoneChat, deskChat), mapOf("d1" to RemoteBinding("desk", "C:\\src\\app"))))
     }
@@ -61,5 +62,14 @@ class PcChatsTest {
     @Test fun aVpnOnlyComputerHasOneAddress() {
         assertEquals(listOf("100.64.0.5"), desk.hosts)
         assertEquals("yoni@100.64.0.5", desk.address)
+    }
+
+    @Test fun providerIdsDoNotHideEachOtherInTheSameProject() {
+        val binding = RemoteBinding("desk", "C:\\src", threadId = "same-id")
+        val rows = listOf(CodexThread("same-id", "Codex", binding.cwd, 5),
+            CodexThread("same-id", "Claude", binding.cwd, 60, engine = EngineKind.CLAUDE))
+        val project = PcChats.sections(listOf(desk), "desk", emptyList(), mapOf("d1" to binding),
+            listOf(deskChat), mapOf("desk" to rows)).single().projects.single()
+        assertEquals(listOf("thread-CLAUDE:same-id", "chat-d1"), project.chats.map { it.key })
     }
 }

@@ -20,6 +20,7 @@ import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import dev.androidagent.core.EngineKind
 
 /**
  * How much Codex on a computer may do without asking.
@@ -74,6 +75,8 @@ data class RemoteBinding(
     val threadId: String? = null,
     /** Null only for bindings saved by older app versions, before origin was recorded. */
     val importedFromPc: Boolean? = false,
+    /** The native engine owning [threadId]; old bindings are Codex. */
+    val engine: EngineKind = EngineKind.CODEX,
 )
 
 data class RemoteState(
@@ -274,6 +277,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                         put("computer", b.computerId); put("cwd", b.cwd)
                         b.threadId?.let { put("thread", it) }
                         b.importedFromPc?.let { put("importedFromPc", it) }
+                        put("engine", b.engine.name)
                     })
                 }
             })
@@ -310,6 +314,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     b.text("cwd") ?: return@mapNotNull null,
                     b.text("thread"),
                     (b["importedFromPc"] as? JsonPrimitive)?.booleanOrNull,
+                    b.text("engine")?.let { value -> runCatching { EngineKind.valueOf(value) }.getOrNull() } ?: EngineKind.CODEX,
                 )
             }.toMap()
             val default = root.text("default")?.takeIf { it in ids } ?: computers.firstOrNull()?.id

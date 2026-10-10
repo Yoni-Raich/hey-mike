@@ -2,7 +2,7 @@ package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.EngineKind
-import dev.androidagent.enginecodex.CodexThread
+import dev.androidagent.remote.ComputerConversation
 import dev.androidagent.remote.RemoteBinding
 import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteProject
@@ -19,8 +19,8 @@ sealed interface PcChatEntry {
         override val updatedAt get() = session.updatedAt
     }
 
-    data class OnComputer(val thread: CodexThread) : PcChatEntry {
-        override val key get() = "thread-${thread.id}"
+    data class OnComputer(val thread: ComputerConversation) : PcChatEntry {
+        override val key get() = "thread-${thread.key}"
         override val title get() = thread.title
         override val updatedAt get() = thread.updatedAt
     }
@@ -42,9 +42,9 @@ data class PcSection(val computer: RemoteComputer, val projects: List<PcProject>
 object PcChats {
 
     /** A saved PC name is shared across clients; an unnamed preview must not replace a local name. */
-    fun title(session: ChatSession, binding: RemoteBinding?, threads: List<CodexThread>): String =
-        if (session.engine == EngineKind.CODEX && binding?.threadId == session.engineThreadId && binding?.threadId != null)
-            threads.firstOrNull { it.id == binding.threadId }?.name?.takeIf { it.isNotBlank() } ?: session.title
+    fun title(session: ChatSession, binding: RemoteBinding?, threads: List<ComputerConversation>): String =
+        if (session.engine == binding?.engine && binding.threadId == session.engineThreadId && binding.threadId != null)
+            threads.firstOrNull { it.engine == binding.engine && it.id == binding.threadId }?.name?.takeIf { it.isNotBlank() } ?: session.title
         else session.title
 
     /** Windows paths ignore case and may end in a separator; Linux paths keep their case. */
@@ -57,14 +57,14 @@ object PcChats {
         projects: List<RemoteProject>,
         bindings: Map<String, RemoteBinding>,
         sessions: List<ChatSession>,
-        threads: Map<String, List<CodexThread>>,
+        threads: Map<String, List<ComputerConversation>>,
         query: String = "",
     ): List<PcSection> {
         val needle = query.trim()
         val byId = sessions.associateBy { it.id }
         return computers.sortedByDescending { it.id == defaultComputerId }.map { computer ->
             val bound = bindings.filterValues { it.computerId == computer.id }
-            val followed = bound.values.mapNotNull { it.threadId }.toSet()
+            val followed = bound.values.mapNotNull { binding -> binding.threadId?.let { "${binding.engine.name}:$it" } }.toSet()
             val entries = mutableMapOf<String, MutableList<PcChatEntry>>()
             val spelled = mutableMapOf<String, String>()
             fun folder(path: String): MutableList<PcChatEntry> {
@@ -77,7 +77,7 @@ object PcChats {
                 folder(binding.cwd) += PcChatEntry.Local(it.copy(title = title(it, binding, threads[computer.id].orEmpty())))
             } }
             threads[computer.id].orEmpty()
-                .filter { it.id !in followed }
+                .filter { it.key !in followed }
                 .forEach { folder(it.cwd) += PcChatEntry.OnComputer(it) }
             val shown = entries.map { (key, chats) ->
                 val kept = if (needle.isEmpty()) chats else chats.filter { it.title.contains(needle, ignoreCase = true) }

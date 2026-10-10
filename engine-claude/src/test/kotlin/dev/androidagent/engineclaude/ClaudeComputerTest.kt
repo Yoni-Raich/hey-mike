@@ -171,6 +171,46 @@ class ClaudeComputerTest {
         assertEquals("Tapped", result["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content)
     }
 
+    @Test fun anImportedMissingSessionIsNeverReplacedWithAnEmptyOne() = runBlocking {
+        val computer = FakeComputer()
+        val known = "11111111-1111-4111-8111-111111111111"
+        host.script = { process ->
+            process.err("No conversation found with session ID: $known")
+            process.finish(1)
+        }
+        val engine = engine(computer)
+        val id = engine.openSessionAt(PROJECT, known, "sonnet", emptyList(), requireExisting = true)
+        try { engine.startTurn(id, "continue", emptyList()); throw AssertionError("Missing session was resumed") }
+        catch (error: IllegalStateException) { assertTrue(error.message.orEmpty().contains("could not open")) }
+        assertEquals(1, computer.chats.size)
+        assertEquals(known, computer.chats.single().process.after("--resume"))
+    }
+
+    @Test fun handoffCannotStopAnActiveTurnButReleasesAnIdleProcess() = runBlocking {
+        val computer = FakeComputer()
+        val engine = engine(computer)
+        val (id, _, chat) = engine.begin(computer)
+        try { engine.releaseSession(id); throw AssertionError("Live turn was released") }
+        catch (_: IllegalStateException) { }
+        assertTrue(chat.isAlive)
+        chat.send("""{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"$id"}""")
+        awaitEvent<EngineEvent.TurnFinished>()
+        engine.releaseSession(id)
+        assertFalse(chat.isAlive)
+    }
+
+    @Test fun nativeIdsAreReportedBeforeCompletedText() = runBlocking {
+        val computer = FakeComputer()
+        val engine = engine(computer)
+        val ids = CopyOnWriteArrayList<String>()
+        engine.onNativeMessage = { _, message -> ids += message }
+        val (_, _, chat) = engine.begin(computer)
+        val native = "22222222-2222-4222-8222-222222222222"
+        chat.send("""{"type":"assistant","uuid":"$native","message":{"id":"msg_test","model":"sonnet","content":[{"type":"text","text":"answer"}]}}""")
+        awaitEvent<EngineEvent.MessageCompleted>()
+        assertTrue(native in ids)
+    }
+
     @Test fun aToolThatNeedsPermissionAsksOnThePhoneAndRunsAfterYes() = runBlocking {
         val computer = FakeComputer()
         val engine = engine(computer)

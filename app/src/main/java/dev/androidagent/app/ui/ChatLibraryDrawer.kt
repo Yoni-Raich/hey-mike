@@ -261,7 +261,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                     Box(Modifier.animateItem().padding(start = 18.dp)) {
                                         LibraryChatRow(
                                             entry = entry,
-                                            detail = if (entry is PcChatEntry.OnComputer) "In Codex on ${computer.label}" else "",
+                                            detail = if (entry is PcChatEntry.OnComputer) "In ${if (entry.thread.engine == dev.androidagent.core.EngineKind.CLAUDE) "Claude" else "Codex"} on ${computer.label}" else "",
                                             leading = null,
                                             state = state,
                                             actions = actions,
@@ -576,7 +576,7 @@ private fun LibraryChatRow(
         )
     } else {
         Surface(
-            onClick = { dismiss(); actions.onOpenPcThread(computerId!!, (entry as PcChatEntry.OnComputer).thread.id) },
+            onClick = { dismiss(); val thread = (entry as PcChatEntry.OnComputer).thread; actions.onOpenPcThread(computerId!!, thread.id, thread.engine) },
             color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -660,7 +660,10 @@ private fun LibraryConnection(state: AgentUiState, id: String, actions: AgentUiA
             is RemoteSetup.Working -> LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = LibraryAmber, trackColor = LibraryTile)
             is RemoteSetup.Failed -> PcProblemCard(message = setup.message, primary = "Try again", onPrimary = { actions.onReconnectComputer(id) }, secondary = "Settings", onSecondary = { close(); actions.onOpenComputers() }, modifier = Modifier.padding(0.dp))
             is RemoteSetup.NeedsTailscaleApproval -> TailscaleApprovalCard(state.computers.first { it.id == id }.label, setup.url, { actions.onOpenTailscaleApproval(id, it) }, { actions.onReconnectComputer(id) })
-            is RemoteSetup.Ready -> Unit
+            is RemoteSetup.Ready -> state.pcThreadErrors[id]?.let { problem ->
+                PcProblemCard(message = "Some conversations could not be loaded: $problem", primary = "Refresh", onPrimary = actions.onRefreshPcThreads,
+                    secondary = "Settings", onSecondary = { close(); actions.onOpenComputers() }, modifier = Modifier.padding(0.dp))
+            }
             null -> QuietLink("Connect to load its projects", icon = Icons.Outlined.Computer) { actions.onReconnectComputer(id) }
         }
     }
