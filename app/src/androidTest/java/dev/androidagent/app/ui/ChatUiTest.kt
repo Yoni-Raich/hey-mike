@@ -30,6 +30,8 @@ import dev.androidagent.core.AgentModel
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.EngineKind
+import dev.androidagent.remote.RemoteBinding
 import dev.androidagent.core.ReasoningEffortOption
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
@@ -43,6 +45,29 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 class ChatUiTest {
+    @Test fun computerClaudeOffersHistoryRefreshAndDesktopHandoff() {
+        var refreshed: String? = null
+        var opened: String? = null
+        compose.setContent { AndroidAgentScreen(loadingFixture.copy(activeEngine = EngineKind.CLAUDE,
+            sessions = listOf(dev.androidagent.core.ChatSession("ui-fixture", "Claude session", 1, 1, engine = EngineKind.CLAUDE)),
+            remoteBindings = mapOf("ui-fixture" to RemoteBinding("pc", "C:/project", "native-id", true, EngineKind.CLAUDE))),
+            AgentUiActions(onSyncPcChat = { refreshed = it }, onOpenClaudeDesktop = { opened = it })) }
+        compose.onNodeWithText("Refresh history").performClick()
+        compose.onNodeWithText("Open in Claude Desktop").performClick()
+        compose.runOnIdle { assertEquals("ui-fixture", refreshed); assertEquals("ui-fixture", opened) }
+    }
+
+    @Test fun computerClaudeWriterBlocksSendAndDoesNotOfferACodexFork() {
+        compose.setContent { AndroidAgentScreen(loadingFixture.copy(activeEngine = EngineKind.CLAUDE,
+            sessions = listOf(dev.androidagent.core.ChatSession("ui-fixture", "Claude session", 1, 1, engine = EngineKind.CLAUDE)),
+            remoteBindings = mapOf("ui-fixture" to RemoteBinding("pc", "C:/project", "native-id", true, EngineKind.CLAUDE)),
+            pcBusyChats = setOf("ui-fixture")), AgentUiActions()) }
+        compose.onNodeWithText("Continue in a copy").assertDoesNotExist()
+        compose.onNodeWithText("Open in Claude Desktop").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Message input").performTextInput("continue")
+        compose.onNodeWithContentDescription("Send message").assertIsNotEnabled()
+    }
+
     @Test fun savedHistoryShowsLoadingUntilMessagesArrive() {
         val state = androidx.compose.runtime.mutableStateOf(loadingFixture.copy(messages = emptyList(), isLoadingMessages = true))
         compose.setContent { AndroidAgentScreen(state.value, AgentUiActions()) }

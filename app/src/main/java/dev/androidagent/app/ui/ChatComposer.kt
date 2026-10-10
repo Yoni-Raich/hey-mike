@@ -121,6 +121,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.app.ChatEngines
 import dev.androidagent.core.AgentSkill
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
 import dev.androidagent.core.VoicePhase
@@ -190,7 +191,9 @@ internal fun AgentComposer(
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)
     val hasDraft = draft.isNotBlank()
-    val loading = state.isLoadingMessages || state.activeSessionId in state.pcChatLoading
+    val loading = state.isLoadingMessages || state.activeSessionId in state.pcChatLoading ||
+        state.activeSessionId in state.pcSyncing || state.activeSessionId in state.pcDesktopOpening ||
+        (state.activeEngine == EngineKind.CLAUDE && state.activeSessionId in state.pcBusyChats)
     val canSend = state.activeSessionId != null && hasDraft && !loading && !stopping && !voiceStopping
     val action = composerAction(
         active = active,

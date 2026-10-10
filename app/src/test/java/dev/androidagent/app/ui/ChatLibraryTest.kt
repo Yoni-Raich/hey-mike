@@ -1,7 +1,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatSession
-import dev.androidagent.enginecodex.CodexThread
+import dev.androidagent.remote.ComputerConversation as CodexThread
 import dev.androidagent.remote.RemoteBinding
 import dev.androidagent.remote.RemoteComputer
 import org.junit.Assert.*

@@ -12,10 +12,11 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.androidagent.core.ChatSession
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.AutomationAttention
 import dev.androidagent.core.AutomationOverview
 import dev.androidagent.core.AutomationSummary
-import dev.androidagent.enginecodex.CodexThread
+import dev.androidagent.remote.ComputerConversation as CodexThread
 import dev.androidagent.remote.*
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -107,6 +108,14 @@ class ChatLibraryUiTest {
         show()
         compose.onNodeWithText("Add a computer").assertDoesNotExist()
         compose.onNodeWithContentDescription("Manage computers").assertIsDisplayed()
+    }
+
+    @Test fun claudeConversationOpensWithItsComputerAndEngine() {
+        var opened: Triple<String, String, EngineKind>? = null
+        show(AgentUiActions(onOpenPcThread = { computer, id, engine -> opened = Triple(computer, id, engine) }),
+            fixture.copy(pcThreads = mapOf("pc" to listOf(CodexThread("native-claude", "Claude session", "C:\\projects\\app", now, engine = EngineKind.CLAUDE)))))
+        compose.onNodeWithText("Claude session").performClick()
+        compose.runOnIdle { assertEquals(Triple("pc", "native-claude", EngineKind.CLAUDE), opened) }
     }
 
     private fun screenshot(name: String) {

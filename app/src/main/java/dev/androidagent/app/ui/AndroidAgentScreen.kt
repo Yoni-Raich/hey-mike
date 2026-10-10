@@ -157,6 +157,7 @@ import androidx.compose.material3.rememberDrawerState
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.EngineKind
 import dev.androidagent.app.update.AppUpdateInfo
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.RunPhase
@@ -324,14 +325,30 @@ fun AndroidAgentScreen(
                 },
                 bottomBar = {
                     Column {
+                        state.activeSessionId?.let { id ->
+                            val binding = state.remoteBindings[id]
+                            if (binding?.engine == EngineKind.CLAUDE && binding.threadId != null &&
+                                state.sessions.firstOrNull { it.id == id }?.engine == EngineKind.CLAUDE) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) {
+                                    val enabled = !state.runState.active && id !in state.pcSyncing && id !in state.pcDesktopOpening
+                                    TextButton(onClick = { actions.onSyncPcChat(id) }, enabled = enabled) {
+                                        Text(if (id in state.pcSyncing) "Refreshing…" else "Refresh history")
+                                    }
+                                    TextButton(onClick = { actions.onOpenClaudeDesktop(id) }, enabled = enabled && id !in state.pcBusyChats) {
+                                        Text(if (id in state.pcDesktopOpening) "Opening…" else "Open in Claude Desktop")
+                                    }
+                                }
+                            }
+                        }
                         // Pinned above the composer, never in the chat list: the
                         // list follows the newest message, and a card placed in it
                         // sat above everything, out of sight in any long chat.
                         state.activeSessionId?.takeIf { it in state.pcBusyChats }?.let { id ->
                             PcBusyBanner(
+                                claude = state.remoteBindings[id]?.engine == EngineKind.CLAUDE,
                                 forking = id in state.pcForking,
                                 onFork = { actions.onForkPcChat(id) },
-                                onCheck = { actions.onCheckPcChatBusy(id) },
+                                onCheck = { if (state.remoteBindings[id]?.engine == EngineKind.CLAUDE) actions.onSyncPcChat(id) else actions.onCheckPcChatBusy(id) },
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
@@ -796,7 +813,7 @@ private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
  * write to it. A copy with the whole history can go on right away.
  */
 @Composable
-private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Unit, modifier: Modifier = Modifier) {
+private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Unit, modifier: Modifier = Modifier, claude: Boolean = false) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.tertiaryContainer,
@@ -807,17 +824,18 @@ private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Un
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Text("Open in Codex on the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(if (claude) "Claude session is unavailable for writing" else "Open in Codex on the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             }
             Text(
-                "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer.",
+                if (claude) "Close this session in Claude on the computer, then refresh its history. If the computer is offline, reconnect it first."
+                else "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer.",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = 32.dp, top = 6.dp),
             )
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onCheck, enabled = !forking) { Text("Check again", color = MaterialTheme.colorScheme.onTertiaryContainer) }
                 Spacer(Modifier.width(4.dp))
-                Button(
+                if (!claude) Button(
                     onClick = onFork,
                     enabled = !forking,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary, contentColor = MaterialTheme.colorScheme.onSecondary),

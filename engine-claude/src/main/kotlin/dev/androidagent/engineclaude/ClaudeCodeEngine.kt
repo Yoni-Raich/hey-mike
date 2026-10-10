@@ -110,6 +110,8 @@ class ClaudeCodeEngine(
     private val loginLock = Mutex()
     @Volatile private var loginProcess: Process? = null
     @Volatile private var accountCache: Pair<Long, AccountStatus>? = null
+    /** Records native transcript IDs owned by a Mike turn before its UI events are delivered. */
+    var onNativeMessage: suspend (threadId: String, messageId: String) -> Unit = { _, _ -> }
 
     private class PendingTool(val threadId: String, val turnId: String, val result: CompletableDeferred<ToolResult>)
 
@@ -290,8 +292,17 @@ class ClaudeCodeEngine(
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
         openSessionAt(workspace.absolutePath, threadId, model, tools)
 
+    /** Give an idle native session back to another client, without stopping a running turn. */
+    suspend fun releaseSession(threadId: String) = chatsLock.withLock {
+        val chat = chats[threadId] ?: return@withLock
+        chat.lock.withLock {
+            check(chat.idle()) { "Claude is still working in this chat. Stop or wait before switching clients." }
+            chat.stopProcess()
+        }
+    }
+
     /** [openSession] for a folder named as the machine that runs `claude` spells it: a computer's project folder. */
-    suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
+    suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>, requireExisting: Boolean = false): String {
         connect()
         val known = ClaudeProtocol.isSessionId(threadId)
         val id = if (known) threadId!! else UUID.randomUUID().toString()
@@ -305,6 +316,7 @@ class ClaudeCodeEngine(
             }
             val chat = chats.getOrPut(id) { Chat(id, dir, resumable = known) }
             chat.lock.withLock {
+                chat.requireExisting = requireExisting
                 chat.model = wantedModel
                 chat.tools = tools
                 chat.touch()
@@ -498,6 +510,7 @@ class ClaudeCodeEngine(
     private class ChatStartException(message: String, val notFound: Boolean) : IllegalStateException(message)
 
     private inner class Chat(val threadId: String, val cwd: String, @Volatile var resumable: Boolean) {
+        @Volatile var requireExisting = false
         val lock = Mutex()
         val state = Any()
         // Paths are shown relative to the chat folder only where this JVM can name it.
@@ -552,7 +565,7 @@ class ClaudeCodeEngine(
                 } catch (error: ChatStartException) {
                     // A session that never got a message has no file to resume.
                     // Starting it under the same id keeps the chat's id stable.
-                    if (!error.notFound) throw error
+                    if (!error.notFound || requireExisting) throw error
                     start(resume = false)
                 }
             } else {
@@ -662,6 +675,9 @@ class ClaudeCodeEngine(
                             mapper.map(message).also {
                                 if (mapper.active?.workStarted == true) authReplay = null
                             }
+                        }
+                        if (message.string("type") in setOf("user", "assistant") && synchronized(state) { mapper.toolTurn() != null }) {
+                            message.string("uuid")?.takeIf(ClaudeProtocol::isSessionId)?.let { onNativeMessage(threadId, it) }
                         }
                         dispatch(signals)
                     }

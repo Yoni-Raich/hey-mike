@@ -167,16 +167,23 @@ class RoutingAgentEngine(
         val sessionId = sessionIdOf(workspace)
         if (engineOf(workspace) == EngineKind.CLAUDE) {
             val computer = sessionId?.let(store::binding)
+            if (computer != null && threadId != null) {
+                check(claudeComputers[threadId] == null || claudeComputers[threadId] == computer.computerId) { "This native Claude ID is already routed to another computer in Mike. Continue it on its original computer instead of using a copied ID." }
+                check(!hub.isClaudeThreadBusy(computer.computerId, threadId)) { "This session is open in Claude on the computer. Close it there and refresh its history before sending." }
+            }
             val opened = if (computer == null) claude().openSession(workspace, threadId, model, tools)
-            else hub.claude(computer.computerId).openSessionAt(computer.cwd, threadId, model, tools)
+            else hub.claude(computer.computerId).openSessionAt(computer.cwd, threadId, model, tools, requireExisting = computer.importedFromPc == true)
             claudeThreads += opened
-            if (computer != null) claudeComputers[opened] = computer.computerId
+            if (computer != null) {
+                claudeComputers[opened] = computer.computerId
+                store.bind(sessionId!!, computer.copy(threadId = opened, engine = EngineKind.CLAUDE))
+            }
             return opened
         }
         val binding = sessionId?.let(store::binding) ?: return local.openSession(workspace, threadId, model, tools).also { localCodexThreads += it }
         val engine = hub.engine(binding.computerId)
         // Only a thread the computer made can be resumed there.
-        val resumable = binding.threadId?.takeIf { it == threadId }
+        val resumable = binding.threadId?.takeIf { binding.engine == EngineKind.CODEX && it == threadId }
         // A thread the computer already has is continued or reported, never
         // silently swapped for an empty one.
         val opened = try {
@@ -193,8 +200,8 @@ class RoutingAgentEngine(
             )
         }
         threads[opened] = binding.computerId
-        if (opened != binding.threadId) {
-            store.bind(sessionId, binding.copy(threadId = opened))
+        if (opened != binding.threadId || binding.engine != EngineKind.CODEX) {
+            store.bind(sessionId, binding.copy(threadId = opened, engine = EngineKind.CODEX))
         }
         return opened
     }

@@ -1,5 +1,45 @@
 # Progress
 
+### Claude computer session continuity — 2026-10-11
+
+- Isolated branch based on merged dev `6692067402dba86841ef35c20fdad450166243bf`.
+  Native Claude Code / Desktop Code-tab sessions now appear beside Codex in
+  computer projects. Imports keep their engine, computer, cwd and native UUID;
+  idle refresh appends external text and preserves local history/drafts/queue.
+  A persistent native-ID ledger handles repeat sync and interrupted UI writes.
+- Imported missing sessions and detected external writers are refused. Active
+  runs are not released. Windows Open in Claude Desktop uses the official CLI
+  through a one-off interactive task; a staged script avoids cmd length limits.
+  A signed-in desktop fixture verified UUID/cwd and task/script cleanup with a
+  local CLI stub. No actual Desktop UI or model turn was opened.
+- Real Pc store scan: 97 files, 92 listed UUIDs, 91 readable histories / 2,623
+  text messages. Both shipped readers agree. Three metadata-less files and
+  two duplicate-ID files are omitted with a warning; one raw-NUL corruption
+  yields an explicit error. Native files were not edited. Full Windows scan
+  86.121 s, maximum read 4.668 s, maximum display payload 110,907 bytes.
+- Real-store testing found/fixed foreign ancestor session IDs in forks and
+  compaction logical-parent cycles. Compacted history follows the official
+  parent chain/summary; already stored local history is retained. The readers
+  now agree when a complete record contains invalid raw NUL bytes.
+- Final command passed in 55 s: `gradlew.bat test assembleDevRelease
+  assembleDevDebugAndroidTest :app:assembleDevDebug :app:lintDevDebug
+  :voice:lintDebug --no-daemon`. Used the isolated cached Gradle home and
+  `HEYMIKE_TEST_DESKTOP_BRIDGE=true`. XML: 2,353 executions, zero failures/errors,
+  16 skips. Python reader/runtime suite: 26 passed (8.166 s). Diff check passed.
+- Dev Debug metadata: `dev.androidagent.app.dev`, 28 / `0.14.0`, arm64/x86_64,
+  debug-key v2 signature, 16 KiB alignment. SHA-256:
+  `c0da717e6c70c8500a431b87877313314daa676e1efdc2fc28ea492f88da8222`.
+  Dev Release built unsigned, SHA-256:
+  `02575d481a2c99c0fbae9112894ea30043ca6f6835439b704bf8cd083f810ec6`.
+  Both APKs contain source-matching PowerShell/Python readers. No version bump,
+  production release or installation was performed.
+- UI evidence is three compiled Compose instrumentation cases, not a live UI
+  pass or screenshot. `adb devices -l` was empty. Native Desktop same-ID model
+  continuation, phone→SSH→Desktop→phone, Server/Linux and ownership races remain
+  unverified. Writer checks are advisory; legacy text matching is best effort.
+  Original dirty checkout preserved. No reviewer or new-feature merge was run.
+  [Full evidence and live-check list](docs/testing/claude-session-sync-20261010/RESULTS.md).
+
 ### Nothing opening-crash follow-up — 2026-10-09
 
 - Reproduced a source-level upgrade failure using the exact preserved 1113
