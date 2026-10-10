@@ -12,13 +12,13 @@
   No replay after restart or an unknown dispatch outcome.
 - Full gate passed: `gradlew.bat test assembleDevRelease assembleDevDebug
   assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug --no-daemon
-  --no-parallel --max-workers=2` (1m30s). XML: 2,372 unit executions,
+  --no-parallel --max-workers=2` (2m43s). XML: 2,374 unit executions,
   zero failures/errors, 16 skips. Runtime Python: 15 passed. Manual emulator
   runner: 33 UI tests passed, including Hebrew/large text, child continuation,
   source/child Stop, voice navigation and delayed draft echo regression.
 - Xiaomi Redmi 12 / Android 15: backed up the old private data and APK, then
   installed exact Dev Debug 1129 (`0.14.0-dev.subagents1`) with `install -r`.
-  SHA-256 `676d04d88bd6c0d7102ff166b7920b6b69b5a3355a91a46d8300741a27e530a6`
+  SHA-256 `659c5803c3d18682f1911ea601799acf77f82848b4226f62e1fa863db8722f5c`
   matches the installed APK. Debug-key v2 signature and 16 KiB alignment pass.
   The first v6→v9 upgrade preserved all original rows: 96 chats, 1,830 messages
   and two drafts. Final reopen retained child receipts, links and model choices.
@@ -28,6 +28,10 @@
   accessibility was restored through the visible Xiaomi Settings flow and is
   bound, with no crashed service. No uninstall, data clearing or physical-phone
   instrumentation was used.
+- A final cancellation regression failed before the fix: a completed child can
+  still have an active grandchild. Protocol cancel now stops that subtree while
+  preserving the completed child's result. The real coordinator integration
+  test also confirms the unrelated root keeps running.
 - Remaining gaps: spoken creation/steering has not been verified with a human;
   a standalone recorded-audio fixture install was refused by Xiaomi and was
   not bypassed. A saved PC did not answer over VPN or LAN; remote project/model

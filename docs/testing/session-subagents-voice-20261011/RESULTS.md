@@ -15,10 +15,10 @@ Worktree: `feat/session-subagents-voice-20261011`, based on clean `origin/dev`
 
 | Area | Evidence |
 |---|---|
-| Full build gate | `gradlew.bat test assembleDevRelease assembleDevDebug assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug --no-daemon --no-parallel --max-workers=2`: successful in 1m30s, 1,168 tasks. |
-| Unit variants | 2,372 XML test executions, zero failures/errors, 16 skips. These are executions across variants, not 2,372 unique tests. |
+| Full build gate | `gradlew.bat test assembleDevRelease assembleDevDebug assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug --no-daemon --no-parallel --max-workers=2`: successful in 2m43s, 1,168 tasks. |
+| Unit variants | 2,374 XML test executions, zero failures/errors, 16 skips. These are executions across variants, not 2,374 unique tests. |
 | Runtime preparation | `python -m unittest tools.test_prepare_runtime`: 15 passed. |
-| UI | Own API 35 x86_64 emulator, manual `install -r` and `am instrument -w -e package dev.androidagent.app.ui dev.androidagent.app.dev.test/androidx.test.runner.AndroidJUnitRunner`: 33 passed in 48.015s. |
+| UI | Own API 35 x86_64 emulator, manual `install -r` and `am instrument -w -e package dev.androidagent.app.ui dev.androidagent.app.dev.test/androidx.test.runner.AndroidJUnitRunner`: 33 passed in 48.165s. |
 | Source hygiene | `git diff --check` passed. No lint baseline or gate weakening. |
 | Package | `dev.androidagent.app.dev`, Dev Debug, 1129, `0.14.0-dev.subagents1`. APK Signature Scheme v2, debug key; `zipalign -c -P 16 4` passed. |
 | Exact install | Xiaomi Redmi 12 (23053RN02Y), Android 15, deliberately selected USB serial. `adb install -r`: success; package metadata and installed APK SHA match. |
@@ -26,11 +26,11 @@ Worktree: `feat/session-subagents-voice-20261011`, based on clean `origin/dev`
 | Real models | Sol 6.1/High and Claude catalog `opus`/Medium children replied. Card click opened their ordinary chat; a direct follow-up replied in that same chat. |
 | Real voice | Source call stayed active while browsing a child, sending a typed child message, receiving its reply and returning. Child status was also relayed into source voice context. |
 | Device gateway | Final-build `device_status` reported connected accessibility and returned the requested QA reply. Service restored through normal visible Xiaomi Settings after the update; bound, no crashed service. |
-| Final build on phone | Opus/Medium replied `QA_FINAL_OK` while its source voice stayed active; Return succeeded. Voice entry hid the keyboard (`mInputShown=false`). All original chat/message/draft IDs remain present after QA. |
-| Bounded logs | Final-build UID log capture from 02:23:35 through the short QA run contains zero fatal exception, native fatal signal, OOM or SQLite exception matches. This is not a stress/ANR proof. |
+| Final build on phone | Sol 6.1/High replied `QA_LAST_VOICE_OK` while its source voice stayed active; Return succeeded. Final-build `device_status` returned `QA_FINAL_TOOLS_OK`. Voice entry hid the keyboard (`mInputShown=false`). All original chat/message/draft IDs remain present after QA. |
+| Bounded logs | Final-build UID log capture from 02:35:00 through the short QA run contains zero fatal exception, native fatal signal, OOM or SQLite exception matches. This is not a stress/ANR proof. |
 
 Final APK SHA-256:
-`676d04d88bd6c0d7102ff166b7920b6b69b5a3355a91a46d8300741a27e530a6`.
+`659c5803c3d18682f1911ea601799acf77f82848b4226f62e1fa863db8722f5c`.
 
 Dev Release was built as part of the gate. It was not signed/installed as a
 production release. No release tag or published APK asset was made.
@@ -44,6 +44,9 @@ production release. No release tag or published APK asset was made.
 - Stop during root/child setup, running child steering, subtree cancellation,
   unknown/lost dispatch replies, restart without replay, and direct user recovery.
   The child-Stop-during-prepare regression failed before the fence fix.
+- Cancel after a child's turn completed still stops its running grandchild and
+  keeps the completed result. This regression failed before the fix; a real
+  coordinator test verifies the grandchild interrupts and an unrelated root stays active.
 - Source and descendant user gates; steering does not answer or bypass approval.
   Voice answers only its source family.
 - Per-child model/effort dispatch and current choices on follow-up, including Auto
@@ -74,8 +77,8 @@ These three checked fixture captures are also saved with this report:
 |---|---|---|
 | ![Child card](ui/subagents-parent.png) | ![Voice source](ui/subagents-voice.png) | ![Hebrew large font](ui/subagents-hebrew-large-font.png) |
 
-Final build log: `artifacts/subagents-device/full-gate-final-keyboard.log`.
-UI runner log: `artifacts/subagents-device/ui-tests-final-keyboard.log`.
+Final build log: `artifacts/subagents-device/full-gate-terminal-subtree.log`.
+UI runner log: `artifacts/subagents-device/ui-tests-terminal-subtree.log`.
 
 ## Remaining gaps
 

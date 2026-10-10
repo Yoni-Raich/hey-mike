@@ -95,6 +95,31 @@ class AgentRunsTest {
         rig.close()
     }
 
+    @Test fun protocolCancelAfterChildCompletionInterruptsGrandchildOnly() = runTest {
+        val rig = Rig(this); runCurrent()
+        fun start(key: String) = buildJsonObject {
+            put("mode", "start"); put("requestId", key); put("title", key); put("task", "Do $key")
+        }
+        assertTrue(rig.agents.invoke("one", start("child")) { true }.success)
+        val child = rig.agents.tasks.value.single().sessionId!!
+        assertTrue(rig.agents.invoke(child, start("grandchild")) { true }.success)
+        val grandchild = rig.agents.tasks.value.last().sessionId!!
+        rig.runs.send("two", "Unrelated root"); runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("Delegated", "thread-$child", "turn-thread-$child", "reply", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-$child", turnId = "turn-thread-$child"))
+        runCurrent()
+        assertEquals("completed", rig.agents.tasks.value.first().status)
+        assertTrue(rig.agents.invoke("one", buildJsonObject {
+            put("mode", "cancel"); put("sessionId", child)
+        }) { true }.success)
+        runCurrent()
+        assertEquals(listOf("thread-$grandchild"), rig.engine.interrupted)
+        assertTrue(rig.runs.stateOf("two")!!.active)
+        assertEquals("Delegated", rig.agents.tasks.value.first().result)
+        assertEquals("cancelled", rig.agents.tasks.value.last().status)
+        rig.close()
+    }
+
     @Test fun sourceStopFencesAChildThatHasNotDispatchedYet() = runTest {
         var dispatchAllowed = true
         val stopped = mutableListOf<String?>()

@@ -63,6 +63,20 @@ class SessionAgentsTest {
         rig.close()
     }
 
+    @Test fun cancellingCompletedChildStillStopsItsSubtreeAndPreservesItsResult() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.agents.invoke("root", start()) { true }
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.agents.invoke(child, start("grandchild")) { true }
+        rig.runner.complete(child, rig.store, "Delegation finished"); runCurrent()
+        assertEquals("completed", rig.agents.tasks.value.first().status)
+        assertTrue(rig.agents.invoke("root", operation("cancel", child)) { true }.success)
+        assertEquals(listOf(child), rig.runner.stopped)
+        assertEquals("completed", rig.agents.tasks.value.first().status)
+        assertEquals("Delegation finished", rig.agents.tasks.value.first().result)
+        rig.close()
+    }
+
     @Test fun stopDuringPlaceSetupPreventsDispatchEvenBeforeAChildOwnsARun() = runTest {
         val place = CompletableDeferred<Unit>()
         val rig = Rig(this, place = { place.await() }); runCurrent()

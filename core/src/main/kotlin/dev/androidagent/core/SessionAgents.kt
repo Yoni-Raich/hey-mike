@@ -260,10 +260,14 @@ class SessionAgents(
         when (mode) {
             "open" -> { check(child != null && sessions.getSession(child) != null) { "Child chat is not available." }; check(allowed()); openChat(child) }
             "cancel" -> {
-                if (!task.terminal && child != null) {
+                if (child != null) {
                     stop(child)
-                    task = task.copy(status = "stopping", progress = "Stopping; completed actions are not undone.")
-                    save(task)
+                    // A completed child can still have running descendants.
+                    // Stop the subtree while keeping that child's completed result.
+                    if (!task.terminal) {
+                        task = task.copy(status = "stopping", progress = "Stopping; completed actions are not undone.")
+                        save(task)
+                    }
                     runner().stop(child)
                 }
             }
