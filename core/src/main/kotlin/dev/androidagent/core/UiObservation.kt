@@ -21,6 +21,8 @@
 package dev.androidagent.core
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -126,7 +128,18 @@ data class UiNode(
 }
 
 /** A parsed screen, before it is rendered for the model. */
-data class UiObservation(val activePackage: String?, val nodes: List<UiNode>)
+data class UiObservation(val activePackage: String?, val nodes: List<UiNode>, val masking: UiMasking? = null)
+
+/** Status only: never exposes our buttons, text or node handles. */
+data class UiMasking(val packageName: String, val excludedWindows: Int, val activeWindowExcluded: Boolean) {
+    fun toJson(): JsonObject = buildJsonObject {
+        put("reason", "agent_own_ui")
+        put("package", packageName)
+        put("excludedWindows", excludedWindows)
+        put("activeWindowExcluded", activeWindowExcluded)
+        put("message", "Hey Mike's own UI is intentionally hidden from the agent. An empty or black capture does not imply a failed launch. Never tap Mike's approval or Stop controls.")
+    }
+}
 
 /**
  * The one `read_ui` description, so both backends advertise the same tool.
@@ -146,7 +159,8 @@ const val READ_UI_DESCRIPTION: String =
         "the query are identical to the previous observation the reply is \"unchanged\":true " +
         "with \"unchangedSinceRevision\" instead of the node list — reuse the nodes from that " +
         "revision, or pass force=true to resend them. Timeout or idle failures are typed and " +
-        "do not trigger a second dump."
+        "do not trigger a second dump. A masking field explains intentionally hidden agent UI; " +
+        "do not reopen Mike or diagnose a failed launch from its missing nodes."
 
 /** The actions `act_and_observe` may wrap. */
 val ACT_AND_OBSERVE_ACTIONS: Set<String> = setOf("tap", "swipe", "key", "open_app", "type_text")
@@ -397,6 +411,7 @@ object UiObservationSerializer {
         page: UiPage? = null,
     ): String = buildJsonObject {
         put("ok", true)
+        observation.masking?.let { put("masking", it.toJson()) }
         put("observationId", observationId)
         put("revision", revision)
         put("elapsedMs", elapsedMs)
@@ -420,7 +435,9 @@ object UiObservationSerializer {
             }
             if (window.offset > 0) put("offset", window.offset)
             window.nextOffset?.let { put("nextOffset", it) }
-            window.hint(observation.activePackage)?.let { put("hint", it) }
+            val ownQuery = observation.masking?.let { window.query.packageName == it.packageName } == true
+            if (ownQuery) put("hint", "Hey Mike's own UI is intentionally masked; no own nodes or action handles are exposed. Do not retry opening Mike to obtain them.")
+            else window.hint(observation.activePackage)?.let { put("hint", it) }
         }
         put("nodes", buildJsonArray { observation.nodes.forEach { add(it.toJson()) } })
     }.toString()
@@ -571,7 +588,7 @@ object UiObservationSerializer {
         }
         val matched = select(observation.nodes, query)
         val fingerprint = ObservationFingerprint(
-            digest = digest(observation.activePackage, observation.nodes, query),
+            digest = digest(observation.masking?.let { observation.activePackage.orEmpty() + it.toJson() } ?: observation.activePackage, observation.nodes, query),
             revision = revision,
             backend = backend,
         )
@@ -583,7 +600,11 @@ object UiObservationSerializer {
                 text = unchangedJson(
                     observation.activePackage, matched.size, source,
                     observationId, revision, elapsedMs, previous.revision,
-                ),
+                ).let { text ->
+                    observation.masking?.let { mask ->
+                        JsonObject(Json.parseToJsonElement(text).jsonObject + ("masking" to mask.toJson())).toString()
+                    } ?: text
+                },
                 fingerprint = null,
                 unchanged = true,
             )

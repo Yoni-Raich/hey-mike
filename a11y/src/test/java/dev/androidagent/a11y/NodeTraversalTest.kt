@@ -56,6 +56,16 @@ class NodeTraversalTest {
 
     private fun window(root: A11yNodeView?, active: Boolean = true) = A11yWindow(root, active)
 
+    @Test fun ownWindowReportsMaskingWithoutLeakingAnyNodeOrHandle() {
+        val result = traverse(listOf(window(FakeNode(text = "Allow", packageName = OWN))), OWN)
+        assertTrue(result.observation.nodes.isEmpty())
+        assertTrue(result.handles.isEmpty())
+        assertEquals(1, result.observation.masking!!.excludedWindows)
+        assertTrue(result.observation.masking!!.activeWindowExcluded)
+        assertEquals("agent_own_ui", result.observation.masking!!.toJson()["reason"].toString().trim('"'))
+        assertFalse(result.observation.masking!!.toJson().toString().contains("Allow"))
+    }
+
     @Test fun eachNodeNamesTheNearestAncestorThatWasItselfEmitted() {
         // rootNodeId resolves a subtree out of the flat list, so a node that
         // was dropped must not break the chain: its children adopt the nearest

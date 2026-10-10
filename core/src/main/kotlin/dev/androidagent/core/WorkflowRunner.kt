@@ -158,7 +158,10 @@ class WorkflowRunner(
             records += StepRecord(definition.steps[index], "skipped", "before startAt", 0L)
         }
 
+        var pendingIndex = startIndex
+        try {
         for (index in startIndex until definition.steps.size) {
+            pendingIndex = index
             currentCoroutineContext().ensureActive()
             val step = definition.steps[index]
             if (isRevoked()) {
@@ -267,6 +270,16 @@ class WorkflowRunner(
             }
         }
         return success(definition, options, records, nowMs() - startedAt, outputs = captured)
+        } catch (cancelled: CancellationException) {
+            // Build evidence only. Cancellation must not dispatch a screenshot or a retry.
+            val pending = definition.steps.getOrNull(pendingIndex)
+            val report = failure(
+                definition, options.copy(screenshotOnFailure = false), records, pending, pendingIndex,
+                "cancelled", "Run cancelled. Completed steps remain completed. The interrupted step may have run; inspect before resuming.",
+                committed = pending?.let(::committedOf) ?: false, outputs = captured,
+            )
+            throw WorkflowCancelledException(report.text, cancelled)
+        }
     }
 
     /** Whether a failure after this step counts as possibly committed. A call follows its registry entry. */
@@ -1418,4 +1431,9 @@ class WorkflowRunner(
             "workflow_unsupported",
         )
     }
+}
+
+/** Carries the completed prefix to the coordinator without turning Stop into success. */
+class WorkflowCancelledException(val report: String, cause: CancellationException) : CancellationException("Workflow cancelled") {
+    init { initCause(cause) }
 }

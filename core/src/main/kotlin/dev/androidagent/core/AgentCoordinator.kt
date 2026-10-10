@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -1174,6 +1176,8 @@ class AgentCoordinator(
                         }
                         var captureHidden = false
                         var result: ToolResult
+                        var callTraced = false
+                        val callStarted = nowNanos()
                         try {
                             if (visible) {
                                 // Idempotent show also checks a replaced/reconnected window host.
@@ -1191,13 +1195,14 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 mutableState.value = state.value.copy(phase = if (visible) RunPhase.CONTROLLING else RunPhase.TOOL, controlling = visible, status = status, toolName = toolName)
                             }
-                            trace(sessionId, "tool_call", buildJsonObject {
+                            withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
                                 put("threadId", event.threadId.orEmpty())
                                 put("turnId", event.turnId.orEmpty())
                                 put("requestId", event.requestId)
                                 put("name", event.name)
                                 put("arguments", event.arguments)
-                            })
+                            }); callTraced = true }
+                            ensureCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())
                             val toolStart = nowNanos()
                             // Any approval this call raises is subtracted below,
                             // so tool time stays device time.
@@ -1209,6 +1214,7 @@ class AgentCoordinator(
                                 toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
                             }
                         } catch (cancelled: CancellationException) {
+                            if (callTraced) traceToolCancelled(sessionId, event, callStarted, cancelled)
                             throw cancelled
                         } catch (error: Exception) {
                             result = ToolResult(error.message ?: "Device action failed", success = false)
@@ -1224,7 +1230,7 @@ class AgentCoordinator(
                             }
                             handBackUnlessOnScreen()
                         }
-                        if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
+                        withContext(NonCancellable) {
                             val imagePath = result.imageBase64?.let { persistTraceImage(sessionId, it) }
                             trace(sessionId, "tool_result", buildJsonObject {
                                 put("threadId", event.threadId.orEmpty())
@@ -1232,11 +1238,14 @@ class AgentCoordinator(
                                 put("requestId", event.requestId)
                                 put("name", event.name)
                                 put("success", result.success)
+                                put("elapsedMs", (nowNanos() - callStarted).coerceAtLeast(0) / 1_000_000)
                                 put("text", result.text)
                                 put("attachments", buildJsonArray { result.attachmentPaths.forEach { add(it) } })
                                 imagePath?.let { put("imageArtifact", it) }
                                 if (result.imageBase64 != null && imagePath == null) put("imageArtifactError", "Image could not be saved")
                             })
+                        }
+                        if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                             sessions.append(message(sessionId, "tool", "${event.name}: ${result.text.take(4_000)}", attachments = result.attachmentPaths))
                             engine.answerTool(event.requestId, result)
                         }
@@ -1281,6 +1290,9 @@ class AgentCoordinator(
                 }
             }
             is EngineEvent.TurnFinished -> if (matches(event.threadId, event.turnId)) {
+                state.value.sessionId?.let { sessionId -> trace(sessionId, "turn_finished", buildJsonObject {
+                    put("threadId", event.threadId); put("turnId", event.turnId); put("status", event.status)
+                }) }
                 if (isVoiceMode()) {
                     if (event.status == "failed") {
                         state.value.sessionId?.let { sessions.append(message(it, "system", event.error ?: "Voice task failed")) }
@@ -1347,17 +1359,18 @@ class AgentCoordinator(
     private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall) {
         val threadId = event.threadId.orEmpty()
         val turnId = event.turnId.orEmpty()
-        trace(sessionId, "tool_call", buildJsonObject {
+        withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
             put("threadId", threadId)
             put("turnId", turnId)
             put("requestId", event.requestId)
             put("name", event.name)
             put("arguments", event.arguments)
-        })
+        }) }
         toolCalls++
         val started = nowNanos()
         val waitedBefore = approvalNanos.get()
         val result = try {
+            ensureCurrentTurn(token, threadId, turnId)
             when (event.name) {
                 ChatTools.ASK -> askUser(token, sessionId, threadId, turnId, event.arguments)
                 ChatTools.TITLE -> {
@@ -1369,6 +1382,7 @@ class AgentCoordinator(
                 else -> showMedia(token, sessionId, threadId, turnId, event.arguments)
             }
         } catch (cancelled: CancellationException) {
+            traceToolCancelled(sessionId, event, started, cancelled)
             throw cancelled
         } catch (error: Exception) {
             ChatTools.refused("failed", error.message ?: "${event.name} failed")
@@ -1382,15 +1396,16 @@ class AgentCoordinator(
                 }
             }
         }
-        if (!isCurrentTurn(token, threadId, turnId)) return
-        trace(sessionId, "tool_result", buildJsonObject {
+        withContext(NonCancellable) { trace(sessionId, "tool_result", buildJsonObject {
             put("threadId", threadId)
             put("turnId", turnId)
             put("requestId", event.requestId)
             put("name", event.name)
             put("success", result.success)
             put("text", result.text)
-        })
+            put("elapsedMs", (nowNanos() - started).coerceAtLeast(0) / 1_000_000)
+        }) }
+        if (!isCurrentTurn(token, threadId, turnId)) return
         engine.answerTool(event.requestId, result)
     }
 
@@ -1498,6 +1513,21 @@ class AgentCoordinator(
     }
 
     private fun isVoiceMode(): Boolean = synchronized(lifecycleLock) { voiceMode }
+
+    private suspend fun traceToolCancelled(sessionId: String, event: EngineEvent.ToolCall, started: Long, cancelled: CancellationException) = withContext(NonCancellable) {
+        trace(sessionId, "tool_cancelled", buildJsonObject {
+            put("threadId", event.threadId.orEmpty()); put("turnId", event.turnId.orEmpty())
+            put("requestId", event.requestId); put("name", event.name)
+            put("success", false); put("errorType", "cancelled")
+            put("elapsedMs", (nowNanos() - started).coerceAtLeast(0) / 1_000_000)
+            put("message", "Run cancelled. Completed side effects are not undone. Do not automatically replay this request.")
+            put("outcomeUnknown", true)
+            (cancelled as? WorkflowCancelledException)?.let {
+                val report = it.report
+                put("progress", runCatching { Json.parseToJsonElement(report) }.getOrElse { JsonPrimitive(report) })
+            }
+        })
+    }
 
     private suspend fun trace(sessionId: String, type: String, details: JsonObject) {
         val entry = buildJsonObject {

@@ -524,7 +524,7 @@ class AutomationToolGateway(
             put(
                 "description",
                 "For create: the whole rule, {id, when, if?, then, description?, guard?}. " +
-                    "For update, describe, enable, disable, delete, test and run: the rule's exact id as a string.",
+                    "For update, enable, disable, delete and run: the rule's exact id. Read-only describe and test also accept an unambiguous near name.",
             )
             put(
                 "properties",

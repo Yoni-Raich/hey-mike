@@ -202,7 +202,7 @@ data class AgentUiState(
     val pcChatLoading: Map<String, String> = emptyMap(),
     /** A computer Mike filled in for the user to check and finish. */
     val computerProposal: ComputerDraft? = null,
-    /** Text to put in a chat's composer, unsent, once: chat id to text. */
+    /** Latest unsent text per chat, retained across navigation. */
     val composerSeeds: Map<String, String> = emptyMap(),
     /**
      * The engine the open chat runs on now. [selectedModel] and [usageLimits]
@@ -377,7 +377,7 @@ data class AgentUiActions(
     val onForkPcChat: (sessionId: String) -> Unit = {},
     /** Look again whether the computer still holds this chat's conversation open. */
     val onCheckPcChatBusy: (sessionId: String) -> Unit = {},
-    val onComposerSeedUsed: (sessionId: String) -> Unit = {},
+    val onComposerDraftChanged: (sessionId: String, text: String) -> Unit = { _, _ -> },
     /** Hand text to another app, such as the PC setup steps to email to oneself. */
     val onShareText: (String) -> Unit = {},
     /** Connect, install Codex if needed, and use Mike's active account. */

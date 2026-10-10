@@ -42,6 +42,22 @@ class LocalSessionStoreTest {
 
     private val context: Context = RuntimeEnvironment.getApplication()
 
+    @Test fun draftsSurviveReopenKeepExactWhitespaceAndStayUnsent() = runBlocking {
+        val store = LocalSessionStore(context)
+        val first = store.createSession()
+        val second = store.createSession()
+        val text = "  שלום\nreview this exactly  "
+        store.saveComposerDraft(first.id, text)
+        store.saveComposerDraft(second.id, "Other")
+        val reopened = LocalSessionStore(context)
+        assertEquals(text, reopened.composerDraft(first.id))
+        assertEquals("Other", reopened.composerDraft(second.id))
+        assertTrue(reopened.messages(first.id).first().isEmpty())
+        reopened.saveComposerDraft(first.id, "")
+        assertNull(store.composerDraft(first.id))
+        assertEquals("Other", store.composerDraft(second.id))
+    }
+
     @Test
     fun aNewChatRunsOnCodexByDefault() = runBlocking {
         val store = LocalSessionStore(context)
@@ -86,7 +102,7 @@ class LocalSessionStoreTest {
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
         assertFalse(old.titlePending)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(5, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(6, it.version) }
     }
 
     @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {

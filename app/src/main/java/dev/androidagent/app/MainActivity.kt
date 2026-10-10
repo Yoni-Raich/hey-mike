@@ -106,6 +106,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) latencyProbe = UiLatencyProbe(window.decorView).apply {
+            enabled = intent.getBooleanExtra(UiLatencyProbe.EXTRA, false)
+        }
         voiceForAssistant = savedInstanceState?.getBoolean(AssistLaunch.EXTRA_START_VOICE) == true
         pendingAutomationVoice = savedInstanceState?.getString(AssistLaunch.EXTRA_AUTOMATION_VOICE)?.let {
             runCatching { dev.androidagent.core.AutomationVoiceRequest.fromJson(it) }.getOrNull()
@@ -153,6 +156,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.hasExtra(UiLatencyProbe.EXTRA)) latencyProbe?.enabled = BuildConfig.DEBUG && intent.getBooleanExtra(UiLatencyProbe.EXTRA, false)
         handleAssistantPress(intent)
         openAskedChat(intent)
     }
@@ -221,8 +225,14 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
     override fun onDestroy() {
+        latencyProbe?.close()
         model.graph.runtimePermissions.detach(this)
         super.onDestroy()
+    }
+    private var latencyProbe: UiLatencyProbe? = null
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_UP) latencyProbe?.input()
+        return super.dispatchTouchEvent(event)
     }
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
@@ -241,7 +251,7 @@ class MainActivity : ComponentActivity() {
         onComputerProposalShown = { model.editUi { it.copy(computerProposal = null) } },
         onForkPcChat = { id -> model.forkPcChat(id) },
         onCheckPcChatBusy = { id -> model.checkPcChatBusy(id) },
-        onComposerSeedUsed = { id -> model.editUi { it.copy(composerSeeds = it.composerSeeds - id) } },
+        onComposerDraftChanged = model::composerDraftChanged,
         onShareText = { text ->
             val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
             runCatching { startActivity(Intent.createChooser(send, "Send the setup steps")) }

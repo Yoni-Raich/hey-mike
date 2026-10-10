@@ -91,6 +91,7 @@ class RemoteHub(
     val setup: StateFlow<Map<String, RemoteSetup>> = mutableSetup.asStateFlow()
 
     private val mutableThreads = MutableStateFlow<Map<String, List<CodexThread>>>(emptyMap())
+    private val threadRefresh = ThreadRefreshGate()
     /** Per computer, the conversations Codex keeps there, as last listed. */
     val threads: StateFlow<Map<String, List<CodexThread>>> = mutableThreads.asStateFlow()
 
@@ -107,14 +108,20 @@ class RemoteHub(
      * never starts a connection the user did not ask for. A failure keeps
      * the last list.
      */
-    suspend fun refreshThreads(computerId: String) {
+    suspend fun refreshThreads(computerId: String, force: Boolean = true) {
         if (mutableSetup.value[computerId] !is RemoteSetup.Ready) return
-        mutableRefreshing.value = mutableRefreshing.value + computerId
-        try {
-            runCatching { engine(computerId).listThreads() }
-                .onSuccess { list -> mutableThreads.value = mutableThreads.value + (computerId to list) }
-        } finally {
-            mutableRefreshing.value = mutableRefreshing.value - computerId
+        threadRefresh.run(computerId, force) {
+            mutableRefreshing.update { it + computerId }
+            try {
+                val list = engine(computerId).listThreads()
+                mutableThreads.update { it + (computerId to list) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Quiet failure keeps the previous list, including during a drawer burst.
+            } finally {
+                mutableRefreshing.update { it - computerId }
+            }
         }
     }
 

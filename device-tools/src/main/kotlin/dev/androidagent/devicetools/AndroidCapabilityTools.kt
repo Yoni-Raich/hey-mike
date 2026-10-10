@@ -867,6 +867,11 @@ internal class CapabilityDispatcher(
         row.mimeType?.let { put("mimeType", CapabilityPolicy.bound(it)) }
         row.sizeBytes?.let { put("sizeBytes", it) }
         row.dateMs?.let { put("dateMs", it) }
+        row.durationMs?.let { put("durationMs", it) }
+        row.width?.let { put("width", it) }
+        row.height?.let { put("height", it) }
+        row.rotationDegrees?.let { put("rotationDegrees", it) }
+        row.metadataStatus?.let { put("metadataStatus", it) }
     }
 
     private fun appJson(row: AppRow): JsonObject = buildJsonObject {

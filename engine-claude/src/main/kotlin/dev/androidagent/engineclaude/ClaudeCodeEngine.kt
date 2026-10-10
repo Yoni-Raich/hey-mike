@@ -94,6 +94,7 @@ class ClaudeCodeEngine(
     private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
     /** Set when this engine runs the Claude Code of one of the user's computers, reached through [host]. */
     private val computer: ClaudeComputer? = null,
+    private val authRetryDelayMs: Long = 2_000,
 ) : AgentEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 256)
@@ -364,10 +365,12 @@ class ClaudeCodeEngine(
             val turnId = UUID.randomUUID().toString()
             val frame = UUID.randomUUID().toString()
             val turn = synchronized(chat.state) { chat.mapper.begin(turnId, frame) }
+            chat.rememberAuthReplay(turn, content)
             stream.emit(EngineEvent.TurnStarted(threadId, turnId))
             try {
                 chat.write(ClaudeProtocol.userFrame(frame, content))
             } catch (error: Exception) {
+                chat.forgetAuthReplay()
                 synchronized(chat.state) { chat.mapper.abandon(turn) }
                 throw error
             }
@@ -401,15 +404,21 @@ class ClaudeCodeEngine(
     /** A new user message inside the running turn. Fails when the turn has already ended. */
     override suspend fun steer(threadId: String, turnId: String, prompt: String) {
         val chat = chats[threadId] ?: error(TURN_OVER)
-        val frame = UUID.randomUUID().toString()
-        synchronized(chat.state) {
-            val turn = chat.mapper.active
-            check(turn != null && turn.turnId == turnId && !turn.ended && !turn.interruptRequested && !turn.internal) { TURN_OVER }
-            chat.mapper.addFrame(turn, frame)
+        // Serialize the intent change and write with retry, so an older frame
+        // cannot overtake the steered message after its content was selected.
+        chat.lock.withLock {
+            val frame = UUID.randomUUID().toString()
+            synchronized(chat.state) {
+                val turn = chat.mapper.active
+                check(turn != null && turn.turnId == turnId && !turn.ended && !turn.interruptRequested && !turn.internal) { TURN_OVER }
+                turn.workStarted = true
+                chat.cancelAuthReplay()
+                chat.mapper.addFrame(turn, frame)
+            }
+            chat.write(
+                ClaudeProtocol.userFrame(frame, JsonArray(listOf(ClaudeProtocol.textBlock(prompt))), ClaudeProtocol.STEER_PRIORITY),
+            )
         }
-        chat.write(
-            ClaudeProtocol.userFrame(frame, JsonArray(listOf(ClaudeProtocol.textBlock(prompt))), ClaudeProtocol.STEER_PRIORITY),
-        )
     }
 
     /**
@@ -422,6 +431,7 @@ class ClaudeCodeEngine(
         val turn = synchronized(chat.state) {
             chat.mapper.active?.takeIf { it.turnId == turnId && !it.ended }?.also { it.interruptRequested = true }
         } ?: return
+        chat.cancelAuthReplay()
         failPendingTools(threadId, turnId)
         val sent = runCatching { chat.write(ClaudeProtocol.interruptRequest("interrupt-${UUID.randomUUID()}")) }.isSuccess
         scope.launch {
@@ -506,6 +516,20 @@ class ClaudeCodeEngine(
         private val controls = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
         private val stderrLock = Any()
         private val stderrTail = ArrayDeque<String>()
+        private var authReplay: Pair<ClaudeStreamMapper.Turn, JsonArray>? = null
+        private var authRetryJob: Job? = null
+
+        fun rememberAuthReplay(turn: ClaudeStreamMapper.Turn, content: JsonArray) {
+            synchronized(state) { authReplay = turn to content }
+        }
+
+        fun forgetAuthReplay() {
+            synchronized(state) { authReplay = null }
+        }
+
+        fun cancelAuthReplay() {
+            synchronized(state) { authReplay = null; authRetryJob?.cancel() }
+        }
 
         val alive: Boolean get() = process?.isAlive == true
 
@@ -634,7 +658,12 @@ class ClaudeCodeEngine(
                         if (line.isBlank()) continue
                         // Stdout is never logged: a bad line is dropped, not printed.
                         val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
-                        dispatch(synchronized(state) { mapper.map(message) })
+                        val signals = synchronized(state) {
+                            mapper.map(message).also {
+                                if (mapper.active?.workStarted == true) authReplay = null
+                            }
+                        }
+                        dispatch(signals)
                     }
                 }
             } catch (_: IOException) {
@@ -660,7 +689,32 @@ class ClaudeCodeEngine(
                     }
                     is Signal.ControlRequest -> onControlRequest(signal)
                     is Signal.Init -> checkInit(signal.message)
-                    is Signal.Ended -> failPendingTools(threadId, signal.turn.turnId)
+                    is Signal.Ended -> {
+                        synchronized(state) { authReplay = null }
+                        authRetryJob?.cancel()
+                        failPendingTools(threadId, signal.turn.turnId)
+                    }
+                    is Signal.RetryAuth -> retryAuthentication(signal.turn)
+                }
+            }
+        }
+
+        private suspend fun retryAuthentication(turn: ClaudeStreamMapper.Turn) {
+            stream.emit(EngineEvent.Activity("Claude is refreshing sign-in; retrying once before any work", threadId, turn.turnId))
+            authRetryJob = scope.launch {
+                delay(authRetryDelayMs)
+                lock.withLock {
+                    val frame = UUID.randomUUID().toString()
+                    val content = synchronized(state) {
+                        authReplay?.takeIf { it.first === turn && mapper.replayAuth(turn, frame) }?.second
+                    } ?: return@withLock
+                    try {
+                        write(ClaudeProtocol.userFrame(frame, content))
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        dispatch(synchronized(state) { mapper.end(turn, "failed", SecretRedactor.redactUiText(error.message ?: "Claude stopped before retrying sign-in")) })
+                    }
                 }
             }
         }
@@ -674,7 +728,15 @@ class ClaudeCodeEngine(
         private suspend fun onControlRequest(signal: Signal.ControlRequest) {
             val place = computer
             val subtype = signal.request.string("subtype")
+            if (subtype == "can_use_tool") synchronized(state) {
+                mapper.toolTurn()?.workStarted = true
+                authReplay = null
+            }
             val mcp = if (place != null && subtype == "mcp_message") StdioMcp.messageOf(signal.request, ClaudeProtocol.MCP_SERVER_NAME) else null
+            if (mcp?.string("method") == "tools/call") synchronized(state) {
+                mapper.toolTurn()?.workStarted = true
+                authReplay = null
+            }
             when {
                 mcp != null -> scope.launch {
                     val body = try {
@@ -693,7 +755,9 @@ class ClaudeCodeEngine(
         }
 
         private suspend fun askUser(signal: Signal.ControlRequest) {
-            val turn = synchronized(state) { mapper.toolTurn() }
+            val turn = synchronized(state) {
+                mapper.toolTurn()?.also { it.workStarted = true; authReplay = null }
+            }
             if (turn == null) {
                 runCatching { write(ClaudeProtocol.controlSuccess(signal.requestId, ClaudePermission.deny("No task is running in this chat."))) }
                 return
@@ -766,7 +830,9 @@ class ClaudeCodeEngine(
         }
 
         private suspend fun onToolCall(name: String, arguments: JsonObject): ToolResult {
-            val turn = synchronized(state) { mapper.toolTurn() }
+            val turn = synchronized(state) {
+                mapper.toolTurn()?.also { it.workStarted = true; authReplay = null }
+            }
                 ?: return ToolResult("No task is running in this chat, so the tool was not run.", success = false)
             val requestId = "claude-${UUID.randomUUID()}"
             val pending = PendingTool(threadId, turn.turnId, CompletableDeferred())
@@ -787,6 +853,8 @@ class ClaudeCodeEngine(
          * it is marked unusable: the next turn starts a new one.
          */
         fun kill() {
+            forgetAuthReplay()
+            authRetryJob?.cancel()
             running = null
             process?.destroyForcibly()
             server?.stop()
@@ -795,6 +863,8 @@ class ClaudeCodeEngine(
 
         /** Stop an idle process: close stdin so the CLI exits by itself, then force it after 2 s. */
         suspend fun stopProcess() {
+            forgetAuthReplay()
+            authRetryJob?.cancel()
             val started = process
             process = null
             running = null

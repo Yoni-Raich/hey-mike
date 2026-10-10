@@ -351,6 +351,23 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun stopPairsAnInFlightCallWithExplicitCancellationAndNeverAnswersSuccess() = runTest {
+        val rig = Rig(this)
+        rig.tools.workMs = 45_000
+        rig.coordinator.send("one", "Wait")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("cancel-request", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        rig.coordinator.stop()
+        runCurrent()
+        val terminal = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "cancel-request" }
+        assertEquals(listOf("tool_call", "tool_cancelled"), terminal.map { it["type"]!!.jsonPrimitive.content })
+        assertEquals("false", terminal.last()["success"]!!.jsonPrimitive.content)
+        assertTrue(rig.engine.answers.isEmpty())
+        assertTrue(rig.tools.revoked)
+        rig.close()
+    }
+
     @Test fun timeSpentWaitingForTheUserIsNotReportedAsTimeOnThePhone() = runTest {
         // A send approval happens inside the tool call that asks for it. Counted
         // as device time it would read as 20 seconds of a slow phone.

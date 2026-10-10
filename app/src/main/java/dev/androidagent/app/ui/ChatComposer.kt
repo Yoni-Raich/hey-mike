@@ -168,14 +168,16 @@ internal fun AgentComposer(
     onVoiceButtonPlaced: (Offset) -> Unit = {},
 ) {
     var draft by rememberSaveable(state.activeSessionId) { mutableStateOf("") }
-    // A task Mike wrote for this chat waits here for the user to send.
+    // Stored per chat; reading a draft never consumes it.
     val seed = state.activeSessionId?.let(state.composerSeeds::get)
     LaunchedEffect(state.activeSessionId, seed) {
-        val id = state.activeSessionId ?: return@LaunchedEffect
         if (seed != null) {
             draft = seed
-            actions.onComposerSeedUsed(id)
         }
+    }
+    fun updateDraft(text: String) {
+        draft = text
+        state.activeSessionId?.let { actions.onComposerDraftChanged(it, text) }
     }
     var choosingModel by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
@@ -198,7 +200,7 @@ internal fun AgentComposer(
         voiceAllowed = ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
     )
     val runCommand: (ComposerCommand) -> Unit = { command ->
-        draft = ""
+        updateDraft("")
         when (command) {
             ComposerCommand.NEW -> actions.onNewChat()
             ComposerCommand.COMPACT -> actions.onCompact()
@@ -209,7 +211,7 @@ internal fun AgentComposer(
         }
     }
     val pickSkill: (AgentSkill) -> Unit = { picked ->
-        draft = draftAfterPicking(picked, draft)
+        updateDraft(draftAfterPicking(picked, draft))
         skill = picked
         renaming = false
     }
@@ -222,19 +224,19 @@ internal fun AgentComposer(
         }
     }
     val submit: () -> Unit = {
-        val text = draft.trim()
-        val command = if (skill == null && !renaming) exactCommand(text) else null
+        val text = draft
+        val command = if (skill == null && !renaming) exactCommand(text.trim()) else null
         when {
             renaming -> if (text.isNotEmpty()) {
                 state.activeSessionId?.let { actions.onRenameSession(it, text) }
                 renaming = false
-                draft = ""
+                updateDraft("")
             }
             command != null -> if (commandEnabled(command)) runCommand(command)
-            text.isNotEmpty() -> {
+            text.isNotBlank() -> {
                 val message = withSkill(skill, text)
                 if (active) actions.onSteer(message) else actions.onSend(message, state.attachments)
-                draft = ""
+                updateDraft("")
                 skill = null
             }
             else -> Unit
@@ -297,10 +299,10 @@ internal fun AgentComposer(
                         }
                     }
                     skill?.let { picked -> SkillChip(picked) { skill = null } }
-                    if (renaming) RenameChip { renaming = false; draft = "" }
+                    if (renaming) RenameChip { renaming = false; updateDraft("") }
                     MessageField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = { updateDraft(it) },
                         enabled = state.activeSessionId != null,
                         placeholder = when {
                             renaming -> "New name for this chat"

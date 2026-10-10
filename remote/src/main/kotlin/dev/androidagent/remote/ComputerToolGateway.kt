@@ -166,7 +166,8 @@ class ComputerToolGateway(
     private suspend fun openChat(arguments: JsonObject): ToolResult {
         val computer = computer(arguments)
         val asked = arguments.text("project") ?: throw Refused("missing_project", "Name the project, or give its folder's path.")
-        val message = arguments.text("message") ?: throw Refused("missing_message", "Write the task, with what the chat so far decided, as message.")
+        val message = (arguments["message"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: throw Refused("missing_message", "Write the task, with what the chat so far decided, as message.")
         val path = projects(computer.id).firstOrNull { folderName(it).equals(asked, ignoreCase = true) || samePath(it, asked) }
             ?: if (asked.matches(ABSOLUTE)) asked
             else throw Refused("unknown_project", "No project \"$asked\" on ${computer.label}. Known: ${projects(computer.id).joinToString(", ") { folderName(it) }}.")
@@ -186,13 +187,18 @@ class ComputerToolGateway(
                 System.currentTimeMillis(),
             ),
         )
+        sessions.saveComposerDraft(session.id, message)
+        check(sessions.composerDraft(session.id) == message) { "The exact draft could not be retained" }
         requests.value = ComputerUiRequest.OpenChat(session.id, message)
         bringToForeground()
         return ok {
             put("computer", computer.label)
             put("project", path)
             put("chat", folderName(path))
-            put("note", "The app switched to the new chat with your message in the composer, not sent. The user sends it. Finish this turn with one short line.")
+            put("sessionId", session.id)
+            put("draftSaved", true)
+            put("sent", false)
+            put("note", "The exact unsent draft is saved in this chat; opening it has been requested. The user sends it. Finish this turn with one short line.")
         }
     }
 

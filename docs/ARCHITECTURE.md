@@ -1,5 +1,32 @@
 # Architecture
 
+## QA findings contracts — 2026-10-08
+
+- Workflow call text remains in its arguments. Save validates the serialized
+  definition before replacing a stored workflow, so acknowledged definitions
+  can be loaded again.
+- Session database v6 keeps exact unsent composer drafts per chat. Computer
+  `open_chat` stores and reads back the exact proposed message before returning
+  `draftSaved` and its session id. Opening is requested, not guaranteed by that
+  acknowledgement; reading the draft does not consume it.
+- A traced tool ends with `tool_result` or explicit `tool_cancelled`, including
+  monotonic elapsed time. Stop still revokes dispatch first. Cancellation
+  preserves a workflow's completed prefix and outputs without new screenshot
+  dispatch, success conversion or automatic replay. Completed side effects
+  are not undone. `turn_finished` records the engine's terminal status.
+- Own accessibility windows stay excluded from nodes/handles. Observations
+  and unchanged replies carry masking metadata; an active own window's image
+  reply is `captured:false`. Own streamed content does not reset the screen
+  settle clock; real window changes and other apps still do.
+- Media info reads duration/dimensions/rotation from the actual content URI;
+  unknown fields are omitted. `media-output-check` adds external final-frame
+  verification to export acceptance. Metadata is not visual or decode proof.
+- Debug QA evidence is read-only, requires Android DUMP permission and is absent
+  from release. The opt-in touch-to-next-draw probe records timings, never text
+  or coordinates. QA drivers refuse UI dumps during active runs and checkpoint
+  before uncertain actions. Physical results and limits are in
+  [the validation report](testing/e2e-findings-fixes-20261008/RESULTS.md).
+
 One Android project, with replaceable modules and small core contracts.
 
 | Module | Responsibility |
@@ -1754,6 +1781,17 @@ computers is one entry in the device picker.
 
 The title, New chat, close, Files and Settings stay reachable while the filters
 and list scroll on short screens. Large text moves New chat to its own row.
+
+Opening the drawer uses a quiet computer-thread refresh. The view model keeps
+one refresh batch in flight, and `RemoteHub` serializes attempts per computer.
+Quiet attempts use a 15-second monotonic interval, including failed attempts;
+they retain the last list. An explicit connection/setup refresh skips the quiet
+interval, but joins the existing in-flight attempt by leaving it running.
+Refreshing flags and thread lists use atomic updates so two computers cannot
+overwrite each other's state. Cancellation propagates and releases the gate.
+This bounds repeated SSH list requests; it does not establish the cause of
+every slow drawer frame.
+
 Automations use one compact footer entry with a count and an attention dot.
 Its accessibility label states blocked or on/off status. The detailed rule list
 stays in `AutomationsSheet`; the hamburger
@@ -2183,6 +2221,17 @@ voice works in a Claude chat.
   accounts. `/compact` works: after a restart the view model opens the chat
   before compacting, and the note shows before the call, which waits for
   Claude to finish.
+- **One bounded retry for a rejected sign-in refresh (2026-10-09).** Only a
+  terminal CLI error explicitly saying another Claude Code process is refreshing
+  OAuth, before any visible text, thinking, tool request or steering, permits a
+  second user frame. After two seconds the same CLI receives the exact original
+  content under a new frame UUID, within the same app turn. It never changes or
+  copies credentials, restarts a competing process, or retries a tool. The next
+  failure ends normally; permanent sign-in errors, process loss and uncertain
+  outcomes are not replayed. Stop cancels the delayed attempt; steering discards
+  the old replay content. Replay content is also discarded at first work, turn
+  completion and process shutdown. Unit tests prove this policy; reproducing a
+  real competing OAuth refresh safely is still separate device evidence.
 - **Privacy and consent.** The consent text and the privacy page name both
   providers, with OpenAI's and Anthropic's policy links, and say that a chat
   which changes model, or uses voice in a Claude chat, gives its earlier

@@ -22,6 +22,7 @@ package dev.androidagent.a11y
 
 import dev.androidagent.core.UiNode
 import dev.androidagent.core.UiObservation
+import dev.androidagent.core.UiMasking
 import dev.androidagent.core.UiObservationSerializer
 
 /**
@@ -56,6 +57,8 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
     val packages = mutableMapOf<String, Int>()
     var activePackage: String? = null
     var visited = 0
+    var excludedWindows = 0
+    var activeWindowExcluded = false
     // Ids come from a counter over every visited node, not from the emitted
     // list, so two different nodes can never share one and a clickableAncestor
     // always names the node it was taken from.
@@ -63,7 +66,11 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
 
     for (window in windows) {
         val root = window.root ?: continue
-        if (root.packageName == ownPackage) continue
+        if (root.packageName == ownPackage) {
+            excludedWindows++
+            if (window.active) activeWindowExcluded = true
+            continue
+        }
         if (window.active) {
             activePackage = activePackage ?: root.packageName
         }
@@ -125,6 +132,7 @@ fun traverse(windows: List<A11yWindow>, ownPackage: String): TraversalResult {
         observation = UiObservation(
             activePackage = activePackage ?: packages.maxByOrNull { it.value }?.key,
             nodes = nodes,
+            masking = if (excludedWindows > 0) UiMasking(ownPackage, excludedWindows, activeWindowExcluded) else null,
         ),
         handles = handles,
     )
