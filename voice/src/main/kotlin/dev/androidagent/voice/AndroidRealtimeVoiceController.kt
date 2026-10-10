@@ -126,6 +126,7 @@ class AndroidRealtimeVoiceController(
         transport: RealtimeTransport = RealtimeTransport.WEBRTC,
         bluetoothHeadphonesOnly: Boolean = false,
         outputConditions: List<dev.androidagent.core.AutomationCondition> = emptyList(),
+        beforeAudio: suspend () -> Unit = {},
     ) {
         val started = CompletableDeferred<Unit>()
         val answer = if (transport == RealtimeTransport.WEBRTC) CompletableDeferred<String>() else null
@@ -187,6 +188,9 @@ class AndroidRealtimeVoiceController(
             // The start RPC only means "accepted". Audio waits for the
             // separate started notification and, for WebRTC, the SDP answer.
             withTimeout(VOICE_START_TIMEOUT_MS) { started.await() }
+            // The assistant's screen must arrive before the first microphone frame.
+            // Both transports keep capture/playback closed until this succeeds.
+            prepareVoiceInput(beforeAudio)
             if (transport == RealtimeTransport.WEBRTC) {
                 val remoteSdp = withTimeout(VOICE_START_TIMEOUT_MS) { checkNotNull(answer).await() }
                 checkNotNull(mediaSession).setRemoteAnswer(remoteSdp)

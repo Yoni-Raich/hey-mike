@@ -1,11 +1,22 @@
 # Architecture
 
+## Session schema compatibility — 2026-10-09
+
+Session database v7 repairs two deployed v6 shapes. The preserved Nothing
+1113 build had `sessions.is_mike` and `mike_main_chat`, without
+`composer_drafts`; the validation branch used the same version for drafts.
+Moving between those v6 builds skipped SQLiteOpenHelper's upgrade callback,
+so opening a saved chat could query a missing draft table. The v7 upgrade
+uses the existing additive, idempotent migration. It keeps old columns,
+indexes, sessions, messages, queued turns and exact drafts; it never rebuilds
+the database or clears private files.
+
 ## QA findings contracts — 2026-10-08
 
 - Workflow call text remains in its arguments. Save validates the serialized
   definition before replacing a stored workflow, so acknowledged definitions
   can be loaded again.
-- Session database v6 keeps exact unsent composer drafts per chat. Computer
+- Session database v7 keeps exact unsent composer drafts per chat. Computer
   `open_chat` stores and reads back the exact proposed message before returning
   `draftSaved` and its session id. Opening is requested, not guaranteed by that
   acknowledgement; reading the draft does not consume it.
@@ -1417,11 +1428,39 @@ Mike as the digital assistant and reach voice mode by holding the power button.
 No app can take `ROLE_ASSISTANT` for itself, so Settings only reads the holder
 and opens the system picker.
 
-- The session draws nothing. It starts `MainActivity` with
-  `AssistLaunch.EXTRA_START_VOICE` and `CLEAR_TOP | SINGLE_TOP`, so a press lands
-  on the one chat screen (via `onNewIntent` when it is open). It uses a plain
-  `startActivity` first: `startAssistantActivity` creates a second copy in an
-  assistant task, whose view model does not own the voice conversation.
+- A ready session draws `AssistantPanelView` over the current app, with a
+  scrollable transcript, a text field, Send, Mute, Open Mike and End. Only the card takes
+  touches. IME insets move it above the keyboard. Without voice permission or
+  consent it keeps the `MainActivity` onboarding path.
+- Each invocation starts its own bounded screen capture before the panel is
+  drawn. Android supplies `AssistStructure` and its original screenshot.
+  The device gateway can also take a passive accessibility text snapshot:
+  application windows only, no passwords, own windows, actionable handles,
+  run arming or ADB fallback. This text is used only with Android's text and
+  screenshot consent, a non-null platform screenshot and a matching app.
+  Visible accessibility text takes priority over potentially off-viewport
+  assist views. Context is capped at 16,000 characters. Disabled or protected
+  captures remain unavailable; the panel does not recapture them later.
+- `VoiceConversation.begin(initialContext)` sends app guidance as developer
+  text and quoted screen content as ordinary conversation data, through
+  `AndroidRealtimeVoiceController.beforeAudio`. Both audio transports keep
+  microphone input and playback closed until delivery finishes. The panel
+  waits at most two seconds for Android's callbacks; missing context does not
+  indefinitely hold voice. The current realtime protocol accepts text
+  context, not screenshot image items.
+- The first insertion or paste in the field cancels voice startup, mutes the
+  microphone and ends local audio before waiting for the remote stop. The
+  panel stays open in text mode; Send waits for shutdown before starting a
+  normal local chat turn. That turn carries the invocation's quoted text and
+  original screenshot as an image attachment, including for follow-up
+  questions. It never captures Mike's window or the newly opened keyboard.
+  An empty chat with a draft or a computer binding is not reused. The normal
+  selected engine/model is retained or restored after voice.
+- `QueuedTurn.displayPrompt` keeps the user's exact text in the chat and title
+  while the engine and trace receive the enriched prompt. Send failure keeps
+  the field. End/Back cancels panel-owned work; Open Mike hands the same chat
+  and work to the main screen. Closing voice restores a guest engine before
+  typed work can start. Stop does not undo completed actions.
 - `AgentViewModel.startAssistantVoice` never ends a conversation, waits for the
   runtime and the saved chat on a cold start, and opens a new chat unless the
   current one is empty.

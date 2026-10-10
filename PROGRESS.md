@@ -1,5 +1,71 @@
 # Progress
 
+### Nothing opening-crash follow-up — 2026-10-09
+
+- Reproduced a source-level upgrade failure using the exact preserved 1113
+  schema: both old and new builds used database version 6, but the old one
+  lacked `composer_drafts`. Opening a saved chat raised SQLiteException
+  `no such table: composer_drafts`. The regression failed before the fix.
+- Database v7 now runs the existing additive migration. Two new regression
+  checks pass, including preserved chat/thread/engine, messages, queue,
+  Mike column/index, exact drafts and a workspace file.
+- Full 1128 gate passed (1m26s): unit variants, Dev Debug/Release,
+  androidTest compilation and app/voice/a11y/workspace lint. XML: 2,325
+  executions, zero failures/errors, 16 skips. Runtime Python: 15 passed.
+  Package/version readback, debug-key v2 signature and 16 KiB alignment pass.
+  APK SHA-256: `04ca64576fcb19b69971823eaf65a45d2afbe24aafd7f7a5c17c6393ee603515`.
+- Nothing A059 / Android 16 USB follow-up confirmed the actual 1127 APK by
+  installed version and SHA-256. Its fatal stack is the same missing-table
+  exception. A private database/preferences backup was taken before replacing
+  it with exact 1128 (`adb install -r`); installed version and SHA-256 match.
+- MainActivity launch returned `Status: ok`. The live database is v7, with
+  `composer_drafts` and the original Mike index. Binary-safe row comparison
+  confirms all 430 chats and 28,583 messages unchanged; no original rows lost.
+  A complete 11:37:53–11:47:53 UID/system capture has no new fatal/ANR/native
+  signal/OOM signature. This is bounded opening/upgrade evidence, not stress
+  or live-model tool coverage. No uninstall or data clearing was used.
+- USB disconnected before the additional controlled cold reopen and saved
+  history UI check. Dev accessibility is not enabled (the prod service is);
+  the selected digital assistant is Dev. Device-tool and power-panel repeats
+  need manual Dev accessibility setup and a live connection.
+  Details: `docs/testing/assistant-screen-text-20261009/RESULTS.md`.
+
+### Assistant screen preload and text panel — 2026-10-09
+
+- Each invocation freezes permitted Android screen text/screenshot before the
+  panel covers the app. A passive device-gateway accessibility snapshot keeps
+  visible posts intact. Screen data remains quoted and untrusted; passwords,
+  own windows and disabled/protected captures are excluded. Voice audio waits
+  for context delivery. The text budget is now 16,000 characters.
+- The floating card has an EditText, Send, a scrollable answer and IME insets.
+  First insertion/paste ends voice without hiding the panel; typed turns use
+  the original text/image and retain the selected chat engine. The exact user
+  question is displayed separately from internal context. Open Mike transfers
+  the same chat; failed Send keeps the draft.
+- Full final gate passed (1m28s): unit variants, Dev Debug/Release, androidTest
+  APK compilation, app/voice/a11y lint. XML: 2,321 executions, zero failures or
+  errors, 16 skips; Python 23 passed; diff check passed. No instrumentation run.
+- Xiaomi Redmi 12 / Android 15 replacement install verified: 1127 /
+  `0.14.0-dev.assistant3`, Dev Debug, debug-key v2, 16 KiB alignment. SHA-256:
+  `dadea9011bb9bef2469de4d7047c6970b88d05b2be4eea18b2bbc2c885a13a7a`.
+  Dev Release built unsigned and was not installed.
+- Actual assistant invocation over a synthetic Hebrew Chrome post captured
+  385 characters and the original image. Typing ended live voice; Gboard and
+  card position checked. Claude/Sonnet answered 10:30 and image-only 731 with
+  zero tools, 11.551 s recorded-turn-to-answer. Long answer scrolling and
+  Open Mike handoff passed. Earlier Codex/Claude candidates also answered
+  directly; 1126 exposed answer clipping, fixed and rechecked in 1127.
+- Complete UID/system captures 08:38:53–09:08:53 and 09:13:33–09:17:23 show no
+  fatal/ANR/native-signal/OOM signature; final crash buffer empty. Expected
+  package-update exits only during installs. Original chat/IME restored,
+  accessibility bound, voice/runs idle, own QA server and reverse port removed.
+- Physical hardware long press and spoken question remain unverified; current
+  voice context is text, whereas typed image understanding is proven. OEM
+  privacy negatives, landscape/large-font/cold-start and STARTING cancellation
+  need physical coverage. Native panel Markdown styling remains a polish item.
+  [Detailed evidence and gaps](docs/testing/assistant-screen-text-20261009/RESULTS.md).
+  Isolated branch stacks on PR #125; no strong-model review or merge was run.
+
 ### Stress findings fixes and final Xiaomi install — 2026-10-09
 
 - Coalesce in-flight computer thread listings; quiet drawer refresh interval

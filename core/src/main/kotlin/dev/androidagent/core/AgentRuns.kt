@@ -43,6 +43,8 @@ interface TurnRunner {
     /** The phase of [sessionId]'s run, or null when that chat is not running. */
     fun phaseOf(sessionId: String): RunPhase?
     fun steer(sessionId: String, prompt: String)
+    fun send(turn: QueuedTurn) = send(turn.sessionId, turn.prompt, turn.imagePaths.map(::File), turn.model,
+        turn.effort, turn.skill, turn.planMode, turn.engine)
     fun send(
         sessionId: String,
         prompt: String,
@@ -172,6 +174,16 @@ class AgentRuns(
     /** Always: a chat that is not running can start beside any number of others. */
     override fun canStart(): Boolean = true
     override fun phaseOf(sessionId: String): RunPhase? = slotFor(sessionId)?.state?.value?.phase
+
+    override fun send(turn: QueuedTurn) {
+        if (turn.prompt.isBlank() && turn.imagePaths.isEmpty()) return
+        synchronized(this) {
+            val active = slotFor(turn.sessionId)
+            val slot = active ?: freeSlot()
+            if (active == null) slots.forEach { it.clearOutcome(turn.sessionId) }
+            slot.send(turn)
+        }
+    }
 
     override fun send(
         sessionId: String,

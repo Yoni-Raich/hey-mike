@@ -76,6 +76,11 @@ class CompositeDeviceToolGateway(
         }
     }
 
+    override suspend fun assistantScreenText(): AssistantScreenText? {
+        for (member in members) member.assistantScreenText()?.let { return it }
+        return null
+    }
+
     override fun revoke() {
         // Every member is revoked even when an earlier one throws. Skipping a
         // revocation would leave a live backend after Stop.
