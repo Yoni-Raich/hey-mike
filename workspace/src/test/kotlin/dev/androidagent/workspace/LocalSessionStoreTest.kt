@@ -40,7 +40,60 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class LocalSessionStoreTest {
 
+    @Test fun childLinksAndTaskReceiptsSurviveReopenWithoutLosingOrdinaryChatState() = runBlocking {
+        val store = LocalSessionStore(context)
+        val parent = store.createSession()
+        val child = store.createChildSession(parent.id, EngineKind.CLAUDE, "Read notes")
+        val task = dev.androidagent.core.SessionAgentTask("t1", "request", parent.id, "Read notes", "  exact task\n  ",
+            EngineKind.CLAUDE, sessionId = child.id, createdAt = 10, status = "running")
+        store.saveAgentTask(task)
+        store.setModelChoice(child.id, "model-a", "high")
+        store.append(ChatMessage("child-user", child.id, "user", "Continue here", 12))
+        store.setThread(child.id, "child-thread")
+        store.saveComposerDraft(child.id, "  my draft  ")
+        val reopened = LocalSessionStore(context)
+        assertEquals(parent.id, reopened.getSession(child.id)!!.parentSessionId)
+        assertEquals("Read notes", reopened.getSession(child.id)!!.title)
+        assertFalse(reopened.getSession(child.id)!!.titlePending)
+        assertEquals("model-a", reopened.getSession(child.id)!!.model)
+        assertEquals("high", reopened.getSession(child.id)!!.reasoningEffort)
+        assertEquals(EngineKind.CLAUDE, reopened.getSession(child.id)!!.engine)
+        assertEquals("child-thread", reopened.getSession(child.id)!!.engineThreadId)
+        assertEquals(task, reopened.loadAgentTasks().single())
+        assertEquals("  my draft  ", reopened.composerDraft(child.id))
+        assertEquals("Continue here", reopened.messages(child.id).first().single().text)
+        assertTrue(runCatching { reopened.setParent(parent.id, child.id) }.isFailure)
+        val other = reopened.createSession()
+        assertTrue(runCatching { reopened.setParent(child.id, other.id) }.isFailure)
+        reopened.deleteSession(parent.id)
+        assertNull(reopened.getSession(child.id)!!.parentSessionId)
+        assertEquals("Continue here", reopened.messages(child.id).first().single().text)
+    }
+
     private val context: Context = RuntimeEnvironment.getApplication()
+
+    @Test fun schemaEightChildrenGainModelSettingsWithoutLosingTheirReceipt() = runBlocking {
+        val file = context.getDatabasePath("sessions.db").apply { parentFile!!.mkdirs() }
+        val task = dev.androidagent.core.SessionAgentTask("t", "r", "parent", "Child", "Exact task", EngineKind.CODEX,
+            sessionId = "child", createdAt = 2)
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX',parked TEXT,catch_up INTEGER,title_pending INTEGER NOT NULL DEFAULT 0,parent_session TEXT REFERENCES sessions(id) ON DELETE SET NULL)")
+            db.execSQL("CREATE TABLE messages(id TEXT PRIMARY KEY,session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,attachments TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE agent_tasks(id TEXT PRIMARY KEY,payload TEXT NOT NULL)")
+            db.execSQL("INSERT INTO sessions(id,title,created,updated) VALUES('parent','Parent',1,1)")
+            db.execSQL("INSERT INTO sessions(id,title,created,updated,parent_session,thread) VALUES('child','Child',2,2,'parent','child-thread')")
+            db.execSQL("INSERT INTO agent_tasks VALUES(?,?)", arrayOf("t", kotlinx.serialization.json.Json.encodeToString(dev.androidagent.core.SessionAgentTask.serializer(), task)))
+            db.version = 8
+        }
+        val store = LocalSessionStore(context)
+        assertEquals("parent", store.getSession("child")!!.parentSessionId)
+        assertEquals("child-thread", store.getSession("child")!!.engineThreadId)
+        assertEquals(task, store.loadAgentTasks().single())
+        store.setModelChoice("child", "model-a", "high")
+        assertEquals("high", LocalSessionStore(context).getSession("child")!!.reasoningEffort)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
+    }
 
     @Test fun persistentMikeSchemaSixWithoutDraftTableOpensWithoutLosingHistory() = runBlocking {
         // The Nothing's 1113 build used v6 for is_mike, before the separate
@@ -74,7 +127,7 @@ class LocalSessionStoreTest {
         assertEquals(draft, LocalSessionStore(context).composerDraft(OLD_ID))
         assertEquals("untouched", keptFile.readText())
         SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
-            assertEquals(7, db.version)
+            assertEquals(9, db.version)
             db.rawQuery("SELECT is_mike FROM sessions WHERE id=?", arrayOf(OLD_ID)).use {
                 assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
             }
@@ -94,7 +147,7 @@ class LocalSessionStoreTest {
         assertEquals("  existing draft\nשלום  ", upgraded.composerDraft(chat.id))
         assertEquals(listOf("existing history"), upgraded.messages(chat.id).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, upgraded.getSession(chat.id)!!.engine)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(7, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
     }
 
     @Test fun draftsSurviveReopenKeepExactWhitespaceAndStayUnsent() = runBlocking {
@@ -157,7 +210,7 @@ class LocalSessionStoreTest {
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
         assertFalse(old.titlePending)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(7, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
     }
 
     @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {

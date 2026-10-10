@@ -168,14 +168,22 @@ internal fun AgentComposer(
     onVoiceButtonPlaced: (Offset) -> Unit = {},
 ) {
     var draft by rememberSaveable(state.activeSessionId) { mutableStateOf("") }
+    var editedLocally by rememberSaveable(state.activeSessionId) { mutableStateOf(false) }
+    var appliedDraftVersion by rememberSaveable(state.activeSessionId) { mutableStateOf(-1L) }
     // Stored per chat; reading a draft never consumes it.
     val seed = state.activeSessionId?.let(state.composerSeeds::get)
-    LaunchedEffect(state.activeSessionId, seed) {
-        if (seed != null) {
+    val draftVersion = state.activeSessionId?.let(state.composerDraftVersions::get) ?: 0L
+    LaunchedEffect(state.activeSessionId, seed, draftVersion) {
+        // A delayed echo of local typing must never replace newer keystrokes.
+        // Explicit incoming drafts still replace the field through their version.
+        if (seed != null && (!editedLocally || draftVersion != appliedDraftVersion)) {
             draft = seed
+            appliedDraftVersion = draftVersion
         }
     }
     fun updateDraft(text: String) {
+        editedLocally = true
+        appliedDraftVersion = draftVersion
         draft = text
         state.activeSessionId?.let { actions.onComposerDraftChanged(it, text) }
     }
@@ -184,7 +192,7 @@ internal fun AgentComposer(
     // A skill picked from the menu rides as a chip until the message is sent.
     var skill by remember(state.activeSessionId) { mutableStateOf<AgentSkill?>(null) }
     var renaming by remember(state.activeSessionId) { mutableStateOf(false) }
-    val voiceActive = state.voiceState.active
+    val voiceActive = state.voiceState.active && (state.voiceSessionId == null || state.voiceSessionId == state.activeSessionId)
     val active = state.runState.active && state.runState.sessionId == state.activeSessionId && !state.runState.delegated && !voiceActive
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
@@ -197,7 +205,7 @@ internal fun AgentComposer(
         hasDraft = hasDraft,
         runActive = state.runState.active,
         voiceActive = voiceActive,
-        voiceAllowed = ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
+        voiceAllowed = !state.voiceState.active && ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
     )
     val runCommand: (ComposerCommand) -> Unit = { command ->
         updateDraft("")

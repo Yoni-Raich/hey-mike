@@ -108,6 +108,7 @@ data class AgentUiState(
     val runState: RunState = RunState(),
     /** Every chat running now, by chat. */
     val runs: Map<String, RunState> = emptyMap(),
+    val childAgents: List<ChildAgentItem> = emptyList(),
     val queuedTurns: List<dev.androidagent.core.QueuedTurn> = emptyList(),
     val queuePaused: Boolean = false,
     val tokenUsage: dev.androidagent.core.TokenUsage? = null,
@@ -138,6 +139,9 @@ data class AgentUiState(
     /** Turns sent from the composer run in Codex plan mode. */
     val planMode: Boolean = false,
     val voiceState: VoiceState = VoiceState(),
+    val voiceSessionId: String? = null,
+    /** Browse and type in child chats while the source voice conversation keeps talking. */
+    val voiceBrowsing: Boolean = false,
     val voiceTranscript: String = "",
     val voiceTranscriptRole: String? = null,
     val voiceMuted: Boolean = false,
@@ -204,6 +208,8 @@ data class AgentUiState(
     val computerProposal: ComputerDraft? = null,
     /** Latest unsent text per chat, retained across navigation. */
     val composerSeeds: Map<String, String> = emptyMap(),
+    /** Only an explicit incoming draft advances this; local draft echoes do not. */
+    val composerDraftVersions: Map<String, Long> = emptyMap(),
     /**
      * The engine the open chat runs on now. [selectedModel] and [usageLimits]
      * are this engine's. [modelCatalog] holds every engine's models the chat
@@ -269,6 +275,9 @@ data class AgentUiActions(
     val onSend: (String, List<PendingAttachment>) -> Unit = { _, _ -> },
     val onSteer: (String) -> Unit = {},
     val onStop: () -> Unit = {},
+    val onStopSession: (String) -> Unit = {},
+    val onBrowseVoiceChats: () -> Unit = {},
+    val onReturnToVoice: () -> Unit = {},
     val onCancelQueued: (String) -> Unit = {},
     val onResumeQueue: () -> Unit = {},
     val onVoiceToggle: () -> Unit = {},

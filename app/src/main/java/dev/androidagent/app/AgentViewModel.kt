@@ -95,6 +95,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             graph.sessions.sessions.collect { list ->
                 mutable.update { it.copy(sessions = list) }
+                project()
                 if (current.value == null || list.none { it.id == current.value }) {
                     val saved = preferences.getString("session", null)
                     current.value = list.firstOrNull { it.id == saved }?.id ?: list.firstOrNull()?.id
@@ -181,6 +182,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         mutable.update {
                             it.copy(
                                 composerSeeds = it.composerSeeds + (request.sessionId to request.draft),
+                                composerDraftVersions = it.composerDraftVersions +
+                                    (request.sessionId to ((it.composerDraftVersions[request.sessionId] ?: 0L) + 1L)),
                                 isComputersOpen = false,
                                 folderBrowser = null,
                                 isDrawerOpen = false,
@@ -194,10 +197,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // The open chat shows its own run; another chat running beside it is
         // not this chat's "Working", and the drawer marks it instead.
         viewModelScope.launch {
-            combine(graph.coordinator.sessionStates, current, graph.computerTasks.state) { states, id, _ -> states to id }.collect { (states, id) ->
-                mutable.update { it.copy(runState = id?.let { source -> graph.computerTasks.sourceState(source, states) } ?: RunState(), runs = states.filterValues { run -> run.active }) }
+            combine(graph.coordinator.sessionStates, current, graph.computerTasks.state, graph.sessionAgents.tasks, graph.sessions.sessions) { states, id, computers, agents, chats ->
+                val cards = agents.map { ChildAgentItem.from(it, computers, chats) } +
+                    computers.tasks.values.map { ChildAgentItem.from(it, computers) }
+                Triple(states, id, cards)
+            }.collect { (states, id, cards) ->
+                val own = id?.let(graph.coordinator::sourceState) ?: RunState()
+                val shown = if (!own.active && id != null) graph.computerTasks.sourceState(id, states) else own
+                mutable.update { it.copy(runState = shown, runs = states.filterValues { run -> run.active }, childAgents = cards) }
             }
         }
+        viewModelScope.launch { graph.agentOpenRequests.filterNotNull().collect { id ->
+            select(id)
+            graph.agentOpenRequests.value = null
+        } }
         viewModelScope.launch { current.collect { graph.openChat.value = it } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
@@ -230,7 +243,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.voiceConversation.failures.collect { error(it) } }
         // Voice started from the assistant panel records into a chat this
         // screen did not pick; show that chat while the conversation is live.
-        viewModelScope.launch { graph.voiceConversation.sessionId.filterNotNull().collect { current.value = it } }
+        viewModelScope.launch { graph.voiceConversation.sessionId.collect { id ->
+            mutable.update { it.copy(voiceSessionId = id, voiceBrowsing = false) }
+            if (id != null) current.value = id
+        } }
         // Codex only: its sign-in, quota and the widget's numbers are Codex's.
         viewModelScope.launch { graph.engine.codexEvents.collect { event ->
             when (event) {
@@ -304,7 +320,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private fun project() {
         mutable.update { state ->
             val kind = ChatEngines.of(state.sessions, current.value)
-            val choice = engines.of(kind)
+            val session = state.sessions.firstOrNull { it.id == current.value }
+            val choice = engines.of(kind).let { defaults ->
+                if (session?.model != null) defaults.copy(model = session.model, effort = session.reasoningEffort) else defaults
+            }
             val computer = current.value?.let(graph.computers::binding)?.computerId
             val offered = engines.offered(
                 enginesFor(current.value, kind, state),
@@ -382,7 +401,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Nobody wrote in it and no engine holds a thread for it, in use or parked. */
     private fun isBlank(session: ChatSession): Boolean =
-        !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty()
+        !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty() && session.parentSessionId == null
 
     private fun rememberDefaultEngine(kind: EngineKind) {
         preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
@@ -410,8 +429,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun useEngine(kind: EngineKind) = task {
         val id = current.value ?: return@task
-        val session = graph.sessions.getSession(id) ?: return@task
-        if (session.engine == kind) return@task
+        changeEngine(id, kind)
+    }
+    private suspend fun changeEngine(id: String, kind: EngineKind) {
+        val session = graph.sessions.getSession(id) ?: return
+        if (session.engine == kind) return
         check(graph.coordinator.phaseOf(id) == null) { "Wait for Mike to finish, or stop him, before changing the model." }
         check(!(graph.voice.state.value.active && graph.voiceConversation.sessionId.value == id)) { "End voice before changing the model." }
         // A chat nobody wrote in yet may be pointed at an engine that is still
@@ -733,13 +755,29 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         task { pairFromDialog(timeoutMs = WIRELESS_SETUP_TIMEOUT_MS) }
         send(WIRELESS_SETUP_PROMPT, emptyList())
     }
-    fun select(id: String) { current.value = id }
+    fun select(id: String) {
+        if (graph.voice.state.value.active) mutable.update { it.copy(voiceBrowsing = true) }
+        current.value = id
+    }
+    fun browseVoiceChats() { mutable.update { it.copy(voiceBrowsing = true) } }
+    fun returnToVoice() {
+        graph.voiceConversation.sessionId.value?.let { current.value = it }
+        mutable.update { it.copy(voiceBrowsing = false) }
+    }
+    fun stopSession(id: String) {
+        graph.coordinator.stop(id)
+        if (id == graph.voiceConversation.sessionId.value) stopVoice()
+    }
     fun composerDraftChanged(id: String, text: String) {
         mutable.update { it.copy(composerSeeds = it.composerSeeds + (id to text)) }
         draftWrites.trySend(id to text)
     }
     fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
+        if (graph.coordinator.family(id).any { graph.coordinator.phaseOf(it) != null } ||
+            mutable.value.childAgents.any { it.parentSessionId == id && !it.terminal }) {
+            error("Stop this chat's subagents before deleting it."); return
+        }
         if (graph.computers.state.value.tasks.values.any { it.originSessionId == id && !it.terminal }) {
             error("Stop this chat's computer subagents before deleting it."); return
         }
@@ -753,8 +791,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (attachments.isEmpty()) {
             if (answerRunGate(id, text)) return
         }
-        if (graph.voice.state.value.active) {
-            if (id != graph.voiceConversation.sessionId.value) { error("End voice before sending in another chat."); return }
+        if (graph.voice.state.value.active && id == graph.voiceConversation.sessionId.value) {
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
             task { graph.voiceConversation.type(text) }
             return
@@ -776,7 +813,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // The chat's own engine's pick. Plan mode is carried by a model name,
         // so it falls back to the first offered model when none is picked.
         val kind = ChatEngines.of(snapshot.sessions, id)
-        val choice = engines.of(kind)
+        val choice = ModelChoice(catalog = snapshot.modelCatalog.filter { it.engine == kind },
+            model = snapshot.selectedModel, effort = snapshot.selectedReasoningEffort)
         val model = choice.modelFor(snapshot.planMode)
         if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return }
         task {
@@ -803,7 +841,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
             mutable.update { it.copy(infoMessage = null) }
             graph.queue.submit(QueuedTurn(sessionId = id, prompt = prompt, imagePaths = images.map { it.absolutePath },
-                model = model, effort = choice.turnEffort, skill = invokedSkill, planMode = snapshot.planMode, engine = kind))
+                model = model, effort = snapshot.selectedReasoningEffort ?: choice.turnEffort,
+                skill = invokedSkill, planMode = snapshot.planMode, engine = kind))
             mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
         }
     }
@@ -823,7 +862,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             note(id, "Compacting the chat to free up context")
             if (session.engine == EngineKind.CLAUDE) {
                 // After a restart the Claude process for this chat is not open yet.
-                graph.engine.openSession(graph.sessions.workspace(id), thread, engines.of(EngineKind.CLAUDE).model, graph.tools.definitions)
+                graph.engine.openSession(graph.sessions.workspace(id), thread, session.model ?: engines.of(EngineKind.CLAUDE).model, graph.tools.definitions)
                 graph.engine.compact(thread)
                 note(id, "Chat compacted")
             } else {
@@ -848,7 +887,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {
             assistantVoiceJob?.cancel()
         }
-        if (graph.voice.state.value.active) {
+        if (graph.voice.state.value.active && (!mutable.value.voiceBrowsing || current.value == graph.voiceConversation.sessionId.value)) {
             // User Stop covers the voice source's children too. Ending only
             // the microphone through toggleVoice keeps its separate meaning.
             (graph.voiceConversation.sessionId.value ?: current.value)?.let(graph.coordinator::stop)
@@ -930,10 +969,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private fun startVoice() = task { beginVoice() }
     private suspend fun beginVoice(automation: dev.androidagent.core.AutomationVoiceRequest? = null) {
         automation?.requireCurrent()
-        graph.queue.pause()
         val sessionId = current.value ?: kotlin.error("Choose a chat first.")
         mutable.update { it.copy(errorMessage = null) }
-        graph.voiceConversation.begin(sessionId, engines.of(EngineKind.CODEX).model, automation)
+        graph.voiceConversation.begin(sessionId, mutable.value.selectedModel.takeIf { mutable.value.activeEngine == EngineKind.CODEX }
+            ?: engines.of(EngineKind.CODEX).model, automation)
     }
     private fun stopVoice() = task { graph.voiceConversation.stop() }
     fun prepare() {
@@ -1340,18 +1379,26 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * Pick a model for the open chat. The list holds both engines' models, so
      * picking one of the other engine also moves the chat to that engine.
      */
-    fun model(value: String) {
+    fun model(value: String) = task {
         val state = mutable.value
+        val id = current.value ?: return@task
         val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.activeEngine)
+        check(graph.coordinator.phaseOf(id) == null) { "Wait for this chat to finish before changing its model." }
         engines = engines.update(kind) { it.select(value) }
         persistChoice(kind)
-        if (kind != state.activeEngine) useEngine(kind)
+        if (kind != state.activeEngine) changeEngine(id, kind)
+        graph.sessions.setModelChoice(id, value, engines.of(kind).effort)
         project()
     }
-    fun reasoningEffort(value: String?) {
-        val kind = mutable.value.activeEngine
-        engines = engines.update(kind) { it.selectEffort(value) }
+    fun reasoningEffort(value: String?) = task {
+        val state = mutable.value
+        val id = current.value ?: return@task
+        val kind = state.activeEngine
+        val choice = ModelChoice(state.modelCatalog.filter { it.engine == kind }, state.selectedModel,
+            state.selectedReasoningEffort).selectEffort(value)
+        engines = engines.update(kind) { it.copy(model = choice.model, effort = choice.effort) }
         persistChoice(kind)
+        graph.sessions.setModelChoice(id, choice.model, choice.effort)
         project()
     }
     /** Each engine's pick under its own keys; Codex keeps the keys the assistant panel reads. */

@@ -87,7 +87,8 @@ class QuestionNotifier(
         scope.launch {
             combine(runs.sessionStates, appInFront, openChat) { states, front, open ->
                 val waiting = QuestionNotices.waiting(states, conversationOwner, conversationOrder)
-                QuestionNotices.due(waiting, front, open)
+                val visible = if (front && open != null) runs.sourceState(open).question?.id else null
+                QuestionNotices.due(waiting, front, open).filterValues { it.id != visible }
             }.distinctUntilChanged().collect { due -> show(due) }
         }
     }

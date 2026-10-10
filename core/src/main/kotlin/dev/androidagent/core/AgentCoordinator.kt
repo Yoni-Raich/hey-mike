@@ -81,6 +81,7 @@ class AgentCoordinator(
      */
     private val chatMedia: (suspend (address: String, workspace: File) -> String)? = null,
     private val chatTitles: ChatTitleManager = ChatTitleManager(sessions, engine),
+    private val sessionAgents: (() -> SessionAgents)? = null,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -219,7 +220,7 @@ class AgentCoordinator(
             // The chat's engine names every message this run shows; run() reads
             // it again from the store before anything is checked.
             runEngine = engineKind ?: sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine ?: EngineKind.CODEX
-            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}")
+            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}", runId = UUID.randomUUID().toString())
             completion = runCompletion
             thread = null
             turn = null
@@ -255,6 +256,7 @@ class AgentCoordinator(
             check(availableState.value && !state.value.active) { "Another agent run is already active." }
             availableState.value = false
             epoch.incrementAndGet()
+            mutableOutcomes.value = mutableOutcomes.value - sessionId
             // The phone is taken at the first tool call, as for a typed turn.
             runWorkspace = workspace
             screenSticky = false
@@ -269,7 +271,7 @@ class AgentCoordinator(
             overlaySpeech = null
             completion = null
             runJob = null
-            mutableState.value = RunState(RunPhase.THINKING, sessionId, "Voice ready")
+            mutableState.value = RunState(RunPhase.THINKING, sessionId, "Voice ready", runId = UUID.randomUUID().toString())
         }
     }
 
@@ -415,7 +417,8 @@ class AgentCoordinator(
                         assistantId = null
                         assistantText.clear()
                         completion = null
-                        mutableState.value = RunState(sessionId = context.sessionId, status = "Voice ended")
+                        mutableState.value = RunState(sessionId = context.sessionId, status = "Voice ended", runId = state.value.runId)
+                        context.sessionId?.let { id -> mutableOutcomes.value = mutableOutcomes.value + (id to mutableState.value) }
                     }
                 }
                 runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, "Voice ended")) }
@@ -704,6 +707,7 @@ class AgentCoordinator(
                             sessionId = context.snapshot.sessionId,
                             status = if (stopConfirmed) "Stopped" else "Stopped locally; computer interruption could not be confirmed",
                             stopConfirmed = stopConfirmed,
+                            runId = context.snapshot.runId,
                         )
                         context.snapshot.sessionId?.let { id -> mutableOutcomes.value = mutableOutcomes.value + (id to mutableState.value) }
                     }
@@ -1316,8 +1320,12 @@ class AgentCoordinator(
                                 controlling = false,
                                 approval = null,
                             )
+                            screenSticky = false
                         }
                     }
+                    // The voice conversation keeps listening between tasks;
+                    // only its delegated turn owns these screen handles.
+                    handBackUnlessOnScreen()
                 } else when (event.status) {
                     "failed" -> {
                         val error = event.error ?: "${runEngine.label} could not finish"
@@ -1389,6 +1397,9 @@ class AgentCoordinator(
                         ?.takeIf { it.isString }?.contentOrNull.orEmpty()
                     chatTitles.refine(sessionId, threadId, title)
                 }
+                SessionAgentTools.NAME -> sessionAgents?.invoke()?.invoke(sessionId, event.arguments) {
+                    isCurrentTurn(token, threadId, turnId)
+                } ?: ChatTools.refused("not_available", "Session agents are not configured.")
                 else -> showMedia(token, sessionId, threadId, turnId, event.arguments)
             }
         } catch (cancelled: CancellationException) {
@@ -1722,6 +1733,7 @@ class AgentCoordinator(
                     mutableState.value = RunState(
                         sessionId = sessionId,
                         status = if (final.outcome == "interrupted") "Interrupted" else "Ready",
+                        runId = state.value.runId,
                     )
                 }
                 mutableOutcomes.value = mutableOutcomes.value + (sessionId to mutableState.value)

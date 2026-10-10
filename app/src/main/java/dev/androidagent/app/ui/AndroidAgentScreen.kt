@@ -77,6 +77,8 @@ import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -268,7 +270,15 @@ fun AndroidAgentScreen(
                 .collectLatest { actions.onDrawerChanged(it == DrawerValue.Open) }
         }
 
-        val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()))
+        val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()) && !state.voiceBrowsing)
+        val focusManager = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(state.voiceState.active, state.voiceBrowsing) {
+            if (state.voiceState.active && !state.voiceBrowsing) {
+                focusManager.clearFocus()
+                keyboard?.hide()
+            }
+        }
         val drawerPush = rememberDrawerPush(drawerState)
         val layoutDirection = LocalLayoutDirection.current
 
@@ -324,6 +334,9 @@ fun AndroidAgentScreen(
                 },
                 bottomBar = {
                     Column {
+                        if (state.voiceState.active && state.voiceBrowsing) {
+                            VoiceChatBanner(state, actions)
+                        }
                         // Pinned above the composer, never in the chat list: the
                         // list follows the newest message, and a card placed in it
                         // sat above everything, out of sight in any long chat.
@@ -361,14 +374,16 @@ fun AndroidAgentScreen(
                     }
                 },
             ) { padding ->
+                Column(Modifier.fillMaxSize().padding(padding)) {
+                Box(Modifier.voiceStage(voiceMode.topBar)) { ParentChatBanner(state, actions) }
                 AgentChatContent(
                     state = state,
                     actions = actions,
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding)
                         .voiceStage(voiceMode.chat, lift = (-32).dp, scaleFrom = 0.97f, blur = 10.dp),
                 )
+                }
             }
             VoiceModeLayer(motion = voiceMode, state = state, actions = actions, voiceLevel = voiceLevel)
         }
@@ -678,7 +693,11 @@ private fun AgentChatContent(
             } else state.messages
             items(chatRows(shown, running), key = { it.key }) { row ->
                 when (row) {
-                    is MessageRow -> MessageBubble(row.message, row.copyText)
+                    is MessageRow -> {
+                        val child = state.childAgents.firstOrNull { it.id == row.message.id }
+                        if (child != null) ChildAgentCard(child, actions)
+                        else MessageBubble(row.message, row.copyText)
+                    }
                     is ActionsRow -> DeviceActionsRow(row)
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }

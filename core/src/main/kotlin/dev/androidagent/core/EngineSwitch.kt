@@ -40,6 +40,8 @@ object EngineSwitch {
         val parked = session.parked - to - session.engine
         return session.copy(
             engine = to,
+            model = null,
+            reasoningEffort = null,
             engineThreadId = returning?.threadId,
             parked = if (leaving == null) parked else parked + (session.engine to leaving),
             catchUpFrom = when {
