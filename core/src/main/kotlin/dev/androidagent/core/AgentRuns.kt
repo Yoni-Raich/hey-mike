@@ -92,20 +92,40 @@ class AgentRuns(
     /** An app-owned direct task can expose its gates and Stop in its source chat. */
     fun linkChild(child: String, parent: String) = synchronized(this) {
         require(child.isNotBlank() && parent.isNotBlank()) { "Child and source session IDs are required." }
-        require(child != parent && childParents[parent] == null && childParents.values.none { it == child }) {
-            "Nested computer tasks are not supported."
-        }
+        require(child != parent && child !in ancestorsOf(parent)) { "A child link cannot form a cycle." }
         require(childParents[child] == null || childParents[child] == parent) {
-            "A computer task already belongs to another source chat."
+            "A child chat already belongs to another source chat."
         }
         childParents[child] = parent
     }
+
+    /** A deleted parent detaches its surviving chats in the session store. */
+    fun unlinkChild(child: String) = synchronized(this) { childParents.remove(child); Unit }
 
     fun childrenOf(sessionId: String): List<String> = synchronized(this) {
         childParents.filterValues { it == sessionId }.keys.toList()
     }
 
-    private fun family(sessionId: String): List<String> = listOf(sessionId) + childrenOf(sessionId)
+    fun ancestorsOf(sessionId: String): List<String> = synchronized(this) {
+        buildList { var next = childParents[sessionId]; while (next != null && next !in this) { add(next); next = childParents[next] } }
+    }
+
+    fun family(sessionId: String): List<String> = synchronized(this) {
+        buildList { add(sessionId); var index = 0; while (index < size) { addAll(childrenOf(get(index++))) } }
+    }
+
+    /** Reads the coordinators directly; the combined flow can lag a synchronous dispatch. */
+    fun outcomeOf(sessionId: String): RunState? = slots.firstNotNullOfOrNull { it.outcomes.value[sessionId] }
+
+    fun sourceState(sessionId: String): RunState {
+        val own = stateOf(sessionId) ?: RunState(sessionId = sessionId)
+        val children = family(sessionId).drop(1).mapNotNull(::stateOf)
+        val waiting = children.firstOrNull { it.approval != null || it.question != null }
+        if (waiting != null && own.approval == null && own.question == null) return own.copy(
+            phase = if (own.active) own.phase else RunPhase.THINKING, status = waiting.status,
+            approval = waiting.approval, question = waiting.question, delegated = !own.active)
+        return if (!own.active && children.isNotEmpty()) own.copy(phase = RunPhase.THINKING, status = children.first().status, delegated = true) else own
+    }
 
     /** The gate shown in the source chat: its own first, then its oldest waiting child. */
     private fun waitingSlot(sessionId: String): AgentCoordinator? = family(sessionId).firstNotNullOfOrNull { id ->
@@ -217,6 +237,8 @@ class AgentRuns(
         prompt: String,
         model: String? = null,
         allowed: () -> Boolean = { true },
+        engineKind: EngineKind = EngineKind.CODEX,
+        reasoningEffort: String? = null,
     ): Boolean = synchronized(this) {
         if (!allowed()) return@synchronized false
         require(prompt.isNotBlank()) { "A computer task needs a message." }
@@ -225,7 +247,7 @@ class AgentRuns(
         // not become steering input on an already running child.
         if (sessionId in dispatchedChildren || slotFor(sessionId) != null) return@synchronized false
         dispatchedChildren += sessionId
-        send(sessionId, prompt, model = model, engineKind = EngineKind.CODEX)
+        send(sessionId, prompt, model = model, reasoningEffort = reasoningEffort, engineKind = engineKind)
         true
     }
 

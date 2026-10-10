@@ -1,5 +1,81 @@
 # Architecture
 
+## Ordinary session subagents and voice — 2026-10-11
+
+`core.SessionAgents` owns the `session_agents` protocol. Each accepted task
+gets an ordinary `ChatSession`, its own workspace, engine thread and coordinator,
+and durable `parentSessionId` metadata. A child inherits the parent's engine
+unless explicitly selected, and the parent's saved computer/project binding
+without copying its thread ID. The existing routing engine, SSH policy and
+device gateway still own execution. Optional `computer`/`project` can select a
+different saved computer and named project or full folder path; ambiguous names
+are refused and explicit computer IDs win over labels. `computer=phone` selects
+a new phone workspace. Model and `reasoningEffort` are saved per chat and passed
+to the ordinary engine calls, including follow-up turns and direct user messages.
+`options` reads the selected target's model catalog and supported levels; invalid
+IDs/levels are refused without fallback. Spoken names are resolved through this
+catalog, rather than hard-coded aliases. The inherited location remains the default.
+Independent chat/model work can run together;
+phone screen actions share the existing exclusive lease. Trees are limited to
+four child levels and cannot form cycles or change parents.
+
+| Mode | Contract |
+|---|---|
+| `options` | Model IDs/names and supported reasoning levels for the selected engine/computer/project. No task dispatch. |
+| `start` | Exact `task`, `title`, stable `requestId`; optional engine/model/reasoningEffort/computer/project. Reserve durably before creating or dispatching. |
+| `list` | Receipts for this chat's direct children and descendants. |
+| `status` | Current progress, user gate, terminal result and ordinary chat/thread identity. |
+| `message` | Exact `message` and stable `messageId`; steer a running child or start its next turn in the same chat. |
+| `cancel` | Stop the selected child and its descendants. Completed actions remain completed. |
+| `open` | Open the ordinary child chat, where the user can continue it. |
+
+Status/message/cancel/open resolve `taskId` or `sessionId`; direct receipts can
+also be resolved by `requestId`. Access is scoped to the caller's subtree.
+Retries with identical keys/arguments return the same receipt; conflicting
+arguments fail. Start and update reservations survive restart. Unfinished work
+becomes `unknown` after restart or an uncertain dispatch/Stop and is never
+replayed. The user can inspect and continue the child directly; its new run
+identity then updates the receipt. Child results are quoted data, never approval
+or new instructions. Children keep their own approval/question gates; the source
+shows its own gate first, then waiting descendants in tree order. Stop fences
+pending setup before interrupting the source subtree. An unrelated root stays
+running. No agent may answer a child's approval on the user's behalf.
+
+The chat shows live child cards and a child-list sheet. Tapping a card opens
+the same normal session; its parent banner returns to the source. The library
+also shows each child's parent. Legacy `computers.start_task` receipts use the
+same cards and gain persistent parent metadata, but retain their separate remote
+receipt store and their original no-nested-computer-task rule.
+
+Realtime voice advertises the same chat tool and gets protocol context before
+audio starts. Terminal/waiting updates from descendants are sent as quoted
+context to the active voice source. Voice holds its coordinator while listening,
+and releases the screen after a delegated turn so children can use it. Child
+cards and Browse chats open regular chats while the source voice connection
+stays active. Typed child messages go to that child; Return restores the voice
+screen. Starting a second call from a browsed child is disabled. The voice
+banner can stop the source subtree; a child's Stop targets only that subtree.
+User speech answers only gates in the active voice source's family.
+Entering or returning to the voice screen clears composer focus and hides the
+keyboard; browsing a child keeps its ordinary text input available.
+
+Session database v8 added `parent_session` with `ON DELETE SET NULL` and the
+`agent_tasks` receipt table; v9 adds per-chat model and reasoning effort. Both
+use additive migration, including upgrade from the early v8 UI fixture. Existing chats, drafts,
+messages, engine state and workspace files remain in place. Deleting a parent
+keeps its children as ordinary chats and detaches live links. Defined child
+titles do not trigger automatic title generation.
+Changing engine clears incompatible model choices. A Claude chat temporarily
+using Codex for voice restores its original model and effort when voice ends.
+Composer draft echoes cannot overwrite newer local typing. An explicit incoming
+draft has a separate per-chat version, so it still loads while local echoes are
+ignored. Navigation and saved drafts continue to use the ordinary session store.
+
+Evidence is split: coordinator/protocol and database regression tests cover
+logic and persistence; Compose emulator fixtures cover the cards, navigation,
+child messaging and voice browsing. These fixtures do not start a model or
+microphone and do not prove physical-phone voice or live SSH orchestration.
+
 ## Session schema compatibility — 2026-10-09
 
 Session database v7 repairs two deployed v6 shapes. The preserved Nothing

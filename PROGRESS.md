@@ -1,5 +1,41 @@
 # Progress
 
+### Ordinary session subagents and voice — 2026-10-11
+
+- Implemented `session_agents` options/start/list/status/message/cancel/open.
+  Children are normal chats with durable parent links, separate engine/model/
+  reasoning effort and optional saved computer/project. Voice can browse and
+  continue a child while its source call stays active. Source Stop fences its
+  subtree, including pending setup; child Stop leaves the source running.
+- Clean isolated branch from `origin/dev` at `6692067`; the existing dirty
+  checkout was preserved. Database v9 adds receipts, links and model choices.
+  No replay after restart or an unknown dispatch outcome.
+- Full gate passed: `gradlew.bat test assembleDevRelease assembleDevDebug
+  assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug --no-daemon
+  --no-parallel --max-workers=2` (1m30s). XML: 2,372 unit executions,
+  zero failures/errors, 16 skips. Runtime Python: 15 passed. Manual emulator
+  runner: 33 UI tests passed, including Hebrew/large text, child continuation,
+  source/child Stop, voice navigation and delayed draft echo regression.
+- Xiaomi Redmi 12 / Android 15: backed up the old private data and APK, then
+  installed exact Dev Debug 1129 (`0.14.0-dev.subagents1`) with `install -r`.
+  SHA-256 `676d04d88bd6c0d7102ff166b7920b6b69b5a3355a91a46d8300741a27e530a6`
+  matches the installed APK. Debug-key v2 signature and 16 KiB alignment pass.
+  The first v6→v9 upgrade preserved all original rows: 96 chats, 1,830 messages
+  and two drafts. Final reopen retained child receipts, links and model choices.
+- Real phone tasks: Sol 6.1/High and Claude Opus/Medium children replied;
+  clicking the card continued the same chat. A live voice source stayed active
+  during a child message/reply and Return. Final-build `device_status` passed;
+  accessibility was restored through the visible Xiaomi Settings flow and is
+  bound, with no crashed service. No uninstall, data clearing or physical-phone
+  instrumentation was used.
+- Remaining gaps: spoken creation/steering has not been verified with a human;
+  a standalone recorded-audio fixture install was refused by Xiaomi and was
+  not bypassed. A saved PC did not answer over VPN or LAN; remote project/model
+  routing is unit-tested, but remote-project E2E remains unverified. One muted
+  voice connection reset after about five minutes; long-call stability is open.
+  This is a dev test build, not a signed production-release validation.
+  Details and UI fixture evidence: `docs/testing/session-subagents-voice-20261011/RESULTS.md`.
+
 ### Nothing opening-crash follow-up — 2026-10-09
 
 - Reproduced a source-level upgrade failure using the exact preserved 1113

@@ -86,6 +86,11 @@ data class ChatSession(
     val catchUpFrom: Long? = null,
     /** A new chat's provisional name may be refined once by the agent. */
     val titlePending: Boolean = false,
+    /** A delegated chat is still an ordinary chat; this link keeps its context visible. */
+    val parentSessionId: String? = null,
+    /** Explicit choices belong to this session, including delegated sessions. */
+    val model: String? = null,
+    val reasoningEffort: String? = null,
 )
 
 /** An engine's thread for a chat that now runs on another engine, and the time up to which it saw the chat. */
@@ -98,6 +103,12 @@ interface SessionStore {
     /** A new chat that starts on [engine]. */
     suspend fun createSession(engine: EngineKind): ChatSession
     suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
+    suspend fun createChildSession(parentSessionId: String, engine: EngineKind, title: String): ChatSession =
+        error("This store does not support child chats.")
+    suspend fun setParent(sessionId: String, parentSessionId: String) {}
+    suspend fun setModelChoice(sessionId: String, model: String?, reasoningEffort: String?) {}
+    suspend fun loadAgentTasks(): List<SessionAgentTask> = emptyList()
+    suspend fun saveAgentTask(task: SessionAgentTask) { error("This store does not support agent receipts.") }
     suspend fun getSession(id: String): ChatSession?
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
@@ -432,6 +443,8 @@ data class RunState(
     val stopConfirmed: Boolean? = null,
     /** A lost dispatch/connection reply cannot establish the remote task's outcome. */
     val outcomeUnknown: Boolean = false,
+    /** Identifies this execution, so a previous turn's outcome cannot finish a new task. */
+    val runId: String? = null,
 ) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
 
