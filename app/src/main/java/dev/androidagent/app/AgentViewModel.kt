@@ -235,6 +235,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { graph.voice.state.collect { state -> mutable.update { it.copy(voiceState = state) } } }
         viewModelScope.launch { graph.voice.muted.collect { muted -> mutable.update { it.copy(voiceMuted = muted) } } }
+        viewModelScope.launch { graph.voiceConversation.childUpdates.collect { updates -> mutable.update { it.copy(voiceChildUpdates = updates) } } }
         viewModelScope.launch { graph.sendGrants.grants.collect { grants -> mutable.update { it.copy(sendGrants = grants) } } }
         viewModelScope.launch {
             graph.voiceConversation.transcript.collect { line ->
@@ -987,6 +988,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.voiceConversation.begin(sessionId, mutable.value.selectedModel.takeIf { mutable.value.activeEngine == EngineKind.CODEX }
             ?: engines.of(EngineKind.CODEX).model, automation)
     }
+    fun toggleVoiceChildUpdates() = graph.voiceConversation.setChildUpdatesPaused(!graph.voiceConversation.childUpdates.value.paused)
+
     private fun stopVoice() = task { graph.voiceConversation.stop() }
     fun prepare() {
         if (setupJob?.isActive == true) return
