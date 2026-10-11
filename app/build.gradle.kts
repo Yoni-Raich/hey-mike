@@ -49,7 +49,10 @@ android {
     }
     packaging {
         jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/*.so" }
-        resources { excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/**", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES") }
+        resources {
+            excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/**", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES")
+            merges += "META-INF/LICENSE.md"
+        }
     }
 }
 val prepareCodexRuntime by tasks.registering(Exec::class) {

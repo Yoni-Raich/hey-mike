@@ -1,5 +1,141 @@
 # Architecture
 
+## Claude runtime reuse across APK updates — 2026-10-11
+
+Runtime discovery keeps other version directories. The updater first restores
+the saved active or previous choice, then checks the bundled pin and known
+previous pins. A known previous pin is accepted only with its compiled size
+and SHA-256; a directory name or altered selection metadata is not enough.
+This lets an existing 2.1.285 installation remain ready while the APK upgrades
+it to the bundled 2.1.293 required for Haiku 5.5. That first update uses the
+authenticated bundled pin without depending on latest-release discovery.
+Later updates still use signed official manifests and a compatibility probe.
+
+Only a verified, launch-tested candidate replaces the active selection.
+Download failure, cancellation and probe failure leave the working runtime
+usable. The saved previous choice can recover a damaged active binary. A
+failed selection-file write does not hide an existing verified installation.
+First installation also saves the selection. Claude account files and chat
+files stay outside the runtime-selection logic.
+
+## Live child output and automatic parent continuation — 2026-10-11
+
+`SessionAgents` observes each child's ordinary message flow as well as run
+state. `SessionAgentUpdate` carries public assistant/activity text revisions
+in order, with message IDs, append offsets and explicit replacements. The
+compact status preview remains bounded; the event path carries every message
+and the full final result, including text beyond that preview. Restored history
+is a baseline, not a new event. Child text remains JSON-quoted data.
+
+`SessionAgentDelivery` batches events for 500 ms and delivers them to the
+direct parent and its ancestors. An active typed parent receives context in
+its existing turn; an idle parent starts an ordinary turn using its saved
+model and effort. Context never goes through the user's approval/question
+reply parser or seeds a chat title. Startup and pending user gates hold the
+batch. A run's Stop fence travels with its events and is checked again at
+dispatch, so queued completion cannot restart a stopped parent. A transport
+error is reported and is not automatically replayed. Restart does not resume
+pending background notifications or unknown child work.
+
+Voice receives every text segment through quiet quoted context, followed by
+a speakable backend handoff for useful progress/completion. `appendText`
+alone does not request a spoken response. The pinned Codex v0.153.4
+[`appendSpeech` handler](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/realtime_conversation.rs)
+uses the realtime backend's speakable context channel. Large context is sent
+in numbered packets without splitting Unicode surrogate pairs. A speaking
+voice parent holds the batch until it can respond. The call and child-chat
+browsing remain owned by the original voice session.
+
+WebRTC microphone mute uses the audio device module's zeroed capture samples,
+while the live local track stays enabled. Disabling that track delayed the
+Xiaomi's incoming speakable child updates until unmute. Stop/close still mute
+capture/playback and disable the track. The exact bundled WebRTC
+`144.7559.09` bytecode confirms muted samples are replaced with zero bytes
+before native transport; this also matches the upstream
+[`WebRtcAudioRecord` capture loop](https://webrtc.googlesource.com/src/+/66f1e9eb345d2201459f1a95a6cffa8fc2311fde/sdk/android/src/java/org/webrtc/audio/WebRtcAudioRecord.java).
+Voice dispatch and submission are recorded in the private source-session
+trace; submission alone is not proof of a spoken response.
+
+Delegated `message` steering also bypasses the human gate parser: a parent's
+"yes" is never an approval or answer to `ask_user`. Only a user's reply may
+resolve those gates. Child cards show the latest public words during work.
+
+## Ordinary session subagents and voice — 2026-10-11
+
+`core.SessionAgents` owns the `session_agents` protocol. Each accepted task
+gets an ordinary `ChatSession`, its own workspace, engine thread and coordinator,
+and durable `parentSessionId` metadata. A child inherits the parent's engine
+unless explicitly selected, and the parent's saved computer/project binding
+without copying its thread ID. The existing routing engine, SSH policy and
+device gateway still own execution. Optional `computer`/`project` can select a
+different saved computer and named project or full folder path; ambiguous names
+are refused and explicit computer IDs win over labels. `computer=phone` selects
+a new phone workspace. Model and `reasoningEffort` are saved per chat and passed
+to the ordinary engine calls, including follow-up turns and direct user messages.
+`options` reads the selected target's model catalog and supported levels; invalid
+IDs/levels are refused without fallback. Spoken names are resolved through this
+catalog, rather than hard-coded aliases. The inherited location remains the default.
+Independent chat/model work can run together;
+phone screen actions share the existing exclusive lease. Trees are limited to
+four child levels and cannot form cycles or change parents.
+
+| Mode | Contract |
+|---|---|
+| `options` | Model IDs/names and supported reasoning levels for the selected engine/computer/project. No task dispatch. |
+| `start` | Exact `task`, `title`, stable `requestId`; optional engine/model/reasoningEffort/computer/project. Reserve durably before creating or dispatching. |
+| `list` | Receipts for this chat's direct children and descendants. |
+| `status` | Current progress, user gate, terminal result and ordinary chat/thread identity. |
+| `message` | Exact `message` and stable `messageId`; steer a running child or start its next turn in the same chat. |
+| `cancel` | Stop the selected child and its descendants. Completed actions remain completed. |
+| `open` | Open the ordinary child chat, where the user can continue it. |
+
+Status/message/cancel/open resolve `taskId` or `sessionId`; direct receipts can
+also be resolved by `requestId`. Access is scoped to the caller's subtree.
+Retries with identical keys/arguments return the same receipt; conflicting
+arguments fail. Start and update reservations survive restart. Unfinished work
+becomes `unknown` after restart or an uncertain dispatch/Stop and is never
+replayed. The user can inspect and continue the child directly; its new run
+identity then updates the receipt. Child results are quoted data, never approval
+or new instructions. Children keep their own approval/question gates; the source
+shows its own gate first, then waiting descendants in tree order. Stop fences
+pending setup before interrupting the source subtree. An unrelated root stays
+running. No agent may answer a child's approval on the user's behalf.
+
+The chat shows live child cards and a child-list sheet. Tapping a card opens
+the same normal session; its parent banner returns to the source. The library
+also shows each child's parent. Legacy `computers.start_task` receipts use the
+same cards and gain persistent parent metadata, but retain their separate remote
+receipt store and their original no-nested-computer-task rule.
+
+Realtime voice advertises the same chat tool and gets protocol context before
+audio starts. Terminal/waiting updates from descendants are sent as quoted
+context to the active voice source. Voice holds its coordinator while listening,
+and releases the screen after a delegated turn so children can use it. Child
+cards and Browse chats open regular chats while the source voice connection
+stays active. Typed child messages go to that child; Return restores the voice
+screen. Starting a second call from a browsed child is disabled. The voice
+banner can stop the source subtree; a child's Stop targets only that subtree.
+User speech answers only gates in the active voice source's family.
+Entering or returning to the voice screen clears composer focus and hides the
+keyboard; browsing a child keeps its ordinary text input available.
+
+Session database v8 added `parent_session` with `ON DELETE SET NULL` and the
+`agent_tasks` receipt table; v9 adds per-chat model and reasoning effort. Both
+use additive migration, including upgrade from the early v8 UI fixture. Existing chats, drafts,
+messages, engine state and workspace files remain in place. Deleting a parent
+keeps its children as ordinary chats and detaches live links. Defined child
+titles do not trigger automatic title generation.
+Changing engine clears incompatible model choices. A Claude chat temporarily
+using Codex for voice restores its original model and effort when voice ends.
+Composer draft echoes cannot overwrite newer local typing. An explicit incoming
+draft has a separate per-chat version, so it still loads while local echoes are
+ignored. Navigation and saved drafts continue to use the ordinary session store.
+
+Evidence is split: coordinator/protocol and database regression tests cover
+logic and persistence; Compose emulator fixtures cover the cards, navigation,
+child messaging and voice browsing. These fixtures do not start a model or
+microphone and do not prove physical-phone voice or live SSH orchestration.
+
 ## Session schema compatibility — 2026-10-09
 
 Session database v7 repairs two deployed v6 shapes. The preserved Nothing
@@ -2226,11 +2362,52 @@ voice works in a Claude chat.
 - **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
   `claude` binary through the pinned Alpine musl loader, packaged as
   `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
-  W^X does not apply. The binary (2.1.285, pinned sha256 and size) is never
+  W^X does not apply. The binary (2.1.293, pinned sha256 and size) is never
   bundled: it is downloaded from `downloads.claude.ai` only after the user
-  saw its size (232 MB) and tapped Download, with progress and cancel, and
+  saw its size (244 MB) and tapped Download, with progress and cancel, and
   hashed before use. At app start the host only re-checks a binary that is
   already there. On other ABIs the card says "Not available on this device".
+  Claude Code 2.1.293 adds Haiku 5.5 (`claude-haiku-5-5`); the picker uses
+  the CLI's `initialize` catalog, including its effort options. Until a
+  catalog is available, the pinned Haiku alias is shown as "Haiku 5.5".
+  A computer's own CLI catalog still supplies its names, so an older
+  computer can keep showing Haiku 4.5. Claude sign-in and chat files live
+  outside the versioned binary directory.
+- **Automatic Claude updates (2026-10-07).** The first phone installation
+  still uses the explicit Download action and the bundled 2.1.293 pin.
+  After that, `ClaudeRuntimeUpdates` checks the official `latest` endpoint
+  when Mike enters the foreground and every 15 minutes while it stays open.
+  The last attempt is stored across app restarts, so reopening cannot flood
+  the service. Binary downloads wait for an unmetered connection; checking
+  release metadata is small and does not require a model request.
+  `ClaudeReleaseClient` accepts only bounded HTTPS responses from the fixed
+  official origin without redirects. It verifies the detached GPG manifest
+  signature with the bundled Anthropic key, whose fingerprint is
+  `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`, before trusting its ARM64 musl
+  checksum and size. Bouncy Castle 1.86 provides OpenPGP verification without
+  registering a new global security provider. Unknown major versions or
+  harness schemas are refused until an app compatibility update.
+  A candidate downloads beside the active version and must pass its exact
+  `--version` and a tool-free, message-free stream-json `initialize` probe
+  using a separate HOME and no session persistence. Only then is the active
+  pointer atomically replaced. The working binary remains available during
+  downloads, cancellation, offline checks and incompatible releases. On
+  restart, a damaged active file falls back to the previous verified build,
+  then the bundled pin. Old version files are retained so live processes
+  can continue reading them; automatic disk pruning is not implemented.
+  The candidate probe HOME is excluded from backup and device transfer.
+- **Catalog refresh and turn boundaries.** Claude catalogs expire after
+  one minute and refresh immediately when the host's runtime identity changes.
+  Failed refreshes keep the last good catalog and back off for 30 seconds;
+  cancellation propagates and destroys the probe. Mike requests the current
+  chat's catalog on app resume, chat change, model-menu open and each foreground
+  minute. Computer checks re-probe the installed CLI version and keep account
+  and models scoped to that computer. The phone never installs or changes
+  computer update settings. An updated runtime identity becomes part of each
+  chat's running config: a live turn keeps its old immutable binary, and the
+  next idle turn restarts with `--resume`. A release can appear on the next
+  successful check, subject to account availability and protocol compatibility;
+  Android background execution and a closed app do not promise instant updates.
 - **Phone tools over loopback MCP.** Each chat process gets its own
   `LoopbackMcpServer` (127.0.0.1, fresh port and bearer token per start), so
   a tool call is always tied to the chat that made it. A `tools/call` becomes
@@ -2249,7 +2426,8 @@ voice works in a Claude chat.
   across configuration changes and is cleared on submit; the code is not
   logged or stored. Sign-in state comes only from `claude auth status`.
 - **Compliance rules** (from the spec): official unmodified binary checked
-  against its pinned hash; never bundled; sign-in only inside `claude`; the
+  against the bundled pin or an authenticated official manifest pin; never
+  bundled; sign-in only inside `claude`; the
   app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
   excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
   headers or `--bare`; API keys and base-URL variables are scrubbed from the

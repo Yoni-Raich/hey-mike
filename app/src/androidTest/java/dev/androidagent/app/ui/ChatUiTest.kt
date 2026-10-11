@@ -100,20 +100,18 @@ class ChatUiTest {
             )
         }
 
-        compose.onNodeWithText("Approval needed").assertIsDisplayed()
+        compose.onNodeWithText("Open this?").assertIsDisplayed()
         compose.onNodeWithText("https://pay.example/checkout?amount=10", substring = true).assertIsDisplayed()
         compose.onNodeWithText("com.example.pay", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Allow").performClick()
         compose.runOnIdle { assertEquals("local-intent-1" to true, answer) }
     }
 
-    @Test fun newChatRequiresConfirmationWhileAnotherSessionRuns() {
+    @Test fun newChatCanOpenWhileAnotherSessionKeepsRunning() {
         var created = 0
         compose.setContent { AndroidAgentScreen(fixture.copy(runState = RunState(RunPhase.THINKING, "ui-fixture")), AgentUiActions(onNewChat = { created++ })) }
         compose.onNodeWithContentDescription("New chat").performClick()
-        compose.onNodeWithText("Start a new chat?").assertIsDisplayed()
-        compose.runOnIdle { assertEquals(0, created) }
-        compose.onNodeWithText("New chat").performClick()
+        compose.onNodeWithText("Start a new chat?").assertDoesNotExist()
         compose.runOnIdle { assertEquals(1, created) }
     }
 
@@ -128,11 +126,12 @@ class ChatUiTest {
     @Test fun voiceModeMuteTogglesAndShowsMicrophoneOff() {
         var toggles = 0
         val listening = fixture.copy(voiceState = VoiceState(VoicePhase.LISTENING, "Listening", "voice"))
-        compose.setContent { AndroidAgentScreen(listening, AgentUiActions(onVoiceMuteToggle = { toggles++ })) }
+        val state = androidx.compose.runtime.mutableStateOf(listening)
+        compose.setContent { AndroidAgentScreen(state.value, AgentUiActions(onVoiceMuteToggle = { toggles++ })) }
         compose.onNodeWithContentDescription("Mute microphone").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(1, toggles) }
 
-        compose.setContent { AndroidAgentScreen(listening.copy(voiceMuted = true), AgentUiActions()) }
+        compose.runOnIdle { state.value = listening.copy(voiceMuted = true) }
         compose.onNodeWithContentDescription("Unmute microphone").assertIsDisplayed()
         compose.onNodeWithText("Microphone off").assertIsDisplayed()
         screenshot("voice-muted")
@@ -140,11 +139,11 @@ class ChatUiTest {
 
     @Test fun workStatusStaysOutsideTheScrollingConversation() {
         compose.setContent { AndroidAgentScreen(fixture.copy(
-            runState = RunState(RunPhase.TOOL, "ui-fixture", "Reading current screen"),
+            runState = RunState(RunPhase.TOOL, "ui-fixture", "Reading current screen", delegated = true),
             messages = (1..60).map { ChatMessage("m$it", "ui-fixture", "user", "Message $it", it.toLong()) }), AgentUiActions()) }
         compose.onAllNodes(hasScrollAction()).onFirst().performScrollToIndex(0)
-        compose.onNodeWithText("Reading current screen").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Stop agent").assertIsDisplayed()
+        compose.onAllNodesWithText("Reading current screen").onLast().assertIsDisplayed()
+        compose.onNodeWithText("Stop active task").assertIsDisplayed()
     }
 
     @Test fun richMarkdownAndQueuedSessionControlsRender() {
@@ -165,6 +164,8 @@ class ChatUiTest {
     ))
     private val fixture = AgentUiState(
         activeSessionId = "ui-fixture", activeSessionTitle = "תכנון היום",
+        onboarding = dev.androidagent.core.OnboardingProgress(welcomed = true,
+            consentVersion = dev.androidagent.core.Onboarding.CONSENT_VERSION, finished = true),
         selectedModel = "gpt-5.6-luna", availableModels = listOf("gpt-5.6-luna"),
         modelCatalog = listOf(
             AgentModel(
@@ -193,7 +194,8 @@ class ChatUiTest {
     @Test fun hebrewMessageSendsAndClearsDraft() {
         var sent = ""
         compose.setContent { AndroidAgentScreen(fixture, AgentUiActions(onSend = { text, _ -> sent = text })) }
-        compose.onNodeWithText("עזור לי לתכנן את היום שלי").assertIsDisplayed()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("עזור לי לתכנן את היום שלי", substring = true))
+        compose.onNodeWithText("עזור לי לתכנן את היום שלי", substring = true).assertIsDisplayed()
         // An empty draft offers voice rather than a disabled send.
         compose.onNodeWithContentDescription("Send message").assertDoesNotExist()
         screenshot("chat-hebrew")
@@ -245,30 +247,33 @@ class ChatUiTest {
         compose.onNodeWithText("פריט ראשון", substring = true).assertIsDisplayed()
         screenshot("chat-markdown")
     }
-    @Test fun diagnosticsAreCollapsedAndRemainAvailable() {
-        val details = "[HTTP] Connection failed | diagnostic trace"
+    @Test fun diagnosticsShowUsefulPreviewAndCanExpand() {
+        val details = "[HTTP] Connection failed. Check the saved computer and try again.\n" +
+            "The connection timed out while loading this chat.\nDiagnostic trace: fixture only.\nMore detail for support."
         compose.setContent { AndroidAgentScreen(fixture.copy(errorMessage = details), AgentUiActions()) }
-        compose.onNodeWithText(details).assertDoesNotExist()
-        compose.onNodeWithText("Show details").performClick()
         compose.onNodeWithText(details).assertIsDisplayed()
-        compose.onNodeWithText("Hide details").performClick()
-        compose.onNodeWithText(details).assertDoesNotExist()
+        fun lineCount(): Int {
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithText(details).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            return layouts.single().lineCount
+        }
+        assertEquals(2, lineCount())
+        compose.onNodeWithText("More").performClick()
+        org.junit.Assert.assertTrue(lineCount() > 2)
+        compose.onNodeWithText("Less").performClick()
+        assertEquals(2, lineCount())
         screenshot("chat-error-collapsed")
     }
     @Test fun voiceButtonStartsAndShowsActiveState() {
         var toggles = 0
+        val state = androidx.compose.runtime.mutableStateOf(fixture)
         compose.setContent {
-            AndroidAgentScreen(fixture, AgentUiActions(onVoiceToggle = { toggles++ }))
+            AndroidAgentScreen(state.value, AgentUiActions(onVoiceToggle = { toggles++ }))
         }
         compose.onNodeWithContentDescription("Start voice conversation").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(1, toggles) }
 
-        compose.setContent {
-            AndroidAgentScreen(
-                fixture.copy(voiceState = VoiceState(VoicePhase.LISTENING, "Listening", "thread-1")),
-                AgentUiActions(onVoiceToggle = { toggles++ }),
-            )
-        }
+        compose.runOnIdle { state.value = fixture.copy(voiceState = VoiceState(VoicePhase.LISTENING, "Listening", "thread-1")) }
         compose.onNodeWithContentDescription("End voice conversation").assertIsDisplayed()
         compose.onNodeWithText("Listening").assertIsDisplayed()
     }
@@ -288,15 +293,11 @@ class ChatUiTest {
     }
 
     @Test fun phoneControlStatusOpensFromTheAgentOrb() {
+        val state = androidx.compose.runtime.mutableStateOf(fixture.copy(adbStatus = AdbStatus(
+            phase = ConnectionPhase.CONNECTED, message = "Connected to 127.0.0.1:37123", port = 37123)))
         compose.setContent {
             AndroidAgentScreen(
-                fixture.copy(
-                    adbStatus = AdbStatus(
-                        phase = ConnectionPhase.CONNECTED,
-                        message = "Connected to 127.0.0.1:37123",
-                        port = 37123,
-                    ),
-                ),
+                state.value,
                 AgentUiActions(),
             )
         }
@@ -305,19 +306,9 @@ class ChatUiTest {
         compose.onNodeWithText("Ready to control your phone through ADB").assertIsDisplayed()
         compose.onNodeWithText("Connected · port 37123").assertIsDisplayed()
 
-        compose.setContent {
-            AndroidAgentScreen(
-                fixture.copy(
-                    adbStatus = AdbStatus(
-                        phase = ConnectionPhase.CONNECTING,
-                        message = "Connecting",
-                    ),
-                ),
-                AgentUiActions(),
-            )
-        }
-        compose.onNodeWithContentDescription("Open status and usage", substring = true).performClick()
+        compose.runOnIdle { state.value = fixture.copy(adbStatus = AdbStatus(
+            phase = ConnectionPhase.CONNECTING, message = "Connecting")) }
         compose.onNodeWithText("The agent cannot control your phone yet").assertIsDisplayed()
-        compose.onNodeWithText("Reconnecting").assertIsDisplayed()
+        compose.onNodeWithText("Connecting…").assertIsDisplayed()
     }
 }

@@ -91,7 +91,12 @@ class ComputerTasks(
             store.saveTask(recovered)
         }
         val restored = store.state.value.tasks.values.toList()
-        scope.launch { lock.withLock { restored.forEach { publish(it) } } }
+        scope.launch { lock.withLock { restored.forEach { task ->
+            if (sessions.getSession(task.originSessionId) != null && task.sessionId?.let { sessions.getSession(it) } != null) {
+                sessions.setParent(task.sessionId!!, task.originSessionId)
+            }
+            publish(task)
+        } } }
         // Removing a saved computer must not leave its old live coordinator
         // dispatching. Source removal likewise stops setup and its child.
         scope.launch {
@@ -202,6 +207,7 @@ class ComputerTasks(
                     return
                 }
                 val session = sessions.createSession()
+                sessions.setParent(session.id, task.originSessionId)
                 store.bind(session.id, RemoteBinding(task.computerId, task.project))
                 store.addProject(task.computerId, task.project)
                 sessions.rename(session.id, ComputerToolGateway.folderName(task.project))

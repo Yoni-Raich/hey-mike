@@ -10,5 +10,6 @@ dependencies {
     api(project(":core"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.bouncycastle:bcpg-jdk18on:1.86")
     testImplementation("junit:junit:4.13.2")
 }
