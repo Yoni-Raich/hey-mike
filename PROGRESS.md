@@ -1,5 +1,32 @@
 # Progress
 
+### Claude upgrade preservation and Haiku integration — 2026-10-11
+
+- Integrated PR #121 and #122 into the ordinary-child/voice branch. The old
+  startup installer removed other Claude versions; discovery now keeps them.
+  Missing selection metadata reuses authenticated known installed bytes.
+  First installation saves its choice; a failed marker write keeps Claude ready.
+- A reused 2.1.285 upgrades first to bundled 2.1.293 without depending on
+  latest-release discovery. Update download/probe failure and cancellation
+  keep the working version. Saved active/previous choices support rollback.
+  Model refresh and the newer dev auth-retry/steering fixes both remain.
+- Final 1133 (`0.14.0-dev.subagents5`) full gate passed in 2m24s: Debug/Release,
+  AndroidTest build, app/voice lint; 2,482 unit executions, zero failures/errors,
+  16 skips. New upgrade suite: 18 passed in each variant. Runtime Python:
+  15 passed. Manual emulator runner: 34 UI tests passed in 44.236s.
+- Xiaomi Redmi 12: backed up private database/preferences and old runtime,
+  replaced the app with `install -r`, verified exact installed APK SHA.
+  Old 2.1.285 SHA stayed unchanged; startup selected it without another
+  Download action, then automatically activated exact verified 2.1.293.
+  Haiku 5.5 appeared in the model menu. A real saved `CLAUDE`/`haiku` chat
+  called `device_status` successfully and returned `QA_HAIKU_1133_OK`.
+  All 102 pre-update chat IDs, 1,930 message IDs and two drafts remain.
+  Original QA chat restored; voice/runs idle and accessibility bound.
+- Nothing 1132 installation was confirmed through app metadata. Nothing
+  is currently absent from computer ADB, so 1133 is not installed there yet.
+  No data clearing, uninstall, phone instrumentation or production release.
+  Full evidence and remaining gaps: `docs/testing/session-subagents-voice-20261011/CLAUDE-UPGRADE.md`.
+
 ### Live child updates and automatic parent reply — 2026-10-11
 
 - Child public text now reaches its parent and ancestors as ordered revisions,
@@ -356,6 +383,123 @@
   coordinator and JSON-RPC code with an in-memory stdio peer; it does not prove
   those physical/account paths. No APK was installed or release published.
   After restart, unknown tasks require inspection; they are not reattached.
+### Automatic Claude runtime and model catalog updates — 2026-10-07
+
+- Claude catalogs refresh on resume, chat/menu open and each foreground
+  minute. Engine caches expire after one minute, invalidate on a runtime
+  identity change, retain the last good list offline, and back off for 30
+  seconds after failure. Computer catalogs remain scoped to their own CLI.
+- After the explicit first installation, the phone checks official Claude
+  releases every 15 minutes while Mike is open, with a persisted throttle.
+  Binary downloads wait for an unmetered connection. Metadata is bounded,
+  HTTPS-only, without redirects, and the exact manifest must pass Anthropic's
+  detached GPG signature using its bundled, fingerprint-checked public key.
+  Bouncy Castle 1.86 supplies OpenPGP; its upstream MIT notice is retained
+  in the repo and APK. Unknown major versions/harness schemas fail closed.
+- A candidate is size/hash verified beside the working binary, then checked
+  through the real loader with `--version` and a message-free, tool-free
+  `initialize` using a separate HOME. Only a compatible build becomes active.
+  Previous files remain available to running turns and for restart rollback.
+  A runtime change resumes an idle chat on its next turn, without interrupting
+  a turn already running. Sign-in and session files are neither read nor moved.
+- Windows/JDK 21: `./gradlew.bat :core:test :runtime:testDebugUnitTest
+  :engine-claude:testDebugUnitTest :remote:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+  --no-daemon --no-parallel --max-workers=2 --console=plain` passed.
+  XML: 680 core, 64 runtime, 79 Claude, 62 remote, 140 app; 1,025 tests,
+  zero failures/errors, two existing optional remote skips. New tests cover
+  real signed public metadata, tampering, unsafe/malformed/oversized replies,
+  protocol rejection, retention, cancellation, persisted selection/throttle,
+  rollback, metered downloads, catalog expiry/runtime changes/offline retries,
+  and continuing a live turn before resuming on a new process. Python runtime
+  preparation tests: 15 passed. App lint: zero errors, 21 existing warnings.
+- A one-off Java audit invoked the production `ClaudeReleaseClient` against
+  the live official endpoint and authenticated release 2.1.293. The production
+  `ClaudeRuntimeProbe` also passed against the real official Windows 2.1.293
+  binary in an isolated HOME. No login, account change or model message occurred.
+  This proves the Windows probe and live metadata flow, not Android execution.
+- Dev Debug APK: `dev.androidagent.app.dev`, code 28, version 0.14.0,
+  333,499,367 bytes, existing Android debug-key v2 signing (test-only).
+  SHA-256 `92285bf95de805ab0a7ade13bca387196139a854a9faaabcf7d74d7b82917712`.
+  The release key and Bouncy Castle license are present in the APK. Logs,
+  public downloads, Java audit/config and verification JSON remain ignored
+  under `artifacts/claude-auto-update/`; Gradle outputs use the configured
+  central `build/0db2d29f53122413/` bucket. The global storage hook automatically
+  pruned the earlier completed Haiku build bucket; no source or user data was
+  deleted by task commands.
+- Not tested: installed Settings/menu text, real ARM64 candidate activation,
+  rollback across an Android process death, network transitions on Nothing,
+  retained real sign-in with a new binary, a model turn with phone tools, or
+  real SSH runtime changes. No phone install or full release gate was run.
+  Checks run while Mike is open; immediate closed-app updates and old-version
+  disk pruning are not implemented. This change is stacked on the Haiku 5.5
+  PR, preserves the original dirty checkout, and changes no release/tag/asset.
+
+### Haiku 5.5 runtime update — 2026-10-07
+
+- Pin the phone's official Claude Code to 2.1.293, the minimum version
+  [documented for Haiku 5.5](https://code.claude.com/docs/en/model-config).
+  The installer and protocol pins agree. The fallback Haiku name is now
+  "Haiku 5.5" and exposes the five effort levels; a CLI catalog still takes
+  precedence, including the Haiku 4.5 name from an older computer.
+- Downloaded the official `linux-arm64-musl` binary and checked its bytes
+  against the [2.1.293 manifest](https://downloads.claude.ai/claude-code-releases/2.1.293/manifest.json):
+  244,463,424 bytes, AArch64 ELF, SHA-256
+  `00755ae106b6925c1adb2b17e4c6d9b0c41eb4cc55bcad3581345b0aa3176c85`.
+  The official Windows binary also matched its manifest hash and size.
+- A real Windows 2.1.293 process with isolated config answered `initialize`:
+  `haiku` resolves to `claude-haiku-5-5`, the description names Haiku 5.5,
+  and `low`, `medium`, `high`, `xhigh`, `max` are supported. No sign-in or
+  model message was sent. Only its public model fields were saved in the
+  new catalog fixture. The older recorded catalog test still passes.
+- Windows/JDK 21: `./gradlew.bat :core:test :runtime:testDebugUnitTest
+  :engine-claude:testDebugUnitTest :remote:testDebugUnitTest
+  :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+  --no-daemon --no-parallel --max-workers=2 --console=plain` passed.
+  XML: 680 core, 42 runtime, 74 engine, 62 remote and 140 app tests;
+  998 total, zero failures/errors, two existing remote skips. App lint:
+  zero errors, 21 warnings. `python -m unittest tools.test_prepare_runtime`
+  passed all 15 tests; `git diff --check` passed.
+- APK: Dev Debug, `dev.androidagent.app.dev`, code 28, version 0.14.0,
+  329,783,126 bytes, Android debug-key v2 signed (test-only). SHA-256:
+  `f2d0915fc421f75b569b2464cd510e8699971ea4fc09f2d5cdb09c0209f99e06`.
+  Its DEX contains the new version, download URL, hash and fallback name.
+  Binaries, APK and probe/build evidence remain outside tracked files.
+- Not tested: phone/emulator installation, Android launch of 2.1.293,
+  retained real account sign-in, a Haiku 5.5 task with phone tools, installed
+  model-menu UI, real SSH chats, or the full release gate. After an app
+  update the new binary must be downloaded in Claude setup. No release
+  version, tag or published asset changed. The additional Nothing delivery
+  below uses the phone's existing test-code base.
+
+#### Nothing delivery and computer model refresh — 2026-10-07
+
+- The connected phone identified itself as Nothing `A059`. Built the update
+  on the already installed computer-subagent/persistent-Mike base `ddf1806`
+  with this PR's patch cherry-picked as `055bd95`, preserving those test
+  features. No changes were made in the original dirty checkout.
+- The same Gradle checks passed with `-PversionCodeOverride=1111` and
+  `-PversionNameOverride=0.15.0-haiku55-test`. XML: 728 core, 42 runtime,
+  74 Claude engine, 102 remote and 150 app tests; 1,096 total, zero
+  failures/errors, two existing remote skips. Lint: zero errors, 21 warnings.
+- Delivery APK: `dev.androidagent.app.dev`, Dev Debug, code 1111,
+  `0.15.0-haiku55-test`, 330,145,565 bytes, Android debug-key v2 signed.
+  SHA-256: `f2ee9526c31ecae01d5577fdeafc84cec0e20cd0089838d6c4a22424f101dc9e`.
+  `copy_file` completed the transfer, then `install_apk(replace=true)` was
+  dispatched. The source turn was interrupted while installation was
+  returning; `apps_settings(app_info)` afterward confirmed code 1111 and
+  the exact version name, and `dumpsys activity` showed MainActivity resumed.
+  The installation was not replayed. No uninstall, data clear or
+  instrumentation was used.
+- The user's model-menu capture still showed Haiku 4.5. The phone's new
+  local Claude binary had not been downloaded, and Pc's native CLI was
+  still 2.1.292. `claude update` succeeded and `claude --version` read back
+  2.1.293. The user then reported that the model menu worked. This is user
+  confirmation of the computer-model refresh, not a real model-turn trace.
+- Own-app UI observation is excluded by Mike's accessibility tools, so
+  their black screenshot did not mean the phone was locked. Android's
+  keyguard state confirmed it was unlocked. Installed local Claude launch,
+  account retention and a Haiku 5.5 phone-tool task remain unverified.
 
 ### Shared topic names for Mike chats — 2026-10-06
 

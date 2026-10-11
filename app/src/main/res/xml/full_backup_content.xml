@@ -6,5 +6,6 @@
 <full-backup-content>
     <exclude domain="file" path="runtime/claude-home" />
     <exclude domain="file" path="runtime/claude-tmp" />
+    <exclude domain="file" path="runtime/claude-update-probe" />
     <exclude domain="file" path="runtime/claude" />
 </full-backup-content>

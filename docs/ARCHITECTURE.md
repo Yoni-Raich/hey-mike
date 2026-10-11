@@ -1,5 +1,23 @@
 # Architecture
 
+## Claude runtime reuse across APK updates — 2026-10-11
+
+Runtime discovery keeps other version directories. The updater first restores
+the saved active or previous choice, then checks the bundled pin and known
+previous pins. A known previous pin is accepted only with its compiled size
+and SHA-256; a directory name or altered selection metadata is not enough.
+This lets an existing 2.1.285 installation remain ready while the APK upgrades
+it to the bundled 2.1.293 required for Haiku 5.5. That first update uses the
+authenticated bundled pin without depending on latest-release discovery.
+Later updates still use signed official manifests and a compatibility probe.
+
+Only a verified, launch-tested candidate replaces the active selection.
+Download failure, cancellation and probe failure leave the working runtime
+usable. The saved previous choice can recover a damaged active binary. A
+failed selection-file write does not hide an existing verified installation.
+First installation also saves the selection. Claude account files and chat
+files stay outside the runtime-selection logic.
+
 ## Live child output and automatic parent continuation — 2026-10-11
 
 `SessionAgents` observes each child's ordinary message flow as well as run
@@ -2344,11 +2362,52 @@ voice works in a Claude chat.
 - **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
   `claude` binary through the pinned Alpine musl loader, packaged as
   `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
-  W^X does not apply. The binary (2.1.285, pinned sha256 and size) is never
+  W^X does not apply. The binary (2.1.293, pinned sha256 and size) is never
   bundled: it is downloaded from `downloads.claude.ai` only after the user
-  saw its size (232 MB) and tapped Download, with progress and cancel, and
+  saw its size (244 MB) and tapped Download, with progress and cancel, and
   hashed before use. At app start the host only re-checks a binary that is
   already there. On other ABIs the card says "Not available on this device".
+  Claude Code 2.1.293 adds Haiku 5.5 (`claude-haiku-5-5`); the picker uses
+  the CLI's `initialize` catalog, including its effort options. Until a
+  catalog is available, the pinned Haiku alias is shown as "Haiku 5.5".
+  A computer's own CLI catalog still supplies its names, so an older
+  computer can keep showing Haiku 4.5. Claude sign-in and chat files live
+  outside the versioned binary directory.
+- **Automatic Claude updates (2026-10-07).** The first phone installation
+  still uses the explicit Download action and the bundled 2.1.293 pin.
+  After that, `ClaudeRuntimeUpdates` checks the official `latest` endpoint
+  when Mike enters the foreground and every 15 minutes while it stays open.
+  The last attempt is stored across app restarts, so reopening cannot flood
+  the service. Binary downloads wait for an unmetered connection; checking
+  release metadata is small and does not require a model request.
+  `ClaudeReleaseClient` accepts only bounded HTTPS responses from the fixed
+  official origin without redirects. It verifies the detached GPG manifest
+  signature with the bundled Anthropic key, whose fingerprint is
+  `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`, before trusting its ARM64 musl
+  checksum and size. Bouncy Castle 1.86 provides OpenPGP verification without
+  registering a new global security provider. Unknown major versions or
+  harness schemas are refused until an app compatibility update.
+  A candidate downloads beside the active version and must pass its exact
+  `--version` and a tool-free, message-free stream-json `initialize` probe
+  using a separate HOME and no session persistence. Only then is the active
+  pointer atomically replaced. The working binary remains available during
+  downloads, cancellation, offline checks and incompatible releases. On
+  restart, a damaged active file falls back to the previous verified build,
+  then the bundled pin. Old version files are retained so live processes
+  can continue reading them; automatic disk pruning is not implemented.
+  The candidate probe HOME is excluded from backup and device transfer.
+- **Catalog refresh and turn boundaries.** Claude catalogs expire after
+  one minute and refresh immediately when the host's runtime identity changes.
+  Failed refreshes keep the last good catalog and back off for 30 seconds;
+  cancellation propagates and destroys the probe. Mike requests the current
+  chat's catalog on app resume, chat change, model-menu open and each foreground
+  minute. Computer checks re-probe the installed CLI version and keep account
+  and models scoped to that computer. The phone never installs or changes
+  computer update settings. An updated runtime identity becomes part of each
+  chat's running config: a live turn keeps its old immutable binary, and the
+  next idle turn restarts with `--resume`. A release can appear on the next
+  successful check, subject to account availability and protocol compatibility;
+  Android background execution and a closed app do not promise instant updates.
 - **Phone tools over loopback MCP.** Each chat process gets its own
   `LoopbackMcpServer` (127.0.0.1, fresh port and bearer token per start), so
   a tool call is always tied to the chat that made it. A `tools/call` becomes
@@ -2367,7 +2426,8 @@ voice works in a Claude chat.
   across configuration changes and is cleared on submit; the code is not
   logged or stored. Sign-in state comes only from `claude auth status`.
 - **Compliance rules** (from the spec): official unmodified binary checked
-  against its pinned hash; never bundled; sign-in only inside `claude`; the
+  against the bundled pin or an authenticated official manifest pin; never
+  bundled; sign-in only inside `claude`; the
   app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
   excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
   headers or `--bare`; API keys and base-URL variables are scrubbed from the

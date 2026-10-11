@@ -324,6 +324,7 @@ data class AgentUiActions(
     val onDisconnect: () -> Unit = {},
     val onForgetPairing: () -> Unit = {},
     val onModelSelected: (String) -> Unit = {},
+    val onRefreshModels: () -> Unit = {},
     val onReasoningEffortSelected: (String?) -> Unit = {},
     val onRenameSession: (sessionId: String, title: String) -> Unit = { _, _ -> },
     val onCompact: () -> Unit = {},
