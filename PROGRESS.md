@@ -1,5 +1,28 @@
 # Progress
 
+### Live child updates and automatic parent reply — 2026-10-11
+
+- Child public text now reaches its parent and ancestors as ordered revisions,
+  including commentary between tools and the full result. Active parents get
+  context; idle parents wake with their saved model/effort. Stop, startup,
+  pending user gates, deletion and unknown delivery outcomes are fenced.
+- Voice receives all quoted context and a speakable handoff. Xiaomi QA found
+  that disabling the muted WebRTC track delayed speech until unmute. Capture
+  now uses ADM zeroed samples while the live track stays enabled; Stop still
+  disables it. Real muted voice QA received both progress markers and the final
+  result automatically, with no source-user follow-up.
+- Final 1132 (`0.14.0-dev.subagents4`) full gate passed in 1m38s, including app
+  and voice lint. XML: 2,390 executions, zero failures/errors, 16 skips;
+  runtime Python: 15 passed; manual emulator UI runner: 34 passed in 49.136s.
+- Exact signed Dev Debug APK installed with `install -r` on Xiaomi Redmi 12 /
+  Android 15; installed SHA matches. All 100 original chat IDs, 1,876 message
+  IDs and two draft IDs remain. Accessibility stayed bound; no uninstall,
+  data clearing or physical instrumentation. Typed QA also proved live progress
+  and a new parent turn after the previous parent turn ended.
+- Evidence, full SHA, UI fixture and remaining spoken-command, remote-project,
+  long-call and production-release gaps:
+  `docs/testing/session-subagents-voice-20261011/LIVE-UPDATES.md`.
+
 ### Ordinary session subagents and voice — 2026-10-11
 
 - Implemented `session_agents` options/start/list/status/message/cancel/open.

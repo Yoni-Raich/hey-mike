@@ -34,6 +34,23 @@ class ChildAgentsUiTest {
             consentVersion = Onboarding.CONSENT_VERSION, finished = true),
     )
 
+    @Test fun progressRevisionsAndAutomaticParentReplyKeepTheChildChatAction() {
+        val state = mutableStateOf(fixture())
+        val selected = mutableListOf<String>()
+        compose.setContent { AndroidAgentScreen(state.value, AgentUiActions(onSelectSession = { selected += it })) }
+        compose.onNodeWithText("Checking the options").assertIsDisplayed()
+        compose.runOnIdle { state.value = state.value.copy(childAgents = listOf(card.copy(progress = "Reading the second document"))) }
+        compose.onNodeWithText("Reading the second document").assertIsDisplayed()
+        compose.onNodeWithText("Checking the options").assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(childAgents = listOf(card.copy(status = "completed", result = "Three options found")),
+            messages = state.value.messages + ChatMessage("parent-reply", "root", "assistant", "The child finished. Here are the three options.", 2)) }
+        compose.onNodeWithText("The child finished. Here are the three options.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Open subagent chat: Find places").assertIsDisplayed().performClick()
+        assertEquals(listOf("child"), selected)
+        compose.onNodeWithContentDescription("Stop subagent: Find places").assertDoesNotExist()
+        capture("subagents-live-parent-update")
+    }
+
     @Test fun cardOpensOrdinaryChildChatAndParentLinkGoesBack() {
         val state = mutableStateOf(fixture())
         val sent = mutableListOf<String>()

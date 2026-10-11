@@ -253,6 +253,30 @@ class AgentRuns(
 
     override fun steer(sessionId: String, prompt: String) { slotFor(sessionId)?.steer(prompt) }
 
+    /** Delegated steering is not a human answer to a child's pending gate. */
+    fun canMessageChild(sessionId: String): Boolean = synchronized(this) {
+        slotFor(sessionId)?.acceptsAgentMessage() ?: true
+    }
+
+    fun messageChild(sessionId: String, prompt: String, model: String?, reasoningEffort: String?) = synchronized(this) {
+        val active = slotFor(sessionId)
+        if (active != null) active.steerAgentMessage(prompt)
+        else send(sessionId, prompt, model = model, reasoningEffort = reasoningEffort)
+    }
+
+    /** A child update joins this parent's run, or wakes its ordinary chat with its saved model. */
+    suspend fun deliverAgentContext(session: ChatSession, prompt: String, allowed: () -> Boolean): Boolean {
+        val active = synchronized(this) {
+            if (!allowed()) return true
+            slotFor(session.id).also { slot ->
+                if (slot == null) freeSlot().send(QueuedTurn(sessionId = session.id, prompt = prompt,
+                    model = session.model, effort = session.reasoningEffort,
+                    displayPrompt = "Update from child chats", agentContext = true))
+            }
+        }
+        return active?.receiveAgentContext(prompt, allowed) ?: true
+    }
+
     fun stop(sessionId: String) = synchronized(this) {
         try { onStopSession(sessionId) }
         finally { family(sessionId).forEach { slotFor(it)?.stop() } }

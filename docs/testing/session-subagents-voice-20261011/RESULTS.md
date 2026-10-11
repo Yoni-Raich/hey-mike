@@ -1,5 +1,9 @@
 # Session subagents and voice — 2026-10-11
 
+The latest live-output and automatic-parent fixes, final 1132 APK and device
+evidence are in [LIVE-UPDATES.md](LIVE-UPDATES.md). The checks below record the
+earlier 1129 feature build.
+
 ## Result
 
 Children run as ordinary Mike chats. A parent can select their engine, model,

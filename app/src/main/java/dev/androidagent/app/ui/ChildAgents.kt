@@ -65,7 +65,7 @@ data class ChildAgentItem(
                 listOfNotNull(computer, task.project?.trimEnd('/', '\\')?.substringAfterLast('/')?.substringAfterLast('\\')).joinToString(" · ")
             } ?: "This phone"
             return ChildAgentItem(task.id, task.parentSessionId, task.sessionId,
-                chat?.title ?: task.title, task.task, task.status, task.progress, place, task.result,
+                chat?.title ?: task.title, task.task, task.status, task.activity?.takeIf { it.isNotBlank() } ?: task.progress, place, task.result,
                 chat?.model ?: task.model.takeIf { chat == null || chat.engine == task.engine },
                 if (chat?.model != null) chat.reasoningEffort else task.reasoningEffort.takeIf { chat == null || chat.engine == task.engine })
         }

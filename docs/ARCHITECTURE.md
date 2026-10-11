@@ -1,5 +1,47 @@
 # Architecture
 
+## Live child output and automatic parent continuation — 2026-10-11
+
+`SessionAgents` observes each child's ordinary message flow as well as run
+state. `SessionAgentUpdate` carries public assistant/activity text revisions
+in order, with message IDs, append offsets and explicit replacements. The
+compact status preview remains bounded; the event path carries every message
+and the full final result, including text beyond that preview. Restored history
+is a baseline, not a new event. Child text remains JSON-quoted data.
+
+`SessionAgentDelivery` batches events for 500 ms and delivers them to the
+direct parent and its ancestors. An active typed parent receives context in
+its existing turn; an idle parent starts an ordinary turn using its saved
+model and effort. Context never goes through the user's approval/question
+reply parser or seeds a chat title. Startup and pending user gates hold the
+batch. A run's Stop fence travels with its events and is checked again at
+dispatch, so queued completion cannot restart a stopped parent. A transport
+error is reported and is not automatically replayed. Restart does not resume
+pending background notifications or unknown child work.
+
+Voice receives every text segment through quiet quoted context, followed by
+a speakable backend handoff for useful progress/completion. `appendText`
+alone does not request a spoken response. The pinned Codex v0.153.4
+[`appendSpeech` handler](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/realtime_conversation.rs)
+uses the realtime backend's speakable context channel. Large context is sent
+in numbered packets without splitting Unicode surrogate pairs. A speaking
+voice parent holds the batch until it can respond. The call and child-chat
+browsing remain owned by the original voice session.
+
+WebRTC microphone mute uses the audio device module's zeroed capture samples,
+while the live local track stays enabled. Disabling that track delayed the
+Xiaomi's incoming speakable child updates until unmute. Stop/close still mute
+capture/playback and disable the track. The exact bundled WebRTC
+`144.7559.09` bytecode confirms muted samples are replaced with zero bytes
+before native transport; this also matches the upstream
+[`WebRtcAudioRecord` capture loop](https://webrtc.googlesource.com/src/+/66f1e9eb345d2201459f1a95a6cffa8fc2311fde/sdk/android/src/java/org/webrtc/audio/WebRtcAudioRecord.java).
+Voice dispatch and submission are recorded in the private source-session
+trace; submission alone is not proof of a spoken response.
+
+Delegated `message` steering also bypasses the human gate parser: a parent's
+"yes" is never an approval or answer to `ask_user`. Only a user's reply may
+resolve those gates. Child cards show the latest public words during work.
+
 ## Ordinary session subagents and voice — 2026-10-11
 
 `core.SessionAgents` owns the `session_agents` protocol. Each accepted task

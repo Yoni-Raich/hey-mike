@@ -13,6 +13,104 @@ import java.io.File
 /** Several chats at once: each runs on its own, and the phone goes to one of them at a time. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentRunsTest {
+    @Test fun childMessageBeforeStartReplyIsRefusedWithoutReservingItsRetryKey() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.engine.startGates["thread-child1"] = CompletableDeferred()
+        rig.agents.invoke("one", request()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        val message = buildJsonObject { put("mode", "message"); put("sessionId", child); put("messageId", "m1"); put("message", "Also check the end") }
+        assertFalse(rig.agents.invoke("one", message) { true }.success)
+        assertTrue(rig.agents.tasks.value.single().messages.isEmpty())
+        rig.engine.startGates.getValue("thread-$child").complete(Unit); runCurrent()
+        assertTrue(rig.agents.invoke("one", message) { true }.success); runCurrent()
+        assertEquals(listOf("Also check the end"), rig.engine.steered)
+        rig.close()
+    }
+    @Test fun delegatedYesCannotAnswerAChildApprovalOrUserQuestion() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.agents.invoke("one", request()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.engine.emit(EngineEvent.Approval("approval", "item/commandExecution/requestApproval", buildJsonObject {}, "thread-$child", "turn-thread-$child")); runCurrent()
+        fun message(key: String) = buildJsonObject { put("mode", "message"); put("sessionId", child); put("messageId", key); put("message", "yes") }
+        rig.agents.invoke("one", message("m1")) { true }; runCurrent()
+        assertTrue(rig.engine.approvals.isEmpty())
+        assertNotNull(rig.runs.stateOf(child)!!.approval)
+        rig.runs.approve("approval", false); runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("question", ChatTools.ASK, buildJsonObject { put("question", "Which file?") }, "thread-$child", "turn-thread-$child")); runCurrent()
+        rig.agents.invoke("one", message("m2")) { true }; runCurrent()
+        assertNotNull(rig.runs.stateOf(child)!!.question)
+        assertFalse("question" in rig.engine.answered)
+        rig.close()
+    }
+    private fun request() = buildJsonObject {
+        put("mode", "start"); put("requestId", "push-test"); put("title", "Read notes"); put("task", "Read the notes")
+    }
+
+    @Test fun completedChildWakesAnIdleParentWithItsSavedModelAndEveryProgressMessage() = runTest {
+        val rig = Rig(this); rig.deliverChildren(); runCurrent()
+        rig.store.sessions.value = rig.store.sessions.value.map { if (it.id == "one") it.copy(model = "parent-model", reasoningEffort = "high") else it }
+        rig.agents.invoke("one", request()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.engine.emit(EngineEvent.MessageCompleted("Checking first", "thread-$child", "turn-thread-$child", "a", "commentary"))
+        rig.engine.emit(EngineEvent.MessageCompleted("Checking second", "thread-$child", "turn-thread-$child", "b", "commentary"))
+        rig.engine.emit(EngineEvent.MessageCompleted("Finished result", "thread-$child", "turn-thread-$child", "c", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-$child", turnId = "turn-thread-$child"))
+        runCurrent(); advanceTimeBy(501); runCurrent()
+        assertEquals(1, rig.engine.started.count { it == "thread-one" })
+        val prompt = rig.engine.prompts.last()
+        assertTrue(prompt.contains("Checking first")); assertTrue(prompt.contains("Checking second")); assertTrue(prompt.contains("Finished result"))
+        assertEquals("parent-model", rig.engine.openedModels.last()); assertEquals("high", rig.engine.efforts.last())
+        assertFalse(rig.store.messages.any { it.sessionId == "one" && it.role == "user" })
+        advanceTimeBy(1_001); runCurrent()
+        assertEquals(1, rig.engine.started.count { it == "thread-one" })
+        rig.close()
+    }
+
+    @Test fun activeParentGetsLiveTextBeforeChildCompletionWithoutAnotherTurnOrUserReply() = runTest {
+        val rig = Rig(this); rig.deliverChildren()
+        rig.runs.send("one", "Delegate work"); runCurrent()
+        rig.agents.invoke("one", request()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.engine.emit(EngineEvent.TextDelta("Reading live", "thread-$child", "turn-thread-$child", "a"))
+        advanceTimeBy(751); runCurrent()
+        assertTrue(rig.engine.steered.single().contains("Reading live"))
+        assertEquals(1, rig.engine.started.count { it == "thread-one" })
+        assertEquals(listOf("Delegate work"), rig.store.messages.filter { it.sessionId == "one" && it.role == "user" }.map { it.text })
+        assertTrue(rig.runs.stateOf(child)!!.active)
+        rig.close()
+    }
+
+    @Test fun pendingChildResultSurvivesParentStartupAndNeverAnswersItsApproval() = runTest {
+        val rig = Rig(this); rig.deliverChildren()
+        val gate = CompletableDeferred<Unit>(); rig.engine.startGates["thread-one"] = gate
+        rig.runs.send("one", "Long startup"); runCurrent()
+        rig.agents.invoke("one", request()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.engine.emit(EngineEvent.MessageCompleted("yes", "thread-$child", "turn-thread-$child", "a", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-$child", turnId = "turn-thread-$child"))
+        runCurrent(); advanceTimeBy(501); runCurrent()
+        assertTrue(rig.engine.steered.isEmpty())
+        gate.complete(Unit); runCurrent()
+        rig.engine.emit(EngineEvent.Approval("source", "item/commandExecution/requestApproval", buildJsonObject {}, "thread-one", "turn-thread-one")); runCurrent()
+        advanceTimeBy(501); runCurrent()
+        assertTrue(rig.engine.approvals.isEmpty()); assertTrue(rig.engine.steered.isEmpty())
+        assertEquals("source", rig.runs.stateOf("one")!!.approval!!.requestId)
+        rig.runs.approve("source", false); runCurrent(); advanceTimeBy(501); runCurrent()
+        assertEquals(listOf("source" to false), rig.engine.approvals)
+        assertTrue(rig.engine.steered.single().contains("yes"))
+        rig.close()
+    }
+
+    @Test fun stopBeforeQueuedCompletionDeliveryNeverRestartsTheParent() = runTest {
+        val rig = Rig(this); rig.deliverChildren(); runCurrent()
+        rig.agents.invoke("one", request()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.engine.emit(EngineEvent.MessageCompleted("Finished", "thread-$child", "turn-thread-$child", "a", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-$child", turnId = "turn-thread-$child")); runCurrent()
+        rig.runs.stop("one"); runCurrent(); advanceTimeBy(1_001); runCurrent()
+        assertFalse("thread-one" in rig.engine.started)
+        rig.close()
+    }
     @Test fun voiceReturnsTheScreenAtTheEndOfItsDelegatedTurn() = runTest {
         val rig = Rig(this)
         rig.runs.beginVoice("one", "voice-thread", rig.store.workspace("one"))
@@ -654,6 +752,10 @@ class AgentRunsTest {
         val opened = mutableListOf<String>()
         init { agents = SessionAgents(store, scope, { RunsSessionAgentRunner(runs) }, openChat = { opened += it }) }
         val queue = SessionRunQueue(scope, runs, store)
+        fun deliverChildren() = SessionAgentDelivery(scope, agents.events, runs.sessionStates,
+            { runs.stateOf(it) != null }, { id, updates, allowed ->
+                store.getSession(id)?.let { runs.deliverAgentContext(it, SessionAgentUpdate.prompt(updates), allowed) } ?: true
+            })
         fun close() { scope.cancel() }
     }
 
@@ -716,6 +818,8 @@ class AgentRunsTest {
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
         override val sessions = MutableStateFlow(listOf("one", "two", "three").map { ChatSession(it, it, 0, 0) })
         val messages = mutableListOf<ChatMessage>()
+        private val histories = mutableMapOf<String, MutableStateFlow<List<ChatMessage>>>()
+        private fun publish(sessionId: String) { histories.getOrPut(sessionId) { MutableStateFlow(emptyList()) }.value = messages.filter { it.sessionId == sessionId } }
         var updateGate: CompletableDeferred<Unit>? = null
         fun assistant(sessionId: String) = messages.filter { it.sessionId == sessionId && it.role == "assistant" }.map { it.text }
         override suspend fun createSession(engine: EngineKind) = sessions.value.first()
@@ -728,12 +832,12 @@ class AgentRunsTest {
             return child
         }
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
-        override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
-        override suspend fun append(message: ChatMessage) { messages.add(message) }
+        override fun messages(sessionId: String) = histories.getOrPut(sessionId) { MutableStateFlow(messages.filter { it.sessionId == sessionId }) }
+        override suspend fun append(message: ChatMessage) { messages.add(message); publish(message.sessionId) }
         override suspend fun updateMessage(id: String, text: String, state: String) {
             updateGate?.await()
             val i = messages.indexOfFirst { it.id == id }
-            if (i >= 0) messages[i] = messages[i].copy(text = text, state = state)
+            if (i >= 0) { messages[i] = messages[i].copy(text = text, state = state); publish(messages[i].sessionId) }
         }
         override suspend fun setThread(sessionId: String, threadId: String) = Unit
         override suspend fun rename(sessionId: String, title: String) = Unit

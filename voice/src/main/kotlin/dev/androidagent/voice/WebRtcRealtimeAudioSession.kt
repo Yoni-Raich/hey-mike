@@ -185,7 +185,9 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
         audioStarted = true
         audioDeviceModule.setMicrophoneMute(microphoneMuted)
         audioDeviceModule.setSpeakerMute(false)
-        localAudioTrack.setEnabled(!microphoneMuted)
+        // ADM replaces muted microphone samples with zeros. Keep the live track
+        // running: disabling it also stalls speakable backend updates until unmute.
+        localAudioTrack.setEnabled(true)
     }
 
     override fun stopAudio() {
@@ -200,7 +202,8 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
         microphoneMuted = muted
         if (closed.get() || !audioStarted) return
         audioDeviceModule.setMicrophoneMute(muted)
-        localAudioTrack.setEnabled(!muted)
+        // Mute the samples, not the media clock. Stop/close still disable the track.
+        localAudioTrack.setEnabled(true)
     }
 
     override fun setLevelListener(listener: VoiceLevelListener?) {

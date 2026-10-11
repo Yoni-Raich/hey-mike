@@ -10,6 +10,102 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionAgentsTest {
+    @Test fun preparationFailureAlsoNotifiesTheParentWithoutAnyEngineDispatch() = runTest {
+        val rig = Rig(this, place = { error("Model unavailable") }); val events = mutableListOf<SessionAgentUpdate>()
+        rig.scope.launch { rig.agents.events.collect { events += it } }; runCurrent()
+        assertFalse(rig.agents.invoke("root", start()) { true }.success); runCurrent()
+        assertTrue(rig.runner.sent.isEmpty())
+        assertEquals("failed", events.single().task.status)
+        assertTrue(events.single().wake); assertTrue(events.single().allowed("root"))
+        rig.close()
+    }
+    @Test fun everyPublicSegmentAndCorrectionReachesTheParentAndTerminalIsEmittedOnce() = runTest {
+        val rig = Rig(this); val events = mutableListOf<SessionAgentUpdate>()
+        rig.scope.launch { rig.agents.events.collect { events += it } }; runCurrent()
+        rig.agents.invoke("root", start()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.store.append(ChatMessage("a", child, "assistant", "First", 1, "streaming")); runCurrent()
+        rig.store.updateMessage("a", "First\nsecond", "streaming"); runCurrent()
+        rig.store.updateMessage("a", "Corrected", "complete"); runCurrent()
+        rig.store.append(ChatMessage("private", child, "user", "Do not forward this user reply", 2)); runCurrent()
+        repeat(60) { index -> rig.store.append(ChatMessage("b$index", child, "assistant", "Progress $index", 3L + index)); runCurrent() }
+        val long = "אבג🙂".repeat(6_000) + "TAIL_PRESERVED"
+        rig.runner.complete(child, rig.store, long); runCurrent()
+        repeat(3) { rig.agents.invoke("root", operation("status", child)) { true }; runCurrent() }
+        val segments = events.flatMap { it.outputs }
+        assertEquals("First", segments[0].text)
+        assertEquals("\nsecond", segments[1].text); assertEquals(5, segments[1].offset)
+        assertEquals("Corrected", segments[2].text); assertTrue(segments[2].replace)
+        assertEquals(60, segments.count { it.text.startsWith("Progress ") })
+        assertFalse(segments.any { it.messageId == "private" })
+        assertEquals(long, segments.last().text)
+        assertTrue(events.last().quoted().contains("TAIL_PRESERVED"))
+        assertEquals(1, events.count { it.task.status == "completed" })
+        rig.close()
+    }
+
+    @Test fun restoredHistoryDoesNotWakeTheParentAndStopRevokesAlreadyQueuedUpdates() = runTest {
+        val rig = Rig(this); val events = mutableListOf<SessionAgentUpdate>()
+        rig.scope.launch { rig.agents.events.collect { events += it } }; runCurrent()
+        rig.agents.invoke("root", start()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.store.append(ChatMessage("a", child, "assistant", "Live progress", 1)); runCurrent()
+        val pending = events.last()
+        assertTrue(pending.allowed("root"))
+        rig.agents.stop("root")
+        assertFalse(pending.allowed("root"))
+        rig.close()
+        val restarted = Rig(this, rig.store); val restored = mutableListOf<SessionAgentUpdate>()
+        restarted.scope.launch { restarted.agents.events.collect { restored += it } }; runCurrent()
+        assertTrue(restored.isEmpty())
+        assertEquals("unknown", restarted.agents.tasks.value.single().status)
+        restarted.close()
+    }
+
+    @Test fun grandchildOutputHasBothAncestorsAndDeletedLinksRevokeDelivery() = runTest {
+        val rig = Rig(this); val events = mutableListOf<SessionAgentUpdate>()
+        rig.scope.launch { rig.agents.events.collect { events += it } }; runCurrent()
+        rig.agents.invoke("root", start()) { true }
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.agents.invoke(child, start("nested")) { true }; runCurrent()
+        val nested = rig.agents.tasks.value.last().sessionId!!
+        rig.store.append(ChatMessage("a", nested, "assistant", "Grandchild progress", 1)); runCurrent()
+        val update = events.last()
+        assertEquals(listOf(child, "root"), update.parents)
+        rig.store.sessions.value = rig.store.sessions.value.map { if (it.id == nested) it.copy(parentSessionId = null) else it }
+        assertFalse(update.allowed(child)); assertFalse(update.allowed("root"))
+        rig.close()
+    }
+
+    @Test fun explicitNewChildTurnAfterStopGetsANewDeliveryFence() = runTest {
+        val rig = Rig(this); val events = mutableListOf<SessionAgentUpdate>()
+        rig.scope.launch { rig.agents.events.collect { events += it } }; runCurrent()
+        rig.agents.invoke("root", start()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.runner.complete(child, rig.store, "First"); runCurrent()
+        val old = events.last(); rig.agents.stop("root")
+        assertFalse(old.allowed("root"))
+        rig.agents.invoke("root", buildJsonObject {
+            put("mode", "message"); put("sessionId", child); put("messageId", "after-stop"); put("message", "Continue")
+        }) { true }; runCurrent()
+        rig.runner.complete(child, rig.store, "Second"); runCurrent()
+        assertTrue(events.last().allowed("root"))
+        assertEquals("Second", events.last().task.result)
+        rig.close()
+    }
+    @Test fun childTextIsObservedWithoutAnyRunStateChange() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.agents.invoke("root", start()) { true }
+        runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.store.append(ChatMessage("progress", child, "assistant", "Checking the first file", 1, "streaming"))
+        runCurrent()
+        assertEquals("Checking the first file", rig.agents.tasks.value.single().activity)
+        rig.store.updateMessage("progress", "Checking the first file\nThen the second file", "complete")
+        runCurrent()
+        assertEquals("Checking the first file\nThen the second file", rig.agents.tasks.value.single().activity)
+        rig.close()
+    }
     private fun start(key: String = "r1", task: String = "  exact\ntask  ") = buildJsonObject {
         put("mode", "start"); put("requestId", key); put("title", "Notes"); put("task", task)
     }
@@ -293,6 +389,8 @@ class SessionAgentsTest {
         override val sessions = MutableStateFlow(listOf(ChatSession("root", "Root", 0, 0, engine = EngineKind.CLAUDE)))
         val receipts = mutableMapOf<String, SessionAgentTask>()
         val history = mutableListOf<ChatMessage>()
+        private val histories = mutableMapOf<String, MutableStateFlow<List<ChatMessage>>>()
+        private fun publish(sessionId: String) { histories.getOrPut(sessionId) { MutableStateFlow(emptyList()) }.value = history.filter { it.sessionId == sessionId } }
         override suspend fun createSession(engine: EngineKind): ChatSession = error("Use child creation")
         override suspend fun createChildSession(parentSessionId: String, engine: EngineKind, title: String): ChatSession =
             ChatSession("child-${sessions.value.size}", title, 0, 0, engine = engine, parentSessionId = parentSessionId).also { sessions.value += it }
@@ -302,9 +400,9 @@ class SessionAgentsTest {
             sessions.value = sessions.value.map { if (it.id == sessionId) it.copy(model = model, reasoningEffort = reasoningEffort) else it }
         }
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
-        override fun messages(sessionId: String) = flowOf(history.filter { it.sessionId == sessionId })
-        override suspend fun append(message: ChatMessage) { history += message }
-        override suspend fun updateMessage(id: String, text: String, state: String) { val i = history.indexOfFirst { it.id == id }; if (i >= 0) history[i] = history[i].copy(text = text, state = state) }
+        override fun messages(sessionId: String) = histories.getOrPut(sessionId) { MutableStateFlow(history.filter { it.sessionId == sessionId }) }
+        override suspend fun append(message: ChatMessage) { history += message; publish(message.sessionId) }
+        override suspend fun updateMessage(id: String, text: String, state: String) { val i = history.indexOfFirst { it.id == id }; if (i >= 0) { history[i] = history[i].copy(text = text, state = state); publish(history[i].sessionId) } }
         override suspend fun setThread(sessionId: String, threadId: String) = Unit
         override suspend fun rename(sessionId: String, title: String) = Unit
         override suspend fun deleteSession(sessionId: String) = Unit

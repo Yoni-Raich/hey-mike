@@ -31,6 +31,9 @@ import dev.androidagent.core.VoiceEvent
 import dev.androidagent.remote.RoutingAgentEngine
 import dev.androidagent.voice.AndroidRealtimeVoiceController
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -216,6 +219,35 @@ class VoiceConversation(
             synchronized(pendingTypedTexts) { pendingTypedTexts.removeLastOccurrence(echo) }
             throw failure
         }
+    }
+
+    /** Speakable backend handoffs wake realtime; appendText alone only adds quiet context. */
+    suspend fun deliverChildUpdates(source: String, updates: List<dev.androidagent.core.SessionAgentUpdate>, allowed: () -> Boolean): Boolean =
+        announcementLock.withLock {
+            val thread = activeThreadId
+            fun current() = allowed() && sessionId.value == source && activeThreadId == thread && thread != null
+            if (!allowed()) return@withLock true
+            if (!current()) return@withLock false
+            if (voice.state.value.phase in setOf(dev.androidagent.core.VoicePhase.STARTING, dev.androidagent.core.VoicePhase.SPEAKING)) return@withLock false
+            traceChildUpdates(source, updates, "dispatching")
+            val last = updates.withIndex().filter { it.value.wake }.associate { it.value.task.id to it.index }
+            updates.forEachIndexed { index, update ->
+                update.deliverVoice(::addContext, { voice.appendSpeech(it) }, ::current, announce = last[update.task.id] == index)
+            }
+            traceChildUpdates(source, updates, "submitted")
+            true
+        }
+
+    /** Private session evidence separates app dispatch from an actual spoken response. */
+    private suspend fun traceChildUpdates(source: String, updates: List<dev.androidagent.core.SessionAgentUpdate>, stage: String) {
+        try {
+            sessions.appendTrace(source, buildJsonObject {
+                put("timestampMs", System.currentTimeMillis()); put("type", "child_update")
+                put("source", "voice_child"); put("stage", stage)
+                put("text", dev.androidagent.core.SessionAgentUpdate.prompt(updates))
+            })
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { android.util.Log.w("VoiceConversation", "Child update trace could not be saved") }
     }
 
     private suspend fun handle(event: VoiceEvent) {
