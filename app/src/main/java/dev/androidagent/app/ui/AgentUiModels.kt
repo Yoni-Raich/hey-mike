@@ -190,8 +190,15 @@ data class AgentUiState(
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */
     val pcThreads: Map<String, List<dev.androidagent.remote.ComputerConversation>> = emptyMap(),
+    /** Per computer, why part of its conversation list is missing. */
     val pcThreadErrors: Map<String, String> = emptyMap(),
+    /** Per computer, a quiet remark about its list that is not a failure. */
+    val pcThreadNotices: Map<String, String> = emptyMap(),
+    /** Computer chats whose history is being read again. */
     val pcSyncing: Set<String> = emptySet(),
+    /** Per computer chat, what went wrong the last time its session was checked. */
+    val pcSyncProblems: Map<String, String> = emptyMap(),
+    /** Computer chats being handed to Claude Desktop. */
     val pcDesktopOpening: Set<String> = emptySet(),
     /** Computer chats whose conversation another Codex on the computer holds open. */
     val pcBusyChats: Set<String> = emptySet(),

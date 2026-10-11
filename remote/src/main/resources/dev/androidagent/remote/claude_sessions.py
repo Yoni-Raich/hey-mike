@@ -72,13 +72,15 @@ def slices(file):
             continue
 
 
-def metadata(file, busy_ids):
+def metadata(file, holders):
     cwd = ""
     custom = title = summary = first = model = ""
     for row in slices(file):
         if row.get("isSidechain") or row.get("teamName"):
             continue
-        cwd = row.get("cwd") or cwd
+        # The folder the session started in names its project. A later cd or
+        # worktree must not move it: `claude --resume` only finds it from there.
+        cwd = cwd or row.get("cwd")
         typ = row.get("type")
         if typ == "custom-title":
             custom = row.get("customTitle") or custom
@@ -95,11 +97,48 @@ def metadata(file, busy_ids):
     name = custom or title or summary
     return {"id": file.stem, "cwd": cwd, "title": str(name or first or "Claude conversation")[:200],
             "name": str(name)[:200] if name else None, "updatedAt": int(file.stat().st_mtime * 1000),
-            "model": model or None, "busy": file.stem in busy_ids}
+            "model": model or None, "busy": file.stem in holders}
 
 
-def active_ids(config):
-    ids = set()
+MIKE = re.compile(r"[\\/]\.hey-mike[\\/]claude[\\/]")
+
+
+class ReaderError(ValueError):
+    def __init__(self, message, code):
+        super().__init__(message)
+        self.code = code
+
+
+def alive(pid):
+    if os.name != "nt":
+        os.kill(pid, 0)
+        return True
+    # os.kill(pid, 0) is not a liveness probe on Windows.
+    import ctypes
+    kernel = ctypes.windll.kernel32
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        return bool(kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(exit_code))) and exit_code.value == 259
+    finally:
+        kernel.CloseHandle(ctypes.c_void_p(handle))
+
+
+def session_holders(config):
+    """Per session ID: 'other' when another Claude client holds it, 'mike' when
+    only CLIs that Mike launched do. Mike's launch files live in .hey-mike/claude."""
+    ids = {}
+    mike_pids = set()
+
+    def note(sid, mike):
+        if not mike:
+            ids[sid] = "other"
+        else:
+            ids.setdefault(sid, "mike")
+
     proc = Path("/proc")
     if proc.is_dir():
         for folder in proc.iterdir():
@@ -109,9 +148,12 @@ def active_ids(config):
                 args = (folder / "cmdline").read_bytes()[:65536].decode("utf-8", "replace").split("\0")
                 if "claude" not in " ".join(args[:2]).lower():
                     continue
+                mike = any(MIKE.search(arg) for arg in args)
+                if mike:
+                    mike_pids.add(int(folder.name))
                 for i, arg in enumerate(args[:-1]):
                     if arg in ("--resume", "--session-id", "-r") and UUID.fullmatch(args[i + 1]):
-                        ids.add(args[i + 1])
+                        note(args[i + 1], mike)
             except OSError:
                 continue
     sessions = config / "sessions"
@@ -122,25 +164,11 @@ def active_ids(config):
             try:
                 row = json.loads(file.read_text(encoding="utf-8"))
                 pid = int(row.get("pid") or file.stem)
-                if os.name == "nt":
-                    # os.kill(pid, 0) is not a liveness probe on Windows.
-                    import ctypes
-                    kernel = ctypes.windll.kernel32
-                    kernel.OpenProcess.restype = ctypes.c_void_p
-                    handle = kernel.OpenProcess(0x1000, False, pid)
-                    if not handle:
-                        continue
-                    try:
-                        exit_code = ctypes.c_ulong()
-                        if not kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(exit_code)) or exit_code.value != 259:
-                            continue
-                    finally:
-                        kernel.CloseHandle(ctypes.c_void_p(handle))
-                else:
-                    os.kill(pid, 0)
+                if not alive(pid):
+                    continue
                 sid = row.get("sessionId") or row.get("session_id")
                 if isinstance(sid, str) and UUID.fullmatch(sid):
-                    ids.add(sid)
+                    note(sid, pid in mike_pids)
             except (OSError, ValueError, TypeError):
                 continue
     return ids
@@ -222,30 +250,36 @@ def messages(file):
 
 def project(mode, sid=None):
     config, projects = roots()
-    busy_ids = active_ids(config)
+    holders = session_holders(config)
     candidates = files(projects)
     if mode == "list":
-        items = [item for file in candidates if (item := metadata(file, busy_ids)) is not None]
+        items = [item for file in candidates if (item := metadata(file, holders)) is not None]
         counts = {}
         for item in items:
             counts[item["id"]] = counts.get(item["id"], 0) + 1
-        items = [item for item in items if counts[item["id"]] == 1]
-        return {"threads": items, "skipped": len(candidates) - len(items)}
+        unique = [item for item in items if counts[item["id"]] == 1]
+        # Empty files and stubs without a folder are not conversations and not
+        # a problem. Only a native ID that names two files is reported.
+        return {"threads": unique, "skipped": len(items) - len(unique), "incomplete": len(candidates) - len(items)}
     if not isinstance(sid, str) or not UUID.fullmatch(sid):
         raise ValueError("Invalid Claude session ID")
     selected = [file for file in candidates if file.stem == sid]
     if not selected:
-        raise ValueError("Claude session was not found; its original transcript is required")
+        raise ReaderError("Claude session was not found; its original transcript is required", "not_found")
     if len(selected) != 1:
         raise ValueError("Claude session ID occurs in more than one project; resolve the duplicate first")
-    item = metadata(selected[0], busy_ids)
+    item = metadata(selected[0], holders)
     if item is None:
-        raise ValueError("Claude session has no valid working folder")
-    if mode == "busy":
-        return {"thread": item, "busy": sid in busy_ids}
-    if mode != "read":
+        raise ReaderError("Claude session has no valid working folder", "not_found")
+    payload = {"thread": item, "busy": holders.get(sid) == "other", "mike": holders.get(sid) == "mike"}
+    if mode == "read":
+        try:
+            payload["messages"] = messages(selected[0])
+        except ValueError as error:
+            raise ReaderError(str(error), "history") from error
+    elif mode != "busy":
         raise ValueError("Unknown Claude session operation")
-    return {"thread": item, "messages": messages(selected[0]), "busy": sid in busy_ids}
+    return payload
 
 
 def main():
@@ -253,9 +287,12 @@ def main():
         payload = project(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
         encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) > MAX_OUTPUT:
-            raise ValueError("Claude history exceeds the 8 MiB display limit")
+            raise ReaderError("Claude history exceeds the 8 MiB display limit", "history")
     except Exception as error:
-        encoded = json.dumps({"error": str(error)}, ensure_ascii=True, separators=(",", ":"))
+        failure = {"error": str(error)}
+        if isinstance(error, ReaderError):
+            failure["code"] = error.code
+        encoded = json.dumps(failure, ensure_ascii=True, separators=(",", ":"))
     print("HEYMIKE " + encoded)
 
 

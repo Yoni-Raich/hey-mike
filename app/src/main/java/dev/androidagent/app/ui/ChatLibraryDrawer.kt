@@ -660,9 +660,15 @@ private fun LibraryConnection(state: AgentUiState, id: String, actions: AgentUiA
             is RemoteSetup.Working -> LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = LibraryAmber, trackColor = LibraryTile)
             is RemoteSetup.Failed -> PcProblemCard(message = setup.message, primary = "Try again", onPrimary = { actions.onReconnectComputer(id) }, secondary = "Settings", onSecondary = { close(); actions.onOpenComputers() }, modifier = Modifier.padding(0.dp))
             is RemoteSetup.NeedsTailscaleApproval -> TailscaleApprovalCard(state.computers.first { it.id == id }.label, setup.url, { actions.onOpenTailscaleApproval(id, it) }, { actions.onReconnectComputer(id) })
-            is RemoteSetup.Ready -> state.pcThreadErrors[id]?.let { problem ->
-                PcProblemCard(message = "Some conversations could not be loaded: $problem", primary = "Refresh", onPrimary = actions.onRefreshPcThreads,
-                    secondary = "Settings", onSecondary = { close(); actions.onOpenComputers() }, modifier = Modifier.padding(0.dp))
+            is RemoteSetup.Ready -> {
+                state.pcThreadErrors[id]?.let { problem ->
+                    PcProblemCard(message = "Some conversations could not be loaded. $problem", primary = "Refresh", onPrimary = actions.onRefreshPcThreads,
+                        secondary = "Settings", onSecondary = { close(); actions.onOpenComputers() }, modifier = Modifier.padding(0.dp))
+                }
+                // Not a failure and nothing to press: one muted line, not a card.
+                state.pcThreadNotices[id]?.let { notice ->
+                    Text(notice, style = MaterialTheme.typography.labelSmall, color = LibraryMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                }
             }
             null -> QuietLink("Connect to load its projects", icon = Icons.Outlined.Computer) { actions.onReconnectComputer(id) }
         }

@@ -21,5 +21,8 @@ data class ComputerConversation(
     }
 }
 
+/** A native Claude session as read in one go: its text, and whether another client holds it open. */
+data class ClaudeSnapshot(val messages: List<ComputerMessage>, val busy: Boolean)
+
 /** Text projected from a native transcript. Source IDs make refresh idempotent. */
 data class ComputerMessage(val id: String, val role: String, val text: String, val createdAt: Long)

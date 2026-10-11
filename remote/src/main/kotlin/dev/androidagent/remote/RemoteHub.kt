@@ -97,7 +97,12 @@ class RemoteHub(
     val threads: StateFlow<Map<String, List<ComputerConversation>>> = mutableThreads.asStateFlow()
     private val mutableThreadErrors = MutableStateFlow<Map<String, String>>(emptyMap())
     val threadErrors: StateFlow<Map<String, String>> = mutableThreadErrors.asStateFlow()
+    private val mutableThreadNotices = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** Per computer, something about its list worth a quiet line, not a failure. */
+    val threadNotices: StateFlow<Map<String, String>> = mutableThreadNotices.asStateFlow()
     private val readerLocks = ConcurrentHashMap<String, Mutex>()
+    /** Computers that already have this app version's session reader. */
+    private val readersUploaded: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val claudeMessages = ClaudeMessageLedger(File(claudeScratch, "native-message-ids"))
 
     fun ownedClaudeMessages(computerId: String, threadId: String): Set<String> = claudeMessages.ids(computerId, threadId)
@@ -124,19 +129,22 @@ class RemoteHub(
             mutableRefreshing.update { it + computerId }
             try {
                 val errors = mutableListOf<String>()
+                var notice: String? = null
                 for (kind in listOf(EngineKind.CODEX, EngineKind.CLAUDE)) {
                     try {
                         val list = if (kind == EngineKind.CODEX) engine(computerId).listThreads().map(ComputerConversation::codex)
                             else {
                                 val row = claudeProjection(computerId, "list")
                                 val skipped = (row["skipped"] as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull ?: 0
-                                if (skipped > 0) errors += "CLAUDE: $skipped transcripts have missing project metadata or duplicate IDs."
+                                // The computer's own files are fine to list around; nothing here failed.
+                                if (skipped > 0) notice = "$skipped Claude sessions are hidden: each shares its ID with another transcript on the computer."
                                 ClaudeSessionFiles.threads(row)
                             }
                         mutableThreads.update { all -> all + (computerId to (all[computerId].orEmpty().filter { it.engine != kind } + list)) }
                     } catch (cancelled: CancellationException) { throw cancelled }
-                    catch (failure: Exception) { errors += "${kind.name}: ${failure.message}" }
+                    catch (failure: Exception) { errors += "${if (kind == EngineKind.CLAUDE) "Claude" else "Codex"}: ${failure.message}" }
                 }
+                mutableThreadNotices.update { all -> notice?.let { all + (computerId to it) } ?: (all - computerId) }
                 mutableThreadErrors.update { if (errors.isEmpty()) it - computerId else it + (computerId to errors.joinToString("; ")) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -242,22 +250,36 @@ class RemoteHub(
     suspend fun readThread(computerId: String, threadId: String): List<CodexThreadMessage> =
         engine(computerId).readThreadMessages(threadId)
 
-    /** Only native transcript text crosses SSH; no model or credential read. */
-    suspend fun readClaudeThread(computerId: String, threadId: String): List<ComputerMessage> =
-        ClaudeSessionFiles.messages(claudeProjection(computerId, "read", threadId))
-
-    suspend fun isClaudeThreadBusy(computerId: String, threadId: String): Boolean {
-        // Release only our idle holder; a live turn must never be interrupted by a refresh.
-        claudeEngines[computerId]?.first?.releaseSession(threadId)
-        val row = claudeProjection(computerId, "busy", threadId)
-        return (row["busy"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull
-            ?: error("Claude writer status is unavailable")
+    /** Only native transcript text crosses SSH; no model or credential read. One round trip for text and writer status. */
+    suspend fun readClaudeSnapshot(computerId: String, threadId: String): ClaudeSnapshot {
+        val row = claudeProjection(computerId, "read", threadId)
+        return ClaudeSnapshot(ClaudeSessionFiles.messages(row), heldElsewhere(computerId, threadId, row))
     }
+
+    suspend fun isClaudeThreadBusy(computerId: String, threadId: String): Boolean =
+        heldElsewhere(computerId, threadId, claudeProjection(computerId, "busy", threadId))
+
+    /**
+     * This phone's own warm `claude` is not another writer, so checking never
+     * has to stop it. A `claude` another phone's Mike started holds the
+     * session like any other client.
+     */
+    private fun heldElsewhere(computerId: String, threadId: String, row: kotlinx.serialization.json.JsonObject): Boolean =
+        ClaudeSessionFiles.heldByOther(row) ||
+            ClaudeSessionFiles.heldByMike(row) && claudeEngines[computerId]?.first?.holdsSession(threadId) != true
 
     /** Releases only Mike's idle CLI; an external writer must be closed by its user. */
     suspend fun openClaudeDesktop(computerId: String, threadId: String) {
-        check(!isClaudeThreadBusy(computerId, threadId)) { "Close this session in Claude on the computer before handing it to Desktop." }
-        val metadata = ClaudeSessionFiles.thread(claudeProjection(computerId, "busy", threadId)["thread"] as? kotlinx.serialization.json.JsonObject
+        claudeEngines[computerId]?.first?.releaseSession(threadId)
+        var row = claudeProjection(computerId, "busy", threadId)
+        // The CLI just released may take a moment to leave the computer's process list.
+        repeat(4) {
+            if (ClaudeSessionFiles.heldByOther(row) || !ClaudeSessionFiles.heldByMike(row)) return@repeat
+            kotlinx.coroutines.delay(500)
+            row = claudeProjection(computerId, "busy", threadId)
+        }
+        check(!heldElsewhere(computerId, threadId, row)) { "Close this session in Claude on the computer before handing it to Desktop." }
+        val metadata = ClaudeSessionFiles.thread(row["thread"] as? kotlinx.serialization.json.JsonObject
             ?: error("Claude session metadata is missing"))
         withContext(Dispatchers.IO) {
             val connection = connection(computerId)
@@ -284,12 +306,32 @@ class RemoteHub(
                 val probe = connection.probe(refresh = false)
                 val folder = ClaudeLaunch.folder(probe.home, connection.os)
                 val path = ClaudeLaunch.file(folder, ClaudeSessionFiles.scriptName(connection.os), connection.os)
-                val local = File.createTempFile("claude-session-reader", ".tmp", claudeScratch.apply { mkdirs() })
+                suspend fun upload() {
+                    val local = File.createTempFile("claude-session-reader", ".tmp", claudeScratch.apply { mkdirs() })
+                    try {
+                        local.writeText(ClaudeSessionFiles.script(connection.os))
+                        connection.link.upload(local, path, replace = true)
+                    } finally { local.delete() }
+                    readersUploaded += computerId
+                }
+                suspend fun read() = ClaudeSessionFiles.payload(connection.link.run(ClaudeSessionFiles.command(connection.os, path, mode, threadId), 45_000))
+                // The reader is a few kilobytes that never change within one
+                // app version: sent once, not before every question.
+                val known = computerId in readersUploaded
+                if (!known) upload()
                 try {
-                    local.writeText(ClaudeSessionFiles.script(connection.os))
-                    connection.link.upload(local, path, replace = true)
-                } finally { local.delete() }
-                ClaudeSessionFiles.payload(connection.link.run(ClaudeSessionFiles.command(connection.os, path, mode, threadId), 45_000))
+                    read()
+                } catch (reported: ClaudeReaderException) {
+                    throw reported
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    // No answer at all: the file may have been removed on the computer.
+                    if (!known) throw failure
+                    readersUploaded -= computerId
+                    upload()
+                    read()
+                }
             }
         }
 

@@ -1,5 +1,37 @@
 # Progress
 
+### Claude session sync review fixes — 2026-10-11
+
+- Review of PR #127 against the real Pc store found three blockers, fixed here.
+  The readers took a session's last `cwd`, so 16 of 92 sessions were filed
+  under a worktree or subfolder that `claude --resume` cannot find them from;
+  they now take the folder the session started in (0 of 93 differ). A chat
+  whose first turn never wrote a transcript was locked for good; a missing
+  transcript in a chat Mike started is now "nothing to read". Any reader
+  failure blocked sending in every Claude chat on a computer; now only a
+  session imported from the computer fails closed, and unreadable history
+  text no longer blocks at all.
+- Checking for another writer no longer stops Mike's own warm `claude`: the
+  readers tell a Mike-launched CLI (`.hey-mike/claude` in its command line)
+  from any other client. The reader is uploaded once per app run instead of
+  before every call, and a chat open or a send reads text and writer status in
+  one round trip. PowerShell listing of the real store: 10.4 s before, 1.6 s
+  after. Empty and folderless transcript files are no longer reported.
+- UI: the two permanent text buttons above the composer became one quiet
+  status line with two icon buttons; the blocking banner names the real cause
+  (held by another Claude, or could not be checked); duplicate-ID sessions are
+  one muted line in the drawer, not a problem card.
+- Evidence: `python -m unittest tools.test_claude_sessions` 14 passed on both
+  readers. `gradlew.bat :remote:test :engine-claude:test
+  :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:assembleDevDebugAndroidTest :app:lintDevDebug --no-daemon --continue`
+  BUILD SUCCESSFUL in 1m 23s. Both readers agree on every real session.
+- Not tested: the new UI on a device, a live phone -> Desktop -> phone turn,
+  two phones on one session, and the Linux reader against a real server. On
+  the Xiaomi (cd4928027d76) the pre-fix build installed and launched, but the
+  androidTest APK was refused (`INSTALL_FAILED_USER_RESTRICTED`), so the three
+  Compose test classes still have not run on a device.
+
 ### Claude computer session continuity — 2026-10-11
 
 - Isolated branch based on merged dev `6692067402dba86841ef35c20fdad450166243bf`.

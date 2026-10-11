@@ -293,13 +293,17 @@ class ClaudeCodeEngine(
         openSessionAt(workspace.absolutePath, threadId, model, tools)
 
     /** Give an idle native session back to another client, without stopping a running turn. */
-    suspend fun releaseSession(threadId: String) = chatsLock.withLock {
-        val chat = chats[threadId] ?: return@withLock
+    suspend fun releaseSession(threadId: String) {
+        // Stopping can take seconds; it must not hold up every other chat.
+        val chat = chats[threadId] ?: return
         chat.lock.withLock {
             check(chat.idle()) { "Claude is still working in this chat. Stop or wait before switching clients." }
             chat.stopProcess()
         }
     }
+
+    /** Whether this engine keeps a live `claude` for [threadId], so a holder seen on the computer is its own. */
+    fun holdsSession(threadId: String): Boolean = chats[threadId]?.alive == true
 
     /** [openSession] for a folder named as the machine that runs `claude` spells it: a computer's project folder. */
     suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>, requireExisting: Boolean = false): String {

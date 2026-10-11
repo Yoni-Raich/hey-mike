@@ -169,14 +169,26 @@ class RoutingAgentEngine(
             val computer = sessionId?.let(store::binding)
             if (computer != null && threadId != null) {
                 check(claudeComputers[threadId] == null || claudeComputers[threadId] == computer.computerId) { "This native Claude ID is already routed to another computer in Mike. Continue it on its original computer instead of using a copied ID." }
-                check(!hub.isClaudeThreadBusy(computer.computerId, threadId)) { "This session is open in Claude on the computer. Close it there and refresh its history before sending." }
+                val busy = try {
+                    hub.isClaudeThreadBusy(computer.computerId, threadId)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    // A session brought in from the computer fails closed. A chat
+                    // Mike started may have no transcript yet, or sit on a computer
+                    // where the reader cannot run; it keeps working as it always did.
+                    if (computer.importedFromPc == true) throw failure
+                    false
+                }
+                check(!busy) { "This session is open in Claude on the computer. Close it there and refresh its history before sending." }
             }
             val opened = if (computer == null) claude().openSession(workspace, threadId, model, tools)
             else hub.claude(computer.computerId).openSessionAt(computer.cwd, threadId, model, tools, requireExisting = computer.importedFromPc == true)
             claudeThreads += opened
             if (computer != null) {
                 claudeComputers[opened] = computer.computerId
-                store.bind(sessionId!!, computer.copy(threadId = opened, engine = EngineKind.CLAUDE))
+                val bound = computer.copy(threadId = opened, engine = EngineKind.CLAUDE)
+                if (bound != computer) store.bind(sessionId!!, bound)
             }
             return opened
         }

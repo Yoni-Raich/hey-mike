@@ -8,13 +8,26 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 
+/**
+ * A failure the reader on the computer reported itself, as opposed to the
+ * computer not answering. [code] says which kind, where it matters to a caller.
+ */
+class ClaudeReaderException(message: String, val code: String?) : IllegalStateException(message) {
+    /** No transcript carries this ID: a chat whose first turn never reached Claude Code has none yet. */
+    val missing: Boolean get() = code == "not_found"
+    /** The session is there, but its text could not be projected. Claude itself can still continue it. */
+    val history: Boolean get() = code == "history"
+}
+
 /** Read-only projections from the computer's native Claude Code transcript store. */
 object ClaudeSessionFiles {
     private val idPattern = Regex("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 
     fun requireId(id: String) { require(idPattern.matches(id)) { "Invalid Claude session ID" } }
 
-    fun scriptName(os: HostOs): String = "session-reader-v1." + if (os == HostOs.WINDOWS) "ps1" else "py"
+    // The version is part of the name: two phones on different app versions
+    // share this folder and must not run each other's reader.
+    fun scriptName(os: HostOs): String = "session-reader-v2." + if (os == HostOs.WINDOWS) "ps1" else "py"
 
     fun script(os: HostOs): String {
         val suffix = if (os == HostOs.WINDOWS) "ps1" else "py"
@@ -35,8 +48,15 @@ object ClaudeSessionFiles {
     }
 
     fun payload(result: ExecResult): JsonObject = WindowsHost.payload(result).also { row ->
-        row.text("error")?.let { throw IllegalStateException(it) }
+        row.text("error")?.let { throw ClaudeReaderException(it, row.text("code")) }
     }
+
+    /** Another Claude client holds the session open. */
+    fun heldByOther(row: JsonObject): Boolean =
+        (row["busy"] as? JsonPrimitive)?.booleanOrNull ?: error("Claude writer status is unavailable")
+
+    /** Only a `claude` that some Mike launched holds it: this phone's warm one, or another phone's. */
+    fun heldByMike(row: JsonObject): Boolean = (row["mike"] as? JsonPrimitive)?.booleanOrNull == true
 
     fun threads(row: JsonObject): List<ComputerConversation> =
         (row["threads"] as? JsonArray ?: error("Claude session inventory is incomplete")).map { thread(it as? JsonObject ?: error("Invalid Claude session")) }

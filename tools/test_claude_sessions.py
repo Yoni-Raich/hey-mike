@@ -63,6 +63,33 @@ class ReadersTest(unittest.TestCase):
             self.assertEqual((SID, "Chosen title", user["cwd"]), (item["id"], item["title"], item["cwd"]))
         self.check("list", verify)
 
+    def test_project_folder_is_where_the_session_started(self):
+        user = self.row()
+        moved = self.row("assistant", "now in a worktree", user["uuid"])
+        moved["message"]["model"] = "claude-x"
+        moved["cwd"] = "C:\\src\\elsewhere\\.claude\\worktrees\\w1"
+        self.write([user, moved])
+        def verify(row):
+            item = row["threads"][0]
+            self.assertEqual((user["cwd"], "claude-x"), (item["cwd"], item["model"]))
+        self.check("list", verify)
+        self.check("busy", lambda row: self.assertEqual(user["cwd"], row["thread"]["cwd"]))
+
+    def test_empty_and_folderless_transcripts_are_not_reported_as_skipped(self):
+        self.write([self.row()])
+        (self.file.parent / (str(uuid.uuid4()) + ".jsonl")).write_bytes(b"")
+        (self.file.parent / (str(uuid.uuid4()) + ".jsonl")).write_text(json.dumps(dict(type="summary", summary="stub")) + "\n")
+        self.check("list", lambda row: self.assertEqual((1, 0, 2), (len(row["threads"]), row["skipped"], row["incomplete"])))
+
+    def test_failures_say_what_kind_they_are(self):
+        self.write([self.row()])
+        self.check("busy", lambda row: self.assertEqual("not_found", row["code"]), str(uuid.uuid4()))
+        self.check("busy", lambda row: self.assertEqual((False, False), (row["busy"], row["mike"])))
+        self.write([self.row()], b'{"invalid":\n')
+        self.check("read", lambda row: self.assertEqual("history", row["code"]))
+        # Whether another client holds the session does not depend on its text being readable.
+        self.check("busy", lambda row: self.assertFalse(row["busy"]))
+
     def test_complete_corruption_is_reported(self):
         self.write([self.row()], b'{"invalid":\n')
         self.check("read", lambda row: self.assertIn("Malformed complete", row["error"]))

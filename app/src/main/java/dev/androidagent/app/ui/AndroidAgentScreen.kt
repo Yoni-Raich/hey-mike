@@ -62,7 +62,9 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -329,15 +331,17 @@ fun AndroidAgentScreen(
                             val binding = state.remoteBindings[id]
                             if (binding?.engine == EngineKind.CLAUDE && binding.threadId != null &&
                                 state.sessions.firstOrNull { it.id == id }?.engine == EngineKind.CLAUDE) {
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) {
-                                    val enabled = !state.runState.active && id !in state.pcSyncing && id !in state.pcDesktopOpening
-                                    TextButton(onClick = { actions.onSyncPcChat(id) }, enabled = enabled) {
-                                        Text(if (id in state.pcSyncing) "Refreshing…" else "Refresh history")
-                                    }
-                                    TextButton(onClick = { actions.onOpenClaudeDesktop(id) }, enabled = enabled && id !in state.pcBusyChats) {
-                                        Text(if (id in state.pcDesktopOpening) "Opening…" else "Open in Claude Desktop")
-                                    }
-                                }
+                                ClaudeSessionStrip(
+                                    computer = state.computers.firstOrNull { it.id == binding.computerId }?.label ?: "the computer",
+                                    syncing = id in state.pcSyncing,
+                                    opening = id in state.pcDesktopOpening,
+                                    // A problem that blocks sending has its own banner below.
+                                    notice = state.pcSyncProblems[id].takeIf { id !in state.pcBusyChats },
+                                    enabled = !state.runState.active && id !in state.pcSyncing && id !in state.pcDesktopOpening,
+                                    canOpenDesktop = id !in state.pcBusyChats,
+                                    onRefresh = { actions.onSyncPcChat(id) },
+                                    onOpenDesktop = { actions.onOpenClaudeDesktop(id) },
+                                )
                             }
                         }
                         // Pinned above the composer, never in the chat list: the
@@ -346,6 +350,8 @@ fun AndroidAgentScreen(
                         state.activeSessionId?.takeIf { it in state.pcBusyChats }?.let { id ->
                             PcBusyBanner(
                                 claude = state.remoteBindings[id]?.engine == EngineKind.CLAUDE,
+                                problem = state.pcSyncProblems[id],
+                                checking = id in state.pcSyncing,
                                 forking = id in state.pcForking,
                                 onFork = { actions.onForkPcChat(id) },
                                 onCheck = { if (state.remoteBindings[id]?.engine == EngineKind.CLAUDE) actions.onSyncPcChat(id) else actions.onCheckPcChatBusy(id) },
@@ -809,11 +815,75 @@ private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
 }
 
 /**
- * The conversation is held open by Codex on the computer, so Mike cannot
- * write to it. A copy with the whole history can go on right away.
+ * One quiet line above the composer of a Claude session that lives on a
+ * computer: where it is, what Mike is doing with it, and the two things the
+ * user can do. It is always there, so it is small; trouble that stops
+ * sending gets [PcBusyBanner] instead.
  */
 @Composable
-private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Unit, modifier: Modifier = Modifier, claude: Boolean = false) {
+private fun ClaudeSessionStrip(
+    computer: String,
+    syncing: Boolean,
+    opening: Boolean,
+    notice: String?,
+    enabled: Boolean,
+    canOpenDesktop: Boolean,
+    onRefresh: () -> Unit,
+    onOpenDesktop: () -> Unit,
+) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp).heightIn(min = 40.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (syncing || opening) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = muted)
+        } else {
+            Icon(
+                if (notice != null) Icons.Outlined.ErrorOutline else Icons.Outlined.Computer,
+                contentDescription = null,
+                tint = if (notice != null) MaterialTheme.colorScheme.error else muted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            when {
+                opening -> "Opening in Claude Desktop…"
+                syncing -> "Syncing with $computer…"
+                notice != null -> notice
+                else -> "Claude session on $computer"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = muted,
+            maxLines = if (notice != null && !syncing && !opening) 3 else 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+        )
+        IconButton(onClick = onRefresh, enabled = enabled) {
+            Icon(Icons.Outlined.Refresh, contentDescription = "Refresh history", modifier = Modifier.size(20.dp))
+        }
+        IconButton(onClick = onOpenDesktop, enabled = enabled && canOpenDesktop) {
+            Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Open in Claude Desktop", modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/**
+ * Mike cannot write to the conversation: another client on the computer
+ * holds it open, or (Claude only) [problem] says why that could not be
+ * checked. A Codex conversation can go on in a copy right away.
+ */
+@Composable
+private fun PcBusyBanner(
+    forking: Boolean,
+    onFork: () -> Unit,
+    onCheck: () -> Unit,
+    modifier: Modifier = Modifier,
+    claude: Boolean = false,
+    problem: String? = null,
+    checking: Boolean = false,
+) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.tertiaryContainer,
@@ -822,18 +892,30 @@ private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Un
     ) {
         Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(if (problem != null) Icons.Outlined.ErrorOutline else Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Text(if (claude) "Claude session is unavailable for writing" else "Open in Codex on the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    when {
+                        problem != null -> "Can't check this session"
+                        claude -> "Open in Claude on the computer"
+                        else -> "Open in Codex on the computer"
+                    },
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                )
             }
             Text(
-                if (claude) "Close this session in Claude on the computer, then refresh its history. If the computer is offline, reconnect it first."
-                else "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer.",
+                when {
+                    problem != null -> "$problem Sending waits until Mike can see that nothing else is writing to it."
+                    claude -> "Mike can't add to this session while another Claude has it open. Close it there, then check again."
+                    else -> "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = 32.dp, top = 6.dp),
             )
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onCheck, enabled = !forking) { Text("Check again", color = MaterialTheme.colorScheme.onTertiaryContainer) }
+                TextButton(onClick = onCheck, enabled = !forking && !checking) {
+                    Text(if (checking) "Checking…" else if (problem != null) "Try again" else "Check again", color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
                 Spacer(Modifier.width(4.dp))
                 if (!claude) Button(
                     onClick = onFork,

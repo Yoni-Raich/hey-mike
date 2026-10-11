@@ -68,6 +68,21 @@ class ClaudeHistorySyncTest {
         assertEquals(1, ClaudeHistorySync.additions("chat", "pc", thread, newHistory, local, ledger.ids("pc", thread)).size)
     }
 
+    @Test fun readerFailuresKeepTheirKindAndHoldersAreToldApart() {
+        fun failure(json: String) = try { ClaudeSessionFiles.payload(ExecResult("HEYMIKE $json", "", 0)); null }
+            catch (error: ClaudeReaderException) { error }
+        assertTrue(failure("""{"error":"Claude session was not found","code":"not_found"}""")!!.missing)
+        assertTrue(failure("""{"error":"Malformed complete record","code":"history"}""")!!.history)
+        val plain = failure("""{"error":"Claude projects directory is a symlink"}""")!!
+        assertFalse(plain.missing || plain.history)
+        val mine = ClaudeSessionFiles.payload(ExecResult("""HEYMIKE {"busy":false,"mike":true}""", "", 0))
+        assertFalse(ClaudeSessionFiles.heldByOther(mine))
+        assertTrue(ClaudeSessionFiles.heldByMike(mine))
+        val other = ClaudeSessionFiles.payload(ExecResult("""HEYMIKE {"busy":true,"mike":false}""", "", 0))
+        assertTrue(ClaudeSessionFiles.heldByOther(other))
+        assertTrue(ClaudeSessionFiles.scriptName(HostOs.WINDOWS).endsWith("-v2.ps1"))
+    }
+
     @Test fun importedSessionsKeepTheirProvider() {
         val item = ClaudeSessionFiles.thread(Json.parseToJsonElement("""{"id":"$thread","cwd":"C:/src","title":"old chat","updatedAt":1,"busy":true}""") as kotlinx.serialization.json.JsonObject)
         assertEquals(EngineKind.CLAUDE, item.engine)

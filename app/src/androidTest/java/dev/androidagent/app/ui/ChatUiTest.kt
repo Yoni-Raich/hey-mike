@@ -52,8 +52,8 @@ class ChatUiTest {
             sessions = listOf(dev.androidagent.core.ChatSession("ui-fixture", "Claude session", 1, 1, engine = EngineKind.CLAUDE)),
             remoteBindings = mapOf("ui-fixture" to RemoteBinding("pc", "C:/project", "native-id", true, EngineKind.CLAUDE))),
             AgentUiActions(onSyncPcChat = { refreshed = it }, onOpenClaudeDesktop = { opened = it })) }
-        compose.onNodeWithText("Refresh history").performClick()
-        compose.onNodeWithText("Open in Claude Desktop").performClick()
+        compose.onNodeWithContentDescription("Refresh history").performClick()
+        compose.onNodeWithContentDescription("Open in Claude Desktop").performClick()
         compose.runOnIdle { assertEquals("ui-fixture", refreshed); assertEquals("ui-fixture", opened) }
     }
 
@@ -63,7 +63,8 @@ class ChatUiTest {
             remoteBindings = mapOf("ui-fixture" to RemoteBinding("pc", "C:/project", "native-id", true, EngineKind.CLAUDE)),
             pcBusyChats = setOf("ui-fixture")), AgentUiActions()) }
         compose.onNodeWithText("Continue in a copy").assertDoesNotExist()
-        compose.onNodeWithText("Open in Claude Desktop").assertIsNotEnabled()
+        compose.onNodeWithText("Open in Claude on the computer").assertExists()
+        compose.onNodeWithContentDescription("Open in Claude Desktop").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Message input").performTextInput("continue")
         compose.onNodeWithContentDescription("Send message").assertIsNotEnabled()
     }

@@ -2385,8 +2385,10 @@ Decided 2026-10-01, on top of the section above.
   `sessionId`; the transcript filename remains the native resume ID. Compaction
   displays its replacement summary, rather than following `logicalParentUuid`
   back into replaced history. Previously saved local messages remain intact.
-  File/record/display limits are 256/32/8 MiB; missing project metadata and
-  duplicate session IDs are reported separately from a successful partial list.
+  The project is the first valid working folder in the transcript; later
+  directory changes do not move the session. File/record/display limits are
+  256/32/8 MiB. Empty and folderless stubs are ignored; duplicate native IDs
+  are omitted with a quiet notice. Reader failures remain explicit errors.
 - **Claude refresh and ownership.** Selection, app resume, manual Refresh
   history and an idle Send refresh external messages. Stable source UUIDs
   prevent duplicate imports; local messages, notes, attachments, drafts and
@@ -2397,10 +2399,16 @@ Decided 2026-10-01, on top of the section above.
   or clock-skewed records can appear again, rather than losing local history.
   Multiple live text blocks can
   match one native assistant message. Refresh never interrupts an active turn.
-  Mike releases only its own idle Claude process, then checks live process
-  arguments and native PID metadata. A detected external writer, missing
-  transcript or failed ownership check blocks writing. The router repeats
-  the check, including queued runs. These are advisory writer checks, not an
+  Refresh reads history and ownership together, and keeps Mike's own warm
+  Claude process. The versioned reader is uploaded once per app run and
+  restored if it disappears. Ownership uses live process arguments and native
+  PID metadata, distinguishing Mike's launcher from external clients. A
+  detected external writer blocks writing. Missing transcripts and failed
+  ownership checks block imported sessions; chats created by Mike keep their
+  previous behavior, including a first turn with no transcript yet. If only
+  history text is unreadable, ownership is checked separately and the UI shows
+  a notice. The router repeats the ownership check, including queued runs.
+  These are advisory writer checks, not an
   atomic lock shared by every external client; a concurrent external launch
   can still race. Reopening after idle release resumes native disk history.
 - **Desktop handoff.** Open in Claude Desktop releases Mike's idle process

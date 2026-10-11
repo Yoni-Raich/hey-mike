@@ -35,15 +35,22 @@ function TranscriptFiles {
     }
     return @($found | Sort-Object LastWriteTimeUtc -Descending)
 }
-function BusyIds {
+function Holders {
+    # Per session ID: 'other' when another Claude client holds it, 'mike' when
+    # only CLIs that Mike launched do. Mike's launch files live in .hey-mike\claude.
     $ids = @{}
+    $mikePids = @{}
     $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
     foreach ($process in $processes) {
         if ($process.Name -notmatch 'claude|node') { continue }
         $command = [string]$process.CommandLine
         if ($command -notmatch '(?i)claude') { continue }
+        $mike = $command -match '[\\/]\.hey-mike[\\/]claude[\\/]'
+        if ($mike) { $mikePids[[int]$process.ProcessId] = $true }
         foreach ($match in [regex]::Matches($command, '(?:--resume|--session-id|-r)(?:\s+|=)["'']?([0-9a-fA-F-]{36})(?:["''\s]|$)')) {
-            if ($match.Groups[1].Value -match $uuidPattern) { $ids[$match.Groups[1].Value] = $true }
+            $sid = $match.Groups[1].Value
+            if ($sid -notmatch $uuidPattern) { continue }
+            if (-not $mike) { $ids[$sid] = 'other' } elseif (-not $ids.ContainsKey($sid)) { $ids[$sid] = 'mike' }
         }
     }
     $sessionsPath = Join-Path $configPath 'sessions'
@@ -57,14 +64,16 @@ function BusyIds {
                     if (-not $ownerPid) { $ownerPid = $file.BaseName }
                     $sid = Field $row 'sessionId'
                     if (-not $sid) { $sid = Field $row 'session_id' }
-                    if ($sid -match $uuidPattern -and @($processes | Where-Object { $_.ProcessId -eq [int]$ownerPid }).Count -gt 0) { $ids[$sid] = $true }
+                    if ($sid -match $uuidPattern -and @($processes | Where-Object { $_.ProcessId -eq [int]$ownerPid }).Count -gt 0) {
+                        if (-not $mikePids.ContainsKey([int]$ownerPid)) { $ids[$sid] = 'other' } elseif (-not $ids.ContainsKey($sid)) { $ids[$sid] = 'mike' }
+                    }
                 } catch { }
             }
         }
     }
     return $ids
 }
-function SliceRows($file) {
+function SliceLines($file) {
     $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
     try {
         $length = [Math]::Min(524288L, $stream.Length)
@@ -81,16 +90,24 @@ function SliceRows($file) {
             $tail = if ($break -ge 0) { $tail.Substring($break + 1) } else { '' }
             $head += "`n" + $tail
         }
-        foreach ($line in $head.Split("`n")) {
-            try { $row = $line | ConvertFrom-Json; if ($null -ne $row) { $row } } catch { }
-        }
+        return $head.Split("`n")
     } finally { $stream.Dispose() }
 }
-function Metadata($file, $busy) {
+function Metadata($file, $holders) {
     $cwd = ''; $custom = ''; $title = ''; $summary = ''; $first = ''; $model = ''
-    foreach ($row in SliceRows $file) {
-        if ((Field $row 'isSidechain') -or (Field $row 'teamName')) { continue }
-        if (Field $row 'cwd') { $cwd = [string](Field $row 'cwd') }
+    foreach ($line in SliceLines $file) {
+        # Parsing every record of every transcript took most of a listing. Only
+        # the first folder, the titles and the first prompt need a parsed row.
+        $wanted = (-not $cwd) -or ($line -match '"type"\s*:\s*"(?:custom-title|ai-title|summary)"') -or ((-not $first) -and $line -match '"type"\s*:\s*"user"')
+        if (-not $wanted) {
+            if ($line -match '"type"\s*:\s*"assistant"' -and $line -notmatch '"isSidechain"\s*:\s*true' -and $line -notmatch '"teamName"\s*:\s*"' -and $line -match '"model"\s*:\s*"([^"\\]+)"') { $model = $Matches[1] }
+            continue
+        }
+        try { $row = ConvertFrom-Json -InputObject $line } catch { continue }
+        if ($null -eq $row -or (Field $row 'isSidechain') -or (Field $row 'teamName')) { continue }
+        # The folder the session started in names its project. A later cd or
+        # worktree must not move it: `claude --resume` only finds it from there.
+        if (-not $cwd -and (Field $row 'cwd')) { $cwd = [string](Field $row 'cwd') }
         switch (Field $row 'type') {
             'custom-title' { if (Field $row 'customTitle') { $custom = [string](Field $row 'customTitle') } }
             'ai-title' { if (Field $row 'aiTitle') { $title = [string](Field $row 'aiTitle') } }
@@ -104,7 +121,7 @@ function Metadata($file, $busy) {
     $label = if ($name) { $name } elseif ($first) { $first } else { 'Claude conversation' }
     if ($label.Length -gt 200) { $label = $label.Substring(0,200) }
     if ($name.Length -gt 200) { $name = $name.Substring(0,200) }
-    return [ordered]@{id=$file.BaseName;cwd=$cwd;title=$label;name=$(if ($name) {$name} else {$null});updatedAt=([DateTimeOffset]$file.LastWriteTimeUtc).ToUnixTimeMilliseconds();model=$(if ($model) {$model} else {$null});busy=$busy.ContainsKey($file.BaseName)}
+    return [ordered]@{id=$file.BaseName;cwd=$cwd;title=$label;name=$(if ($name) {$name} else {$null});updatedAt=([DateTimeOffset]$file.LastWriteTimeUtc).ToUnixTimeMilliseconds();model=$(if ($model) {$model} else {$null});busy=$holders.ContainsKey($file.BaseName)}
 }
 function Messages($file) {
     if ($file.Length -gt 268435456) { throw 'Claude transcript exceeds the 256 MiB read limit' }
@@ -163,26 +180,38 @@ function Messages($file) {
     $chain.Reverse()
     return @($chain.ToArray())
 }
+$code = $null
 try {
-    $busy = BusyIds
+    $holders = Holders
     $files = @(TranscriptFiles)
     if ($Mode -eq 'list') {
-        $items = @($files | ForEach-Object { $item = Metadata $_ $busy; if ($null -ne $item) { $item } })
+        $items = @($files | ForEach-Object { $item = Metadata $_ $holders; if ($null -ne $item) { $item } })
         $counts = @{}
         foreach ($item in $items) { $counts[$item.id] = 1 + $counts[$item.id] }
-        $items = @($items | Where-Object { $counts[$_.id] -eq 1 })
-        $payload = @{threads=$items;skipped=($files.Count - $items.Count)}
+        $unique = @($items | Where-Object { $counts[$_.id] -eq 1 })
+        # Empty files and stubs without a folder are not conversations and not
+        # a problem. Only a native ID that names two files is reported.
+        $payload = @{threads=$unique;skipped=($items.Count - $unique.Count);incomplete=($files.Count - $items.Count)}
     } else {
         if ($SessionId -notmatch $uuidPattern) { throw 'Invalid Claude session ID' }
         $selected = @($files | Where-Object { $_.BaseName -eq $SessionId })
-        if ($selected.Count -eq 0) { throw 'Claude session was not found; its original transcript is required' }
+        $held = $holders[$SessionId]
+        if ($selected.Count -eq 0) { $code = 'not_found'; throw 'Claude session was not found; its original transcript is required' }
         if ($selected.Count -ne 1) { throw 'Claude session ID occurs in more than one project; resolve the duplicate first' }
-        $item = Metadata $selected[0] $busy
-        if ($null -eq $item) { throw 'Claude session has no valid working folder' }
-        if ($Mode -eq 'busy') { $payload = @{thread=$item;busy=$busy.ContainsKey($SessionId)} }
-        else { $payload = @{thread=$item;messages=@(Messages $selected[0]);busy=$busy.ContainsKey($SessionId)} }
+        $item = Metadata $selected[0] $holders
+        if ($null -eq $item) { $code = 'not_found'; throw 'Claude session has no valid working folder' }
+        $payload = @{thread=$item;busy=($held -eq 'other');mike=($held -eq 'mike')}
+        if ($Mode -eq 'read') {
+            $code = 'history'
+            $payload.messages = @(Messages $selected[0])
+            $code = $null
+        }
     }
     $encoded = ConvertTo-Json -InputObject $payload -Compress -Depth 12
-    if ([Text.Encoding]::UTF8.GetByteCount($encoded) -gt 8388608) { throw 'Claude history exceeds the 8 MiB display limit' }
-} catch { $encoded = ConvertTo-Json -InputObject @{error=$_.Exception.Message} -Compress }
+    if ([Text.Encoding]::UTF8.GetByteCount($encoded) -gt 8388608) { $code = 'history'; throw 'Claude history exceeds the 8 MiB display limit' }
+} catch {
+    $failure = @{error=$_.Exception.Message}
+    if ($code) { $failure.code = $code }
+    $encoded = ConvertTo-Json -InputObject $failure -Compress
+}
 'HEYMIKE ' + $encoded
