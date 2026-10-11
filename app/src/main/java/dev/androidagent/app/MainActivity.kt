@@ -290,6 +290,7 @@ class MainActivity : ComponentActivity() {
         onResumeQueue = { model.resumeQueue() },
         onVoiceToggle = ::toggleVoice,
         onVoiceMuteToggle = model::toggleVoiceMute,
+        onVoiceChildUpdatesToggle = model::toggleVoiceChildUpdates,
         onOpenSettings = { model.editUi { it.copy(isSettingsOpen = true) } },
         onCloseSettings = { model.editUi { it.copy(isSettingsOpen = false) } },
         onOpenAutomations = {

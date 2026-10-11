@@ -1,5 +1,28 @@
 # Progress
 
+### Voice child-update timing and quiet — issue #129, 2026-10-11
+
+- Continued `fix/voice-child-update-timing-129` from merged PR #128 on dev
+  `189852e8dcd28fc463d9fd26811b41641c9006da`; other worktrees stay untouched.
+- Full child context now arrives during either speaker's turn. A separate
+  call-local queue groups complete useful revisions after finalized turns and
+  audio quiet. Streaming/activity, bare technical/no-change messages and the
+  coordinator's no-final-reply diagnostic do not trigger announcements.
+- Pause/Resume child updates and exact English/Hebrew user quiet phrases gate
+  automatic speech locally without ending Voice or cancelling child work.
+  Normal user replies restore playback even without assistant deltas. Pending
+  cards, full results, source ownership, user gates and Stop fences remain.
+- Final frozen-source Windows gate passed in 2m13s: `test assembleDevRelease
+  assembleDevDebug assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug`
+  with `--no-daemon --no-parallel --max-workers=2` and an isolated Gradle home.
+  XML: 2,506 executions, zero failures/errors, 16 existing skips; new queue
+  suite: 24 passed. Runtime Python: 15 passed. Source SHA-256 manifest checked
+  unchanged across the final gate; `git diff --check` passed.
+- AndroidTest UI fixture compiled, not run. No phone/emulator test, screenshot,
+  install, deployment, version bump or production signing. Real audio buffering,
+  microphone thresholds and late response timing remain unverified. Details:
+  `docs/testing/voice-child-update-timing-129-20261011.md`.
+
 ### Claude upgrade preservation and Haiku integration — 2026-10-11
 
 - Integrated PR #121 and #122 into the ordinary-child/voice branch. The old

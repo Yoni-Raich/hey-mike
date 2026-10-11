@@ -170,6 +170,31 @@ class ChildAgentsUiTest {
         field.assertTextContains("Read README.md")
     }
 
+    @Test fun quietControlDoesNotEndVoiceOrStopChildWork() {
+        val state = mutableStateOf(fixture().copy(voiceState = VoiceState(VoicePhase.LISTENING, "Listening"),
+            voiceSessionId = "root", voiceChildUpdates = VoiceChildUpdateState(pendingChildren = 2)))
+        var ended = 0
+        val stopped = mutableListOf<String>()
+        compose.setContent { AndroidAgentScreen(state.value, AgentUiActions(
+            onStop = { ended++ }, onStopSession = { stopped += it },
+            onVoiceChildUpdatesToggle = { state.value = state.value.copy(
+                voiceChildUpdates = state.value.voiceChildUpdates.copy(paused = !state.value.voiceChildUpdates.paused)) },
+        )) }
+        compose.onNodeWithText("2 child updates waiting").assertIsDisplayed()
+        compose.onNodeWithText("Pause child updates").performClick()
+        compose.onNodeWithText("Resume child updates").assertIsDisplayed()
+        compose.onNodeWithText("Updates paused · Call and child work stay active").assertIsDisplayed()
+        assertEquals(0, ended)
+        assertTrue(stopped.isEmpty())
+        assertTrue(state.value.voiceState.active)
+        assertEquals("root", state.value.voiceSessionId)
+        assertEquals("running", state.value.childAgents.single().status)
+        compose.onNodeWithContentDescription("Open subagent chat: Find places").assertIsDisplayed()
+        capture("voice-child-updates-paused")
+        compose.onNodeWithText("Resume child updates").performClick()
+        assertFalse(state.value.voiceChildUpdates.paused)
+    }
+
     private fun capture(name: String) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val file = File(context.getExternalFilesDir(null), "ui-fixtures/$name.png").apply { parentFile!!.mkdirs() }

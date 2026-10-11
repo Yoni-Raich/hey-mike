@@ -37,14 +37,52 @@ dispatch, so queued completion cannot restart a stopped parent. A transport
 error is reported and is not automatically replayed. Restart does not resume
 pending background notifications or unknown child work.
 
-Voice receives every text segment through quiet quoted context, followed by
-a speakable backend handoff for useful progress/completion. `appendText`
+Voice receives every text segment through quiet quoted context during either
+speaker's turn. Receipt has no speakable side effect. `appendText`
 alone does not request a spoken response. The pinned Codex v0.153.4
 [`appendSpeech` handler](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/realtime_conversation.rs)
 uses the realtime backend's speakable context channel. Large context is sent
-in numbered packets without splitting Unicode surrogate pairs. A speaking
-voice parent holds the batch until it can respond. The call and child-chat
-browsing remain owned by the original voice session.
+in numbered packets without splitting Unicode surrogate pairs. The call and
+child-chat browsing remain owned by the original voice session.
+
+`core.VoiceChildUpdates` owns a separate call-local announcement queue. It
+reassembles assistant append/replacement revisions, keeps the latest complete
+useful change per child, and deduplicates previously announced revisions.
+Activity-only messages, streaming fragments, bare technical/no-change statuses
+and the coordinator's generated no-final-reply diagnostic never
+request speech; their full data still reaches the voice context. Completion,
+failure and requests for user input remain available through the child cards.
+The app sends one grouped speakable summary after both turns finish and at
+least 1.5 seconds of input/output quiet, with an 8-second minimum between
+automatic summaries. A microphone signal closes the gate before transcript
+arrival; sustained input or a user transcript holds it until a finalized user
+turn. Mike's transcript turn and actual playback also hold the gate, so the
+visualizer's 280 ms pause is not a safe announcement boundary.
+
+The voice screen has a pending-child count and Pause/Resume child updates.
+Exact user quiet/resume phrases in English or Hebrew change the same policy.
+Pausing locally mutes an in-flight child response, without stopping capture,
+the call or any child run. WebRTC uses ADM speaker mute; WebSocket playback
+pauses/flushes its track and drops suppressed frames. A normal explicit user
+turn restores playback at its finalized transcript boundary while automatic
+updates remain paused. This supports replies with audio or TranscriptDone
+only, without waiting for an assistant delta. The bundled WebRTC playout
+bytecode zeroes samples before its level callback when speaker mute is on,
+so a suppressed audio callback cannot reliably serve as the unmute trigger.
+Resume groups the newest pending changes, including an interrupted result;
+an explicit status request consumes that pending summary without resuming
+automatic announcements. Child quotes and typed/context echoes cannot change
+the policy or answer human gates. Unrecognized command phrases remain normal
+conversation text rather than being guessed from child output.
+
+Scheduling rechecks Stop fences, source user gates and call/thread identity
+before submission. Only a known unsubmitted batch can be deferred; uncertain
+speech outcomes are reported without automatic replay. Source/thread epochs
+fence context packets and scheduling across call boundaries; ending Voice
+clears call-local queue, turn and pause state. This does not alter child chat
+storage. Playback timing and microphone thresholds still need phone testing;
+the current realtime transcript events do not carry a response ID that can
+prove whether a late frame belongs to an interrupted child or a user reply.
 
 WebRTC microphone mute uses the audio device module's zeroed capture samples,
 while the live local track stays enabled. Disabling that track delayed the

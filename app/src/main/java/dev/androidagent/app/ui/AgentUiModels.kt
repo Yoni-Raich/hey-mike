@@ -145,6 +145,7 @@ data class AgentUiState(
     val voiceTranscript: String = "",
     val voiceTranscriptRole: String? = null,
     val voiceMuted: Boolean = false,
+    val voiceChildUpdates: dev.androidagent.core.VoiceChildUpdateState = dev.androidagent.core.VoiceChildUpdateState(),
     /** Status line while a power-button press is setting up voice, before the call exists. */
     val voiceSummon: String? = null,
     /** Sends the user chose to always allow, for review in Settings. */
@@ -282,6 +283,7 @@ data class AgentUiActions(
     val onResumeQueue: () -> Unit = {},
     val onVoiceToggle: () -> Unit = {},
     val onVoiceMuteToggle: () -> Unit = {},
+    val onVoiceChildUpdatesToggle: () -> Unit = {},
     val onOpenSettings: () -> Unit = {},
     val onCloseSettings: () -> Unit = {},
     val onPrepareRuntime: () -> Unit = {},
