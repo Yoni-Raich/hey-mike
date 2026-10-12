@@ -1,5 +1,93 @@
 # Architecture
 
+## APK delta copies — 2026-10-12
+
+`copy_file` keeps its API. `ComputerPlace` sends APK downloads through
+`DeltaTransfers` (`core`). The phone and computer identify bytes by SHA-256,
+not by version numbers, paths or chat ids. Installation is still a separate
+phone-local `install_apk` call. It never installs a patch or starts another copy.
+
+`TransferBlobStore` (`workspace`) holds verified private blobs under
+`filesDir/transfer-cache/v1`, shared by all chats. One cancellable mutex leases
+the cache through negotiation, reconstruction and materialization. Eviction
+uses a 1.5 GiB soft budget while retaining at least two blobs; large retained
+blobs can exceed that budget. Only owned hashes and UUID parts are removed.
+Copies to chat folders are independent files, so editing a chat file cannot
+change the cached base. Startup seeds the app's own installed signed APK on
+an IO dispatcher. This lets the first full bootstrap update become a base
+without downloading it again.
+
+`SshDeltaPeer` (`remote`) provisions a versioned, checksum-checked Python
+helper on the saved computer's existing pinned SSH connection. Python 3.9+
+is needed for optimization; a missing interpreter retains normal full SFTP
+copying. This legacy path has its existing SSH/size checks, without a
+negotiated source content digest. Other helper failures fail closed. The
+helper needs no model call or server, and retains an OS cache lock until the
+request releases stdin. EOF is cancellation; it stops its owned generator.
+It never closes the shared SSH session. Java interrupted stream errors are
+converted back to coroutine cancellation before they can become a fallback.
+
+The host cache is `~/.hey-mike/file-transfer/v1`. A Windows snapshot holds a
+read-sharing-only handle; Linux also checks fstat and reads content twice to
+detect ordinary concurrent writes. Linux does not claim an OS snapshot against
+an adversarial writer. The immutable copy is served after snapshot publication,
+not the changing build path. Host cache eviction has an 8 GiB budget and runs
+under its OS lock, after the client releases the transfer lease. It never
+removes original build output. Dev Debug assembly exports its exact signed
+APK and tries to precompute one patch against the previous artifact with a
+matching filename. Rename aliases are retained. Precomputation failure does
+not invalidate a successful build; on-demand generation or full copying still
+work. Other build/signing pipelines may call the same helper's `--export` mode.
+
+The pinned generator is HDiffPatch 5.1.3. Keys include old/new SHA-256, tool
+version and all configured options. `-WD-256k -s-64 -c-zstd-3-23 -w-2m`
+creates HDIFFW26/zstd patches with xxh128 checksums. The host selects a patch
+only when it is smaller than 85% of the full target. Cached tool archives,
+executables and patches are verified before reuse. Bases are opaque APK bytes;
+Android's installer still owns package/version/signature compatibility checks.
+No normalization, signing keys or re-signing are involved in copying.
+
+`NativeDeltaApplier` (`workspace`) uses our C/JNI adapter over pinned
+HDiffPatch, zstd and xxHash source archives. Build preparation verifies the
+archives and restores their source bytes, then compiles ARM64/x86_64 libraries
+with NDK 28.2.13676358 and 16 KiB ELF alignment. Fingerprints include the build
+script and sources, and the staged binaries are also hashed. License texts are
+kept under `third_party/licenses` and included in the APK. The adapter accepts
+only the negotiated window format, with a 2 MiB old window, 256 KiB step and
+8 MiB maximum zstd dictionary. It uses one native thread. Read, write and
+buffered decode callbacks check a per-call cancellation flag; wrapping an
+uncancellable stock JNI call in Dispatchers.IO would not be enough.
+
+The receiver checks patch/base sizes and hashes, applies to a UUID temporary
+file, verifies the complete target hash and syncs before atomic publication.
+Reconstruction failure may retry the *same immutable target* as a full blob.
+Stop never triggers fallback or installation. `AtomicTransferFile` commits
+chat copies without deleting a previous target first. No-replace uses an
+atomic hard link, then removes the owned part; replace uses ATOMIC_MOVE.
+Unsupported filesystems fail instead of weakening no-clobber semantics.
+These operations do not claim directory-fsync or power-loss durability.
+
+Transfer progress reports preparation, hashing, generation, network copy,
+reconstruction, verification and publication separately. Rate/ETA apply only
+to network copying. The meter keeps records by transfer id, so a newer chat
+cannot be overwritten by an older callback; it displays the latest active
+copy and resumes another active copy when that one finishes. APK caching
+and reconstruction may need additional storage for a full target and its
+separate chat copy, even when the patch is tiny.
+
+PC tests cover real SSH/SFTP leases and cancellation, the actual generator,
+and the same JNI adapter compiled for the Windows JVM against signed APKs.
+Those checks do not prove Android JNI loading, runtime memory/Stop latency,
+Wi-Fi throughput, installation, self-update or UI behavior on a phone.
+See `docs/testing/apk-delta-transfer-20261012.md` for exact evidence.
+
+
+**Dev channel only.** `BuildConfig.DELTA_TRANSFER` is true for `dev` and false for
+`prod`. In `prod`, `AgentApplication` creates no `TransferBlobStore`/`DeltaTransfers`
+(copies use the plain full path with rename publication), and Gradle excludes
+`libmike_delta.so`, the host helper and its licenses from the APK. The Mike skill
+text for delta lives in `app/src/dev/assets/agent_stack/skills/` and overrides the
+main copy only in dev builds.
 ## Claude runtime reuse across APK updates — 2026-10-11
 
 Runtime discovery keeps other version directories. The updater first restores

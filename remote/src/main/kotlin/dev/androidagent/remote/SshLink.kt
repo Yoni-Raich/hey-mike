@@ -79,6 +79,12 @@ class SshLink(private val target: SshTarget) : Closeable {
     // Keep TOFU trust for this link too, including after close() or a lost session.
     private var trustedHostKey: String? = target.pinnedHostKey
 
+    /** Transfer processes own their connection, never the active chat's Windows SSH job. */
+    @Synchronized
+    internal fun isolated(): SshLink = SshLink(target.copy(
+        pinnedHostKey = checkNotNull(trustedHostKey) { "Connect and verify the computer before isolating a transfer" },
+    ))
+
     /** Connect if needed and return the host key the server presented. */
     @Synchronized
     fun connect(): HostKeySeen {

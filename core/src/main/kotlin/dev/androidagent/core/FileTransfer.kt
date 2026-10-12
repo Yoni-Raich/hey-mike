@@ -24,14 +24,17 @@ data class FileTransfer(
     val startedAt: Long,
     val state: State = State.MOVING,
     val error: String? = null,
+    val phase: Phase = Phase.MOVING,
 ) {
     enum class State { MOVING, DONE, FAILED }
+    enum class Phase { PREPARING, HASHING, GENERATING, MOVING, PATCHING, VERIFYING, PUBLISHING }
 
     /** 0..1, or null while the size is unknown. */
     val fraction: Float? get() = if (total > 0) (bytes.toFloat() / total).coerceIn(0f, 1f) else null
 
     /** Bytes per second so far; null in the first half second, when it means nothing. */
     fun rate(now: Long): Long? {
+        if (phase != Phase.MOVING) return null
         val elapsed = now - startedAt
         return if (elapsed < 500 || bytes <= 0) null else bytes * 1000 / elapsed
     }
@@ -56,34 +59,54 @@ class TransferMeter(
     private val mutable = MutableStateFlow<FileTransfer?>(null)
     val current: StateFlow<FileTransfer?> = mutable.asStateFlow()
     private val ids = AtomicLong()
+    private val lock = Any()
+    private val transfers = linkedMapOf<Long, FileTransfer>()
+
+    private fun change(id: Long, transform: (FileTransfer) -> FileTransfer) = synchronized(lock) {
+        transfers[id]?.let { transfers[id] = transform(it) }
+        select()
+    }
+
+    private fun select() {
+        mutable.value = transfers.values.lastOrNull { it.state == FileTransfer.State.MOVING } ?: transfers.values.lastOrNull()
+    }
 
     suspend fun <T> track(name: String, from: String, to: String, copy: suspend (progress: (Long, Long) -> Unit) -> T): T {
         val id = ids.incrementAndGet()
         val start = clock()
         var last = 0L
-        mutable.value = FileTransfer(id, name, from, to, 0, 0, start)
-        val progress: (Long, Long) -> Unit = { bytes, total ->
-            val now = clock()
-            if (now - last >= 120 || bytes >= total) {
-                last = now
-                mutable.value = FileTransfer(id, name, from, to, bytes, total, start)
+        synchronized(lock) { transfers[id] = FileTransfer(id, name, from, to, 0, 0, start); select() }
+        var stage = FileTransfer.Phase.MOVING
+        var stageStart = start
+        val progress = object : TransferProgress {
+            override fun invoke(bytes: Long, total: Long) {
+                val now = clock()
+                if (now - last >= 120 || bytes >= total) {
+                    last = now
+                    // An older transfer must not overwrite another chat's banner.
+                    change(id) { it.copy(bytes = bytes, total = total, startedAt = stageStart, phase = stage) }
+                }
+            }
+            override fun phase(value: FileTransfer.Phase) {
+                stage = value
+                stageStart = clock()
+                last = 0
+                change(id) { it.copy(bytes = 0, total = 0, startedAt = stageStart, phase = value) }
             }
         }
         val result = try {
             copy(progress)
         } catch (error: Throwable) {
-            mutable.value?.takeIf { it.id == id }?.let { failed ->
-                mutable.value = failed.copy(
+            change(id) { failed ->
+                failed.copy(
                     state = FileTransfer.State.FAILED,
                     error = if (error is CancellationException) "Stopped" else error.message,
                 )
-                clearLater(id, 4_000)
             }
+            clearLater(id, 4_000)
             throw error
         }
-        mutable.value?.takeIf { it.id == id }?.let { now ->
-            mutable.value = now.copy(bytes = maxOf(now.bytes, now.total), state = FileTransfer.State.DONE)
-        }
+        change(id) { now -> now.copy(bytes = maxOf(now.bytes, now.total), state = FileTransfer.State.DONE) }
         clearLater(id, 2_500)
         return result
     }
@@ -91,7 +114,7 @@ class TransferMeter(
     private fun clearLater(id: Long, afterMs: Long) {
         scope.launch {
             delay(afterMs)
-            mutable.value?.takeIf { it.id == id }?.let { mutable.compareAndSet(it, null) }
+            synchronized(lock) { transfers.remove(id); select() }
         }
     }
 }

@@ -58,6 +58,7 @@ class CodexEngine(
     private val profile: EngineProfile = PHONE_PROFILE,
     /** Process diagnostics have no turn scope; keep them out of conversation failures. */
     private val diagnosticSink: (String) -> Unit = { android.util.Log.w("CodexEngine", it) },
+    private val compactWaitMs: Long = COMPACT_WAIT_MS,
 ) : AgentEngine, RealtimeVoiceEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectLock = Mutex()
@@ -66,6 +67,7 @@ class CodexEngine(
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
     private val approvals = ConcurrentHashMap<String, EngineEvent.Approval>()
     private val selectedModels = ConcurrentHashMap<String, String>()
+    private val compactions = ConcurrentHashMap<String, Compaction>()
     private val ids = AtomicLong()
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 128)
     override val events: Flow<EngineEvent> = stream.asSharedFlow()
@@ -108,6 +110,8 @@ class CodexEngine(
                 initialized = false
                 pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex process stopped")) }
                 pending.clear()
+                compactions.values.forEach { it.finished.completeExceptionally(IllegalStateException("Codex process stopped during compaction. Completion was not confirmed.")) }
+                compactions.clear()
                 approvals.clear()
                 val stoppedVoiceThreadId = voiceThreadId
                 if (stoppedVoiceThreadId != null) {
@@ -368,8 +372,29 @@ class CodexEngine(
         return result["turn"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no turn ID")
     }
 
-    // Compaction streams as an ordinary turn on the thread; the call itself returns at once.
-    override suspend fun compact(threadId: String) { connect(); request("thread/compact/start", buildJsonObject { put("threadId", threadId) }) }
+    // Compaction streams as an ordinary turn on the thread and the request
+    // returns at once, so wait here for that turn to finish: the caller shows
+    // the compaction as running until then. Codex reports no sizes.
+    override suspend fun compact(threadId: String): CompactResult? {
+        connect()
+        val compaction = Compaction()
+        check(compactions.putIfAbsent(threadId, compaction) == null) { "This chat is already being compacted." }
+        try {
+            request("thread/compact/start", buildJsonObject { put("threadId", threadId) })
+            val end = withTimeoutOrNull(compactWaitMs) { compaction.finished.await() }
+                ?: error("Compaction completion was not confirmed. Codex may still be working; do not retry it yet.")
+            check(end.status == "completed") { end.error ?: "Codex could not compact this chat (${end.status})." }
+        } finally {
+            compactions.remove(threadId, compaction)
+        }
+        return null
+    }
+
+    private class Compaction {
+        var turnId: String? = null
+        val finished = CompletableDeferred<TurnEnd>()
+    }
+    private class TurnEnd(val status: String, val error: String?)
 
     override suspend fun startVoice(
         threadId: String,
@@ -659,7 +684,12 @@ class CodexEngine(
                 voiceStream.emit(VoiceEvent.Closed(threadId, reason))
             }
             id != null -> respond(id, buildJsonObject {})
-            method == "turn/started" -> stream.emit(EngineEvent.TurnStarted(params.string("threadId"), (params["turn"] as? JsonObject)?.string("id").orEmpty()))
+            method == "turn/started" -> {
+                val threadId = params.string("threadId")
+                val turnId = (params["turn"] as? JsonObject)?.string("id").orEmpty()
+                compactions[threadId]?.let { if (it.turnId == null && turnId.isNotBlank()) it.turnId = turnId }
+                stream.emit(EngineEvent.TurnStarted(threadId, turnId))
+            }
             method == "item/agentMessage/delta" -> stream.emit(EngineEvent.TextDelta(params.string("delta"), params.string("threadId"), params.string("turnId"), params.string("itemId").ifBlank { null }))
             method == "item/completed" -> {
                 val item = params["item"] as? JsonObject
@@ -680,6 +710,9 @@ class CodexEngine(
             method == "turn/completed" -> {
                 val turn = params["turn"] as? JsonObject ?: params
                 val turnError = (turn["error"] as? JsonObject)?.let(::rpcErrorMessage)
+                compactions[params.string("threadId")]?.let {
+                    if (it.turnId == turn.string("id")) it.finished.complete(TurnEnd(turn.string("status"), turnError))
+                }
                 stream.emit(EngineEvent.TurnFinished(turn.string("status"), turnError, params.string("threadId"), turn.string("id")))
             }
             method == "account/login/completed" -> {
@@ -740,6 +773,9 @@ class CodexEngine(
     }
 
     companion object {
+        /** How long a compaction may run before the caller stops waiting; Codex goes on without it. */
+        private const val COMPACT_WAIT_MS = 5 * 60_000L
+
         internal fun itemActivity(item: JsonObject, params: JsonObject, complete: Boolean): EngineEvent.ItemActivity? {
             val type = item.string("type")
             val id = item.string("id")

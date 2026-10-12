@@ -90,10 +90,19 @@ private fun TransferCard(transfer: FileTransfer) {
     val failed = transfer.state == FileTransfer.State.FAILED
     val done = transfer.state == FileTransfer.State.DONE
     val direction = "${transfer.from} → ${transfer.to}"
+    val stage = when (transfer.phase) {
+        FileTransfer.Phase.PREPARING -> "Preparing"
+        FileTransfer.Phase.HASHING -> "Checking the file"
+        FileTransfer.Phase.GENERATING -> "Preparing the update"
+        FileTransfer.Phase.MOVING -> "Copying"
+        FileTransfer.Phase.PATCHING -> "Restoring the APK"
+        FileTransfer.Phase.VERIFYING -> "Checking the copy"
+        FileTransfer.Phase.PUBLISHING -> "Saving the copy"
+    }
     val spoken = when {
         done -> "${transfer.name} copied, $direction"
         failed -> "${transfer.name} not copied: ${transfer.error.orEmpty()}"
-        else -> "Copying ${transfer.name}, $direction, ${((transfer.fraction ?: 0f) * 100).toInt()} percent"
+        else -> "$stage ${transfer.name}, $direction" + (transfer.fraction?.let { ", ${(it * 100).toInt()} percent" } ?: "")
     }
     Surface(
         shape = RoundedCornerShape(18.dp),
@@ -111,7 +120,7 @@ private fun TransferCard(transfer: FileTransfer) {
                         when {
                             done -> "Copied · $direction"
                             failed -> "Not copied · ${transfer.error ?: "failed"}"
-                            else -> direction
+                            else -> "$stage · $direction"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = when { done -> TransferDone; failed -> MaterialTheme.colorScheme.error; else -> MaterialTheme.colorScheme.onSurfaceVariant },
@@ -120,7 +129,7 @@ private fun TransferCard(transfer: FileTransfer) {
                 }
                 if (!failed) {
                     Text(
-                        if (done) sizeLabel(transfer.total) else "${((transfer.fraction ?: 0f) * 100).toInt()}%",
+                        if (done) "Done" else transfer.fraction?.let { "${(it * 100).toInt()}%" }.orEmpty(),
                         style = MaterialTheme.typography.labelMedium,
                         fontFamily = FontFamily.Monospace,
                         color = if (done) TransferDone else TransferInk,
@@ -141,7 +150,7 @@ private fun TransferCard(transfer: FileTransfer) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     listOfNotNull(
-                        if (transfer.total > 0) "${sizeLabel(transfer.bytes)} of ${sizeLabel(transfer.total)}" else sizeLabel(transfer.bytes),
+                        if (transfer.total > 0) "${sizeLabel(transfer.bytes)} of ${sizeLabel(transfer.total)}" else stage,
                         transfer.rate(now)?.let { "${sizeLabel(it)}/s" },
                         transfer.secondsLeft(now)?.let { timeLeft(it) },
                     ).joinToString(" · "),

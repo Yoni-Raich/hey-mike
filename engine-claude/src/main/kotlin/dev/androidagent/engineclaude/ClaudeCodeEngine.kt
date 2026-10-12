@@ -24,8 +24,10 @@ import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.AgentEngine
 import dev.androidagent.core.AgentModel
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.ClaudeProcessHost
+import dev.androidagent.core.CompactResult
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.RuntimePhase
@@ -110,6 +112,11 @@ class ClaudeCodeEngine(
     @Volatile private var modelReadAt: Long? = null
     @Volatile private var modelRuntime: String = ""
     @Volatile private var modelAttemptAt: Long? = null
+    private val slashLock = Mutex()
+    @Volatile private var slash: ClaudeProtocol.SlashCatalog? = null
+    @Volatile private var slashReadAt: Long? = null
+    @Volatile private var slashAttemptAt: Long? = null
+    @Volatile private var slashRuntime: String = ""
     private val usageLock = Mutex()
     private val loginLock = Mutex()
     @Volatile private var loginProcess: Process? = null
@@ -292,8 +299,54 @@ class ClaudeCodeEngine(
         }
     }
 
-    /** The skills the app installed under `<claudeHome>/.claude/skills`. Only `SKILL.md` files are read. */
-    override suspend fun skillCatalog(workspace: File, forceReload: Boolean): List<AgentSkill> = withContext(Dispatchers.IO) {
+    /**
+     * What the CLI itself offers behind `/`: its commands and its skills. A
+     * throwaway process answers `initialize`, as for the model list, and the
+     * answer is kept for a minute. Null until one has answered. A failed ask
+     * keeps the last answer of the same runtime and waits before it asks again.
+     */
+    private suspend fun slashCatalog(forceReload: Boolean): ClaudeProtocol.SlashCatalog? {
+        if (!installed()) return null
+        return slashLock.withLock {
+            val at = catalogClock()
+            val identity = host.runtimeIdentity
+            val sameRuntime = slashRuntime == identity
+            fun within(since: Long?, limit: Long) = since?.let { at >= it && at - it < limit } == true
+            val fresh = sameRuntime && within(slashReadAt, if (forceReload) SLASH_FORCE_MIN_NS else SLASH_CACHE_NS)
+            val retryWait = sameRuntime && within(slashAttemptAt, SLASH_RETRY_NS)
+            if (fresh || retryWait) return@withLock slash.takeIf { sameRuntime }
+            if (!sameRuntime) { slash = null; slashReadAt = null }
+            slashAttemptAt = at
+            slashRuntime = identity
+            try {
+                val args = ClaudeProtocol.commandProbeArgs(userSettingsOnly = computer == null)
+                probe(usage = false, args = args).initialize?.let(ClaudeProtocol::parseSlashCatalog)?.let {
+                    slash = it
+                    slashReadAt = catalogClock()
+                }
+            } catch (cancelled: CancellationException) {
+                slashAttemptAt = null
+                throw cancelled
+            } catch (_: Exception) { /* Keep what was known while the CLI cannot answer. */ }
+            slash
+        }
+    }
+
+    /** The CLI's built-in commands, as it lists them for a headless chat. Empty until it has answered. */
+    override suspend fun commandCatalog(workspace: File, forceReload: Boolean): List<AgentCommand> =
+        slashCatalog(forceReload)?.commands.orEmpty()
+
+    /**
+     * On the phone, the skills the app installed under
+     * `<claudeHome>/.claude/skills`; only `SKILL.md` files are read. A
+     * computer's skills are whatever its Claude Code loaded.
+     */
+    override suspend fun skillCatalog(workspace: File, forceReload: Boolean): List<AgentSkill> {
+        if (computer != null) return slashCatalog(forceReload)?.skills.orEmpty()
+        return installedSkills()
+    }
+
+    private suspend fun installedSkills(): List<AgentSkill> = withContext(Dispatchers.IO) {
         val root = File(host.homeDirectory, ".claude/skills")
         val rootPath = runCatching { root.canonicalFile.toPath() }.getOrNull() ?: return@withContext emptyList()
         root.listFiles().orEmpty().filter { it.isDirectory }.mapNotNull { dir ->
@@ -403,9 +456,9 @@ class ClaudeCodeEngine(
     }
 
     /** Write `/compact` and wait for its `result`. */
-    override suspend fun compact(threadId: String) {
+    override suspend fun compact(threadId: String): CompactResult? {
         val chat = chats[threadId] ?: error("Send a message in this chat before compacting it.")
-        chat.lock.withLock {
+        return chat.lock.withLock {
             chat.ensureRunning()
             val frame = UUID.randomUUID().toString()
             val turn = synchronized(chat.state) { chat.mapper.begin("compact-$frame", frame, internal = true) }
@@ -422,6 +475,7 @@ class ClaudeCodeEngine(
                 error("Compacting took too long.")
             }
             check(status == "completed") { turn.error ?: "Claude could not compact this chat." }
+            turn.compact
         }
     }
 
@@ -955,8 +1009,8 @@ class ClaudeCodeEngine(
      * Ask a throwaway process for `initialize` and, with [usage], `get_usage`.
      * It sends no message, so no usage is spent.
      */
-    private suspend fun probe(usage: Boolean): Probe = withContext(Dispatchers.IO) {
-        val process = host.start(ClaudeProtocol.probeArgs(), home(), emptyMap())
+    private suspend fun probe(usage: Boolean, args: List<String> = ClaudeProtocol.probeArgs()): Probe = withContext(Dispatchers.IO) {
+        val process = host.start(args, home(), emptyMap())
         try {
             launch { drain(process.errorStream) }
             val wanted = if (usage) setOf(PROBE_ID, PROBE_USAGE_ID) else setOf(PROBE_ID)
@@ -1067,6 +1121,9 @@ class ClaudeCodeEngine(
         private const val ACCOUNT_CACHE_NS = 30_000_000_000L
         private const val MAX_CODE_CHARS = 4_096
         private const val MAX_SKILL_BYTES = 256L * 1024
+        private const val SLASH_CACHE_NS = 60_000_000_000L
+        private const val SLASH_FORCE_MIN_NS = 5_000_000_000L
+        private const val SLASH_RETRY_NS = 30_000_000_000L
         private const val MAX_AGENTS_MD_BYTES = 1024L * 1024
         private const val MAX_LOGIN_OUTPUT = 64 * 1024
         private const val MAX_COMMAND_OUTPUT = 256 * 1024

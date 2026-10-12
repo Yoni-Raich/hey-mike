@@ -19,6 +19,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +77,7 @@ class RemoteHub(
         // The tools ride on the process's own streams there, so no server is ever made.
         ClaudeCodeEngine(host, McpToolServerFactory { _, _, _ -> error("A computer chat has no tool server") }, maxLiveChats = 4, computer = computer)
     },
+    private val deltaTransfers: dev.androidagent.core.DeltaTransfers? = null,
     private val createEngine: (RuntimeHost, EngineProfile) -> CodexEngine = ::CodexEngine,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -275,6 +280,31 @@ class RemoteHub(
         progress: (Long, Long) -> Unit = { _, _ -> },
     ) = withContext(Dispatchers.IO) {
         connection(computerId).link.download(remotePath, target, maxBytes, progress)
+    }
+
+    /** APKs may reuse immutable bytes or a delta; installation remains a separate phone tool. */
+    suspend fun downloadApk(computerId: String, remotePath: String, target: File, progress: (Long, Long) -> Unit): dev.androidagent.core.FilePlace.Fetched {
+        val delta = deltaTransfers ?: run {
+            download(computerId, remotePath, target, Long.MAX_VALUE, progress)
+            return dev.androidagent.core.FilePlace.Fetched(target.length(), ComputerPlace.fileName(remotePath))
+        }
+        val connection = connection(computerId)
+        val probe = runInterruptible(Dispatchers.IO) { connection.probe(false) }
+        val transferLink = connection.link.isolated()
+        val peer = SshDeltaPeer(transferLink, connection.os, probe.home, File(claudeScratch.parentFile, "transfer-helpers"))
+        return try {
+            delta.download(peer, remotePath, target, progress)
+        } catch (_: DeltaHelperUnavailable) {
+            currentCoroutineContext().ensureActive()
+            (progress as? dev.androidagent.core.TransferProgress)?.phase(dev.androidagent.core.FileTransfer.Phase.MOVING)
+            transferLink.download(remotePath, target, Long.MAX_VALUE, progress)
+            dev.androidagent.core.FilePlace.Fetched(target.length(), ComputerPlace.fileName(remotePath))
+        } finally {
+            val stopped = !currentCoroutineContext().isActive
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                try { peer.close(stopped) } finally { transferLink.close() }
+            }
+        }
     }
 
     /** The size of a file on the computer, without copying it. */
