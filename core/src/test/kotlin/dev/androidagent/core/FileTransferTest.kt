@@ -5,6 +5,11 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class FileTransferTest {
+    @Test fun reconstructionProgressDoesNotPretendToBeNetworkSpeed() {
+        val move=FileTransfer(1,"a.apk","Pc","phone",10,20,0,phase=FileTransfer.Phase.PATCHING)
+        assertEquals(0.5f,move.fraction!!,0.0001f)
+        assertNull(move.rate(2000)); assertNull(move.secondsLeft(2000))
+    }
     @Test fun rateAndTimeLeftComeFromWhatHasMovedSoFar() {
         val move = FileTransfer(1, "a.apk", "Pc", "phone", bytes = 10_000_000, total = 40_000_000, startedAt = 0)
         assertEquals(0.25f, move.fraction!!, 0.0001f)

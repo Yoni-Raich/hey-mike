@@ -223,6 +223,16 @@ data class AgentSkill(
     val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: name
     val summary: String get() = shortDescription?.takeIf { it.isNotBlank() } ?: description
 }
+/** A command the connected engine answers itself, such as Claude Code's `/context`. */
+data class AgentCommand(
+    val name: String,
+    val description: String,
+    /** How the engine spells its arguments, such as `[low|high]`; empty when it takes none. */
+    val argumentHint: String = "",
+    val aliases: List<String> = emptyList(),
+)
+/** What a compaction did, in tokens, when the engine says; null where it does not. */
+data class CompactResult(val tokensBefore: Long? = null, val tokensAfter: Long? = null, val durationMs: Long? = null)
 data class TokenUsage(val total: Long, val input: Long, val output: Long, val cachedInput: Long = 0, val contextWindow: Long? = null)
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
 /**
@@ -302,6 +312,12 @@ interface AgentEngine {
      */
     suspend fun modelCatalog(): List<AgentModel> = models().map { AgentModel(id = it) }
     suspend fun skillCatalog(workspace: File, forceReload: Boolean = false): List<AgentSkill> = emptyList()
+    /**
+     * The commands the engine itself answers when a message begins with
+     * `/name`, as the engine reports them. Empty for an engine that has no
+     * such list: Codex keeps its terminal commands in its own code.
+     */
+    suspend fun commandCatalog(workspace: File, forceReload: Boolean = false): List<AgentCommand> = emptyList()
     suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String
     /** Persist a name where the engine keeps the thread, when supported. */
     suspend fun renameThread(threadId: String, title: String) {}
@@ -356,8 +372,11 @@ interface AgentEngine {
         capabilities: DeviceCapabilities,
         planModel: String?,
     ): String = startTurn(threadId, prompt, images, reasoningEffort, skill, capabilities)
-    /** Summarize the thread's history to free up context. */
-    suspend fun compact(threadId: String): Unit = throw UnsupportedOperationException("This engine cannot compact a chat.")
+    /**
+     * Summarize the thread's history to free up context. Returns when the
+     * summary is in place, with the sizes the engine reported, if it did.
+     */
+    suspend fun compact(threadId: String): CompactResult? = throw UnsupportedOperationException("This engine cannot compact a chat.")
     suspend fun steer(threadId: String, turnId: String, prompt: String)
     suspend fun interrupt(threadId: String, turnId: String)
     suspend fun answerTool(requestId: String, result: ToolResult)

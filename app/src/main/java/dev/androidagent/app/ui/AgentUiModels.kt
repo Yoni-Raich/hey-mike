@@ -24,6 +24,7 @@ import dev.androidagent.app.update.AppUpdateInfo
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AgentModel
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.AdbEndpoint
 import dev.androidagent.a11y.A11yStatus
@@ -134,6 +135,8 @@ data class AgentUiState(
     val availableModels: List<String> = emptyList(),
     val modelCatalog: List<AgentModel> = emptyList(),
     val availableSkills: List<AgentSkill> = emptyList(),
+    /** What the open chat's engine itself answers behind `/`; empty for Codex. */
+    val availableCommands: List<AgentCommand> = emptyList(),
     val selectedModel: String? = null,
     val selectedReasoningEffort: String? = null,
     /** Turns sent from the composer run in Codex plan mode. */
@@ -205,6 +208,8 @@ data class AgentUiState(
     val pcRefreshing: Set<String> = emptySet(),
     /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
     val pcChatLoading: Map<String, String> = emptyMap(),
+    /** Chats being compacted right now: chat id to the start time in epoch milliseconds. */
+    val compacting: Map<String, Long> = emptyMap(),
     /** A computer Mike filled in for the user to check and finish. */
     val computerProposal: ComputerDraft? = null,
     /** Latest unsent text per chat, retained across navigation. */

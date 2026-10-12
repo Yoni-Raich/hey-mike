@@ -421,9 +421,11 @@ class ClaudeCodeEngineTest {
         val frame = chat.nextFrame { it.type() == "user" && it.toString().contains("/compact") }
         assertNotNull(frame["uuid"])
         assertFalse(compact.isCompleted)
-        chat.send("""{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual"}}""")
+        chat.send("""{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":7015,"post_tokens":911}}""")
         chat.send(result(""""subtype":"success","is_error":false,"result":"""""))
-        compact.await()
+        val done = compact.await()
+        assertEquals(7015L, done?.tokensBefore)
+        assertEquals(911L, done?.tokensAfter)
         assertEquals(1, events.filterIsInstance<EngineEvent.TurnFinished>().size)
     }
 
@@ -724,6 +726,30 @@ class ClaudeCodeEngineTest {
         val catalog = engine().skillCatalog(workspace)
         assertEquals(listOf("device-automation", "quick-actions"), catalog.map { it.name })
         assertEquals("Drive the phone", catalog.first().description)
+    }
+
+    @Test fun commandsComeFromTheCliAndAreAskedOnceForAMinute() = runBlocking {
+        host.script = probeScript()
+        var now = 0L
+        val engine = engine(catalogClock = { now })
+        val commands = engine.commandCatalog(workspace)
+        assertEquals(listOf("deep-research", "design", "slides"), commands.map { it.name })
+        assertEquals("[what to design]", commands.first { it.name == "design" }.argumentHint)
+        val probe = host.started.single()
+        assertTrue("the user's settings and skills load", probe.args.zipWithNext().any { it == "--setting-sources" to "user" })
+        assertFalse("the probe never sends a message", probe.lines.any { it.contains("\"type\":\"user\"") })
+        now += 10_000_000_000L
+        engine.commandCatalog(workspace, forceReload = false)
+        engine.commandCatalog(workspace, forceReload = true)
+        assertEquals("one process answers both within the cache", 1, host.started.size)
+        now += 61_000_000_000L
+        engine.commandCatalog(workspace, forceReload = false)
+        assertEquals("an old answer is asked for again", 2, host.started.size)
+    }
+
+    @Test fun anAnswerThatFailsLeavesNoCommandsInsteadOfAMadeUpList() = runBlocking {
+        host.script = { process -> process.finish(1) }
+        assertTrue(engine().commandCatalog(workspace).isEmpty())
     }
 
     @Test fun closeStopsEveryChatAndTheHost() = runBlocking {

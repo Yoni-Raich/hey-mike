@@ -221,7 +221,7 @@ class RoutingAgentEngineTest {
             return threadId ?: "claude-thread"
         }
         override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String { turns++; return "turn" }
-        override suspend fun compact(threadId: String) { compacted += threadId }
+        override suspend fun compact(threadId: String): dev.androidagent.core.CompactResult? { compacted += threadId; return null }
         override suspend fun steer(threadId: String, turnId: String, prompt: String) { steers += prompt }
         override suspend fun interrupt(threadId: String, turnId: String) { interrupts += threadId }
         override suspend fun answerTool(requestId: String, result: ToolResult) { answered += requestId }

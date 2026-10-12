@@ -1,5 +1,64 @@
 # Progress
 
+### Delta transfer gated to dev, skills added - 2026-10-12
+
+- Real phone check on 1143 (`0.14.0-dev.delta4`): a ~332 MB `copy_file` finished with the chat session intact (transfer on its own SSH connection); SHA-256 on phone equals the PC file. 1142 measured the delta at ~436 KB. Wire bytes were not re-measured on 1143.
+- Delta is dev-channel only (`BuildConfig.DELTA_TRANSFER`). `assembleProdDebug` APK has no `libmike_delta.so`, no host helper, no delta skill text, and uses plain rename publication; its `assets/file-transfer/licenses` text files remain. `:core:test :workspace:testDebugUnitTest :remote:test :app:testDevDebugUnitTest :app:lintDevDebug :app:lintProdDebug` passed. Not run: full release gate, a prod install on a phone.
+- Skills: `.agents/skills/phone-apk-delivery` (developers) and `app/src/dev/assets/agent_stack/skills/files-across-devices` (Mike, dev builds only); `AGENTS.md` points to the first.
+
+### Delta bootstrap installed on the chat phone — 2026-10-12
+
+- The 1134 APK copied successfully, but Android rejected installation because
+  the chat phone already had 1137 (`0.14.0-dev.slash1`). No downgrade was used.
+- Preserved the newer slash/context/compaction source in the isolated delta
+  worktree: 20 source/test files copied byte-identically (normalized line
+  endings), other worktrees untouched. Source manifest is outside Git under
+  `%TEMP%/hey-mike-apk-delta-20261012/preserved-slash-context-source.json`.
+- Repeated the full build/test/lint gate for Dev Debug 1140 /
+  `0.14.0-dev.delta2`: passed in 3m30s, 2,609 unit executions, zero
+  failures/errors and 16 existing skips. Signature v2, ZIP/ELF 16KiB alignment,
+  helper packaging and preservation manifest verified. Artifact:
+  `artifacts/hey-mike-dev-1140-delta2.apk` (331,542,025 bytes).
+- `copy_file` completed the full bootstrap transfer. `install_apk(replace=true)`
+  was interrupted before returning, so its outcome was checked independently.
+  On the chat phone, `apps_settings(app_info)` and package metadata report
+  1140 / `0.14.0-dev.delta2`. Installed `base.apk` SHA-256 exactly matches:
+  `85c5d8e6b24c9f23c3ef28ed5bc5eb4d6494f916ec3cb86f3e4a230461179d3e`.
+  Last update: 17:02:53 local; first install remains 2026-09-08 20:12:05.
+- This proves the exact APK installed as an update. No physical JNI delta
+  reconstruction, Wi-Fi delta benchmark or live feature/UI test is claimed.
+
+### APK delta transfer — 2026-10-12
+
+- Implemented in isolated `feat/apk-delta-transfer-20261012` from dev
+  `1b6827ba03ae218fa631e166d32a160b8a8acf5b`; other worktrees untouched.
+  PC-to-phone APK copies negotiate verified immutable SHA-256 bases over the
+  existing SSH connection, reuse global blobs/patches, and reconstruct exact
+  signed APK bytes through bounded cancellable HDiffPatch JNI callbacks.
+  Missing bases or unusable deltas fall back to the pinned full snapshot;
+  Stop never triggers fallback. Transfers show preparation and verification
+  phases and publish verified files atomically. Debug builds seed the PC cache
+  and attempt patch precomputation; startup seeds the app's installed APK.
+- Final gate passed: `test assembleDevRelease assembleDevDebug
+  assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug`, isolated
+  Gradle home, native fixture properties, version overrides 1134 /
+  `0.14.0-dev.delta1`. 2,545 unit executions, zero failures/errors, 16 existing
+  skips; new native and real SSH/SFTP suites had no skips. Python host/runtime:
+  24 passed, no skips. `git diff --check` passed.
+- Product helper on existing signed 1132→1133 APKs produced a 2,776,115-byte
+  patch for a 331,102,984-byte APK (99.16% less transfer data). PC preparation
+  was 2.658s cold patch cache / 0.849s warm patch cache, including hashing.
+  Actual JNI reconstruction preserved SHA-256; actual generator Stop exited
+  the observed child. These results do not measure Android or Wi-Fi speed.
+- Final debug APK metadata, v2 signature, 16KiB ZIP alignment and bundled
+  native ABIs/helper/licenses verified. PC artifact:
+  `artifacts/hey-mike-dev-1134-delta1.apk`, SHA-256
+  `7381eea0e0045e30d52bf66b488d1bbe2c6b09b36976c30dade0126761eed89e`.
+  No phone transfer/install, Android JNI run, UI screenshot, production
+  signing or deployment. Python-less hosts keep legacy full SFTP; Linux
+  strict snapshots, split APKs and partial resume remain gaps. Full evidence:
+  `docs/testing/apk-delta-transfer-20261012.md`.
+
 ### Voice child-update timing and quiet — issue #129, 2026-10-11
 
 - Continued `fix/voice-child-update-timing-129` from merged PR #128 on dev

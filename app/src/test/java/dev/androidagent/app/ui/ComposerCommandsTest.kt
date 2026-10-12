@@ -20,6 +20,7 @@
 
 package dev.androidagent.app.ui
 
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentModel
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.EngineKind
@@ -160,5 +161,39 @@ class ComposerCommandsTest {
         assertEquals("5.6-luna", modelLabel(state, "gpt-5.6-luna"))
         assertNull(claudeModelName(state, "gpt-5.6-luna"))
         assertEquals("", modelNote(state, "gpt-5.6-luna"))
+    }
+    private val claudeCommands = listOf(
+        AgentCommand("context", "Show current context usage"),
+        AgentCommand("usage", "Show session cost and plan usage", aliases = listOf("cost", "stats")),
+        AgentCommand("clear", "Start a new session with empty context", aliases = listOf("reset", "new")),
+        AgentCommand("compact", "Free up context", "<optional custom summarization instructions>"),
+        AgentCommand("effort", "Set effort level", "<low|medium|high>"),
+        AgentCommand("rename", "Rename the current conversation", "[name]", aliases = listOf("name")),
+        AgentCommand("goal", "Set a goal", "<condition>"),
+    )
+
+    @Test fun claudeCommandsTheAppAlreadyDoesByItsOwnButtonAreNotOfferedTwice() {
+        val state = AgentUiState(activeEngine = EngineKind.CLAUDE, availableCommands = claudeCommands)
+        assertEquals(listOf("context", "usage", "goal"), engineCommands(state).map { it.name })
+    }
+
+    @Test fun aChatWithoutEngineCommandsOffersNone() {
+        assertTrue(engineCommands(AgentUiState(activeEngine = EngineKind.CODEX)).isEmpty())
+    }
+
+    @Test fun engineCommandsMatchTheirNameOrAnAlias() {
+        val usage = claudeCommands.first { it.name == "usage" }
+        assertTrue(usage.matches("us"))
+        assertTrue(usage.matches("COST"))
+        assertFalse(usage.matches("goal"))
+    }
+
+    @Test fun aCommandWithoutArgumentsRunsAtOnceAndOneWithArgumentsWaitsForThem() {
+        val context = claudeCommands.first { it.name == "context" }
+        val goal = claudeCommands.first { it.name == "goal" }
+        assertTrue(context.runsAtOnce())
+        assertEquals("/context", context.draft())
+        assertFalse(goal.runsAtOnce())
+        assertEquals("/goal ", goal.draft())
     }
 }
