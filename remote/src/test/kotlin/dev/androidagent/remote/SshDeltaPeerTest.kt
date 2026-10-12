@@ -43,7 +43,10 @@ class SshDeltaPeerTest {
             port = 0
             keyPairProvider = SimpleGeneratorHostKeyProvider(File(temp.root,"host.key").toPath())
             passwordAuthenticator = org.apache.sshd.server.auth.password.PasswordAuthenticator { user, password, _ -> user=="fixture" && password=="fixture" }
-            commandFactory = ProcessShellCommandFactory.INSTANCE
+            // Exec commands use shell syntax (command -v, quotes); ProcessShellCommandFactory splits words without a shell.
+            commandFactory = if (windows) ProcessShellCommandFactory.INSTANCE else org.apache.sshd.server.command.CommandFactory { channel, command ->
+                org.apache.sshd.server.shell.ProcessShellFactory(command, listOf("/bin/sh", "-c", command)).createShell(channel)
+            }
             subsystemFactories = listOf(SftpSubsystemFactory.Builder().withFileSystemAccessor(accessor).build())
         }
         server.start()
