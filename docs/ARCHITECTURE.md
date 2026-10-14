@@ -2669,6 +2669,10 @@ Decided 2026-10-01, on top of the section above.
   phone's ChatGPT account for each run, Claude uses the computer's own. The
   compliance rules above therefore hold unchanged; the binary is the user's
   own install, started unmodified.
+  - Computer chats pass only the MCP timeouts in `COMPUTER_CHAT_ENV`.
+    They leave `ENABLE_TOOL_SEARCH` to the user's environment/settings and
+    Claude Code's default, which discovers tools on demand. This includes
+    Mike's SDK MCP server. Phone chats keep their existing `CHAT_ENV`.
   - `RemoteHub.claude(computerId)` is a `ClaudeCodeEngine` whose host starts
     `claude` over the computer's SSH link. `ClaudeLaunch.probe` finds it on
     `PATH` or in the usual install places (an SSH command gets a bare `PATH`);

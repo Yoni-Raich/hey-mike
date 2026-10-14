@@ -655,7 +655,7 @@ class ClaudeCodeEngine(
                     PROMPT_FILE to place.instructions,
                     MCP_CONFIG_FILE to StdioMcp.config(ClaudeProtocol.MCP_SERVER_NAME),
                 )
-                attach(place.startChat(threadId, cwd, files, ClaudeProtocol.CHAT_ENV) { paths ->
+                attach(place.startChat(threadId, cwd, files, ClaudeProtocol.COMPUTER_CHAT_ENV) { paths ->
                     ClaudeProtocol.computerChatArgs(
                         threadId, resume, model, effort,
                         mcpConfig = paths.getValue(MCP_CONFIG_FILE),
