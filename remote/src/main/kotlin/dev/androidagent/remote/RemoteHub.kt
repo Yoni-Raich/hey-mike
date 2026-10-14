@@ -515,7 +515,11 @@ class RemoteHub(
             if (connection.os == HostOs.WINDOWS) {
                 val probe = connection.probe(refresh = false)
                 val instance = CodexRelayScripts.install(connection.link, probe, File(claudeScratch.parentFile, "codex-relay"))
-                val result = startRelay(computerId, connection.link, instance, probe.appServer)
+                // One app-server per computer for this phone: a replacement ends the earlier one,
+                // which would otherwise keep each thread's writer for its offline lease.
+                require(computerId.matches(LinuxHost.THREAD_ID)) { "Unexpected computer id" }
+                val owner = probe.home.replace('\\', '/') + "/.hey-mike/codex/owners/$computerId.lock"
+                val result = startRelay(computerId, connection.link, instance, probe.appServer, owner)
                 check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") {
                     "Could not start the computer's Codex relay. No task was sent."
                 }
@@ -538,9 +542,15 @@ class RemoteHub(
     }
 
     /** A lost startup receipt is followed by attachment to that same instance only. */
-    private suspend fun startRelay(computerId: String, link: SshLink, instance: CodexRelayScripts.Instance, exe: String? = null): ExecResult? =
+    private suspend fun startRelay(
+        computerId: String,
+        link: SshLink,
+        instance: CodexRelayScripts.Instance,
+        exe: String? = null,
+        owner: String? = null,
+    ): ExecResult? =
         try {
-            link.run(CodexRelayScripts.start(instance, exe), 30_000).takeIf { it.exitCode >= 0 }
+            link.run(CodexRelayScripts.start(instance, exe, owner), CodexRelayScripts.START_TIMEOUT_MS).takeIf { it.exitCode >= 0 }
         } catch (error: Exception) {
             if (error is CancellationException || error is HostKeyChanged || error is TailscaleCheck) throw error
             // Attach can prove whether that very instance started. Never replace

@@ -67,21 +67,35 @@ class CodexRelayHostTest {
         assertTrue(host.metadata.readText().contains("\"ended\":true"))
     }
 
-    @Test fun nativeLaunchPreservesWorkingFolderAndEnvironmentAndRefusesASecondOwner() = withHost(configured = true) { host ->
-        await { host.settings.isFile }
+    @Test fun nativeLaunchPreservesWorkingFolderAndEnvironmentAndASecondOwnerEndsTheFirst() = withHost(configured = true) { host ->
+        await { host.settings.isFile && host.childPid.isFile && host.childPid.readText().isNotBlank() }
         val settings = host.settings.readText()
         assertTrue(settings.contains("relay with spaces"))
         assertTrue(settings.contains("שלום 100% 🙂"))
-        val secondCommand = host.command.toMutableList().apply {
-            this[indexOf("-Metadata") + 1] = File(host.metadata.parentFile, "second-connection.json").absolutePath
-        }
+        val child = host.childPid.readText().trim().toLong()
+        val secondMetadata = File(host.metadata.parentFile, "second-connection.json")
+        val secondCommand = host.command.toMutableList().apply { this[indexOf("-Metadata") + 1] = secondMetadata.absolutePath }
         val second = ProcessBuilder(secondCommand).redirectErrorStream(true).start()
         try {
-            assertTrue(second.waitFor(20, TimeUnit.SECONDS))
-            assertNotEquals(0, second.exitValue())
-            assertTrue(host.process.isAlive)
+            // One owner at a time: the earlier relay and its child end before the new one starts its own.
+            await(25_000) { !host.process.isAlive }
+            assertFalse(processExists(child))
+            await(20_000) { secondMetadata.isFile && secondMetadata.readText().contains("\"child\"") }
+            assertTrue(second.isAlive)
             assertEquals("", host.count.readText())
-        } finally { second.destroy() }
+        } finally {
+            // This second host and its echo child were created by this test only.
+            runCatching {
+                val port = Json.parseToJsonElement(secondMetadata.readText()).jsonObject["port"]!!.jsonPrimitive.content.toInt()
+                Socket("127.0.0.1", port).use { socket ->
+                    socket.soTimeout = 8_000
+                    socket.getOutputStream().write("S ${host.token}\n".toByteArray())
+                    socket.getOutputStream().flush()
+                    socket.getInputStream().bufferedReader().readLine()
+                }
+            }
+            if (!second.waitFor(8, TimeUnit.SECONDS)) second.destroyForcibly()
+        }
     }
 
     private fun withHost(lease: Int = 30, configured: Boolean = false, check: (Host) -> Unit) {
