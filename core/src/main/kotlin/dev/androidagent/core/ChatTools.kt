@@ -61,7 +61,7 @@ object ChatTools {
     const val ASK = "ask_user"
     const val SHOW = "show_media"
     const val TITLE = "set_chat_title"
-    val NAMES = setOf(ASK, SHOW, TITLE)
+    val NAMES = setOf(ASK, SHOW, TITLE, SessionAgentTools.NAME)
 
     const val MAX_OPTIONS = 6
     const val MAX_MEDIA = 10
@@ -71,7 +71,7 @@ object ChatTools {
     /** How long a question waits. Below Claude's 10 minute tool limit, so the answer has a call to go back to. */
     const val ASK_TIMEOUT_MS = 8L * 60 * 1_000
 
-    val DEFINITIONS: List<ToolDefinition> = listOf(
+    val DEFINITIONS: List<ToolDefinition> = SessionAgentTools.DEFINITIONS + listOf(
         ToolDefinition(
             name = TITLE,
             description = "Give a new chat a short topic name once you understand the user's request. Use 3 to 7 words " +

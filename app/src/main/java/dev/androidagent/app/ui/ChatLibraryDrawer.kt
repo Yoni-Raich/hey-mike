@@ -570,7 +570,9 @@ private fun LibraryChatRow(
             onSelect = { dismiss(); actions.onSelectSession(local.id) },
             onRename = { actions.onRenameSession(local.id, it) },
             onDelete = { actions.onDeleteSession(local.id) },
-            subtitle = if (running) listOf("Running", detail).filter { it.isNotBlank() }.joinToString(" · ") else detail.ifBlank { null },
+            subtitle = listOfNotNull(if (running) "Running" else null,
+                local.parentSessionId?.let { parent -> "From ${state.sessions.firstOrNull { it.id == parent }?.title ?: "parent chat"}" },
+                detail.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { null },
             leading = leading,
             subtitleColor = if (running) LibraryAmber else null,
         )

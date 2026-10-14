@@ -55,7 +55,8 @@ class ComputerClaudeSetupUiTest {
         field.performTextInput("fixture-code#state")
         compose.onNodeWithText("Finish sign-in on Pc").performClick()
         compose.runOnIdle { assertEquals("pc" to "fixture-code#state", submitted) }
-        field.assertTextEquals("")
+        field.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText,
+            androidx.compose.ui.text.AnnotatedString("")))
         compose.onNodeWithText("Finish sign-in on Pc").assertIsNotEnabled()
         compose.runOnIdle { signIn.value = ComputerClaudeSignInState(error = "Sign-in expired. Start again.") }
         compose.onNode(hasSetTextAction()).assertDoesNotExist()

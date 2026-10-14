@@ -60,6 +60,8 @@ data class QueuedTurn(
      * drops the turn rather than running it long after its moment.
      */
     val validUntil: Long? = null,
+    /** App-supplied child context must never masquerade as the user's words or answer a gate. */
+    val agentContext: Boolean = false,
 )
 
 /**

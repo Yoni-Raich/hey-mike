@@ -295,6 +295,9 @@ class AgentGraph(private val app: Application) {
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
+    val agentOpenRequests = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    lateinit var sessionAgents: dev.androidagent.core.SessionAgents
+        private set
     val computerTasks = dev.androidagent.remote.ComputerTasks(
         computers, sessions, scope,
         runner = { dev.androidagent.remote.RunsComputerTaskRunner(runCoordinator) },
@@ -351,7 +354,8 @@ class AgentGraph(private val app: Application) {
             A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
         }
         runCoordinator = AgentRuns(scope, engine, onStopSession = { id ->
-            if (id != null) computerTasks.stopOrigin(id)
+            if (::sessionAgents.isInitialized) sessionAgents.stop(id)
+            if (id != null) runCoordinator.family(id).forEach(computerTasks::stopOrigin)
             else computerTasks.stopAll()
         }, create = { share ->
             AgentCoordinator(
@@ -366,13 +370,38 @@ class AgentGraph(private val app: Application) {
                 // show_media reads addresses as copy_file does: this chat, the phone, a computer.
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
+                sessionAgents = { sessionAgents },
             )
         })
+        val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
+        sessionAgents = dev.androidagent.core.SessionAgents(sessions, scope,
+            runner = { dev.androidagent.core.RunsSessionAgentRunner(runCoordinator) },
+            prepareChild = childSetup::prepare, options = childSetup::options,
+            openChat = { child -> agentOpenRequests.value = child; bringAppForward() },
+        )
+        dev.androidagent.core.SessionAgentDelivery(scope, sessionAgents.events,
+            changes = kotlinx.coroutines.flow.combine(runCoordinator.sessionStates, voice.state, voiceConversation.sessionId) { a, b, c -> Triple(a, b, c) },
+            active = { runCoordinator.stateOf(it) != null },
+            deliver = { source, updates, allowed ->
+                val chat = sessions.getSession(source)
+                val state = runCoordinator.stateOf(source)
+                when {
+                    chat == null || !allowed() -> true
+                    state?.approval != null || state?.question != null || state?.phase == dev.androidagent.core.RunPhase.STOPPING -> false
+                    voiceConversation.sessionId.value == source -> voiceConversation.deliverChildUpdates(source, updates, allowed)
+                    else -> runCoordinator.deliverAgentContext(chat, dev.androidagent.core.SessionAgentUpdate.prompt(updates), allowed)
+                }
+            },
+            failed = { source, error -> sessions.append(dev.androidagent.core.ChatMessage(
+                java.util.UUID.randomUUID().toString(), source, "system",
+                "A child update could not be delivered automatically. Inspect its chat before continuing. ${error.message.orEmpty()}",
+                System.currentTimeMillis())) },
+        )
         questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat,
-            conversationOwner = { child -> computers.state.value.tasks.values.firstOrNull { it.sessionId == child }?.originSessionId ?: child },
+            conversationOwner = { child -> runCoordinator.ancestorsOf(child).lastOrNull() ?: child },
             conversationOrder = { child ->
-                val source = computers.state.value.tasks.values.firstOrNull { it.sessionId == child }?.originSessionId
-                if (source == null) -1 else runCoordinator.childrenOf(source).indexOf(child).takeIf { it >= 0 } ?: Int.MAX_VALUE
+                val source = runCoordinator.ancestorsOf(child).lastOrNull()
+                if (source == null) -1 else runCoordinator.family(source).indexOf(child).takeIf { it >= 0 } ?: Int.MAX_VALUE
             },
         )
         queue = SessionRunQueue(
@@ -414,7 +443,20 @@ class AgentGraph(private val app: Application) {
         }
         // Report a binary downloaded in an earlier run as ready. This checks
         // its hash and never downloads.
-        scope.launch(Dispatchers.IO) { runCatching { claudeHost.installer.refresh() } }
+        scope.launch(Dispatchers.IO) {
+            runCatching { claudeHost.refresh() }
+            appInFront.collect { foreground ->
+                if (foreground) scope.launch { claudeHost.checkForUpdates() }
+            }
+        }
+        scope.launch {
+            while (true) {
+                // The persisted 15-minute throttle owns network checks; a one-minute
+                // wake-up avoids missing its deadline after a foreground transition.
+                kotlinx.coroutines.delay(60_000)
+                if (appInFront.value) scope.launch { claudeHost.checkForUpdates() }
+            }
+        }
         // Separate from the skills so a failed skill install cannot leave the
         // user without their preferences, or the reverse.
         runCatching {

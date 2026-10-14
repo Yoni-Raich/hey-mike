@@ -193,6 +193,7 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
             }
         },
         actions = {
+            ChildAgentsButton(state, actions)
             AgentStatusButton(state) { showStatus = true }
             // A running chat keeps running beside the new one, so there is nothing to confirm.
             IconButton(onClick = actions.onNewChat) {

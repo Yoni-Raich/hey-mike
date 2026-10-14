@@ -214,6 +214,7 @@ internal fun JsonObject.requestSubtype(): String =
     ((this["request"] as? JsonObject)?.get("subtype") as? JsonPrimitive)?.content.orEmpty()
 
 internal class FakeHost(override val homeDirectory: File) : ClaudeProcessHost {
+    override var runtimeIdentity: String = "2.1.293"
     override val status = MutableStateFlow(RuntimeStatus(RuntimePhase.READY, "Ready"))
     val started = CopyOnWriteArrayList<FakeClaude>()
     @Volatile var script: (FakeClaude) -> Unit = { it.answerInitialize() }

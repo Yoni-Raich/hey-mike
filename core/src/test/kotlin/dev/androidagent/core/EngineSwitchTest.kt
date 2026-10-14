@@ -29,6 +29,15 @@ import org.junit.Test
 class EngineSwitchTest {
     private val chat = ChatSession("c", "Chat", 1, 2, engineThreadId = "codex-1", hasMessages = true, engine = EngineKind.CODEX)
 
+    @Test fun anEngineChangeClearsIncompatibleModelSettingsButKeepsTheParentLink() {
+        val child = chat.copy(parentSessionId = "parent", model = "model-a", reasoningEffort = "high")
+        val moved = EngineSwitch.switch(child, EngineKind.CLAUDE, 100)
+        assertEquals("parent", moved.parentSessionId)
+        assertNull(moved.model)
+        assertNull(moved.reasoningEffort)
+        assertSame(child, EngineSwitch.switch(child, EngineKind.CODEX, 100))
+    }
+
     @Test
     fun switchingToTheSameEngineChangesNothing() {
         assertSame(chat, EngineSwitch.switch(chat, EngineKind.CODEX, now = 100))

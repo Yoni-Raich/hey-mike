@@ -50,7 +50,7 @@ import java.util.Base64
 import java.util.Locale
 
 /**
- * The wire shapes of `claude -p` in stream-json mode (Claude Code 2.1.285).
+ * The wire shapes of `claude -p` in stream-json mode (Claude Code 2.1.293).
  *
  * Everything here is a pure function so the codec can be tested against
  * recorded lines without a process. Shapes were recorded from a real CLI:
@@ -60,7 +60,7 @@ import java.util.Locale
  */
 internal object ClaudeProtocol {
     /** The only Claude Code version the app installs. `system/init` is checked against it. */
-    const val PINNED_VERSION = "2.1.285"
+    const val PINNED_VERSION = "2.1.293"
 
     const val MCP_SERVER_NAME = "mike"
     const val MCP_TOOL_PREFIX = "mcp__${MCP_SERVER_NAME}__"
@@ -383,7 +383,7 @@ internal object ClaudeProtocol {
     private val PINNED_NAMES: Map<String, String> = mapOf(
         "sonnet" to "Sonnet 5.5",
         "opus" to "Opus 5.5",
-        "haiku" to "Haiku 4.5",
+        "haiku" to "Haiku 5.5",
         "fable" to "Fable 5.1",
         "claude-fable-5-1" to "Fable 5.1",
     )
@@ -410,7 +410,7 @@ internal object ClaudeProtocol {
     val FALLBACK_MODELS: List<AgentModel> = listOf(
         AgentModel("sonnet", modelName("sonnet"), EFFORTS.map { ReasoningEffortOption(it) }, engine = EngineKind.CLAUDE),
         AgentModel("opus", modelName("opus"), EFFORTS.map { ReasoningEffortOption(it) }, engine = EngineKind.CLAUDE),
-        AgentModel("haiku", modelName("haiku"), engine = EngineKind.CLAUDE),
+        AgentModel("haiku", modelName("haiku"), EFFORTS.map { ReasoningEffortOption(it) }, engine = EngineKind.CLAUDE),
     )
 
     private val WINDOW_NAMES = mapOf(
