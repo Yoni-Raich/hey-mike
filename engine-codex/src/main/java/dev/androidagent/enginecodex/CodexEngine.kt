@@ -78,49 +78,48 @@ class CodexEngine(
     private val voiceLock = Mutex()
     @Volatile private var voiceThreadId: String? = null
     @Volatile private var voiceClosedSignal: CompletableDeferred<Unit>? = null
-    private var process: Process? = null
+    @Volatile private var process: Process? = null
     private var writer: BufferedWriter? = null
     private var readerJob: Job? = null
-    private var initialized = false
+    @Volatile private var initialized = false
     private var externalAuth: ExternalChatgptTokens? = null
     private var externalRefresh: (suspend (String?) -> ExternalChatgptTokens)? = null
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun connect() = connectLock.withLock {
         if (initialized && process?.isAlive == true) return@withLock
+        if (process != null) closeConnectionLocked()
         runtime.prepare()
         val started = runtime.startAppServer()
         externalAuth = null
         process = started
         writer = started.outputStream.bufferedWriter(Charsets.UTF_8)
         readerJob = scope.launch {
+            var failure: String? = null
             try {
                 started.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                     while (isActive) {
                         val line = reader.readLine() ?: throw IOException("App-server output closed")
-                        if (line.isNotBlank()) receive(json.parseToJsonElement(line).jsonObject)
+                        if (line.isNotBlank()) receive(CodexTransportJson.parse(line))
                     }
                 }
             } catch (error: Exception) {
                 if (isActive && error !is CancellationException) {
-                    val detail = SecretRedactor.redact("Codex connection ended: ${error.message}")
-                    stream.emit(EngineEvent.Failure(detail, uncertain = true))
+                    failure = if (error is kotlinx.serialization.SerializationException) {
+                        "Codex connection ended: an incomplete or invalid JSON message was received. Task outcome is unknown."
+                    } else SecretRedactor.redact("Codex connection ended: ${error.message}").take(500)
                 }
             } finally {
-                initialized = false
-                pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex process stopped")) }
-                pending.clear()
-                compactions.values.forEach { it.finished.completeExceptionally(IllegalStateException("Codex process stopped during compaction. Completion was not confirmed.")) }
-                compactions.clear()
-                approvals.clear()
-                val stoppedVoiceThreadId = voiceThreadId
-                if (stoppedVoiceThreadId != null) {
-                    val detail = "Codex process stopped during voice"
-                    voiceClosedSignal?.complete(Unit)
-                    voiceClosedSignal = null
-                    voiceThreadId = null
-                    mutableVoiceState.value = VoiceState(VoicePhase.ERROR, detail, stoppedVoiceThreadId)
-                    voiceStream.emit(VoiceEvent.Failure(detail, stoppedVoiceThreadId))
+                if (process === started) {
+                    // Unblock an initialize RPC before waiting on connectLock.
+                    pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex process stopped")) }
+                    withContext(NonCancellable) { connectLock.withLock {
+                        // An old reader must never close a newly connected process.
+                        if (process === started) {
+                            closeConnectionLocked(cancelReader = false, failure = failure)
+                            failure?.let { stream.emit(EngineEvent.Failure(it, uncertain = true)) }
+                        }
+                    } }
                 }
             }
         }
@@ -140,12 +139,18 @@ class CodexEngine(
             } catch (_: IOException) {
             }
         }
-        request("initialize", buildJsonObject {
-            put("clientInfo", buildJsonObject { put("name", "android_agent"); put("title", "Hey Mike"); put("version", "0.1.0") })
-            put("capabilities", buildJsonObject { put("experimentalApi", true) })
-        })
-        notify("initialized", buildJsonObject {})
-        initialized = true
+        try {
+            request("initialize", buildJsonObject {
+                put("clientInfo", buildJsonObject { put("name", "android_agent"); put("title", "Hey Mike"); put("version", "0.1.0") })
+                put("capabilities", buildJsonObject { put("experimentalApi", true) })
+            })
+            notify("initialized", buildJsonObject {})
+            check(process === started && started.isAlive) { "Codex stopped during startup" }
+            initialized = true
+        } catch (error: Exception) {
+            withContext(NonCancellable) { closeConnectionLocked() }
+            throw error
+        }
     }
 
     override suspend fun account(): AccountStatus {
@@ -547,17 +552,33 @@ class CodexEngine(
     }
 
     override suspend fun close() {
+        // Wake a blocked relay writer before waiting for an in-flight connect.
+        withContext(Dispatchers.IO) { process?.destroy() }
+        connectLock.withLock { closeConnectionLocked() }
+    }
+
+    private suspend fun closeConnectionLocked(cancelReader: Boolean = true, failure: String? = null) {
         initialized = false
+        process = null
+        val closingWriter = writer
+        writer = null
+        if (cancelReader) readerJob?.cancel()
+        readerJob = null
+        pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex process stopped")) }
+        pending.clear()
+        compactions.values.forEach { it.finished.completeExceptionally(IllegalStateException("Codex process stopped during compaction. Completion was not confirmed.")) }
+        compactions.clear()
         approvals.clear()
         val closedVoiceThreadId = voiceThreadId
         voiceThreadId = null
         voiceClosedSignal?.cancel()
         voiceClosedSignal = null
-        mutableVoiceState.value = VoiceState(VoicePhase.IDLE, "Closed", closedVoiceThreadId)
-        readerJob?.cancel()
-        withContext(Dispatchers.IO) { runCatching { writer?.close() }; writer = null }
+        mutableVoiceState.value = VoiceState(if (failure == null) VoicePhase.IDLE else VoicePhase.ERROR, failure ?: "Closed", closedVoiceThreadId)
+        if (failure != null && closedVoiceThreadId != null) voiceStream.emit(VoiceEvent.Failure(failure, closedVoiceThreadId))
+        // Closing BufferedWriter first can deadlock behind a write waiting on
+        // an offline transport. Stop the owned runtime first, then close it.
         runtime.stop()
-        process = null
+        withContext(Dispatchers.IO) { runCatching { closingWriter?.close() } }
     }
 
     private suspend fun request(method: String, params: JsonObject): JsonObject {
@@ -566,14 +587,26 @@ class CodexEngine(
         pending[id] = response
         try {
             write(buildJsonObject { put("id", id.toLong()); put("method", method); put("params", params) })
-            return withTimeout(60_000) { response.await() }
+            val connection = process
+            if (connection !is RecoverableConnection) return withTimeout(60_000) { response.await() }
+            // A retained app-server still owns this RPC while SSH reconnects.
+            // Pause the response budget, never send a new turn/start on timeout.
+            var remaining = 60_000L
+            while (remaining > 0) {
+                val before = System.nanoTime()
+                val recovering = connection.reconnecting
+                val result = withTimeoutOrNull(minOf(remaining, 250)) { response.await() }
+                if (result != null) return result
+                if (!recovering && !connection.reconnecting) remaining -= (System.nanoTime() - before) / 1_000_000
+            }
+            return withTimeout(1) { awaitCancellation() }
         } finally { pending.remove(id) }
     }
 
     private suspend fun notify(method: String, params: JsonObject) = write(buildJsonObject { put("method", method); put("params", params) })
     private suspend fun respond(id: String, result: JsonObject) = write(buildJsonObject { put("id", json.parseToJsonElement(id)); put("result", result) })
     private suspend fun write(message: JsonObject) = withContext(Dispatchers.IO) {
-        writeLock.withLock { (writer ?: error("Codex is not connected")).apply { write(message.toString()); newLine(); flush() } }
+        writeLock.withLock { runInterruptible { (writer ?: error("Codex is not connected")).apply { write(message.toString()); newLine(); flush() } } }
     }
 
     private suspend fun receive(message: JsonObject) {

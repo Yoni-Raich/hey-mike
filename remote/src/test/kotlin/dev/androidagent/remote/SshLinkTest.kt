@@ -12,6 +12,7 @@ import org.apache.sshd.server.SshServer
 import org.apache.sshd.server.auth.password.PasswordAuthenticator
 import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.apache.sshd.server.shell.ProcessShellCommandFactory
+import org.apache.sshd.server.forward.AcceptAllForwardingFilter
 import org.apache.sshd.common.keyprovider.KeyPairProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -24,6 +25,9 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.security.KeyPairGenerator
+import java.net.ServerSocket
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -40,6 +44,7 @@ class SshLinkTest {
             keyPairProvider = SimpleGeneratorHostKeyProvider(temp.newFile("host.ser").toPath().also { it.toFile().delete() })
             passwordAuthenticator = PasswordAuthenticator { user, password, _ -> user == USER && password == PASSWORD }
             commandFactory = ProcessShellCommandFactory.INSTANCE
+            forwardingFilter = AcceptAllForwardingFilter.INSTANCE
         }
         server.start()
     }
@@ -48,6 +53,38 @@ class SshLinkTest {
 
     private fun target(password: String = PASSWORD, pinned: String? = null) =
         SshTarget("127.0.0.1", server.port, USER, password, pinned)
+
+    @Test(timeout = 20_000) fun loopbackTunnelKeepsBidirectionalInputLiveAndClosingItKeepsTheSshSession() {
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress()).use { socket ->
+                val peer = pool.submit { socket.accept().use { client ->
+                    val writer = client.getOutputStream().bufferedWriter(Charsets.UTF_8)
+                    client.getInputStream().bufferedReader(Charsets.UTF_8).useLines { lines -> lines.forEach {
+                        writer.write(it); writer.newLine(); writer.flush()
+                    } }
+                } }
+                SshLink(target()).use { link ->
+                    val process = link.loopback(socket.localPort)
+                    try {
+                        val writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
+                        val reader = process.inputStream.bufferedReader(Charsets.UTF_8)
+                        repeat(100) { index ->
+                            val text = "frame $index שלום 🙂"
+                            writer.write(text); writer.newLine(); writer.flush()
+                            assertEquals(text, reader.readLine())
+                        }
+                    } finally { process.destroy() }
+                    peer.get(3, TimeUnit.SECONDS)
+                    assertEquals("still-connected", link.run("echo still-connected").stdout.trim())
+                    for (invalid in listOf(0, -1, 65536)) {
+                        try { link.loopback(invalid); fail("Invalid port must be refused") }
+                        catch (_: IllegalArgumentException) { }
+                    }
+                }
+            }
+        } finally { pool.shutdownNow() }
+    }
 
     @Test fun aCommandRunsAndItsHostKeyIsReportedForPinning() {
         SshLink(target()).use { link ->

@@ -333,6 +333,20 @@ class ClaudeCodeEngineTest {
         assertEquals(id, second.after("--resume"))
     }
 
+    @Test fun damagedOutputFailsWithoutPayloadOrAutomaticTaskReplay() = runBlocking {
+        val engine = engine()
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.send("{\"private\":\"personal-content\", BROKEN}")
+        val failure = awaitEvent<EngineEvent.Failure>()
+        assertEquals(turnId, failure.turnId)
+        assertTrue(failure.message.contains("Invalid Claude protocol message"))
+        assertFalse(failure.message.contains("personal-content"))
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished>().status)
+        assertEquals(1, host.chats().size)
+        assertFalse(chat.isAlive)
+    }
+
     @Test fun aSessionThatNeverGotAMessageStartsAgainUnderTheSameId() = runBlocking {
         val known = "0b9f6a8e-3f7d-4c1a-9e2b-5d6c7e8f9a0b"
         host.script = { process ->

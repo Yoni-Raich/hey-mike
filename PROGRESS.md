@@ -1,5 +1,101 @@
 # Progress
 
+### Windows relay startup repair — 2026-10-14
+
+- Preserved the exact 1144 reconnect source in a new managed worktree;
+  the primary checkout and the original reconnect worktree were left untouched.
+- Replaced background `Start-Process` with a hidden native launch that explicitly
+  escapes OpenSSH's kill-on-close job and inherits no SSH pipe handles. Startup
+  now requires an authenticated health response. Dead/reused broker PIDs fail
+  immediately; pending writes retain the safe terminal error. The offline lease
+  begins after process startup and endpoint publication.
+- The native Windows job regression test reproduces the old launch's abrupt
+  termination and proves the product bootstrap survives that same job closure
+  and exchanges Unicode input/output. Scoped relay checks: 12 tests passed,
+  no failures or skips. Runtime preparation: 15 Python tests passed.
+- Final gate passed: `test assembleDevDebug assembleDevRelease
+  assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug --no-daemon`,
+  isolated Gradle home, two workers. 2,663 unit executions, zero failures or
+  errors, 32 existing skips. App/voice lint: zero errors/fatals. Packaged helper
+  bytes match source in Debug and Release. Debug v2 signature and 16KiB ZIP
+  alignment verified; Release is unsigned and is not the delivery artifact.
+- Installed 1145 through `copy_file` then `install_apk`; independently verified
+  the installed APK SHA-256. Its real new PC chat proved the broker stayed
+  alive, but RPC stdin delivery still stalled and the chat returned `Stream
+  closed`. This was a failed physical chat, not completion evidence.
+- 1146 uses an authenticated SSH `direct-tcpip` tunnel to that same loopback
+  broker, bypassing Windows command stdin for both Codex and native Claude.
+  A real Windows SSH echo fixture reproduced the stdin stall; the underlying
+  Windows pipe cause remains unproven. The tunnel passed 100 round trips.
+  Real-SSH unit fixtures cover Unicode exchange, scoped channel closure,
+  product endpoint validation and reattachment to the same native broker.
+- Repeated final gate passed for 1146 in 2m12s: 2,667 unit executions, zero
+  failures/errors, 32 existing skips; app/voice lint had zero errors/fatals.
+  Runtime preparation: 15 Python tests passed. Signed Dev Debug metadata,
+  v2 signature, same signer, 16KiB ZIP alignment and packaged helper bytes
+  verified. An initial short-lease fixture failure exposed startup time being
+  counted as offline time; fixed before this successful gate.
+- Current artifact: 1146 / `0.14.0-dev.reconnect3`, Dev Debug, 331,619,686
+  bytes, SHA-256 `11052cde1eeaf5f9c4d1fa7a98026245c3b340a684f2d3c6bc42d39827bd6a16`.
+  Source: `app/build/outputs/apk/dev/debug/app-dev-debug.apk` (ignored).
+  `copy_file` completed in 7.718s; `install_apk(replace=true)` updated the
+  Nothing A059. Copied and installed `base.apk` SHA-256 both match the artifact.
+  Transfer wire bytes were not measured.
+- Physical 1146 checks passed: a fresh Codex PC chat ran `pwd` on the Windows
+  project and `read_ui` once on the phone; the PC tool receipt and phone gateway
+  receipt confirm both. A guarded one-time TCP deletion dropped only that
+  test tunnel during a PC command. It reattached in about 1.84s; independent
+  process creation times confirmed the same broker and app-server, and the
+  prepared command executed once. The output and final answer arrived, then a
+  follow-up recalled the original marker and folder on the same Codex thread.
+  The old reported chat, selected on its Claude/Sonnet engine, also completed a
+  new reply without tools or replaying earlier work. Accessibility was restored
+  through Android's settings UI after an idle app restart and verified bound.
+  Original screen timeout restored. No sign-in/session data was cleared.
+- Remaining gaps: outer SSH-session loss, a physical Wi-Fi/VPN outage, long
+  outage/soak, voice recovery, Linux retained-process behavior and a signed
+  non-debuggable Release installation are not proved by these checks.
+  See `docs/testing/relay-startup-20261014.md`.
+
+### Windows Codex and Claude connection recovery — 2026-10-13
+
+- Dedicated `fix/codex-reconnect-20261013` worktree from dev `5d7f2f38`;
+  the dirty primary checkout and existing running processes were preserved.
+- Added an authenticated loopback relay retaining the same Windows app-server
+  across SSH loss, framed output replay and deduplicated input receipts,
+  bounded backoff/lease, scoped reconnect status and locally cancellable Stop.
+- Transport trailing commas are accepted narrowly; other malformed JSON
+  remains terminal, hides its payload and closes the owned runtime. An old
+  reader cannot close a new connection. Legacy busy-writer advice no longer
+  claims that reconnect alone fixes it.
+- Native Windows Claude chats also keep their process through SSH loss. An
+  exclusive per-chat owner prevents a second retained process; each instance
+  gets separate launch files. A lost startup receipt never starts another
+  helper automatically. Claude's writer is cancellable, Stop wakes it first,
+  and invalid protocol frames fail without exposing their payload.
+- Scoped core/engine/remote checks and final relay suites passed. Real shipped
+  helper tests proved receipt deduplication and lease/Stop behavior. Pinned
+  Windows Codex plus real SSH disconnect/reconnect kept the same loaded thread
+  and live broker, without a model request or sign-in. Post-Claude scoped checks:
+  1,067 executions, zero failures/errors, two existing Linux-only skips.
+  Final combined gate passed: 2,659 unit executions, zero failures/errors,
+  32 existing skips; Dev Debug/unsigned Dev Release and AndroidTest APKs built.
+  App/voice lint had zero errors/fatals; runtime preparation's 15 Python tests
+  passed. A final native exit-code confirmation passed in 15s with 1,170 cached
+  tasks and four executed tasks after the combined build. Source hashes match
+  the frozen manifest, and packaged helper bytes match source in both APKs.
+- No phone install, physical network outage, authenticated in-flight task,
+  voice transport, Linux retained process, or app-restart recovery evidence.
+  No legacy/external writer was killed; no version bump, commit, PR or merge.
+  The chat phone still reports 1143 / `0.14.0-dev.delta4`. The phone trace has
+  four stream EOFs and a separate 60-second timeout, without the underlying
+  closure reason. The reported Claude transcript has a final at 16:21 and
+  separate quota rejections at 16:28/16:29. No rendering jobs were stopped.
+  APK validation metadata remains 1133 / `0.14.0-dev.subagents5`, below the
+  installed phone version. These are build evidence, not an update candidate;
+  no downgrade was attempted. Debug signature v2 verified; Release is unsigned.
+  Details: `docs/testing/codex-reconnect-20261013.md`.
+
 ### Delta transfer gated to dev, skills added - 2026-10-12
 
 - Real phone check on 1143 (`0.14.0-dev.delta4`): a ~332 MB `copy_file` finished with the chat session intact (transfer on its own SSH connection); SHA-256 on phone equals the PC file. 1142 measured the delta at ~436 KB. Wire bytes were not re-measured on 1143.

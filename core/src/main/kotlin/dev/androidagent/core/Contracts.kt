@@ -146,6 +146,11 @@ interface RuntimeHost {
     suspend fun stop()
 }
 
+/** A process transport can reconnect while keeping the same agent and turn. */
+interface RecoverableConnection {
+    val reconnecting: Boolean
+}
+
 /** Which agent engine runs a turn. A chat can change it between turns. */
 @Serializable
 enum class EngineKind { CODEX, CLAUDE }
@@ -262,7 +267,9 @@ sealed interface EngineEvent {
     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
-    data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null,
+        /** Transport progress may span turns, but must be scoped to its own threads. */
+        val connectionStatus: Boolean = false) : EngineEvent
     /** One Codex item. The router marks it remote before it reaches chat history. */
     data class ItemActivity(
         val itemId: String, val title: String, val detail: String, val state: String,
