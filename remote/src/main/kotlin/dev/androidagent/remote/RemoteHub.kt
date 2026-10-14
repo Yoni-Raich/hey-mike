@@ -521,7 +521,7 @@ class RemoteHub(
                 }
                 return CodexRelayProcess(
                     attach = { after -> runBlocking {
-                        try { connection(computerId).link.start(CodexRelayScripts.attach(instance, after)) }
+                        try { CodexRelayScripts.attach(connection(computerId).link, instance, after) }
                         catch (error: SshUnreachable) { dropLink(computerId); throw error }
                     } },
                     status = { text -> connectionStatus(computerId, text) },
@@ -643,7 +643,7 @@ class RemoteHub(
                 }
                 return CodexRelayProcess(
                     attach = { after -> runBlocking {
-                        try { connection(computerId).link.start(CodexRelayScripts.attach(instance, after)) }
+                        try { CodexRelayScripts.attach(connection(computerId).link, instance, after) }
                         catch (error: SshUnreachable) { dropLink(computerId); throw error }
                     } },
                     status = { text -> connectionStatus(computerId, text, EngineKind.CLAUDE, name.removePrefix("chat-")) },

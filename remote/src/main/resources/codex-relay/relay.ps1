@@ -27,7 +27,7 @@ if ($Mode -eq 'host') {
         } else { [MikeCodexRelay]::Host($Executable, $Arguments, $Token, $Metadata, $LeaseSeconds) }
     }
     finally { if ($owner) { $owner.Dispose() }; $lease.Dispose() }
-} elseif ($Mode -eq 'attach' -or $Mode -eq 'stop') {
+} elseif ($Mode -eq 'attach' -or $Mode -eq 'stop' -or $Mode -eq 'endpoint') {
     if ($Metadata) {
         $info = Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
         if ($info.ended -or $info.port -le 0) { [Console]::WriteLine('F Relay ended'); exit 1 }
@@ -44,6 +44,7 @@ if ($Mode -eq 'host') {
         if (-not $alive) { [Console]::WriteLine('F Relay ended'); exit 1 }
         $Port = $info.port
     }
-    if ($Mode -eq 'stop') { [MikeCodexRelay]::Stop($Port, $Token) }
+    if ($Mode -eq 'endpoint') { 'HEYMIKE {"port":' + $Port + '}' }
+    elseif ($Mode -eq 'stop') { [MikeCodexRelay]::Stop($Port, $Token) }
     else { [MikeCodexRelay]::Attach($Port, $Token, $After) }
 } else { throw 'Unknown Codex relay mode' }

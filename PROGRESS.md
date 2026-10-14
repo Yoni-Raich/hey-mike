@@ -7,7 +7,8 @@
 - Replaced background `Start-Process` with a hidden native launch that explicitly
   escapes OpenSSH's kill-on-close job and inherits no SSH pipe handles. Startup
   now requires an authenticated health response. Dead/reused broker PIDs fail
-  immediately; pending writes retain the safe terminal error.
+  immediately; pending writes retain the safe terminal error. The offline lease
+  begins after process startup and endpoint publication.
 - The native Windows job regression test reproduces the old launch's abrupt
   termination and proves the product bootstrap survives that same job closure
   and exchanges Unicode input/output. Scoped relay checks: 12 tests passed,
@@ -18,13 +19,42 @@
   errors, 32 existing skips. App/voice lint: zero errors/fatals. Packaged helper
   bytes match source in Debug and Release. Debug v2 signature and 16KiB ZIP
   alignment verified; Release is unsigned and is not the delivery artifact.
-- Delivery candidate: 1145 / `0.14.0-dev.reconnect2`, Dev Debug, 331,617,006
-  bytes, SHA-256 `f63db8b951bd74de9345ff2e232612cc4601228df0bb3d1c23a50eb2b94e0741`.
+- Installed 1145 through `copy_file` then `install_apk`; independently verified
+  the installed APK SHA-256. Its real new PC chat proved the broker stayed
+  alive, but RPC stdin delivery still stalled and the chat returned `Stream
+  closed`. This was a failed physical chat, not completion evidence.
+- 1146 uses an authenticated SSH `direct-tcpip` tunnel to that same loopback
+  broker, bypassing Windows command stdin for both Codex and native Claude.
+  A real Windows SSH echo fixture reproduced the stdin stall; the underlying
+  Windows pipe cause remains unproven. The tunnel passed 100 round trips.
+  Real-SSH unit fixtures cover Unicode exchange, scoped channel closure,
+  product endpoint validation and reattachment to the same native broker.
+- Repeated final gate passed for 1146 in 2m12s: 2,667 unit executions, zero
+  failures/errors, 32 existing skips; app/voice lint had zero errors/fatals.
+  Runtime preparation: 15 Python tests passed. Signed Dev Debug metadata,
+  v2 signature, same signer, 16KiB ZIP alignment and packaged helper bytes
+  verified. An initial short-lease fixture failure exposed startup time being
+  counted as offline time; fixed before this successful gate.
+- Current artifact: 1146 / `0.14.0-dev.reconnect3`, Dev Debug, 331,619,686
+  bytes, SHA-256 `11052cde1eeaf5f9c4d1fa7a98026245c3b340a684f2d3c6bc42d39827bd6a16`.
   Source: `app/build/outputs/apk/dev/debug/app-dev-debug.apk` (ignored).
-  No transfer or installation was attempted: the Nothing is locked and the
-  required app `copy_file` delivery flow cannot be operated yet. The user was
-  asked to unlock it. Installed package remains 1144; physical new-chat,
-  authenticated model, in-flight reconnect and follow-up continuity are pending.
+  `copy_file` completed in 7.718s; `install_apk(replace=true)` updated the
+  Nothing A059. Copied and installed `base.apk` SHA-256 both match the artifact.
+  Transfer wire bytes were not measured.
+- Physical 1146 checks passed: a fresh Codex PC chat ran `pwd` on the Windows
+  project and `read_ui` once on the phone; the PC tool receipt and phone gateway
+  receipt confirm both. A guarded one-time TCP deletion dropped only that
+  test tunnel during a PC command. It reattached in about 1.84s; independent
+  process creation times confirmed the same broker and app-server, and the
+  prepared command executed once. The output and final answer arrived, then a
+  follow-up recalled the original marker and folder on the same Codex thread.
+  The old reported chat, selected on its Claude/Sonnet engine, also completed a
+  new reply without tools or replaying earlier work. Accessibility was restored
+  through Android's settings UI after an idle app restart and verified bound.
+  Original screen timeout restored. No sign-in/session data was cleared.
+- Remaining gaps: outer SSH-session loss, a physical Wi-Fi/VPN outage, long
+  outage/soak, voice recovery, Linux retained-process behavior and a signed
+  non-debuggable Release installation are not proved by these checks.
   See `docs/testing/relay-startup-20261014.md`.
 
 ### Windows Codex and Claude connection recovery — 2026-10-13

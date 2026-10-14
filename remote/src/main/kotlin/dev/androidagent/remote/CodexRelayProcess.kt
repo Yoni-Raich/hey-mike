@@ -223,7 +223,7 @@ internal class CodexRelayProcess(
         heartbeat.interrupt()
     }
 
-    private class RelayEnded(message: String) : IOException(message)
+    internal class RelayEnded(message: String) : IOException(message)
     private class BufferedInput(private val max: Int, private val discardOverflow: Boolean = false) : InputStream() {
         private val gate = Object()
         private val chunks = ArrayDeque<ByteArray>()

@@ -83,5 +83,29 @@ internal object CodexRelayScripts {
         """.trimIndent())
     }
 
+    fun endpoint(instance: Instance): String = WindowsHost.powershell("""
+        & ${quote(instance.script)} -Mode endpoint -Metadata ${quote(instance.metadata)}
+    """.trimIndent())
+
+    fun attach(link: SshLink, instance: Instance, after: Long): Process {
+        require(after >= 0)
+        val result = link.run(endpoint(instance), 30_000)
+        if (result.stdout.lineSequence().any { it.trim() == "F Relay ended" }) {
+            throw CodexRelayProcess.RelayEnded("Codex relay ended. Task outcome is unknown.")
+        }
+        check(result.exitCode == 0) { "Could not read the retained relay endpoint" }
+        val port = WindowsHost.payload(result)["port"]?.toString()?.toIntOrNull()
+        check(port != null && port in 1..65535) { "Invalid retained relay endpoint" }
+        val process = link.loopback(port)
+        try {
+            process.outputStream.write("H1 ${instance.token} $after\n".toByteArray(Charsets.UTF_8))
+            process.outputStream.flush()
+            return process
+        } catch (error: Exception) {
+            process.destroy()
+            throw error
+        }
+    }
+
     private fun quote(text: String): String = "'" + text.replace("'", "''") + "'"
 }

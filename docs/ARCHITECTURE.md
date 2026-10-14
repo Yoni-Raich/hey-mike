@@ -2317,6 +2317,15 @@ would be a mobile round trip wrapped in `cat` and heredocs.
     than submitting work to a replacement process. Stop revokes local writes
     first and asks only the capability's own child to stop. When offline,
     immediate remote interruption cannot be confirmed; the lease bounds it.
+    Windows attachments use an SSH `direct-tcpip` channel to the authenticated
+    broker on `127.0.0.1`. The app reads and verifies that instance's process
+    identity before opening the tunnel, then sends its capability and replay
+    cursor. There is no shell stdin reader in this path and no listening port
+    exposed outside loopback. Closing a tunnel leaves the broker and child
+    alive. The SSH server must permit TCP forwarding. Native broker startup
+    explicitly breaks away from OpenSSH's kill-on-close job, with a hidden
+    private console and no inherited SSH pipe handles; a health response must
+    confirm startup before readiness is reported.
     Already launched commands may outlive Codex. Tokens and transcripts are
     not written into helper metadata or logs. A phone process restart does not
     restore the in-memory attachment/receipt state; Linux still uses the direct

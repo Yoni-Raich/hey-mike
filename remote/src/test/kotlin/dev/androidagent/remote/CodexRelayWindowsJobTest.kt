@@ -4,6 +4,13 @@ import java.io.File
 import java.net.Socket
 import java.util.Base64
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import org.apache.sshd.server.SshServer
+import org.apache.sshd.server.auth.password.PasswordAuthenticator
+import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
+import org.apache.sshd.server.shell.ProcessShellCommandFactory
+import org.apache.sshd.server.forward.AcceptAllForwardingFilter
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -16,6 +23,41 @@ import org.junit.rules.TemporaryFolder
 /** Exercises the PRODUCT bootstrap inside the Windows job used by OpenSSH. */
 class CodexRelayWindowsJobTest {
     @get:Rule val temp = TemporaryFolder()
+
+    @Test(timeout = 45_000) fun productTunnelReattachesToTheSameNativeBrokerWithoutRepeatingInput() = withFiles { folder, instance ->
+        val result = inJob(folder, CodexRelayScripts.start(instance))
+        assertEquals(result.second, 0, result.first)
+        val metadata = File(instance.metadata).readText()
+        val server = SshServer.setUpDefaultServer().apply {
+            port = 0
+            keyPairProvider = SimpleGeneratorHostKeyProvider(File(folder, "host-key.ser").toPath())
+            passwordAuthenticator = PasswordAuthenticator { user, password, _ -> user == "fixture" && password == "fixture" }
+            commandFactory = ProcessShellCommandFactory.INSTANCE
+            forwardingFilter = AcceptAllForwardingFilter.INSTANCE
+        }
+        server.start()
+        val link = SshLink(SshTarget("127.0.0.1", server.port, "fixture", "fixture", null))
+        val connections = CopyOnWriteArrayList<Process>()
+        val attach = CodexRelayProcess(attach = { after ->
+            CodexRelayScripts.attach(link, instance, after).also { connections += it }
+        }, retryDelaysMs = longArrayOf(10), heartbeatMs = 100, stalledMs = 10_000)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val writer = attach.outputStream.bufferedWriter()
+            val reader = attach.inputStream.bufferedReader()
+            fun read(): String = executor.submit<String> { reader.readLine() ?: error("Attachment closed") }.get(3, TimeUnit.SECONDS)
+            fun send(line: String) { writer.write(line); writer.newLine(); writer.flush() }
+            send("first שלום 🙂")
+            assertEquals("first שלום 🙂", read())
+            connections.single().destroy()
+            send("second שלום 🙂")
+            assertEquals("second שלום 🙂", read())
+            assertTrue(connections.size >= 2)
+            assertEquals("The retained broker identity cannot change", metadata, File(instance.metadata).readText())
+        } finally {
+            attach.destroy(); executor.shutdownNow(); stop(instance); link.close(); server.stop(true)
+        }
+    }
 
     @Test(timeout = 45_000) fun productBootstrapSurvivesItsSshCommandJobAndStillDeliversInput() = withFiles { folder, instance ->
         val result = inJob(folder, CodexRelayScripts.start(instance))
@@ -87,10 +129,10 @@ class CodexRelayWindowsJobTest {
                 [Console]::WriteLine(${ '$' }line); [Console]::Out.Flush()
             }
         """.trimIndent()
-        val encoded = Base64.getEncoder().encodeToString(echo.toByteArray(Charsets.UTF_16LE))
+        val echoFile = File(folder, "echo.ps1").apply { writeText(echo) }
         val instance = CodexRelayScripts.Instance("f".repeat(64), folder.absolutePath.replace('\\', '/'))
         File(folder, "launch.json").writeText(CodexRelayScripts.launchConfig(
-            "powershell.exe", listOf("-NoProfile", "-NonInteractive", "-EncodedCommand", encoded), folder.absolutePath, emptyMap(),
+            "powershell.exe", listOf("-NoProfile", "-NonInteractive", "-File", echoFile.absolutePath), folder.absolutePath, emptyMap(),
         ))
         try { check(folder, instance) } finally { stop(instance) }
     }

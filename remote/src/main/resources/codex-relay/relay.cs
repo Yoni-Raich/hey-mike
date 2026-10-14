@@ -137,6 +137,9 @@ public static class MikeCodexRelay {
             File.WriteAllText(metadata, "{\"version\":1,\"port\":" +
                 ((IPEndPoint)listener.LocalEndpoint).Port + ",\"pid\":" + Process.GetCurrentProcess().Id +
                 ",\"startedTicks\":" + Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks + "}", Utf8);
+            // Process creation and metadata publication are startup, not offline time.
+            // Start the client's lease only once the endpoint can be discovered.
+            lastContact = DateTime.UtcNow;
             Action<string, StreamReader> collect = (kind, source) => {
                 try {
                     string line;
