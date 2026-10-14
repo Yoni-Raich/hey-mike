@@ -13,9 +13,11 @@
   32 existing skips. Runtime preparation: 15 Python tests passed.
   Dev Debug 1147 / `0.14.0-dev.tool-search1` built, v2 signature and 16KiB ZIP
   alignment verified. Dev Release is unsigned and was not sent.
-- `copy_file` completed. Phone installation is pending: `install_apk` reported
-  Wireless ADB unavailable. No data was cleared. Installed-app chat/tool/Stop
-  validation and Linux live validation remain open. See
+- `copy_file` completed. After Wireless ADB connected, the self-update lost
+  its tool response. A later independent `apps_settings(app_info)` confirms
+  the chat phone is on 1147 / `0.14.0-dev.tool-search1`; no install was replayed
+  and no data was cleared. The installed `base.apk` SHA-256 matches the built
+  artifact exactly. App chat/tool/Stop and Linux live validation remain open. See
   `docs/testing/claude-tool-search-20261014.md` for evidence and limits.
 
 ### Windows relay startup repair — 2026-10-14

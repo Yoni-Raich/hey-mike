@@ -65,8 +65,14 @@ fixture measurement, not a phone Stop-latency claim.
   `c3fb84a8828e39fe49cec8ff9f69e7f977057a8807b3483aa1f1aa10518f60ae`.
 - `copy_file` completed to the chat. This reports reconstructed file size;
   network wire bytes were not measured. `install_apk` returned
-  `backend_unavailable` / `adb_not_connected`. No reinstall fallback or data
-  clearing was attempted.
+  `backend_unavailable` / `adb_not_connected` before connection. Once Wireless
+  ADB connected, installation was requested using that same phone file. The
+  self-update lost its response. A later independent `apps_settings(app_info)`
+  confirms the chat phone is on code 1147 / `0.14.0-dev.tool-search1`.
+  The install was not replayed and no data was cleared. After restoring
+  Wireless ADB, `shell` resolved the installed path with `pm path` and hashed
+  `base.apk` with `sha256sum`. Its hash matches the built APK exactly. This
+  establishes installation of that artifact, not a full installed-app flow.
 
 Private logs and the probe are outside Git under
 `%TEMP%/hey-mike-tool-search-20261014`. Build outputs are in the managed,
@@ -75,7 +81,7 @@ included in this change.
 
 ## Remaining gaps
 
-Phone installation, an installed-app Claude PC greeting/device action/Stop,
+An installed-app Claude PC greeting/device action/Stop,
 Linux live behavior and a signed non-debuggable release install are pending.
 Tool search adds a discovery round trip when a task needs a deferred tool.
 Users who explicitly disable tool search retain that setting. Existing
