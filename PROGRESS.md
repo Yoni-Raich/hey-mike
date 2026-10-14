@@ -1,5 +1,30 @@
 # Progress
 
+### Windows relay takeover of a stale owner — 2026-10-14
+
+- Seen on Pc in the chat logs and relay folders: the phone started a new
+  Codex relay at 13:26 while the 13:08 app-server still held the thread, so
+  `thread/resume` failed with "already has an active writer". At 13:30 the
+  switch to Claude met the 13:25 Claude relay of the same chat, which still
+  held its owner lock, and failed with "Could not start Claude's retained
+  connection". Both locks were free a few minutes later (offline lease).
+- A new relay now ends the earlier relay of the same owner (per chat for
+  Claude, per phone-saved computer for Codex), verified by PID and start
+  time, and then takes the owner. Metadata records the child's PID and start
+  time; `<owner>.relay` records only the metadata path. No token on disk.
+- Relays started by earlier builds have no owner record and still hold their
+  owner until their lease ends; this applies once, after the update.
+- `:remote:testDebugUnitTest` on Windows: new native tests prove a second
+  relay of the same owner ends the first (broker and child gone, even with a
+  silent attachment) and a different owner leaves it running. The old
+  "refuses a second owner" test now asserts the takeover. Five consecutive
+  `--rerun-tasks` runs passed (134 tests, 2 existing skips). The two runs
+  before them each had one or two timing failures in other relay tests
+  (`Relay condition timed out`, a 32 s reattach); two baseline dev runs were
+  clean. Treat those relay timing tests as load sensitive.
+- Dev Debug 1148 / `0.14.0-dev.relay-owner1` built; the packaged relay files
+  contain the change. Not yet installed or tried on the phone against Pc.
+
 ### Claude computer tool search — 2026-10-14
 
 - Computer chats no longer force `ENABLE_TOOL_SEARCH=false`; they keep the

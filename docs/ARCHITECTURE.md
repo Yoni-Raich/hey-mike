@@ -2317,6 +2317,17 @@ would be a mobile round trip wrapped in `cat` and heredocs.
     than submitting work to a replacement process. Stop revokes local writes
     first and asks only the capability's own child to stop. When offline,
     immediate remote interruption cannot be confirmed; the lease bounds it.
+    A replacement relay does not wait for that lease. Each relay holds an
+    owner lock: one per chat for Claude, one per phone-saved computer for
+    Codex. A relay that finds its owner held reads the earlier relay's
+    metadata path from `<owner>.relay`, ends that relay's child and broker
+    only if each PID still has its recorded start time, then takes the lock
+    (20 s at most). Before this, a phone that gave up a relay (engine
+    restart, engine switch, app restart) met the old process for up to five
+    minutes as "thread already has an active writer" or "Could not start
+    Claude's retained connection". A turn still running in the replaced
+    relay is ended: the phone can no longer read or stop it. No token is
+    written to the owner record.
     Windows attachments use an SSH `direct-tcpip` channel to the authenticated
     broker on `127.0.0.1`. The app reads and verifies that instance's process
     identity before opening the tunnel, then sends its capability and replay

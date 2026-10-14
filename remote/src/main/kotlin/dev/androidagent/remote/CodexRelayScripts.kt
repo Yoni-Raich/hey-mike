@@ -48,9 +48,14 @@ internal object CodexRelayScripts {
         }.toString()
     }
 
-    fun start(instance: Instance, exe: String? = null): String {
-        val launch = if (exe == null) "-LaunchConfig \"${instance.folder}/launch.json\"" else "-Executable \"$exe\""
-        require('"' !in (exe ?: instance.folder))
+    /**
+     * [owner] names the lock one relay holds at a time (a launch config carries its own).
+     * Taking it over first ends the earlier relay that holds it, so startup may take a little longer.
+     */
+    fun start(instance: Instance, exe: String? = null, owner: String? = null): String {
+        val launch = if (exe == null) "-LaunchConfig \"${instance.folder}/launch.json\"" else "-Executable \"$exe\"" +
+            owner?.let { " -Owner \"$it\"" }.orEmpty()
+        require('"' !in (exe ?: instance.folder) && '"' !in owner.orEmpty())
         return WindowsHost.powershell("""
         ${'$'}ErrorActionPreference='Stop'
         ${'$'}script=${quote(instance.script)}
@@ -58,7 +63,7 @@ internal object CodexRelayScripts {
         ${'$'}arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + ${'$'}script + '" -Mode host ' + ${quote(launch)} + ' -Token ${instance.token} -Metadata "' + ${'$'}metadata + '"'
         Add-Type -Path (Join-Path (Split-Path -Parent ${'$'}script) 'relay.cs')
         ${'$'}started=[MikeCodexRelay]::StartDetached((Get-Command powershell.exe).Source, ${'$'}arguments)
-        ${'$'}deadline=[DateTime]::UtcNow.AddSeconds(20)
+        ${'$'}deadline=[DateTime]::UtcNow.AddSeconds(${STARTUP_SECONDS})
         do {
             if (Test-Path -LiteralPath ${'$'}metadata) {
                 try {
@@ -108,4 +113,9 @@ internal object CodexRelayScripts {
     }
 
     private fun quote(text: String): String = "'" + text.replace("'", "''") + "'"
+
+    /** Taking an owner over from an earlier relay may wait up to 20 s for its lock. */
+    const val STARTUP_SECONDS = 40
+    /** The SSH command that runs [start] gets a little longer than the script itself. */
+    const val START_TIMEOUT_MS = (STARTUP_SECONDS + 15) * 1_000L
 }

@@ -113,6 +113,60 @@ class CodexRelayWindowsJobTest {
         } finally { attach.destroy(); stop(instance) }
     }
 
+    @Test(timeout = 150_000) fun aReplacementEndsTheEarlierRelayOfTheSameOwnerEvenWhileItIsAttached() {
+        assumeTrue(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val owner = File(temp.root, "owners with spaces/chat.lock").absolutePath.replace('\\', '/')
+        val firstFolder = temp.newFolder("first relay")
+        val secondFolder = temp.newFolder("second relay")
+        val first = prepare(firstFolder, "a".repeat(64), owner)
+        val second = prepare(secondFolder, "b".repeat(64), owner)
+        try {
+            val started = inJob(firstFolder, CodexRelayScripts.start(first))
+            assertEquals(started.second, 0, started.first)
+            val earlier = Json.parseToJsonElement(File(first.metadata).readText()).jsonObject
+            val port = earlier["port"]!!.jsonPrimitive.content.toInt()
+            // A phone that went away mid-attachment: the host serves it until its read timeout.
+            Socket("127.0.0.1", port).use { stale ->
+                stale.getOutputStream().write("H1 ${first.token} 0\n".toByteArray())
+                stale.getOutputStream().flush()
+                assertEquals("H1", stale.getInputStream().bufferedReader().readLine())
+                val replaced = inJob(secondFolder, CodexRelayScripts.start(second), waitSeconds = 60)
+                assertEquals(replaced.second, 0, replaced.first)
+            }
+            for (pid in listOf("pid", "child")) {
+                assertFalse("The earlier relay's $pid still runs", running(earlier[pid]!!.jsonPrimitive.content.toLong()))
+            }
+            assertTrue(File(second.metadata).readText().contains("\"child\""))
+            assertEquals(second.metadata, File("$owner.relay").readText())
+        } finally { stop(first); stop(second) }
+    }
+
+    @Test(timeout = 60_000) fun aDifferentOwnerLeavesTheEarlierRelayRunning() {
+        assumeTrue(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val owners = File(temp.root, "owners").absolutePath.replace('\\', '/')
+        val firstFolder = temp.newFolder("first")
+        val secondFolder = temp.newFolder("second")
+        val first = prepare(firstFolder, "c".repeat(64), "$owners/one.lock")
+        val second = prepare(secondFolder, "d".repeat(64), "$owners/two.lock")
+        try {
+            assertEquals(0, inJob(firstFolder, CodexRelayScripts.start(first)).first)
+            assertEquals(0, inJob(secondFolder, CodexRelayScripts.start(second)).first)
+            assertTrue(File(first.metadata).readText().contains("\"pid\""))
+            assertTrue(File(second.metadata).readText().contains("\"pid\""))
+        } finally { stop(first); stop(second) }
+    }
+
+    private fun prepare(folder: File, token: String, owner: String? = null): CodexRelayScripts.Instance {
+        for (name in listOf("relay.cs", "relay.ps1", "job-fixture.cs")) javaClass.getResourceAsStream("/codex-relay/$name")!!.use {
+            File(folder, name).outputStream().use(it::copyTo)
+        }
+        val echoFile = File(folder, "echo.ps1").apply { writeText(ECHO) }
+        File(folder, "launch.json").writeText(CodexRelayScripts.launchConfig(
+            "powershell.exe", listOf("-NoProfile", "-NonInteractive", "-File", echoFile.absolutePath), folder.absolutePath, emptyMap(), owner,
+        ))
+        return CodexRelayScripts.Instance(token, folder.absolutePath.replace('\\', '/'))
+    }
+
     private fun withFiles(check: (File, CodexRelayScripts.Instance) -> Unit) {
         assumeTrue(System.getProperty("os.name").orEmpty().startsWith("Windows"))
         val folder = temp.newFolder("SSH job with spaces")
@@ -137,7 +191,7 @@ class CodexRelayWindowsJobTest {
         try { check(folder, instance) } finally { stop(instance) }
     }
 
-    private fun inJob(folder: File, command: String): Pair<Int, String> {
+    private fun inJob(folder: File, command: String, waitSeconds: Long = 30): Pair<Int, String> {
         val log = File(folder, "bootstrap.log")
         val childFile = File(folder, "bootstrap.ps1").apply {
             writeText("& $command *> ${quote(log.absolutePath)}; exit ${'$'}LASTEXITCODE")
@@ -150,7 +204,7 @@ class CodexRelayWindowsJobTest {
         val process = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
             "-File", runner.absolutePath).redirectErrorStream(true).start()
         try {
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS))
+            assertTrue(process.waitFor(waitSeconds, TimeUnit.SECONDS))
             return process.exitValue() to (process.inputStream.bufferedReader().readText() + if (log.isFile) log.readText() else "")
         } finally { process.destroy() }
     }
@@ -160,9 +214,23 @@ class CodexRelayWindowsJobTest {
             "-File", instance.script, "-Mode", "stop", "-Token", instance.token, "-Metadata", instance.metadata).redirectErrorStream(true).start()
         try { process.waitFor(8, TimeUnit.SECONDS) } finally { process.destroy() }
     }
+    private fun running(pid: Long): Boolean {
+        val list = ProcessBuilder("tasklist", "/FI", "PID eq $pid", "/NH", "/FO", "CSV").redirectErrorStream(true).start()
+        return list.inputStream.bufferedReader().readText().contains("\"$pid\"")
+    }
     private fun quote(text: String) = "'" + text.replace("'", "''") + "'"
     private fun await(check: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (!check()) { check(System.nanoTime() < deadline) { "Relay did not stop" }; Thread.sleep(25) }
+    }
+
+    private companion object {
+        val ECHO = """
+            [Console]::InputEncoding=New-Object Text.UTF8Encoding(${ '$' }false)
+            [Console]::OutputEncoding=New-Object Text.UTF8Encoding(${ '$' }false)
+            while ((${ '$' }line=[Console]::ReadLine()) -ne ${ '$' }null) {
+                [Console]::WriteLine(${ '$' }line); [Console]::Out.Flush()
+            }
+        """.trimIndent()
     }
 }

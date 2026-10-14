@@ -134,9 +134,11 @@ public static class MikeCodexRelay {
             child.Start();
             child.StandardInput.AutoFlush = true;
             listener.Start();
+            // The child's identity lets a replacement relay of the same owner end it. No secret is written.
             File.WriteAllText(metadata, "{\"version\":1,\"port\":" +
                 ((IPEndPoint)listener.LocalEndpoint).Port + ",\"pid\":" + Process.GetCurrentProcess().Id +
-                ",\"startedTicks\":" + Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks + "}", Utf8);
+                ",\"startedTicks\":" + Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks +
+                ",\"child\":" + child.Id + ",\"childTicks\":" + child.StartTime.ToUniversalTime().Ticks + "}", Utf8);
             // Process creation and metadata publication are startup, not offline time.
             // Start the client's lease only once the endpoint can be discovered.
             lastContact = DateTime.UtcNow;
