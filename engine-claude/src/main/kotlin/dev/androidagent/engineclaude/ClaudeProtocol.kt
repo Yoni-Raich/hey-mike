@@ -93,12 +93,15 @@ internal object ClaudeProtocol {
     const val DEFAULT_MODEL = "sonnet"
     val EFFORTS: List<String> = listOf("low", "medium", "high", "xhigh", "max")
 
-    /** Environment for chat processes, on top of what the host sets. */
+    /** Environment for phone chat processes, on top of what the host sets. */
     val CHAT_ENV: Map<String, String> = mapOf(
         "ENABLE_TOOL_SEARCH" to "false",
         "MCP_TOOL_TIMEOUT" to "600000",
         "MCP_TIMEOUT" to "30000",
     )
+
+    /** Keep the computer's own tool-search setting and Claude Code's default deferral. */
+    val COMPUTER_CHAT_ENV: Map<String, String> = CHAT_ENV - "ENABLE_TOOL_SEARCH"
 
     /** Arguments for one chat process. Never `--bare`: it ignores subscriptions. */
     fun chatArgs(

@@ -212,6 +212,7 @@ class ClaudeCodeEngineTest {
         assertEquals("opus", chat.after("--model"))
         assertEquals("high", chat.after("--effort"))
         assertEquals(ClaudeProtocol.CHAT_ENV, chat.env)
+        assertEquals("false", chat.env["ENABLE_TOOL_SEARCH"])
         val mcpConfig = File(chat.after("--mcp-config"))
         assertTrue(mcpConfig.readText().contains("Bearer test-token"))
         assertTrue("the MCP token stays in the private home", mcpConfig.canonicalPath.startsWith(home.canonicalPath))

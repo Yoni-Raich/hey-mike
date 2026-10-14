@@ -1,5 +1,23 @@
 # Progress
 
+### Claude computer tool search — 2026-10-14
+
+- Computer chats no longer force `ENABLE_TOOL_SEARCH=false`; they keep the
+  MCP timeouts and use the computer's own settings/default tool search.
+  Phone chat settings are unchanged. Launch regression checks passed.
+- Controlled Windows CLI 2.1.296 / Opus 5.5 comparison with the same greeting,
+  Mike prompt and 36 SDK tool definitions: input fell from 98,411 to 30,077
+  tokens (69.4%). ToolSearch found and called a synthetic Mike tool; interrupt
+  acknowledged and ended a pending synthetic call with no later dispatch.
+- Full test/build/lint gate passed: 2,667 unit executions, no failures/errors,
+  32 existing skips. Runtime preparation: 15 Python tests passed.
+  Dev Debug 1147 / `0.14.0-dev.tool-search1` built, v2 signature and 16KiB ZIP
+  alignment verified. Dev Release is unsigned and was not sent.
+- `copy_file` completed. Phone installation is pending: `install_apk` reported
+  Wireless ADB unavailable. No data was cleared. Installed-app chat/tool/Stop
+  validation and Linux live validation remain open. See
+  `docs/testing/claude-tool-search-20261014.md` for evidence and limits.
+
 ### Windows relay startup repair — 2026-10-14
 
 - Preserved the exact 1144 reconnect source in a new managed worktree;

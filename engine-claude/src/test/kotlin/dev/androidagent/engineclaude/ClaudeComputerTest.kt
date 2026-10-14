@@ -124,7 +124,10 @@ class ClaudeComputerTest {
         // The folder is named as the computer spells it, never turned into a phone path.
         assertEquals(PROJECT, launch.cwd)
         assertEquals(id, launch.chatId)
-        assertEquals(ClaudeProtocol.CHAT_ENV, launch.env)
+        assertEquals(ClaudeProtocol.COMPUTER_CHAT_ENV, launch.env)
+        assertFalse("computer tool search follows Claude's default or the user's setting", "ENABLE_TOOL_SEARCH" in launch.env)
+        assertEquals("600000", launch.env["MCP_TOOL_TIMEOUT"])
+        assertEquals("30000", launch.env["MCP_TIMEOUT"])
         assertEquals("You are Mike, on the user's computer.", launch.files["system-prompt.md"])
         assertEquals("""{"mcpServers":{"mike":{"type":"sdk","name":"mike"}}}""", launch.files["mcp.json"])
         assertEquals("C:\\Users\\me\\.hey-mike\\claude\\system-prompt.md", chat.after("--append-system-prompt-file"))
