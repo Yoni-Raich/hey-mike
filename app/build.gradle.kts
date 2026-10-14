@@ -61,6 +61,7 @@ val prepareCodexRuntime by tasks.registering(Exec::class) {
 }
 tasks.named("preBuild") { dependsOn(prepareCodexRuntime) }
 dependencies {
+    implementation(project(":web"))
     implementation(project(":core")); implementation(project(":workspace")); implementation(project(":runtime"))
     implementation(project(":engine-codex")); implementation(project(":adb")); implementation(project(":device-tools")); implementation(project(":overlay")); implementation(project(":voice")); implementation(project(":a11y")); implementation(project(":automations")); implementation(project(":remote"))
     implementation("androidx.core:core-ktx:1.15.0")

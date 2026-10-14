@@ -359,6 +359,7 @@ class AgentCoordinator(
             )
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING, "Voice")) }
         scope.launch {
@@ -564,6 +565,7 @@ class AgentCoordinator(
             mutableState.value = snapshot.copy(phase = RunPhase.STOPPING, status = "Stopping", controlling = false, approval = null)
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING)) }
         context.runJob?.cancel()
@@ -1047,7 +1049,13 @@ class AgentCoordinator(
                 launchTool {
                     toolLock.withLock {
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
-                        if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        val independent = !tools.requiresDeviceLease(event.name)
+                        if (independent) {
+                            synchronized(lifecycleLock) {
+                                if (!isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                                tools.beginIndependentTool(event.name, token.toString(), checkNotNull(runWorkspace))
+                            }
+                        } else if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         if (usesScreen(event.name)) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
                         val visible = tools.needsControl(event.name)
                         val capture = tools.hidesOverlayDuringCapture(event.name)
@@ -1082,7 +1090,7 @@ class AgentCoordinator(
                                         if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) controlTakeover = true
                                     }
                                 }
-                            } else {
+                            } else if (!independent) {
                                 overlay.updateState(overlayState)
                             }
                             ensureCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())
@@ -1115,7 +1123,7 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                                     mutableState.value = state.value.copy(phase = RunPhase.THINKING, controlling = false, status = "Working")
-                                    overlay.updateState(OverlayState(OverlayPhase.THINKING))
+                                    if (!independent) overlay.updateState(OverlayState(OverlayPhase.THINKING))
                                 }
                             }
                             handBackUnlessOnScreen()
@@ -1388,6 +1396,7 @@ class AgentCoordinator(
             }
         } ?: return
         final.flush?.let { job -> runCatching { withTimeout(1_000) { job.join() } } }
+        tools.revokeIndependentTools()
         if (final.device) runCatching { tools.revoke() }
         runCatching { overlay.setCaptureHidden(false) }
         final.id?.let { id ->
@@ -1460,6 +1469,15 @@ class AgentCoordinator(
      * Take the phone for this run before its first tool call. Another chat may
      * be driving it; this run waits, saying so, until that chat is done.
      */
+    /** Browser panels and approvals change the foreground, so they also take the phone. */
+    suspend fun claimBrowserScreen(): Boolean {
+        val current = synchronized(lifecycleLock) { Triple(epoch.get(), thread, turn) }
+        if (current.second == null || current.third == null) return false
+        if (!claimDevice(current.first, current.second!!, current.third!!)) return false
+        synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+        return true
+    }
+
     private suspend fun claimDevice(token: Long, threadId: String, turnId: String): Boolean {
         if (synchronized(lifecycleLock) { deviceHeld }) return true
         if (!share.lease.tryAcquire(this)) {

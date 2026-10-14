@@ -15,6 +15,7 @@ One Android project, with replaceable modules and small core contracts.
 | a11y | Optional in-process accessibility screen observation and control |
 | overlay | Floating steering card, status and direct local stop |
 | remote | Computers over SSH: sealed profiles, Codex on Windows, chat routing |
+| web | Internal WebView pages, app-owned CDP, DOM reading and inline action plans |
 
 A model change is configuration. An engine change replaces the engine adapter. Runtime packaging must not affect chat or ADB APIs. The UI observes app events, never raw Codex JSON.
 
@@ -74,6 +75,60 @@ app-server copy to this exact filename, which must keep the upstream name's
 20-byte width, and fails closed if the upstream binary layout changes. The
 downloaded official archive stays unchanged, and the manifest records the
 staged file hashes.
+
+## Internal browser
+
+`:web` exposes one `browser` tool through the existing composite gateway.
+`AndroidBrowserHost` owns one WebView per workspace, attached to a parked,
+non-touchable overlay. `CdpClient` speaks HTTP/WebSocket over the app's own
+abstract LocalSocket (`webview_devtools_remote_<pid>`); no ADB connection is
+used. WebView debugging is intentionally enabled while internal pages exist,
+including release builds, and disabled after the last page closes or the
+service stops. Anyone already authorized for ADB can inspect these pages while
+it is enabled; this is an intentional control channel, not a hidden debug flag.
+
+`BrowserSession` puts a helper in an isolated world to produce bounded semantic
+DOM snapshots, page reading text, stable element refs, and selectors. It reads
+open shadow roots and readable child frames. Out-of-process cross-origin
+frames and closed shadow roots have no full coverage yet. Ref ranges change
+when a document is replaced, so an old ref cannot silently name a new field.
+Snapshots support paging, filtering and unchanged suppression. CDP types text
+and captures page PNGs. Android touch uses `WebViewInput`: the DOM coordinates
+become Android MotionEvents delivered to this app's WebView. This preserves
+trusted input when WebView rejects CDP touch emulation. Cancellation sends a
+cancel event instead of completing the click. It never taps the global screen;
+viewport scaling and parked-window rendering still need device evidence.
+
+`browser(operation="plan")` validates the whole sequence before dispatch,
+then runs up to 12 steps in one call with an 80-second ceiling. Each target is
+resolved again. A step may `verify` text, selector or URL. The reply keeps the
+completed prefix if a later step or the final read fails, distinguishes a
+completed action from failed verification, and reports uncertain actions.
+`startAt` resumes the caller's steps without replaying the prefix. Cancellation
+propagates through CDP and waits; a stop revokes this run's independent gateway.
+
+Each coordinator has its own browser gateway. Independent tools bypass
+`DeviceLease` through `requiresDeviceLease`/`beginIndependentTool`; their stop
+does not revoke another run's screen backend. A user panel or approval changes
+the foreground, so `claimBrowserScreen` first takes the existing screen lease.
+`show` pauses agent mutations while the user types a password or passes a
+CAPTCHA; `hide` returns control. Browser profiles are app-owned and separate
+from Chrome, but all chats share the app's cookies.
+
+The host disables file/content access, popups, automatic downloads, uploads,
+third-party cookies, and camera/microphone grants. URL checks block non-web
+schemes, local literals/names, private DNS answers and unresolved hosts; the
+host also checks resource requests. These checks are not a network firewall:
+DNS rebinding, redirect handling, service workers and websocket traffic remain
+validation gaps. Password/card values are masked in snapshots and refused by
+fill. Arbitrary page eval and recognized sends/payments/form submissions use
+the app's approval card. This does not prove every site-specific sensitive
+control is recognizable. The bundled `browser` skill is installed normally by
+`WorkspaceSeeder`, and resumed Codex threads receive the current tool surface.
+
+The standalone `tools/browser-probe` app links the same module and checks the
+non-debuggable, test-signed WebView path without replacing or instrumenting
+Hey Mike. See its README for reproducible commands and evidence boundaries.
 
 ## Android network compatibility
 

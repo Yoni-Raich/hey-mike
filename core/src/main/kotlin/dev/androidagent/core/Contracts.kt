@@ -346,6 +346,11 @@ interface DeviceToolGateway {
     suspend fun invoke(name: String, arguments: JsonObject): ToolResult
     suspend fun cancel()
 
+    /** An independent page can work while another chat owns the phone. */
+    fun requiresDeviceLease(name: String): Boolean = true
+    fun beginIndependentTool(name: String, runId: String, workspace: File) { beginRun(runId, workspace) }
+    fun revokeIndependentTools() {}
+
     /**
      * True when the overlay must be taken off the captured surface for this
      * tool. Only backends that capture the composited screen need it; a

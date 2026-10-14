@@ -266,9 +266,23 @@ class AgentGraph(private val app: Application) {
     )
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
-    val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(workflowTools, knowledgeTools, automationTools, computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
+    private fun browserOwner(key: String) = coordinator.slots.firstOrNull { slot ->
+        slot.state.value.active && slot.state.value.sessionId?.let { sessions.workspace(it).absolutePath == key } == true
+    }
+    val browserHost = dev.androidagent.web.AndroidBrowserHost(app, takeScreen = { key ->
+        browserOwner(key)?.claimBrowserScreen() == true
+    }, confirm = { key, summary ->
+        val owner = browserOwner(key)
+        owner?.claimBrowserScreen() == true && owner.authorizeWorkflowStep(dev.androidagent.core.WorkflowConfirmation(
+            workflowId = "browser", stepId = "action", action = "browser",
+            summary = summary, packageName = app.packageName, appLabel = "Mike browser",
+        )) == dev.androidagent.core.WorkflowConfirmationOutcome.ALLOWED
+    })
+    private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
+        listOf(dev.androidagent.web.WebToolGateway(browserHost), workflowTools, knowledgeTools, automationTools,
+            computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
     )
+    val tools: CompositeDeviceToolGateway = runTools()
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     /** Every chat's run: several at once, with the phone to one of them at a time. */
     val coordinator: AgentRuns
@@ -279,7 +293,7 @@ class AgentGraph(private val app: Application) {
     init {
         runCoordinator = AgentRuns(scope, engine) { share ->
             AgentCoordinator(
-                scope, engine, sessions, tools, overlay,
+                scope, engine, sessions, runTools(), overlay,
                 sendGrants = sendGrants,
                 adbStatus = { adb.status.value },
                 // An approval card lives only in the app, and device control means

@@ -174,14 +174,46 @@ class AgentRunsTest {
         rig.close()
     }
 
+    @Test fun independentBrowserRunsWhileAnotherChatOwnsTheScreen() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "Use the screen")
+        rig.runs.send("two", "Browse")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("screen", "read_ui", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        val before = rig.tools.executions
+        rig.engine.emit(EngineEvent.ToolCall("browser", "browser", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        assertEquals(listOf("screen", "browser"), rig.engine.answered)
+        assertEquals(before, rig.tools.executions)
+        assertEquals(1, rig.browserCalls)
+        assertTrue(rig.tools.revoked.not())
+        rig.runs.stop("two"); runCurrent()
+        assertTrue(rig.runs.stateOf("one")!!.active)
+        assertTrue(rig.tools.revoked.not())
+        rig.close()
+    }
+
     private class Rig(test: TestScope) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = Engine()
         val store = Store()
         val overlay = Overlay()
         val tools = Tools()
+        var browserCalls = 0
         val runs = AgentRuns(scope, engine) { share ->
-            AgentCoordinator(scope, engine, store, tools, overlay, share = share)
+            val browser = object : DeviceToolGateway {
+                var armed = false
+                override val definitions = listOf(ToolDefinition("browser", "test", buildJsonObject {}))
+                override fun beginRun(runId: String, workspace: File) { armed = true }
+                override fun revoke() { armed = false }
+                override fun revokeIndependentTools() = revoke()
+                override fun requiresDeviceLease(name: String) = false
+                override fun needsControl(name: String) = false
+                override suspend fun invoke(name: String, arguments: JsonObject): ToolResult { check(armed); browserCalls++; return ToolResult("Page") }
+                override suspend fun cancel() = Unit
+            }
+            AgentCoordinator(scope, engine, store, CompositeDeviceToolGateway(listOf(browser, tools)), overlay, share = share)
         }
         val queue = SessionRunQueue(scope, runs, store)
         fun close() { scope.cancel() }
@@ -235,7 +267,7 @@ class AgentRunsTest {
     }
 
     private class Tools : DeviceToolGateway {
-        override val definitions = emptyList<ToolDefinition>()
+        override val definitions = listOf("tap", "read_ui", "contacts").map { ToolDefinition(it, "test", buildJsonObject {}) }
         var revoked = true
         var executions = 0
         override fun beginRun(runId: String, workspace: File) { revoked = false }

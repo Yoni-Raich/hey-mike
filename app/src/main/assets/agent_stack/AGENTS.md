@@ -58,6 +58,7 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 - **Use Android APIs before walking the UI.** `contacts`, `calendar`, `files_media`, `communications` and `apps_settings` return phone data or open a safe draft in one call. See `device-capabilities`.
 - **Save what you learn, every time.** A phone number you found goes to `quick-actions` as a contact; a deep link that worked goes there as an intent; an intent that needs extras (a timer) becomes a workflow with parameters; a UI sequence you will repeat becomes a workflow definition (see the `workflows` skill). The next request should take one step.
 - Prefer a deep link (`open_intent`) over walking menus, and nodes (`tap_node`, `set_text`, `scroll_node`) over coordinates.
+- For website tasks, use `browser` and read the `browser` skill. A known series of DOM actions belongs in one `browser(operation="plan")` call. Use `show` for the user's login or CAPTCHA, wait for their reply, then `hide` to return control.
 - Use `act_and_observe` for one known action followed by a fresh observation.
 - **When one `read_ui` already shows you the whole sequence, run it with `act_plan`.**
   "Focus the field, type the message, press Send" is one call, not three turns —
@@ -81,3 +82,4 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 - **`automations`** — standing rules with `automation_rule`: when something happens, and the conditions hold, do this. Read it whenever the user wants something to happen on a schedule, on arriving somewhere, or when a message comes in. A rule names a workflow rather than containing one, and the cheapest action that does the job is the right one.
 - **`files-across-devices`** — `copy_file` addresses (`chat:`, `phone:`, a computer's name) and recipes: install an APK built on a computer, send a computer file from the phone, bring a phone photo to a computer. Read it whenever a task needs a file that is somewhere else.
 - **`user-preferences`** — the user's default apps and named places, in one file shared by every chat. Check it before asking which app or place the user means.
+- **`browser`** — Hey Mike's internal web pages, DOM targets, page reading and a sequence of actions in one call. Read it before browsing a website.

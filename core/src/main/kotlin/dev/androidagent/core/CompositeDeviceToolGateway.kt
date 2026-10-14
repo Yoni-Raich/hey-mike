@@ -90,6 +90,17 @@ class CompositeDeviceToolGateway(
         // Unrouted names fail safe as visible control, matching the ADB gateway.
         routes[name]?.firstOrNull()?.needsControl(name) ?: true
 
+    override fun requiresDeviceLease(name: String): Boolean =
+        routes[name]?.firstOrNull()?.requiresDeviceLease(name) ?: true
+
+    override fun beginIndependentTool(name: String, runId: String, workspace: File) {
+        routes[name]?.filter { !it.requiresDeviceLease(name) }?.forEach { it.beginRun(runId, workspace) }
+    }
+
+    override fun revokeIndependentTools() {
+        members.forEach { it.revokeIndependentTools() }
+    }
+
     override fun hidesOverlayDuringCapture(name: String): Boolean =
         routes[name]?.firstOrNull()?.hidesOverlayDuringCapture(name) ?: false
 
