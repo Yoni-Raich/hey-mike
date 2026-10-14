@@ -197,6 +197,8 @@ class RoutingAgentEngine(
         } catch (error: IllegalStateException) {
             val remedy = if (binding.importedFromPc == true) {
                 "Close it in Codex on the computer, or continue in a copy from the banner above the message box."
+            } else if (error.message?.contains("active writer", ignoreCase = true) == true) {
+                "An earlier Codex process still holds this chat. Reconnecting alone may not release it. The previous task may still be running."
             } else {
                 "Reconnect this computer in Mike and try again."
             }
@@ -339,6 +341,9 @@ class RoutingAgentEngine(
         // Two engines on one computer each number their own requests.
         val prefix = if (remote.engine == EngineKind.CLAUDE) CLAUDE_REMOTE_TAG else TAG
         val event = remote.event
+        if (event is EngineEvent.Activity && event.connectionStatus && event.threadId == null) {
+            return computerThreadIds(computer, remote.engine).map { event.copy(threadId = it) }
+        }
         if (event is EngineEvent.Failure && event.threadId.isNullOrBlank()) {
             // Passing this unscoped would end unrelated phone and computer runs.
             // Dropping it would leave children waiting forever after their server died.

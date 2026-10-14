@@ -2286,13 +2286,54 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   or both. Connect tries the one that answered last first and moves on only
   when an address does not answer at all; a refused password or a changed
   key stops there. The pin holds for both addresses.
-- **Codex on Windows.** Setup runs short PowerShell scripts through
+  - **Codex on Windows.** Setup runs short PowerShell scripts through
   `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
   and PowerShell default shells. The computer downloads the official
   `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
   pinned on the phone (0.159.2), checks its sha256 against hashes compiled
   into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
-  The phone and computer therefore speak one protocol version.
+    The phone and computer therefore speak one protocol version.
+  - **Temporary network loss on Windows.** A private helper retains that same
+    app-server while its SSH attachment reconnects. Its hidden Windows process
+    explicitly breaks away from OpenSSH's
+    kill-on-close job and inherits no SSH pipe handles. Startup checks an
+    authenticated health response, rather than trusting a leftover metadata
+    file. Broker PID and process start time identify stale or reused PIDs;
+    attachment to a dead broker fails immediately without retrying a new task.
+    The helper listens only on loopback, requires a random per-instance
+    capability, and keeps output and
+    input receipts in memory. Complete frames carry a sequence, byte length
+    and SHA-256; incomplete frames never reach the engine's JSON reader.
+    Reattachment replays unread output and deduplicates unacknowledged input
+    before forwarding it to Codex. It does not start another turn, initialize
+    another app-server, or acquire another thread writer. Response timeouts
+    pause during recovery. Heartbeats detect a stalled attachment, byte progress
+    keeps large frames alive, and retries back off up to ten seconds. Setup
+    retries only unreachable hosts; changed host keys and rejected passwords
+    still fail closed. Connection status is scoped to that computer's chats.
+    The helper bounds frames to 32 MiB and unread output to 64 MiB. It ends its
+    owned child after five minutes without an authenticated client heartbeat;
+    recovery exhaustion or lost relay state reports an unknown outcome rather
+    than submitting work to a replacement process. Stop revokes local writes
+    first and asks only the capability's own child to stop. When offline,
+    immediate remote interruption cannot be confirmed; the lease bounds it.
+    Already launched commands may outlive Codex. Tokens and transcripts are
+    not written into helper metadata or logs. A phone process restart does not
+    restore the in-memory attachment/receipt state; Linux still uses the direct
+    stdio path. These limits must not be described as full network/voice E2E.
+    Native Windows Claude chats use the same retained transport. The helper
+    starts the `.exe` directly with literal arguments, a working folder and
+    launch environment; it inherits the computer's existing sign-in. Each
+    instance has separate prompt/config files. A per-chat exclusive owner file
+    prevents another retained helper from starting that same Claude session
+    while its previous process is still alive. Short auth/model probes and
+    Linux or Windows npm `.cmd` installs retain their existing transport.
+    An ambiguous startup receipt leads only to attachment to the same helper,
+    never a second launch. Claude Stop destroys a recovering transport before
+    closing its buffered writer. Damaged Claude protocol messages fail with
+    a payload-free error instead of silently dropping a possible final answer.
+    Existing direct-SSH Claude processes are not acquired or killed by this
+    ownership guard; legacy sessions need a separate verified migration.
 - **Access is the user's choice per computer.** *Ask me first*:
   `workspace-write` with `on-request` approvals, answered on the phone's
   approval card. *Full access*: `danger-full-access` with no approvals, as on

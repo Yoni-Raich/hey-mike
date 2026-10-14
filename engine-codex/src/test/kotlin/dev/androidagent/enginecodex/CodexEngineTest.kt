@@ -575,6 +575,7 @@ class CodexEngineTest {
         val serverOut = java.io.PipedOutputStream(clientIn)
 
         val fakeProcess = object : Process() {
+            override fun isAlive() = true
             override fun getOutputStream() = clientOut
             override fun getInputStream() = clientIn
             override fun getErrorStream() = java.io.ByteArrayInputStream(ByteArray(0))
@@ -641,6 +642,7 @@ class CodexEngineTest {
         val clientIn = java.io.PipedInputStream()
         val serverOut = java.io.PipedOutputStream(clientIn)
         val fakeProcess = object : Process() {
+            override fun isAlive() = true
             override fun getOutputStream() = clientOut
             override fun getInputStream() = clientIn
             override fun getErrorStream() = java.io.ByteArrayInputStream(ByteArray(0))
@@ -696,6 +698,7 @@ class CodexEngineTest {
         val serverOut = java.io.PipedOutputStream(clientIn)
 
         val fakeProcess = object : Process() {
+            override fun isAlive() = true
             override fun getOutputStream() = clientOut
             override fun getInputStream() = clientIn
             override fun getErrorStream() = java.io.ByteArrayInputStream(ByteArray(0))
@@ -764,6 +767,7 @@ class CodexEngineTest {
         val serverOut = java.io.PipedOutputStream(clientIn)
 
         val fakeProcess = object : Process() {
+            override fun isAlive() = true
             override fun getOutputStream() = clientOut
             override fun getInputStream() = clientIn
             override fun getErrorStream() = java.io.ByteArrayInputStream(ByteArray(0))
@@ -848,6 +852,7 @@ class CodexEngineTest {
         }
 
         val fakeProcess = object : Process() {
+            override fun isAlive() = true
             override fun getOutputStream() = clientOut
             override fun getInputStream() = clientIn
             override fun getErrorStream() = stderr

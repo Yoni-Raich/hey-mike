@@ -1306,7 +1306,8 @@ class AgentCoordinator(
             }
             is EngineEvent.Activity -> synchronized(lifecycleLock) {
                 if (isCurrentLocked(epoch.get()) && !state.value.controlling &&
-                    (event.threadId == null || (event.threadId == thread && event.turnId == turn))) {
+                    (event.threadId == null || (event.threadId == thread &&
+                        (event.turnId == turn || (event.connectionStatus && event.turnId == null))))) {
                     mutableState.value = state.value.copy(status = event.text)
                     overlay.updateState(OverlayState(OverlayPhase.RUNNING, event.text))
                 }

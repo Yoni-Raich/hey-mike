@@ -31,6 +31,7 @@ import dev.androidagent.core.CompactResult
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.RuntimePhase
+import dev.androidagent.core.RecoverableConnection
 import dev.androidagent.core.SecretRedactor
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolResult
@@ -49,6 +50,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -729,13 +731,16 @@ class ClaudeCodeEngine(
         }
 
         private suspend fun readLoop(started: Process, ended: CompletableDeferred<Unit>) {
+            var failure = ""
             try {
                 started.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                     while (true) {
                         val line = reader.readLine() ?: break
                         if (line.isBlank()) continue
-                        // Stdout is never logged: a bad line is dropped, not printed.
-                        val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
+                        // A damaged final frame cannot silently become successful
+                        // completion with no answer. Never include its payload.
+                        val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull()
+                            ?: throw IOException("Invalid Claude protocol message; task outcome is unknown")
                         val signals = synchronized(state) {
                             mapper.map(message).also {
                                 if (mapper.active?.workStarted == true) authReplay = null
@@ -744,14 +749,17 @@ class ClaudeCodeEngine(
                         dispatch(signals)
                     }
                 }
-            } catch (_: IOException) {
+            } catch (error: IOException) {
+                failure = SecretRedactor.redactUiText(error.message.orEmpty()).take(500)
             } finally {
                 withContext(NonCancellable) {
                     ended.complete(Unit)
                     stderrJob?.let { job -> withTimeoutOrNull(500) { job.join() } }
                     if (process === started) {
+                        started.destroy()
                         failControls()
-                        dispatch(synchronized(state) { mapper.processEnded(stderrSnapshot(3)) })
+                        val detail = listOf(failure, stderrSnapshot(3)).filter { it.isNotBlank() }.joinToString("; ")
+                        dispatch(synchronized(state) { mapper.processEnded(detail) })
                     }
                 }
             }
@@ -898,9 +906,11 @@ class ClaudeCodeEngine(
             writeLock.withLock {
                 val out = writer ?: error("Claude is not running for this chat.")
                 try {
-                    out.write(message.toString())
-                    out.newLine()
-                    out.flush()
+                    runInterruptible {
+                        out.write(message.toString())
+                        out.newLine()
+                        out.flush()
+                    }
                 } catch (error: IOException) {
                     throw IllegalStateException("Claude is not running for this chat.", error)
                 }
@@ -949,6 +959,9 @@ class ClaudeCodeEngine(
             val out = writer
             writer = null
             withContext(Dispatchers.IO) {
+                // A recovering writer may be waiting for a receipt. Destroy the
+                // transport first to wake it before BufferedWriter.close takes its lock.
+                if (started is RecoverableConnection) started.destroy()
                 runCatching { out?.close() }
                 if (started != null && !started.waitFor(STOP_GRACE_MS, TimeUnit.MILLISECONDS)) started.destroyForcibly()
             }

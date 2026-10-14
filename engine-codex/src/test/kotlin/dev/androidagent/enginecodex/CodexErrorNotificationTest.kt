@@ -96,6 +96,26 @@ class CodexErrorNotificationTest {
             assertTrue(failure.uncertain)
             assertNull(failure.threadId)
             assertNull(failure.turnId)
+            assertFalse("The owned runtime must stop before failure is reported", server.running)
+        }
+    }
+
+    @Test fun trailingCommaTransportMessagesDoNotKillTheReader() = runBlocking {
+        withServer { server, engine, events ->
+            server.writeLine("""{"method":"item/agentMessage/delta","params":{"threadId":"t","turnId":"u","delta":"Recovered",},}""")
+            assertEquals("Recovered", (events.next() as EngineEvent.TextDelta).text)
+            assertTrue(server.running)
+            assertFalse(engine.account().signedIn)
+        }
+    }
+
+    @Test fun invalidJsonDoesNotExposeTheRawPayloadAndStopsTheOwnedRuntime() = runBlocking {
+        withServer { server, _, events ->
+            server.writeLine("""{"private":"personal-screen-text-12345678","broken":""")
+            val failure = events.next() as EngineEvent.Failure
+            assertFalse(failure.message.contains("personal-screen-text"))
+            assertTrue(failure.uncertain)
+            assertFalse(server.running)
         }
     }
 
@@ -138,6 +158,7 @@ class CodexErrorNotificationTest {
         private val lock = Any()
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         @Volatile private var alive = true
+        val running get() = alive
         private val process = object : Process() {
             override fun getOutputStream() = clientOutput
             override fun getInputStream() = clientInput
