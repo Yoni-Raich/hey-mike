@@ -43,9 +43,24 @@ object PcChats {
 
     /** A saved PC name is shared across clients; an unnamed preview must not replace a local name. */
     fun title(session: ChatSession, binding: RemoteBinding?, threads: List<ComputerConversation>): String =
-        if (session.engine == binding?.engine && binding.threadId == session.engineThreadId && binding.threadId != null)
-            threads.firstOrNull { it.engine == binding.engine && it.id == binding.threadId }?.name?.takeIf { it.isNotBlank() } ?: session.title
-        else session.title
+        session.engineThreadId?.takeIf { binding != null && binding.thread(session.engine) == it }
+            ?.let { id -> threads.firstOrNull { it.engine == session.engine && it.id == id }?.name?.takeIf { it.isNotBlank() } }
+            ?: session.title
+
+    fun threadKey(engine: EngineKind, threadId: String): String = "${engine.name}:$threadId"
+
+    /**
+     * The computer conversations a chat bound there already follows, by
+     * [threadKey]: the binding's thread, the one parked for the other engine,
+     * and the chat's own threads. A Claude chat Mike started before bindings
+     * named their engine is found through the chat alone.
+     */
+    fun followed(binding: RemoteBinding, session: ChatSession?): Set<String> = buildSet {
+        binding.threadId?.let { add(threadKey(binding.engine, it)) }
+        binding.parked?.let { add(threadKey(it.engine, it.threadId)) }
+        session?.engineThreadId?.let { add(threadKey(session.engine, it)) }
+        session?.parked?.forEach { (engine, parked) -> add(threadKey(engine, parked.threadId)) }
+    }
 
     /** Windows paths ignore case and may end in a separator; Linux paths keep their case. */
     fun pathKey(path: String): String =
@@ -64,7 +79,7 @@ object PcChats {
         val byId = sessions.associateBy { it.id }
         return computers.sortedByDescending { it.id == defaultComputerId }.map { computer ->
             val bound = bindings.filterValues { it.computerId == computer.id }
-            val followed = bound.values.mapNotNull { binding -> binding.threadId?.let { "${binding.engine.name}:$it" } }.toSet()
+            val followed = bound.flatMap { (chat, binding) -> followed(binding, byId[chat]) }.toSet()
             val entries = mutableMapOf<String, MutableList<PcChatEntry>>()
             val spelled = mutableMapOf<String, String>()
             fun folder(path: String): MutableList<PcChatEntry> {

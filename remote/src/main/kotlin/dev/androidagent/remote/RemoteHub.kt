@@ -298,12 +298,24 @@ class RemoteHub(
             val folder = ClaudeLaunch.folder(host.home, connection.os)
             val scriptPath = ClaudeLaunch.file(folder, "desktop-bridge-${java.util.UUID.randomUUID()}.ps1", connection.os)
             val local = File.createTempFile("claude-desktop-bridge", ".tmp", claudeScratch.apply { mkdirs() })
-            val row = try {
-                local.writeText(ClaudeDesktop.script(cli, metadata.cwd, threadId, folder))
+            try {
+                local.writeBytes(ClaudeDesktop.bytes(ClaudeDesktop.script(cli, metadata.cwd, threadId, folder)))
                 connection.link.upload(local, scriptPath, replace = false)
-                ClaudeSessionFiles.payload(connection.link.run(ClaudeDesktop.command(scriptPath), 45_000))
             } finally { local.delete() }
-            check((row["requested"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull == true) { "Claude Desktop handoff was not confirmed" }
+            // From here on the computer may have opened Desktop. Only its own
+            // word that nothing started counts as "not opened".
+            val unknown = "Mike couldn't confirm whether Claude Desktop opened this session. Look on the computer and close it there if it opened, then check again."
+            val row = try {
+                ClaudeSessionFiles.payload(connection.link.run(ClaudeDesktop.command(scriptPath), 45_000))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (reported: ClaudeReaderException) {
+                if (reported.code == "unknown") throw ClaudeDesktopUnknownException(unknown)
+                throw reported
+            } catch (_: Exception) {
+                throw ClaudeDesktopUnknownException(unknown)
+            }
+            if ((row["requested"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull != true) throw ClaudeDesktopUnknownException(unknown)
         }
     }
 

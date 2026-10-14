@@ -130,14 +130,32 @@ class ReadersTest(unittest.TestCase):
         self.check("read", lambda row: self.assertEqual(["hello", "image understood"], [m["text"] for m in row["messages"]]))
         self.check("list", lambda row: self.assertEqual(1, len(row["threads"])))
 
-    def test_compaction_uses_summary_without_logical_parent_cycle(self):
+    def test_compaction_keeps_earlier_history_and_hides_the_summary(self):
+        # The shape Claude Code 2.1.284 wrote on this PC: the boundary has no
+        # parentUuid, and the summary is a transcript-only user record.
+        user = self.row()
+        reply = self.row("assistant", "before compaction", user["uuid"])
+        compact = self.row("system", "", None, logicalParentUuid=reply["uuid"], subtype="compact_boundary")
+        summary = self.row("user", "This session is being continued from a previous conversation", compact["uuid"],
+                           isCompactSummary=True, isVisibleInTranscriptOnly=True)
+        question = self.row("user", "next question", summary["uuid"])
+        answer = self.row("assistant", "after compaction", question["uuid"])
+        self.write([user, reply, compact, summary, question, answer])
+        self.check("read", lambda row: self.assertEqual(["hello", "before compaction", "next question", "after compaction"],
+                                                        [m["text"] for m in row["messages"]]))
+        self.check("list", lambda row: self.assertEqual("hello", row["threads"][0]["title"]))
+
+    def test_compaction_without_logical_parent_cycle(self):
         user = self.row()
         compact = self.row("system", "", None, logicalParentUuid=user["uuid"])
         summary = self.row("user", "compacted summary", compact["uuid"], isCompactSummary=True)
         compact["logicalParentUuid"] = summary["uuid"]
         answer = self.row("assistant", "after compaction", summary["uuid"])
         self.write([user, compact, summary, answer])
-        self.check("read", lambda row: self.assertEqual(["compacted summary", "after compaction"], [m["text"] for m in row["messages"]]))
+        self.check("read", lambda row: self.assertEqual(["after compaction"], [m["text"] for m in row["messages"]]))
+        gone = self.row("system", "", None, logicalParentUuid=str(uuid.uuid4()))
+        self.write([gone, self.row("assistant", "only part kept", gone["uuid"])])
+        self.check("read", lambda row: self.assertEqual(["only part kept"], [m["text"] for m in row["messages"]]))
         self.check("read", lambda row: self.assertIn("Invalid Claude session ID", row["error"]), "../credentials")
         self.write([self.row(parent=str(uuid.uuid4()))])
         self.check("read", lambda row: self.assertIn("missing parent", row["error"]))

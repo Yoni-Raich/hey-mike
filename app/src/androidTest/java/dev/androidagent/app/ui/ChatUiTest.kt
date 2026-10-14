@@ -55,6 +55,7 @@ class ChatUiTest {
         compose.onNodeWithContentDescription("Refresh history").performClick()
         compose.onNodeWithContentDescription("Open in Claude Desktop").performClick()
         compose.runOnIdle { assertEquals("ui-fixture", refreshed); assertEquals("ui-fixture", opened) }
+        screenshot("chat-claude-session-strip")
     }
 
     @Test fun computerClaudeWriterBlocksSendAndDoesNotOfferACodexFork() {
@@ -65,8 +66,23 @@ class ChatUiTest {
         compose.onNodeWithText("Continue in a copy").assertDoesNotExist()
         compose.onNodeWithText("Open in Claude on the computer").assertExists()
         compose.onNodeWithContentDescription("Open in Claude Desktop").assertIsNotEnabled()
+        screenshot("chat-claude-held-by-client")
         compose.onNodeWithContentDescription("Message input").performTextInput("continue")
         compose.onNodeWithContentDescription("Send message").assertIsNotEnabled()
+    }
+
+    @Test fun computerClaudeCheckFailureNamesTheConnectionProblem() {
+        compose.setContent { AndroidAgentScreen(loadingFixture.copy(activeEngine = EngineKind.CLAUDE,
+            sessions = listOf(dev.androidagent.core.ChatSession("ui-fixture", "Claude session", 1, 1, engine = EngineKind.CLAUDE)),
+            remoteBindings = mapOf("ui-fixture" to RemoteBinding("pc", "C:/project", "native-id", true, EngineKind.CLAUDE)),
+            pcBusyChats = setOf("ui-fixture"),
+            pcSyncProblems = mapOf("ui-fixture" to "The computer is offline.")), AgentUiActions()) }
+        compose.onNodeWithText("Can't check this session").assertIsDisplayed()
+        compose.onNodeWithText("The computer is offline.", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Open in Claude on the computer").assertDoesNotExist()
+        compose.onNodeWithText("Try again").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Open in Claude Desktop").assertIsNotEnabled()
+        screenshot("chat-claude-check-failed")
     }
 
     @Test fun savedHistoryShowsLoadingUntilMessagesArrive() {

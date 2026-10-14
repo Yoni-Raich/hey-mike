@@ -1,5 +1,20 @@
 # Progress
 
+### Claude session sync deep review — 2026-10-14
+
+- PR #127 brought onto dev `358d2ef`; the open 2026-10-11 merge was concluded.
+  Fixed: Desktop bridge paths in Hebrew (ASCII scripts with Base64 paths and a
+  BOM), Windows JSON in the OEM code page (`\uXXXX`), unknown Desktop outcome
+  (blocked, never retried on its own), a Codex thread lost after a switch to
+  Claude and back (`RemoteBinding.parked`), compaction hiding earlier history
+  and showing Claude's summary, a draft lost when sending was held back, text
+  shown after Stop imported again, duplicate drawer entries.
+- Real store scan, both readers: 114 listed, 113 read, 4,009 messages, 0
+  mismatches (old reader 3,168). Real interactive scheduled-task bridge with a
+  fixture CLI in a Hebrew/quote/bracket folder passed. Full gate passed:
+  2,717 unit executions, 0 failures. Not verified: phone -> SSH -> Desktop ->
+  phone, Linux host, Mac. Details: `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
 ### Claude session sync review fixes — 2026-10-11
 
 - Review of PR #127 against the real Pc store found three blockers, fixed here.

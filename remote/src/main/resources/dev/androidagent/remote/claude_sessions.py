@@ -88,7 +88,7 @@ def metadata(file, holders):
             title = row.get("aiTitle") or title
         elif typ == "summary":
             summary = row.get("summary") or summary
-        elif typ == "user" and not first and not row.get("isMeta"):
+        elif typ == "user" and not first and not row.get("isMeta") and not row.get("isCompactSummary"):
             first = content_text(row.get("message", {}).get("content"))[:140]
         elif typ == "assistant":
             model = row.get("message", {}).get("model") or model
@@ -205,18 +205,21 @@ def messages(file):
             if not isinstance(uid, str):
                 continue
             # A fork can retain the original sessionId on copied ancestors.
-            # The file's UUID is its identity. Compaction follows parentUuid;
-            # logicalParentUuid would reconnect replaced history and can cycle.
+            # The file's UUID is its identity. A compaction boundary has no
+            # parentUuid; its logicalParentUuid names the last record before
+            # it, so the earlier history stays readable.
             parent = row.get("parentUuid")
+            logical = row.get("logicalParentUuid") if not parent else None
             typ = row.get("type")
             if typ not in ("user", "assistant", "progress", "system", "attachment"):
                 continue
             text = ""
-            main = not row.get("isMeta") and not row.get("teamName")
+            # The compaction summary is Claude's note to itself, not something the user said.
+            main = not (row.get("isMeta") or row.get("teamName") or row.get("isCompactSummary") or row.get("isVisibleInTranscriptOnly"))
             if typ in ("user", "assistant") and main:
                 text = content_text(row.get("message", {}).get("content"))
                 leaf = uid
-            nodes[uid] = {"id": uid, "parent": parent, "role": typ, "text": text,
+            nodes[uid] = {"id": uid, "parent": parent, "logical": logical, "role": typ, "text": text,
                           "main": main, "order": read_bytes, "createdAt": stamp(row.get("timestamp"))}
     # Trailing progress/internal records must not select an older branch.
     parents = {node["parent"] for node in nodes.values()}
@@ -243,6 +246,11 @@ def messages(file):
         if node["role"] in ("user", "assistant") and node["text"]:
             chain.append({key: node[key] for key in ("id", "role", "text", "createdAt")})
         leaf = node["parent"]
+        if not leaf and node["logical"]:
+            # Across a compaction boundary only to a record still in this file, never back.
+            leaf = node["logical"]
+            if leaf in visited or leaf not in nodes:
+                leaf = None
     if leaf:
         raise ValueError("Claude history has a missing parent record; its source transcript is required")
     return list(reversed(chain))

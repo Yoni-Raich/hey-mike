@@ -36,6 +36,7 @@ import dev.androidagent.remote.RemoteSetup
 import dev.androidagent.remote.RemoteStore
 import dev.androidagent.remote.ClaudeHistorySync
 import dev.androidagent.remote.ClaudeReaderException
+import dev.androidagent.remote.ClaudeDesktopUnknownException
 import dev.androidagent.runtime.ClaudeInstallPhase
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -468,6 +469,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             else "Set up ${kind.label} in Settings first."
         }
         graph.sessions.setEngine(id, kind)
+        // Who holds the computer conversation is a question for the engine the chat now runs on.
+        if (graph.computers.binding(id) != null) checkPcChatBusy(id)
         // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
         mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
         viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
@@ -562,8 +565,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (graph.coordinator.phaseOf(sessionId) != null) return
         if (isComputerClaude(sessionId)) { syncPcChat(sessionId); return }
         val binding = graph.computers.binding(sessionId)
-        val thread = binding?.threadId
-        if (binding == null || binding.importedFromPc == false || binding.engine != EngineKind.CODEX || thread == null) {
+        // The chat's Codex thread, also while it is parked during a turn on Claude.
+        val thread = binding?.thread(EngineKind.CODEX)?.takeIf { sessionOf(sessionId)?.engine != EngineKind.CLAUDE }
+        if (binding == null || thread == null || binding.imported(EngineKind.CODEX, thread) == false) {
             syncState(sessionId, busy = false, problem = null)
             return
         }
@@ -581,15 +585,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun forkPcChat(sessionId: String) = task {
         val binding = graph.computers.binding(sessionId) ?: kotlin.error("This chat does not run on a computer.")
-        check(binding.engine == EngineKind.CODEX) { "Close this session in Claude on the computer, then refresh it in Mike." }
-        val thread = binding.threadId ?: kotlin.error("This chat has no conversation on the computer yet.")
-        check(binding.importedFromPc != false) { "This conversation belongs to Mike; it does not need a copy." }
+        check(sessionOf(sessionId)?.engine != EngineKind.CLAUDE) { "Close this session in Claude on the computer, then refresh it in Mike." }
+        val thread = binding.thread(EngineKind.CODEX) ?: kotlin.error("This chat has no conversation on the computer yet.")
+        check(binding.imported(EngineKind.CODEX, thread) != false) { "This conversation belongs to Mike; it does not need a copy." }
         mutable.update { it.copy(pcForking = it.pcForking + sessionId) }
         try {
             // The copy is a Codex thread, so it goes where the chat keeps its Codex thread.
             graph.sessions.setEngine(sessionId, EngineKind.CODEX)
             val copy = graph.remote.forkThread(binding.computerId, binding.cwd, thread)
-            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.copy(threadId = copy, importedFromPc = false)) }
+            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.opened(EngineKind.CODEX, copy)) }
             graph.sessions.setThread(sessionId, copy)
             mutable.update { it.copy(pcBusyChats = it.pcBusyChats - sessionId) }
             note(sessionId, "Mike continues here in a copy of the conversation, with its whole history. The original stays in Codex on the computer.")
@@ -613,12 +617,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         current.value?.takeIf(::isComputerClaude)?.let(::syncPcChat)
     }
 
-    private fun isComputerClaude(id: String): Boolean {
-        val binding = graph.computers.binding(id) ?: return false
-        val session = graph.sessions.sessions.value.firstOrNull { it.id == id } ?: return false
-        return session.engine == EngineKind.CLAUDE && (binding.engine == EngineKind.CLAUDE ||
-            session.engineThreadId != null && (binding.threadId == null || binding.threadId == session.engineThreadId))
+    private fun sessionOf(id: String) = graph.sessions.sessions.value.firstOrNull { it.id == id }
+
+    /**
+     * The Claude session a computer chat runs on, once it has one. Every
+     * Claude thread of a chat bound to a computer lives on that computer:
+     * imported ones, ones Mike started there, and ones from builds that did
+     * not record the engine in the binding yet.
+     */
+    private fun computerClaudeThread(id: String): String? {
+        if (graph.computers.binding(id) == null) return null
+        return sessionOf(id)?.takeIf { it.engine == EngineKind.CLAUDE }?.engineThreadId
     }
+
+    private fun isComputerClaude(id: String): Boolean = computerClaudeThread(id) != null
 
     fun syncPcChat(sessionId: String) = task { refreshClaudeHistory(sessionId) }
 
@@ -639,10 +651,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         pcSyncLocks.getOrPut(sessionId) { Mutex() }.withLock {
             if (graph.coordinator.phaseOf(sessionId) != null) return@withLock
             var binding = graph.computers.binding(sessionId) ?: return@withLock
-            val thread = (if (binding.engine == EngineKind.CLAUDE) binding.threadId else graph.sessions.getSession(sessionId)?.engineThreadId) ?: return@withLock
-            if (binding.engine != EngineKind.CLAUDE) {
-                binding = binding.copy(engine = EngineKind.CLAUDE, threadId = thread)
-                withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding) }
+            val thread = computerClaudeThread(sessionId) ?: return@withLock
+            // Park, never drop, the Codex thread this chat may have on the computer.
+            binding.opened(EngineKind.CLAUDE, thread).takeIf { it != binding }?.let { bound ->
+                binding = bound
+                withContext(Dispatchers.IO) { graph.computers.bind(sessionId, bound) }
             }
             // A session brought in from the computer may have another writer, so
             // not knowing fails closed. A chat Mike started keeps working as it
@@ -694,8 +707,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             check(graph.coordinator.phaseOf(sessionId) == null) { "Wait for this chat to finish before opening Desktop." }
             check(sessionId !in mutable.value.pcBusyChats) { pcBlockedReason(sessionId) }
             val binding = graph.computers.binding(sessionId) ?: kotlin.error("This chat no longer runs on a computer.")
-            val thread = binding.threadId ?: kotlin.error("Send a message first to create the Claude session.")
-            graph.remote.openClaudeDesktop(binding.computerId, thread)
+            val thread = computerClaudeThread(sessionId) ?: kotlin.error("Send a message first to create the Claude session.")
+            try {
+                graph.remote.openClaudeDesktop(binding.computerId, thread)
+            } catch (unknown: ClaudeDesktopUnknownException) {
+                // It may be open there now. Sending waits for a check that
+                // finds nobody else writing; the handoff is not tried again on its own.
+                syncState(sessionId, busy = true, problem = unknown.message)
+                return@task
+            }
             mutable.update { it.copy(pcBusyChats = it.pcBusyChats + sessionId, infoMessage = "Opening the same session in Claude Desktop. Close it there, then refresh here to continue in Mike.") }
         } finally { mutable.update { it.copy(pcDesktopOpening = it.pcDesktopOpening - sessionId) } }
     }
@@ -708,7 +728,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun importPcThread(id: String, threadId: String, engine: EngineKind) {
-        graph.computers.state.value.bindings.entries.firstOrNull { it.value.computerId == id && it.value.engine == engine && it.value.threadId == threadId }?.let {
+        // A chat here may already follow it, also one that runs on the other engine for now.
+        val wanted = PcChats.threadKey(engine, threadId)
+        graph.computers.state.value.bindings.entries.firstOrNull { (session, binding) ->
+            binding.computerId == id && wanted in PcChats.followed(binding, sessionOf(session))
+        }?.let {
             current.value = it.key
             if (engine == EngineKind.CLAUDE) refreshClaudeHistory(it.key)
             return
@@ -742,7 +766,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         } finally {
             mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
         }
-        checkPcChatBusy(session.id)
+        // A Claude session's refresh above already read who holds it.
+        if (engine == EngineKind.CODEX) checkPcChatBusy(session.id)
     }
 
     /**
@@ -899,6 +924,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(composerSeeds = it.composerSeeds + (id to text)) }
         draftWrites.trySend(id to text)
     }
+
+    /** Put [text] back into [id]'s composer after a send that never left, unless something new was typed since. */
+    private fun restoreDraft(id: String, text: String) {
+        var restored = false
+        mutable.update {
+            restored = it.composerSeeds[id].isNullOrBlank()
+            if (!restored) return@update it
+            it.copy(
+                composerSeeds = it.composerSeeds + (id to text),
+                composerDraftVersions = it.composerDraftVersions + (id to ((it.composerDraftVersions[id] ?: 0L) + 1L)),
+            )
+        }
+        if (restored) draftWrites.trySend(id to text)
+    }
     fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
         if (graph.coordinator.family(id).any { graph.coordinator.phaseOf(it) != null } ||
@@ -952,7 +991,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         task {
             if (kind == EngineKind.CLAUDE && isComputerClaude(id) && graph.coordinator.phaseOf(id) == null) {
                 refreshClaudeHistory(id)
-                check(id !in mutable.value.pcBusyChats) { pcBlockedReason(id) }
+                if (id in mutable.value.pcBusyChats) {
+                    // Nothing was sent; the words go back where they were typed.
+                    restoreDraft(id, text)
+                    kotlin.error(pcBlockedReason(id))
+                }
             }
             // Pictures travel inside the turn. Any other file has to be on the
             // machine the agent runs on, so a computer chat copies it there

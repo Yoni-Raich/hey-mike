@@ -214,6 +214,20 @@ class ClaudeComputerTest {
         assertTrue(native in ids)
     }
 
+    /** Text shown after Stop was asked is in the transcript too; a history refresh must not add it twice. */
+    @Test fun nativeIdsShownAfterStopAreStillReported() = runBlocking {
+        val computer = FakeComputer()
+        val engine = engine(computer)
+        val ids = CopyOnWriteArrayList<String>()
+        engine.onNativeMessage = { _, message -> ids += message }
+        val (id, turn, chat) = engine.begin(computer)
+        engine.interrupt(id, turn)
+        val native = "33333333-3333-4333-8333-333333333333"
+        chat.send("""{"type":"assistant","uuid":"$native","message":{"id":"msg_stop","model":"sonnet","content":[{"type":"text","text":"partial answer"}]}}""")
+        awaitEvent<EngineEvent.MessageCompleted>()
+        assertTrue(native in ids)
+    }
+
     @Test fun aToolThatNeedsPermissionAsksOnThePhoneAndRunsAfterYes() = runBlocking {
         val computer = FakeComputer()
         val engine = engine(computer)

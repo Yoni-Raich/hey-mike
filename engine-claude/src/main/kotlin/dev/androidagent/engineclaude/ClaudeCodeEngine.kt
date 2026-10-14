@@ -763,7 +763,7 @@ class ClaudeCodeEngine(
                                 if (mapper.active?.workStarted == true) authReplay = null
                             }
                         }
-                        if (message.string("type") in setOf("user", "assistant") && synchronized(state) { mapper.toolTurn() != null }) {
+                        if (message.string("type") in setOf("user", "assistant") && synchronized(state) { mapper.shownTurn() != null }) {
                             message.string("uuid")?.takeIf(ClaudeProtocol::isSessionId)?.let { onNativeMessage(threadId, it) }
                         }
                         dispatch(signals)

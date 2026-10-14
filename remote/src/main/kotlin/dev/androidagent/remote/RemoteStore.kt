@@ -71,13 +71,52 @@ data class RemoteBinding(
     val computerId: String,
     /** The working folder, as the computer spells it (`C:\Users\...`). */
     val cwd: String,
-    /** The Codex thread on that computer, once there is one. */
+    /** The [engine] thread on that computer, once there is one. */
     val threadId: String? = null,
     /** Null only for bindings saved by older app versions, before origin was recorded. */
     val importedFromPc: Boolean? = false,
     /** The native engine owning [threadId]; old bindings are Codex. */
     val engine: EngineKind = EngineKind.CODEX,
-)
+    /** The other engine's thread on the same computer, kept while the chat runs on [engine]. */
+    val parked: ParkedBinding? = null,
+) {
+    /** The thread [kind] has on the computer for this chat, current or parked. */
+    fun thread(kind: EngineKind): String? = when {
+        engine == kind -> threadId
+        parked?.engine == kind -> parked.threadId
+        else -> null
+    }
+
+    /** Where [id] of [kind] came from: true the computer, false Mike, null unknown (older bindings). */
+    fun imported(kind: EngineKind, id: String): Boolean? = when {
+        engine == kind && threadId == id -> importedFromPc
+        parked?.engine == kind && parked.threadId == id -> parked.importedFromPc
+        else -> false
+    }
+
+    /**
+     * This binding once [kind] runs [id]. The other engine's thread is parked,
+     * not dropped: switching back resumes it on the computer instead of
+     * starting an empty one.
+     */
+    fun opened(kind: EngineKind, id: String): RemoteBinding {
+        if (engine == kind) {
+            if (threadId == id) return this
+            // A thread Mike made in place of an earlier one is Mike's.
+            return copy(threadId = id, importedFromPc = if (threadId == null) importedFromPc else false)
+        }
+        val returning = parked?.takeIf { it.engine == kind && it.threadId == id }
+        return copy(
+            engine = kind,
+            threadId = id,
+            importedFromPc = returning?.importedFromPc ?: false,
+            parked = threadId?.let { ParkedBinding(engine, it, importedFromPc) } ?: parked?.takeIf { it.engine != kind },
+        )
+    }
+}
+
+/** A chat's thread on a computer for the engine it is not running on right now. */
+data class ParkedBinding(val engine: EngineKind, val threadId: String, val importedFromPc: Boolean?)
 
 data class RemoteState(
     val computers: List<RemoteComputer> = emptyList(),
@@ -135,7 +174,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
 
     /** The chat and binding that own [threadId], if a computer runs it. */
     @Synchronized fun bindingForThread(threadId: String): Pair<String, RemoteBinding>? =
-        stored.state.bindings.entries.firstOrNull { it.value.threadId == threadId }?.toPair()
+        stored.state.bindings.entries.firstOrNull { it.value.threadId == threadId || it.value.parked?.threadId == threadId }?.toPair()
 
     /**
      * Add a computer, or change one. A null [password] keeps the saved one.
@@ -278,6 +317,12 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                         b.threadId?.let { put("thread", it) }
                         b.importedFromPc?.let { put("importedFromPc", it) }
                         put("engine", b.engine.name)
+                        b.parked?.let { parked ->
+                            put("parked", buildJsonObject {
+                                put("engine", parked.engine.name); put("thread", parked.threadId)
+                                parked.importedFromPc?.let { put("importedFromPc", it) }
+                            })
+                        }
                     })
                 }
             })
@@ -315,6 +360,12 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     b.text("thread"),
                     (b["importedFromPc"] as? JsonPrimitive)?.booleanOrNull,
                     b.text("engine")?.let { value -> runCatching { EngineKind.valueOf(value) }.getOrNull() } ?: EngineKind.CODEX,
+                    (b["parked"] as? JsonObject)?.let { parked ->
+                        val engine = parked.text("engine")?.let { value -> runCatching { EngineKind.valueOf(value) }.getOrNull() }
+                        val thread = parked.text("thread")
+                        if (engine == null || thread == null) null
+                        else ParkedBinding(engine, thread, (parked["importedFromPc"] as? JsonPrimitive)?.booleanOrNull)
+                    },
                 )
             }.toMap()
             val default = root.text("default")?.takeIf { it in ids } ?: computers.firstOrNull()?.id

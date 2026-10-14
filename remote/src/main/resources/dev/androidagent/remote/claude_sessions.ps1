@@ -112,7 +112,7 @@ function Metadata($file, $holders) {
             'custom-title' { if (Field $row 'customTitle') { $custom = [string](Field $row 'customTitle') } }
             'ai-title' { if (Field $row 'aiTitle') { $title = [string](Field $row 'aiTitle') } }
             'summary' { if (Field $row 'summary') { $summary = [string](Field $row 'summary') } }
-            'user' { if (-not $first -and -not (Field $row 'isMeta')) { $first = ContentText (Field (Field $row 'message') 'content'); if ($first.Length -gt 140) { $first = $first.Substring(0,140) } } }
+            'user' { if (-not $first -and -not (Field $row 'isMeta') -and -not (Field $row 'isCompactSummary')) { $first = ContentText (Field (Field $row 'message') 'content'); if ($first.Length -gt 140) { $first = $first.Substring(0,140) } } }
             'assistant' { if (Field (Field $row 'message') 'model') { $model = [string](Field (Field $row 'message') 'model') } }
         }
     }
@@ -143,15 +143,18 @@ function Messages($file) {
             if (Field $row 'isSidechain') { continue }
             $uid = Field $row 'uuid'
             if ($uid -isnot [string]) { continue }
-            # Forked ancestors may keep their original sessionId. Compaction
-            # uses parentUuid; following logicalParentUuid can create a cycle.
+            # Forked ancestors may keep their original sessionId. A compaction
+            # boundary has no parentUuid; its logicalParentUuid names the last
+            # record before it, so the earlier history stays readable.
             $parent = Field $row 'parentUuid'
+            $logical = if (-not $parent) { Field $row 'logicalParentUuid' } else { $null }
             $role = Field $row 'type'; $text = ''
             if ($role -notin @('user','assistant','progress','system','attachment')) { continue }
-            $main = -not (Field $row 'isMeta') -and -not (Field $row 'teamName')
+            # The compaction summary is Claude's note to itself, not something the user said.
+            $main = -not (Field $row 'isMeta') -and -not (Field $row 'teamName') -and -not (Field $row 'isCompactSummary') -and -not (Field $row 'isVisibleInTranscriptOnly')
             if ($role -in @('user','assistant') -and $main) { $text = ContentText (Field (Field $row 'message') 'content'); $leaf = $uid }
             $order++
-            $nodes[$uid] = @{id=$uid;parent=$parent;role=$role;text=$text;main=$main;order=$order;createdAt=(Stamp (Field $row 'timestamp'))}
+            $nodes[$uid] = @{id=$uid;parent=$parent;logical=$logical;role=$role;text=$text;main=$main;order=$order;createdAt=(Stamp (Field $row 'timestamp'))}
         }
     } finally { $reader.Dispose() }
     $parents = @{}
@@ -175,6 +178,11 @@ function Messages($file) {
         $visited[$leaf] = $true; $node = $nodes[$leaf]
         if ($node.role -in @('user','assistant') -and $node.text) { [void]$chain.Add([ordered]@{id=$node.id;role=$node.role;text=$node.text;createdAt=$node.createdAt}) }
         $leaf = $node.parent
+        if (-not $leaf -and $node.logical) {
+            # Across a compaction boundary only to a record still in this file, never back.
+            $leaf = $node.logical
+            if ($visited.ContainsKey($leaf) -or -not $nodes.ContainsKey($leaf)) { $leaf = $null }
+        }
     }
     if ($leaf) { throw 'Claude history has a missing parent record; its source transcript is required' }
     $chain.Reverse()

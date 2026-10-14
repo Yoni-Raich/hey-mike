@@ -67,6 +67,32 @@ class RemoteStoreTest {
         assertEquals(binding, RemoteStore(file, box).binding("chat"))
     }
 
+    /** An imported Codex chat that moves to Claude and back keeps its Codex thread and its origin. */
+    @Test fun anEngineSwitchParksTheOtherThreadAndKeepsEachOrigin() {
+        val imported = RemoteBinding("pc", "C:\\src", "codex-thread", true)
+        val onClaude = imported.opened(EngineKind.CLAUDE, "claude-id")
+        assertEquals(EngineKind.CLAUDE, onClaude.engine)
+        assertEquals(false, onClaude.importedFromPc)
+        assertEquals("codex-thread", onClaude.thread(EngineKind.CODEX))
+        assertEquals(true, onClaude.imported(EngineKind.CODEX, "codex-thread"))
+        assertEquals(false, onClaude.imported(EngineKind.CLAUDE, "claude-id"))
+        val back = onClaude.opened(EngineKind.CODEX, "codex-thread")
+        assertEquals("codex-thread", back.threadId)
+        assertEquals(true, back.importedFromPc)
+        assertEquals(ParkedBinding(EngineKind.CLAUDE, "claude-id", false), back.parked)
+        assertEquals(back, back.opened(EngineKind.CODEX, "codex-thread"))
+        // A new thread Mike makes in place of an imported one is Mike's.
+        assertEquals(false, back.opened(EngineKind.CODEX, "fresh").importedFromPc)
+        // A Mike chat whose binding never had a thread keeps its recorded origin.
+        assertEquals(null, RemoteBinding("pc", "C:\\src", null, null).opened(EngineKind.CODEX, "t").importedFromPc)
+
+        val box = SoftwareBox()
+        val file = File(temp.root, "parked.bin")
+        RemoteStore(file, box).apply { save(computer, "secret"); bind("chat", back) }
+        assertEquals(back, RemoteStore(file, box).binding("chat"))
+        assertEquals("chat" to back, RemoteStore(file, box).bindingForThread("claude-id"))
+    }
+
     @Test fun anEditedFileIsNotTrustedAtAll() {
         val box = SoftwareBox()
         val file = File(temp.root, "state.bin")

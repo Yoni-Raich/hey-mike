@@ -50,6 +50,28 @@ class PcChatsTest {
         assertEquals(listOf(phoneChat), PcChats.phoneSessions(listOf(phoneChat, deskChat), mapOf("d1" to RemoteBinding("desk", "C:\\src\\app"))))
     }
 
+    /** A session a chat here follows on either engine is not offered again as a second chat. */
+    @Test fun claudeSessionsFollowedThroughTheChatOrAParkedThreadAreNotListedTwice() {
+        val olderClaude = deskChat.copy(id = "d2", engine = EngineKind.CLAUDE, engineThreadId = "claude-old")
+        val switched = deskChat.copy(id = "d3", engineThreadId = "codex-now")
+        val bindings = mapOf(
+            // Saved before bindings named their engine: no thread recorded.
+            "d2" to RemoteBinding("desk", "C:\\src\\app"),
+            "d3" to RemoteBinding("desk", "C:\\src\\app", "codex-now", false, EngineKind.CODEX,
+                dev.androidagent.remote.ParkedBinding(EngineKind.CLAUDE, "claude-parked", true)),
+        )
+        val threads = listOf(
+            CodexThread("claude-old", "Old", "C:\\src\\app", 60, engine = EngineKind.CLAUDE),
+            CodexThread("claude-parked", "Parked", "C:\\src\\app", 61, engine = EngineKind.CLAUDE),
+            CodexThread("claude-new", "New", "C:\\src\\app", 62, engine = EngineKind.CLAUDE),
+            // The same ID under the other engine is another conversation.
+            CodexThread("claude-old", "Codex twin", "C:\\src\\app", 63),
+        )
+        val chats = PcChats.sections(listOf(desk), "desk", emptyList(), bindings, listOf(olderClaude, switched), mapOf("desk" to threads))
+            .single().projects.single().chats.map { it.key }
+        assertEquals(setOf("thread-CLAUDE:claude-new", "thread-CODEX:claude-old", "chat-d2", "chat-d3"), chats.toSet())
+    }
+
     @Test fun searchKeepsMatchingChatsAndMatchingProjects() {
         val sections = PcChats.sections(
             listOf(desk), "desk", listOf(RemoteProject("desk", "C:\\web")), emptyMap(), emptyList(),

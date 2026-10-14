@@ -361,13 +361,15 @@ fun AndroidAgentScreen(
                         // list follows the newest message, and a card placed in it
                         // sat above everything, out of sight in any long chat.
                         state.activeSessionId?.takeIf { it in state.pcBusyChats }?.let { id ->
+                            // The engine the chat runs on now; the other one's thread may still be the binding's.
+                            val claude = state.sessions.firstOrNull { it.id == id }?.engine == EngineKind.CLAUDE
                             PcBusyBanner(
-                                claude = state.remoteBindings[id]?.engine == EngineKind.CLAUDE,
+                                claude = claude,
                                 problem = state.pcSyncProblems[id],
                                 checking = id in state.pcSyncing,
                                 forking = id in state.pcForking,
                                 onFork = { actions.onForkPcChat(id) },
-                                onCheck = { if (state.remoteBindings[id]?.engine == EngineKind.CLAUDE) actions.onSyncPcChat(id) else actions.onCheckPcChatBusy(id) },
+                                onCheck = { if (claude) actions.onSyncPcChat(id) else actions.onCheckPcChatBusy(id) },
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }

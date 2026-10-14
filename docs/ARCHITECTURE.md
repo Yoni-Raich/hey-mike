@@ -2751,9 +2751,14 @@ Decided 2026-10-01, on top of the section above.
   the latest main `parentUuid` chain, excludes sidechains/internal context and
   tool/image payloads, ignores an uncommitted tail, and reports malformed
   complete records or missing parents. Fork ancestors may retain another
-  `sessionId`; the transcript filename remains the native resume ID. Compaction
-  displays its replacement summary, rather than following `logicalParentUuid`
-  back into replaced history. Previously saved local messages remain intact.
+  `sessionId`; the transcript filename remains the native resume ID. A
+  compaction boundary has no `parentUuid`; the reader crosses it once through
+  `logicalParentUuid` to a record in the same file, never back to a record it
+  already showed, so the earlier history stays visible. The compaction summary
+  (`isCompactSummary`, transcript-only) is Claude's own note and is not shown
+  as a user message (revised 2026-10-14; a real 2.1.284 transcript went from 6
+  shown messages, summary included, to 63). Previously saved local messages
+  remain intact.
   The project is the first valid working folder in the transcript; later
   directory changes do not move the session. File/record/display limits are
   256/32/8 MiB. Empty and folderless stubs are ignored; duplicate native IDs
@@ -2777,6 +2782,18 @@ Decided 2026-10-01, on top of the section above.
   previous behavior, including a first turn with no transcript yet. If only
   history text is unreadable, ownership is checked separately and the UI shows
   a notice. The router repeats the ownership check, including queued runs.
+  A send that the check holds back puts its text back in an empty composer.
+  Text shown after Stop is recorded as Mike's too, so a refresh does not add
+  it a second time.
+- **One binding, two engines (2026-10-14).** A chat bound to a computer keeps
+  the thread of the engine it runs on in `RemoteBinding.threadId` and the
+  other engine's thread in `parked`, each with its own origin. Moving a chat
+  from Codex to Claude and back resumes the same Codex thread there instead of
+  starting an empty one, and only the session that was actually brought in
+  from the computer fails closed; a Claude session Mike started in an
+  imported Codex chat is Mike's. The drawer and import treat a native
+  conversation as followed when any chat on that computer holds it, current
+  or parked, including Claude chats saved before bindings named an engine.
   These are advisory writer checks, not an
   atomic lock shared by every external client; a concurrent external launch
   can still race. Reopening after idle release resumes native disk history.
@@ -2785,7 +2802,17 @@ Decided 2026-10-01, on top of the section above.
   scheduled task in the signed-in Windows user's desktop. A short command
   starts an uploaded script, avoiding Windows' command-length limit. The
   task, scripts and result are removed when the bridge exits; an SSH failure
-  before execution can leave an app-owned staged script. A launch request
+  before execution can leave an app-owned staged script. Windows PowerShell
+  5.1 reads a script file without a byte order mark in the ANSI code page, so
+  both scripts are pure ASCII: every path (CLI, working folder, result, job)
+  is carried as Base64 UTF-8 and decoded in the script, and the files are
+  written with a UTF-8 BOM as well. The job uses `Process.Start`, not
+  `Start-Process`, so `[` in a folder is not a wildcard. Every Windows JSON
+  answer Mike reads (probes, folder lists, the Desktop result) escapes
+  non-ASCII as `\uXXXX`, because PowerShell prints to the SSH pipe in the OEM
+  code page. Once the task has started, a missing or unreadable answer is an
+  unknown outcome: the chat shows it, sending waits for a check that finds no
+  other writer, and the handoff is not repeated on its own. A launch request
   is not proof of a visible Desktop session or a resumed model turn. Close
   the session there and refresh Mike before continuing here. This first
   handoff supports Windows and the default Claude store; custom stores can

@@ -132,6 +132,66 @@ read count, projected message count and corruption result.
 5. Repeat discovery/resume on Linux Server; exercise missing/malformed transcripts
    and inaccessible writer metadata with explicit recoverable errors.
 
+## Deep review and fixes — 2026-10-14
+
+Reviewed on top of dev `358d2ef` (relay restore #132, tool search #133, stale
+relay owner #134). The pending 2026-10-11 merge was concluded as it had been
+resolved (strip and voice banner both kept, send guard beside dev's voice
+routing) and dev `358d2ef` merged after it (composer keeps the sync and the
+compaction guards). The unpublished fix commit was re-authored to the
+authorized Git identity with its tree and GPT-6 sign-off unchanged.
+
+### Found and fixed
+
+| Problem | Effect before | Fix |
+| --- | --- | --- |
+| Desktop bridge and job script written as UTF-8 without BOM, paths as plain literals | A Hebrew folder or user name reached `claude --desktop` as other letters (PowerShell 5.1, code page 1255) | Both scripts are pure ASCII; every path is Base64 UTF-8 decoded in the script; files also get a BOM; `Process.Start` instead of `Start-Process` (`[` is not a wildcard) |
+| Windows JSON printed to the SSH pipe in the OEM code page | Bytes `0x99 0x8C` for two Hebrew letters in probes, folder lists and Desktop errors | `WindowsHost.asciiJson` escapes non-ASCII as `\uXXXX` |
+| Desktop answer lost after the task started | Error toast only; a retry could hand off twice and Mike could write meanwhile | `ClaudeDesktopUnknownException`: chat blocked with the reason, no automatic retry, released by a check that finds no writer |
+| One binding thread for two engines | Codex -> Claude -> Codex on a computer started an empty Codex thread; a Claude session Mike started in an imported Codex chat failed closed and could be locked by a missing first transcript | `RemoteBinding.parked` keeps the other engine's thread and origin; `opened()` moves between them |
+| Compaction | History showed only the part after the last compaction plus Claude's summary as a user message | Readers cross the boundary once through `logicalParentUuid` (same file, never back) and hide `isCompactSummary` / transcript-only rows |
+| Send held back by the Claude check | The typed text was gone | Text returns to an empty composer |
+| Text shown after Stop | Not recorded as Mike's, so a refresh added it again | Recorded for the owning visible turn, also after Stop was asked |
+| Drawer follow keys | A Claude chat saved before bindings named an engine, or a parked thread, was offered again as a second chat | `PcChats.followed` covers binding, parked and chat threads; import reuses it |
+| Engine switch | The busy banner kept the old engine's state | Re-check on switch; banner follows the chat's engine |
+
+Reader file name moved to `session-reader-v3` because the projection changed.
+
+### Evidence
+
+- Real store on Pc, read-only, counts only: 114 sessions listed by both
+  readers (same IDs; 4 hidden duplicates, 3 folderless stubs). 113 readable by
+  both with 4,009 messages and 0 per-session mismatches; the same 1 file fails
+  as malformed. The previous reader showed 3,168 messages for the same 113:
+  the difference is history before compaction. One compacted 2.1.284 session:
+  6 messages with the summary before, 63 without it after. Slowest Windows
+  read 9.3 s while Gradle was running.
+- `HEYMIKE_TEST_DESKTOP_BRIDGE=true`: the real one-off interactive scheduled
+  task ran the bridge in the signed-in desktop with a fixture `claude.cmd` in
+  a folder named with Hebrew letters, a quote and brackets. The fixture got
+  `--desktop --resume <uuid>`, ran in that folder, and nothing was left behind.
+  No Claude Desktop window was opened and no model was called.
+- PowerShell 5.1 prints `{"a":"\u05e9\u05dcx\ud83d\ude00"}` through
+  `asciiJson` and Kotlin reads it back exactly (unit test on Windows).
+- Red/green: the Stop ledger test and the parked Codex thread test fail on
+  the previous code and pass now.
+- Full gate `gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+  :voice:lintDebug :app:lintDevDebug --no-daemon`: passed; 2,717 XML unit
+  executions, 0 failures/errors, 34 skips. `python -m unittest
+  tools.test_prepare_runtime tools.test_claude_sessions`: 30 passed.
+  `git diff --check`: clean.
+
+### Still not verified
+
+- No phone -> SSH -> Desktop -> phone run: no APK was installed for this
+  task and no real Desktop handoff was opened. Compose fixture tests were
+  compiled, not run (the screenshots in `ui/` are from the 2026-10-11 fixture
+  run of the same tests).
+- Linux reader on a Linux host, Mac Desktop, and a Mike-origin prompt with an
+  attached file matched against its transcript text are untested.
+- Writer detection stays advisory; a client without visible markers or a
+  simultaneous launch can still race.
+
 ## Primary references
 
 - [Claude Desktop CLI/session handoff](https://code.claude.com/docs/en/desktop#coming-from-the-cli).
