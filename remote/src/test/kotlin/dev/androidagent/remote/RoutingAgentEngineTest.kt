@@ -116,6 +116,30 @@ class RoutingAgentEngineTest {
         } finally { router.close() }
     }
 
+    /** Back from Claude, the chat resumes the Codex thread it had on the computer instead of starting an empty one. */
+    @Test fun aCodexThreadParkedDuringClaudeTurnsIsResumed() = runBlocking {
+        val box = object : SecretBox {
+            override fun seal(plain: ByteArray) = plain
+            override fun open(sealed: ByteArray) = sealed
+        }
+        val store = RemoteStore(File(temp.root, "computers.bin"), box)
+        store.save(RemoteComputer("pc", "PC", "localhost", user = "test"), "test-only")
+        val remote = mutableListOf<ReplyRuntime>()
+        val hub = RemoteHub(store, { _, _ -> ExternalChatgptTokens("t", "a") }) { _, profile -> CodexEngine(ReplyRuntime().also { remote += it }, profile) }
+        val router = RoutingAgentEngine(CodexEngine(ReplyRuntime()), hub)
+        try {
+            store.bind("chat", RemoteBinding("pc", "C:\\project", "claude-id", false, EngineKind.CLAUDE,
+                ParkedBinding(EngineKind.CODEX, "codex-thread", true)))
+            val workspace = File(temp.root, "sessions/chat/workspace").apply { mkdirs() }
+            assertEquals("codex-thread", withTimeout(5_000) { router.openSession(workspace, "codex-thread", null, emptyList()) })
+            val methods = remote.flatMap { runtime -> runtime.requests.mapNotNull { it["method"]?.jsonPrimitive?.content } }
+            assertTrue(methods.contains("thread/resume"))
+            assertFalse(methods.contains("thread/start"))
+            assertEquals(RemoteBinding("pc", "C:\\project", "codex-thread", true, EngineKind.CODEX,
+                ParkedBinding(EngineKind.CLAUDE, "claude-id", false)), store.binding("chat"))
+        } finally { router.close() }
+    }
+
     private fun claudeRig(sessions: List<ChatSession>): Triple<RoutingAgentEngine, FakeClaude, File> {
         val box = object : SecretBox {
             override fun seal(plain: ByteArray) = plain

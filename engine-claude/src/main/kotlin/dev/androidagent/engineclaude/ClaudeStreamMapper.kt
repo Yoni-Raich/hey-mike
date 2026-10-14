@@ -132,6 +132,12 @@ internal class ClaudeStreamMapper(
      */
     fun toolTurn(): Turn? = owner?.takeIf { it === active && !it.internal && !it.ended && !it.interruptRequested }
 
+    /**
+     * The turn whose visible messages the current cycle writes, also after a
+     * stop was asked: what it shows the user before ending is the user's too.
+     */
+    fun shownTurn(): Turn? = cycleTurn()?.takeIf { !it.internal }
+
     /** Forget [turn] without any event, for a turn whose frame never reached the CLI. */
     fun abandon(turn: Turn) {
         if (turn.ended) return

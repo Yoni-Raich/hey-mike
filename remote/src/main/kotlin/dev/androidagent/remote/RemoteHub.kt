@@ -11,7 +11,6 @@ import dev.androidagent.engineclaude.ClaudeCodeEngine
 import dev.androidagent.engineclaude.ClaudeComputer
 import dev.androidagent.engineclaude.McpToolServerFactory
 import dev.androidagent.enginecodex.CodexEngine
-import dev.androidagent.enginecodex.CodexThread
 import dev.androidagent.enginecodex.CodexThreadMessage
 import dev.androidagent.enginecodex.EngineProfile
 import dev.androidagent.enginecodex.ExternalChatgptTokens
@@ -40,6 +39,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 
 /** An engine event and the computer it came from. [engine] is the engine that sent it there. */
 data class RemoteEvent(val computerId: String, val event: EngineEvent, val engine: EngineKind = EngineKind.CODEX)
@@ -98,16 +99,30 @@ class RemoteHub(
     /** The latest setup step per computer. */
     val setup: StateFlow<Map<String, RemoteSetup>> = mutableSetup.asStateFlow()
 
-    private val mutableThreads = MutableStateFlow<Map<String, List<CodexThread>>>(emptyMap())
+    private val mutableThreads = MutableStateFlow<Map<String, List<ComputerConversation>>>(emptyMap())
     private val threadRefresh = ThreadRefreshGate()
     /** Per computer, the conversations Codex keeps there, as last listed. */
-    val threads: StateFlow<Map<String, List<CodexThread>>> = mutableThreads.asStateFlow()
+    val threads: StateFlow<Map<String, List<ComputerConversation>>> = mutableThreads.asStateFlow()
+    private val mutableThreadErrors = MutableStateFlow<Map<String, String>>(emptyMap())
+    val threadErrors: StateFlow<Map<String, String>> = mutableThreadErrors.asStateFlow()
+    private val mutableThreadNotices = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** Per computer, something about its list worth a quiet line, not a failure. */
+    val threadNotices: StateFlow<Map<String, String>> = mutableThreadNotices.asStateFlow()
+    private val readerLocks = ConcurrentHashMap<String, Mutex>()
+    /** Computers that already have this app version's session reader. */
+    private val readersUploaded: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val claudeMessages = ClaudeMessageLedger(File(claudeScratch, "native-message-ids"))
+
+    fun ownedClaudeMessages(computerId: String, threadId: String): Set<String> = claudeMessages.ids(computerId, threadId)
+
+    fun adoptLocalClaudeHistory(computerId: String, threadId: String, history: List<ComputerMessage>, local: List<dev.androidagent.core.ChatMessage>) =
+        claudeMessages.adoptLocalHistory(computerId, threadId, history, local)
 
     /** Reflect a successful rename at once; another Mike reads the same name on its next refresh. */
     internal fun threadRenamed(computerId: String, threadId: String, title: String) {
         mutableThreads.update { all ->
             val list = all[computerId] ?: return@update all
-            all + (computerId to list.map { if (it.id == threadId) it.copy(title = title, name = title) else it })
+            all + (computerId to list.map { if (it.engine == EngineKind.CODEX && it.id == threadId) it.copy(title = title, name = title) else it })
         }
     }
 
@@ -121,8 +136,24 @@ class RemoteHub(
         threadRefresh.run(computerId, force) {
             mutableRefreshing.update { it + computerId }
             try {
-                val list = engine(computerId).listThreads()
-                mutableThreads.update { it + (computerId to list) }
+                val errors = mutableListOf<String>()
+                var notice: String? = null
+                for (kind in listOf(EngineKind.CODEX, EngineKind.CLAUDE)) {
+                    try {
+                        val list = if (kind == EngineKind.CODEX) engine(computerId).listThreads().map(ComputerConversation::codex)
+                            else {
+                                val row = claudeProjection(computerId, "list")
+                                val skipped = (row["skipped"] as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull ?: 0
+                                // The computer's own files are fine to list around; nothing here failed.
+                                if (skipped > 0) notice = "$skipped Claude sessions are hidden: each shares its ID with another transcript on the computer."
+                                ClaudeSessionFiles.threads(row)
+                            }
+                        mutableThreads.update { all -> all + (computerId to (all[computerId].orEmpty().filter { it.engine != kind } + list)) }
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { errors += "${if (kind == EngineKind.CLAUDE) "Claude" else "Codex"}: ${failure.message}" }
+                }
+                mutableThreadNotices.update { all -> notice?.let { all + (computerId to it) } ?: (all - computerId) }
+                mutableThreadErrors.update { if (errors.isEmpty()) it - computerId else it + (computerId to errors.joinToString("; ")) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -157,6 +188,7 @@ class RemoteHub(
             store.computer(computerId) ?: error("That computer was removed.")
             val host = ComputerClaudeHost(computerId)
             val created = createClaude(host, host)
+            created.onNativeMessage = { thread, message -> claudeMessages.record(computerId, thread, message) }
             val job = scope.launch { created.events.collect { stream.emit(RemoteEvent(computerId, it, EngineKind.CLAUDE)) } }
             claudeEngines[computerId] = Triple(created, host, job)
             created
@@ -225,6 +257,103 @@ class RemoteHub(
     /** One conversation's messages, read from the computer. */
     suspend fun readThread(computerId: String, threadId: String): List<CodexThreadMessage> =
         engine(computerId).readThreadMessages(threadId)
+
+    /** Only native transcript text crosses SSH; no model or credential read. One round trip for text and writer status. */
+    suspend fun readClaudeSnapshot(computerId: String, threadId: String): ClaudeSnapshot {
+        val row = claudeProjection(computerId, "read", threadId)
+        return ClaudeSnapshot(ClaudeSessionFiles.messages(row), heldElsewhere(computerId, threadId, row))
+    }
+
+    suspend fun isClaudeThreadBusy(computerId: String, threadId: String): Boolean =
+        heldElsewhere(computerId, threadId, claudeProjection(computerId, "busy", threadId))
+
+    /**
+     * This phone's own warm `claude` is not another writer, so checking never
+     * has to stop it. A `claude` another phone's Mike started holds the
+     * session like any other client.
+     */
+    private fun heldElsewhere(computerId: String, threadId: String, row: kotlinx.serialization.json.JsonObject): Boolean =
+        ClaudeSessionFiles.heldByOther(row) ||
+            ClaudeSessionFiles.heldByMike(row) && claudeEngines[computerId]?.first?.holdsSession(threadId) != true
+
+    /** Releases only Mike's idle CLI; an external writer must be closed by its user. */
+    suspend fun openClaudeDesktop(computerId: String, threadId: String) {
+        claudeEngines[computerId]?.first?.releaseSession(threadId)
+        var row = claudeProjection(computerId, "busy", threadId)
+        // The CLI just released may take a moment to leave the computer's process list.
+        repeat(4) {
+            if (ClaudeSessionFiles.heldByOther(row) || !ClaudeSessionFiles.heldByMike(row)) return@repeat
+            kotlinx.coroutines.delay(500)
+            row = claudeProjection(computerId, "busy", threadId)
+        }
+        check(!heldElsewhere(computerId, threadId, row)) { "Close this session in Claude on the computer before handing it to Desktop." }
+        val metadata = ClaudeSessionFiles.thread(row["thread"] as? kotlinx.serialization.json.JsonObject
+            ?: error("Claude session metadata is missing"))
+        withContext(Dispatchers.IO) {
+            val connection = connection(computerId)
+            check(connection.os == HostOs.WINDOWS) { "Opening Claude Desktop from Mike currently works on Windows computers." }
+            val probe = claudeEngines[computerId]?.second?.probe(refresh = false) ?: ComputerClaudeHost(computerId).probe(refresh = false)
+            val cli = probe.path ?: error("Install Claude Code on the computer first.")
+            val host = connection.probe(refresh = false)
+            val folder = ClaudeLaunch.folder(host.home, connection.os)
+            val scriptPath = ClaudeLaunch.file(folder, "desktop-bridge-${java.util.UUID.randomUUID()}.ps1", connection.os)
+            val local = File.createTempFile("claude-desktop-bridge", ".tmp", claudeScratch.apply { mkdirs() })
+            try {
+                local.writeBytes(ClaudeDesktop.bytes(ClaudeDesktop.script(cli, metadata.cwd, threadId, folder)))
+                connection.link.upload(local, scriptPath, replace = false)
+            } finally { local.delete() }
+            // From here on the computer may have opened Desktop. Only its own
+            // word that nothing started counts as "not opened".
+            val unknown = "Mike couldn't confirm whether Claude Desktop opened this session. Look on the computer and close it there if it opened, then check again."
+            val row = try {
+                ClaudeSessionFiles.payload(connection.link.run(ClaudeDesktop.command(scriptPath), 45_000))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (reported: ClaudeReaderException) {
+                if (reported.code == "unknown") throw ClaudeDesktopUnknownException(unknown)
+                throw reported
+            } catch (_: Exception) {
+                throw ClaudeDesktopUnknownException(unknown)
+            }
+            if ((row["requested"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull != true) throw ClaudeDesktopUnknownException(unknown)
+        }
+    }
+
+    private suspend fun claudeProjection(computerId: String, mode: String, threadId: String? = null): kotlinx.serialization.json.JsonObject =
+        readerLocks.getOrPut(computerId) { Mutex() }.withLock {
+            withContext(Dispatchers.IO) {
+                val connection = connection(computerId)
+                val probe = connection.probe(refresh = false)
+                val folder = ClaudeLaunch.folder(probe.home, connection.os)
+                val path = ClaudeLaunch.file(folder, ClaudeSessionFiles.scriptName(connection.os), connection.os)
+                suspend fun upload() {
+                    val local = File.createTempFile("claude-session-reader", ".tmp", claudeScratch.apply { mkdirs() })
+                    try {
+                        local.writeText(ClaudeSessionFiles.script(connection.os))
+                        connection.link.upload(local, path, replace = true)
+                    } finally { local.delete() }
+                    readersUploaded += computerId
+                }
+                suspend fun read() = ClaudeSessionFiles.payload(connection.link.run(ClaudeSessionFiles.command(connection.os, path, mode, threadId), 45_000))
+                // The reader is a few kilobytes that never change within one
+                // app version: sent once, not before every question.
+                val known = computerId in readersUploaded
+                if (!known) upload()
+                try {
+                    read()
+                } catch (reported: ClaudeReaderException) {
+                    throw reported
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    // No answer at all: the file may have been removed on the computer.
+                    if (!known) throw failure
+                    readersUploaded -= computerId
+                    upload()
+                    read()
+                }
+            }
+        }
 
     /** The Codex for [computerId], started on first use. */
     suspend fun engine(computerId: String): CodexEngine = lock.withLock {

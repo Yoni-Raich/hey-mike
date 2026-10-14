@@ -197,7 +197,17 @@ data class AgentUiState(
     /** Folders the user picked on each computer. */
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */
-    val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
+    val pcThreads: Map<String, List<dev.androidagent.remote.ComputerConversation>> = emptyMap(),
+    /** Per computer, why part of its conversation list is missing. */
+    val pcThreadErrors: Map<String, String> = emptyMap(),
+    /** Per computer, a quiet remark about its list that is not a failure. */
+    val pcThreadNotices: Map<String, String> = emptyMap(),
+    /** Computer chats whose history is being read again. */
+    val pcSyncing: Set<String> = emptySet(),
+    /** Per computer chat, what went wrong the last time its session was checked. */
+    val pcSyncProblems: Map<String, String> = emptyMap(),
+    /** Computer chats being handed to Claude Desktop. */
+    val pcDesktopOpening: Set<String> = emptySet(),
     /** Computer chats whose conversation another Codex on the computer holds open. */
     val pcBusyChats: Set<String> = emptySet(),
     /** Computer chats being copied so Mike can continue them. */
@@ -380,7 +390,9 @@ data class AgentUiActions(
     /** A new chat in a project folder on a computer. */
     val onNewChatInProject: (computerId: String, path: String) -> Unit = { _, _ -> },
     /** Open a conversation Codex keeps on the computer as a chat here. */
-    val onOpenPcThread: (computerId: String, threadId: String) -> Unit = { _, _ -> },
+    val onOpenPcThread: (computerId: String, threadId: String, engine: EngineKind) -> Unit = { _, _, _ -> },
+    val onSyncPcChat: (sessionId: String) -> Unit = {},
+    val onOpenClaudeDesktop: (sessionId: String) -> Unit = {},
     /** List the computers' conversations again. */
     val onRefreshPcThreads: () -> Unit = {},
     /** Try the computer's connection again from the side panel. */

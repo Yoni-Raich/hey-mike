@@ -70,7 +70,7 @@ object WindowsHost : HostScripts {
         ${'$'}shell=''
         try { ${'$'}shell=(Get-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -ErrorAction Stop).DefaultShell } catch {}
         ${'$'}o=[ordered]@{computer=${'$'}env:COMPUTERNAME; home=${'$'}env:USERPROFILE; arch=${'$'}arch; exe=${'$'}exe; installed=(Test-Path -LiteralPath ${'$'}exe); shell=${'$'}shell}
-        '$MARKER' + (ConvertTo-Json -Compress -InputObject ${'$'}o)
+        ${asciiJson("ConvertTo-Json -Compress -InputObject ${'$'}o")}
     """.trimIndent()
 
     fun installScript(): String = """
@@ -91,7 +91,7 @@ object WindowsHost : HostScripts {
           if (Test-Path -LiteralPath ${'$'}root) { Remove-Item -LiteralPath ${'$'}root -Recurse -Force }
           Move-Item -LiteralPath ${'$'}stage -Destination ${'$'}root
         }
-        '$MARKER' + (ConvertTo-Json -Compress -InputObject ([ordered]@{exe=${'$'}exe; installed=(Test-Path -LiteralPath ${'$'}exe)}))
+        ${asciiJson("ConvertTo-Json -Compress -InputObject ([ordered]@{exe=${'$'}exe; installed=(Test-Path -LiteralPath ${'$'}exe)})")}
     """.trimIndent()
 
     override fun probe(): String = powershell(probeScript())
@@ -126,9 +126,18 @@ object WindowsHost : HostScripts {
             ${'$'}d=@(Get-ChildItem -LiteralPath ${'$'}p -Directory -Force -ErrorAction SilentlyContinue | Where-Object { -not (${'$'}_.Attributes -band [IO.FileAttributes]::Hidden) } | Sort-Object Name | Select-Object -First 500 | ForEach-Object { ${'$'}_.Name })
             ${'$'}r=@(Get-PSDrive -PSProvider FileSystem | ForEach-Object { ${'$'}_.Root })
             ${'$'}o=[ordered]@{path=${'$'}p; parent=(Split-Path -Parent ${'$'}p); dirs=${'$'}d; drives=${'$'}r; git=(Test-Path -LiteralPath (Join-Path ${'$'}p '.git'))}
-            '$MARKER' + (ConvertTo-Json -Compress -InputObject ${'$'}o)
+            ${asciiJson("ConvertTo-Json -Compress -InputObject ${'$'}o")}
         """.trimIndent()
     }
+
+    /**
+     * `HEYMIKE ` and the JSON [json] makes, with each letter outside ASCII
+     * written as `\uXXXX`. Windows PowerShell prints to the SSH pipe in the
+     * console's OEM code page, so a Hebrew folder or user name would reach
+     * the phone as other letters.
+     */
+    internal fun asciiJson(json: String): String =
+        "'$MARKER' + [regex]::Replace(($json), '[^\\x00-\\x7F]', { param(${'$'}m) '\\u{0:x4}' -f [int][char]${'$'}m.Value })"
 
     /** A command line that runs [script] under either Windows default shell. */
     fun powershell(script: String): String {

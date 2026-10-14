@@ -74,7 +74,7 @@ object ClaudeLaunch {
         }
         ${'$'}v=''
         if (${'$'}c) { try { ${'$'}v=[string](& ${'$'}c --version 2>${'$'}null | Select-Object -First 1) } catch {} }
-        '$MARKER' + (ConvertTo-Json -Compress -InputObject ([ordered]@{claude=[string]${'$'}c; version=${'$'}v; home=${'$'}env:USERPROFILE}))
+        ${WindowsHost.asciiJson("ConvertTo-Json -Compress -InputObject ([ordered]@{claude=[string]${'$'}c; version=${'$'}v; home=${'$'}env:USERPROFILE})")}
     """.trimIndent()
 
     fun parseProbe(result: ExecResult): ClaudeProbe {

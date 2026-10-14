@@ -180,22 +180,45 @@ class RoutingAgentEngine(
         val sessionId = sessionIdOf(workspace)
         if (engineOf(workspace) == EngineKind.CLAUDE) {
             val computer = sessionId?.let(store::binding)
+            // Only the session the chat was opened from on the computer. One
+            // Mike started there, also after an engine switch, is Mike's own.
+            val imported = computer != null && threadId != null && computer.imported(EngineKind.CLAUDE, threadId) == true
+            if (computer != null && threadId != null) {
+                check(claudeComputers[threadId] == null || claudeComputers[threadId] == computer.computerId) { "This native Claude ID is already routed to another computer in Mike. Continue it on its original computer instead of using a copied ID." }
+                val busy = try {
+                    hub.isClaudeThreadBusy(computer.computerId, threadId)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    // A session brought in from the computer fails closed. A chat
+                    // Mike started may have no transcript yet, or sit on a computer
+                    // where the reader cannot run; it keeps working as it always did.
+                    if (imported) throw failure
+                    false
+                }
+                check(!busy) { "This session is open in Claude on the computer. Close it there and refresh its history before sending." }
+            }
             val opened = if (computer == null) claude().openSession(workspace, threadId, model, tools)
-            else hub.claude(computer.computerId).openSessionAt(computer.cwd, threadId, model, tools)
+            else hub.claude(computer.computerId).openSessionAt(computer.cwd, threadId, model, tools, requireExisting = imported)
             claudeThreads += opened
-            if (computer != null) claudeComputers[opened] = computer.computerId
+            if (computer != null) {
+                claudeComputers[opened] = computer.computerId
+                val bound = computer.opened(EngineKind.CLAUDE, opened)
+                if (bound != computer) store.bind(sessionId!!, bound)
+            }
             return opened
         }
         val binding = sessionId?.let(store::binding) ?: return local.openSession(workspace, threadId, model, tools).also { localCodexThreads += it }
         val engine = hub.engine(binding.computerId)
-        // Only a thread the computer made can be resumed there.
-        val resumable = binding.threadId?.takeIf { it == threadId }
+        // Only a thread the computer made can be resumed there, also one
+        // parked while the chat ran on Claude.
+        val resumable = binding.thread(EngineKind.CODEX)?.takeIf { it == threadId }
         // A thread the computer already has is continued or reported, never
         // silently swapped for an empty one.
         val opened = try {
             engine.openSessionAt(binding.cwd, resumable, model, tools, freshIfLost = resumable == null)
         } catch (error: IllegalStateException) {
-            val remedy = if (binding.importedFromPc == true) {
+            val remedy = if (resumable != null && binding.imported(EngineKind.CODEX, resumable) == true) {
                 "Close it in Codex on the computer, or continue in a copy from the banner above the message box."
             } else if (error.message?.contains("active writer", ignoreCase = true) == true) {
                 "An earlier Codex process still holds this chat. Reconnecting alone may not release it. The previous task may still be running."
@@ -208,9 +231,8 @@ class RoutingAgentEngine(
             )
         }
         threads[opened] = binding.computerId
-        if (opened != binding.threadId) {
-            store.bind(sessionId, binding.copy(threadId = opened))
-        }
+        val bound = binding.opened(EngineKind.CODEX, opened)
+        if (bound != binding) store.bind(sessionId, bound)
         return opened
     }
 
@@ -327,7 +349,7 @@ class RoutingAgentEngine(
         val ids = known.entries.filter { it.value == computer }.map { it.key }.toMutableSet()
         if (kind == EngineKind.CODEX) {
             ids += store.state.value.bindings.values.filter { it.computerId == computer }
-                .mapNotNull { it.threadId }.filterNot(::isClaude)
+                .mapNotNull { it.thread(EngineKind.CODEX) }.filterNot(::isClaude)
         }
         sessions?.sessions?.value?.filter { store.binding(it.id)?.computerId == computer }?.forEach { chat ->
             if (chat.engine == kind) chat.engineThreadId?.let(ids::add)

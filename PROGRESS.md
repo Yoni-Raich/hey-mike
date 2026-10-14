@@ -1,5 +1,92 @@
 # Progress
 
+### Claude session sync deep review — 2026-10-14
+
+- PR #127 brought onto dev `358d2ef`; the open 2026-10-11 merge was concluded.
+  Fixed: Desktop bridge paths in Hebrew (ASCII scripts with Base64 paths and a
+  BOM), Windows JSON in the OEM code page (`\uXXXX`), unknown Desktop outcome
+  (blocked, never retried on its own), a Codex thread lost after a switch to
+  Claude and back (`RemoteBinding.parked`), compaction hiding earlier history
+  and showing Claude's summary, a draft lost when sending was held back, text
+  shown after Stop imported again, duplicate drawer entries.
+- Real store scan, both readers: 114 listed, 113 read, 4,009 messages, 0
+  mismatches (old reader 3,168). Real interactive scheduled-task bridge with a
+  fixture CLI in a Hebrew/quote/bracket folder passed. Full gate passed:
+  2,717 unit executions, 0 failures. Not verified: phone -> SSH -> Desktop ->
+  phone, Linux host, Mac. Details: `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
+### Claude session sync review fixes — 2026-10-11
+
+- Review of PR #127 against the real Pc store found three blockers, fixed here.
+  The readers took a session's last `cwd`, so 16 of 92 sessions were filed
+  under a worktree or subfolder that `claude --resume` cannot find them from;
+  they now take the folder the session started in (0 of 93 differ). A chat
+  whose first turn never wrote a transcript was locked for good; a missing
+  transcript in a chat Mike started is now "nothing to read". Any reader
+  failure blocked sending in every Claude chat on a computer; now only a
+  session imported from the computer fails closed, and unreadable history
+  text no longer blocks at all.
+- Checking for another writer no longer stops Mike's own warm `claude`: the
+  readers tell a Mike-launched CLI (`.hey-mike/claude` in its command line)
+  from any other client. The reader is uploaded once per app run instead of
+  before every call, and a chat open or a send reads text and writer status in
+  one round trip. PowerShell listing of the real store: 10.4 s before, 1.6 s
+  after. Empty and folderless transcript files are no longer reported.
+- UI: the two permanent text buttons above the composer became one quiet
+  status line with two icon buttons; the blocking banner names the real cause
+  (held by another Claude, or could not be checked); duplicate-ID sessions are
+  one muted line in the drawer, not a problem card.
+- Evidence: `python -m unittest tools.test_claude_sessions` 14 passed on both
+  readers. `gradlew.bat :remote:test :engine-claude:test
+  :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:assembleDevDebugAndroidTest :app:lintDevDebug --no-daemon --continue`
+  BUILD SUCCESSFUL in 1m 23s. Both readers agree on every real session.
+- Not tested: the new UI on a device, a live phone -> Desktop -> phone turn,
+  two phones on one session, and the Linux reader against a real server. On
+  the Xiaomi (cd4928027d76) the pre-fix build installed and launched, but the
+  androidTest APK was refused (`INSTALL_FAILED_USER_RESTRICTED`), so the three
+  Compose test classes still have not run on a device.
+
+### Claude computer session continuity — 2026-10-11
+
+- Isolated branch based on merged dev `6692067402dba86841ef35c20fdad450166243bf`.
+  Native Claude Code / Desktop Code-tab sessions now appear beside Codex in
+  computer projects. Imports keep their engine, computer, cwd and native UUID;
+  idle refresh appends external text and preserves local history/drafts/queue.
+  A persistent native-ID ledger handles repeat sync and interrupted UI writes.
+- Imported missing sessions and detected external writers are refused. Active
+  runs are not released. Windows Open in Claude Desktop uses the official CLI
+  through a one-off interactive task; a staged script avoids cmd length limits.
+  A signed-in desktop fixture verified UUID/cwd and task/script cleanup with a
+  local CLI stub. No actual Desktop UI or model turn was opened.
+- Real Pc store scan: 97 files, 92 listed UUIDs, 91 readable histories / 2,623
+  text messages. Both shipped readers agree. Three metadata-less files and
+  two duplicate-ID files are omitted with a warning; one raw-NUL corruption
+  yields an explicit error. Native files were not edited. Full Windows scan
+  86.121 s, maximum read 4.668 s, maximum display payload 110,907 bytes.
+- Real-store testing found/fixed foreign ancestor session IDs in forks and
+  compaction logical-parent cycles. Compacted history follows the official
+  parent chain/summary; already stored local history is retained. The readers
+  now agree when a complete record contains invalid raw NUL bytes.
+- Final command passed in 55 s: `gradlew.bat test assembleDevRelease
+  assembleDevDebugAndroidTest :app:assembleDevDebug :app:lintDevDebug
+  :voice:lintDebug --no-daemon`. Used the isolated cached Gradle home and
+  `HEYMIKE_TEST_DESKTOP_BRIDGE=true`. XML: 2,353 executions, zero failures/errors,
+  16 skips. Python reader/runtime suite: 26 passed (8.166 s). Diff check passed.
+- Dev Debug metadata: `dev.androidagent.app.dev`, 28 / `0.14.0`, arm64/x86_64,
+  debug-key v2 signature, 16 KiB alignment. SHA-256:
+  `c0da717e6c70c8500a431b87877313314daa676e1efdc2fc28ea492f88da8222`.
+  Dev Release built unsigned, SHA-256:
+  `02575d481a2c99c0fbae9112894ea30043ca6f6835439b704bf8cd083f810ec6`.
+  Both APKs contain source-matching PowerShell/Python readers. No version bump,
+  production release or installation was performed.
+- UI evidence is three compiled Compose instrumentation cases, not a live UI
+  pass or screenshot. `adb devices -l` was empty. Native Desktop same-ID model
+  continuation, phone→SSH→Desktop→phone, Server/Linux and ownership races remain
+  unverified. Writer checks are advisory; legacy text matching is best effort.
+  Original dirty checkout preserved. No reviewer or new-feature merge was run.
+  [Full evidence and live-check list](docs/testing/claude-session-sync-20261010/RESULTS.md).
+
 ### Windows relay takeover of a stale owner — 2026-10-14
 
 - Seen on Pc in the chat logs and relay folders: the phone started a new

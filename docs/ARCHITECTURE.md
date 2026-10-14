@@ -2737,9 +2737,89 @@ Decided 2026-10-01, on top of the section above.
   and moves it back when voice ends; Claude is told what was said on its next
   turn. This needs the ChatGPT sign-in; without it a Claude chat has no voice
   button.
+- **Native computer history (2026-10-10).** `ComputerConversation` carries its
+  engine as well as the native ID. The project drawer lists Codex and local
+  Claude Code conversations together; following a conversation is keyed by
+  computer, engine and ID. Claude imports keep the original working folder
+  and UUID and resume with the computer's official CLI. An imported session
+  that disappeared fails rather than silently starting without its history.
+  This covers the Desktop **Code** tab, not cloud Chat or Cowork history.
+  `ClaudeSessionFiles` uploads a read-only, versioned projection helper:
+  PowerShell on Windows, Python 3 on Linux. It reads the computer's own
+  `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), never auth
+  files. Only bounded metadata and user/assistant text cross SSH. It follows
+  the latest main `parentUuid` chain, excludes sidechains/internal context and
+  tool/image payloads, ignores an uncommitted tail, and reports malformed
+  complete records or missing parents. Fork ancestors may retain another
+  `sessionId`; the transcript filename remains the native resume ID. A
+  compaction boundary has no `parentUuid`; the reader crosses it once through
+  `logicalParentUuid` to a record in the same file, never back to a record it
+  already showed, so the earlier history stays visible. The compaction summary
+  (`isCompactSummary`, transcript-only) is Claude's own note and is not shown
+  as a user message (revised 2026-10-14; a real 2.1.284 transcript went from 6
+  shown messages, summary included, to 63). Previously saved local messages
+  remain intact.
+  The project is the first valid working folder in the transcript; later
+  directory changes do not move the session. File/record/display limits are
+  256/32/8 MiB. Empty and folderless stubs are ignored; duplicate native IDs
+  are omitted with a quiet notice. Reader failures remain explicit errors.
+- **Claude refresh and ownership.** Selection, app resume, manual Refresh
+  history and an idle Send refresh external messages. Stable source UUIDs
+  prevent duplicate imports; local messages, notes, attachments, drafts and
+  queued work are retained. A persistent ID ledger distinguishes live Mike
+  messages from Desktop additions and recovers IDs whose text was not saved
+  before an interruption. Legacy local text is matched once, with role, text
+  and a five-minute timestamp window. This migration is best effort: unmatched
+  or clock-skewed records can appear again, rather than losing local history.
+  Multiple live text blocks can
+  match one native assistant message. Refresh never interrupts an active turn.
+  Refresh reads history and ownership together, and keeps Mike's own warm
+  Claude process. The versioned reader is uploaded once per app run and
+  restored if it disappears. Ownership uses live process arguments and native
+  PID metadata, distinguishing Mike's launcher from external clients. A
+  detected external writer blocks writing. Missing transcripts and failed
+  ownership checks block imported sessions; chats created by Mike keep their
+  previous behavior, including a first turn with no transcript yet. If only
+  history text is unreadable, ownership is checked separately and the UI shows
+  a notice. The router repeats the ownership check, including queued runs.
+  A send that the check holds back puts its text back in an empty composer.
+  Text shown after Stop is recorded as Mike's too, so a refresh does not add
+  it a second time.
+- **One binding, two engines (2026-10-14).** A chat bound to a computer keeps
+  the thread of the engine it runs on in `RemoteBinding.threadId` and the
+  other engine's thread in `parked`, each with its own origin. Moving a chat
+  from Codex to Claude and back resumes the same Codex thread there instead of
+  starting an empty one, and only the session that was actually brought in
+  from the computer fails closed; a Claude session Mike started in an
+  imported Codex chat is Mike's. The drawer and import treat a native
+  conversation as followed when any chat on that computer holds it, current
+  or parked, including Claude chats saved before bindings named an engine.
+  These are advisory writer checks, not an
+  atomic lock shared by every external client; a concurrent external launch
+  can still race. Reopening after idle release resumes native disk history.
+- **Desktop handoff.** Open in Claude Desktop releases Mike's idle process
+  and calls official `claude --desktop --resume <uuid>` from a one-off
+  scheduled task in the signed-in Windows user's desktop. A short command
+  starts an uploaded script, avoiding Windows' command-length limit. The
+  task, scripts and result are removed when the bridge exits; an SSH failure
+  before execution can leave an app-owned staged script. Windows PowerShell
+  5.1 reads a script file without a byte order mark in the ANSI code page, so
+  both scripts are pure ASCII: every path (CLI, working folder, result, job)
+  is carried as Base64 UTF-8 and decoded in the script, and the files are
+  written with a UTF-8 BOM as well. The job uses `Process.Start`, not
+  `Start-Process`, so `[` in a folder is not a wildcard. Every Windows JSON
+  answer Mike reads (probes, folder lists, the Desktop result) escapes
+  non-ASCII as `\uXXXX`, because PowerShell prints to the SSH pipe in the OEM
+  code page. Once the task has started, a missing or unreadable answer is an
+  unknown outcome: the chat shows it, sending waits for a check that finds no
+  other writer, and the handoff is not repeated on its own. A launch request
+  is not proof of a visible Desktop session or a resumed model turn. Close
+  the session there and refresh Mike before continuing here. This first
+  handoff supports Windows and the default Claude store; custom stores can
+  still be read/continued in Mike, but Desktop handoff is refused. Desktop
+  needs its own install/sign-in; Mike's phone MCP connection is not migrated.
 - **Not done.** A computer still has to be set up through Codex (and so with
-  a ChatGPT sign-in) before its Claude can be used. Claude conversations kept
-  on a computer are not listed or imported the way Codex's are. The
-  computer's Claude skills are not listed in the composer. A Claude session
-  file the CLI removed (its own clean-up of old sessions) starts again under
-  the same id without the chat's history being sent again.
+  a ChatGPT sign-in) before its Claude can be used. The computer's Claude
+  skills are not listed in the composer. Mac Desktop handoff and real
+  phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
+  evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
