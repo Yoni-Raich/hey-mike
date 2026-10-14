@@ -100,6 +100,14 @@ class AgentGraph(private val app: Application) {
         java.io.File(app.filesDir, "remote/computers.bin"),
         dev.androidagent.remote.KeystoreSecretBox(),
     )
+    /** Dev channel only: the official release never ships delta APK transfer. */
+    private val deltaEnabled = BuildConfig.DELTA_TRANSFER
+    val transferCache = if (deltaEnabled) dev.androidagent.workspace.TransferBlobStore(java.io.File(app.filesDir, "transfer-cache/v1")) else null
+    private val seedTransferCache = if (!deltaEnabled) null else scope.launch(Dispatchers.IO) {
+        try { transferCache?.seedInstalled(java.io.File(app.applicationInfo.sourceDir)) }
+        catch (stopped: kotlinx.coroutines.CancellationException) { throw stopped }
+        catch (_: Exception) { /* An optimization: storage failure keeps normal full copying available. */ }
+    }
     val remote = dev.androidagent.remote.RemoteHub(
         computers,
         authTokens = { refresh, previous ->
@@ -109,6 +117,9 @@ class AgentGraph(private val app: Application) {
             ).current(refresh, previous)
         },
         claudeScratch = java.io.File(runtime.runtimeRoot, "claude-computers"),
+        deltaTransfers = transferCache?.let { cache ->
+            dev.androidagent.core.DeltaTransfers(cache, dev.androidagent.workspace.NativeDeltaApplier())
+        },
     )
     /**
      * Anthropic's Claude Code on this phone. Never bundled: it is downloaded
@@ -167,6 +178,7 @@ class AgentGraph(private val app: Application) {
         home = { workspace -> remote.fileHome(workspace) },
         meter = transfers,
         scratch = java.io.File(app.cacheDir, "copies"),
+        publishFile = if (deltaEnabled) dev.androidagent.workspace.NativeAtomicPublisher()::commit else ::publishWithoutNative,
     )
     val adbTools = AndroidDeviceTools(
         adb,
@@ -463,4 +475,10 @@ class AgentGraph(private val app: Application) {
             WorkspaceSeeder.ensureGlobalPreferences(runtime.homeDirectory, File(app.filesDir, "sessions"), app)
         }
     }
+}
+
+/** The official release's copy publication: unchanged behaviour, no native library. */
+private fun publishWithoutNative(part: File, target: File, @Suppress("UNUSED_PARAMETER") replace: Boolean) {
+    if (target.exists()) target.delete()
+    check(part.renameTo(target)) { "Could not finish the copy at ${target.name}." }
 }

@@ -22,6 +22,7 @@ package dev.androidagent.engineclaude
 
 import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AgentModel
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineKind
@@ -92,12 +93,15 @@ internal object ClaudeProtocol {
     const val DEFAULT_MODEL = "sonnet"
     val EFFORTS: List<String> = listOf("low", "medium", "high", "xhigh", "max")
 
-    /** Environment for chat processes, on top of what the host sets. */
+    /** Environment for phone chat processes, on top of what the host sets. */
     val CHAT_ENV: Map<String, String> = mapOf(
         "ENABLE_TOOL_SEARCH" to "false",
         "MCP_TOOL_TIMEOUT" to "600000",
         "MCP_TIMEOUT" to "30000",
     )
+
+    /** Keep the computer's own tool-search setting and Claude Code's default deferral. */
+    val COMPUTER_CHAT_ENV: Map<String, String> = CHAT_ENV - "ENABLE_TOOL_SEARCH"
 
     /** Arguments for one chat process. Never `--bare`: it ignores subscriptions. */
     fun chatArgs(
@@ -172,6 +176,19 @@ internal object ClaudeProtocol {
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
     )
+
+    /**
+     * [probeArgs] for the slash catalog: the answer lists a user's skills, so
+     * the user settings load. On the phone those are the app's own
+     * [BUILTIN_TOOLS] and skills; a computer keeps all its own settings.
+     */
+    fun commandProbeArgs(userSettingsOnly: Boolean): List<String> = buildList {
+        add("-p"); add("--input-format"); add("stream-json"); add("--output-format"); add("stream-json"); add("--verbose")
+        add("--tools"); add(if (userSettingsOnly) BUILTIN_TOOLS.joinToString(",") else "")
+        add("--strict-mcp-config")
+        if (userSettingsOnly) { add("--setting-sources"); add("user") }
+        add("--no-session-persistence")
+    }
 
     val AUTH_STATUS_ARGS = listOf("auth", "status", "--json")
     val AUTH_LOGIN_ARGS = listOf("auth", "login", "--claudeai")
@@ -292,7 +309,16 @@ internal object ClaudeProtocol {
         images.forEach { file -> add(imageBlock(file)) }
         if (planMode) add(textBlock(PLAN_INSTRUCTION))
         val skill = skillName?.trim()?.takeIf { SKILL_NAME.matches(it) }
-        add(textBlock(if (skill != null) "/$skill $prompt".trimEnd() else prompt))
+        add(textBlock(if (skill != null) "/$skill ${withoutSkillMention(prompt, skill)}".trimEnd() else prompt))
+    }
+
+    /** A skill the user picked is sent as `/name`; the `$name` the composer put in front of the words is dropped. */
+    private fun withoutSkillMention(prompt: String, skill: String): String {
+        val text = prompt.trimStart()
+        val mention = "\$$skill"
+        return if (text.startsWith(mention) && (text.length == mention.length || text[mention.length].isWhitespace())) {
+            text.substring(mention.length).trimStart()
+        } else prompt
     }
 
     fun textBlock(text: String): JsonObject = buildJsonObject { put("type", "text"); put("text", text) }
@@ -404,6 +430,51 @@ internal object ClaudeProtocol {
         val fable = id.contains("fable", ignoreCase = true) || resolvedModel.contains("fable", ignoreCase = true)
         if (!fable) return description
         return if (description.isEmpty()) FABLE_NOTE else "$FABLE_NOTE · $description"
+    }
+
+    /**
+     * What `/` offers for a Claude chat: the CLI's own answer, not a list kept
+     * here. [skills] are the ones the CLI loaded from settings; [commands] are
+     * its built-in ones, bundled skills such as `/verify` among them.
+     */
+    class SlashCatalog(val skills: List<AgentSkill>, val commands: List<AgentCommand>)
+
+    /**
+     * Commands the CLI lists (`commands` of the `initialize` response, the
+     * Agent SDK's `supportedCommands()`) that do nothing useful in a chat on a
+     * phone. The CLI's own `terminal_slash_commands` are the ones that need
+     * its terminal screen; the rest change settings or the tool server the
+     * app owns, open a browser or a file on the machine, or are gone.
+     */
+    val UNAVAILABLE_COMMANDS: Set<String> = setOf(
+        "doctor", "color", "focus", "reload-plugins",
+        "config", "mcp", "import", "heapdump", "usage-credits", "extra-usage", "agents", "fast",
+        "workflow-launch-exec",
+    )
+
+    private val SOURCE_SUFFIX = Regex("\\s+\\((user|project|local|policy|claude\\.ai sync|[\\w.-]+ plugin)\\)$")
+
+    /** The slash catalog from an `initialize` response. A name the CLI lists that is not a plain word is skipped. */
+    fun parseSlashCatalog(initialize: JsonObject): SlashCatalog {
+        val skills = mutableListOf<AgentSkill>()
+        val commands = mutableListOf<AgentCommand>()
+        for (element in (initialize["commands"] as? JsonArray).orEmpty()) {
+            val entry = element as? JsonObject ?: continue
+            val name = entry.string("name").trim()
+            if (!SKILL_NAME.matches(name) || name in UNAVAILABLE_COMMANDS) continue
+            val description = entry.string("description").trim()
+            if ((entry["builtin"] as? JsonPrimitive)?.booleanOrNull == true) {
+                val aliases = (entry["aliases"] as? JsonArray).orEmpty()
+                    .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(SKILL_NAME::matches) }
+                commands += AgentCommand(name, description, entry.string("argumentHint").trim(), aliases)
+            } else {
+                skills += AgentSkill(name, description.replace(SOURCE_SUFFIX, ""), "claude:$name", "user")
+            }
+        }
+        return SlashCatalog(
+            skills.distinctBy { it.name }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }),
+            commands.distinctBy { it.name }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }),
+        )
     }
 
     /** Used until a process has answered `initialize`. */

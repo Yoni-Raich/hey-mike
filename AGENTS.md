@@ -29,6 +29,7 @@ Read `PROGRESS.md` and `docs/ARCHITECTURE.md` before work. Write short, clear En
 - x86_64 emulator app-server exits `SIGSYS` (159) — not a valid runtime target; Q8 is. Emulator Compose fixture tests do not prove real chat, ADB, or voice.
 
 ## Workflow
+- **Phone APK delivery:** never copy a full APK to a phone. Use `copy_file` (delta) and read `.agents/skills/phone-apk-delivery/SKILL.md` before building for, copying to or installing on a phone.
 
 - `dev` = integration, `main` = validated releases. Conventional commits, `git commit -s` with your own model identity only (`Signed-off-by: <model>`; verify with `git show -s --format=%B HEAD`). Work only in assigned paths; read-only tasks never write files.
 - Preserve `android_ai_agent_mvp_brief.md`. Record decisions in `docs/ARCHITECTURE.md`, real command evidence + untested gaps in `PROGRESS.md` (build/install alone prove nothing). PRs use `.github/pull_request_template.md` (Change / Checks / Remaining gaps + UI evidence for visual changes).

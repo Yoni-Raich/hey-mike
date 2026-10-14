@@ -2,6 +2,7 @@ package dev.androidagent.remote
 
 import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AdbStatus
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentEngine
 import dev.androidagent.core.AgentModel
 import dev.androidagent.core.AgentSkill
@@ -17,6 +18,7 @@ import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolResult
 import dev.androidagent.core.VoiceEvent
 import dev.androidagent.core.VoiceState
+import dev.androidagent.engineclaude.ClaudeCodeEngine
 import dev.androidagent.enginecodex.CodexEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -156,12 +158,23 @@ class RoutingAgentEngine(
     override suspend fun skillCatalog(workspace: File, forceReload: Boolean): List<AgentSkill> {
         val binding = bindingOf(workspace)
         if (engineOf(workspace) == EngineKind.CLAUDE) {
-            // The computer's Claude Code lists its own skills when asked with "/"; none are read from here.
-            return if (binding == null) claude().skillCatalog(workspace, forceReload) else emptyList()
+            // A computer's Claude Code lists the skills it loaded; none are read from here.
+            return if (binding == null) claude().skillCatalog(workspace, forceReload) else computerClaude(binding.computerId)?.skillCatalog(workspace, forceReload).orEmpty()
         }
         if (binding == null) return local.skillCatalog(workspace, forceReload)
         return hub.engine(binding.computerId).skillCatalogAt(binding.cwd, forceReload)
     }
+
+    /** Only Claude Code has a list of its own commands; Codex's terminal commands are not exposed by its app-server. */
+    override suspend fun commandCatalog(workspace: File, forceReload: Boolean): List<AgentCommand> {
+        if (engineOf(workspace) != EngineKind.CLAUDE) return emptyList()
+        val binding = bindingOf(workspace)
+        return if (binding == null) claude().commandCatalog(workspace, forceReload)
+        else computerClaude(binding.computerId)?.commandCatalog(workspace, forceReload).orEmpty()
+    }
+
+    /** The computer's Claude Code, or null when it cannot be reached: a list that is missing is not an error. */
+    private suspend fun computerClaude(computerId: String): ClaudeCodeEngine? = runCatching { hub.claude(computerId) }.getOrNull()
 
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
         val sessionId = sessionIdOf(workspace)
@@ -203,6 +216,8 @@ class RoutingAgentEngine(
         } catch (error: IllegalStateException) {
             val remedy = if (binding.importedFromPc == true) {
                 "Close it in Codex on the computer, or continue in a copy from the banner above the message box."
+            } else if (error.message?.contains("active writer", ignoreCase = true) == true) {
+                "An earlier Codex process still holds this chat. Reconnecting alone may not release it. The previous task may still be running."
             } else {
                 "Reconnect this computer in Mike and try again."
             }
@@ -345,6 +360,9 @@ class RoutingAgentEngine(
         // Two engines on one computer each number their own requests.
         val prefix = if (remote.engine == EngineKind.CLAUDE) CLAUDE_REMOTE_TAG else TAG
         val event = remote.event
+        if (event is EngineEvent.Activity && event.connectionStatus && event.threadId == null) {
+            return computerThreadIds(computer, remote.engine).map { event.copy(threadId = it) }
+        }
         if (event is EngineEvent.Failure && event.threadId.isNullOrBlank()) {
             // Passing this unscoped would end unrelated phone and computer runs.
             // Dropping it would leave children waiting forever after their server died.

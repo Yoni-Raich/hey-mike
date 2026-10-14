@@ -18,6 +18,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +37,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
@@ -74,6 +81,7 @@ class RemoteHub(
         // The tools ride on the process's own streams there, so no server is ever made.
         ClaudeCodeEngine(host, McpToolServerFactory { _, _, _ -> error("A computer chat has no tool server") }, maxLiveChats = 4, computer = computer)
     },
+    private val deltaTransfers: dev.androidagent.core.DeltaTransfers? = null,
     private val createEngine: (RuntimeHost, EngineProfile) -> CodexEngine = ::CodexEngine,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -394,6 +402,31 @@ class RemoteHub(
         connection(computerId).link.download(remotePath, target, maxBytes, progress)
     }
 
+    /** APKs may reuse immutable bytes or a delta; installation remains a separate phone tool. */
+    suspend fun downloadApk(computerId: String, remotePath: String, target: File, progress: (Long, Long) -> Unit): dev.androidagent.core.FilePlace.Fetched {
+        val delta = deltaTransfers ?: run {
+            download(computerId, remotePath, target, Long.MAX_VALUE, progress)
+            return dev.androidagent.core.FilePlace.Fetched(target.length(), ComputerPlace.fileName(remotePath))
+        }
+        val connection = connection(computerId)
+        val probe = runInterruptible(Dispatchers.IO) { connection.probe(false) }
+        val transferLink = connection.link.isolated()
+        val peer = SshDeltaPeer(transferLink, connection.os, probe.home, File(claudeScratch.parentFile, "transfer-helpers"))
+        return try {
+            delta.download(peer, remotePath, target, progress)
+        } catch (_: DeltaHelperUnavailable) {
+            currentCoroutineContext().ensureActive()
+            (progress as? dev.androidagent.core.TransferProgress)?.phase(dev.androidagent.core.FileTransfer.Phase.MOVING)
+            transferLink.download(remotePath, target, Long.MAX_VALUE, progress)
+            dev.androidagent.core.FilePlace.Fetched(target.length(), ComputerPlace.fileName(remotePath))
+        } finally {
+            val stopped = !currentCoroutineContext().isActive
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                try { peer.close(stopped) } finally { transferLink.close() }
+            }
+        }
+    }
+
     /** The size of a file on the computer, without copying it. */
     suspend fun size(computerId: String, remotePath: String): Long = withContext(Dispatchers.IO) {
         connection(computerId).link.size(remotePath)
@@ -481,13 +514,27 @@ class RemoteHub(
         mutableSetup.value = mutableSetup.value + (computerId to step)
     }
 
+    internal fun connectionStatus(computerId: String, text: String, engine: EngineKind = EngineKind.CODEX, threadId: String? = null) {
+        stream.tryEmit(RemoteEvent(computerId, EngineEvent.Activity(text, threadId = threadId, connectionStatus = true), engine))
+    }
+
     private fun dropLink(computerId: String) {
         links.remove(computerId)?.let { runCatching { it.link.close() } }
     }
 
     private suspend fun connection(computerId: String, onAttempt: (RemoteRoute) -> Unit = {}): Connection = linkLock.withLock {
         links[computerId]?.let { return@withLock it }
-        openConnection(computerId, onAttempt)
+        var missed: SshUnreachable? = null
+        for (attempt in 0..3) {
+            try { return@withLock openConnection(computerId, onAttempt) }
+            catch (error: SshUnreachable) {
+                missed = error
+                // This is only connection setup, before any task or transfer
+                // request. Wrong passwords and changed host keys never retry.
+                if (attempt < 3) delay(1_000L shl attempt)
+            }
+        }
+        throw checkNotNull(missed)
     }
 
     /**
@@ -500,6 +547,7 @@ class RemoteHub(
         val password = store.password(computerId) ?: error("No password saved for ${computer.label}.")
         val hosts = computer.hosts.sortedByDescending { it == lastHost[computerId] }
         val missed = mutableListOf<String>()
+        var lastMiss: SshUnreachable? = null
         for ((index, host) in hosts.withIndex()) {
             val route = RemoteRoute(host, viaVpn = host != computer.host)
             onAttempt(route)
@@ -510,6 +558,7 @@ class RemoteHub(
                 link.connect()
             } catch (error: SshUnreachable) {
                 missed += "$host: ${error.message}"
+                lastMiss = error
                 continue
             }
             if (computer.hostKey == null) {
@@ -528,9 +577,10 @@ class RemoteHub(
             lastHost[computerId] = host
             return@withContext Connection(link, route, os).also { links[computerId] = it }
         }
-        error(
+        throw SshUnreachable(
             if (missed.size == 1) missed.single().substringAfter(": ")
             else "No address answered.\n" + missed.joinToString("\n"),
+            lastMiss ?: IOException("No computer address available"),
         )
     }
 
@@ -570,15 +620,8 @@ class RemoteHub(
 
         override suspend fun startAppServer(): Process = withContext(Dispatchers.IO) {
             process?.destroy()
-            val started = try {
-                launchOnce()
-            } catch (error: Exception) {
-                // The link may have dropped while idle: the computer slept or
-                // the phone changed networks. One fresh connection, then the
-                // error stands.
-                dropLink(computerId)
-                launchOnce()
-            }
+            // Never launch another process after an ambiguous startup result.
+            val started = launchOnce()
             process = started
             mutableStatus.value = RuntimeStatus(RuntimePhase.RUNNING, "Codex running on the computer")
             started
@@ -586,6 +629,25 @@ class RemoteHub(
 
         private suspend fun launchOnce(): Process {
             val connection = connection(computerId)
+            if (connection.os == HostOs.WINDOWS) {
+                val probe = connection.probe(refresh = false)
+                val instance = CodexRelayScripts.install(connection.link, probe, File(claudeScratch.parentFile, "codex-relay"))
+                // One app-server per computer for this phone: a replacement ends the earlier one,
+                // which would otherwise keep each thread's writer for its offline lease.
+                require(computerId.matches(LinuxHost.THREAD_ID)) { "Unexpected computer id" }
+                val owner = probe.home.replace('\\', '/') + "/.hey-mike/codex/owners/$computerId.lock"
+                val result = startRelay(computerId, connection.link, instance, probe.appServer, owner)
+                check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") {
+                    "Could not start the computer's Codex relay. No task was sent."
+                }
+                return CodexRelayProcess(
+                    attach = { after -> runBlocking {
+                        try { CodexRelayScripts.attach(connection(computerId).link, instance, after) }
+                        catch (error: SshUnreachable) { dropLink(computerId); throw error }
+                    } },
+                    status = { text -> connectionStatus(computerId, text) },
+                )
+            }
             return connection.link.start(connection.scripts.appServer(connection.probe(refresh = false)))
         }
 
@@ -595,6 +657,24 @@ class RemoteHub(
             mutableStatus.value = RuntimeStatus(RuntimePhase.READY, "Codex stopped on the computer")
         }
     }
+
+    /** A lost startup receipt is followed by attachment to that same instance only. */
+    private suspend fun startRelay(
+        computerId: String,
+        link: SshLink,
+        instance: CodexRelayScripts.Instance,
+        exe: String? = null,
+        owner: String? = null,
+    ): ExecResult? =
+        try {
+            link.run(CodexRelayScripts.start(instance, exe, owner), CodexRelayScripts.START_TIMEOUT_MS).takeIf { it.exitCode >= 0 }
+        } catch (error: Exception) {
+            if (error is CancellationException || error is HostKeyChanged || error is TailscaleCheck) throw error
+            // Attach can prove whether that very instance started. Never replace
+            // an unknown result with another launch, even after a command timeout.
+            dropLink(computerId)
+            null
+        }
 
     /**
      * The computer's own Claude Code, as the Claude engine's host and place.
@@ -661,7 +741,7 @@ class RemoteHub(
                 launchOnce(name, cwd, files, env, args)
             } catch (error: Exception) {
                 // The link may have dropped while idle; one fresh connection, then the error stands.
-                if (error is IllegalArgumentException || error is CancellationException) throw error
+                if (name.startsWith("chat-") || error is IllegalArgumentException || error is CancellationException) throw error
                 dropLink(computerId)
                 cached = null
                 launchOnce(name, cwd, files, env, args)
@@ -678,6 +758,24 @@ class RemoteHub(
             val connection = connection(computerId)
             val found = probe(refresh = false)
             val claude = found.path ?: error(notReady)
+            if (name.startsWith("chat-") && connection.os == HostOs.WINDOWS && claude.endsWith(".exe", ignoreCase = true)) {
+                val instance = CodexRelayScripts.install(connection.link, connection.probe(refresh = false), File(claudeScratch.parentFile, "codex-relay"))
+                val paths = files.mapValues { (file, text) -> put(connection, "${instance.folder}/$file", text) }
+                val owner = found.home.replace('\\', '/') + "/.hey-mike/claude/owners/${name.removePrefix("chat-")}.lock"
+                val config = CodexRelayScripts.launchConfig(claude, args(paths), checkNotNull(cwd), env, owner)
+                put(connection, "${instance.folder}/launch.json", config)
+                val result = startRelay(computerId, connection.link, instance)
+                check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") {
+                    "Could not start Claude's retained connection. An earlier process may still own this chat. No task was sent."
+                }
+                return CodexRelayProcess(
+                    attach = { after -> runBlocking {
+                        try { CodexRelayScripts.attach(connection(computerId).link, instance, after) }
+                        catch (error: SshUnreachable) { dropLink(computerId); throw error }
+                    } },
+                    status = { text -> connectionStatus(computerId, text, EngineKind.CLAUDE, name.removePrefix("chat-")) },
+                )
+            }
             val folder = ClaudeLaunch.folder(found.home, connection.os)
             val paths = files.mapValues { (file, text) -> put(connection, ClaudeLaunch.file(folder, file, connection.os), text) }
             val script = ClaudeLaunch.script(connection.os, claude, cwd, env, args(paths))

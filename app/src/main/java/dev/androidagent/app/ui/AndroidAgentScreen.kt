@@ -730,6 +730,12 @@ private fun AgentChatContent(
                     RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem())
                 }
             }
+            // A compaction takes a while and sends nothing meanwhile: this card is the proof it is alive.
+            state.activeSessionId?.let(state.compacting::get)?.let { startedAt ->
+                item(key = "compacting", contentType = "compacting") {
+                    CompactingCard(startedAt, Modifier.animateItem())
+                }
+            }
             if (offersWorkflowSuggestion(state.messages, running)) {
                 item(key = "suggest-workflows-${state.messages.last().id}") {
                     AssistChip(
@@ -1026,6 +1032,12 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
             )
             InlineMedia(message.attachmentPaths)
         }
+        return
+    }
+    // What `/context` answers is shown as a gauge, not as the CLI's table.
+    val contextUsage = remember(message.id, message.text) { if (user) null else parseContextUsage(message.text) }
+    if (contextUsage != null) {
+        ContextUsageCard(contextUsage)
         return
     }
     val bubbleColor = when {

@@ -212,6 +212,7 @@ class ClaudeCodeEngineTest {
         assertEquals("opus", chat.after("--model"))
         assertEquals("high", chat.after("--effort"))
         assertEquals(ClaudeProtocol.CHAT_ENV, chat.env)
+        assertEquals("false", chat.env["ENABLE_TOOL_SEARCH"])
         val mcpConfig = File(chat.after("--mcp-config"))
         assertTrue(mcpConfig.readText().contains("Bearer test-token"))
         assertTrue("the MCP token stays in the private home", mcpConfig.canonicalPath.startsWith(home.canonicalPath))
@@ -333,6 +334,20 @@ class ClaudeCodeEngineTest {
         assertEquals(id, second.after("--resume"))
     }
 
+    @Test fun damagedOutputFailsWithoutPayloadOrAutomaticTaskReplay() = runBlocking {
+        val engine = engine()
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.send("{\"private\":\"personal-content\", BROKEN}")
+        val failure = awaitEvent<EngineEvent.Failure>()
+        assertEquals(turnId, failure.turnId)
+        assertTrue(failure.message.contains("Invalid Claude protocol message"))
+        assertFalse(failure.message.contains("personal-content"))
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished>().status)
+        assertEquals(1, host.chats().size)
+        assertFalse(chat.isAlive)
+    }
+
     @Test fun aSessionThatNeverGotAMessageStartsAgainUnderTheSameId() = runBlocking {
         val known = "0b9f6a8e-3f7d-4c1a-9e2b-5d6c7e8f9a0b"
         host.script = { process ->
@@ -421,9 +436,11 @@ class ClaudeCodeEngineTest {
         val frame = chat.nextFrame { it.type() == "user" && it.toString().contains("/compact") }
         assertNotNull(frame["uuid"])
         assertFalse(compact.isCompleted)
-        chat.send("""{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual"}}""")
+        chat.send("""{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":7015,"post_tokens":911}}""")
         chat.send(result(""""subtype":"success","is_error":false,"result":"""""))
-        compact.await()
+        val done = compact.await()
+        assertEquals(7015L, done?.tokensBefore)
+        assertEquals(911L, done?.tokensAfter)
         assertEquals(1, events.filterIsInstance<EngineEvent.TurnFinished>().size)
     }
 
@@ -724,6 +741,30 @@ class ClaudeCodeEngineTest {
         val catalog = engine().skillCatalog(workspace)
         assertEquals(listOf("device-automation", "quick-actions"), catalog.map { it.name })
         assertEquals("Drive the phone", catalog.first().description)
+    }
+
+    @Test fun commandsComeFromTheCliAndAreAskedOnceForAMinute() = runBlocking {
+        host.script = probeScript()
+        var now = 0L
+        val engine = engine(catalogClock = { now })
+        val commands = engine.commandCatalog(workspace)
+        assertEquals(listOf("deep-research", "design", "slides"), commands.map { it.name })
+        assertEquals("[what to design]", commands.first { it.name == "design" }.argumentHint)
+        val probe = host.started.single()
+        assertTrue("the user's settings and skills load", probe.args.zipWithNext().any { it == "--setting-sources" to "user" })
+        assertFalse("the probe never sends a message", probe.lines.any { it.contains("\"type\":\"user\"") })
+        now += 10_000_000_000L
+        engine.commandCatalog(workspace, forceReload = false)
+        engine.commandCatalog(workspace, forceReload = true)
+        assertEquals("one process answers both within the cache", 1, host.started.size)
+        now += 61_000_000_000L
+        engine.commandCatalog(workspace, forceReload = false)
+        assertEquals("an old answer is asked for again", 2, host.started.size)
+    }
+
+    @Test fun anAnswerThatFailsLeavesNoCommandsInsteadOfAMadeUpList() = runBlocking {
+        host.script = { process -> process.finish(1) }
+        assertTrue(engine().commandCatalog(workspace).isEmpty())
     }
 
     @Test fun closeStopsEveryChatAndTheHost() = runBlocking {

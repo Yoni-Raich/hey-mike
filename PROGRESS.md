@@ -72,6 +72,206 @@
   Original dirty checkout preserved. No reviewer or new-feature merge was run.
   [Full evidence and live-check list](docs/testing/claude-session-sync-20261010/RESULTS.md).
 
+### Windows relay takeover of a stale owner — 2026-10-14
+
+- Seen on Pc in the chat logs and relay folders: the phone started a new
+  Codex relay at 13:26 while the 13:08 app-server still held the thread, so
+  `thread/resume` failed with "already has an active writer". At 13:30 the
+  switch to Claude met the 13:25 Claude relay of the same chat, which still
+  held its owner lock, and failed with "Could not start Claude's retained
+  connection". Both locks were free a few minutes later (offline lease).
+- A new relay now ends the earlier relay of the same owner (per chat for
+  Claude, per phone-saved computer for Codex), verified by PID and start
+  time, and then takes the owner. Metadata records the child's PID and start
+  time; `<owner>.relay` records only the metadata path. No token on disk.
+- Relays started by earlier builds have no owner record and still hold their
+  owner until their lease ends; this applies once, after the update.
+- `:remote:testDebugUnitTest` on Windows: new native tests prove a second
+  relay of the same owner ends the first (broker and child gone, even with a
+  silent attachment) and a different owner leaves it running. The old
+  "refuses a second owner" test now asserts the takeover. Five consecutive
+  `--rerun-tasks` runs passed (134 tests, 2 existing skips). The two runs
+  before them each had one or two timing failures in other relay tests
+  (`Relay condition timed out`, a 32 s reattach); two baseline dev runs were
+  clean. Treat those relay timing tests as load sensitive.
+- Dev Debug 1148 / `0.14.0-dev.relay-owner1` built; the packaged relay files
+  contain the change. Not yet installed or tried on the phone against Pc.
+
+### Claude computer tool search — 2026-10-14
+
+- Computer chats no longer force `ENABLE_TOOL_SEARCH=false`; they keep the
+  MCP timeouts and use the computer's own settings/default tool search.
+  Phone chat settings are unchanged. Launch regression checks passed.
+- Controlled Windows CLI 2.1.296 / Opus 5.5 comparison with the same greeting,
+  Mike prompt and 36 SDK tool definitions: input fell from 98,411 to 30,077
+  tokens (69.4%). ToolSearch found and called a synthetic Mike tool; interrupt
+  acknowledged and ended a pending synthetic call with no later dispatch.
+- Full test/build/lint gate passed: 2,667 unit executions, no failures/errors,
+  32 existing skips. Runtime preparation: 15 Python tests passed.
+  Dev Debug 1147 / `0.14.0-dev.tool-search1` built, v2 signature and 16KiB ZIP
+  alignment verified. Dev Release is unsigned and was not sent.
+- `copy_file` completed. After Wireless ADB connected, the self-update lost
+  its tool response. A later independent `apps_settings(app_info)` confirms
+  the chat phone is on 1147 / `0.14.0-dev.tool-search1`; no install was replayed
+  and no data was cleared. The installed `base.apk` SHA-256 matches the built
+  artifact exactly. App chat/tool/Stop and Linux live validation remain open. See
+  `docs/testing/claude-tool-search-20261014.md` for evidence and limits.
+
+### Windows relay startup repair — 2026-10-14
+
+- Preserved the exact 1144 reconnect source in a new managed worktree;
+  the primary checkout and the original reconnect worktree were left untouched.
+- Replaced background `Start-Process` with a hidden native launch that explicitly
+  escapes OpenSSH's kill-on-close job and inherits no SSH pipe handles. Startup
+  now requires an authenticated health response. Dead/reused broker PIDs fail
+  immediately; pending writes retain the safe terminal error. The offline lease
+  begins after process startup and endpoint publication.
+- The native Windows job regression test reproduces the old launch's abrupt
+  termination and proves the product bootstrap survives that same job closure
+  and exchanges Unicode input/output. Scoped relay checks: 12 tests passed,
+  no failures or skips. Runtime preparation: 15 Python tests passed.
+- Final gate passed: `test assembleDevDebug assembleDevRelease
+  assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug --no-daemon`,
+  isolated Gradle home, two workers. 2,663 unit executions, zero failures or
+  errors, 32 existing skips. App/voice lint: zero errors/fatals. Packaged helper
+  bytes match source in Debug and Release. Debug v2 signature and 16KiB ZIP
+  alignment verified; Release is unsigned and is not the delivery artifact.
+- Installed 1145 through `copy_file` then `install_apk`; independently verified
+  the installed APK SHA-256. Its real new PC chat proved the broker stayed
+  alive, but RPC stdin delivery still stalled and the chat returned `Stream
+  closed`. This was a failed physical chat, not completion evidence.
+- 1146 uses an authenticated SSH `direct-tcpip` tunnel to that same loopback
+  broker, bypassing Windows command stdin for both Codex and native Claude.
+  A real Windows SSH echo fixture reproduced the stdin stall; the underlying
+  Windows pipe cause remains unproven. The tunnel passed 100 round trips.
+  Real-SSH unit fixtures cover Unicode exchange, scoped channel closure,
+  product endpoint validation and reattachment to the same native broker.
+- Repeated final gate passed for 1146 in 2m12s: 2,667 unit executions, zero
+  failures/errors, 32 existing skips; app/voice lint had zero errors/fatals.
+  Runtime preparation: 15 Python tests passed. Signed Dev Debug metadata,
+  v2 signature, same signer, 16KiB ZIP alignment and packaged helper bytes
+  verified. An initial short-lease fixture failure exposed startup time being
+  counted as offline time; fixed before this successful gate.
+- Current artifact: 1146 / `0.14.0-dev.reconnect3`, Dev Debug, 331,619,686
+  bytes, SHA-256 `11052cde1eeaf5f9c4d1fa7a98026245c3b340a684f2d3c6bc42d39827bd6a16`.
+  Source: `app/build/outputs/apk/dev/debug/app-dev-debug.apk` (ignored).
+  `copy_file` completed in 7.718s; `install_apk(replace=true)` updated the
+  Nothing A059. Copied and installed `base.apk` SHA-256 both match the artifact.
+  Transfer wire bytes were not measured.
+- Physical 1146 checks passed: a fresh Codex PC chat ran `pwd` on the Windows
+  project and `read_ui` once on the phone; the PC tool receipt and phone gateway
+  receipt confirm both. A guarded one-time TCP deletion dropped only that
+  test tunnel during a PC command. It reattached in about 1.84s; independent
+  process creation times confirmed the same broker and app-server, and the
+  prepared command executed once. The output and final answer arrived, then a
+  follow-up recalled the original marker and folder on the same Codex thread.
+  The old reported chat, selected on its Claude/Sonnet engine, also completed a
+  new reply without tools or replaying earlier work. Accessibility was restored
+  through Android's settings UI after an idle app restart and verified bound.
+  Original screen timeout restored. No sign-in/session data was cleared.
+- Remaining gaps: outer SSH-session loss, a physical Wi-Fi/VPN outage, long
+  outage/soak, voice recovery, Linux retained-process behavior and a signed
+  non-debuggable Release installation are not proved by these checks.
+  See `docs/testing/relay-startup-20261014.md`.
+
+### Windows Codex and Claude connection recovery — 2026-10-13
+
+- Dedicated `fix/codex-reconnect-20261013` worktree from dev `5d7f2f38`;
+  the dirty primary checkout and existing running processes were preserved.
+- Added an authenticated loopback relay retaining the same Windows app-server
+  across SSH loss, framed output replay and deduplicated input receipts,
+  bounded backoff/lease, scoped reconnect status and locally cancellable Stop.
+- Transport trailing commas are accepted narrowly; other malformed JSON
+  remains terminal, hides its payload and closes the owned runtime. An old
+  reader cannot close a new connection. Legacy busy-writer advice no longer
+  claims that reconnect alone fixes it.
+- Native Windows Claude chats also keep their process through SSH loss. An
+  exclusive per-chat owner prevents a second retained process; each instance
+  gets separate launch files. A lost startup receipt never starts another
+  helper automatically. Claude's writer is cancellable, Stop wakes it first,
+  and invalid protocol frames fail without exposing their payload.
+- Scoped core/engine/remote checks and final relay suites passed. Real shipped
+  helper tests proved receipt deduplication and lease/Stop behavior. Pinned
+  Windows Codex plus real SSH disconnect/reconnect kept the same loaded thread
+  and live broker, without a model request or sign-in. Post-Claude scoped checks:
+  1,067 executions, zero failures/errors, two existing Linux-only skips.
+  Final combined gate passed: 2,659 unit executions, zero failures/errors,
+  32 existing skips; Dev Debug/unsigned Dev Release and AndroidTest APKs built.
+  App/voice lint had zero errors/fatals; runtime preparation's 15 Python tests
+  passed. A final native exit-code confirmation passed in 15s with 1,170 cached
+  tasks and four executed tasks after the combined build. Source hashes match
+  the frozen manifest, and packaged helper bytes match source in both APKs.
+- No phone install, physical network outage, authenticated in-flight task,
+  voice transport, Linux retained process, or app-restart recovery evidence.
+  No legacy/external writer was killed; no version bump, commit, PR or merge.
+  The chat phone still reports 1143 / `0.14.0-dev.delta4`. The phone trace has
+  four stream EOFs and a separate 60-second timeout, without the underlying
+  closure reason. The reported Claude transcript has a final at 16:21 and
+  separate quota rejections at 16:28/16:29. No rendering jobs were stopped.
+  APK validation metadata remains 1133 / `0.14.0-dev.subagents5`, below the
+  installed phone version. These are build evidence, not an update candidate;
+  no downgrade was attempted. Debug signature v2 verified; Release is unsigned.
+  Details: `docs/testing/codex-reconnect-20261013.md`.
+
+### Delta transfer gated to dev, skills added - 2026-10-12
+
+- Real phone check on 1143 (`0.14.0-dev.delta4`): a ~332 MB `copy_file` finished with the chat session intact (transfer on its own SSH connection); SHA-256 on phone equals the PC file. 1142 measured the delta at ~436 KB. Wire bytes were not re-measured on 1143.
+- Delta is dev-channel only (`BuildConfig.DELTA_TRANSFER`). `assembleProdDebug` APK has no `libmike_delta.so`, no host helper, no delta skill text, and uses plain rename publication; its `assets/file-transfer/licenses` text files remain. `:core:test :workspace:testDebugUnitTest :remote:test :app:testDevDebugUnitTest :app:lintDevDebug :app:lintProdDebug` passed. Not run: full release gate, a prod install on a phone.
+- Skills: `.agents/skills/phone-apk-delivery` (developers) and `app/src/dev/assets/agent_stack/skills/files-across-devices` (Mike, dev builds only); `AGENTS.md` points to the first.
+
+### Delta bootstrap installed on the chat phone — 2026-10-12
+
+- The 1134 APK copied successfully, but Android rejected installation because
+  the chat phone already had 1137 (`0.14.0-dev.slash1`). No downgrade was used.
+- Preserved the newer slash/context/compaction source in the isolated delta
+  worktree: 20 source/test files copied byte-identically (normalized line
+  endings), other worktrees untouched. Source manifest is outside Git under
+  `%TEMP%/hey-mike-apk-delta-20261012/preserved-slash-context-source.json`.
+- Repeated the full build/test/lint gate for Dev Debug 1140 /
+  `0.14.0-dev.delta2`: passed in 3m30s, 2,609 unit executions, zero
+  failures/errors and 16 existing skips. Signature v2, ZIP/ELF 16KiB alignment,
+  helper packaging and preservation manifest verified. Artifact:
+  `artifacts/hey-mike-dev-1140-delta2.apk` (331,542,025 bytes).
+- `copy_file` completed the full bootstrap transfer. `install_apk(replace=true)`
+  was interrupted before returning, so its outcome was checked independently.
+  On the chat phone, `apps_settings(app_info)` and package metadata report
+  1140 / `0.14.0-dev.delta2`. Installed `base.apk` SHA-256 exactly matches:
+  `85c5d8e6b24c9f23c3ef28ed5bc5eb4d6494f916ec3cb86f3e4a230461179d3e`.
+  Last update: 17:02:53 local; first install remains 2026-09-08 20:12:05.
+- This proves the exact APK installed as an update. No physical JNI delta
+  reconstruction, Wi-Fi delta benchmark or live feature/UI test is claimed.
+
+### APK delta transfer — 2026-10-12
+
+- Implemented in isolated `feat/apk-delta-transfer-20261012` from dev
+  `1b6827ba03ae218fa631e166d32a160b8a8acf5b`; other worktrees untouched.
+  PC-to-phone APK copies negotiate verified immutable SHA-256 bases over the
+  existing SSH connection, reuse global blobs/patches, and reconstruct exact
+  signed APK bytes through bounded cancellable HDiffPatch JNI callbacks.
+  Missing bases or unusable deltas fall back to the pinned full snapshot;
+  Stop never triggers fallback. Transfers show preparation and verification
+  phases and publish verified files atomically. Debug builds seed the PC cache
+  and attempt patch precomputation; startup seeds the app's installed APK.
+- Final gate passed: `test assembleDevRelease assembleDevDebug
+  assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug`, isolated
+  Gradle home, native fixture properties, version overrides 1134 /
+  `0.14.0-dev.delta1`. 2,545 unit executions, zero failures/errors, 16 existing
+  skips; new native and real SSH/SFTP suites had no skips. Python host/runtime:
+  24 passed, no skips. `git diff --check` passed.
+- Product helper on existing signed 1132→1133 APKs produced a 2,776,115-byte
+  patch for a 331,102,984-byte APK (99.16% less transfer data). PC preparation
+  was 2.658s cold patch cache / 0.849s warm patch cache, including hashing.
+  Actual JNI reconstruction preserved SHA-256; actual generator Stop exited
+  the observed child. These results do not measure Android or Wi-Fi speed.
+- Final debug APK metadata, v2 signature, 16KiB ZIP alignment and bundled
+  native ABIs/helper/licenses verified. PC artifact:
+  `artifacts/hey-mike-dev-1134-delta1.apk`, SHA-256
+  `7381eea0e0045e30d52bf66b488d1bbe2c6b09b36976c30dade0126761eed89e`.
+  No phone transfer/install, Android JNI run, UI screenshot, production
+  signing or deployment. Python-less hosts keep legacy full SFTP; Linux
+  strict snapshots, split APKs and partial resume remain gaps. Full evidence:
+  `docs/testing/apk-delta-transfer-20261012.md`.
+
 ### Voice child-update timing and quiet — issue #129, 2026-10-11
 
 - Continued `fix/voice-child-update-timing-129` from merged PR #128 on dev

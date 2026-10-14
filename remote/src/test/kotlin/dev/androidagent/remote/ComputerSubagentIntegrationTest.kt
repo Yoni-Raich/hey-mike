@@ -172,6 +172,22 @@ class ComputerSubagentIntegrationTest {
         } finally { rig.close() }
     }
 
+    @Test fun reconnectStatusKeepsTheComputerRunActiveAndDoesNotChangeAPhoneRun() = runBlocking<Unit> {
+        val rig = Rig(File(temp.root, "connection-status"), RemoteAccess.ASK)
+        try {
+            rig.runs.send("other", "Phone task")
+            rig.local.awaitRequest("thread/name/set")
+            rig.start()
+            rig.remote.awaitRequest("thread/name/set")
+            rig.connectionStatus("Connection lost. Reconnecting.")
+            withTimeout(5_000) { rig.runs.sessionStates.first { it["child-1"]?.status == "Connection lost. Reconnecting." } }
+            assertTrue(rig.runs.stateOf("child-1")!!.active)
+            assertTrue(rig.runs.stateOf("other")!!.active)
+            assertFalse(rig.runs.stateOf("other")!!.status.contains("Reconnecting"))
+            assertEquals(1, rig.remote.requests.value.count { it.method() == "turn/start" })
+        } finally { rig.close() }
+    }
+
     @Test fun aScopedPhoneTurnErrorDoesNotEndTheComputerChild() = runBlocking<Unit> {
         val rig = Rig(temp.root, RemoteAccess.ASK)
         try {
@@ -261,6 +277,7 @@ class ComputerSubagentIntegrationTest {
         }
         val ui = MutableStateFlow<ComputerUiRequest?>(null)
         var foregroundRequests = 0
+        fun connectionStatus(text: String) = hub.connectionStatus(computer.id, text)
         private val gateway = ComputerToolGateway(hub, sessions, ui, manager) { foregroundRequests++ }
 
         init {

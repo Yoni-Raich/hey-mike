@@ -1,5 +1,93 @@
 # Architecture
 
+## APK delta copies — 2026-10-12
+
+`copy_file` keeps its API. `ComputerPlace` sends APK downloads through
+`DeltaTransfers` (`core`). The phone and computer identify bytes by SHA-256,
+not by version numbers, paths or chat ids. Installation is still a separate
+phone-local `install_apk` call. It never installs a patch or starts another copy.
+
+`TransferBlobStore` (`workspace`) holds verified private blobs under
+`filesDir/transfer-cache/v1`, shared by all chats. One cancellable mutex leases
+the cache through negotiation, reconstruction and materialization. Eviction
+uses a 1.5 GiB soft budget while retaining at least two blobs; large retained
+blobs can exceed that budget. Only owned hashes and UUID parts are removed.
+Copies to chat folders are independent files, so editing a chat file cannot
+change the cached base. Startup seeds the app's own installed signed APK on
+an IO dispatcher. This lets the first full bootstrap update become a base
+without downloading it again.
+
+`SshDeltaPeer` (`remote`) provisions a versioned, checksum-checked Python
+helper on the saved computer's existing pinned SSH connection. Python 3.9+
+is needed for optimization; a missing interpreter retains normal full SFTP
+copying. This legacy path has its existing SSH/size checks, without a
+negotiated source content digest. Other helper failures fail closed. The
+helper needs no model call or server, and retains an OS cache lock until the
+request releases stdin. EOF is cancellation; it stops its owned generator.
+It never closes the shared SSH session. Java interrupted stream errors are
+converted back to coroutine cancellation before they can become a fallback.
+
+The host cache is `~/.hey-mike/file-transfer/v1`. A Windows snapshot holds a
+read-sharing-only handle; Linux also checks fstat and reads content twice to
+detect ordinary concurrent writes. Linux does not claim an OS snapshot against
+an adversarial writer. The immutable copy is served after snapshot publication,
+not the changing build path. Host cache eviction has an 8 GiB budget and runs
+under its OS lock, after the client releases the transfer lease. It never
+removes original build output. Dev Debug assembly exports its exact signed
+APK and tries to precompute one patch against the previous artifact with a
+matching filename. Rename aliases are retained. Precomputation failure does
+not invalidate a successful build; on-demand generation or full copying still
+work. Other build/signing pipelines may call the same helper's `--export` mode.
+
+The pinned generator is HDiffPatch 5.1.3. Keys include old/new SHA-256, tool
+version and all configured options. `-WD-256k -s-64 -c-zstd-3-23 -w-2m`
+creates HDIFFW26/zstd patches with xxh128 checksums. The host selects a patch
+only when it is smaller than 85% of the full target. Cached tool archives,
+executables and patches are verified before reuse. Bases are opaque APK bytes;
+Android's installer still owns package/version/signature compatibility checks.
+No normalization, signing keys or re-signing are involved in copying.
+
+`NativeDeltaApplier` (`workspace`) uses our C/JNI adapter over pinned
+HDiffPatch, zstd and xxHash source archives. Build preparation verifies the
+archives and restores their source bytes, then compiles ARM64/x86_64 libraries
+with NDK 28.2.13676358 and 16 KiB ELF alignment. Fingerprints include the build
+script and sources, and the staged binaries are also hashed. License texts are
+kept under `third_party/licenses` and included in the APK. The adapter accepts
+only the negotiated window format, with a 2 MiB old window, 256 KiB step and
+8 MiB maximum zstd dictionary. It uses one native thread. Read, write and
+buffered decode callbacks check a per-call cancellation flag; wrapping an
+uncancellable stock JNI call in Dispatchers.IO would not be enough.
+
+The receiver checks patch/base sizes and hashes, applies to a UUID temporary
+file, verifies the complete target hash and syncs before atomic publication.
+Reconstruction failure may retry the *same immutable target* as a full blob.
+Stop never triggers fallback or installation. `AtomicTransferFile` commits
+chat copies without deleting a previous target first. No-replace uses an
+atomic hard link, then removes the owned part; replace uses ATOMIC_MOVE.
+Unsupported filesystems fail instead of weakening no-clobber semantics.
+These operations do not claim directory-fsync or power-loss durability.
+
+Transfer progress reports preparation, hashing, generation, network copy,
+reconstruction, verification and publication separately. Rate/ETA apply only
+to network copying. The meter keeps records by transfer id, so a newer chat
+cannot be overwritten by an older callback; it displays the latest active
+copy and resumes another active copy when that one finishes. APK caching
+and reconstruction may need additional storage for a full target and its
+separate chat copy, even when the patch is tiny.
+
+PC tests cover real SSH/SFTP leases and cancellation, the actual generator,
+and the same JNI adapter compiled for the Windows JVM against signed APKs.
+Those checks do not prove Android JNI loading, runtime memory/Stop latency,
+Wi-Fi throughput, installation, self-update or UI behavior on a phone.
+See `docs/testing/apk-delta-transfer-20261012.md` for exact evidence.
+
+
+**Dev channel only.** `BuildConfig.DELTA_TRANSFER` is true for `dev` and false for
+`prod`. In `prod`, `AgentApplication` creates no `TransferBlobStore`/`DeltaTransfers`
+(copies use the plain full path with rename publication), and Gradle excludes
+`libmike_delta.so`, the host helper and its licenses from the APK. The Mike skill
+text for delta lives in `app/src/dev/assets/agent_stack/skills/` and overrides the
+main copy only in dev builds.
 ## Claude runtime reuse across APK updates — 2026-10-11
 
 Runtime discovery keeps other version directories. The updater first restores
@@ -2198,13 +2286,74 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   or both. Connect tries the one that answered last first and moves on only
   when an address does not answer at all; a refused password or a changed
   key stops there. The pin holds for both addresses.
-- **Codex on Windows.** Setup runs short PowerShell scripts through
+  - **Codex on Windows.** Setup runs short PowerShell scripts through
   `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
   and PowerShell default shells. The computer downloads the official
   `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
   pinned on the phone (0.159.2), checks its sha256 against hashes compiled
   into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
-  The phone and computer therefore speak one protocol version.
+    The phone and computer therefore speak one protocol version.
+  - **Temporary network loss on Windows.** A private helper retains that same
+    app-server while its SSH attachment reconnects. Its hidden Windows process
+    explicitly breaks away from OpenSSH's
+    kill-on-close job and inherits no SSH pipe handles. Startup checks an
+    authenticated health response, rather than trusting a leftover metadata
+    file. Broker PID and process start time identify stale or reused PIDs;
+    attachment to a dead broker fails immediately without retrying a new task.
+    The helper listens only on loopback, requires a random per-instance
+    capability, and keeps output and
+    input receipts in memory. Complete frames carry a sequence, byte length
+    and SHA-256; incomplete frames never reach the engine's JSON reader.
+    Reattachment replays unread output and deduplicates unacknowledged input
+    before forwarding it to Codex. It does not start another turn, initialize
+    another app-server, or acquire another thread writer. Response timeouts
+    pause during recovery. Heartbeats detect a stalled attachment, byte progress
+    keeps large frames alive, and retries back off up to ten seconds. Setup
+    retries only unreachable hosts; changed host keys and rejected passwords
+    still fail closed. Connection status is scoped to that computer's chats.
+    The helper bounds frames to 32 MiB and unread output to 64 MiB. It ends its
+    owned child after five minutes without an authenticated client heartbeat;
+    recovery exhaustion or lost relay state reports an unknown outcome rather
+    than submitting work to a replacement process. Stop revokes local writes
+    first and asks only the capability's own child to stop. When offline,
+    immediate remote interruption cannot be confirmed; the lease bounds it.
+    A replacement relay does not wait for that lease. Each relay holds an
+    owner lock: one per chat for Claude, one per phone-saved computer for
+    Codex. A relay that finds its owner held reads the earlier relay's
+    metadata path from `<owner>.relay`, ends that relay's child and broker
+    only if each PID still has its recorded start time, then takes the lock
+    (20 s at most). Before this, a phone that gave up a relay (engine
+    restart, engine switch, app restart) met the old process for up to five
+    minutes as "thread already has an active writer" or "Could not start
+    Claude's retained connection". A turn still running in the replaced
+    relay is ended: the phone can no longer read or stop it. No token is
+    written to the owner record.
+    Windows attachments use an SSH `direct-tcpip` channel to the authenticated
+    broker on `127.0.0.1`. The app reads and verifies that instance's process
+    identity before opening the tunnel, then sends its capability and replay
+    cursor. There is no shell stdin reader in this path and no listening port
+    exposed outside loopback. Closing a tunnel leaves the broker and child
+    alive. The SSH server must permit TCP forwarding. Native broker startup
+    explicitly breaks away from OpenSSH's kill-on-close job, with a hidden
+    private console and no inherited SSH pipe handles; a health response must
+    confirm startup before readiness is reported.
+    Already launched commands may outlive Codex. Tokens and transcripts are
+    not written into helper metadata or logs. A phone process restart does not
+    restore the in-memory attachment/receipt state; Linux still uses the direct
+    stdio path. These limits must not be described as full network/voice E2E.
+    Native Windows Claude chats use the same retained transport. The helper
+    starts the `.exe` directly with literal arguments, a working folder and
+    launch environment; it inherits the computer's existing sign-in. Each
+    instance has separate prompt/config files. A per-chat exclusive owner file
+    prevents another retained helper from starting that same Claude session
+    while its previous process is still alive. Short auth/model probes and
+    Linux or Windows npm `.cmd` installs retain their existing transport.
+    An ambiguous startup receipt leads only to attachment to the same helper,
+    never a second launch. Claude Stop destroys a recovering transport before
+    closing its buffered writer. Damaged Claude protocol messages fail with
+    a payload-free error instead of silently dropping a possible final answer.
+    Existing direct-SSH Claude processes are not acquired or killed by this
+    ownership guard; legacy sessions need a separate verified migration.
 - **Access is the user's choice per computer.** *Ask me first*:
   `workspace-write` with `on-request` approvals, answered on the phone's
   approval card. *Full access*: `danger-full-access` with no approvals, as on
@@ -2531,6 +2680,10 @@ Decided 2026-10-01, on top of the section above.
   phone's ChatGPT account for each run, Claude uses the computer's own. The
   compliance rules above therefore hold unchanged; the binary is the user's
   own install, started unmodified.
+  - Computer chats pass only the MCP timeouts in `COMPUTER_CHAT_ENV`.
+    They leave `ENABLE_TOOL_SEARCH` to the user's environment/settings and
+    Claude Code's default, which discovers tools on demand. This includes
+    Mike's SDK MCP server. Phone chats keep their existing `CHAT_ENV`.
   - `RemoteHub.claude(computerId)` is a `ClaudeCodeEngine` whose host starts
     `claude` over the computer's SSH link. `ClaudeLaunch.probe` finds it on
     `PATH` or in the usual install places (an SSH command gets a bare `PATH`);

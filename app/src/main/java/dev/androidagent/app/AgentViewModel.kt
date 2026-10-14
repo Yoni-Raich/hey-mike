@@ -123,7 +123,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             // A computer conversation may be held open by Codex on the computer.
             checkPcChatBusy(id)
             preferences.edit().putString("session", id).apply()
-            mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false, isLoadingMessages = true) }
+            // The skills and commands of the chat just left belong to its engine, not to this one.
+            mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false, isLoadingMessages = true, availableSkills = emptyList(), availableCommands = emptyList()) }
             updateTitle()
             project()
             refreshModels()
@@ -137,8 +138,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 val messages = withContext(Dispatchers.IO) { graph.sessions.messages(id) }
                 coroutineScope {
                     launch {
-                        if (graph.runtime.status.value.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) {
-                            runCatching { loadSkills(id) }
+                        // Codex lists its skills through its own runtime; Claude's list comes from its CLI.
+                        if (ChatEngines.of(mutable.value.sessions, id) == EngineKind.CLAUDE ||
+                            graph.runtime.status.value.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) {
+                            runCatching { loadSlashCatalog(id) }
                         }
                     }
                     messages.collect { items -> mutable.update { it.copy(messages = items, isLoadingMessages = false) } }
@@ -268,7 +271,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     usageChanged(EngineKind.CODEX, event)
                     event.limits?.let(::recordUsage)
                 }
-                EngineEvent.SkillsChanged -> runCatching { loadSkills(forceReload = false) }
+                EngineEvent.SkillsChanged -> runCatching { loadSlashCatalog(forceReload = false) }
                 is EngineEvent.Failure -> if (!graph.coordinator.anyActive) error(event.message)
                 else -> Unit
             }
@@ -465,6 +468,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             else "Set up ${kind.label} in Settings first."
         }
         graph.sessions.setEngine(id, kind)
+        // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
+        mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
+        viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
         // Like any model pick, it also holds for the next new chat.
         rememberDefaultEngine(kind)
         if (session.hasMessages) {
@@ -908,6 +914,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun send(text: String, attachments: List<PendingAttachment>) {
         val id = current.value ?: return
+        if (id in mutable.value.compacting) { error("Wait for compaction to finish before sending a message."); return }
         // A subagent's existing gate is also answerable in its source chat.
         if (attachments.isEmpty()) {
             if (answerRunGate(id, text)) return
@@ -982,20 +989,29 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun compact() {
         val id = current.value ?: return
+        if (id in mutable.value.compacting) return
         if (graph.coordinator.phaseOf(id) != null) { error("Wait for the agent to finish before compacting."); return }
+        if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End voice before compacting this chat."); return }
+        val started = System.currentTimeMillis()
+        mutable.update { it.copy(compacting = it.compacting + (id to started), errorMessage = null) }
         task {
-            val session = graph.sessions.getSession(id)
-            val thread = checkNotNull(session?.engineThreadId) { "There is nothing to compact yet. Send a message first." }
-            // Claude compacts in the call itself, which can take a while, so
-            // the note comes first.
-            note(id, "Compacting the chat to free up context")
-            if (session.engine == EngineKind.CLAUDE) {
-                // After a restart the Claude process for this chat is not open yet.
-                graph.engine.openSession(graph.sessions.workspace(id), thread, session.model ?: engines.of(EngineKind.CLAUDE).model, graph.tools.definitions)
-                graph.engine.compact(thread)
-                note(id, "Chat compacted")
-            } else {
-                graph.engine.compact(thread)
+            try {
+                val session = graph.sessions.getSession(id)
+                val thread = checkNotNull(session?.engineThreadId) { "There is nothing to compact yet. Send a message first." }
+                // Rebind the saved chat after an APK update or process restart,
+                // for either engine and for computers. Do not compact a fresh
+                // replacement if the saved thread could not be resumed.
+                val resumed = graph.engine.openSession(graph.sessions.workspace(id), thread, session.model ?: engines.of(session.engine).model, graph.tools.definitions)
+                check(resumed == thread) { "The saved chat could not be reopened for compaction. Send a message to resume it first." }
+                val result = graph.engine.compact(thread)
+                note(id, compactedNote(result, System.currentTimeMillis() - started))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                note(id, "Compaction failed: ${failure.message ?: "Completion was not confirmed."}")
+                throw failure
+            } finally {
+                mutable.update { it.copy(compacting = it.compacting - id) }
             }
         }
     }
@@ -1116,7 +1132,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 mutable.update { it.copy(accountStatus = account) }
                 rememberAccount(account)
                 loadModels()
-                loadSkills()
+                loadSlashCatalog()
                 runCatching { graph.engine.refreshUsage() }
             } finally { mutable.update { it.copy(isPreparingRuntime = false) } }
         }
@@ -1523,13 +1539,24 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         finally { mutable.update { it.copy(isLoadingModels = false) } }
     }
-    private suspend fun loadSkills(sessionId: String? = current.value, forceReload: Boolean = true) {
+    /**
+     * The skills and commands of the open chat's own engine. They are kept
+     * only if that chat is still open on that engine when they arrive, so a
+     * quick switch between Codex and Claude never shows the other one's list.
+     */
+    private suspend fun loadSlashCatalog(sessionId: String? = current.value, forceReload: Boolean = true) {
         val id = sessionId ?: return
         mutable.update { it.copy(isLoadingSkills = true) }
         try {
             val workspace = graph.sessions.workspace(id)
+            val kind = graph.sessions.getSession(id)?.engine
             val skills = graph.engine.skillCatalog(workspace, forceReload = forceReload)
-            mutable.update { it.copy(availableSkills = skills) }
+            val commands = try {
+                graph.engine.commandCatalog(workspace, forceReload = forceReload)
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { emptyList() }
+            if (current.value == id && graph.sessions.getSession(id)?.engine == kind) {
+                mutable.update { it.copy(availableSkills = skills, availableCommands = commands) }
+            }
         } finally {
             mutable.update { it.copy(isLoadingSkills = false) }
         }
@@ -1543,6 +1570,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val id = current.value ?: return@task
         val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.activeEngine)
         check(graph.coordinator.phaseOf(id) == null) { "Wait for this chat to finish before changing its model." }
+        check(id !in state.compacting) { "Wait for compaction to finish before changing its model." }
         engines = engines.update(kind) { it.select(value) }
         persistChoice(kind)
         if (kind != state.activeEngine) changeEngine(id, kind)
