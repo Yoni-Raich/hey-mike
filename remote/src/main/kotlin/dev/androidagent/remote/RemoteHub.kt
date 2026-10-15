@@ -270,11 +270,11 @@ class RemoteHub(
     /**
      * This phone's own warm `claude` is not another writer, so checking never
      * has to stop it. A `claude` another phone's Mike started holds the
-     * session like any other client.
+     * session like any other client. A stable client namespace also recognizes
+     * our retained relay after this app's in-memory engine was lost.
      */
     private fun heldElsewhere(computerId: String, threadId: String, row: kotlinx.serialization.json.JsonObject): Boolean =
-        ClaudeSessionFiles.heldByOther(row) ||
-            ClaudeSessionFiles.heldByMike(row) && claudeEngines[computerId]?.first?.holdsSession(threadId) != true
+        ClaudeSessionFiles.heldElsewhere(row, claudeEngines[computerId]?.first?.holdsSession(threadId) == true)
 
     /** Releases only Mike's idle CLI; an external writer must be closed by its user. */
     suspend fun openClaudeDesktop(computerId: String, threadId: String) {
@@ -286,7 +286,9 @@ class RemoteHub(
             kotlinx.coroutines.delay(500)
             row = claudeProjection(computerId, "busy", threadId)
         }
-        check(!heldElsewhere(computerId, threadId, row)) { "Close this session in Claude on the computer before handing it to Desktop." }
+        check(!ClaudeSessionFiles.heldByOther(row) && !ClaudeSessionFiles.heldByMike(row)) {
+            "The previous Claude process must release this session before opening it in Desktop."
+        }
         val metadata = ClaudeSessionFiles.thread(row["thread"] as? kotlinx.serialization.json.JsonObject
             ?: error("Claude session metadata is missing"))
         withContext(Dispatchers.IO) {
@@ -334,7 +336,8 @@ class RemoteHub(
                     } finally { local.delete() }
                     readersUploaded += computerId
                 }
-                suspend fun read() = ClaudeSessionFiles.payload(connection.link.run(ClaudeSessionFiles.command(connection.os, path, mode, threadId), 45_000))
+                suspend fun read() = ClaudeSessionFiles.payload(connection.link.run(
+                    ClaudeSessionFiles.command(connection.os, path, mode, threadId, ClaudeSessionFiles.clientId(computerId)), 45_000))
                 // The reader is a few kilobytes that never change within one
                 // app version: sent once, not before every question.
                 val known = computerId in readersUploaded
@@ -771,7 +774,8 @@ class RemoteHub(
             val found = probe(refresh = false)
             val claude = found.path ?: error(notReady)
             if (name.startsWith("chat-") && connection.os == HostOs.WINDOWS && claude.endsWith(".exe", ignoreCase = true)) {
-                val instance = CodexRelayScripts.install(connection.link, connection.probe(refresh = false), File(claudeScratch.parentFile, "codex-relay"))
+                val instance = CodexRelayScripts.install(connection.link, connection.probe(refresh = false),
+                    File(claudeScratch.parentFile, "codex-relay"), ClaudeSessionFiles.clientId(computerId))
                 val paths = files.mapValues { (file, text) -> put(connection, "${instance.folder}/$file", text) }
                 val owner = found.home.replace('\\', '/') + "/.hey-mike/claude/owners/${name.removePrefix("chat-")}.lock"
                 val config = CodexRelayScripts.launchConfig(claude, args(paths), checkNotNull(cwd), env, owner)

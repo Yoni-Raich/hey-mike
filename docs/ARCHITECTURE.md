@@ -3030,7 +3030,19 @@ Decided 2026-10-01, on top of the section above.
   Refresh reads history and ownership together, and keeps Mike's own warm
   Claude process. The versioned reader is uploaded once per app run and
   restored if it disappears. Ownership uses live process arguments and native
-  PID metadata, distinguishing Mike's launcher from external clients. A
+  PID metadata, distinguishing Mike's launcher from external clients. Both
+  `.hey-mike/claude/` and retained `.hey-mike/codex-relay/` launch paths identify
+  Mike's processes; similarly named sibling folders do not. A
+  Windows Claude relay also has a stable client UUID in its launch path,
+  derived from this phone's saved computer ID. Reader v5 receives that UUID:
+  this client's relay is marked `owned`, another client's is an external
+  writer. This survives an app/engine restart, when the live engine map is
+  empty. Refresh only reads; a later explicit Send uses the existing verified
+  owner-lock takeover to replace the previous owned relay and resume native
+  history. No earlier user turn is replayed. Unmarked legacy Mike processes
+  still need a live local engine or must release their old offline lease.
+  Desktop handoff requires every process to release the session, even an
+  owned relay. A
   detected external writer blocks writing. Missing transcripts and failed
   ownership checks block imported sessions; chats created by Mike keep their
   previous behavior, including a first turn with no transcript yet. If only

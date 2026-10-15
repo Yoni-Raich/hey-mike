@@ -1,4 +1,4 @@
-param([ValidateSet('list','read','busy')][string]$Mode, [string]$SessionId)
+param([ValidateSet('list','read','busy')][string]$Mode, [string]$SessionId, [string]$ClientId)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -36,8 +36,10 @@ function TranscriptFiles {
     return @($found | Sort-Object LastWriteTimeUtc -Descending)
 }
 function Holders {
+    if ($ClientId -and $ClientId -notmatch $uuidPattern) { throw 'Invalid Claude client ID' }
     # Per session ID: 'other' when another Claude client holds it, 'mike' when
-    # only CLIs that Mike launched do. Mike's launch files live in .hey-mike\claude.
+    # only CLIs that Mike launched do. Mike's launch files live in .hey-mike\claude
+    # and, for relayed chats, in .hey-mike\codex-relay.
     $ids = @{}
     $mikePids = @{}
     $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
@@ -45,12 +47,17 @@ function Holders {
         if ($process.Name -notmatch 'claude|node') { continue }
         $command = [string]$process.CommandLine
         if ($command -notmatch '(?i)claude') { continue }
-        $mike = $command -match '[\\/]\.hey-mike[\\/]claude[\\/]'
-        if ($mike) { $mikePids[[int]$process.ProcessId] = $true }
+        $mike = $command -match '[\\/]\.hey-mike[\\/](?:claude|codex-relay)[\\/]'
+        $kind = if ($mike) { 'mike' } else { 'other' }
+        $client = [regex]::Match($command, '[\\/]\.hey-mike[\\/]codex-relay[\\/]([0-9a-fA-F-]{36})[\\/][0-9a-fA-F]{64}[\\/]')
+        if ($ClientId -and $client.Success -and $client.Groups[1].Value -match $uuidPattern) {
+            $kind = if ($client.Groups[1].Value -eq $ClientId) { 'mine' } else { 'other' }
+        }
+        if ($mike) { $mikePids[[int]$process.ProcessId] = $kind }
         foreach ($match in [regex]::Matches($command, '(?:--resume|--session-id|-r)(?:\s+|=)["'']?([0-9a-fA-F-]{36})(?:["''\s]|$)')) {
             $sid = $match.Groups[1].Value
             if ($sid -notmatch $uuidPattern) { continue }
-            if (-not $mike) { $ids[$sid] = 'other' } elseif (-not $ids.ContainsKey($sid)) { $ids[$sid] = 'mike' }
+            if ($kind -eq 'other' -or -not $ids.ContainsKey($sid) -or $ids[$sid] -eq 'mine') { $ids[$sid] = $kind }
         }
     }
     $sessionsPath = Join-Path $configPath 'sessions'
@@ -65,7 +72,8 @@ function Holders {
                     $sid = Field $row 'sessionId'
                     if (-not $sid) { $sid = Field $row 'session_id' }
                     if ($sid -match $uuidPattern -and @($processes | Where-Object { $_.ProcessId -eq [int]$ownerPid }).Count -gt 0) {
-                        if (-not $mikePids.ContainsKey([int]$ownerPid)) { $ids[$sid] = 'other' } elseif (-not $ids.ContainsKey($sid)) { $ids[$sid] = 'mike' }
+                        $kind = if ($mikePids.ContainsKey([int]$ownerPid)) { $mikePids[[int]$ownerPid] } else { 'other' }
+                        if ($kind -eq 'other' -or -not $ids.ContainsKey($sid) -or $ids[$sid] -eq 'mine') { $ids[$sid] = $kind }
                     }
                 } catch { }
             }
@@ -208,7 +216,7 @@ try {
         if ($selected.Count -ne 1) { throw 'Claude session ID occurs in more than one project; resolve the duplicate first' }
         $item = Metadata $selected[0] $holders
         if ($null -eq $item) { $code = 'not_found'; throw 'Claude session has no valid working folder' }
-        $payload = @{thread=$item;busy=($held -eq 'other');mike=($held -eq 'mike')}
+        $payload = @{thread=$item;busy=($held -eq 'other');mike=($held -in @('mike','mine'));owned=($held -eq 'mine')}
         if ($Mode -eq 'read') {
             $code = 'history'
             $payload.messages = @(Messages $selected[0])

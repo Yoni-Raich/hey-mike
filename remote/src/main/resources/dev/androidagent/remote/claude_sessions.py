@@ -1,4 +1,5 @@
 """Read-only Claude Code transcript projection. No SDK, model or auth request."""
+import argparse
 import json
 import os
 import re
@@ -100,7 +101,8 @@ def metadata(file, holders):
             "model": model or None, "busy": file.stem in holders}
 
 
-MIKE = re.compile(r"[\\/]\.hey-mike[\\/]claude[\\/]")
+MIKE = re.compile(r"[\\/]\.hey-mike[\\/](?:claude|codex-relay)[\\/]")
+CLIENT = re.compile(r"[\\/]\.hey-mike[\\/]codex-relay[\\/]([0-9a-fA-F-]{36})[\\/][0-9a-fA-F]{64}[\\/]")
 
 
 class ReaderError(ValueError):
@@ -127,17 +129,18 @@ def alive(pid):
         kernel.CloseHandle(ctypes.c_void_p(handle))
 
 
-def session_holders(config):
+def session_holders(config, client=None):
     """Per session ID: 'other' when another Claude client holds it, 'mike' when
-    only CLIs that Mike launched do. Mike's launch files live in .hey-mike/claude."""
+    only CLIs that Mike launched do. Mike's launch files live in .hey-mike/claude and, for relayed chats,
+    .hey-mike/codex-relay."""
     ids = {}
-    mike_pids = set()
+    mike_pids = {}
+    if client is not None and not UUID.fullmatch(client):
+        raise ValueError("Invalid Claude client ID")
 
-    def note(sid, mike):
-        if not mike:
-            ids[sid] = "other"
-        else:
-            ids.setdefault(sid, "mike")
+    def note(sid, kind):
+        if kind == "other" or sid not in ids or ids[sid] == "mine":
+            ids[sid] = kind
 
     proc = Path("/proc")
     if proc.is_dir():
@@ -149,11 +152,15 @@ def session_holders(config):
                 if "claude" not in " ".join(args[:2]).lower():
                     continue
                 mike = any(MIKE.search(arg) for arg in args)
+                kind = "mike" if mike else "other"
+                owner = next((match.group(1) for arg in args if (match := CLIENT.search(arg)) and UUID.fullmatch(match.group(1))), None)
+                if client is not None and owner is not None:
+                    kind = "mine" if owner.lower() == client.lower() else "other"
                 if mike:
-                    mike_pids.add(int(folder.name))
+                    mike_pids[int(folder.name)] = kind
                 for i, arg in enumerate(args[:-1]):
                     if arg in ("--resume", "--session-id", "-r") and UUID.fullmatch(args[i + 1]):
-                        note(args[i + 1], mike)
+                        note(args[i + 1], kind)
             except OSError:
                 continue
     sessions = config / "sessions"
@@ -168,7 +175,7 @@ def session_holders(config):
                     continue
                 sid = row.get("sessionId") or row.get("session_id")
                 if isinstance(sid, str) and UUID.fullmatch(sid):
-                    note(sid, pid in mike_pids)
+                    note(sid, mike_pids.get(pid, "other"))
             except (OSError, ValueError, TypeError):
                 continue
     return ids
@@ -256,9 +263,9 @@ def messages(file):
     return list(reversed(chain))
 
 
-def project(mode, sid=None):
+def project(mode, sid=None, client=None):
     config, projects = roots()
-    holders = session_holders(config)
+    holders = session_holders(config, client)
     candidates = files(projects)
     if mode == "list":
         items = [item for file in candidates if (item := metadata(file, holders)) is not None]
@@ -279,7 +286,8 @@ def project(mode, sid=None):
     item = metadata(selected[0], holders)
     if item is None:
         raise ReaderError("Claude session has no valid working folder", "not_found")
-    payload = {"thread": item, "busy": holders.get(sid) == "other", "mike": holders.get(sid) == "mike"}
+    payload = {"thread": item, "busy": holders.get(sid) == "other",
+               "mike": holders.get(sid) in ("mike", "mine"), "owned": holders.get(sid) == "mine"}
     if mode == "read":
         try:
             payload["messages"] = messages(selected[0])
@@ -292,7 +300,12 @@ def project(mode, sid=None):
 
 def main():
     try:
-        payload = project(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+        parser = argparse.ArgumentParser()
+        parser.add_argument("mode", choices=("list", "read", "busy"))
+        parser.add_argument("session", nargs="?")
+        parser.add_argument("--client")
+        args = parser.parse_args()
+        payload = project(args.mode, args.session, args.client)
         encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) > MAX_OUTPUT:
             raise ReaderError("Claude history exceeds the 8 MiB display limit", "history")
