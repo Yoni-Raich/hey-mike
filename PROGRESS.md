@@ -1,5 +1,49 @@
 # Progress
 
+### Internal browser: dev integration and panel handoff review — 2026-10-15
+
+Merged current `origin/dev` (`816be90`) into the browser branch as `5d005c8`.
+Only PROGRESS conflicted; both the browser evidence and Claude ownership
+updates were kept. PR #136 targets dev and includes the full internal browser.
+Its initial push and PR CI checks passed on `5d005c8`.
+
+The automated review found a real panel handoff gap: the Android host inherited
+a no-op `screenInUse`, leaving the panel above phone actions or approvals after
+Give back. A new host regression failed on that code. The host now publishes
+a dismissal version; the UI closes its panel and parks the same WebView. Phone
+work waits for the frame to detach, refusing after 3s if the UI has not done so.
+A visible user-owned page refuses screen work instead of being taken away,
+including calls from another chat. Later page updates do not undo an explicit
+reopen. Focused host/UI tests passed: 10 + 5, no failures or skips.
+
+Local integration validation hit build-environment problems: a shared Kotlin
+compiler wait (only this gate's daemon was stopped), the global storage hook
+trying to prune a locked lint-cache JAR, then unreadable shared transform
+metadata. Validation uses a temporary Gradle home with its own transforms,
+in-process Kotlin and a central-output init script that holds the existing
+worktree lease without pruning other builds. Global settings were not edited.
+The first full run then failed on Chrome's DevToolsActivePort write/read race
+and two SshDeltaPeerTest timeouts. The Chrome fixture now waits for a readable
+port within the same 15s startup budget. The serial full gate passed in 12m12s:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:web:lintDebug :app:lintDevDebug --no-daemon`, with
+`-Pkotlin.compiler.execution.strategy=in-process --max-workers=1` and
+`HEYMIKE_TEST_CHROME` set. Reports: 2917 test cases across 290 suites, zero
+failures/errors, 34 existing skips. Web: 87 per variant, including 60 live Chrome
+tests in each, no skips. Both SSH test variants passed without a remote change.
+Both requested APK builds and all three lint tasks passed. `python -m unittest
+tools.test_prepare_runtime tools.test_claude_sessions`: 32 passed. Diff check
+passed. Final-head CI is tracked in PR #136.
+
+Evidence is ignored under `artifacts/browser-dev-merge-20261015/`, including
+failed attempts, the red host test, focused green run, full-gate log, summary
+JSON and archived result XML. No new merged-tree
+phone install was done. Earlier Xiaomi evidence below applies to the earlier
+browser code; the panel handoff change has host/UI unit proof only. Hosting
+phone metadata read during this integration reported 1157, and was not replaced
+with the older 1155 browser APK. GitHub's stale-body Back and the unreproduced
+uncertain-click case remain open as described below.
+
 ### Internal browser: new-window links, router back, tolerant settling — 2026-10-15
 
 The hosting phone's deep run took 3:00, with 86.2s in browser calls. Xiaomi

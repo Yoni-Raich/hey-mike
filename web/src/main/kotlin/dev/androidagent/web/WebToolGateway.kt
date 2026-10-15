@@ -74,9 +74,9 @@ interface BrowserHost {
 
     /**
      * The run working in [key] is about to read or act on the phone's screen.
-     * A host whose page can sit above other apps must move it out of the way
-     * before this returns. The phone's pages live inside Hey Mike, so its
-     * host has nothing to move.
+     * A host whose panel can cover the screen must await its dismissal before
+     * this returns, including a panel inside Hey Mike above an approval card.
+     * A page still under user control must not be taken away silently.
      */
     suspend fun screenInUse(key: String) {}
 

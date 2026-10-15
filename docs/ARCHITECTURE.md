@@ -535,8 +535,11 @@ screen backend. A user panel or an approval changes the foreground, so
 `claimBrowserScreen` first takes the existing screen lease. Before any run
 reads or acts on the screen, raises a browser approval, or an automation
 drives the phone, the coordinator awaits `DeviceToolGateway.screenInUse`; a
-member that fails to clear the screen stops the caller. The phone's browser
-host has nothing to move there any more: its pages never sit above other apps.
+member that fails to clear the screen stops the caller. The phone host publishes
+a panel-dismissal version and awaits UI detachment (up to 3s), so the panel's
+bar and dialogs cannot cover a phone action or approval. The page stays alive
+in its hidden window. A visible page still owned by the user refuses screen
+work until the user gives it back or leaves the panel, including other chats.
 Browser profiles are app-owned and separate from Chrome, but all chats share
 the app's cookies.
 

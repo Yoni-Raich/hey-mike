@@ -73,6 +73,8 @@ data class BrowserPageState(
     val title: String? = null,
     /** The user has the page; the agent's actions wait until they give it back. */
     val userControlled: Boolean = false,
+    /** Changes when phone screen work asks the UI to leave this page's panel. */
+    val panelDismissals: Long = 0,
 )
 
 /**
@@ -520,6 +522,29 @@ class AndroidBrowserHost(
     }
 
     override suspend fun hide(key: String) = onMain { pages[key]?.let { control(it, user = false) }; Unit }
+
+    override suspend fun screenInUse(key: String) {
+        val waiting = onMain {
+            val visible = pages.values.filter { it.frame != null }
+            if (visible.any { it.userControlled }) throw WebFailure(
+                "user_control", "The user is controlling a visible browser page. No phone action was performed.",
+                "Wait for the user to give the page back or return to the chat before using the phone's screen.",
+            )
+            visible.forEach { page -> publish(page, page.state.copy(panelDismissals = page.state.panelDismissals + 1)) }
+            visible.isNotEmpty()
+        }
+        if (!waiting) return
+        // Only the panel's UI disposal can acknowledge that its bar, dialogs
+        // and WebView have all left the screen. Moving just the WebView is not enough.
+        repeat((SHOW_WAIT_MS / POLL_MS).toInt()) {
+            if (onMain { pages.values.none { it.frame != null } }) return
+            delay(POLL_MS)
+        }
+        throw WebFailure(
+            "browser_panel_busy", "The browser panel is still on screen. No phone action was performed.",
+            "Return to the chat before trying the phone action again.",
+        )
+    }
 
     override suspend fun close(key: String): Boolean = lock.withLock {
         onMain {

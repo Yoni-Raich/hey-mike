@@ -4,6 +4,8 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -54,7 +56,9 @@ class AndroidBrowserHostTest {
         // Regression: show used to schedule its own hiding through screen hand-over.
         val host = host()
         assertTrue(host.show(key))
-        host.screenInUse("another-chat")
+        val failure = runCatching { host.screenInUse("another-chat") }.exceptionOrNull()
+        assertTrue("phone work must not silently take a user-owned page", failure is WebFailure)
+        assertEquals("user_control", (failure as WebFailure).errorType)
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(1, frame.childCount)
         assertTrue(host.pageStates.value.getValue(key).userControlled)
@@ -66,6 +70,51 @@ class AndroidBrowserHostTest {
         assertEquals(0, frame.childCount)
         // The user still has it: the agent must not act while they are asked to open it.
         assertTrue(host.pageStates.value.getValue(key).userControlled)
+    }
+
+    @Test fun screenWorkWaitsForThePanelToLeaveAndKeepsItsPage() = runBlocking {
+        val host = host()
+        assertTrue(host.show(key))
+        host.giveBack(key)
+        val view = frame.getChildAt(0)
+        val screenWork = async(start = CoroutineStart.UNDISPATCHED) { host.screenInUse(key) }
+        try {
+            assertFalse("screen work must wait for the UI to remove the panel", screenWork.isCompleted)
+            assertEquals(1, frame.childCount)
+            // The Compose panel's disposal acknowledges that it has left the screen.
+            host.detach(key, frame)
+            screenWork.await()
+            assertEquals(0, frame.childCount)
+            assertNotNull("the page is parked, not closed", view.parent)
+            assertNotSame(frame, view.parent)
+            assertTrue(key in host.pageStates.value)
+            assertFalse(host.pageStates.value.getValue(key).userControlled)
+        } finally { screenWork.cancel() }
+    }
+
+    @Test fun anotherChatsScreenWorkAlsoWaitsForAnAgentOwnedPanel() = runBlocking {
+        val host = host()
+        assertTrue(host.show(key))
+        host.giveBack(key)
+        val screenWork = async(start = CoroutineStart.UNDISPATCHED) { host.screenInUse("another-chat") }
+        try {
+            assertFalse(screenWork.isCompleted)
+            assertEquals(1L, host.pageStates.value.getValue(key).panelDismissals)
+            host.detach(key, frame)
+            screenWork.await()
+            assertTrue(key in host.pageStates.value)
+        } finally { screenWork.cancel() }
+    }
+
+    @Test fun screenWorkIsRefusedWhenTheUiDoesNotRemoveThePanel() = runBlocking {
+        val host = host()
+        assertTrue(host.show(key))
+        host.giveBack(key)
+        val failure = runCatching { host.screenInUse(key) }.exceptionOrNull()
+        assertTrue(failure is WebFailure)
+        assertEquals("browser_panel_busy", (failure as WebFailure).errorType)
+        assertEquals(1, frame.childCount)
+        assertTrue(key in host.pageStates.value)
     }
 
     @Test fun leavingTheScreenMovesThePageBackToItsHiddenWindow() = runBlocking {

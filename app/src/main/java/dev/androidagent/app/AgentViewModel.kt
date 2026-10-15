@@ -186,7 +186,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val page = key?.let(pages::get)
                 mutable.update { state ->
-                    state.copy(browserPage = page, browserPageChat = id, browserOpenFor = state.browserOpenFor.takeUnless { it == id && page == null })
+                    state.withBrowserPage(id, page)
                 }
             }
         }

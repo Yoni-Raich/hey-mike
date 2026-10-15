@@ -29,9 +29,13 @@ class BrowserIntegrationTest {
                 .redirectErrorStream(true).redirectOutput(File(directory, "chrome.log")).start()
             val activePort = File(directory, "DevToolsActivePort")
             val deadline = System.nanoTime() + 15_000_000_000
-            while (!activePort.isFile && process.isAlive && System.nanoTime() < deadline) Thread.sleep(50)
-            check(activePort.isFile) { "Chrome did not start: ${File(directory, "chrome.log").readText().takeLast(1500)}" }
-            port = activePort.readLines().first().toInt()
+            var chromePort: Int? = null
+            while (chromePort == null && process.isAlive && System.nanoTime() < deadline) {
+                // Windows may expose the file while Chrome still has its write handle open.
+                chromePort = runCatching { activePort.readLines().firstOrNull()?.toIntOrNull() }.getOrNull()
+                if (chromePort == null) Thread.sleep(50)
+            }
+            port = checkNotNull(chromePort) { "Chrome did not start: ${File(directory, "chrome.log").readText().takeLast(1500)}" }
             server = ServerSocket().apply { bind(InetSocketAddress("127.0.0.1", 0)) }
             thread(isDaemon = true, name = "browser-fixture-http") {
                 while (!server.isClosed) {

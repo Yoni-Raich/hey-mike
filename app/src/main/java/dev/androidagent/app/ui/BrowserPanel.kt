@@ -93,6 +93,15 @@ private val NotSecure = Color(0xFFFFB4A9)
 internal fun AgentUiState.activeBrowserPage(): BrowserPageState? =
     browserPage?.takeIf { browserPageChat != null && browserPageChat == activeSessionId }
 
+/** A screen handoff closes the panel while keeping the page and its chat card. */
+internal fun AgentUiState.withBrowserPage(chat: String?, page: BrowserPageState?): AgentUiState {
+    val dismissed = page != null && browserPage?.key == page.key && browserPage.panelDismissals != page.panelDismissals
+    return copy(
+        browserPage = page, browserPageChat = chat,
+        browserOpenFor = browserOpenFor.takeUnless { it == chat && (page == null || dismissed) },
+    )
+}
+
 /** The open chat's page fills the screen. */
 internal fun AgentUiState.browserShown(): Boolean =
     activeBrowserPage() != null && browserOpenFor != null && browserOpenFor == activeSessionId

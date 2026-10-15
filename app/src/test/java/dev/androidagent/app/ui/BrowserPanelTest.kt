@@ -8,6 +8,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BrowserPanelTest {
+    @Test fun screenDismissalClosesThePanelButKeepsThePageAndAllowsReopening() {
+        val page = BrowserPageState("/chats/a/workspace")
+        val shown = AgentUiState(activeSessionId = "a", browserPage = page, browserPageChat = "a", browserOpenFor = "a")
+        val dismissed = shown.withBrowserPage("a", page.copy(panelDismissals = 1))
+        assertNull(dismissed.browserOpenFor)
+        assertFalse(dismissed.browserShown())
+        assertEquals(page.key, dismissed.activeBrowserPage()?.key)
+        val reopened = dismissed.copy(browserOpenFor = "a")
+            .withBrowserPage("a", dismissed.browserPage!!.copy(title = "Still the same page"))
+        assertTrue("later page updates must not undo an explicit reopen", reopened.browserShown())
+    }
+
+    @Test fun anotherPagesPastDismissalDoesNotCloseANewHandoff() {
+        val state = AgentUiState(activeSessionId = "b", browserPage = BrowserPageState("/chats/a/workspace"), browserPageChat = "a", browserOpenFor = "b")
+        val opened = state.withBrowserPage("b", BrowserPageState("/chats/b/workspace", panelDismissals = 1))
+        assertTrue(opened.browserShown())
+    }
+
     @Test fun theBarNamesTheSiteAndWarnsOnPlainHttp() {
         assertEquals("Blank page", browserSiteLabel(BrowserPageState("chat")))
         assertEquals("bank.example", browserSiteLabel(BrowserPageState("chat", host = "bank.example")))
