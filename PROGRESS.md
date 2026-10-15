@@ -1,5 +1,63 @@
 # Progress
 
+### Internal browser: physical follow-up and non-debuggable Hey Mike — 2026-10-15
+
+Follow-up on app code `4ea778a`; no product code changes. Xiaomi 23053RN02Y,
+Android 15. Two real chats on Dev Debug 1147 retained different pages and
+control states: weather at DuckDuckGo stayed Mike's, Example Domain stayed
+the user's. Back, chat switch and Open returned the matching page; the same
+two CDP target IDs survived. Screenshots and target lists are under ignored
+`artifacts/internal-browser-followup-2026-10-15/`.
+
+Built `gradlew.bat :app:assembleDevRelease '-PversionCodeOverride=1148'
+'-PversionNameOverride=0.14.0-dev.browser-releasecheck1' --console=plain`:
+BUILD SUCCESSFUL (43 s). ZIP-aligned and signed with the same test debug
+certificate, APK Signature Scheme v3 verified. This is a test-signed Dev
+Release build, not a published release. APK and installed `base.apk` SHA-256
+both `85f9304c979eff09e19076d81276762a6ec64a9ebf626966b4a586bb7fd17f78`.
+USB `adb install -r` succeeded. Package metadata shows 1148, that version name,
+and no DEBUGGABLE flag. Original install time and chat history stayed; no
+uninstall or data clear. Accessibility remained bound, no crashed services.
+
+On that installed Release build, a live on-phone Codex 6.1 Sol task called
+`device_status`, opened DuckDuckGo with `browser`, and showed it in Hey Mike.
+The expanded action card shows Checked the phone / Browser / Browser.
+An ADB tap and IME key events put `Release QA` in the page's search field;
+the field stayed above the keyboard. This was simulated input, not human
+typing. A second Release chat opened Example Domain, leaving DuckDuckGo and
+its typed field alive. No private session files were read from Release.
+
+Release handoff with a panel already open: B showed DuckDuckGo, then C's live
+`browser show` brought C's Example Domain panel forward. Across 137 CDP
+observations over 47 s, the same targets traded on-screen and parked positions
+at 1.985 s; C stayed attached afterwards. Native screenshots show B before,
+C after, and B reopened afterwards with `Release QA` still present (37, 39,
+45). Three requested browser waits were refused with `user_control` before
+that show, so this was not a 30-second delay test. No crash or page reset seen.
+
+Release show from the background also passed, while unlocked: after Give back,
+the live task waited 10 s then showed the same page. Home was pressed about
+0.4 s after Send. Window focus was sampled through 32 s: launcher first,
+Hey Mike MainActivity from about 11 s; the page was visible in screenshot 43.
+This does not prove locked-screen behavior or long background survival.
+
+Network gap reproduced on Debug 1147 with the unchanged production WebView
+policy: direct navigation to an owned loopback DNS alias made zero receiver
+connections; a synthetic public HTTPS 302 to the same HTTPS alias made two
+TLS ClientHello connections. The receiver ended TLS before HTTP. No private
+HTTP request/response or Internet-hosted redirect was proved. The HTTP
+variant made zero hits because Android refused cleartext. The fixture used
+CDP response fulfillment plus a USB reverse to a PC loopback listener, then
+restored Example Domain and removed the reverse. No network device was
+probed, and no DNS, certificate trust or app policy was changed. The gap is
+confirmed at connection level and remains unfixed; see ARCHITECTURE.
+
+Secure lock testing is pending a human being available to unlock the Xiaomi;
+it has a secure keyguard. The phone has not been locked for this test. Close
+page, renderer crash, user dropdowns/pickers and pinch zoom remain untested.
+The full gate in the next entry covers this unchanged app code; the follow-up
+adds physical evidence and a version override only.
+
 ### Internal browser: integrated with dev, review fixes, page shown inside Hey Mike — 2026-10-15
 
 Branch `fix/internal-browser-review-20261015`. `claude/internal-web-browser`
@@ -92,13 +150,14 @@ Seen on the phone, each in a screenshot:
   your control again"; the card said "Mike's browser", which matches the
   trace (no `show` after `hide`). That sentence was the model's error.
 
-Not tested on the phone: `show` from another app or with the phone locked
-(here Hey Mike was in front each time), two chats with pages and a real chat
-switch with the panel open, Close page, a renderer crash, the user's
-dropdowns, pinch zoom, release (non-debuggable) builds of this change.
+That first run did not cover show from another app, two real chats switching
+with a panel open, or non-debuggable Hey Mike. The follow-up above covers
+those on Release 1148. Still untested: secure lock, Close page, a renderer
+crash, the user's dropdowns/pickers and pinch zoom.
 
-Still open, not fixed: a server redirect to a privately resolving name sends
-that one request before the read guard closes the page. DNS rebinding and
+Still open, not fixed: a redirect can reach a privately resolving destination
+before the read guard runs (the follow-up confirms TLS connections, not a
+private HTTP request). DNS rebinding and
 websockets are still gaps. `tools/browser-probe` only follows the new `show`
 signature and still builds (`-p tools/browser-probe assembleRelease`). It does
 not exercise the in-app panel.

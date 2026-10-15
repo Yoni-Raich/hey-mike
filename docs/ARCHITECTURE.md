@@ -509,8 +509,17 @@ failed DNS lookup in these after-the-fact checks does not blank a page that
 already loaded. These checks are not a network firewall: a server redirect to
 a name that resolves privately is judged only by the literal check while it
 loads (`shouldOverrideUrlLoading` runs on the main thread without a lookup),
-so that one request is made before the read guard closes the page. That is the
-blind request any web page can already cause; its response is not read.
+so a redirect can reach a private destination before the next read guard.
+A controlled Xiaomi test on 2026-10-15 confirmed the connection gap: direct
+navigation to a privately resolving name reached no listener, but a synthetic
+public HTTPS 302 caused two TLS ClientHello connections to an owned loopback
+listener. The fixture ended TLS before HTTP, so this proves private connection
+attempts, not receipt of an HTTP request or reading a private response. The
+plain HTTP variant was stopped by Android's cleartext policy. No certificate
+exception, DNS override or change to the browser's policy was used. The read
+guard still closes a blocked main page before reading it; it is not a firewall.
+Android documents that `shouldInterceptRequest` sees only the initial URL in
+a redirect chain ([WebViewClient reference](https://developer.android.com/reference/android/webkit/WebViewClient#shouldInterceptRequest(android.webkit.WebView,%20android.webkit.WebResourceRequest))).
 DNS rebinding and websocket traffic remain validation gaps. Password/card
 values are masked in snapshots and refused by fill. Arbitrary page eval and
 recognized sends/payments/form submissions use the app's approval card; Enter
