@@ -69,6 +69,7 @@ class DeepProbeActivity : Activity() {
                     when (intent.getStringExtra("scenario")) {
                         "sites" -> sites()
                         "github" -> github()
+                        "popup" -> popup()
                         "controls" -> controls()
                         "keyboard" -> keyboard()
                         else -> forms()
@@ -298,6 +299,27 @@ class DeepProbeActivity : Activity() {
             row("$p-external-result", buildJsonObject { put("ok", external); put("url", host.session(key).location().first) })
         }
         call("gh-show", """{"operation":"show"}""")
+    }
+
+    /** The chat's failing shape: after a reload, a plan click on the new-window link with no verify. */
+    private suspend fun popup() {
+        repeat(8) { index ->
+            val p = "popup-$index"
+            call("$p-open", """{"operation":"open","url":"https://github.com/whatwg/html"}""")
+            if (index % 2 == 0) call("$p-reload", """{"operation":"reload","verify":{"text":"html.spec.whatwg.org/multipage/","timeoutMs":15000}}""")
+            else call("$p-ready", """{"operation":"wait","text":"html.spec.whatwg.org/multipage/","timeoutMs":15000}""")
+            val ref = Regex("""(?m)^link "html\.spec\.whatwg\.org/multipage/" \[([^]]+)]""").find(lastReply)?.groupValues?.get(1)
+                ?: Regex("""(?m)^link "html\.spec\.whatwg\.org/multipage/" \[([^]]+)]""").let { re ->
+                    call("$p-snapshot", """{"operation":"snapshot","filter":"html.spec","force":true}"""); re.find(lastReply)?.groupValues?.get(1) }
+            call("$p-click", buildJsonObject {
+                put("operation", "plan")
+                put("steps", buildJsonArray { add(buildJsonObject {
+                    put("operation", "click")
+                    if (ref != null) put("ref", ref) else { put("text", "html.spec.whatwg.org/multipage/"); put("role", "link") }
+                }) })
+            })
+            row("$p-url", JsonPrimitive(host.session(key).location().first))
+        }
     }
 
     private suspend fun keyboard() {

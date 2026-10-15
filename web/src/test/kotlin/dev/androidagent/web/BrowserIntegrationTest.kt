@@ -176,6 +176,24 @@ class BrowserIntegrationTest {
         assertTrue(back.text, back.text.contains("Browser fixture"))
     }
 
+    @Test fun aSettleReadThatLosesTheDocumentDoesNotFailASentClick() = runBlocking {
+        failReadFor = "__mike.settle"
+        val result = call("""{"operation":"plan","steps":[{"operation":"click","text":"Apply","role":"button"}]}""")
+        failReadFor = null
+        assertTrue(result.text, result.success)
+        assertEquals(JsonPrimitive(1), value("clicks"))
+        assertTrue(result.text, result.text.contains("did not settle"))
+        assertTrue(result.text, result.text.contains("navigationReadRaces"))
+    }
+
+    @Test fun aFailedStepNamesItsErrorTypeInTheTimings() = runBlocking {
+        val result = call("""{"operation":"plan","steps":[{"operation":"click","text":"No such control","role":"button"}]}""")
+        assertFalse(result.text, result.success)
+        val timings = Json.parseToJsonElement(result.text.substringAfterLast("\ntimings: ")).jsonObject
+        assertEquals("not_found", timings["errorType"]!!.jsonPrimitive.content)
+        assertEquals("not_found", timings["steps"]!!.jsonArray[0].jsonObject["timings"]!!.jsonObject["errorType"]!!.jsonPrimitive.content)
+    }
+
     @Test fun planReturnsStepTimingsAndOnlyOneFinalSnapshot() = runBlocking {
         val result = call("""{"operation":"plan","steps":[{"operation":"fill","text":"Query","value":"timing test"},{"operation":"click","text":"Apply","verify":{"text":"Applied timing test true"}}]}""")
         assertTrue(result.text, result.success)

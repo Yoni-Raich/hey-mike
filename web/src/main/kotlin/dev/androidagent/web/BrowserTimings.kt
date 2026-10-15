@@ -41,6 +41,9 @@ internal class BrowserTimings(val operation: String, private val parent: Browser
             put("event", name); put("atMs", ms(System.nanoTime() - started))
         }
     }
+    private var errorType: String? = null
+    /** The failure's stable error name: never page text, so the log can say why a call failed. */
+    @Synchronized fun error(type: String) { if (errorType == null) errorType = type; parent?.error(type) }
     @Synchronized fun step(index: Int, timing: JsonObject, action: String, verification: String) {
         steps += buildJsonObject {
             put("step", index); put("action", action); put("verification", verification); put("timings", timing)
@@ -49,6 +52,7 @@ internal class BrowserTimings(val operation: String, private val parent: Browser
     @Synchronized fun json(status: String, detail: Boolean = false): JsonObject = buildJsonObject {
         val total = System.nanoTime() - started
         put("callId", id); put("operation", operation); put("status", status)
+        errorType?.let { put("errorType", it) }
         put("backendMs", ms(total))
         // Exclusive phases add up; CDP durations below overlap these phases.
         put("phasesMs", buildJsonObject { phases.forEach { (name, ns) -> put(name, ms(ns)) } })

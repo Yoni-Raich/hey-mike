@@ -149,11 +149,11 @@ class WebToolGateway(private val host: BrowserHost, private val timingLog: (Stri
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: WebFailure) {
-                    failed(reconcile(failure, call.acted), call)
+                    failed(reconcile(failure, call.acted).also { timing.error(it.errorType) }, call)
                 } catch (failure: CdpException) {
-                    failed(protocolFailure(failure, call.acted), call)
+                    failed(protocolFailure(failure, call.acted).also { timing.error(it.errorType) }, call)
                 } catch (failure: IOException) {
-                    failed(disconnected(failure, call.acted), call)
+                    failed(disconnected(failure, call.acted).also { timing.error(it.errorType) }, call)
                 }
             }
             status = if (result.success) "ok" else "failed"
@@ -413,6 +413,7 @@ class WebToolGateway(private val host: BrowserHost, private val timingLog: (Stri
                     disconnected(stepFailure, acted())
                 }
             }
+            failure?.let { stepTiming.error(it.errorType) }
             call.timing.step(number, stepTiming.json(when {
                 failure == null -> "ok"
                 ran == number -> "verification_failed"

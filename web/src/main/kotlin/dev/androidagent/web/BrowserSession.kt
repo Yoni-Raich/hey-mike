@@ -1090,12 +1090,21 @@ class BrowserSession(
                 agentValue(mainFrame(), "__mike.settle($QUIET_MS, $maxMs)", timeoutMs = maxMs)
                 return
             } catch (failure: CdpException) {
-                if (failure.code == CdpClient.TIMEOUT_CODE || !failure.message.contains("context", ignoreCase = true)) throw failure
-                coroutineContext[BrowserTimings]?.count("navigationReadRaces")
-                delay(POLL_MS)
-                while (!documentReady()) delay(POLL_MS)
+                // A lost frame or context is the document being replaced; a
+                // timeout is not, and still fails the call.
+                if (failure.code == CdpClient.TIMEOUT_CODE) throw failure
+                replaced()
+            } catch (failure: WebFailure) {
+                if (failure.errorType != "page_busy" && failure.errorType != "frame_gone") throw failure
+                replaced()
             }
         }
+    }
+
+    private suspend fun replaced() {
+        coroutineContext[BrowserTimings]?.count("navigationReadRaces")
+        delay(POLL_MS)
+        while (!documentReady()) delay(POLL_MS)
     }
 
     /**
