@@ -320,9 +320,9 @@ fun AndroidAgentScreen(
                     .fillMaxSize()
                     .drawerPushed(drawerPush, layoutDirection)
                     .imePadding()
-                    // The chat stays composed under voice mode; keep it out
-                    // of touch exploration while it is off screen.
-                    .then(if (voiceMode.shown) Modifier.clearAndSetSemantics { } else Modifier),
+                    // The chat stays composed under voice mode and under the
+                    // browser page; keep it out of touch exploration then.
+                    .then(if (voiceMode.shown || state.browserShown()) Modifier.clearAndSetSemantics { } else Modifier),
                 contentWindowInsets = WindowInsets.safeDrawing,
                 containerColor = MaterialTheme.colorScheme.background,
                 snackbarHost = { SnackbarHost(snackbars) },
@@ -374,6 +374,9 @@ fun AndroidAgentScreen(
                             )
                         }
                         TransferBanner(state.fileTransfer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                        state.browserPage?.let { page ->
+                            BrowserPageCard(page, onOpen = actions.onOpenBrowser, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                        }
                         state.runState.approval?.let { approval ->
                             ApprovalCard(
                                 approval = approval,
@@ -415,6 +418,20 @@ fun AndroidAgentScreen(
 
         // Sheets are windows of their own and would sit above first launch.
         val onboarding = state.onboardingStep() != dev.androidagent.core.OnboardingStep.DONE
+        val page = state.browserPage
+        if (page != null && state.browserShown() && !onboarding) {
+            BrowserPanel(
+                page = page,
+                running = state.runState.active,
+                onBack = actions.onCloseBrowser,
+                onTakeControl = actions.onBrowserTakeControl,
+                onGiveBack = actions.onBrowserGiveBack,
+                onClosePage = actions.onBrowserClosePage,
+                onStop = actions.onStop,
+                attach = actions.onAttachBrowser,
+                detach = actions.onDetachBrowser,
+            )
+        }
         if (state.isSettingsOpen && !onboarding) {
             AgentSettingsSheet(state = state, actions = actions)
         }

@@ -62,7 +62,7 @@ class ProbeActivity : Activity() {
             val gateway = WebToolGateway(object : BrowserHost {
                 override fun unavailable(): WebFailure? = null
                 override suspend fun session(key: String) = page
-                override suspend fun show(key: String) = Unit
+                override suspend fun show(key: String) = false
                 override suspend fun hide(key: String) = Unit
                 override suspend fun close(key: String): Boolean { page.close(); return true }
                 override fun statusLine() = "Probe"

@@ -44,8 +44,8 @@ import java.io.IOException
  * Where the pages live.
  *
  * The gateway knows operations; the host knows how a page comes to exist on
- * this device and how the user gets to see it. On a phone that is a WebView in
- * a window of its own; in a test it is a desktop Chrome.
+ * this device and how the user gets to see it. On a phone that is a WebView
+ * shown inside Hey Mike; in a test it is a desktop Chrome.
  */
 interface BrowserHost {
     /** Why the browser cannot run right now, or null when it can. Never opens anything. */
@@ -54,10 +54,14 @@ interface BrowserHost {
     /** The page that belongs to [key], opened on first use. */
     suspend fun session(key: String): BrowserSession
 
-    /** Put [key]'s page in front of the user, so they can type what the agent must not. */
-    suspend fun show(key: String)
+    /**
+     * Give [key]'s page to the user, in front of them, so they can type what
+     * the agent must not. True when it reached the screen; false when it
+     * waits for them in the chat instead.
+     */
+    suspend fun show(key: String): Boolean
 
-    /** Put it away again. The page keeps running. */
+    /** Take it back from the user. The page keeps running. */
     suspend fun hide(key: String)
 
     /** Close [key]'s page for good. True when there was one. */
@@ -68,8 +72,9 @@ interface BrowserHost {
 
     /**
      * The run working in [key] is about to read or act on the phone's screen.
-     * A page shown to the user for any other chat is put away first, so the
-     * screen work does not land in that window. Must not block.
+     * A host whose page can sit above other apps must move it out of the way
+     * before this returns. The phone's pages live inside Hey Mike, so its
+     * host has nothing to move.
      */
     suspend fun screenInUse(key: String) {}
 
@@ -114,7 +119,7 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
 
     override suspend fun screenInUse(runId: String, workspace: File) = host.screenInUse(workspace.absolutePath)
 
-    /** The page is in a window of its own, never on the screen the user is using. */
+    /** The page is Hey Mike's own, never the app the user is using. */
     override fun needsControl(name: String): Boolean = false
 
     override fun deviceBackendLive(): Boolean = false
@@ -207,12 +212,16 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
         return when (operation) {
             "show" -> {
                 page(chat, call)
-                host.show(chat)
-                ToolResult("ok: true\ndid: the page is in front of the user. Ask them to do their part and say when they are done, then call hide.")
+                ToolResult("ok: true\ndid: " + if (host.show(chat)) {
+                    "the page is in front of the user, in Hey Mike, and they have control. Ask them to do their part and say when they are done, then call hide."
+                } else {
+                    "the user has control of the page, but it could not be brought to the screen (the phone may be locked). " +
+                        "Tell them to open it from this chat in Hey Mike, then call hide when they are done."
+                })
             }
             "hide" -> {
                 host.hide(chat)
-                ToolResult("ok: true\ndid: the page is put away and still open.")
+                ToolResult("ok: true\ndid: the page is back under your control and still open.")
             }
             "close" -> ToolResult("ok: true\ndid: " + if (host.close(chat)) "the page is closed." else "no page was open.")
             "screenshot" -> {
@@ -522,7 +531,7 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
                 "ArrowDown...). scroll (direction up, down, top or bottom, or an element to bring into view). " +
                 "wait (text, selector or url to appear; gone=true to disappear; timeoutMs). read - the page as " +
                 "reading text, paged by offset. eval (script, JavaScript run in the page). back, reload, " +
-                "screenshot, close. show puts the page in front of the user and hide puts it away: password and " +
+                "screenshot, close. show gives the page to the user inside Hey Mike and hide takes it back: password and " +
                 "card fields are the user's to type, so the browser refuses to fill them. plan runs steps - an " +
                 "array of these operations - in ONE call and stops at the first that fails; use it as soon as a " +
                 "snapshot shows you the whole sequence, e.g. fill, fill, click. An action replies with the page " +

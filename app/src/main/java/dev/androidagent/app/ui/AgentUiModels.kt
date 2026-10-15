@@ -159,6 +159,10 @@ data class AgentUiState(
     val isAutomationsOpen: Boolean = false,
     /** The chat folder's file sheet is showing. */
     val isWorkspaceOpen: Boolean = false,
+    /** The open chat's browser page, or null when it has none. */
+    val browserPage: dev.androidagent.web.BrowserPageState? = null,
+    /** The chat whose page fills the screen; any other chat shows its own conversation. */
+    val browserOpenFor: String? = null,
     val isLoadingSessions: Boolean = false,
     val isLoadingMessages: Boolean = false,
     val isPreparingRuntime: Boolean = false,
@@ -354,6 +358,14 @@ data class AgentUiActions(
     val onOpenWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onShareWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onCloseWorkspaceFiles: () -> Unit = {},
+    val onOpenBrowser: () -> Unit = {},
+    val onCloseBrowser: () -> Unit = {},
+    val onBrowserTakeControl: () -> Unit = {},
+    val onBrowserGiveBack: () -> Unit = {},
+    val onBrowserClosePage: () -> Unit = {},
+    /** Put the open chat's page in this frame; false when there is none. */
+    val onAttachBrowser: (dev.androidagent.web.BrowserFrame) -> Boolean = { false },
+    val onDetachBrowser: (dev.androidagent.web.BrowserFrame) -> Unit = {},
     val onApproval: (requestId: String, allow: Boolean) -> Unit = { _, _ -> },
     /** The user's answer to an `ask_user` question; null when they skip it. */
     val onAnswerQuestion: (questionId: String, answer: String?) -> Unit = { _, _ -> },

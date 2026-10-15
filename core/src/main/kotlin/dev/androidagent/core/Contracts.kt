@@ -518,8 +518,8 @@ interface DeviceToolGateway {
     /**
      * The run with [workspace] is about to read or act on the phone's screen,
      * or to raise an approval over it. A backend that can cover the screen
-     * with a window of its own (a browser page shown to the user) moves it out
-     * of the way, so a tap never lands in that window instead of the app.
+     * with a window of its own moves it out of the way before this returns,
+     * so a tap never lands in that window instead of the app.
      */
     suspend fun screenInUse(runId: String, workspace: File) {}
 

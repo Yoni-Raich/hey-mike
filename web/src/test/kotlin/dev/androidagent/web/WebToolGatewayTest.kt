@@ -18,7 +18,7 @@ class WebToolGatewayTest {
         var opened = 0
         override fun unavailable(): WebFailure? = null
         override suspend fun session(key: String): BrowserSession { opened++; throw failure }
-        override suspend fun show(key: String) = Unit
+        override suspend fun show(key: String) = true
         override suspend fun hide(key: String) = Unit
         override suspend fun close(key: String) = false
         override fun statusLine() = "Test"

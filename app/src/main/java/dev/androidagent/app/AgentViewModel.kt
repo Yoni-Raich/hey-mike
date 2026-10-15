@@ -176,6 +176,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.remote.threadNotices.collect { notices -> mutable.update { it.copy(pcThreadNotices = notices) } } }
         viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
         viewModelScope.launch { graph.transfers.current.collect { move -> mutable.update { it.copy(fileTransfer = move) } } }
+        // The open chat's page: a card above the composer, and the page itself when opened.
+        viewModelScope.launch {
+            val keys = mutableMapOf<String, String>()
+            combine(current, graph.browserHost.pageStates) { id, pages -> id to pages }.collectLatest { (id, pages) ->
+                val key = id?.let { chat ->
+                    keys[chat] ?: runCatching { withContext(Dispatchers.IO) { graph.sessions.workspace(chat).absolutePath } }
+                        .getOrNull()?.also { keys[chat] = it }
+                }
+                val page = key?.let(pages::get)
+                mutable.update { state ->
+                    state.copy(browserPage = page, browserOpenFor = state.browserOpenFor.takeUnless { it == id && page == null })
+                }
+            }
+        }
         viewModelScope.launch {
             graph.computerRequests.collect { request ->
                 when (request) {
@@ -912,6 +926,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         current.value = id
     }
     fun browseVoiceChats() { mutable.update { it.copy(voiceBrowsing = true) } }
+    /** Put the open chat's page in front, if it has one. */
+    fun openBrowser() {
+        mutable.update { it.copy(browserOpenFor = it.activeSessionId.takeIf { _ -> it.browserPage != null }) }
+    }
+    /** The open chat's page, as the browser host knows it, or null when there is none. */
+    fun browserPageKey(): String? = mutable.value.browserPage?.key
     fun returnToVoice() {
         graph.voiceConversation.sessionId.value?.let { current.value = it }
         mutable.update { it.copy(voiceBrowsing = false) }

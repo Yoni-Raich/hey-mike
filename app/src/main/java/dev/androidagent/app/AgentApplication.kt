@@ -338,6 +338,19 @@ class AgentGraph(private val app: Application) {
             workflowId = "browser", stepId = "action", action = "browser",
             summary = summary, packageName = app.packageName, appLabel = "Mike browser",
         )) == dev.androidagent.core.WorkflowConfirmationOutcome.ALLOWED
+    }, present = { key ->
+        // The page opens on Hey Mike's own screen, in the chat it belongs to.
+        browserOwner(key)?.state?.value?.sessionId?.let { chat ->
+            runCatching {
+                app.startActivity(
+                    android.content.Intent(app, MainActivity::class.java)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        .putExtra(QuestionNotifier.EXTRA_OPEN_CHAT, chat)
+                        .putExtra(EXTRA_OPEN_BROWSER, true),
+                )
+            }
+        }
     })
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
         listOf(dev.androidagent.web.WebToolGateway(browserHost), workflowTools, knowledgeTools, automationTools,

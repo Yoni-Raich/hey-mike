@@ -379,8 +379,12 @@ staged file hashes.
 ## Internal browser
 
 `:web` exposes one `browser` tool through the existing composite gateway.
-`AndroidBrowserHost` owns one WebView per chat (keyed by the chat's workspace),
-attached to a parked, non-touchable overlay. `CdpClient` speaks HTTP/WebSocket
+`AndroidBrowserHost` owns one WebView per chat (keyed by the chat's workspace).
+While nobody looks at it, the WebView sits in a parked, non-touchable,
+phone-sized overlay window, so it keeps laying out and drawing while the user
+is in another app (this is why the browser needs "display over other apps").
+The user sees it only inside Hey Mike: see "Shown inside Hey Mike" below.
+`CdpClient` speaks HTTP/WebSocket
 over the app's own abstract LocalSocket (`webview_devtools_remote_<pid>`); no
 ADB connection is used. WebView debugging is intentionally enabled while
 internal pages exist, including release builds, and disabled after the last
@@ -397,19 +401,30 @@ connection in the process has used (`Long` refs), so an old ref can only be
 stale, never name another element. Plain-text targets count every match, so a
 label shown twice is `ambiguous_target`. Before a press the helper hit-tests
 the element's middle (`elementFromPoint`, shadow roots and labels included);
-a covering element is scrolled past once, then reported as `obscured` with its
-ref, and nothing is pressed. The check runs again after an approval. `fill`
-types only when the target keeps the focus; a field that passes its focus on
-gets its value set directly, and a content-editable one is refused
-(`not_focused`), so text never lands in another field.
+an off-screen element is scrolled into view once; a covering element is
+reported as `obscured` with its ref, and nothing is pressed. A press inside a
+frame is also hit-tested from the top viewport (`DOM.getNodeForLocation`), so
+an overlay in a parent document blocks it too. The check runs again after an
+approval, and the approval is void if the control or its form destination
+(`approvalToken`: address, ref, name, type, href, form action/method/target)
+changed while the user decided. Approval is judged on the element that really
+activates: a `span` inside a submit button, or a label, counts as that button.
+A selector or text that matches in two frames is ambiguous. `fill` types only
+when the target holds focus through every embedding frame (`hasFocus` walks
+`DOM.getFrameOwner` up to the main document, shadow roots included); a field
+that passes its focus on gets its value set directly, and a content-editable
+one is refused (`not_focused`), so text never lands in another field.
+`fill(submit)` sends Enter only if that focus chain still holds before and
+after the approval; otherwise it reports the completed fill (`completedAction`)
+and sends nothing.
 
 **Input.** CDP types text and captures page PNGs. Android touch uses
 `WebViewInput`: the DOM point becomes a touchscreen-sourced finger
 `MotionEvent` delivered to this app's WebView, which preserves trusted input
 when WebView rejects CDP touch emulation. Stop between down and up sends
 `ACTION_CANCEL`. It never taps the global screen. The CSS-to-view scale is
-exact at default zoom; pinch zoom and parked-window rendering need device
-evidence.
+exact at default zoom; pinch zoom, parked-window rendering, and moving the
+WebView between that window and Hey Mike's screen need device evidence.
 
 **Ledger and uncertainty.** `BrowserSession.inputs` counts every input just
 before it is sent (press, typed text, value set, option, navigation, script).
@@ -426,34 +441,57 @@ verification, and never asks to repeat an uncertain action. Failure replies
 keep the page's notes (blocked link, refused dialog or download) and, for a
 lost connection or a stall, a `phone:` line when the screen is off or the
 phone is locked (`BrowserHost.conditions`). A read that fails is a failed
-call, not an "ok" reply.
+call, not an "ok" reply: a main-frame snapshot that throws is an error, and a
+screenshot is refused while any frame shows a blocked address. Helper calls
+are never retried after a CDP failure: a lost reply to a scroll, value set or
+option may have run the page's handlers, so it is counted as sent first and
+reported as uncertain instead of replayed.
 
 **Reconnect and lifecycle.** A page whose CDP connection dropped but whose
 WebView lives is attached again by its DevTools target id: the page, its login
 and its form stay; nothing is repeated, and the next reply says earlier refs
 are gone. If that fails, or the renderer died, the page is replaced by a blank
-one and the chat is told. Every path that ends a page (Close button,
+one and the chat is told. Every path that ends a page (the user's Close,
 `onRenderProcessGone`, `close`, eviction, service stop) goes through one
 main-thread `discard`, so the page count, the shown page and WebView
 debugging agree. At most four pages exist: before a new one, pages of deleted
-chats are closed, then the least recently used page that is not busy and not
-shown; the chat that lost it is told on its next page.
+chats are closed, then the least recently used page that is not busy, not
+on screen and not in the user's hands; the chat that lost it is told on its
+next page.
 
 **Chats and the screen.** Each coordinator has its own browser gateway.
 Independent tools bypass `DeviceLease` through
 `requiresDeviceLease`/`beginIndependentTool` (the composite calls each
 member's own hook, never `beginRun`); their stop does not revoke another run's
 screen backend. A user panel or an approval changes the foreground, so
-`claimBrowserScreen` first takes the existing screen lease. A shown page
-outlives the turn that showed it (the agent waits for the user's reply), so
-before any run reads or acts on the screen, raises a browser approval, or an
-automation drives the phone, the coordinator calls
-`DeviceToolGateway.screenInUse`, and the host puts away any shown page,
-telling its chat. Taps therefore never land in the browser window. `show`
-pauses agent mutations while the user types a password or passes a CAPTCHA;
-the bar shows the site's host, and "Not secure" for plain http. `hide` returns
-control. Browser profiles are app-owned and separate from Chrome, but all
-chats share the app's cookies.
+`claimBrowserScreen` first takes the existing screen lease. Before any run
+reads or acts on the screen, raises a browser approval, or an automation
+drives the phone, the coordinator awaits `DeviceToolGateway.screenInUse`; a
+member that fails to clear the screen stops the caller. The phone's browser
+host has nothing to move there any more: its pages never sit above other apps.
+Browser profiles are app-owned and separate from Chrome, but all chats share
+the app's cookies.
+
+**Shown inside Hey Mike.** The page is part of its chat, not a floating
+window. The chat shows a card above the composer (site, title, who has the
+page, Open). Open fills Hey Mike's screen with the page: a bar with Back,
+title, host with a lock or "Not secure" for plain http, and Close (asks
+first); a strip that says who has the page, with Take control / Give back to
+Mike, and Stop while a run works. The same WebView moves into a `BrowserFrame`
+on that screen (`attach`) and back to its parked window when the screen
+closes or the activity stops (`detach`), so it keeps running while the user is
+elsewhere; its `MutableContextWrapper` follows it to the activity, so the
+user's own dropdowns and pickers have one. While the agent has the page the
+frame swallows the user's touches; the agent's own taps go to the WebView
+directly. `show` gives the page to the user (agent actions are refused with
+`user_control`), asks the app to come forward on that chat with the page open,
+and says whether the page reached the screen within 3 seconds; if not (phone
+locked), the user still has it and is told to open it from the chat. `hide`,
+or the user's Give back, returns control; the agent is told the user may have
+changed the page. Another chat taking the screen no longer takes the page
+away from the user: Hey Mike simply goes behind the app that chat drives, and
+the page goes back to its parked window. (Before, a shown overlay was parked
+on every screen hand-over, and `show` hid its own page through that path.)
 
 **Network and permissions.** The host disables file/content access, popups,
 automatic downloads, uploads, third-party cookies, and camera/microphone
@@ -474,8 +512,9 @@ blind request any web page can already cause; its response is not read.
 DNS rebinding and websocket traffic remain validation gaps. Password/card
 values are masked in snapshots and refused by fill. Arbitrary page eval and
 recognized sends/payments/form submissions use the app's approval card; Enter
-in a form inside a frame is judged in that frame, and a frame that cannot be
-read asks first. This does not prove every site-specific sensitive control is
+is judged on the control that really holds focus, found through every frame,
+and the approval is void if that control changes while the user decides.
+A frame that cannot be read asks first. This does not prove every site-specific sensitive control is
 recognizable. The bundled `browser` skill is installed normally by
 `WorkspaceSeeder`, and resumed Codex threads receive the current tool surface.
 

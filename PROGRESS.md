@@ -1,5 +1,68 @@
 # Progress
 
+### Internal browser: integrated with dev, review fixes, page shown inside Hey Mike — 2026-10-15
+
+Branch `fix/internal-browser-review-20261015`. `claude/internal-web-browser`
+(`a1874f2`, unchanged) is merged into dev `9caafd2` as a real merge, so dev's
+features, schema 9 and version 1147 stay. No version bump: nothing is released.
+
+Review fixes (`fix(web): close review findings`). Each has a test that failed
+on the merge commit and passes now. Red run checked here: the 12 new tests
+on the pre-fix code with only the `CdpConnection` test seam added gave
+48 tests, 12 failed, and each of the 12 was a new test:
+- `show` hid its own page: the posted screen hand-over parked it after it
+  appeared. Hand-over is now awaited (`screenInUse` is suspend end to end) and
+  a failing member stops the caller.
+- A click on a `span` inside a submit button, or on a label, skipped approval.
+  Approval is judged on the element that activates.
+- `fill(submit)` could send Enter into another form when a frame moved focus.
+  Enter now needs the target focused through every frame, before and after
+  approval. Otherwise the completed fill is reported (`completedAction`) and no
+  Enter is sent.
+- A lost reply to a mutating helper call was retried, which ran page handlers
+  twice. No retries now; scroll/value/option count as sent first, and a lost
+  reply is reported as uncertain.
+- A click inside a frame went through an overlay in the parent document. The
+  hit test now also runs from the top viewport.
+- The same match in two frames took the first. Now `ambiguous_target`.
+- An approval stayed valid after the control or form destination changed.
+  Now `target_changed`/`focus_changed`.
+- A failing main-frame snapshot returned an empty page, and a screenshot could
+  show a blocked frame. Both now fail.
+
+Design change (the user's request): the page is part of its chat, inside Hey
+Mike, not a floating window. See ARCHITECTURE "Shown inside Hey Mike". The
+WebView stays in a parked hidden window while not viewed, so it keeps running
+in the background. The chat shows a card. Open moves the same WebView into a
+full-screen panel: site, lock or "Not secure", who has the page, Take control
+or Give back to Mike, Stop, and Close (asks first). Touches are held back
+while Mike has the page. `show` brings Hey Mike forward on that chat, gives
+the user control, and says whether the page reached the screen.
+
+Evidence (Windows, central build storage, `HEYMIKE_TEST_CHROME` = desktop
+Chrome): `gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+:voice:lintDebug :web:lintDebug :app:lintDevDebug --no-daemon --rerun-tasks`
+BUILD SUCCESSFUL, no lint errors. Tests: web 53 per variant (35 live CDP,
+6 Robolectric host, 7 policy, 5 gateway), core 786, app 164 per variant (2 new
+for the panel labels), remote 149 (3 skipped), workspace 47 (14 skipped),
+others unchanged. All with 0 failures. `python -m unittest
+tools.test_prepare_runtime` 15 OK; `git diff --check` clean.
+
+Not tested: nothing here ran on a phone. Robolectric has no WebView renderer,
+so the following still need device evidence:
+- moving a live WebView between the parked window and the activity, including
+  rendering, keyboard, and the user's dropdowns through
+  `MutableContextWrapper`;
+- the panel itself (no screenshot exists: no UI evidence);
+- `show` bringing Hey Mike forward from another app or with the phone locked;
+- `WebViewInput` taps, pinch zoom, and two chats browsing at once.
+
+Still open, not fixed: a server redirect to a privately resolving name sends
+that one request before the read guard closes the page. DNS rebinding and
+websockets are still gaps. `tools/browser-probe` only follows the new `show`
+signature and still builds (`-p tools/browser-probe assembleRelease`). It does
+not exercise the in-app panel.
+
 ### Internal browser: review fixes for targets, the ledger, reconnect and the shown page — 2026-10-15
 
 Review of the internal browser (`:web`, item 20). The original work was

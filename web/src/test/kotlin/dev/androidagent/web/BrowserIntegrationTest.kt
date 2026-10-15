@@ -110,7 +110,7 @@ class BrowserIntegrationTest {
     private fun host(session: BrowserSession) = object : BrowserHost {
         override fun unavailable(): WebFailure? = null
         override suspend fun session(key: String) = session
-        override suspend fun show(key: String) { session.userControlled = true }
+        override suspend fun show(key: String): Boolean { session.userControlled = true; return true }
         override suspend fun hide(key: String) { session.userControlled = false }
         override suspend fun close(key: String): Boolean { session.close(); return true }
         override fun statusLine() = "Fixture"

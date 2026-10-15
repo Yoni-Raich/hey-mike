@@ -49,6 +49,8 @@ import java.util.UUID
 
 private const val MAX_PHOTOS = 10
 private const val STATE_PENDING_SHOT = "pending_shot"
+/** With [QuestionNotifier.EXTRA_OPEN_CHAT]: open that chat with its browser page in front. */
+internal const val EXTRA_OPEN_BROWSER = "dev.androidagent.app.OPEN_BROWSER"
 
 class MainActivity : ComponentActivity() {
     private val model: AgentViewModel by viewModels()
@@ -161,12 +163,18 @@ class MainActivity : ComponentActivity() {
         openAskedChat(intent)
     }
 
-    /** A tap on a question's notification opens the chat that asked. */
+    /**
+     * A tap on a question's notification opens the chat that asked. Mike
+     * handing the user a page opens that chat with its page in front.
+     */
     private fun openAskedChat(intent: Intent?) {
         val chat = intent?.getStringExtra(QuestionNotifier.EXTRA_OPEN_CHAT) ?: return
+        val browser = intent.getBooleanExtra(EXTRA_OPEN_BROWSER, false)
         intent.removeExtra(QuestionNotifier.EXTRA_OPEN_CHAT)
-        model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false) }
+        intent.removeExtra(EXTRA_OPEN_BROWSER)
+        model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false, isComputersOpen = false, isAutomationsOpen = false) }
         model.select(chat)
+        if (browser) model.editUi { it.copy(browserOpenFor = chat) }
     }
 
     /**
@@ -358,6 +366,13 @@ class MainActivity : ComponentActivity() {
         onOpenWorkspaceFile = { item -> openFile(item) },
         onShareWorkspaceFile = { item -> shareFile(item) },
         onCloseWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = false) } },
+        onOpenBrowser = model::openBrowser,
+        onCloseBrowser = { model.editUi { it.copy(browserOpenFor = null) } },
+        onBrowserTakeControl = { model.browserPageKey()?.let(model.graph.browserHost::takeControl) },
+        onBrowserGiveBack = { model.browserPageKey()?.let(model.graph.browserHost::giveBack) },
+        onBrowserClosePage = { model.browserPageKey()?.let(model.graph.browserHost::closeByUser) },
+        onAttachBrowser = { frame -> model.browserPageKey()?.let { model.graph.browserHost.attach(it, frame) } == true },
+        onDetachBrowser = { frame -> model.browserPageKey()?.let { model.graph.browserHost.detach(it, frame) } },
         onApproval = { requestId, allow -> model.graph.coordinator.approve(requestId, allow) },
         onAnswerQuestion = { questionId, answer -> model.graph.coordinator.answerQuestion(questionId, answer) },
         onApproveAlways = { requestId, scope ->

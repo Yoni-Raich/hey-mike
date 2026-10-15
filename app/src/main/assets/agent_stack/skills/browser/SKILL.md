@@ -55,12 +55,14 @@ page JavaScript and requires the user's approval because it can send data.
 Use ordinary actions when they solve the task. Sending, publishing, payment
 and other sensitive controls use the app's approval card, including in plans.
 
-Password and payment fields are for the user. Call `show`, ask them to finish
-their login or CAPTCHA, and wait for their reply. While the panel is shown,
-agent actions are refused. `hide` returns the page to agent control. If any
-chat then needs the phone's screen, the shown page is put away and the next
-reply says so; call `show` again if the user still needs it. `close`
-destroys this chat's page. File uploads, downloads, popups and page requests
+Password and payment fields are for the user. Call `show`: it opens this
+chat's page inside Hey Mike and gives the user control. Ask them to finish
+their login or CAPTCHA, and wait for their reply. While the user has control,
+agent actions are refused. `hide` takes the page back; the user can also give
+it back themselves, and the next reply says so. If `show` says the page could
+not reach the screen, tell the user to open it from the chat. The user can
+open the page from the chat at any time to watch you; they cannot touch it
+until they take control. `close` destroys this chat's page. File uploads, downloads, popups and page requests
 for camera/microphone are refused. Local URLs and non-web schemes are blocked.
 A page or frame that reaches a blocked address by itself is closed or skipped,
 never read. The network checks are not a firewall: DNS rebinding, redirects
