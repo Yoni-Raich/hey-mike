@@ -357,8 +357,8 @@ class AndroidBrowserHost(
     /** Put [key]'s page out of sight and back under agent control. Main thread. */
     private fun park(key: String, note: String?) {
         val page = pages[key] ?: return
+        windows.updateViewLayout(page.window, layout(false))
         page.session?.userControlled = false
-        runCatching { windows.updateViewLayout(page.window, layout(false)) }
         note?.let { page.session?.note(it) }
         if (visibleKey == key) visibleKey = null
     }
@@ -368,9 +368,9 @@ class AndroidBrowserHost(
         onMain {
             val page = pages[key] ?: throw WebFailure("no_page", "This chat has no page open.", "Open an address first.")
             visibleKey?.takeIf { it != key }?.let { park(it, PUT_AWAY) }
-            page.session?.userControlled = true
             page.lastUsed = SystemClock.elapsedRealtime()
             windows.updateViewLayout(page.window, layout(true))
+            page.session?.userControlled = true
             page.view.requestFocus()
             visibleKey = key
         }
@@ -379,10 +379,10 @@ class AndroidBrowserHost(
     /**
      * Screen work is about to start. A shown page would sit on top of the
      * app it is meant for, so it is put away first, whichever chat it is for.
-     * Posted, never waited on: the caller holds the coordinator's lock.
+     * Await the main thread before showing a new page or sending screen input.
      */
-    override fun screenInUse(key: String) {
-        main.post { visibleKey?.let { shown -> park(shown, PUT_AWAY) } }
+    override suspend fun screenInUse(key: String) {
+        onMain { visibleKey?.let { shown -> park(shown, PUT_AWAY) } }
     }
 
     override suspend fun hide(key: String) = onMain { park(key, null) }

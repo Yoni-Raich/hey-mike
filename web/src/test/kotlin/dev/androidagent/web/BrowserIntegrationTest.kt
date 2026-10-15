@@ -90,6 +90,9 @@ class BrowserIntegrationTest {
     private lateinit var gateway: WebToolGateway
     private var approve = true
     private var confirmDelayMs = 0L
+    private var duringApproval: (suspend () -> Unit)? = null
+    private var loseReplyFor: String? = null
+    private var failReadFor: String? = null
     private val confirmations = mutableListOf<String>()
     private val dialer = DevToolsDialer {
         val socket = Socket("127.0.0.1", port)
@@ -115,8 +118,21 @@ class BrowserIntegrationTest {
 
     @Before fun openFixture() = runBlocking {
         cdp = CdpClient.attach(dialer, CdpClient.pages(dialer).first().id)
-        page = BrowserSession(cdp, policy, BrowserSession.Pointer.MOUSE) {
-            confirmations += it; delay(confirmDelayMs); approve
+        val connection = object : CdpConnection by cdp {
+            override suspend fun call(method: String, params: JsonObject, timeoutMs: Long): JsonObject {
+                val expression = params["expression"]?.jsonPrimitive?.content.orEmpty()
+                if (failReadFor?.let(expression::contains) == true)
+                    throw CdpException(method, -32000, "Fixture read unavailable")
+                val result = cdp.call(method, params, timeoutMs)
+                if (loseReplyFor?.let(expression::contains) == true && result["result"]?.jsonObject?.get("value") != JsonPrimitive("__mike_missing__")) {
+                    loseReplyFor = null
+                    throw CdpException(method, CdpClient.TIMEOUT_CODE, "Fixture: reply lost after execution")
+                }
+                return result
+            }
+        }
+        page = BrowserSession(connection, policy, BrowserSession.Pointer.MOUSE) {
+            confirmations += it; delay(confirmDelayMs); duringApproval?.invoke(); approve
         }
         page.start(); page.open(fixtureUrl)
         gateway = WebToolGateway(host(page))
@@ -204,6 +220,7 @@ class BrowserIntegrationTest {
         page.snapshot(); assertTrue(page.snapshot().contains("unchanged since"))
         assertTrue(page.snapshot(SnapshotQuery(force = true)).contains("button"))
         assertTrue(page.read(0, 1000).contains("Readable article paragraph"))
+        value("document.querySelector('iframe[src=\"/secret\"]').remove();1")
         assertTrue(page.screenshot()!!.startsWith("iVBOR"))
     }
     @Test fun stoppedGatewayRefusesNewActions() = runBlocking {
@@ -317,5 +334,103 @@ class BrowserIntegrationTest {
         assertTrue(result.text, result.text.contains("browser_disconnected"))
         assertFalse(result.text, result.text.contains("mayHaveActed: true"))
         assertTrue(result.text, result.text.contains("Nothing was sent"))
+    }
+
+    @Test fun nestedSubmitTargetCannotSkipApproval() = runBlocking {
+        value("""document.body.innerHTML='<form onsubmit="sends++;return false"><button><span id="nested">Continue</span></button></form>';1""")
+        approve = false
+        val result = call("""{"operation":"click","selector":"#nested"}""")
+        assertFalse(result.text, result.success)
+        assertEquals(1, confirmations.size)
+        assertEquals(JsonPrimitive(0), value("sends"))
+    }
+
+    @Test fun stolenFrameFocusNeverSubmitsTheOtherForm() = runBlocking {
+        value("""document.body.insertAdjacentHTML('afterbegin','<form onsubmit="sends++;return false"><input id="outside"></form>');
+            const field=document.querySelector('iframe[src="/form"]').contentDocument.querySelector('input');
+            field.onfocus=()=>outside.focus();1""")
+        approve = false
+        val result = call("""{"operation":"fill","text":"Message","value":"hello","submit":true}""")
+        assertFalse(result.text, result.success)
+        assertEquals(JsonPrimitive(0), value("sends"))
+        assertEquals(JsonPrimitive(0), value("frameSubmits"))
+    }
+
+    @Test fun lostMutationReplyDoesNotRepeatChangeHandlers() = runBlocking {
+        value("var changes=0;document.querySelector('select').onchange=()=>changes++;1")
+        loseReplyFor = "__mike.choose("
+        val result = call("""{"operation":"select","text":"Choice","value":"Beta"}""")
+        assertEquals(JsonPrimitive(1), value("changes"))
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("mayHaveActed"))
+    }
+
+    @Test fun parentOverlayPreventsClickInsideFrame() = runBlocking {
+        value("""var outerClicks=0;
+            const f=document.querySelector('iframe[src="/frame"]');
+            f.style.cssText='position:fixed;left:20px;top:20px;width:300px;height:150px;z-index:10';
+            const cover=document.createElement('div');cover.textContent='Parent cover';
+            cover.style.cssText='position:fixed;left:0;top:0;width:400px;height:220px;z-index:20;background:white';
+            cover.onclick=()=>outerClicks++;document.body.append(cover);1""")
+        val result = call("""{"operation":"click","text":"Frame button"}""")
+        assertFalse(result.text, result.success)
+        assertEquals(JsonPrimitive(0), value("outerClicks"))
+        assertEquals(JsonPrimitive("Frame button"), value("""document.querySelector('iframe[src="/frame"]').contentDocument.querySelector('button').textContent"""))
+    }
+
+    @Test fun duplicateAcrossFramesRequiresARef() = runBlocking {
+        value("""const b=document.createElement('button');b.type='button';b.textContent='Frame button';b.onclick=()=>clicks++;document.body.prepend(b);1""")
+        val result = call("""{"operation":"click","text":"Frame button","exact":true}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("ambiguous_target"))
+        assertEquals(JsonPrimitive(0), value("clicks"))
+    }
+
+    @Test fun shadowFillUsesTrustedInputAndSupportsContentEditable() = runBlocking {
+        value("""var shadowTrusted=null;shadow.shadowRoot.querySelector('input').oninput=e=>shadowTrusted=e.isTrusted;
+            const editor=document.createElement('div');editor.contentEditable='true';editor.setAttribute('aria-label','Shadow editor');editor.textContent='old';shadow.shadowRoot.append(editor);1""")
+        assertTrue(call("""{"operation":"fill","text":"Shadow field","value":"hello"}""").success)
+        assertEquals(JsonPrimitive(true), value("shadowTrusted"))
+        val result = call("""{"operation":"fill","text":"Shadow editor","value":"edited"}""")
+        assertTrue(result.text, result.success)
+        assertEquals(JsonPrimitive("edited"), value("shadow.shadowRoot.querySelector('[contenteditable]').innerText"))
+    }
+
+    @Test fun mainSnapshotFailureIsNotAnEmptySuccess() = runBlocking {
+        failReadFor = "__mike.snapshot("
+        val result = call("""{"operation":"snapshot"}""")
+        assertFalse(result.text, result.success)
+    }
+
+    @Test fun deniedSubmitDoesNotSuggestRepeatingCompletedFill() = runBlocking {
+        approve = false
+        val result = call("""{"operation":"plan","steps":[{"id":"message","operation":"fill","text":"Message","value":"hello","submit":true}]}""")
+        assertFalse(result.text, result.success)
+        assertFalse(result.text, result.text.contains("Resume with startAt=message"))
+        assertTrue(result.text, result.text.contains("fill") && result.text.contains("not"))
+        assertEquals(JsonPrimitive("hello"), value("""document.querySelector('iframe[src="/form"]').contentDocument.querySelector('input').value"""))
+    }
+
+    @Test fun aScrollWithLostReplyIsUncertainAndNotRepeated() = runBlocking {
+        value("document.body.style.height='5000px';window.scrollTo(0,0);1")
+        loseReplyFor = "__mike.scroll("
+        val result = call("""{"operation":"scroll","direction":"down","observe":false}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("mayHaveActed"))
+        assertEquals(JsonPrimitive(true), value("scrollY <= Math.round(innerHeight * 0.8) + 1"))
+    }
+
+    @Test fun approvalCannotFollowAChangedSubmitDestination() = runBlocking {
+        value("""document.body.innerHTML='<form action="/first" onsubmit="sends++;return false"><button>Continue</button></form>';1""")
+        duringApproval = { value("document.querySelector('form').action='/second';1"); Unit }
+        val result = call("""{"operation":"click","text":"Continue"}""")
+        assertFalse(result.text, result.success)
+        assertEquals(JsonPrimitive(0), value("sends"))
+    }
+
+    @Test fun screenshotRefusesBlockedChildFrames() = runBlocking {
+        val result = call("""{"operation":"screenshot"}""")
+        assertFalse(result.text, result.success)
+        assertNull(result.imageBase64)
     }
 }

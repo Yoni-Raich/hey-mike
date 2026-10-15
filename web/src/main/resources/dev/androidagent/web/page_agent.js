@@ -349,6 +349,33 @@
     return { blockedBy: (roleOf(hit) || hit.localName) + ' ' + JSON.stringify(clean(nameOf(hit), 60)), ref: refOf(hit) };
   };
 
+  const deepFocus = () => {
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+    return el;
+  };
+  const activationTarget = (el) => {
+    for (let node = el; node; node = node.parentElement || node.getRootNode().host) {
+      if (node.localName === 'label' && node.control) return node.control;
+      if (['button', 'a', 'input', 'select', 'textarea'].includes(node.localName) || node.hasAttribute('role')) return node;
+    }
+    return el;
+  };
+  const approvalToken = (el) => {
+    el = activationTarget(el);
+    const form = el.form;
+    return JSON.stringify([location.href, refOf(el), nameOf(el), el.type, el.href,
+      el.getAttribute('formaction'), el.getAttribute('formmethod'), el.getAttribute('formtarget'),
+      form && [form.action, form.method, form.target]]);
+  };
+  const acceptsHit = (ref, hit) => {
+    const el = byRef(ref);
+    if (!el || !hit) return false;
+    for (let node = hit; node; node = node.parentElement || node.getRootNode().host) if (node === el) return true;
+    const label = hit.closest && hit.closest('label');
+    return !!label && label.control === el;
+  };
+
   const info = (ref) => {
     const el = byRef(ref);
     if (!el) return null;
@@ -368,10 +395,12 @@
       editable: textLike || el.isContentEditable,
       valueOnly: tag === 'input' && !textLike && !['checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'file', 'hidden'].includes(type),
       confirmation: needsApproval(el),
+      approvalToken: approvalToken(el),
     };
   };
 
   const needsApproval = (el) => {
+    el = activationTarget(el);
     const name = nameOf(el);
     if (/\b(send|post|publish|buy|pay|purchase|checkout|place order|confirm order|delete|remove account)\b|שלח|שליחה|פרסם|פרסום|רכישה|תשלום|מחק|מחיקה/i.test(name)) return true;
     const form = el.form;
@@ -426,7 +455,7 @@
     } else if (typeof el.select === 'function') {
       el.select();
     }
-    return document.activeElement === el || el.contains(document.activeElement);
+    return deepFocus() === el || el.contains(document.activeElement);
   };
 
   const valueOf = (ref) => {
@@ -559,5 +588,10 @@
   globalThis.__mike = {
     snapshot, find, info, focusForTyping, valueOf, setValue, choose, scroll, settle, present, read, submitNeedsApproval, hitCheck,
     element: (ref) => byRef(ref),
+    isFocused: (ref) => deepFocus() === byRef(ref),
+    focusedElement: deepFocus,
+    focusedRef: () => { const el = deepFocus(); return el && !['iframe', 'frame'].includes(el.localName) ? refOf(el) : null; },
+    focusToken: () => { const el = deepFocus(); return el ? approvalToken(el) : null; },
+    acceptsHit,
   };
 })();

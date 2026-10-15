@@ -62,6 +62,7 @@ class WebFailure(
     val mayHaveActed: Boolean = false,
     /** The message already says exactly what happened on the page; the gateway must not reword it. */
     val known: Boolean = false,
+    val completedAction: String? = null,
 ) : Exception(message)
 
 /** Which element an action is about. Exactly one of [ref], [selector] and [text] is the address. */
@@ -108,7 +109,7 @@ data class SnapshotQuery(
  * a hand. The helper script lives in an isolated world the page cannot see.
  */
 class BrowserSession(
-    private val cdp: CdpClient,
+    private val cdp: CdpConnection,
     private val policy: WebUrlPolicy,
     private val pointer: Pointer = Pointer.TOUCH,
     private val nativeTap: (suspend (Double, Double) -> Unit)? = null,
@@ -127,6 +128,7 @@ class BrowserSession(
     private val frames = mutableListOf<String>()
     /** The address of each frame, as the last frame tree reported it. */
     private val frameUrls = mutableMapOf<String, String>()
+    private val frameParents = mutableMapOf<String, String>()
     private var revision = 0L
     private var lastDigest: String? = null
     private var lastRevision = 0L
@@ -236,12 +238,14 @@ class BrowserSession(
         if (info.tag == "select") {
             throw WebFailure("use_select", "${info.label(found)} is a dropdown.", "Set it with operation \"select\" and value.")
         }
-        runCatching { cdp.call("DOM.scrollIntoViewIfNeeded", buildJsonObject { put("objectId", element(found)) }) }
         // Checked before asking the user, so nobody approves a press that would
         // land on something else, and again after, because an approval takes
         // long enough for the page to change under it.
         reachable(found, info)
         authorize(info)
+        if (info(found).approvalToken != info.approvalToken) throw WebFailure(
+            "target_changed", "The control changed while approval was pending. Nothing was clicked.",
+            "Read the page and request approval for the new action.")
         reachable(found, info)
         val point = centre(element(found))
             ?: throw WebFailure("not_visible", "${info.label(found)} has no clickable box. Nothing was clicked.")
@@ -278,7 +282,8 @@ class BrowserSession(
             // Typed text goes to whatever has the focus. A field that passes its
             // focus on (to a sibling, a hidden proxy, a dialog) would have the
             // text typed somewhere else, so the focus is checked first.
-            val focused = (agentValue(found.frameId, "__mike.focusForTyping(${found.ref})") as? JsonPrimitive)?.booleanOrNull == true
+            sent() // Focus and selection can run page handlers too.
+            val focused = (agentValue(found.frameId, "__mike.focusForTyping(${found.ref})") as? JsonPrimitive)?.booleanOrNull == true && hasFocus(found)
             if (!focused && info.contentEditable) {
                 throw WebFailure(
                     "not_focused",
@@ -303,15 +308,21 @@ class BrowserSession(
         if (!verified) throw WebFailure("fill_not_verified", "The field did not retain the requested text.",
             "The field may have changed. Read it before repeating the fill. No submit was sent.", mayHaveActed = true)
         if (submit) {
-            // Asked in the field's own frame: Enter submits the form the field is in.
+            if (!hasFocus(found)) throw WebFailure(
+                "focus_changed", "The field now holds the text, but another control has focus. No Enter was sent.",
+                "Read the page before submitting. Do not repeat the completed fill.",
+                known = true, completedAction = "fill")
             if (!submitAllowed(found.frameId)) {
                 throw WebFailure(
                     "approval_denied",
                     "${info.label(found)} now holds the text, but the user did not approve submitting it. Nothing was submitted.",
                     "Do not submit it another way. Ask the user what they want.",
-                    known = true,
+                    known = true, completedAction = "fill",
                 )
             }
+            if (!hasFocus(found)) throw WebFailure(
+                "focus_changed", "The field lost focus during approval. No Enter was sent.",
+                "Read the page. Do not repeat the completed fill.", known = true, completedAction = "fill")
             sent()
             key("Enter")
         }
@@ -361,13 +372,16 @@ class BrowserSession(
     suspend fun scroll(direction: String?, target: WebTarget?): WebAction = lock.withLock {
         val result = if (target != null && !target.isEmpty) {
             val found = resolve(target)
+            sent()
             agentValue(found.frameId, "__mike.scroll(null, ${found.ref})")
         } else {
             val way = direction?.trim()?.lowercase() ?: "down"
             if (way !in SCROLL_DIRECTIONS) {
                 throw WebFailure("bad_direction", "\"$direction\" is not a direction.", "Use up, down, top or bottom, or name an element.")
             }
-            agentValue(mainFrame(), "__mike.scroll(${JsonPrimitive(way)}, null)")
+            val frame = mainFrame()
+            sent()
+            agentValue(frame, "__mike.scroll(${JsonPrimitive(way)}, null)")
         } as? JsonObject
         settle(QUICK_SETTLE_MS)
         WebAction("scroll to ${result?.get("scrollY")?.jsonPrimitive?.intOrNull ?: 0} of ${result?.get("scrollMax")?.jsonPrimitive?.intOrNull ?: 0}")
@@ -452,6 +466,8 @@ class BrowserSession(
     /** A PNG of what the page shows now, as base64, or null when the browser cannot capture it. */
     suspend fun screenshot(): String? = lock.withLock {
         guardRead()
+        if (frameIds().any { !frameAllowed(it) }) throw WebFailure(
+            "frame_blocked", "The screenshot includes a frame at a blocked address.", "Use the filtered snapshot instead.")
         runCatching {
             cdp.call("Page.captureScreenshot", buildJsonObject { put("format", "png") }, NAVIGATE_TIMEOUT_MS)["data"]
                 ?.jsonPrimitive?.contentOrNull
@@ -495,9 +511,13 @@ class BrowserSession(
                 lines += "frame f$index (blocked address, not read)"
                 return@forEach
             }
-            val page = runCatching {
+            val page = try {
                 agentValue(frameId, "__mike.snapshot(${query.interactiveOnly})") as? JsonObject
-            }.getOrNull()
+                    ?: throw WebFailure("snapshot_failed", "The page helper returned no snapshot.")
+            } catch (failure: Exception) {
+                if (index == 0 || failure is kotlinx.coroutines.CancellationException) throw failure
+                null
+            }
             val frameLines = (page?.get("lines") as? JsonArray).orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
             if (index == 0) {
                 scrollLine = "scroll: ${page?.get("scrollY")?.jsonPrimitive?.intOrNull ?: 0} of " +
@@ -558,6 +578,7 @@ class BrowserSession(
         val valueOnly: Boolean,
         val contentEditable: Boolean,
         val confirmation: Boolean,
+        val approvalToken: String,
     ) {
         fun label(found: Found): String =
             "$role \"${SecretRedactor.redactUiText(name).take(60)}\" [${if (found.frameIndex > 0) "f${found.frameIndex}" else ""}e${found.ref}]"
@@ -584,16 +605,19 @@ class BrowserSession(
             target.role?.let { put("role", it) }
             if (target.exact) put("exact", true)
         }
+        val matches = mutableListOf<Found>()
         for (frameId in readableFrames()) {
-            val found = runCatching { agentValue(frameId, "__mike.find($wanted)") as? JsonObject }.getOrNull() ?: continue
+            val found = agentValue(frameId, "__mike.find($wanted)") as? JsonObject ?: continue
             if (found["error"]?.jsonPrimitive?.contentOrNull == "bad_selector") {
                 throw WebFailure("bad_selector", "\"${target.selector}\" is not a valid CSS selector.")
             }
             val ref = found["ref"]?.jsonPrimitive?.longOrNull ?: continue
             if ((found["count"]?.jsonPrimitive?.intOrNull ?: 0) > 1)
                 throw WebFailure("ambiguous_target", "More than one element matches $target.", "Use a snapshot ref or a more specific selector.")
-            return Found(frameId, frameIndex(frameId), ref)
+            matches += Found(frameId, frameIndex(frameId), ref)
         }
+        if (matches.size > 1) throw WebFailure("ambiguous_target", "More than one frame matches $target.", "Use a snapshot ref.")
+        matches.singleOrNull()?.let { return it }
         throw WebFailure(
             "not_found",
             "Nothing on the page matches $target.",
@@ -622,6 +646,7 @@ class BrowserSession(
             valueOnly = flag("valueOnly"),
             contentEditable = text("tag") != "input" && text("tag") != "textarea",
             confirmation = flag("confirmation"),
+            approvalToken = text("approvalToken"),
         )
     }
 
@@ -641,8 +666,14 @@ class BrowserSession(
      * true when it needs no approval, or the user approved it.
      */
     private suspend fun submitAllowed(frameId: String): Boolean {
-        val required = agentValue(frameId, "__mike.submitNeedsApproval()") as? JsonPrimitive
-        return required?.booleanOrNull == false || confirm("Submit or activate the focused control at ${location().first}")
+        val focus = focusedControl()
+        val token = agentValue(focus.frameId, "__mike.focusToken()")
+        val required = agentValue(focus.frameId, "__mike.submitNeedsApproval()") as? JsonPrimitive
+        val allowed = required?.booleanOrNull == false || confirm("Submit or activate the focused control at ${location().first}")
+        if (!allowed) return false
+        if (focusedControl() != focus || agentValue(focus.frameId, "__mike.focusToken()") != token)
+            throw WebFailure("focus_changed", "The focused action changed during approval. No key was sent.")
+        return true
     }
 
     /**
@@ -654,7 +685,8 @@ class BrowserSession(
         fun check(value: JsonElement?): JsonObject? = value as? JsonObject
         var hit = check(agentValue(found.frameId, "__mike.hitCheck(${found.ref})"))
         val error = hit?.get("error")?.jsonPrimitive?.contentOrNull
-        if (hit?.get("blockedBy") != null || error == "offscreen") {
+        if (error == "offscreen") {
+            sent()
             agentValue(found.frameId, "__mike.scroll(null, ${found.ref})")
             hit = check(agentValue(found.frameId, "__mike.hitCheck(${found.ref})"))
         }
@@ -666,8 +698,9 @@ class BrowserSession(
                 "Scroll to it, or take a snapshot to see what the page shows.",
             )
         }
-        val blocker = hit?.get("blockedBy")?.jsonPrimitive?.contentOrNull ?: return
-        val ref = hit["ref"]?.jsonPrimitive?.longOrNull
+        if (hit?.get("ok")?.jsonPrimitive?.booleanOrNull == true && globallyReachable(found)) return
+        val blocker = hit?.get("blockedBy")?.jsonPrimitive?.contentOrNull ?: "another frame or page element"
+        val ref = hit?.get("ref")?.jsonPrimitive?.longOrNull
         val frame = if (found.frameIndex > 0) "f${found.frameIndex}" else ""
         throw WebFailure(
             "obscured",
@@ -702,6 +735,61 @@ class BrowserSession(
 
     private suspend fun currentValue(found: Found): String? =
         (agentValue(found.frameId, "__mike.valueOf(${found.ref})") as? JsonPrimitive)?.contentOrNull
+
+    /** Check every embedding frame, not just its remembered local activeElement. */
+    private suspend fun hasFocus(found: Found): Boolean {
+        frameIds()
+        if (agentValue(found.frameId, "__mike.isFocused(${found.ref})")?.jsonPrimitive?.booleanOrNull != true) return false
+        var child = found.frameId
+        while (true) {
+            val parent = frameParents[child] ?: return child == frames.firstOrNull()
+            val owner = cdp.call("DOM.getFrameOwner", buildJsonObject { put("frameId", child) })
+            val backend = owner["backendNodeId"]?.jsonPrimitive?.longOrNull ?: return false
+            if (!callOnNode(parent, backend, "function() { return __mike.focusedElement() === this; }")) return false
+            child = parent
+        }
+    }
+
+    private suspend fun focusedControl(): Found {
+        for (frame in readableFrames().asReversed()) {
+            val ref = agentValue(frame, "__mike.focusedRef()")?.jsonPrimitive?.longOrNull ?: continue
+            val found = Found(frame, frameIndex(frame), ref)
+            if (hasFocus(found)) return found
+        }
+        throw WebFailure("focus_unknown", "The focused control could not be identified. No key was sent.")
+    }
+
+    /** CDP's hit test starts at the top viewport, so a parent overlay cannot be missed. */
+    private suspend fun globallyReachable(found: Found): Boolean {
+        val point = centre(element(found)) ?: return false
+        val hit = cdp.call("DOM.getNodeForLocation", buildJsonObject {
+            put("x", kotlin.math.round(point.first).toInt())
+            put("y", kotlin.math.round(point.second).toInt())
+            put("includeUserAgentShadowDOM", true)
+        })
+        if (hit["frameId"]?.jsonPrimitive?.contentOrNull != found.frameId) return false
+        val backend = hit["backendNodeId"]?.jsonPrimitive?.longOrNull ?: return false
+        return callOnNode(found.frameId, backend, "function() { return __mike.acceptsHit(${found.ref}, this); }")
+    }
+
+    private suspend fun callOnNode(frame: String, backend: Long, function: String): Boolean {
+        agentValue(frame, "true") // Ensure the helper exists in this document.
+        val context = cdp.call("Page.createIsolatedWorld", buildJsonObject {
+            put("frameId", frame); put("worldName", WORLD)
+        })["executionContextId"] ?: return false
+        val node = cdp.call("DOM.resolveNode", buildJsonObject {
+            put("backendNodeId", backend); put("executionContextId", context)
+        })["object"] as? JsonObject ?: return false
+        val objectId = node["objectId"]?.jsonPrimitive?.contentOrNull ?: return false
+        return try {
+            val result = cdp.call("Runtime.callFunctionOn", buildJsonObject {
+                put("objectId", objectId); put("functionDeclaration", function); put("returnByValue", true)
+            })["result"] as? JsonObject
+            result?.get("value")?.jsonPrimitive?.booleanOrNull == true
+        } finally {
+            runCatching { cdp.call("Runtime.releaseObject", buildJsonObject { put("objectId", objectId) }) }
+        }
+    }
 
     private suspend fun element(found: Found): String =
         agent(found.frameId, "__mike.element(${found.ref})", byValue = false)["objectId"]?.jsonPrimitive?.contentOrNull
@@ -784,7 +872,6 @@ class BrowserSession(
      * is put back the first time it is found missing.
      */
     private suspend fun agent(frameId: String, expression: String, byValue: Boolean = true, timeoutMs: Long = CdpClient.DEFAULT_TIMEOUT_MS): JsonObject {
-        var lastFailure: Throwable? = null
         repeat(3) {
             try {
                 val context = cdp.call(
@@ -828,14 +915,12 @@ class BrowserSession(
                 }
                 return remote
             } catch (failure: CdpException) {
-                // The frame navigated between the two calls; its new world is one call away.
-                lastFailure = failure
-                delay(RETRY_MS)
+                throw failure
             }
         }
         throw WebFailure(
             "page_busy",
-            "The page changed while it was being read" + (lastFailure?.message?.let { ": $it" } ?: "."),
+            "The page changed while it was being read.",
             "Wait for it to finish loading, then try again.",
         )
     }
@@ -852,10 +937,12 @@ class BrowserSession(
     private suspend fun frameIds(): List<String> {
         val found = mutableListOf<String>()
         val urls = mutableMapOf<String, String>()
+        frameParents.clear()
         fun collect(node: JsonObject) {
             val frame = node["frame"] as? JsonObject
             frame?.get("id")?.jsonPrimitive?.contentOrNull?.let { id ->
                 found += id
+                frame["parentId"]?.jsonPrimitive?.contentOrNull?.let { frameParents[id] = it }
                 frame["url"]?.jsonPrimitive?.contentOrNull?.let { urls[id] = it }
             }
             (node["childFrames"] as? JsonArray)?.forEach { child -> (child as? JsonObject)?.let(::collect) }
@@ -990,7 +1077,6 @@ class BrowserSession(
         private const val QUICK_SETTLE_MS = 800L
         private const val QUIET_MS = 300L
         private const val POLL_MS = 150L
-        private const val RETRY_MS = 120L
         private const val EVAL_TIMEOUT_MS = 10_000L
         private const val MAX_FRAMES = 12
         private const val MAX_NOTES = 20

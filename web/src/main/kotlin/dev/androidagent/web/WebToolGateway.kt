@@ -71,7 +71,7 @@ interface BrowserHost {
      * A page shown to the user for any other chat is put away first, so the
      * screen work does not land in that window. Must not block.
      */
-    fun screenInUse(key: String) {}
+    suspend fun screenInUse(key: String) {}
 
     /** Phone conditions that may explain a lost connection or a stalled page (screen off, locked), or null. */
     fun conditions(): String? = null
@@ -112,7 +112,7 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
     override fun requiresDeviceLease(name: String): Boolean = false
     override fun revokeIndependentTools() = revoke()
 
-    override fun screenInUse(runId: String, workspace: File) = host.screenInUse(workspace.absolutePath)
+    override suspend fun screenInUse(runId: String, workspace: File) = host.screenInUse(workspace.absolutePath)
 
     /** The page is in a window of its own, never on the screen the user is using. */
     override fun needsControl(name: String): Boolean = false
@@ -392,6 +392,7 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
             if (failure != null) {
                 if (ran > 0) add("resume: steps ${first + 1}-$ran already happened and must not be sent again.")
                 if (ran == failedAt) add("The action at step $failedAt ran; only verification failed. Retry verification, never the action.")
+                else if (failure.completedAction != null) add("Step $failedAt completed ${failure.completedAction}. Do not repeat it; inspect the page and plan the remaining action separately.")
                 else if (failure.mayHaveActed) add("Step $failedAt may have happened. Inspect it before choosing where to resume.")
                 else add("Resume with startAt=${ids[checkNotNull(failedAt) - 1]} after fixing that step.")
             }

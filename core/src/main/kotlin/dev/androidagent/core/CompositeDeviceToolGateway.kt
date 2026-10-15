@@ -113,9 +113,9 @@ class CompositeDeviceToolGateway(
         for (member in members) runCatching { member.revokeIndependentTools() }
     }
 
-    override fun screenInUse(runId: String, workspace: File) {
-        // Advisory: one member failing to step aside must not stop the others.
-        for (member in members) runCatching { member.screenInUse(runId, workspace) }
+    override suspend fun screenInUse(runId: String, workspace: File) {
+        // Await the handoff. If a window cannot move, sending screen input is unsafe.
+        for (member in members) member.screenInUse(runId, workspace)
     }
 
     override fun hidesOverlayDuringCapture(name: String): Boolean =

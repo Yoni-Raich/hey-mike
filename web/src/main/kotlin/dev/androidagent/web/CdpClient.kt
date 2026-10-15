@@ -56,7 +56,13 @@ data class DevToolsPage(val id: String, val url: String, val title: String)
  * One reader thread turns the socket into completed commands and delivered
  * events, so a caller only ever suspends.
  */
-class CdpClient private constructor(private val socket: DevToolsSocket) : Closeable {
+interface CdpConnection : Closeable {
+    val isOpen: Boolean
+    suspend fun call(method: String, params: JsonObject = JsonObject(emptyMap()), timeoutMs: Long = CdpClient.DEFAULT_TIMEOUT_MS): JsonObject
+    fun onEvent(listener: (String, JsonObject) -> Unit): Closeable
+}
+
+class CdpClient private constructor(private val socket: DevToolsSocket) : CdpConnection {
     private val nextId = AtomicInteger(0)
     private val pending = ConcurrentHashMap<Int, Pair<String, CompletableDeferred<JsonObject>>>()
     private val listeners = CopyOnWriteArrayList<(String, JsonObject) -> Unit>()
@@ -97,10 +103,10 @@ class CdpClient private constructor(private val socket: DevToolsSocket) : Closea
         pending.clear()
     }
 
-    val isOpen: Boolean get() = !closed
+    override val isOpen: Boolean get() = !closed
 
     /** Run one command. A timeout leaves the command's fate unknown, and says so. */
-    suspend fun call(method: String, params: JsonObject = EMPTY, timeoutMs: Long = DEFAULT_TIMEOUT_MS): JsonObject {
+    override suspend fun call(method: String, params: JsonObject, timeoutMs: Long): JsonObject {
         coroutineContext.ensureActive()
         if (closed) throw IOException("The browser connection is closed")
         val id = nextId.incrementAndGet()
@@ -128,7 +134,7 @@ class CdpClient private constructor(private val socket: DevToolsSocket) : Closea
     }
 
     /** Hear every event until the returned handle is closed. */
-    fun onEvent(listener: (method: String, params: JsonObject) -> Unit): Closeable {
+    override fun onEvent(listener: (method: String, params: JsonObject) -> Unit): Closeable {
         listeners += listener
         return Closeable { listeners -= listener }
     }

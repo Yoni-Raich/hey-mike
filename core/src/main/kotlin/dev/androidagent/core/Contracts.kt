@@ -521,7 +521,7 @@ interface DeviceToolGateway {
      * with a window of its own (a browser page shown to the user) moves it out
      * of the way, so a tap never lands in that window instead of the app.
      */
-    fun screenInUse(runId: String, workspace: File) {}
+    suspend fun screenInUse(runId: String, workspace: File) {}
 
     /**
      * True when the overlay must be taken off the captured surface for this

@@ -250,14 +250,14 @@ class CompositeDeviceToolGatewayTest {
         assertFalse(composite.hidesOverlayDuringCapture("nope"))
     }
 
-    @Test fun anIndependentCallArmsOnlyItsOwnBackendThroughItsOwnHook() {
+    @Test fun anIndependentCallArmsOnlyItsOwnBackendThroughItsOwnHook() = kotlinx.coroutines.test.runTest {
         val calls = mutableListOf<String>()
         fun member(name: String, tool: String, independent: Boolean) = object : DeviceToolGateway {
             override val definitions = listOf(ToolDefinition(tool, "", buildJsonObject {}))
             override fun beginRun(runId: String, workspace: File) { calls += "$name.beginRun" }
             override fun beginIndependentTool(name2: String, runId: String, workspace: File) { calls += "$name.independent" }
             override fun revokeIndependentTools() { calls += "$name.revokeIndependent"; if (name == "web") error("boom") }
-            override fun screenInUse(runId: String, workspace: File) { calls += "$name.screen"; if (name == "web") error("boom") }
+            override suspend fun screenInUse(runId: String, workspace: File) { calls += "$name.screen"; if (name == "web") error("boom") }
             override fun requiresDeviceLease(name2: String) = !independent
             override fun revoke() = Unit
             override fun needsControl(name2: String) = false
@@ -271,8 +271,13 @@ class CompositeDeviceToolGatewayTest {
         calls.clear()
         // Stop reaches every member even when the first throws, and does not throw itself.
         composite.revokeIndependentTools()
-        composite.screenInUse("1", File("w"))
-        assertEquals(listOf("web.revokeIndependent", "a11y.revokeIndependent", "web.screen", "a11y.screen"), calls)
+        try {
+            composite.screenInUse("1", File("w"))
+            error("A screen handoff failure must stop the caller")
+        } catch (failure: IllegalStateException) {
+            assertEquals("boom", failure.message)
+        }
+        assertEquals(listOf("web.revokeIndependent", "a11y.revokeIndependent", "web.screen"), calls)
     }
 
     @Test fun aCompositeWithNoBackendsIsRejected() {

@@ -22,7 +22,7 @@ class WebToolGatewayTest {
         override suspend fun hide(key: String) = Unit
         override suspend fun close(key: String) = false
         override fun statusLine() = "Test"
-        override fun screenInUse(key: String) { screens += key }
+        override suspend fun screenInUse(key: String) { screens += key }
         override fun conditions() = "the screen is off and the phone is locked."
     }
 
@@ -31,7 +31,7 @@ class WebToolGatewayTest {
 
     private suspend fun call(json: String) = gateway.invoke("browser", Json.parseToJsonElement(json).jsonObject)
 
-    @Test fun screenUseByARunReachesTheHostWithThatRunsPage() {
+    @Test fun screenUseByARunReachesTheHostWithThatRunsPage() = runBlocking {
         gateway.screenInUse("run", File("chat-two"))
         assertEquals(listOf(File("chat-two").absolutePath), host.screens)
     }
