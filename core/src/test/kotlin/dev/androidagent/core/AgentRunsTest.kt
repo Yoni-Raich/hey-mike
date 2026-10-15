@@ -739,6 +739,46 @@ class AgentRunsTest {
         rig.close()
     }
 
+    @Test fun independentBrowserRunsWhileAnotherChatOwnsTheScreen() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "Use the screen")
+        rig.runs.send("two", "Browse")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("screen", "read_ui", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        val before = rig.tools.executions
+        rig.engine.emit(EngineEvent.ToolCall("browser", "browser", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        assertEquals(listOf("screen", "browser"), rig.engine.answered)
+        assertEquals(before, rig.tools.executions)
+        assertEquals(1, rig.browserCalls)
+        assertTrue(rig.tools.revoked.not())
+        rig.runs.stop("two"); runCurrent()
+        assertTrue(rig.runs.stateOf("one")!!.active)
+        assertTrue(rig.tools.revoked.not())
+        rig.close()
+    }
+
+    @Test fun aChatAboutToUseTheScreenTellsTheBrowserToStepAside() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "Use the screen")
+        rig.runs.send("two", "Browse")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("b", "browser", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        // A browser call leaves the screen alone, so nothing is moved for it.
+        assertEquals(emptyList<String>(), rig.screenUses)
+        rig.engine.emit(EngineEvent.ToolCall("c", "contacts", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertEquals(emptyList<String>(), rig.screenUses)
+        rig.engine.emit(EngineEvent.ToolCall("s", "read_ui", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        // A shown page of any chat would cover what read_ui reads and tap presses.
+        assertEquals(listOf("session-one"), rig.screenUses)
+        assertEquals(listOf("b", "c", "s"), rig.engine.answered)
+        rig.close()
+    }
+
     private class Rig(test: TestScope, onStopSession: (String?) -> Unit = {}) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = Engine()
@@ -746,8 +786,23 @@ class AgentRunsTest {
         val overlay = Overlay()
         val tools = Tools()
         lateinit var agents: SessionAgents
+        var browserCalls = 0
+        /** Workspaces whose run told the browser it is about to use the screen. */
+        val screenUses = mutableListOf<String>()
         val runs = AgentRuns(scope, engine, onStopSession = { id -> agents.stop(id); onStopSession(id) }) { share ->
-            AgentCoordinator(scope, engine, store, tools, overlay, share = share, sessionAgents = { agents })
+            val browser = object : DeviceToolGateway {
+                var armed = false
+                override val definitions = listOf(ToolDefinition("browser", "test", buildJsonObject {}))
+                override fun beginRun(runId: String, workspace: File) { armed = true }
+                override fun revoke() { armed = false }
+                override fun revokeIndependentTools() = revoke()
+                override suspend fun screenInUse(runId: String, workspace: File) { screenUses += workspace.name }
+                override fun requiresDeviceLease(name: String) = false
+                override fun needsControl(name: String) = false
+                override suspend fun invoke(name: String, arguments: JsonObject): ToolResult { check(armed); browserCalls++; return ToolResult("Page") }
+                override suspend fun cancel() = Unit
+            }
+            AgentCoordinator(scope, engine, store, CompositeDeviceToolGateway(listOf(browser, tools)), overlay, share = share, sessionAgents = { agents })
         }
         val opened = mutableListOf<String>()
         init { agents = SessionAgents(store, scope, { RunsSessionAgentRunner(runs) }, openChat = { opened += it }) }
@@ -846,7 +901,7 @@ class AgentRunsTest {
     }
 
     private class Tools : DeviceToolGateway {
-        override val definitions = emptyList<ToolDefinition>()
+        override val definitions = listOf("tap", "read_ui", "contacts").map { ToolDefinition(it, "test", buildJsonObject {}) }
         var revoked = true
         var executions = 0
         override fun beginRun(runId: String, workspace: File) { revoked = false }

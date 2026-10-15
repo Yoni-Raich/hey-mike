@@ -338,8 +338,10 @@ class AgentCoordinator(
             if (leased) share.lease.release(this)
             return null
         }
+        // A rule drives the screen: a browser page shown for a chat steps aside.
         runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
         return try {
+            tools.screenInUse(token.toString(), workspace)
             block()
         } finally {
             val stillOurs = synchronized(lifecycleLock) {
@@ -393,6 +395,7 @@ class AgentCoordinator(
             )
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING, "Voice")) }
         scope.launch {
@@ -695,6 +698,7 @@ class AgentCoordinator(
             mutableState.value = snapshot.copy(phase = RunPhase.STOPPING, status = "Stopping", controlling = false, approval = null, question = null)
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING)) }
         context.runJob?.cancel()
@@ -1195,6 +1199,7 @@ class AgentCoordinator(
                     runCatching { engine.answerTool(event.requestId, ToolResult("Run stopped. No device action was performed.", success = false)) }
                     return
                 }
+                val receivedAt = nowNanos()
                 val token = synchronized(lifecycleLock) { epoch.get() }
                 val sessionId = synchronized(lifecycleLock) { state.value.sessionId } ?: return
                 flushAssistantSegment()
@@ -1204,12 +1209,21 @@ class AgentCoordinator(
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         // The chat's own tools leave the phone alone, so they do not wait for it.
                         if (event.name in ChatTools.NAMES) {
-                            serveChatTool(token, sessionId, event)
+                            serveChatTool(token, sessionId, event, receivedAt)
                             return@withLock
                         }
-                        if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        val independent = !tools.requiresDeviceLease(event.name)
+                        if (independent) {
+                            synchronized(lifecycleLock) {
+                                val work = runWorkspace
+                                if (!isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty()) || work == null) return@withLock
+                                tools.beginIndependentTool(event.name, token.toString(), work)
+                            }
+                        } else if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         val visible = usesScreen(event.name, event.arguments)
-                        if (visible) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+                        if (visible) {
+                            synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+                        }
                         val capture = tools.hidesOverlayDuringCapture(event.name)
                         // act_and_observe wraps the real action, so report that
                         // instead: callers care that a tap is happening, not
@@ -1230,11 +1244,15 @@ class AgentCoordinator(
                         var result: ToolResult
                         var callTraced = false
                         val callStarted = nowNanos()
+                        var dispatchStarted: Long? = null
+                        var dispatchFinished: Long? = null
+                        var waitedNanos = 0L
                         try {
+                            if (visible) runWorkspace?.let { tools.screenInUse(token.toString(), it) }
                             if (visible) {
                                 // Idempotent show also checks a replaced/reconnected window host.
                                 overlay.showState(overlayState)
-                            } else {
+                            } else if (!independent) {
                                 overlay.updateState(overlayState)
                             }
                             // Attach before hiding: a first screen read must not create
@@ -1256,6 +1274,7 @@ class AgentCoordinator(
                             }); callTraced = true }
                             ensureCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())
                             val toolStart = nowNanos()
+                            dispatchStarted = toolStart
                             // Any approval this call raises is subtracted below,
                             // so tool time stays device time.
                             val approvalsBefore = approvalNanos.get()
@@ -1263,6 +1282,8 @@ class AgentCoordinator(
                             try { result = tools.invoke(event.name, event.arguments) }
                             finally {
                                 val waited = approvalNanos.get() - approvalsBefore
+                                waitedNanos = waited
+                                dispatchFinished = nowNanos()
                                 toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
                             }
                         } catch (cancelled: CancellationException) {
@@ -1277,11 +1298,12 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                                     mutableState.value = state.value.copy(phase = RunPhase.THINKING, controlling = false, status = "Working")
-                                    overlay.updateState(OverlayState(OverlayPhase.THINKING))
+                                    if (!independent) overlay.updateState(OverlayState(OverlayPhase.THINKING))
                                 }
                             }
                             handBackUnlessOnScreen()
                         }
+                        val resultStarted = nowNanos()
                         withContext(NonCancellable) {
                             val imagePath = result.imageBase64?.let { persistTraceImage(sessionId, it) }
                             trace(sessionId, "tool_result", buildJsonObject {
@@ -1300,6 +1322,7 @@ class AgentCoordinator(
                         if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                             sessions.append(message(sessionId, "tool", "${event.name}: ${result.text.take(4_000)}", attachments = result.attachmentPaths))
                             engine.answerTool(event.requestId, result)
+                            traceToolTiming(sessionId, event, receivedAt, dispatchStarted, dispatchFinished, resultStarted, waitedNanos)
                         }
                     }
                 }
@@ -1413,7 +1436,7 @@ class AgentCoordinator(
      * Answer the chat's own tools. None takes the phone: a question
      * can wait minutes, and another chat's tools must not wait with it.
      */
-    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall) {
+    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long) {
         val threadId = event.threadId.orEmpty()
         val turnId = event.turnId.orEmpty()
         withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
@@ -1456,6 +1479,8 @@ class AgentCoordinator(
                 }
             }
         }
+        val dispatchFinished = nowNanos()
+        val waitedNanos = approvalNanos.get() - waitedBefore
         withContext(NonCancellable) { trace(sessionId, "tool_result", buildJsonObject {
             put("threadId", threadId)
             put("turnId", turnId)
@@ -1467,6 +1492,25 @@ class AgentCoordinator(
         }) }
         if (!isCurrentTurn(token, threadId, turnId)) return
         engine.answerTool(event.requestId, result)
+        traceToolTiming(sessionId, event, receivedAt, started, dispatchFinished, dispatchFinished, waitedNanos)
+    }
+
+    /** App-side boundaries only. No model-time or network-time attribution. */
+    private suspend fun traceToolTiming(
+        sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long,
+        dispatchStarted: Long?, dispatchFinished: Long?, resultStarted: Long, waitedNanos: Long,
+    ) {
+        val deliveredAt = nowNanos()
+        fun ms(ns: Long) = ns.coerceAtLeast(0) / 1_000_000
+        trace(sessionId, "tool_timing", buildJsonObject {
+            put("threadId", event.threadId.orEmpty()); put("turnId", event.turnId.orEmpty())
+            put("requestId", event.requestId); put("name", event.name)
+            put("queueMs", ms((dispatchStarted ?: resultStarted) - receivedAt))
+            put("dispatchMs", if (dispatchStarted != null && dispatchFinished != null) ms(dispatchFinished - dispatchStarted) else 0)
+            put("approvalMs", ms(waitedNanos))
+            put("resultDeliveryMs", ms(deliveredAt - (dispatchFinished ?: resultStarted)))
+            put("totalMs", ms(deliveredAt - receivedAt))
+        })
     }
 
     /**
@@ -1734,6 +1778,7 @@ class AgentCoordinator(
             }
         } ?: return
         final.flush?.let { job -> runCatching { withTimeout(1_000) { job.join() } } }
+        tools.revokeIndependentTools()
         if (final.device) runCatching { tools.revoke() }
         runCatching { overlay.setCaptureHidden(false) }
         final.id?.let { id ->
@@ -1796,12 +1841,34 @@ class AgentCoordinator(
             approvalMs = approvalNanos.get() / 1_000_000,
         )
         metricsState.value = metricsState.value + (sessionId to metrics)
+        trace(sessionId, "run_timing", buildJsonObject {
+            put("runId", state.value.runId)
+            put("totalMs", metrics.totalMs); put("toolCalls", metrics.toolCalls)
+            put("toolMs", metrics.toolMs); put("approvalMs", metrics.approvalMs)
+            put("outsideToolsMs", metrics.outsideToolsMs)
+            metrics.firstResponseMs?.let { put("firstResponseMs", it) }
+        })
         // Into the chat, not a log: the run that felt slow is the one someone
         // will ask about, and the answer belongs where they are already looking.
         RunSummary.line(metrics)?.let { summary ->
             runCatching { sessions.append(message(sessionId, "system", summary)) }
         }
         availableState.value = true
+    }
+
+    /**
+     * A browser panel shown to the user, or an approval card for a browser
+     * action, changes what is on the screen, so it takes the phone like a tap
+     * would and keeps it to this run's end. False when the run is not current.
+     */
+    suspend fun claimBrowserScreen(): Boolean {
+        val current = synchronized(lifecycleLock) { Triple(epoch.get(), thread, turn) }
+        val threadId = current.second ?: return false
+        val turnId = current.third ?: return false
+        if (!claimDevice(current.first, threadId, turnId)) return false
+        val work = synchronized(lifecycleLock) { if (deviceHeld) { screenSticky = true; runWorkspace } else null } ?: return false
+        tools.screenInUse(current.first.toString(), work)
+        return true
     }
 
     /**

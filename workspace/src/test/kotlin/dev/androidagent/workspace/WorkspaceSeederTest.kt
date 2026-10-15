@@ -57,7 +57,7 @@ class WorkspaceSeederTest {
         assertEquals(
             setOf(
                 "device-capabilities", "device-automation", "app-cards",
-                "user-preferences", "quick-actions", "workflows", "automations",
+                "user-preferences", "quick-actions", "workflows", "automations", "browser",
                 "files-across-devices", "media-output-check",
             ),
             shippedSkills,

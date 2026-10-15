@@ -20,4 +20,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - run: sdkmanager 'ndk;28.2.13676358'
       - run: chmod +x gradlew
-      - run: ./gradlew :core:test :engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest :mcp-loopback:testDebugUnitTest :runtime:testDebugUnitTest :workspace:testDebugUnitTest :remote:testDebugUnitTest :device-tools:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+      - run: ./gradlew :web:testDebugUnitTest :core:test :engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest :mcp-loopback:testDebugUnitTest :runtime:testDebugUnitTest :workspace:testDebugUnitTest :remote:testDebugUnitTest :device-tools:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+        env:
+          HEYMIKE_TEST_CHROME: /usr/bin/google-chrome

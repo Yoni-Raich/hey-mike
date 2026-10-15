@@ -159,6 +159,15 @@ data class AgentUiState(
     val isAutomationsOpen: Boolean = false,
     /** The chat folder's file sheet is showing. */
     val isWorkspaceOpen: Boolean = false,
+    /**
+     * A chat's browser page, and the chat it belongs to. Written apart from
+     * [activeSessionId], so it may briefly be another chat's: read it through
+     * [activeBrowserPage].
+     */
+    val browserPage: dev.androidagent.web.BrowserPageState? = null,
+    val browserPageChat: String? = null,
+    /** The chat whose page fills the screen; any other chat shows its own conversation. */
+    val browserOpenFor: String? = null,
     val isLoadingSessions: Boolean = false,
     val isLoadingMessages: Boolean = false,
     val isPreparingRuntime: Boolean = false,
@@ -354,6 +363,16 @@ data class AgentUiActions(
     val onOpenWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onShareWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onCloseWorkspaceFiles: () -> Unit = {},
+    val onOpenBrowser: () -> Unit = {},
+    val onCloseBrowser: () -> Unit = {},
+    // Each takes the key of the page the user acted on, never "the open chat's",
+    // which may have changed by the time a click or a disposal arrives.
+    val onBrowserTakeControl: (pageKey: String) -> Unit = {},
+    val onBrowserGiveBack: (pageKey: String) -> Unit = {},
+    val onBrowserClosePage: (pageKey: String) -> Unit = {},
+    /** Put that page in this frame; false when it no longer exists. */
+    val onAttachBrowser: (pageKey: String, frame: dev.androidagent.web.BrowserFrame) -> Boolean = { _, _ -> false },
+    val onDetachBrowser: (pageKey: String, frame: dev.androidagent.web.BrowserFrame) -> Unit = { _, _ -> },
     val onApproval: (requestId: String, allow: Boolean) -> Unit = { _, _ -> },
     /** The user's answer to an `ask_user` question; null when they skip it. */
     val onAnswerQuestion: (questionId: String, answer: String?) -> Unit = { _, _ -> },

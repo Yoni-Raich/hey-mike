@@ -76,6 +76,7 @@ tasks.matching { it.name == "assembleDevDebug" }.configureEach {
     }
 }
 dependencies {
+    implementation(project(":web"))
     implementation(project(":core")); implementation(project(":workspace")); implementation(project(":runtime"))
     implementation(project(":engine-codex")); implementation(project(":engine-claude")); implementation(project(":mcp-loopback")); implementation(project(":adb")); implementation(project(":device-tools")); implementation(project(":overlay")); implementation(project(":voice")); implementation(project(":a11y")); implementation(project(":automations")); implementation(project(":remote"))
     implementation("androidx.core:core-ktx:1.15.0")

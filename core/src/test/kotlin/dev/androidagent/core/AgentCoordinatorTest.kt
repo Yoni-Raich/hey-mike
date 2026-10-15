@@ -295,7 +295,7 @@ class AgentCoordinatorTest {
         assertEquals(1, metrics.toolCalls)
         assertEquals(0L, metrics.approvalMs)
         // The three seconds on the phone are the phone's, and the two before
-        // the tool call are the model's.
+        // the tool call are outside the measured tool work.
         assertTrue("toolMs=${metrics.toolMs}", metrics.toolMs >= 3_000)
         assertTrue("thinkingMs=${metrics.thinkingMs}", metrics.thinkingMs >= 2_000)
         rig.close()
@@ -309,6 +309,35 @@ class AgentCoordinatorTest {
         runCurrent()
 
         assertTrue(rig.store.messages.none { it.text.startsWith("Run summary:") })
+        rig.close()
+    }
+
+    @Test fun timingTraceSeparatesQueueDispatchAndResultDelivery() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read the test screen")
+        runCurrent()
+        advanceTimeBy(2_000)
+        rig.tools.workMs = 1_000
+        rig.engine.answerDelayMs = 300
+        rig.overlay.waitForShow = CompletableDeferred()
+        rig.engine.emit(EngineEvent.ToolCall("timed", "tap", buildJsonObject { put("private", "not-in-timings") }, "thread", "turn"))
+        runCurrent()
+        advanceTimeBy(600)
+        rig.overlay.waitForShow!!.complete(Unit)
+        runCurrent()
+        advanceTimeBy(1_301)
+        runCurrent()
+        advanceTimeBy(700)
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        val timing = rig.store.traces.single { it["type"]?.jsonPrimitive?.content == "tool_timing" }
+        assertEquals("600", timing["queueMs"]!!.jsonPrimitive.content)
+        assertEquals("1000", timing["dispatchMs"]!!.jsonPrimitive.content)
+        assertEquals("300", timing["resultDeliveryMs"]!!.jsonPrimitive.content)
+        assertFalse(timing.toString().contains("not-in-timings"))
+        val total = rig.store.traces.single { it["type"]?.jsonPrimitive?.content == "run_timing" }
+        assertEquals("1000", total["toolMs"]!!.jsonPrimitive.content)
+        assertEquals("3601", total["outsideToolsMs"]!!.jsonPrimitive.content)
         rig.close()
     }
 
@@ -336,7 +365,7 @@ class AgentCoordinatorTest {
         )
         runCurrent()
 
-        val entries = rig.store.traces
+        val entries = rig.store.traces.filter { it["type"]?.jsonPrimitive?.content != "tool_timing" }
         assertEquals(listOf("user", "tool_call", "tool_result", "assistant"), entries.map {
             it["type"]!!.jsonPrimitive.content
         })
@@ -1034,6 +1063,7 @@ class AgentCoordinatorTest {
         var planModel: String? = null
         var closed = false
         var waitForInterrupt: CompletableDeferred<Unit>? = null
+        var answerDelayMs = 0L
         val answers = mutableListOf<ToolResult>()
         val names = mutableListOf<Pair<String, String>>()
         override suspend fun renameThread(threadId: String, title: String) { names += threadId to title }
@@ -1098,7 +1128,7 @@ class AgentCoordinatorTest {
         val steers = mutableListOf<String>()
         override suspend fun steer(threadId: String, turnId: String, prompt: String) { steers += prompt }
         override suspend fun interrupt(threadId: String, turnId: String) { waitForInterrupt?.await() }
-        override suspend fun answerTool(requestId: String, result: ToolResult) { answers.add(result) }
+        override suspend fun answerTool(requestId: String, result: ToolResult) { delay(answerDelayMs); answers.add(result) }
         override suspend fun answerApproval(requestId: String, allow: Boolean) {
             approvalAnswers += requestId to allow
         }

@@ -98,6 +98,26 @@ class CompositeDeviceToolGateway(
     override fun needsControl(name: String, arguments: JsonObject): Boolean =
         routes[name]?.firstOrNull()?.needsControl(name, arguments) ?: true
 
+    override fun requiresDeviceLease(name: String): Boolean =
+        routes[name]?.firstOrNull()?.requiresDeviceLease(name) ?: true
+
+    override fun beginIndependentTool(name: String, runId: String, workspace: File) {
+        // The member's own hook, not beginRun: arming a member as if the run
+        // held the phone is a different statement from "one call, no lease".
+        routes[name]?.filter { !it.requiresDeviceLease(name) }?.forEach { it.beginIndependentTool(name, runId, workspace) }
+    }
+
+    override fun revokeIndependentTools() {
+        // Called first thing on Stop, before the device revocation: every
+        // member is reached, and a throwing one cannot skip the rest of Stop.
+        for (member in members) runCatching { member.revokeIndependentTools() }
+    }
+
+    override suspend fun screenInUse(runId: String, workspace: File) {
+        // Await the handoff. If a window cannot move, sending screen input is unsafe.
+        for (member in members) member.screenInUse(runId, workspace)
+    }
+
     override fun hidesOverlayDuringCapture(name: String): Boolean =
         routes[name]?.firstOrNull()?.hidesOverlayDuringCapture(name) ?: false
 

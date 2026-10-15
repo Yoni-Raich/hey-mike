@@ -1,5 +1,558 @@
 # Progress
 
+### Internal browser: dev integration and panel handoff review — 2026-10-15
+
+Merged current `origin/dev` (`816be90`) into the browser branch as `5d005c8`.
+Only PROGRESS conflicted; both the browser evidence and Claude ownership
+updates were kept. PR #136 targets dev and includes the full internal browser.
+Its initial push and PR CI checks passed on `5d005c8`.
+
+The automated review found a real panel handoff gap: the Android host inherited
+a no-op `screenInUse`, leaving the panel above phone actions or approvals after
+Give back. A new host regression failed on that code. The host now publishes
+a dismissal version; the UI closes its panel and parks the same WebView. Phone
+work waits for the frame to detach, refusing after 3s if the UI has not done so.
+A visible user-owned page refuses screen work instead of being taken away,
+including calls from another chat. Later page updates do not undo an explicit
+reopen. Focused host/UI tests passed: 10 + 5, no failures or skips.
+
+Local integration validation hit build-environment problems: a shared Kotlin
+compiler wait (only this gate's daemon was stopped), the global storage hook
+trying to prune a locked lint-cache JAR, then unreadable shared transform
+metadata. Validation uses a temporary Gradle home with its own transforms,
+in-process Kotlin and a central-output init script that holds the existing
+worktree lease without pruning other builds. Global settings were not edited.
+The first full run then failed on Chrome's DevToolsActivePort write/read race
+and two SshDeltaPeerTest timeouts. The Chrome fixture now waits for a readable
+port within the same 15s startup budget. The serial full gate passed in 12m12s:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:web:lintDebug :app:lintDevDebug --no-daemon`, with
+`-Pkotlin.compiler.execution.strategy=in-process --max-workers=1` and
+`HEYMIKE_TEST_CHROME` set. Reports: 2917 test cases across 290 suites, zero
+failures/errors, 34 existing skips. Web: 87 per variant, including 60 live Chrome
+tests in each, no skips. Both SSH test variants passed without a remote change.
+Both requested APK builds and all three lint tasks passed. `python -m unittest
+tools.test_prepare_runtime tools.test_claude_sessions`: 32 passed. Diff check
+passed. Final-head CI is tracked in PR #136.
+
+Evidence is ignored under `artifacts/browser-dev-merge-20261015/`, including
+failed attempts, the red host test, focused green run, full-gate log, summary
+JSON and archived result XML. No new merged-tree
+phone install was done. Earlier Xiaomi evidence below applies to the earlier
+browser code; the panel handoff change has host/UI unit proof only. Hosting
+phone metadata read during this integration reported 1157, and was not replaced
+with the older 1155 browser APK. GitHub's stale-body Back and the unreproduced
+uncertain-click case remain open as described below.
+
+### Internal browser: new-window links, router back, tolerant settling — 2026-10-15
+
+The hosting phone's deep run took 3:00, with 86.2s in browser calls. Xiaomi
+`cd4928027d76` (USB, explicit serial) reproduced two causes with a new probe
+scenario `github` (production host, refusing approvals, no human input):
+
+- GitHub's external link uses target=_blank. The refused popup left a click
+  verify waiting 15.0s each time (gh-0..2 15693-15931ms, red v20) and needed a
+  second `open` call. Gesture-started new windows now load in the same page;
+  the throwaway window never fetches (local 204) and its address goes through
+  the page's own policy path. Same click after the fix: 1231-1554ms, 5/5 (v22,
+  v25), destination checked.
+- Back on GitHub stays in one document. Probe v21 run 0 reproduced the
+  hosting phone's symptom: repository URL, Issues body. `back` now reports a
+  same-document step and points to `reload`. Not reproduced in 13 later probe
+  backs; seen in both installed-app chats below.
+- Probe v21 run 1 hit `Cannot find context` while settling across the new
+  navigation. Settling now follows a replaced document (lost context, frame
+  or helper) instead of failing a sent action; timeouts still fail.
+- Skill: verify by URL or seen text, not a guessed selector (`#readme` cost
+  the hosting run a full wait). Timing logs now carry `errorType`.
+
+Evidence (ignored `artifacts/browser-nav-20261015/`): web live-Chrome suite 60
+tests per variant, 0 failures (`HEYMIKE_TEST_CHROME`); new tests cover router
+back, cross-document back, a settle read losing the document, errorType.
+Full gate (`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:app:lintDevDebug`) passed for ee81c74 (2897 executions, 34 existing skips,
+0 failures) and again for be3a7dc (exit 0; result XML later evicted by build
+storage, so counts were not re-read). `tools.test_prepare_runtime` OK, diff
+check clean. Probe v23 then v25 on Xiaomi: sites, controls, forms, keyboard,
+github (5 rounds), popup (8 rounds, after reload or wait) all `FINISHED 0`.
+
+Dev Release 1155 `0.14.0-dev.browser-nav2` (be3a7dc), non-debuggable, 16KiB
+aligned, v3 signed with the local test key, SHA-256
+`a9e8b0a58419278f042a9a1664f25d03d54c0b03975e546dcedf98f7a2061b9e`; installed
+on Xiaomi with `install -r`, base.apk hash identical, accessibility bound.
+Same prompt in a live Codex 6.1 Sol Low chat (GitHub repo, Issues, back,
+external link, show): 1154 used 6 browser calls, the external click returned
+uncertain although the page arrived; 1155 used 4 calls, the click and handoff
+ran as one 1738ms plan, PC send to final log 41.2s. In both chats the model's
+own 8s back verify timed out on the router symptom and reload recovered it.
+
+Gaps: the 1154 uncertain click was not reproduced (0/8 probe runs), so the
+settle hardening is a plausible, not proven, fix; errorType logging will name
+the next one. A same-document back still costs the model's verify timeout
+before reload.
+
+Hosting delivery, 17:14: rechecked the retained signed artifact (291924290
+bytes), SHA-256 above, version 1155, 16KiB alignment and v3 certificate. The
+hosting phone reported version 1153 before update. `copy_file` completed to
+`chat:browser-1155/app-dev-debug.apk` and Downloads URI
+`content://media/external_primary/downloads/1000235171`. APK Manager initially
+showed Install, but it had already moved to Installing before our tap plan
+resolved: target_not_found, zero taps sent. The observed installing screen
+reported Silent install over ADB. No install retry was made. The first app-info
+read still returned 1153. The follow-up wait and metadata read did not answer
+after the update began; the read-only wait was cancelled, without repeating
+installation. Final installed-version verification remains open, separate
+from the completed transfer and observed installation start.
+
+### Internal browser: deep Xiaomi regressions — 2026-10-15
+
+Code `9fca73d` fixes three reproduced problems: document/visual hit-test
+coordinates after keyboard pan or scrolling; CSS smooth scrolling racing
+the next hit test; and `display:contents` wrappers hiding MDN's article from
+the snapshot and target lookup. Input remains native and trusted. No approval,
+Stop, genuine-cover check or uncertain-action retry rule was weakened.
+
+Separate non-debuggable production-host probe on USB Xiaomi 23053RN02Y,
+Android 15, WebView 154.0.8037.107: probe 17 passed eight keyboard/scroll
+cases (four frame heights, two repeats), six real httpbin form flows, and
+cover/user-control/Stop/24-step/two-chat checks. Mid-plan cancellation left
+the counter at exactly 2; the long plan added exactly 21 clicks and handed
+over in 11220ms. Two chat pages retained their independent state. No form
+was submitted. A malformed harness workspace initially triggered the host's
+correct deleted-chat cleanup; it was fixed in the test harness.
+
+Probe 19 passed two complete Wikipedia / MDN / GitHub / WHATWG site rounds,
+including link navigation, scrolling, verified history back and external
+navigation, in 48253ms without a model. Internal clicks including verification:
+Wikipedia 1411/1239ms, MDN 1140/962ms, GitHub Issues 1852/3375ms.
+GitHub opens its external link as a popup: refusal was observed, then the
+known URL was opened in the same page and independently checked. The harness
+waits for SPA body readiness after Back and allows one fresh read/re-resolution
+only for a stale node with the session input counter unchanged. Probe 19
+needed no such recovery. Earlier failed and incomplete diagnostics are kept.
+
+Six new regressions per web variant: native pan, wrong-frame cover, document
+scroll, smooth scroll, rendered contents, and hidden contents. The old code
+failed the corresponding positive tests before each fix. Final full gate:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:web:lintDebug :app:lintDevDebug --no-daemon --console=plain`, 1153 version
+overrides, passed in 2m38s. Web 80 per variant, no skips; complete matrix 2893
+executions, zero failures/errors, 34 existing skips. Runtime preparation:
+15 OK. Raw device JSONL/logcat, red tests and gate evidence are ignored under
+`artifacts/browser-batching-20261015/deep-xiaomi/`. See
+`docs/testing/internal-browser-deep-xiaomi-20261015.md` for scope and gaps.
+
+Hosting-phone metadata was independently read during this work: 1152
+`0.14.0-dev.browser-batching1`.
+
+Package: final rebuild from code `9fca73d` passed in 2m7s. Dev Release,
+non-debuggable, test-signed, version 1153 `0.14.0-dev.browser-keyboard1`.
+16KiB ZIP alignment and v3 signature pass; the existing test certificate
+is unchanged. Signed APK is 291932681 bytes, SHA-256
+`f27240b19d676d6dc20865a3f2dc8c074883e6791cf6752c3c170cc79189d21e`.
+Packaged page helper matches committed source bytes. USB update on Xiaomi
+succeeded without data removal; installed base.apk hash and version match.
+
+Full application smoke also passed on that exact installed APK, using a
+normal ChatGPT/Codex 6.1 Sol Low chat: open MDN JavaScript, follow JavaScript
+reference, show. App timing log: open 3163.4ms, one click/verify/handoff plan
+1798.0ms, both OK, zero protocol errors/timeouts. The screen showed the correct
+Reference title/domain and You have control. The PC's pre-Send UTC marker to
+the handoff timing-log timestamp was 17267.9ms; browser backend sum 4961.4ms.
+This is one short smoke, not the earlier form benchmark or a model speedup
+comparison. The previously enabled accessibility service needed a visible
+Android Settings off/on cycle after update; normal confirmation/countdown
+was respected. It ended bound with no crashed services. No secure setting
+was written, and no instrumentation runner was used.
+
+Hosting-phone transfer/installation of 1153 is separate from this confirmed
+Xiaomi package and application evidence. `copy_file` completed to
+`chat:browser-1153/app-dev-debug.apk` and then Downloads URI
+`content://media/external_primary/downloads/1000235086`. APK Manager's Install
+was tapped once and its next screen said Installing app-dev-debug.apk / Silent
+install over ADB. No install retry was sent. The subsequent wait and two
+app-info reads did not return after installation began; those read-only waits
+were cancelled. Hosting-phone installed version remains unverified. No
+hosting-phone post-update browser success is claimed.
+
+### Internal browser: fewer model/tool exchanges — 2026-10-15
+
+Known forms can now fill, use a read-only `check` of live values/checked
+states, and hand over with `plan(show:true)` in one call. A failed check
+stops later steps and handoff; a lost handoff reply retains the completed
+ledger. Secrets are refused. Plans allow 24 known steps within the same
+80s ceiling. The schema and shipped agent instructions explain this path.
+
+Controlled physical comparison in separate non-debuggable probe 10 on
+Xiaomi Android 15: three alternating pairs, same two fills, Apply once,
+independently checked final DOM and user control. Split: 5 calls, median
+1451ms, 2885 reply bytes. Batch: 1 call, median 1474ms, 2365 reply bytes.
+That is 80% fewer calls and 18.0% less returned text; backend time stayed
+similar. No model delay, token measurement or wall-time speedup is claimed.
+The focused probe ended BATCHING_PASS; the separate screenshot issue remains
+open. Raw evidence is ignored under `artifacts/browser-batching-20261015/`.
+
+Trace entries now separate app-side queue, invocation and result handling
+(`tool_timing`) and record numeric run totals (`run_timing`). The residual
+summary is labelled outside tool calls rather than pure thinking. A virtual
+clock verifies 600ms queue / 1000ms invocation / 300ms delivery without
+recording private arguments in timing entries.
+
+Checks: five initial new browser tests failed before implementation. Final
+full gate passed in 2m51s with 1152 version overrides: `test assembleDevRelease
+assembleDevDebugAndroidTest :voice:lintDebug :web:lintDebug :app:lintDevDebug
+--no-daemon --console=plain`. Web: 74 per variant, core: 787, no failures or
+skips in those modules. Across all variants: 2881 test executions, zero
+failures/errors, 34 existing skips. Runtime preparation: 15 OK.
+The hosting phone's complete model-driven run with this change is not yet
+measured. See `docs/testing/internal-browser-batching-20261015.md`.
+
+Delivery: code commit `d88eddd`; final Dev Release rebuilt in 30s with
+version 1152 `0.14.0-dev.browser-batching1`. ZIP alignment, v3 signature and
+the existing test certificate verified. APK SHA-256
+`88d69a261fb2c940ee9fd9a5971f423c8fdddd22e956e9f929958c28bd55a052`,
+291932681 bytes. Packaged helper, browser skill and agent instructions match
+the committed sources byte for byte. `copy_file` completed to the hosting
+chat and local Downloads. APK Manager then displayed Installing; our Install
+step found no button and sent no tap, so it was not repeated. Installed
+version verification remains separate from this transfer/install progress.
+
+### Internal browser: false approval on navigation paths — 2026-10-15
+
+The user's hosting-phone report isolated a 120.02s approval wait on the
+Google `forms/post` result, followed by approval_denied with no click.
+Source matched `post` inside the path as a publishing verb. Google also
+wraps the title in a link-role div inside the real anchor. The helper now
+judges that enclosing anchor and excludes URL/path tokens only from the
+`post` word check on ordinary HTTP(S) GET links. Buttons, downloads,
+non-GET action links, non-web schemes, other sensitive verbs and form
+submissions retain approval checks. No timeout or approval answer changed.
+
+The initial path-only fix passed 66 tests but failed the physical result
+click; probe versions 7/8 and the captured public DOM were retained. The
+final regression includes Google's nested structure. All 67 web tests
+(43 live CDP, 7 host, 7 policy, 8 gateway, 2 wait) pass without failures or
+skips, including nine refused sensitive controls and a non-web link.
+Web lint passes. Full gate with 1151 version overrides passed in 1m20s:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:web:lintDebug :app:lintDevDebug --no-daemon --console=plain`. Runtime
+preparation: 15 OK. An intermediate build-storage file lock was resolved
+by stopping idle Gradle daemons and building sequentially, without manual
+cleanup or changes to other worktrees.
+
+Physical repeat, separate non-debuggable probe 9 on Xiaomi Android 15:
+all 15 benchmark calls passed with every approval callback set to false.
+Google result click: 2179/1477/1126ms, median 1477ms, one redirect each,
+no protocol timeouts or approval requests. Direct form open:
+1027/791/1281ms. Five-action fill/radio/checkbox plan:
+2480/2446/2426ms. No form submission. Logs, failed intermediate runs and
+timing/DOM evidence are ignored under `artifacts/browser-approval-20261015/`.
+These are module measurements on the test phone, not a live task on the
+hosting phone. The original 27.7s event remains unexplained.
+
+Prepared test-signed Dev Release 1151 `0.14.0-dev.browser-approval1` for
+the hosting phone. ZIP alignment, v3 signature and the existing certificate
+verified. APK SHA-256:
+`56c597ceea5c368081253cdc86a1dd5645a7701c35eb76f2e0000c94ae3224eb`.
+The packaged page helper matches the tested source byte for byte.
+See `docs/testing/internal-browser-performance-20261015.md` for limits.
+
+Delivery: `copy_file` completed to the source chat and then local Downloads.
+Opening that exact file reached APK Manager's "Installing app-dev-debug.apk"
+screen. Phone tool replies stopped during the update. In the 13:32 follow-up,
+live `apps_settings(app_info)` confirmed installed 1151,
+`0.14.0-dev.browser-approval1`; browser ready with one page and accessibility
+connected. The installed base APK hash was not read. No reinstall was needed.
+Probe 9's separate later screenshot check ended FAIL at
+Screenshot unavailable after its 15 successful benchmark calls; the probe
+was then stopped. No full-probe PASS is claimed.
+
+The user's fresh hosting-phone report at 13:32 says the result click and
+form verification took 1.47s backend / 1.55s outer, with no approval wait.
+The form was filled, updated, verified and shown without submitting it.
+Scrolling commands ran but the reported scroll range was zero: this does
+not prove movement. Reported totals: 14.21s backend, 14.97s outer calls,
+79.4s wall time. The 64.43s outside calls is not split into model, orchestration
+or other time by this report. The 0.76s difference between outer and backend
+totals is not a standalone network measurement. The slowest step was Enter:
+3.09s including 3.00s settling. Raw hosting-phone traces were not inspected.
+
+### Internal browser: measured waits and DOM plans — 2026-10-15
+
+Added per-call and per-step monotonic timings, exclusive phases, CDP command
+counts/errors/timeouts, document events and redirect counts. The returned
+compact record is also in the existing tool trace; logcat `MikeBrowserTiming`
+has per-command detail in numbered chunks. Timing records exclude URLs,
+selectors, field values, page text, headers, bodies and chat/workspace paths.
+Plans report action/verification status, keep their no-replay ledger and take
+one final snapshot. The browser skill explains that `browser plan` is the DOM
+equivalent of the screen's `act_plan`; no duplicate tool or gateway was added.
+
+Two regressions were red before fixing waits: a usable document with an 8s
+image took 8535ms to open; a nested read stretched 3s settling to 10050ms.
+After: the live Chrome image fixture took 396ms; the virtual-time delayed
+read stays within 3050ms. DOM readiness no longer needs every image loaded;
+settling/verification include nested cancellable calls, preserve Stop, and
+report budget expiry. A physical follow-up also found the keyboard's panned
+visual viewport was ignored during hit testing. After correcting that, the
+three fills, radio and checkbox plan passed on Xiaomi without sending a form.
+
+Physical module benchmark, separate non-debuggable probe, Xiaomi Android 15,
+WebView 154.0.8037.107: three successful repetitions of every performance call
+(15/15). Google result click: 1640/1214/1632ms; direct httpbin open:
+1256/613/758ms; five-action form plan: 2481/2419/2445ms. Each result click
+recorded one redirect; no protocol timeout. One search used its settling
+budget and then passed URL verification. Public-page snapshots, geometry,
+raw timings and logcat are ignored under `artifacts/browser-performance-20261015/`.
+
+Checks: `:web:testDebugUnitTest :web:lintDebug` PASS, 62 tests (38 live CDP,
+7 host, 7 URL policy, 8 gateway, 2 wait), no failures/skips. Full gate
+`gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+:voice:lintDebug :web:lintDebug :app:lintDevDebug --no-daemon --console=plain`
+BUILD SUCCESSFUL (1m32s), web 62 per variant. Runtime preparation tests: 15 OK;
+`git diff --check` clean. Intermediate compile/test errors in the newly added
+tests and description were corrected before the final green gate.
+
+Limits: the user's original single 27.7s click on another phone was not
+reproduced or diagnosed. These timings exclude model/relay time. This pass
+tested the production browser module in a separate foreground probe, not the
+full Hey Mike host/approval/handoff UI or the hosting phone. The probe's later
+CDP screenshot check was intermittent; its final file says FAIL at Screenshot
+unavailable after all benchmark calls completed. No full-probe PASS is claimed.
+See `docs/testing/internal-browser-performance-20261015.md` for exact evidence,
+test harness limits and reproduction. Earlier network-policy gaps remain open.
+
+Delivery follow-up: built the same app code as test-signed Dev Release 1150
+`0.14.0-dev.browser-timings2` (26s); ZIP-aligned, v3 signature and matching
+test certificate verified. APK SHA-256
+`b90c8b505fe0b6143457181f4bcef9f8dd5974d8c4c954560cb93308d23fb025`.
+`copy_file` completed to the hosting phone; the native installer updated in
+place. `apps_settings(app_info)` then confirmed 1150, and `device_status`
+reported browser ready / accessibility connected. No installed-base hash or
+live browser task on that phone was checked after this update. This retained
+computer chat still lacks a callable `browser` despite the runtime status.
+Artifacts/metadata are in the ignored `delivery-1150/` evidence subfolder.
+
+### Internal browser: physical follow-up and non-debuggable Hey Mike — 2026-10-15
+
+Follow-up on app code `4ea778a`; no product code changes. Xiaomi 23053RN02Y,
+Android 15. Two real chats on Dev Debug 1147 retained different pages and
+control states: weather at DuckDuckGo stayed Mike's, Example Domain stayed
+the user's. Back, chat switch and Open returned the matching page; the same
+two CDP target IDs survived. Screenshots and target lists are under ignored
+`artifacts/internal-browser-followup-2026-10-15/`.
+
+Built `gradlew.bat :app:assembleDevRelease '-PversionCodeOverride=1148'
+'-PversionNameOverride=0.14.0-dev.browser-releasecheck1' --console=plain`:
+BUILD SUCCESSFUL (43 s). ZIP-aligned and signed with the same test debug
+certificate, APK Signature Scheme v3 verified. This is a test-signed Dev
+Release build, not a published release. APK and installed `base.apk` SHA-256
+both `85f9304c979eff09e19076d81276762a6ec64a9ebf626966b4a586bb7fd17f78`.
+USB `adb install -r` succeeded. Package metadata shows 1148, that version name,
+and no DEBUGGABLE flag. Original install time and chat history stayed; no
+uninstall or data clear. Accessibility remained bound, no crashed services.
+
+On that installed Release build, a live on-phone Codex 6.1 Sol task called
+`device_status`, opened DuckDuckGo with `browser`, and showed it in Hey Mike.
+The expanded action card shows Checked the phone / Browser / Browser.
+An ADB tap and IME key events put `Release QA` in the page's search field;
+the field stayed above the keyboard. This was simulated input, not human
+typing. A second Release chat opened Example Domain, leaving DuckDuckGo and
+its typed field alive. No private session files were read from Release.
+
+Release handoff with a panel already open: B showed DuckDuckGo, then C's live
+`browser show` brought C's Example Domain panel forward. Across 137 CDP
+observations over 47 s, the same targets traded on-screen and parked positions
+at 1.985 s; C stayed attached afterwards. Native screenshots show B before,
+C after, and B reopened afterwards with `Release QA` still present (37, 39,
+45). Three requested browser waits were refused with `user_control` before
+that show, so this was not a 30-second delay test. No crash or page reset seen.
+
+Release show from the background also passed, while unlocked: after Give back,
+the live task waited 10 s then showed the same page. Home was pressed about
+0.4 s after Send. Window focus was sampled through 32 s: launcher first,
+Hey Mike MainActivity from about 11 s; the page was visible in screenshot 43.
+This does not prove locked-screen behavior or long background survival.
+
+Network gap reproduced on Debug 1147 with the unchanged production WebView
+policy: direct navigation to an owned loopback DNS alias made zero receiver
+connections; a synthetic public HTTPS 302 to the same HTTPS alias made two
+TLS ClientHello connections. The receiver ended TLS before HTTP. No private
+HTTP request/response or Internet-hosted redirect was proved. The HTTP
+variant made zero hits because Android refused cleartext. The fixture used
+CDP response fulfillment plus a USB reverse to a PC loopback listener, then
+restored Example Domain and removed the reverse. No network device was
+probed, and no DNS, certificate trust or app policy was changed. The gap is
+confirmed at connection level and remains unfixed; see ARCHITECTURE.
+
+Secure lock testing is pending a human being available to unlock the Xiaomi;
+it has a secure keyguard. The phone has not been locked for this test. Close
+page, renderer crash, user dropdowns/pickers and pinch zoom remain untested.
+The full gate in the next entry covers this unchanged app code; the follow-up
+adds physical evidence and a version override only.
+
+### Internal browser: integrated with dev, review fixes, page shown inside Hey Mike — 2026-10-15
+
+Branch `fix/internal-browser-review-20261015`. `claude/internal-web-browser`
+(`a1874f2`, unchanged) is merged into dev `9caafd2` as a real merge, so dev's
+features, schema 9 and version 1147 stay. No version bump: nothing is released.
+
+Review fixes (`fix(web): close review findings`). Each has a test that failed
+on the merge commit and passes now. Red run checked here: the 12 new tests
+on the pre-fix code with only the `CdpConnection` test seam added gave
+48 tests, 12 failed, and each of the 12 was a new test:
+- `show` hid its own page: the posted screen hand-over parked it after it
+  appeared. Hand-over is now awaited (`screenInUse` is suspend end to end) and
+  a failing member stops the caller.
+- A click on a `span` inside a submit button, or on a label, skipped approval.
+  Approval is judged on the element that activates.
+- `fill(submit)` could send Enter into another form when a frame moved focus.
+  Enter now needs the target focused through every frame, before and after
+  approval. Otherwise the completed fill is reported (`completedAction`) and no
+  Enter is sent.
+- A lost reply to a mutating helper call was retried, which ran page handlers
+  twice. No retries now; scroll/value/option count as sent first, and a lost
+  reply is reported as uncertain.
+- A click inside a frame went through an overlay in the parent document. The
+  hit test now also runs from the top viewport.
+- The same match in two frames took the first. Now `ambiguous_target`.
+- An approval stayed valid after the control or form destination changed.
+  Now `target_changed`/`focus_changed`.
+- A failing main-frame snapshot returned an empty page, and a screenshot could
+  show a blocked frame. Both now fail.
+
+Design change (the user's request): the page is part of its chat, inside Hey
+Mike, not a floating window. See ARCHITECTURE "Shown inside Hey Mike". The
+WebView stays in a parked hidden window while not viewed, so it keeps running
+in the background. The chat shows a card. Open moves the same WebView into a
+full-screen panel: site, lock or "Not secure", who has the page, Take control
+or Give back to Mike, Stop, and Close (asks first). Touches are held back
+while Mike has the page. `show` brings Hey Mike forward on that chat, gives
+the user control, and says whether the page reached the screen.
+
+Follow-up after the device run (same day): the panel bar text was black on
+the dark bar, and the composer's keyboard stayed up over the page; both fixed.
+After a source review, also: each page gets its own native frame
+(`key(pageKey)`), every attach, detach and control callback carries the key
+of the page it was made for, the UI state records which chat its page belongs
+to (`browserPageChat`, read through `activeBrowserPage`), and Stop shows
+whenever a run is active, also while the user has the page. New JVM tests: a
+state test that chat B never shows chat A's page while the collectors catch
+up, and a Robolectric host test that a late detach from A's old frame leaves
+B's page attached. These are state and host tests; they do not run Compose,
+so `AndroidView` reuse across a real chat switch is not exercised by them.
+ARCHITECTURE now calls the four-page limit a soft cap (it gives way when
+every page is busy, shown or the user's), with no test.
+
+Evidence (Windows, central build storage, `HEYMIKE_TEST_CHROME` = desktop
+Chrome), final code: `gradlew.bat test assembleDevRelease
+assembleDevDebugAndroidTest :voice:lintDebug :web:lintDebug :app:lintDevDebug
+--no-daemon --rerun-tasks`: BUILD SUCCESSFUL (2m 56s), no lint errors. Tests, every module 0 failures: web 54 per variant (35 live CDP, 7 Robolectric host, 7 policy, 5 gateway), core 786, app 165 per variant, remote 149 (3 skipped), workspace 47 (14 skipped). `python -m unittest tools.test_prepare_runtime` 15 OK; `git diff --check` clean.
+
+Device (Xiaomi 23053RN02Y, no SIM, HyperOS). `adb install -r`
+in place over 1139: no uninstall, sign-in, chats and data kept; same debug
+certificate (SHA-256 `f65c3469…dda1ee`). Final installed `base.apk` SHA-256
+`f15a4f2e7a02d599ada7c15f59d58958f1196ce41ed88a3cb810d8cc4467eb60`,
+`dev.androidagent.app.dev` 1147 `0.14.0-dev.claude-sync4`. Accessibility
+stayed bound after each install. Screenshots, the chat's `session-trace.jsonl`
+and APK metadata are kept under the ignored
+`artifacts/internal-browser-device-2026-10-15/`. One Claude-subscription run
+first failed on an OAuth refresh error (not the browser); the retry worked.
+Seen on the phone, each in a screenshot:
+- `show` (trace: `browser open` then `browser show`, reply "in front of the
+  user, in Hey Mike") opened the page inside Hey Mike's chat with the site
+  host, lock and "You have control" (s6, t3).
+- Back returned to the chat; the card read "Your turn · example.com"; Open
+  reopened the page (s7, s8).
+- Give back to Mike locked the page: a swipe did not scroll it. After Take
+  control the same swipe scrolled (s9, s10, s11).
+- Typing into the page: with the user in control, a tap on DuckDuckGo's search
+  field and `adb input text` (IME key events, not a human) put "Hey mike test"
+  in the field, which stayed above the keyboard (t4). The user's dropdowns and
+  pickers were not tried.
+- Stop while the user had the page and `ask_user` was pending: Stop was shown
+  (u2); pressing it cancelled the run (trace: `ask_user` `tool_cancelled`) and
+  the button went away (u3).
+- Agent refused while the user had the page: trace shows `fill` → `error:
+  user_control`, then `hide`, then `fill` with submit → ok, title "weather at
+  DuckDuckGo". Background: Home was pressed about 2 s after sending; the window
+  focus was the launcher when checked right after Home and again about 80 s
+  later. The successful `fill` started about 5 s and finished about 10 s after the send. Focus was sampled,
+  not watched, so this shows the step ran with the launcher in front, not that
+  the page drew continuously. The model's final text said the page was "under
+  your control again"; the card said "Mike's browser", which matches the
+  trace (no `show` after `hide`). That sentence was the model's error.
+
+That first run did not cover show from another app, two real chats switching
+with a panel open, or non-debuggable Hey Mike. The follow-up above covers
+those on Release 1148. Still untested: secure lock, Close page, a renderer
+crash, the user's dropdowns/pickers and pinch zoom.
+
+Still open, not fixed: a redirect can reach a privately resolving destination
+before the read guard runs (the follow-up confirms TLS connections, not a
+private HTTP request). DNS rebinding and
+websockets are still gaps. `tools/browser-probe` only follows the new `show`
+signature and still builds (`-p tools/browser-probe assembleRelease`). It does
+not exercise the in-app panel.
+
+### Internal browser: review fixes for targets, the ledger, reconnect and the shown page — 2026-10-15
+
+Review of the internal browser (`:web`, item 20). The original work was
+committed as found first (`aa39281`); the fixes are separate. Broken before,
+each shown by a live-Chrome test that failed on the original code:
+
+- A click on a control under a cookie banner or dialog pressed the banner and
+  reported "click Covered". Now a hit test (`elementFromPoint`) refuses with
+  `obscured`, names what covers it with a ref, and presses nothing.
+- `fill` ignored whether the field kept the focus, so typed text could land in
+  another field. Now it types only into the focused target.
+- Plain text shown twice was pressed at its first occurrence. Now
+  `ambiguous_target`.
+- Enter in a form inside a frame skipped the approval card (the main document
+  only saw the frame). Now judged in the field's frame; an unreadable frame asks.
+- A child frame, or a page that reached a blocked address by itself, was read
+  into snapshots. Now blocked frames are listed but never read or acted in, and
+  every read re-checks the page address first.
+- An approval still waiting when a plan ran out of time was reported as "may
+  have happened"; a lost connection during a read said the same, and a failed
+  `snapshot` returned `ok: true`. Now an input counter decides: nothing sent
+  means "did not happen, resume with startAt", anything sent means
+  `mayHaveActed: true`. Failure replies also keep page notes and say when the
+  screen is off or the phone locked.
+
+Also changed (by design, not covered by a failing test): a dropped CDP
+connection reattaches to the same WebView by target id instead of replacing
+the page; all page endings go through one main-thread `discard`; at most four
+pages, closing deleted chats' pages first; a shown page is put away before any
+run uses the screen (`DeviceToolGateway.screenInUse`), so taps cannot land in
+it; the bar shows the site host and "Not secure" for http; a service-worker
+client applies the URL policy; reserved IPv4 ranges and NAT64 are blocked; refs
+come from a process-wide `Long` range; plans and steps are validated before a
+page opens; the finger `MotionEvent` is touchscreen-sourced. A failed DNS
+lookup after a page loaded no longer blanks it.
+
+Evidence (Windows, this worktree, desktop Chrome headless via
+`HEYMIKE_TEST_CHROME`): the red run of the new tests on the original code had
+8 of 10 fail. Then `:web:testDebugUnitTest` 36 (24 live CDP, 7 policy, 5
+gateway), 0 failures; `:core:test` 582; `:app:testDevDebugUnitTest` 92;
+`:workspace:testDebugUnitTest` 18 (6 skipped); the full gate `gradlew.bat test
+assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug` plus
+`:web:lintDebug` and `:app:lintDevDebug`: BUILD SUCCESSFUL, no lint errors;
+`python -m unittest tools.test_prepare_runtime` 5 OK; `git diff --check`
+clean; `gradlew.bat -p tools/browser-probe assembleRelease` builds.
+
+Not tested: nothing in this change ran on a phone. Not checked: the Android
+host (reconnect by target id, `discard`, the page cap, putting a shown page
+away, the address bar, the service-worker client), `WebViewInput` taps (the
+history says a click once ended in `browser_disconnected` on a locked phone;
+the MotionEvent path was never re-run physically), the CSS-to-view scale under
+pinch zoom, approvals from a browser step, and two chats browsing at once. The
+ref-aliasing test also passed on the original code, so that change is
+hardening, not a fixed bug. Server redirects to privately-resolving names,
+DNS rebinding and websockets remain gaps (see ARCHITECTURE). The branch is 107
+commits behind `dev`; a trial `git merge-tree` shows 8 conflicting files
+(coordinator, composite gateway, app wiring, CI, Gradle files, two tests), so
+integrating it needs its own pass.
 ### Claude chat blocked by Mike's own CLI — 2026-10-15
 
 - Claude chats on Pc kept showing "open in another Claude". Mike now launches
