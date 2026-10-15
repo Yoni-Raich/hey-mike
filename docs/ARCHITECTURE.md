@@ -315,6 +315,7 @@ One Android project, with replaceable modules and small core contracts.
 | a11y | Optional in-process accessibility screen observation and control |
 | overlay | Floating steering card, status and direct local stop |
 | remote | Computers over SSH: sealed profiles, Codex on Windows, chat routing |
+| web | Internal WebView pages, app-owned CDP, DOM reading and inline action plans |
 
 A model change is configuration. An engine change replaces the engine adapter. Runtime packaging must not affect chat or ADB APIs. The UI observes app events, never raw Codex JSON.
 
@@ -374,6 +375,113 @@ app-server copy to this exact filename, which must keep the upstream name's
 20-byte width, and fails closed if the upstream binary layout changes. The
 downloaded official archive stays unchanged, and the manifest records the
 staged file hashes.
+
+## Internal browser
+
+`:web` exposes one `browser` tool through the existing composite gateway.
+`AndroidBrowserHost` owns one WebView per chat (keyed by the chat's workspace),
+attached to a parked, non-touchable overlay. `CdpClient` speaks HTTP/WebSocket
+over the app's own abstract LocalSocket (`webview_devtools_remote_<pid>`); no
+ADB connection is used. WebView debugging is intentionally enabled while
+internal pages exist, including release builds, and disabled after the last
+page closes or the service stops. Anyone already authorized for ADB can inspect
+these pages while it is enabled; this is an intentional control channel, not a
+hidden debug flag.
+
+**Targets.** `BrowserSession` puts a helper in an isolated world to produce
+bounded semantic DOM snapshots, page reading text, stable element refs, and
+selectors. It reads open shadow roots and readable child frames. Out-of-process
+cross-origin frames and closed shadow roots have no full coverage yet. Every
+helper injection takes a ref range no other world, document, frame or
+connection in the process has used (`Long` refs), so an old ref can only be
+stale, never name another element. Plain-text targets count every match, so a
+label shown twice is `ambiguous_target`. Before a press the helper hit-tests
+the element's middle (`elementFromPoint`, shadow roots and labels included);
+a covering element is scrolled past once, then reported as `obscured` with its
+ref, and nothing is pressed. The check runs again after an approval. `fill`
+types only when the target keeps the focus; a field that passes its focus on
+gets its value set directly, and a content-editable one is refused
+(`not_focused`), so text never lands in another field.
+
+**Input.** CDP types text and captures page PNGs. Android touch uses
+`WebViewInput`: the DOM point becomes a touchscreen-sourced finger
+`MotionEvent` delivered to this app's WebView, which preserves trusted input
+when WebView rejects CDP touch emulation. Stop between down and up sends
+`ACTION_CANCEL`. It never taps the global screen. The CSS-to-view scale is
+exact at default zoom; pinch zoom and parked-window rendering need device
+evidence.
+
+**Ledger and uncertainty.** `BrowserSession.inputs` counts every input just
+before it is sent (press, typed text, value set, option, navigation, script).
+The gateway compares it per call and per plan step: a failure with the count
+unchanged is reported as "Nothing was sent to the page" and resumable with
+`startAt`; one after the count moved is `mayHaveActed: true`, whatever the
+throw site said. A timeout while an approval or a target lookup is still
+waiting is therefore a step that did not happen. `browser(operation="plan")`
+validates the whole sequence before a page is even opened, then runs up to 12
+steps in one call with an 80-second ceiling. Each target is resolved again; a
+step may `verify` text, selector or URL. The reply keeps the completed prefix,
+lists steps skipped by `startAt`, distinguishes a completed action from failed
+verification, and never asks to repeat an uncertain action. Failure replies
+keep the page's notes (blocked link, refused dialog or download) and, for a
+lost connection or a stall, a `phone:` line when the screen is off or the
+phone is locked (`BrowserHost.conditions`). A read that fails is a failed
+call, not an "ok" reply.
+
+**Reconnect and lifecycle.** A page whose CDP connection dropped but whose
+WebView lives is attached again by its DevTools target id: the page, its login
+and its form stay; nothing is repeated, and the next reply says earlier refs
+are gone. If that fails, or the renderer died, the page is replaced by a blank
+one and the chat is told. Every path that ends a page (Close button,
+`onRenderProcessGone`, `close`, eviction, service stop) goes through one
+main-thread `discard`, so the page count, the shown page and WebView
+debugging agree. At most four pages exist: before a new one, pages of deleted
+chats are closed, then the least recently used page that is not busy and not
+shown; the chat that lost it is told on its next page.
+
+**Chats and the screen.** Each coordinator has its own browser gateway.
+Independent tools bypass `DeviceLease` through
+`requiresDeviceLease`/`beginIndependentTool` (the composite calls each
+member's own hook, never `beginRun`); their stop does not revoke another run's
+screen backend. A user panel or an approval changes the foreground, so
+`claimBrowserScreen` first takes the existing screen lease. A shown page
+outlives the turn that showed it (the agent waits for the user's reply), so
+before any run reads or acts on the screen, raises a browser approval, or an
+automation drives the phone, the coordinator calls
+`DeviceToolGateway.screenInUse`, and the host puts away any shown page,
+telling its chat. Taps therefore never land in the browser window. `show`
+pauses agent mutations while the user types a password or passes a CAPTCHA;
+the bar shows the site's host, and "Not secure" for plain http. `hide` returns
+control. Browser profiles are app-owned and separate from Chrome, but all
+chats share the app's cookies.
+
+**Network and permissions.** The host disables file/content access, popups,
+automatic downloads, uploads, third-party cookies, and camera/microphone
+grants. URL checks block non-web schemes, local literals/names, private and
+reserved ranges (including 0/8, 198.18/15, 240/4 and NAT64 with an embedded
+private IPv4), private DNS answers and unresolved hosts. The host checks
+resource requests, and the app-wide `ServiceWorkerClient` applies the same
+policy to service-worker fetches. Before anything is read (snapshot, read,
+screenshot, a satisfied wait) the main page's address is checked again, and a
+page that reached a blocked address by itself is closed unread; child frames
+at blocked addresses are listed as blocked and never read or acted in. A
+failed DNS lookup in these after-the-fact checks does not blank a page that
+already loaded. These checks are not a network firewall: a server redirect to
+a name that resolves privately is judged only by the literal check while it
+loads (`shouldOverrideUrlLoading` runs on the main thread without a lookup),
+so that one request is made before the read guard closes the page. That is the
+blind request any web page can already cause; its response is not read.
+DNS rebinding and websocket traffic remain validation gaps. Password/card
+values are masked in snapshots and refused by fill. Arbitrary page eval and
+recognized sends/payments/form submissions use the app's approval card; Enter
+in a form inside a frame is judged in that frame, and a frame that cannot be
+read asks first. This does not prove every site-specific sensitive control is
+recognizable. The bundled `browser` skill is installed normally by
+`WorkspaceSeeder`, and resumed Codex threads receive the current tool surface.
+
+The standalone `tools/browser-probe` app links the same module and checks the
+non-debuggable, test-signed WebView path without replacing or instrumenting
+Hey Mike. See its README for reproducible commands and evidence boundaries.
 
 ## Android network compatibility
 

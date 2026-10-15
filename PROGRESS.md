@@ -1,5 +1,63 @@
 # Progress
 
+### Internal browser: review fixes for targets, the ledger, reconnect and the shown page — 2026-10-15
+
+Review of the internal browser (`:web`, item 20). The original work was
+committed as found first (`aa39281`); the fixes are separate. Broken before,
+each shown by a live-Chrome test that failed on the original code:
+
+- A click on a control under a cookie banner or dialog pressed the banner and
+  reported "click Covered". Now a hit test (`elementFromPoint`) refuses with
+  `obscured`, names what covers it with a ref, and presses nothing.
+- `fill` ignored whether the field kept the focus, so typed text could land in
+  another field. Now it types only into the focused target.
+- Plain text shown twice was pressed at its first occurrence. Now
+  `ambiguous_target`.
+- Enter in a form inside a frame skipped the approval card (the main document
+  only saw the frame). Now judged in the field's frame; an unreadable frame asks.
+- A child frame, or a page that reached a blocked address by itself, was read
+  into snapshots. Now blocked frames are listed but never read or acted in, and
+  every read re-checks the page address first.
+- An approval still waiting when a plan ran out of time was reported as "may
+  have happened"; a lost connection during a read said the same, and a failed
+  `snapshot` returned `ok: true`. Now an input counter decides: nothing sent
+  means "did not happen, resume with startAt", anything sent means
+  `mayHaveActed: true`. Failure replies also keep page notes and say when the
+  screen is off or the phone locked.
+
+Also changed (by design, not covered by a failing test): a dropped CDP
+connection reattaches to the same WebView by target id instead of replacing
+the page; all page endings go through one main-thread `discard`; at most four
+pages, closing deleted chats' pages first; a shown page is put away before any
+run uses the screen (`DeviceToolGateway.screenInUse`), so taps cannot land in
+it; the bar shows the site host and "Not secure" for http; a service-worker
+client applies the URL policy; reserved IPv4 ranges and NAT64 are blocked; refs
+come from a process-wide `Long` range; plans and steps are validated before a
+page opens; the finger `MotionEvent` is touchscreen-sourced. A failed DNS
+lookup after a page loaded no longer blanks it.
+
+Evidence (Windows, this worktree, desktop Chrome headless via
+`HEYMIKE_TEST_CHROME`): the red run of the new tests on the original code had
+8 of 10 fail. Then `:web:testDebugUnitTest` 36 (24 live CDP, 7 policy, 5
+gateway), 0 failures; `:core:test` 582; `:app:testDevDebugUnitTest` 92;
+`:workspace:testDebugUnitTest` 18 (6 skipped); the full gate `gradlew.bat test
+assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug` plus
+`:web:lintDebug` and `:app:lintDevDebug`: BUILD SUCCESSFUL, no lint errors;
+`python -m unittest tools.test_prepare_runtime` 5 OK; `git diff --check`
+clean; `gradlew.bat -p tools/browser-probe assembleRelease` builds.
+
+Not tested: nothing in this change ran on a phone. Not checked: the Android
+host (reconnect by target id, `discard`, the page cap, putting a shown page
+away, the address bar, the service-worker client), `WebViewInput` taps (the
+history says a click once ended in `browser_disconnected` on a locked phone;
+the MotionEvent path was never re-run physically), the CSS-to-view scale under
+pinch zoom, approvals from a browser step, and two chats browsing at once. The
+ref-aliasing test also passed on the original code, so that change is
+hardening, not a fixed bug. Server redirects to privately-resolving names,
+DNS rebinding and websockets remain gaps (see ARCHITECTURE). The branch is 107
+commits behind `dev`; a trial `git merge-tree` shows 8 conflicting files
+(coordinator, composite gateway, app wiring, CI, Gradle files, two tests), so
+integrating it needs its own pass.
 ### Claude session sync deep review — 2026-10-14
 
 - PR #127 brought onto dev `358d2ef`; the open 2026-10-11 merge was concluded.

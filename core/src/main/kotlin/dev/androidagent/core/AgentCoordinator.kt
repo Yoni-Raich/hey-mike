@@ -338,8 +338,10 @@ class AgentCoordinator(
             if (leased) share.lease.release(this)
             return null
         }
+        // A rule drives the screen: a browser page shown for a chat steps aside.
         runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
         return try {
+            tools.screenInUse(token.toString(), workspace)
             block()
         } finally {
             val stillOurs = synchronized(lifecycleLock) {
@@ -393,6 +395,7 @@ class AgentCoordinator(
             )
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING, "Voice")) }
         scope.launch {
@@ -695,6 +698,7 @@ class AgentCoordinator(
             mutableState.value = snapshot.copy(phase = RunPhase.STOPPING, status = "Stopping", controlling = false, approval = null, question = null)
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING)) }
         context.runJob?.cancel()
@@ -1207,9 +1211,18 @@ class AgentCoordinator(
                             serveChatTool(token, sessionId, event)
                             return@withLock
                         }
-                        if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        val independent = !tools.requiresDeviceLease(event.name)
+                        if (independent) {
+                            synchronized(lifecycleLock) {
+                                val work = runWorkspace
+                                if (!isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty()) || work == null) return@withLock
+                                tools.beginIndependentTool(event.name, token.toString(), work)
+                            }
+                        } else if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         val visible = usesScreen(event.name, event.arguments)
-                        if (visible) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+                        if (visible) {
+                            synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+                        }
                         val capture = tools.hidesOverlayDuringCapture(event.name)
                         // act_and_observe wraps the real action, so report that
                         // instead: callers care that a tap is happening, not
@@ -1231,10 +1244,11 @@ class AgentCoordinator(
                         var callTraced = false
                         val callStarted = nowNanos()
                         try {
+                            if (visible) runWorkspace?.let { tools.screenInUse(token.toString(), it) }
                             if (visible) {
                                 // Idempotent show also checks a replaced/reconnected window host.
                                 overlay.showState(overlayState)
-                            } else {
+                            } else if (!independent) {
                                 overlay.updateState(overlayState)
                             }
                             // Attach before hiding: a first screen read must not create
@@ -1277,7 +1291,7 @@ class AgentCoordinator(
                             synchronized(lifecycleLock) {
                                 if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                                     mutableState.value = state.value.copy(phase = RunPhase.THINKING, controlling = false, status = "Working")
-                                    overlay.updateState(OverlayState(OverlayPhase.THINKING))
+                                    if (!independent) overlay.updateState(OverlayState(OverlayPhase.THINKING))
                                 }
                             }
                             handBackUnlessOnScreen()
@@ -1734,6 +1748,7 @@ class AgentCoordinator(
             }
         } ?: return
         final.flush?.let { job -> runCatching { withTimeout(1_000) { job.join() } } }
+        tools.revokeIndependentTools()
         if (final.device) runCatching { tools.revoke() }
         runCatching { overlay.setCaptureHidden(false) }
         final.id?.let { id ->
@@ -1802,6 +1817,21 @@ class AgentCoordinator(
             runCatching { sessions.append(message(sessionId, "system", summary)) }
         }
         availableState.value = true
+    }
+
+    /**
+     * A browser panel shown to the user, or an approval card for a browser
+     * action, changes what is on the screen, so it takes the phone like a tap
+     * would and keeps it to this run's end. False when the run is not current.
+     */
+    suspend fun claimBrowserScreen(): Boolean {
+        val current = synchronized(lifecycleLock) { Triple(epoch.get(), thread, turn) }
+        val threadId = current.second ?: return false
+        val turnId = current.third ?: return false
+        if (!claimDevice(current.first, threadId, turnId)) return false
+        val work = synchronized(lifecycleLock) { if (deviceHeld) { screenSticky = true; runWorkspace } else null } ?: return false
+        tools.screenInUse(current.first.toString(), work)
+        return true
     }
 
     /**

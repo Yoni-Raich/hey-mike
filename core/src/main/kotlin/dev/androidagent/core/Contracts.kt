@@ -504,6 +504,26 @@ interface DeviceToolGateway {
     suspend fun cancel()
 
     /**
+     * False for a tool that never touches the phone's screen (the internal
+     * browser's own page), so it runs while another chat holds [DeviceLease].
+     */
+    fun requiresDeviceLease(name: String): Boolean = true
+
+    /** Arm only what serves [name], for one call that holds no lease. */
+    fun beginIndependentTool(name: String, runId: String, workspace: File) { beginRun(runId, workspace) }
+
+    /** Stop: refuse further independent calls of this run. */
+    fun revokeIndependentTools() {}
+
+    /**
+     * The run with [workspace] is about to read or act on the phone's screen,
+     * or to raise an approval over it. A backend that can cover the screen
+     * with a window of its own (a browser page shown to the user) moves it out
+     * of the way, so a tap never lands in that window instead of the app.
+     */
+    fun screenInUse(runId: String, workspace: File) {}
+
+    /**
      * True when the overlay must be taken off the captured surface for this
      * tool. Only backends that capture the composited screen need it; a
      * gateway that filters its own package out of the tree does not.
