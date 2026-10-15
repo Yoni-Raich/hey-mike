@@ -149,16 +149,22 @@ calls succeeded in three consecutive repetitions:
 The result clicks recorded one redirect each, zero protocol timeouts, and
 no approval callback invocation. The approval phase still measures a tiny
 local guard check (0.0-0.1ms), not an approval wait. No order was sent.
-The later screenshot smoke check is separate from these completed calls;
-do not infer a full probe or app-host PASS from the benchmark. This is not
+The later screenshot smoke check ended FAIL at `Screenshot unavailable`;
+its completed output was pulled separately after the benchmark. Do not
+infer a full probe or app-host PASS from the benchmark. This is not
 a same-phone before/after latency comparison or a guarantee for other sites.
 
 The final Dev Release artifact is 1151 `0.14.0-dev.browser-approval1`,
 291916297 bytes, ZIP-aligned and test-signed with v3 and the existing test
 certificate. SHA-256:
 `56c597ceea5c368081253cdc86a1dd5645a7701c35eb76f2e0000c94ae3224eb`.
-Its packaged page helper equals the tested source byte for byte. Delivery
-and installed metadata must be checked separately from this build evidence.
+Its packaged page helper equals the tested source byte for byte. Code was
+committed as `9833bcc`. `copy_file` completed to `chat:browser-1151/` and
+then local Downloads. Opening that file reached APK Manager's
+"Installing app-dev-debug.apk" screen. Phone tool replies stopped during
+the update, so installed 1151 metadata is not yet verified. There was no
+second install attempt. Check metadata before retrying or replacing it.
+Logical copy size is not measured network traffic or proof of a delta.
 
 Follow-up evidence is ignored under `artifacts/browser-approval-20261015/`,
 including the red-test XML, intermediate web/lint log, probe versions 7/8,

@@ -40,6 +40,14 @@ verified. APK SHA-256:
 The packaged page helper matches the tested source byte for byte.
 See `docs/testing/internal-browser-performance-20261015.md` for limits.
 
+Delivery: `copy_file` completed to the source chat and then local Downloads.
+Opening that exact file reached APK Manager's "Installing app-dev-debug.apk"
+screen. Phone tool replies stopped during the update; the installed version
+has not yet been verified. Do not repeat the installation without checking
+app metadata first. Probe 9's separate later screenshot check ended FAIL at
+Screenshot unavailable after its 15 successful benchmark calls; the probe
+was then stopped. No full-probe PASS is claimed.
+
 ### Internal browser: measured waits and DOM plans — 2026-10-15
 
 Added per-call and per-step monotonic timings, exclusive phases, CDP command
