@@ -80,7 +80,25 @@ class ClaudeHistorySyncTest {
         assertTrue(ClaudeSessionFiles.heldByMike(mine))
         val other = ClaudeSessionFiles.payload(ExecResult("""HEYMIKE {"busy":true,"mike":false}""", "", 0))
         assertTrue(ClaudeSessionFiles.heldByOther(other))
-        assertTrue(ClaudeSessionFiles.scriptName(HostOs.WINDOWS).endsWith("-v3.ps1"))
+        assertTrue(ClaudeSessionFiles.scriptName(HostOs.WINDOWS).endsWith("-v5.ps1"))
+    }
+
+    @Test fun thisPhonesRetainedOwnerSurvivesAnEngineRestartWhileOtherClientsRemainBlocked() {
+        fun row(json: String) = Json.parseToJsonElement(json) as kotlinx.serialization.json.JsonObject
+        val owned = row("""{"busy":false,"mike":true,"owned":true}""")
+        assertFalse(ClaudeSessionFiles.heldElsewhere(owned, holdsSession = false))
+        val legacy = row("""{"busy":false,"mike":true}""")
+        assertFalse(ClaudeSessionFiles.heldElsewhere(legacy, holdsSession = true))
+        assertTrue(ClaudeSessionFiles.heldElsewhere(legacy, holdsSession = false))
+        val other = row("""{"busy":true,"mike":false,"owned":false}""")
+        assertTrue(ClaudeSessionFiles.heldElsewhere(other, holdsSession = false))
+        assertTrue(ClaudeSessionFiles.heldElsewhere(other, holdsSession = true))
+        assertFalse(ClaudeSessionFiles.heldElsewhere(row("""{"busy":false,"mike":false}"""), false))
+        val client = ClaudeSessionFiles.clientId("saved-pc")
+        assertEquals(client, ClaudeSessionFiles.clientId("saved-pc"))
+        assertNotEquals(client, ClaudeSessionFiles.clientId("another-phones-pc"))
+        try { ClaudeSessionFiles.command(HostOs.LINUX, "/reader.py", "busy", thread, "'; invalid client"); fail() }
+        catch (_: IllegalArgumentException) { }
     }
 
     @Test fun importedSessionsKeepTheirProvider() {
