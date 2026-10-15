@@ -225,6 +225,8 @@ data class AgentUiState(
     val fileTransfer: dev.androidagent.core.FileTransfer? = null,
     /** Computers whose conversations are being listed right now. */
     val pcRefreshing: Set<String> = emptySet(),
+    /** Keys of pinned chats ([LibraryChat.key]) and pinned projects ([PcProject.key]). */
+    val pins: Set<String> = emptySet(),
     /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
     val pcChatLoading: Map<String, String> = emptyMap(),
     /** Chats being compacted right now: chat id to the start time in epoch milliseconds. */
@@ -357,6 +359,7 @@ data class AgentUiActions(
     val onTogglePlanMode: () -> Unit = {},
     val onShowStatus: () -> Unit = {},
     val onDeleteSession: (String) -> Unit = {},
+    val onTogglePin: (key: String) -> Unit = {},
     val onRetry: () -> Unit = {},
     val onDismissError: () -> Unit = {},
     val onOpenWorkspaceFiles: () -> Unit = {},

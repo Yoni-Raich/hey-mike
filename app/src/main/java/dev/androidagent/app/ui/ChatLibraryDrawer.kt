@@ -25,7 +25,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -45,11 +48,14 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,6 +78,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -130,13 +137,20 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
         PcChats.sections(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, started, state.pcThreads)
     }
     val hasComputers = state.computers.isNotEmpty()
-    val scope = location.takeIf { it in setOf(ChatLibrary.ALL, ChatLibrary.PHONE) || state.computers.any { c -> c.id == it } }
+    val scope = location.takeIf { it in setOf(ChatLibrary.ALL, ChatLibrary.PHONE, ChatLibrary.PINNED) || state.computers.any { c -> c.id == it } }
         ?.takeIf { hasComputers } ?: ChatLibrary.ALL
     val computer = state.computers.firstOrNull { it.id == scope }
     val chats = remember(started, state.remoteBindings, sections, scope, query) {
-        ChatLibrary.chats(started, state.remoteBindings, sections, scope, null, query)
+        ChatLibrary.chats(started, state.remoteBindings, sections, scope, null, query, state.pins)
     }
-    val projects = remember(sections, scope, query) { if (computer == null) emptyList() else ChatLibrary.projects(sections, scope, query) }
+    val pinnedScope = scope == ChatLibrary.PINNED
+    val projects = remember(sections, scope, query, state.pins) {
+        if (computer == null && !pinnedScope) emptyList() else ChatLibrary.projects(sections, scope, query, state.pins)
+    }
+    // Without a rail there is no Pinned tab, so the pins sit above the list.
+    val pinnedHere = remember(chats, state.pins, hasComputers) {
+        if (hasComputers) emptyList() else chats.filter { it.key in state.pins }
+    }
     var limit by remember(scope, query) { mutableStateOf(40) }
     val listStates = remember { mutableMapOf<String, LazyListState>() }
     val listState = listStates.getOrPut(scope) { LazyListState() }
@@ -144,6 +158,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     val focus = LocalFocusManager.current
     val dismiss = { focus.clearFocus(); close() }
     fun choose(id: String) { focus.clearFocus(); location = id }
+    val everywhere = scope == ChatLibrary.ALL || scope == ChatLibrary.PINNED
     val newChat = {
         dismiss()
         if (computer != null) actions.onNewProject(computer.id) else actions.onNewChat()
@@ -177,6 +192,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                         !hasComputers -> "Chats"
                         scope == ChatLibrary.ALL -> "Everything"
                         scope == ChatLibrary.PHONE -> "This phone"
+                        pinnedScope -> "Pinned"
                         else -> computer?.label.orEmpty()
                     },
                     searching = searching,
@@ -191,7 +207,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                         value = query, onValueChange = { query = it }, singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
-                        placeholder = { Text(if (computer != null) "Search ${computer.label}" else "Search chats") },
+                        placeholder = { Text(if (computer != null) "Search ${computer.label}" else if (pinnedScope) "Search pinned" else "Search chats") },
                         trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, "Clear search") } }) else null,
                         shape = RoundedCornerShape(14.dp),
                         colors = TextFieldDefaults.colors(
@@ -241,55 +257,35 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                 detail = if (query.isNotBlank()) "Try another name." else "Start a new chat to pick a folder on ${computer.label}.",
                             )
                         }
-                        projects.forEachIndexed { index, project ->
-                            val holdsCurrent = project.chats.any { (it as? PcChatEntry.Local)?.session?.id == state.activeSessionId }
-                            val open = expanded[project.key] ?: (query.isNotBlank() || holdsCurrent || index == 0)
-                            val matching = if (query.isBlank() || project.name.contains(query.trim(), true)) project.chats
-                            else project.chats.filter { it.title.contains(query.trim(), true) }
-                            item(key = project.key, contentType = "project") {
-                                ProjectHeader(
-                                    project.name, project.chats.size, open, Modifier.animateItem(),
-                                    onNewChat = { dismiss(); actions.onNewChatInProject(project.computerId, project.path) },
-                                ) {
-                                    focus.clearFocus(); expanded[project.key] = !open
-                                }
-                            }
-                            if (open) {
-                                val all = showAll[project.key] == true
-                                val rows = if (all) matching else matching.take(CHATS_PER_PROJECT)
-                                items(rows, key = { "${project.key}/${it.key}" }, contentType = { "chat" }) { entry ->
-                                    Box(Modifier.animateItem().padding(start = 18.dp)) {
-                                        LibraryChatRow(
-                                            entry = entry,
-                                            detail = if (entry is PcChatEntry.OnComputer) "In ${if (entry.thread.engine == dev.androidagent.core.EngineKind.CLAUDE) "Claude" else "Codex"} on ${computer.label}" else "",
-                                            leading = null,
-                                            state = state,
-                                            actions = actions,
-                                            dismiss = dismiss,
-                                            computerId = computer.id,
-                                        )
-                                    }
-                                }
-                                if (matching.size > CHATS_PER_PROJECT) item(key = "${project.key}/more", contentType = "quiet") {
-                                    QuietLink(if (all) "Show fewer" else "Show all ${matching.size}", Modifier.animateItem().padding(start = 30.dp)) { showAll[project.key] = !all }
+                        projectItems(projects, state, actions, query, expanded, showAll, computer, focus::clearFocus, dismiss)
+                    } else {
+                        if (pinnedScope && projects.isNotEmpty()) {
+                            item(key = "pinned-projects-label", contentType = "label") { Caps("Projects", Modifier.padding(start = 12.dp, top = 14.dp)) }
+                            projectItems(projects, state, actions, query, expanded, showAll, null, focus::clearFocus, dismiss)
+                            if (chats.isNotEmpty()) item(key = "pinned-chats-label", contentType = "label") { Caps("Chats", Modifier.padding(start = 12.dp, top = 18.dp)) }
+                        }
+                        if (pinnedHere.isNotEmpty()) {
+                            item(key = "pinned-label", contentType = "label") { Caps("Pinned", Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp)) }
+                            items(pinnedHere, key = { "pin-${it.key}" }, contentType = { "chat" }) { row ->
+                                Box(Modifier.animateItem()) {
+                                    LibraryChatRow(row.entry, if (row.entry is PcChatEntry.OnComputer) "In Codex" else "", null, state, actions, dismiss, row.computerId, pinKey = row.key)
                                 }
                             }
                         }
-                    } else {
                         if (state.isLoadingSessions) item(key = "loading", contentType = "loading") {
                             Row(Modifier.fillMaxWidth().padding(vertical = 32.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LibraryAmber)
                                 Spacer(Modifier.width(12.dp))
                                 Text("Loading chats", style = MaterialTheme.typography.bodyMedium, color = LibraryMuted)
                             }
-                        } else if (chats.isEmpty()) item(key = "empty", contentType = "empty") {
+                        } else if (chats.isEmpty() && !(pinnedScope && projects.isNotEmpty())) item(key = "empty", contentType = "empty") {
                             LibraryEmpty(
-                                icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else Icons.Outlined.Forum,
-                                title = if (query.isNotBlank()) "Nothing matches" else "No chats yet",
-                                detail = if (query.isNotBlank()) "Try another word." else "Start one with New chat.",
+                                icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else if (pinnedScope) Icons.Outlined.PushPin else Icons.Outlined.Forum,
+                                title = if (query.isNotBlank()) "Nothing matches" else if (pinnedScope) "Nothing pinned" else "No chats yet",
+                                detail = if (query.isNotBlank()) "Try another word." else if (pinnedScope) "Press and hold a chat or a project to pin it here." else "Start one with New chat.",
                             )
                         }
-                        val visible = chats.take(limit)
+                        val visible = chats.filter { c -> pinnedHere.none { it.key == c.key } }.take(limit)
                         val byKey = visible.associateBy { it.key }
                         val groups = ChatDayGroups.group(visible.map { ChatSession(it.key, it.entry.title, 0L, it.entry.updatedAt) }, System.currentTimeMillis())
                         groups.forEach { group ->
@@ -301,18 +297,19 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                 // day headings carry the time, and a line under
                                 // every row doubled its height for a clock.
                                 val detail = listOfNotNull(
-                                    if (scope == ChatLibrary.ALL && owner != null) row.project?.name?.takeIf { !it.equals(row.entry.title, true) } else null,
+                                    if (everywhere && owner != null) row.project?.name?.takeIf { !it.equals(row.entry.title, true) } else null,
                                     if (row.entry is PcChatEntry.OnComputer) "In Codex" else null,
                                 ).joinToString(" · ")
                                 Box(Modifier.animateItem()) {
                                     LibraryChatRow(
                                         entry = row.entry,
                                         detail = detail,
-                                        leading = if (scope == ChatLibrary.ALL && hasComputers) ({ PlaceBadge(owner) }) else null,
+                                        leading = if (everywhere && hasComputers) ({ PlaceBadge(owner) }) else null,
                                         state = state,
                                         actions = actions,
                                         dismiss = dismiss,
                                         computerId = row.computerId,
+                                        pinKey = row.key,
                                     )
                                 }
                             }
@@ -363,6 +360,9 @@ private fun DeviceRail(
         ) {
             RailButton("All devices", scope == ChatLibrary.ALL, onClick = { onChoose(ChatLibrary.ALL) }) {
                 Icon(Icons.Outlined.Layers, null, Modifier.size(22.dp))
+            }
+            RailButton("Pinned", scope == ChatLibrary.PINNED, onClick = { onChoose(ChatLibrary.PINNED) }) {
+                Icon(Icons.Outlined.PushPin, null, Modifier.size(20.dp))
             }
             Box(Modifier.width(28.dp).height(1.dp).background(LibraryLine))
             RailButton("This phone", scope == ChatLibrary.PHONE, onClick = { onChoose(ChatLibrary.PHONE) }) {
@@ -481,6 +481,7 @@ private fun LibraryStatus(state: AgentUiState, scope: String, computer: RemoteCo
             is RemoteSetup.Working -> setup.step to LibraryAmber
             else -> "Not connected" to LibraryMuted
         }
+        scope == ChatLibrary.PINNED -> (if (chatCount == 1) "1 pinned chat" else "$chatCount pinned chats") to LibraryMuted
         scope == ChatLibrary.ALL && computers > 0 -> "${computers + 1} places · $chatCount chats" to LibraryMuted
         else -> (if (chatCount == 1) "1 chat" else "$chatCount chats") to LibraryMuted
     }
@@ -524,13 +525,25 @@ private fun Caps(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ProjectHeader(name: String, count: Int, open: Boolean, modifier: Modifier = Modifier, onNewChat: () -> Unit, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp), modifier = modifier.fillMaxWidth()) {
-        Row(Modifier.heightIn(min = 48.dp).padding(start = 12.dp, end = 0.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun ProjectHeader(
+    name: String, count: Int, open: Boolean, modifier: Modifier = Modifier,
+    pinned: Boolean, onTogglePin: () -> Unit, onNewChat: () -> Unit, onClick: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(modifier.fillMaxWidth()) {
+    Surface(color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }, onLongClickLabel = "Project actions")
+                .heightIn(min = 48.dp).padding(start = 12.dp, end = 0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(if (open) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight, if (open) "Close $name" else "Open $name", Modifier.size(18.dp), tint = LibraryMuted)
             Spacer(Modifier.width(10.dp))
             Text(name, style = MaterialTheme.typography.bodyLarge, fontSize = 15.sp, fontWeight = if (open) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.padding(end = 8.dp).size(14.dp), tint = LibraryFaint)
             Text("$count", fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = LibraryFaint)
             // A new chat in this project, where the project is named: it was a
             // row of its own under every open project.
@@ -538,6 +551,8 @@ private fun ProjectHeader(name: String, count: Int, open: Boolean, modifier: Mod
                 Icon(Icons.Outlined.Add, contentDescription = null, Modifier.size(20.dp), tint = LibraryAmber)
             }
         }
+    }
+    Box(Modifier.align(Alignment.TopEnd)) { PinMenu(menuOpen, pinned, { menuOpen = false }, onTogglePin) }
     }
 }
 
@@ -551,6 +566,7 @@ private fun PlaceBadge(computer: RemoteComputer?) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryChatRow(
     entry: PcChatEntry,
@@ -560,7 +576,10 @@ private fun LibraryChatRow(
     actions: AgentUiActions,
     dismiss: () -> Unit,
     computerId: String?,
+    pinKey: String,
 ) {
+    val pinned = pinKey in state.pins
+    val onTogglePin = { actions.onTogglePin(pinKey) }
     val local = (entry as? PcChatEntry.Local)?.session
     if (local != null) {
         val running = state.runs[local.id]?.active == true
@@ -570,6 +589,8 @@ private fun LibraryChatRow(
             onSelect = { dismiss(); actions.onSelectSession(local.id) },
             onRename = { actions.onRenameSession(local.id, it) },
             onDelete = { actions.onDeleteSession(local.id) },
+            pinned = pinned,
+            onTogglePin = onTogglePin,
             subtitle = listOfNotNull(if (running) "Running" else null,
                 local.parentSessionId?.let { parent -> "From ${state.sessions.firstOrNull { it.id == parent }?.title ?: "parent chat"}" },
                 detail.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { null },
@@ -577,12 +598,19 @@ private fun LibraryChatRow(
             subtitleColor = if (running) LibraryAmber else null,
         )
     } else {
-        Surface(
-            onClick = { dismiss(); val thread = (entry as PcChatEntry.OnComputer).thread; actions.onOpenPcThread(computerId!!, thread.id, thread.engine) },
-            color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        var menuOpen by remember { mutableStateOf(false) }
+        Box(Modifier.fillMaxWidth()) {
+        Surface(color = Color.Transparent, contentColor = LibraryLight, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .combinedClickable(
+                        onClick = { dismiss(); val thread = (entry as PcChatEntry.OnComputer).thread; actions.onOpenPcThread(computerId!!, thread.id, thread.engine) },
+                        onLongClick = { menuOpen = true },
+                        onLongClickLabel = "Chat actions",
+                    )
+                    .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 leading?.let { it(); Spacer(Modifier.width(12.dp)) }
                 Column(Modifier.weight(1f)) {
                     Text(entry.title.ifBlank { "Untitled chat" }, style = MaterialTheme.typography.bodyMedium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -590,6 +618,73 @@ private fun LibraryChatRow(
                         Text(detail, style = MaterialTheme.typography.labelSmall, fontSize = 12.sp, color = LibraryMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                if (pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.size(14.dp), tint = LibraryFaint)
+            }
+        }
+        Box(Modifier.align(Alignment.TopEnd)) { PinMenu(menuOpen, pinned, { menuOpen = false }, onTogglePin) }
+        }
+    }
+}
+
+/** The one action a computer chat or a project offers on a long press. */
+@Composable
+private fun PinMenu(expanded: Boolean, pinned: Boolean, onDismiss: () -> Unit, onTogglePin: () -> Unit) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text(if (pinned) "Unpin" else "Pin") },
+            leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },
+            onClick = { onDismiss(); onTogglePin() },
+        )
+    }
+}
+
+/** A computer's projects, each folding open over its chats. [computer] is null where projects of several computers mix. */
+private fun LazyListScope.projectItems(
+    projects: List<PcProject>,
+    state: AgentUiState,
+    actions: AgentUiActions,
+    query: String,
+    expanded: MutableMap<String, Boolean>,
+    showAll: MutableMap<String, Boolean>,
+    computer: RemoteComputer?,
+    clearFocus: () -> Unit,
+    dismiss: () -> Unit,
+) {
+    projects.forEachIndexed { index, project ->
+        val owner = computer ?: state.computers.firstOrNull { it.id == project.computerId } ?: return@forEachIndexed
+        val holdsCurrent = project.chats.any { (it as? PcChatEntry.Local)?.session?.id == state.activeSessionId }
+        val open = expanded[project.key] ?: (query.isNotBlank() || holdsCurrent || index == 0)
+        val matching = if (query.isBlank() || project.name.contains(query.trim(), true)) project.chats
+        else project.chats.filter { it.title.contains(query.trim(), true) }
+        item(key = project.key, contentType = "project") {
+            ProjectHeader(
+                if (computer == null) "${project.name} · ${owner.label}" else project.name, project.chats.size, open, Modifier.animateItem(),
+                pinned = project.key in state.pins,
+                onTogglePin = { actions.onTogglePin(project.key) },
+                onNewChat = { dismiss(); actions.onNewChatInProject(project.computerId, project.path) },
+            ) {
+                clearFocus(); expanded[project.key] = !open
+            }
+        }
+        if (open) {
+            val all = showAll[project.key] == true
+            val rows = if (all) matching else matching.take(CHATS_PER_PROJECT)
+            items(rows, key = { "${project.key}/${it.key}" }, contentType = { "chat" }) { entry ->
+                Box(Modifier.animateItem().padding(start = 18.dp)) {
+                    LibraryChatRow(
+                        entry = entry,
+                        detail = if (entry is PcChatEntry.OnComputer) "In ${if (entry.thread.engine == dev.androidagent.core.EngineKind.CLAUDE) "Claude" else "Codex"} on ${owner.label}" else "",
+                        leading = null,
+                        state = state,
+                        actions = actions,
+                        dismiss = dismiss,
+                        computerId = owner.id,
+                        pinKey = "${owner.id}:${entry.key}",
+                    )
+                }
+            }
+            if (matching.size > CHATS_PER_PROJECT) item(key = "${project.key}/more", contentType = "quiet") {
+                QuietLink(if (all) "Show fewer" else "Show all ${matching.size}", Modifier.animateItem().padding(start = 30.dp)) { showAll[project.key] = !all }
             }
         }
     }

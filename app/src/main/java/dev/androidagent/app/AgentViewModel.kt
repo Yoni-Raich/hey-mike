@@ -67,6 +67,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             selectedReasoningEffort = engines.of(EngineKind.CODEX).effort,
             onboarding = readOnboarding(),
             defaultEngine = ChatEngines.parse(preferences.getString(KEY_DEFAULT_ENGINE, null)),
+            pins = preferences.getStringSet(KEY_PINS, null).orEmpty().toSet(),
         )
     )
     val ui: StateFlow<AgentUiState> = mutable.asStateFlow()
@@ -956,6 +957,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (restored) draftWrites.trySend(id to text)
     }
+    fun togglePin(key: String) {
+        val pins = mutable.value.pins.let { if (key in it) it - key else it + key }
+        preferences.edit().putStringSet(KEY_PINS, pins).apply()
+        mutable.update { it.copy(pins = pins) }
+    }
+
     fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
         if (graph.coordinator.family(id).any { graph.coordinator.phaseOf(it) != null } ||
@@ -1897,6 +1904,7 @@ private const val KEY_EFFORT = "reasoningEffort"
 private const val KEY_CLAUDE_MODEL = "claudeModel"
 private const val KEY_CLAUDE_EFFORT = "claudeReasoningEffort"
 private const val KEY_DEFAULT_ENGINE = "defaultEngine"
+private const val KEY_PINS = "pins"
 private const val CLAUDE_SIGN_IN = "Sign in to Claude"
 
 /** Long enough for Mike to reach Developer options, including turning them on. */
