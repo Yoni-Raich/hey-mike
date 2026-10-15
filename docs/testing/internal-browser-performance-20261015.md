@@ -114,6 +114,16 @@ probe version code for another delivery.
 
 ## Limits
 
+After the performance checks, the full app was built from code commit
+`a6be3dd` as Dev Release 1150 `0.14.0-dev.browser-timings2`, ZIP-aligned and
+test-signed with APK Signature Scheme v3. Artifact SHA-256:
+`b90c8b505fe0b6143457181f4bcef9f8dd5974d8c4c954560cb93308d23fb025`,
+291916297 bytes. It was transferred with `copy_file` (logical file size is not
+measured wire traffic), then opened through Android's installer. After the
+user reported installation, live app metadata confirmed 1150 on the hosting
+phone, with browser ready and accessibility connected. The installed base
+APK hash was not read. This is install/status proof, not a browser task.
+
 Final checks: `:web:testDebugUnitTest :web:lintDebug` PASS, 62 tests without
 failures/skips (38 live CDP, 7 host, 7 policy, 8 gateway, 2 wait). Full gate
 `test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
@@ -126,9 +136,11 @@ The 27.7 s event is still unexplained. Backend timings exclude model time,
 SSH/MCP delivery, and result rendering. They do not split DNS, TLS and server
 time inside a navigation command. A run on the hosting phone with the new
 build and outer-call timing is still needed to measure that relay path.
-The updated full Hey Mike app has not been installed on either phone in this
-performance pass; this phone proof is for its shared browser module in the
-probe host. Locked/background behavior, production network guards, the real
+The updated full app is installed on the hosting phone; the measured physical
+browser actions above remain proof from its shared module in the separate
+Xiaomi probe host. The retained computer chat's tool catalog still does not
+expose a callable `browser`, despite the runtime readiness line. A fresh chat
+can run the hosting-phone comparison. Locked/background behavior, production network guards, the real
 handoff/approval UI and intermittent CDP screenshot capture are not resolved
 by these timing measurements. Previously documented redirect/network-policy
 gaps remain unchanged.

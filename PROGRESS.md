@@ -45,6 +45,17 @@ unavailable after all benchmark calls completed. No full-probe PASS is claimed.
 See `docs/testing/internal-browser-performance-20261015.md` for exact evidence,
 test harness limits and reproduction. Earlier network-policy gaps remain open.
 
+Delivery follow-up: built the same app code as test-signed Dev Release 1150
+`0.14.0-dev.browser-timings2` (26s); ZIP-aligned, v3 signature and matching
+test certificate verified. APK SHA-256
+`b90c8b505fe0b6143457181f4bcef9f8dd5974d8c4c954560cb93308d23fb025`.
+`copy_file` completed to the hosting phone; the native installer updated in
+place. `apps_settings(app_info)` then confirmed 1150, and `device_status`
+reported browser ready / accessibility connected. No installed-base hash or
+live browser task on that phone was checked after this update. This retained
+computer chat still lacks a callable `browser` despite the runtime status.
+Artifacts/metadata are in the ignored `delivery-1150/` evidence subfolder.
+
 ### Internal browser: physical follow-up and non-debuggable Hey Mike — 2026-10-15
 
 Follow-up on app code `4ea778a`; no product code changes. Xiaomi 23053RN02Y,
