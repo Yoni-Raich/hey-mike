@@ -24,12 +24,14 @@ import dev.androidagent.core.SecretRedactor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -48,6 +50,7 @@ import kotlinx.serialization.json.put
 import java.io.Closeable
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.coroutines.coroutineContext
 
 /**
  * A browser operation that did not happen, or did not finish, and why.
@@ -109,12 +112,13 @@ data class SnapshotQuery(
  * a hand. The helper script lives in an isolated world the page cannot see.
  */
 class BrowserSession(
-    private val cdp: CdpConnection,
+    cdp: CdpConnection,
     private val policy: WebUrlPolicy,
     private val pointer: Pointer = Pointer.TOUCH,
     private val nativeTap: (suspend (Double, Double) -> Unit)? = null,
     private val confirm: suspend (String) -> Boolean = { false },
 ) : Closeable {
+    private val cdp = TimedCdpConnection(cdp)
     enum class Pointer { TOUCH, MOUSE }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -158,6 +162,7 @@ class BrowserSession(
 
     suspend fun start() = lock.withLock {
         cdp.call("Page.enable")
+        cdp.call("Network.enable")
         // The page lives in a window that never has input focus. Without this
         // it would believe it is in the background and refuse typed text.
         runCatching { cdp.call("Emulation.setFocusEmulationEnabled", buildJsonObject { put("enabled", true) }) }
@@ -174,22 +179,37 @@ class BrowserSession(
         Unit
     }
 
+    /** Metadata only; never records a URL, HTTP header or response body. */
+    internal fun observeTimings(timing: BrowserTimings): Closeable = cdp.onEvent { method, params ->
+        when (method) {
+            "Network.requestWillBeSent" -> if (params["type"]?.jsonPrimitive?.contentOrNull == "Document") {
+                timing.event("documentRequest")
+                if (params["redirectResponse"] != null) timing.count("redirects")
+            }
+            "Page.frameNavigated" -> {
+                if ((params["frame"] as? JsonObject)?.get("parentId") == null) timing.event("mainFrameNavigated")
+            }
+            "Page.domContentEventFired" -> timing.event("domContentLoaded")
+            "Page.loadEventFired" -> timing.event("load")
+        }
+    }
+
     // --- navigation ---------------------------------------------------------
 
     suspend fun open(url: String): WebAction = lock.withLock {
-        val allowed = when (val decision = withContext(Dispatchers.IO) { policy.check(url) }) {
+        val allowed = when (val decision = browserPhase("policy") { withContext(Dispatchers.IO) { policy.check(url) } }) {
             is WebUrlPolicy.Decision.Allowed -> decision.url
             is WebUrlPolicy.Decision.Blocked -> throw WebFailure(decision.errorType, decision.message, decision.remedy)
         }
         sent()
-        val result = cdp.call("Page.navigate", buildJsonObject { put("url", allowed) }, NAVIGATE_TIMEOUT_MS)
+        val result = browserPhase("navigate") { cdp.call("Page.navigate", buildJsonObject { put("url", allowed) }, NAVIGATE_TIMEOUT_MS) }
         result["errorText"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { error ->
             // An aborted load is a download or a link another app took over.
             if (!error.contains("ERR_ABORTED")) {
                 throw WebFailure("navigation_failed", "$allowed did not load: $error", "Navigation was attempted. Check the page before retrying.", mayHaveActed = true)
             }
         }
-        val loaded = awaitLoad(LOAD_TIMEOUT_MS)
+        val loaded = browserPhase("load") { awaitLoad(LOAD_TIMEOUT_MS) }
         settle(SETTLE_MS)
         enforcePolicy()
         WebAction("open $allowed", listOfNotNull("The page was still loading after ${LOAD_TIMEOUT_MS / 1000}s.".takeIf { !loaded }))
@@ -399,34 +419,33 @@ class BrowserSession(
             }
         }
         val budget = timeoutMs.coerceIn(200, MAX_WAIT_MS)
-        val deadline = System.currentTimeMillis() + budget
         val condition = buildJsonObject {
             text?.let { put("text", it) }
             selector?.let { put("selector", it) }
         }
-        while (true) {
+        val satisfied = withTimeoutOrNull(budget) { while (true) {
             val present = if (url != null) {
                 location().first.contains(url, ignoreCase = true)
             } else {
                 readableFrames().any { frame ->
-                    runCatching { agentValue(frame, "__mike.present($condition)") }.getOrNull()
+                    agentValue(frame, "__mike.present($condition)")
                         ?.let { (it as? JsonPrimitive)?.booleanOrNull } == true
                 }
             }
             if (present != gone) {
                 // What the wait saw must come from a page the browser may read.
-                if (url == null) guardRead()
-                break
-            }
-            if (System.currentTimeMillis() >= deadline) {
-                throw WebFailure(
-                    "wait_timeout",
-                    "Waited ${budget}ms for $what to ${if (gone) "go" else "appear"}, and it did not.",
-                    "Take a snapshot to see what the page shows instead.",
-                )
+                guardRead()
+                return@withTimeoutOrNull true
             }
             delay(POLL_MS)
         }
+            @Suppress("UNREACHABLE_CODE") false
+        } ?: false
+        if (!satisfied) throw WebFailure(
+            "wait_timeout",
+            "Waited ${budget}ms for $what to ${if (gone) "go" else "appear"}, and it did not.",
+            "Take a snapshot to see what the page shows instead.",
+        )
         WebAction("wait: $what ${if (gone) "is gone" else "is there"}")
     }
 
@@ -477,10 +496,10 @@ class BrowserSession(
     // --- reading ------------------------------------------------------------
 
     /** The page as one line per thing on it, with a header that says where it is and what was left out. */
-    suspend fun snapshot(query: SnapshotQuery = SnapshotQuery()): String = lock.withLock {
+    suspend fun snapshot(query: SnapshotQuery = SnapshotQuery()): String = browserPhase("snapshot") { lock.withLock {
         guardRead()
         renderSnapshot(query)
-    }
+    } }
 
     /** The page as reading text, paged by character [offset]. */
     suspend fun read(offset: Int, maxChars: Int): String = lock.withLock {
@@ -584,7 +603,7 @@ class BrowserSession(
             "$role \"${SecretRedactor.redactUiText(name).take(60)}\" [${if (found.frameIndex > 0) "f${found.frameIndex}" else ""}e${found.ref}]"
     }
 
-    private suspend fun resolve(target: WebTarget): Found {
+    private suspend fun resolve(target: WebTarget): Found = browserPhase("resolve") {
         if (target.isEmpty) {
             throw WebFailure("no_target", "This operation needs an element.", "Name it by ref, by text (its visible label) or by selector.")
         }
@@ -597,7 +616,7 @@ class BrowserSession(
             if (index > 0 && !frameAllowed(frameId)) throw blockedFrame(raw)
             val found = runCatching { agentValue(frameId, "__mike.find({ref: ${match.groupValues[2]}})") as? JsonObject }.getOrNull()
             val ref = found?.get("ref")?.jsonPrimitive?.longOrNull ?: throw stale(raw)
-            return Found(frameId, index, ref)
+            return@browserPhase Found(frameId, index, ref)
         }
         val wanted = buildJsonObject {
             target.selector?.let { put("selector", it) }
@@ -617,7 +636,7 @@ class BrowserSession(
             matches += Found(frameId, frameIndex(frameId), ref)
         }
         if (matches.size > 1) throw WebFailure("ambiguous_target", "More than one frame matches $target.", "Use a snapshot ref.")
-        matches.singleOrNull()?.let { return it }
+        matches.singleOrNull()?.let { return@browserPhase it }
         throw WebFailure(
             "not_found",
             "Nothing on the page matches $target.",
@@ -656,7 +675,7 @@ class BrowserSession(
         "Work with the rest of the page, or tell the user this part needs their own browser.",
     )
 
-    private suspend fun authorize(info: Info) {
+    private suspend fun authorize(info: Info) = browserPhase("approval") {
         if (info.confirmation && !confirm("At ${location().first}: activate ${info.role} ${info.name}"))
             throw WebFailure("approval_denied", "The user did not approve this action. Nothing was clicked.")
     }
@@ -723,7 +742,7 @@ class BrowserSession(
     private suspend fun frameAllowed(frameId: String): Boolean {
         val url = frameUrls[frameId] ?: return true
         if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) return true
-        val decision = withContext(Dispatchers.IO) { policy.check(url) }
+        val decision = browserPhase("policy") { withContext(Dispatchers.IO) { policy.check(url) } }
         return decision !is WebUrlPolicy.Decision.Blocked || decision.errorType == DNS_UNRESOLVED
     }
 
@@ -962,36 +981,49 @@ class BrowserSession(
 
     // --- settling ------------------------------------------------------------
 
-    private suspend fun readyState(): String? = runCatching {
+    private suspend fun readyState(): String? =
         (cdp.call("Runtime.evaluate", buildJsonObject { put("expression", "document.readyState"); put("returnByValue", true) }, 2_000)
             ["result"] as? JsonObject)?.get("value")?.jsonPrimitive?.contentOrNull
-    }.getOrNull()
 
     private suspend fun awaitLoad(timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (readyState() == "complete") return true
-            delay(POLL_MS)
-        }
-        return false
+        // DOM readiness is enough to act; images and third-party resources may
+        // never finish. Bound the protocol calls as well as the polling delays.
+        return withTimeoutOrNull(timeoutMs) {
+            while (true) {
+                if (documentReady()) return@withTimeoutOrNull true
+                delay(POLL_MS)
+            }
+            @Suppress("UNREACHABLE_CODE") false
+        } ?: false
+    }
+
+    private suspend fun documentReady(): Boolean = try {
+        readyState() in setOf("interactive", "complete")
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: CdpException) {
+        // A read can race a navigation, but a timeout or broken protocol is
+        // not proof of navigation and must not silently start another 10s wait.
+        if (failure.code != CdpClient.TIMEOUT_CODE && failure.message.contains("context", ignoreCase = true)) {
+            coroutineContext[BrowserTimings]?.count("navigationReadRaces")
+            false
+        } else throw failure
     }
 
     /**
      * Give the page a moment to finish reacting: a navigation the action
      * started, then the DOM going quiet. Bounded, because some pages never do.
      */
-    private suspend fun settle(maxMs: Long) {
-        val deadline = System.currentTimeMillis() + maxMs
-        delay(50)
-        while (true) {
-            while (readyState() != "complete" && System.currentTimeMillis() < deadline) delay(POLL_MS)
-            val left = deadline - System.currentTimeMillis()
-            if (left < 100) return
-            val quiet = runCatching {
-                agentValue(mainFrame(), "__mike.settle($QUIET_MS, $left)", timeoutMs = left + 2_000)
-            }.isSuccess
-            // A failure here is the page navigating under the wait; go round again.
-            if (quiet) return
+    private suspend fun settle(maxMs: Long) = browserPhase("settle") {
+        val settled = withTimeoutOrNull(maxMs) {
+            delay(50)
+            while (!documentReady()) delay(POLL_MS)
+            agentValue(mainFrame(), "__mike.settle($QUIET_MS, $maxMs)", timeoutMs = maxMs)
+            true
+        }
+        if (settled != true) {
+            coroutineContext[BrowserTimings]?.count("settleBudgetExpired")
+            note("The page did not settle within ${maxMs}ms. The input was sent once; inspect the page or wait for a specific target before continuing.")
         }
     }
 
@@ -1007,7 +1039,7 @@ class BrowserSession(
     private suspend fun enforcePolicy(afterAction: Boolean = true) {
         val url = location().first
         if (url.isEmpty() || url == "about:blank") return
-        val decision = withContext(Dispatchers.IO) { policy.check(url) }
+        val decision = browserPhase("policy") { withContext(Dispatchers.IO) { policy.check(url) } }
         if (decision is WebUrlPolicy.Decision.Blocked && decision.errorType != DNS_UNRESOLVED) {
             runCatching { cdp.call("Page.navigate", buildJsonObject { put("url", "about:blank") }) }
             throw WebFailure(

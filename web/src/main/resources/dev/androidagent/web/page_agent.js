@@ -331,7 +331,14 @@
     const point = pointOf(el);
     if (!point) return { error: 'no_box' };
     const view = el.ownerDocument.defaultView;
-    if (point.x < 0 || point.y < 0 || point.x >= view.innerWidth || point.y >= view.innerHeight) return { error: 'offscreen' };
+    // Android can pan only the visual viewport when the keyboard opens. A
+    // control inside the layout viewport may then be outside the actual view.
+    const viewport = view.visualViewport;
+    const left = viewport ? viewport.offsetLeft : 0;
+    const top = viewport ? viewport.offsetTop : 0;
+    const width = viewport ? viewport.width : view.innerWidth;
+    const height = viewport ? viewport.height : view.innerHeight;
+    if (point.x < left || point.y < top || point.x >= left + width || point.y >= top + height) return { error: 'offscreen' };
     const root = el.getRootNode();
     let hit = (typeof root.elementFromPoint === 'function' ? root : el.ownerDocument).elementFromPoint(point.x, point.y);
     while (hit && hit !== el && hit.shadowRoot) {

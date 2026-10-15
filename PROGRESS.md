@@ -1,5 +1,50 @@
 # Progress
 
+### Internal browser: measured waits and DOM plans — 2026-10-15
+
+Added per-call and per-step monotonic timings, exclusive phases, CDP command
+counts/errors/timeouts, document events and redirect counts. The returned
+compact record is also in the existing tool trace; logcat `MikeBrowserTiming`
+has per-command detail in numbered chunks. Timing records exclude URLs,
+selectors, field values, page text, headers, bodies and chat/workspace paths.
+Plans report action/verification status, keep their no-replay ledger and take
+one final snapshot. The browser skill explains that `browser plan` is the DOM
+equivalent of the screen's `act_plan`; no duplicate tool or gateway was added.
+
+Two regressions were red before fixing waits: a usable document with an 8s
+image took 8535ms to open; a nested read stretched 3s settling to 10050ms.
+After: the live Chrome image fixture took 396ms; the virtual-time delayed
+read stays within 3050ms. DOM readiness no longer needs every image loaded;
+settling/verification include nested cancellable calls, preserve Stop, and
+report budget expiry. A physical follow-up also found the keyboard's panned
+visual viewport was ignored during hit testing. After correcting that, the
+three fills, radio and checkbox plan passed on Xiaomi without sending a form.
+
+Physical module benchmark, separate non-debuggable probe, Xiaomi Android 15,
+WebView 154.0.8037.107: three successful repetitions of every performance call
+(15/15). Google result click: 1640/1214/1632ms; direct httpbin open:
+1256/613/758ms; five-action form plan: 2481/2419/2445ms. Each result click
+recorded one redirect; no protocol timeout. One search used its settling
+budget and then passed URL verification. Public-page snapshots, geometry,
+raw timings and logcat are ignored under `artifacts/browser-performance-20261015/`.
+
+Checks: `:web:testDebugUnitTest :web:lintDebug` PASS, 62 tests (38 live CDP,
+7 host, 7 URL policy, 8 gateway, 2 wait), no failures/skips. Full gate
+`gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
+:voice:lintDebug :web:lintDebug :app:lintDevDebug --no-daemon --console=plain`
+BUILD SUCCESSFUL (1m32s), web 62 per variant. Runtime preparation tests: 15 OK;
+`git diff --check` clean. Intermediate compile/test errors in the newly added
+tests and description were corrected before the final green gate.
+
+Limits: the user's original single 27.7s click on another phone was not
+reproduced or diagnosed. These timings exclude model/relay time. This pass
+tested the production browser module in a separate foreground probe, not the
+full Hey Mike host/approval/handoff UI or the hosting phone. The probe's later
+CDP screenshot check was intermittent; its final file says FAIL at Screenshot
+unavailable after all benchmark calls completed. No full-probe PASS is claimed.
+See `docs/testing/internal-browser-performance-20261015.md` for exact evidence,
+test harness limits and reproduction. Earlier network-policy gaps remain open.
+
 ### Internal browser: physical follow-up and non-debuggable Hey Mike — 2026-10-15
 
 Follow-up on app code `4ea778a`; no product code changes. Xiaomi 23053RN02Y,

@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.os.Process
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.widget.LinearLayout
 import android.widget.TextView
 import dev.androidagent.web.*
@@ -33,11 +35,15 @@ class ProbeActivity : Activity() {
         root.addView(status); root.addView(view, LinearLayout.LayoutParams(-1, 0, 1f)); setContentView(root)
         var started = false
         view.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                if (request.url.toString() == "https://example.com/hey-mike-probe")
+                    WebResourceResponse("text/html", "UTF-8", FIXTURE.byteInputStream()) else null
             override fun onPageFinished(view: WebView, url: String) {
                 if (!started) { started = true; scope.launch { probe() } }
             }
         }
-        view.loadDataWithBaseURL("https://example.com/hey-mike-probe", FIXTURE, "text/html", "UTF-8", null)
+        // Current WebView exposes a data: history entry for loadDataWithBaseURL.
+        view.loadUrl("https://example.com/hey-mike-probe")
     }
     private suspend fun probe() {
         val evidence = mutableListOf<String>()
@@ -57,7 +63,13 @@ class ProbeActivity : Activity() {
             }
             evidence += "same_uid_cdp=connected"
             val page = BrowserSession(client, WebUrlPolicy(), BrowserSession.Pointer.TOUCH,
-                nativeTap = { x, y -> WebViewInput.tap(view, x, y) }) { false }
+                nativeTap = { x, y -> WebViewInput.tap(view, x, y) }) { summary ->
+                    // The benchmark preauthorizes only its known public result
+                    // link. Form sends and arbitrary eval stay refused.
+                    intent.getBooleanExtra("benchmark", false) &&
+                        summary.startsWith("At https://www.google.com/") &&
+                        summary.contains(": activate link ") && summary.contains("forms/post")
+                }
             session = page; page.start()
             val gateway = WebToolGateway(object : BrowserHost {
                 override fun unavailable(): WebFailure? = null
@@ -76,6 +88,8 @@ class ProbeActivity : Activity() {
             evidence += result.text
             check(result.success) { "Plan failed" }
             evidence += "plan_fill_fill_touch=PASS"
+            // Keep navigation measurements independent from screenshot support.
+            if (intent.getBooleanExtra("benchmark", false)) benchmark(gateway, client)
             val screenshot = page.screenshot()
             check(screenshot?.startsWith("iVBOR") == true) { "Screenshot unavailable" }
             File(getExternalFilesDir(null), "probe.png").writeBytes(android.util.Base64.decode(screenshot, android.util.Base64.DEFAULT))
@@ -87,6 +101,47 @@ class ProbeActivity : Activity() {
         } catch (failure: Throwable) {
             evidence += "${failure.javaClass.simpleName}: ${failure.message}"
             save("FAIL", evidence)
+        }
+    }
+    private suspend fun benchmark(gateway: WebToolGateway, client: CdpClient) {
+        val output = File(getExternalFilesDir(null), "benchmark.jsonl")
+        output.writeText("")
+        suspend fun call(label: String, args: String): dev.androidagent.core.ToolResult {
+            val start = android.os.SystemClock.elapsedRealtime()
+            val result = gateway.invoke("browser", Json.parseToJsonElement(args).jsonObject)
+            val row = buildJsonObject {
+                put("label", label); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - start)
+                put("ok", result.success); put("result", result.text)
+            }
+            output.appendText("$row\n")
+            if (result.text.contains("No node found at given location")) {
+                val geometry = client.call("Runtime.evaluate", buildJsonObject {
+                    put("expression", "JSON.stringify({inner:[innerWidth,innerHeight],visual:[visualViewport.width,visualViewport.height,visualViewport.offsetTop,visualViewport.scale],scroll:[scrollX,scrollY],radio:document.querySelector('input[value=medium]')?.getBoundingClientRect().toJSON()})")
+                    put("returnByValue", true)
+                })
+                output.appendText(buildJsonObject { put("label", "$label-geometry"); put("geometry", geometry) }.toString() + "\n")
+                output.appendText(buildJsonObject { put("label", "$label-layout"); put("geometry", client.call("Page.getLayoutMetrics")) }.toString() + "\n")
+            }
+            android.util.Log.i("MikeBrowserProbe", "benchmark $label ${android.os.SystemClock.elapsedRealtime() - start}ms ok=${result.success}")
+            return result
+        }
+        repeat(3) { index ->
+            val search = call("google-open-$index", """{"operation":"open","url":"https://www.google.com"}""")
+            if (search.success) {
+                val query = call("google-search-$index", """{"operation":"plan","steps":[
+                    {"operation":"fill","selector":"[name=q]","value":"httpbin forms post"},
+                    {"operation":"press","key":"Enter","verify":{"url":"/search","timeoutMs":15000}}
+                ]}""")
+                if (query.success) call("google-click-$index", """{"operation":"click","text":"forms/post","role":"link"}""")
+            }
+            val direct = call("direct-$index", """{"operation":"open","url":"https://httpbin.org/forms/post"}""")
+            if (direct.success) call("form-plan-$index", """{"operation":"plan","steps":[
+                {"operation":"fill","text":"Customer name:","value":"בדיקת דפדפן"},
+                {"operation":"fill","text":"E-mail address:","value":"test@example.com"},
+                {"operation":"fill","text":"Delivery instructions:","value":"בדיקת מילוי שדות בדפדפן הפנימי."},
+                {"operation":"click","text":"Medium","role":"radio"},
+                {"operation":"click","text":"Mushroom","role":"checkbox"}
+            ]}""")
         }
     }
     private fun save(outcome: String, evidence: List<String>) {

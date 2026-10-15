@@ -447,6 +447,41 @@ are never retried after a CDP failure: a lost reply to a scroll, value set or
 option may have run the page's handlers, so it is counted as sent first and
 reported as uncertain instead of replayed.
 
+**Readiness and performance (2026-10-15).** Navigation waits for an interactive
+or complete DOM, then a short quiet period; an unfinished image does not hold
+the whole operation until the load event. Settling (3 s, or 800 ms for a quick
+edit) and condition waits use coroutine timeouts around their nested protocol
+reads too. Cancellation propagates. A settling budget that expires adds a
+note and counter, without sending the input again. Protocol errors are no
+longer silently treated as proof that a page is navigating. A context-lost
+readiness read may be polled again within the same budget. Read/policy guards
+and the input ledger still apply.
+
+Every `browser` reply includes `timings`: monotonic `backendMs`, exclusive
+`phasesMs`, `otherMs`, aggregate CDP counts/durations/errors/timeouts, bounded
+document event times and redirect count when present. Backend time includes
+browser work and page loading; it excludes model thinking and relay delivery.
+CDP durations overlap phases and must not be added to them. Plan results have
+per-step timings, action status and verification status (`not_requested`,
+`not_run`, `passed`, `failed`). They still take one final snapshot. This is the
+DOM equivalent of `act_plan`; it stays in the existing `browser` tool, separate
+from the phone-screen planner and its allowlist. No second browser tool or
+device gateway is introduced.
+
+`AgentApplication` writes the same timing record with per-command detail to
+the `MikeBrowserTiming` logcat tag; chunks have call ID and part numbers so
+Android's line limit does not silently cut off a large plan. The tool trace
+already stores the compact returned timings. These measurements record no
+URLs, field values, selectors, page text, HTTP headers, bodies or workspace
+paths. The separate test probe's ignored evidence contains public test-page
+snapshots. See `docs/testing/internal-browser-performance-20261015.md` for
+measurements and their limits.
+
+Hit testing uses the visual viewport as well as element bounds. Android's
+keyboard can pan that viewport while layout `innerHeight` and `scrollY` stay
+unchanged; a control outside the visible region must be scrolled into view
+and checked again before the global hit test or native touch.
+
 **Reconnect and lifecycle.** A page whose CDP connection dropped but whose
 WebView lives is attached again by its DevTools target id: the page, its login
 and its form stay; nothing is repeated, and the next reply says earlier refs

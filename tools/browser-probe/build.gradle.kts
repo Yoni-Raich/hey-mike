@@ -11,7 +11,8 @@ android {
     defaultConfig {
         applicationId = "dev.androidagent.browserprobe"
         minSdk = 30; targetSdk = 35
-        versionCode = 1; versionName = "1.0"
+        versionCode = (findProperty("probeVersionCode") as? String)?.toInt() ?: 2
+        versionName = "1.1"
     }
     buildTypes { release { isDebuggable = false; signingConfig = signingConfigs.getByName("debug") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

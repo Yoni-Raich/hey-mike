@@ -42,7 +42,9 @@ class BrowserIntegrationTest {
                             val reader = it.getInputStream().bufferedReader()
                             val request = reader.readLine().orEmpty()
                             while (!reader.readLine().isNullOrEmpty()) { /* consume headers */ }
+                            if (request.contains(" /slow-image ")) Thread.sleep(8_000)
                             val html = when {
+                                request.contains(" /slow-page ") -> "<h1>Usable page</h1><input aria-label='Ready field'><img src='/slow-image'>"
                                 request.contains(" /frame ") -> "<button onclick='this.textContent=\"Frame done\"'>Frame button</button>"
                                 request.contains(" /form ") -> "<form onsubmit='parent.frameSubmits++;return false'><label>Message <input></label></form>"
                                 request.contains(" /secret ") -> "<title>Router</title><p>Router admin password</p>"
@@ -143,6 +145,48 @@ class BrowserIntegrationTest {
     private suspend fun value(expression: String): JsonElement? = (cdp.call("Runtime.evaluate", buildJsonObject {
         put("expression", expression); put("returnByValue", true)
     })["result"] as JsonObject)["value"]
+
+    @Test fun slowSubresourceDoesNotBlockAnInteractiveDocument() = runBlocking {
+        val started = System.nanoTime()
+        val result = call("""{"operation":"open","url":"${fixtureUrl}slow-page"}""")
+        val elapsed = (System.nanoTime() - started) / 1_000_000
+        println("BROWSER_BENCHMARK slow-image-8000 openMs=$elapsed")
+        assertTrue(result.text, result.success)
+        assertTrue(result.text, result.text.contains("Ready field"))
+        assertTrue("An 8s image blocked a usable document for ${elapsed}ms", elapsed < 5_000)
+    }
+
+    @Test fun planReturnsStepTimingsAndOnlyOneFinalSnapshot() = runBlocking {
+        val result = call("""{"operation":"plan","steps":[{"operation":"fill","text":"Query","value":"timing test"},{"operation":"click","text":"Apply","verify":{"text":"Applied timing test true"}}]}""")
+        assertTrue(result.text, result.success)
+        val timings = Json.parseToJsonElement(result.text.substringAfterLast("\ntimings: ")).jsonObject
+        assertEquals(2, timings["steps"]!!.jsonArray.size)
+        val second = timings["steps"]!!.jsonArray[1].jsonObject["timings"]!!.jsonObject
+        assertEquals("not_requested", timings["steps"]!!.jsonArray[0].jsonObject["verification"]!!.jsonPrimitive.content)
+        assertEquals("passed", timings["steps"]!!.jsonArray[1].jsonObject["verification"]!!.jsonPrimitive.content)
+        assertTrue(second["phasesMs"]!!.jsonObject.containsKey("verify"))
+        assertFalse(second["phasesMs"]!!.jsonObject.containsKey("snapshot"))
+        assertTrue(timings["phasesMs"]!!.jsonObject.containsKey("snapshot"))
+        assertFalse(timings.toString().contains("timing test"))
+    }
+
+    @Test fun aControlAboveTheVisualViewportIsNotClicked() = runBlocking {
+        page.snapshot() // Install the helper in its isolated world.
+        val context = cdp.call("Page.createIsolatedWorld", buildJsonObject {
+            put("frameId", cdp.call("Page.getFrameTree")["frameTree"]!!.jsonObject["frame"]!!.jsonObject["id"]!!)
+            put("worldName", "hey_mike")
+        })["executionContextId"]!!
+        cdp.call("Runtime.evaluate", buildJsonObject {
+            put("contextId", context)
+            put("expression", "Object.defineProperty(window,'visualViewport',{configurable:true,value:{offsetLeft:0,offsetTop:500,width:innerWidth,height:100}})")
+        })
+        val result = call("""{"operation":"click","text":"Apply"}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("not_visible"))
+        assertEquals(JsonPrimitive(0), value("clicks"))
+        cdp.call("Runtime.evaluate", buildJsonObject { put("contextId", context); put("expression", "delete window.visualViewport") })
+        Unit
+    }
 
     @Test fun planTypesWithTrustedInputAndClicksOnce() = runBlocking {
         val result = call("""{"operation":"plan","steps":[{"operation":"fill","text":"Query","value":"a & b  שאלה"},{"operation":"fill","text":"Address","value":"value"},{"operation":"click","text":"Apply","verify":{"text":"Applied a & b שאלה true"}}]}""")

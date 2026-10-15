@@ -353,7 +353,7 @@ class AgentGraph(private val app: Application) {
         }
     })
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(dev.androidagent.web.WebToolGateway(browserHost), workflowTools, knowledgeTools, automationTools,
+        listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
             computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), capabilityTools, a11yTools, adbTools),
     )
     /**
