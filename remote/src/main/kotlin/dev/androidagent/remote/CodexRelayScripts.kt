@@ -14,9 +14,11 @@ internal object CodexRelayScripts {
         val metadata get() = "$folder/connection.json"
     }
 
-    suspend fun install(link: SshLink, probe: HostProbe, scratch: File): Instance {
+    suspend fun install(link: SshLink, probe: HostProbe, scratch: File, clientId: String? = null): Instance {
+        clientId?.let(ClaudeSessionFiles::requireId)
         val token = UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "")
-        val instance = Instance(token, probe.home.replace('\\', '/') + "/.hey-mike/codex-relay/$token")
+        val namespace = clientId?.let { "$it/" }.orEmpty()
+        val instance = Instance(token, probe.home.replace('\\', '/') + "/.hey-mike/codex-relay/$namespace$token")
         val local = File(scratch, token).apply { check(mkdirs() || isDirectory) { "Could not prepare Codex relay" } }
         try {
             for (name in listOf("relay.cs", "relay.ps1")) {

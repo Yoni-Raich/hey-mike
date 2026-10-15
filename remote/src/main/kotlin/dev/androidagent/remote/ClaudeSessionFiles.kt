@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
+import java.util.UUID
 
 /**
  * A failure the reader on the computer reported itself, as opposed to the
@@ -27,7 +28,10 @@ object ClaudeSessionFiles {
 
     // The version is part of the name: two phones on different app versions
     // share this folder and must not run each other's reader.
-    fun scriptName(os: HostOs): String = "session-reader-v4." + if (os == HostOs.WINDOWS) "ps1" else "py"
+    fun scriptName(os: HostOs): String = "session-reader-v5." + if (os == HostOs.WINDOWS) "ps1" else "py"
+
+    /** Stable across engine/app restarts, distinct for each phone's saved computer. */
+    fun clientId(computerId: String): String = UUID.nameUUIDFromBytes("claude-client:$computerId".toByteArray(Charsets.UTF_8)).toString()
 
     fun script(os: HostOs): String {
         val suffix = if (os == HostOs.WINDOWS) "ps1" else "py"
@@ -35,16 +39,19 @@ object ClaudeSessionFiles {
             .bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 
-    fun command(os: HostOs, path: String, mode: String, id: String? = null): String {
+    fun command(os: HostOs, path: String, mode: String, id: String? = null, clientId: String? = null): String {
         require(mode in setOf("list", "read", "busy"))
         id?.let(::requireId)
+        clientId?.let(::requireId)
         fun quote(value: String): String {
             require(value.none { it == '\u0000' || it == '\n' || it == '\r' }) { "Invalid session reader path" }
             return "'" + value.replace("'", if (os == HostOs.WINDOWS) "''" else "'\\''") + "'"
         }
         return if (os == HostOs.WINDOWS) {
-            WindowsHost.powershell("& ${quote(path)} -Mode ${quote(mode)}" + (id?.let { " -SessionId ${quote(it)}" } ?: ""))
-        } else LinuxHost.wrap("python3 ${quote(path)} ${quote(mode)}" + (id?.let { " ${quote(it)}" } ?: ""))
+            WindowsHost.powershell("& ${quote(path)} -Mode ${quote(mode)}" + (id?.let { " -SessionId ${quote(it)}" } ?: "") +
+                (clientId?.let { " -ClientId ${quote(it)}" } ?: ""))
+        } else LinuxHost.wrap("python3 ${quote(path)} ${quote(mode)}" + (id?.let { " ${quote(it)}" } ?: "") +
+            (clientId?.let { " --client ${quote(it)}" } ?: ""))
     }
 
     fun payload(result: ExecResult): JsonObject = WindowsHost.payload(result).also { row ->
@@ -57,6 +64,10 @@ object ClaudeSessionFiles {
 
     /** Only a `claude` that some Mike launched holds it: this phone's warm one, or another phone's. */
     fun heldByMike(row: JsonObject): Boolean = (row["mike"] as? JsonPrimitive)?.booleanOrNull == true
+
+    /** A retained process from this saved computer can be reclaimed after this app lost its in-memory engine. */
+    fun heldElsewhere(row: JsonObject, holdsSession: Boolean): Boolean = heldByOther(row) ||
+        (heldByMike(row) && (row["owned"] as? JsonPrimitive)?.booleanOrNull != true && !holdsSession)
 
     fun threads(row: JsonObject): List<ComputerConversation> =
         (row["threads"] as? JsonArray ?: error("Claude session inventory is incomplete")).map { thread(it as? JsonObject ?: error("Invalid Claude session")) }

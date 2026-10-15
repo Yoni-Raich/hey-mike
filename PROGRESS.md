@@ -5,17 +5,34 @@
 - Claude chats on Pc kept showing "open in another Claude". Mike now launches
   `claude` with files under `.hey-mike/codex-relay/<token>/`, but the session
   readers only took `.hey-mike/claude` as Mike's, so Mike's own CLI counted as
-  another client. Both readers now accept either folder; reader bumped to v4 so
-  computers get the new script.
+  another client. Both readers now accept either folder.
+- The first installed fix, 1156 / reader v4, still blocked the hosting phone:
+  the PC reader correctly returned `mike:true, busy:false`, but `RemoteHub`
+  required the in-memory Claude engine to hold the session. An APK/engine
+  restart loses that map while the retained process remains alive.
+- Reader v5 and namespaced Windows Claude launches carry a stable client UUID
+  derived from the phone's saved computer ID. Our retained process can be
+  reclaimed after restart; another phone's client and external writers still
+  block. Refresh never kills a process or sends a turn. Old unmarked relays
+  stay blocked until their local engine releases them or their lease ends.
+- The existing retry-budget test failed intermittently in GitHub at its
+  100 ms wall-clock retry-count assertion. It now advances an injected
+  monotonic clock on each attachment; the 100 ms bound and assertions remain.
 - Real check on Pc against the live session `5a043e5e…`: old reader
   `busy:true, mike:false`, new reader `busy:false, mike:true`.
-- `:remote:testDebugUnitTest` passed (149 cases, zero failures/errors, three
-  existing skips). `python -m unittest tools.test_claude_sessions` passed 16
+- `:remote:testDebugUnitTest` passed (150 cases, zero failures/errors, three
+  existing skips). `python -m unittest tools.test_claude_sessions` passed 17
   tests on both readers. New fixtures cover old/relayed launch paths, both
   slash styles, similarly named sibling folders, and an external writer
   sharing Mike's session. The regression test fails on the old reader for
-  both relay path styles and passes with this fix. `git diff --check` passed.
-- Not verified: the full phone -> SSH flow after install, a live Linux host.
+  both relay path styles and passes with this fix. New fixtures also cover
+  same/other phone identities, legacy paths, and malformed client prefixes.
+  A real Windows Node fixture process, with no model/auth requests, was
+  classified by the actual CIM reader as `busy:false,mike:true,owned:true`
+  for its client, and `busy:true,mike:false,owned:false` for another client.
+  The Kotlin gate test has no live engine, matching the restart condition.
+  `git diff --check` passed.
+- Not verified: the full phone -> SSH flow after the follow-up install, a live Linux host.
   Phone build and delivery use a separate integration branch to retain the
   browser changes already installed on the hosting phone.
 

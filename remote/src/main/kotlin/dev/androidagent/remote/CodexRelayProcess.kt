@@ -23,7 +23,9 @@ internal class CodexRelayProcess(
     private val recoveryMs: Long = 300_000,
     private val heartbeatMs: Long = 5_000,
     private val stalledMs: Long = 20_000,
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : Process(), RecoverableConnection {
+    private fun now() = clock()
     private val gate = Object()
     private val writes = Any()
     private val pending = linkedMapOf<Long, String>()
@@ -256,7 +258,6 @@ internal class CodexRelayProcess(
     }
 
     companion object {
-        private fun now() = System.nanoTime() / 1_000_000
         private fun canRetry(error: Exception): Boolean =
             error is IOException || error is SshUnreachable || error is com.jcraft.jsch.JSchException
         internal fun frame(kind: String, seq: Long, bytes: ByteArray): String {

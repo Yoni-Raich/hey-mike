@@ -173,6 +173,47 @@ class ReadersTest(unittest.TestCase):
         self.check("read", lambda row: self.assertEqual(["hello", "image understood"], [m["text"] for m in row["messages"]]))
         self.check("list", lambda row: self.assertEqual(1, len(row["threads"])))
 
+    def test_relay_ownership_is_stable_across_restart_and_separate_between_phones(self):
+        self.write([self.row()])
+        client = "22222222-2222-4222-8222-222222222222"
+        other = "33333333-3333-4333-8333-333333333333"
+        token = "a" * 64
+        spec = importlib.util.spec_from_file_location("claude_reader_owners", RESOURCES / "claude_sessions.py")
+        reader = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reader)
+        proc = self.root / "proc"
+        proc.mkdir()
+        cases = [(client, False, True, True), (other, True, False, False),
+                 (None, False, True, False), (client + "-other", False, True, False)]
+        for owner, busy, mike, owned in cases:
+            for separator in ("/", "\\"):
+                with self.subTest(owner=owner, separator=separator):
+                    path = "/home/test/.hey-mike/codex-relay/" + (owner + "/" if owner else "") + token + "/mcp.json"
+                    path = path.replace("/", separator)
+                    args = ["claude", "--resume", SID, "--mcp-config", path]
+                    folder = proc / "12345"
+                    folder.mkdir(exist_ok=True)
+                    (folder / "cmdline").write_bytes("\0".join(args).encode())
+                    with mock.patch.object(reader, "Path", side_effect=lambda value: proc if value == "/proc" else Path(value)), \
+                         mock.patch.object(reader, "roots", return_value=(self.root, self.root / "projects")):
+                        row = reader.project("busy", SID, client)
+                    self.assertEqual((busy, mike, owned), (row["busy"], row["mike"], row["owned"]))
+                    if os.name == "nt" and shutil.which("powershell.exe"):
+                        command = ("function Get-CimInstance { ConvertFrom-Json $env:HEYMIKE_TEST_PROCESSES }; "
+                                   "& $env:HEYMIKE_TEST_READER -Mode busy -SessionId $env:HEYMIKE_TEST_SESSION "
+                                   "-ClientId $env:HEYMIKE_TEST_CLIENT")
+                        result = subprocess.run(
+                            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+                            env={**os.environ, "CLAUDE_CONFIG_DIR": str(self.root),
+                                 "HEYMIKE_TEST_PROCESSES": json.dumps([dict(Name="claude.exe", ProcessId=12345,
+                                                                           CommandLine=subprocess.list2cmdline(args))]),
+                                 "HEYMIKE_TEST_READER": str(RESOURCES / "claude_sessions.ps1"),
+                                 "HEYMIKE_TEST_SESSION": SID, "HEYMIKE_TEST_CLIENT": client},
+                            capture_output=True, encoding="utf-8", timeout=30, check=True)
+                        line = next(line for line in result.stdout.splitlines() if line.startswith("HEYMIKE "))
+                        row = json.loads(line[8:])
+                        self.assertEqual((busy, mike, owned), (row["busy"], row["mike"], row["owned"]))
+
     def test_compaction_keeps_earlier_history_and_hides_the_summary(self):
         # The shape Claude Code 2.1.284 wrote on this PC: the boundary has no
         # parentUuid, and the summary is a transcript-only user record.

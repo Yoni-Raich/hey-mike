@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 import org.junit.Assert.*
 import org.junit.Test
@@ -139,10 +140,12 @@ class CodexRelayProcessTest {
 
     @Test(timeout = 15_000) fun repeatedHandshakesDoNotResetTheInvalidFrameRecoveryBudget() {
         val attaches = AtomicInteger()
+        val clock = AtomicLong()
         val process = CodexRelayProcess(attach = {
             attaches.incrementAndGet()
+            clock.addAndGet(40)
             Peer().apply { start { send("H1"); send("O 1 broken"); endOutput() } }
-        }, retryDelaysMs = longArrayOf(5), heartbeatMs = 1_000, recoveryMs = 100)
+        }, retryDelaysMs = longArrayOf(5), heartbeatMs = 1_000, recoveryMs = 100, clock = clock::get)
         try {
             try { process.inputStream.read(); fail("Must end the bounded recovery") }
             catch (error: IOException) { assertTrue(error.message!!.contains("not resent")) }
