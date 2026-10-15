@@ -32,6 +32,16 @@ failures/errors, 34 existing skips. Runtime preparation: 15 OK.
 The hosting phone's complete model-driven run with this change is not yet
 measured. See `docs/testing/internal-browser-batching-20261015.md`.
 
+Delivery: code commit `d88eddd`; final Dev Release rebuilt in 30s with
+version 1152 `0.14.0-dev.browser-batching1`. ZIP alignment, v3 signature and
+the existing test certificate verified. APK SHA-256
+`88d69a261fb2c940ee9fd9a5971f423c8fdddd22e956e9f929958c28bd55a052`,
+291932681 bytes. Packaged helper, browser skill and agent instructions match
+the committed sources byte for byte. `copy_file` completed to the hosting
+chat and local Downloads. APK Manager then displayed Installing; our Install
+step found no button and sent no tap, so it was not repeated. Installed
+version verification remains separate from this transfer/install progress.
+
 ### Internal browser: false approval on navigation paths — 2026-10-15
 
 The user's hosting-phone report isolated a 120.02s approval wait on the

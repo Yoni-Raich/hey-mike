@@ -95,3 +95,22 @@ core: 787, with no failures/errors/skips in those modules. Whole matrix:
 34 existing skipped cases. Runtime preparation: 15 passed. Five new browser
 tests were initially red before implementation. Detailed logs and the parsed
 test summary are in the ignored evidence folder.
+
+## Delivery
+
+Code commit d88eddda70b00daeee170566bbc9a45b6934d711. The final Dev Release
+was rebuilt in 30s after the instruction edits, with version 1152 /
+0.14.0-dev.browser-batching1. ZIP alignment and APK Signature Scheme v3
+passed, with the same test certificate as installed 1151. APK size:
+291932681 bytes. SHA-256:
+88d69a261fb2c940ee9fd9a5971f423c8fdddd22e956e9f929958c28bd55a052.
+The packaged page helper, browser skill and agent instructions were compared
+byte for byte against source. Artifact metadata and signature evidence are
+in the ignored delivery-1152 folder.
+
+Hosting-phone metadata was checked before delivery: 1151. copy_file completed
+to chat:browser-1152/app-dev-debug.apk and then local Downloads. Logical copy
+size is not measured network traffic. Opening that file reached APK Manager;
+the screen changed to Installing before our Install step resolved, so the
+step returned target_not_found with zero taps. It was not repeated. Installed
+1152 metadata and a complete new model-driven task still require live proof.
