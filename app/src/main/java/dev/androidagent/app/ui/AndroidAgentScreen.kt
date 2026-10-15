@@ -374,7 +374,7 @@ fun AndroidAgentScreen(
                             )
                         }
                         TransferBanner(state.fileTransfer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-                        state.browserPage?.let { page ->
+                        state.activeBrowserPage()?.let { page ->
                             BrowserPageCard(page, onOpen = actions.onOpenBrowser, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                         }
                         state.runState.approval?.let { approval ->
@@ -418,7 +418,7 @@ fun AndroidAgentScreen(
 
         // Sheets are windows of their own and would sit above first launch.
         val onboarding = state.onboardingStep() != dev.androidagent.core.OnboardingStep.DONE
-        val page = state.browserPage
+        val page = state.activeBrowserPage()
         if (page != null && state.browserShown() && !onboarding) {
             BrowserPanel(
                 page = page,

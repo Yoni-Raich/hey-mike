@@ -186,7 +186,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val page = key?.let(pages::get)
                 mutable.update { state ->
-                    state.copy(browserPage = page, browserOpenFor = state.browserOpenFor.takeUnless { it == id && page == null })
+                    state.copy(browserPage = page, browserPageChat = id, browserOpenFor = state.browserOpenFor.takeUnless { it == id && page == null })
                 }
             }
         }
@@ -928,10 +928,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun browseVoiceChats() { mutable.update { it.copy(voiceBrowsing = true) } }
     /** Put the open chat's page in front, if it has one. */
     fun openBrowser() {
-        mutable.update { it.copy(browserOpenFor = it.activeSessionId.takeIf { _ -> it.browserPage != null }) }
+        mutable.update { it.copy(browserOpenFor = it.activeSessionId.takeIf { _ -> it.activeBrowserPage() != null }) }
     }
-    /** The open chat's page, as the browser host knows it, or null when there is none. */
-    fun browserPageKey(): String? = mutable.value.browserPage?.key
     fun returnToVoice() {
         graph.voiceConversation.sessionId.value?.let { current.value = it }
         mutable.update { it.copy(voiceBrowsing = false) }

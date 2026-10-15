@@ -454,10 +454,12 @@ are gone. If that fails, or the renderer died, the page is replaced by a blank
 one and the chat is told. Every path that ends a page (the user's Close,
 `onRenderProcessGone`, `close`, eviction, service stop) goes through one
 main-thread `discard`, so the page count, the shown page and WebView
-debugging agree. At most four pages exist: before a new one, pages of deleted
-chats are closed, then the least recently used page that is not busy, not
-on screen and not in the user's hands; the chat that lost it is told on its
-next page.
+debugging agree. Four pages is a soft cap: before a new one, pages of
+deleted chats are closed, then, while four or more exist, the least recently
+used page that is not busy, not on screen and not in the user's hands; the
+chat that lost it is told on its next page. When every page is busy, shown or
+the user's, nothing is closed and the new page opens anyway, so more than four
+can exist. No test covers the cap.
 
 **Chats and the screen.** Each coordinator has its own browser gateway.
 Independent tools bypass `DeviceLease` through

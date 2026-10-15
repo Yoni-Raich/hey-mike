@@ -39,23 +39,63 @@ or Give back to Mike, Stop, and Close (asks first). Touches are held back
 while Mike has the page. `show` brings Hey Mike forward on that chat, gives
 the user control, and says whether the page reached the screen.
 
-Evidence (Windows, central build storage, `HEYMIKE_TEST_CHROME` = desktop
-Chrome): `gradlew.bat test assembleDevRelease assembleDevDebugAndroidTest
-:voice:lintDebug :web:lintDebug :app:lintDevDebug --no-daemon --rerun-tasks`
-BUILD SUCCESSFUL, no lint errors. Tests: web 53 per variant (35 live CDP,
-6 Robolectric host, 7 policy, 5 gateway), core 786, app 164 per variant (2 new
-for the panel labels), remote 149 (3 skipped), workspace 47 (14 skipped),
-others unchanged. All with 0 failures. `python -m unittest
-tools.test_prepare_runtime` 15 OK; `git diff --check` clean.
+Follow-up after the device run (same day): the panel bar text was black on
+the dark bar, and the composer's keyboard stayed up over the page; both fixed.
+After a source review, also: each page gets its own native frame
+(`key(pageKey)`), every attach, detach and control callback carries the key
+of the page it was made for, the UI state records which chat its page belongs
+to (`browserPageChat`, read through `activeBrowserPage`), and Stop shows
+whenever a run is active, also while the user has the page. New JVM tests: a
+state test that chat B never shows chat A's page while the collectors catch
+up, and a Robolectric host test that a late detach from A's old frame leaves
+B's page attached. These are state and host tests; they do not run Compose,
+so `AndroidView` reuse across a real chat switch is not exercised by them.
+ARCHITECTURE now calls the four-page limit a soft cap (it gives way when
+every page is busy, shown or the user's), with no test.
 
-Not tested: nothing here ran on a phone. Robolectric has no WebView renderer,
-so the following still need device evidence:
-- moving a live WebView between the parked window and the activity, including
-  rendering, keyboard, and the user's dropdowns through
-  `MutableContextWrapper`;
-- the panel itself (no screenshot exists: no UI evidence);
-- `show` bringing Hey Mike forward from another app or with the phone locked;
-- `WebViewInput` taps, pinch zoom, and two chats browsing at once.
+Evidence (Windows, central build storage, `HEYMIKE_TEST_CHROME` = desktop
+Chrome), final code: `gradlew.bat test assembleDevRelease
+assembleDevDebugAndroidTest :voice:lintDebug :web:lintDebug :app:lintDevDebug
+--no-daemon --rerun-tasks`: BUILD SUCCESSFUL (2m 56s), no lint errors. Tests, every module 0 failures: web 54 per variant (35 live CDP, 7 Robolectric host, 7 policy, 5 gateway), core 786, app 165 per variant, remote 149 (3 skipped), workspace 47 (14 skipped). `python -m unittest tools.test_prepare_runtime` 15 OK; `git diff --check` clean.
+
+Device (Xiaomi 23053RN02Y, no SIM, HyperOS). `adb install -r`
+in place over 1139: no uninstall, sign-in, chats and data kept; same debug
+certificate (SHA-256 `f65c3469…dda1ee`). Final installed `base.apk` SHA-256
+`f15a4f2e7a02d599ada7c15f59d58958f1196ce41ed88a3cb810d8cc4467eb60`,
+`dev.androidagent.app.dev` 1147 `0.14.0-dev.claude-sync4`. Accessibility
+stayed bound after each install. Screenshots, the chat's `session-trace.jsonl`
+and APK metadata are kept under the ignored
+`artifacts/internal-browser-device-2026-10-15/`. One Claude-subscription run
+first failed on an OAuth refresh error (not the browser); the retry worked.
+Seen on the phone, each in a screenshot:
+- `show` (trace: `browser open` then `browser show`, reply "in front of the
+  user, in Hey Mike") opened the page inside Hey Mike's chat with the site
+  host, lock and "You have control" (s6, t3).
+- Back returned to the chat; the card read "Your turn · example.com"; Open
+  reopened the page (s7, s8).
+- Give back to Mike locked the page: a swipe did not scroll it. After Take
+  control the same swipe scrolled (s9, s10, s11).
+- Typing into the page: with the user in control, a tap on DuckDuckGo's search
+  field and `adb input text` (IME key events, not a human) put "Hey mike test"
+  in the field, which stayed above the keyboard (t4). The user's dropdowns and
+  pickers were not tried.
+- Stop while the user had the page and `ask_user` was pending: Stop was shown
+  (u2); pressing it cancelled the run (trace: `ask_user` `tool_cancelled`) and
+  the button went away (u3).
+- Agent refused while the user had the page: trace shows `fill` → `error:
+  user_control`, then `hide`, then `fill` with submit → ok, title "weather at
+  DuckDuckGo". Background: Home was pressed about 2 s after sending; the window
+  focus was the launcher when checked right after Home and again about 80 s
+  later. The successful `fill` started about 5 s and finished about 10 s after the send. Focus was sampled,
+  not watched, so this shows the step ran with the launcher in front, not that
+  the page drew continuously. The model's final text said the page was "under
+  your control again"; the card said "Mike's browser", which matches the
+  trace (no `show` after `hide`). That sentence was the model's error.
+
+Not tested on the phone: `show` from another app or with the phone locked
+(here Hey Mike was in front each time), two chats with pages and a real chat
+switch with the panel open, Close page, a renderer crash, the user's
+dropdowns, pinch zoom, release (non-debuggable) builds of this change.
 
 Still open, not fixed: a server redirect to a privately resolving name sends
 that one request before the read guard closes the page. DNS rebinding and

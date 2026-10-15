@@ -53,8 +53,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -83,9 +89,13 @@ private val AgentInk = Color(0xFF69A7FF)
 private val UserInk = Color(0xFFE8C9A0)
 private val NotSecure = Color(0xFFFFB4A9)
 
+/** The open chat's own page, never one left over from the chat before. */
+internal fun AgentUiState.activeBrowserPage(): BrowserPageState? =
+    browserPage?.takeIf { browserPageChat != null && browserPageChat == activeSessionId }
+
 /** The open chat's page fills the screen. */
 internal fun AgentUiState.browserShown(): Boolean =
-    browserPage != null && browserOpenFor != null && browserOpenFor == activeSessionId
+    activeBrowserPage() != null && browserOpenFor != null && browserOpenFor == activeSessionId
 
 /** Who has the page, in the words the user sees. */
 internal fun browserControlLabel(page: BrowserPageState): String =
@@ -142,15 +152,22 @@ internal fun BrowserPanel(
     page: BrowserPageState,
     running: Boolean,
     onBack: () -> Unit,
-    onTakeControl: () -> Unit,
-    onGiveBack: () -> Unit,
-    onClosePage: () -> Unit,
+    onTakeControl: (String) -> Unit,
+    onGiveBack: (String) -> Unit,
+    onClosePage: (String) -> Unit,
     onStop: () -> Unit,
-    attach: (BrowserFrame) -> Boolean,
-    detach: (BrowserFrame) -> Unit,
+    attach: (String, BrowserFrame) -> Boolean,
+    detach: (String, BrowserFrame) -> Unit,
 ) {
+    val pageKey = page.key
     BackHandler(onBack = onBack)
     var confirmClose by rememberSaveable(page.key) { mutableStateOf(false) }
+    // The composer's keyboard would otherwise stay up over the page.
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(page.key) { focus.clearFocus(force = true); keyboard?.hide() }
+    // Drawn over the chat, outside any Surface: name the text color, or it is black on the dark bar.
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
     Column(
         Modifier
             .fillMaxSize()
@@ -192,25 +209,28 @@ internal fun BrowserPanel(
                 if (page.userControlled) "You have control" else "Mike has the page",
                 style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f),
             )
-            if (running && !page.userControlled) {
+            // A run that showed the page is still running while the user has it.
+            if (running) {
                 TextButton(onClick = onStop) { Text("Stop", color = MaterialTheme.colorScheme.error) }
             }
             if (page.userControlled) {
-                FilledTonalButton(onClick = onGiveBack) { Text("Give back to Mike") }
+                FilledTonalButton(onClick = { onGiveBack(pageKey) }) { Text("Give back to Mike") }
             } else {
-                OutlinedButton(onClick = onTakeControl) { Text("Take control") }
+                OutlinedButton(onClick = { onTakeControl(pageKey) }) { Text("Take control") }
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            BrowserFrameView(page.key, attach, detach)
+            // One native frame per page: another chat's page gets a new frame.
+            key(pageKey) { BrowserFrameView(pageKey, attach, detach) }
         }
+    }
     }
     if (confirmClose) {
         AlertDialog(
             onDismissRequest = { confirmClose = false },
             title = { Text("Close this page?") },
             text = { Text("Anything typed on it is gone. Mike can open the site again later.") },
-            confirmButton = { TextButton(onClick = { confirmClose = false; onClosePage() }) { Text("Close page") } },
+            confirmButton = { TextButton(onClick = { confirmClose = false; onClosePage(pageKey) }) { Text("Close page") } },
             dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("Keep it") } },
         )
     }
@@ -222,25 +242,27 @@ internal fun BrowserPanel(
  * go on working while the user is elsewhere.
  */
 @Composable
-private fun BrowserFrameView(key: String, attach: (BrowserFrame) -> Boolean, detach: (BrowserFrame) -> Unit) {
+private fun BrowserFrameView(pageKey: String, attach: (String, BrowserFrame) -> Boolean, detach: (String, BrowserFrame) -> Unit) {
     val owner = LocalLifecycleOwner.current
-    val frame = remember(key) { mutableStateOf<BrowserFrame?>(null) }
-    AndroidView(factory = { context -> BrowserFrame(context).also { frame.value = it } }, modifier = Modifier.fillMaxSize())
-    val shown by frame
-    DisposableEffect(owner, shown, key) {
-        val target = shown ?: return@DisposableEffect onDispose {}
+    var frame by remember { mutableStateOf<BrowserFrame?>(null) }
+    AndroidView(factory = { context -> BrowserFrame(context).also { frame = it } }, modifier = Modifier.fillMaxSize())
+    val target = frame
+    // Every call names this page and this frame, so a late stop or disposal
+    // can only take back what this frame holds.
+    DisposableEffect(owner, target, pageKey) {
+        if (target == null) return@DisposableEffect onDispose {}
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> attach(target)
-                Lifecycle.Event.ON_STOP -> detach(target)
+                Lifecycle.Event.ON_START -> attach(pageKey, target)
+                Lifecycle.Event.ON_STOP -> detach(pageKey, target)
                 else -> Unit
             }
         }
-        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) attach(target)
+        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) attach(pageKey, target)
         owner.lifecycle.addObserver(observer)
         onDispose {
             owner.lifecycle.removeObserver(observer)
-            detach(target)
+            detach(pageKey, target)
         }
     }
 }

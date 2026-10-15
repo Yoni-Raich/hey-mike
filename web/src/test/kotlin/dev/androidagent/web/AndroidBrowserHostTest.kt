@@ -118,4 +118,22 @@ class AndroidBrowserHostTest {
         assertFalse(key in host.pageStates.value)
         assertFalse(host.attach(key, frame))
     }
+
+    @Test fun aLateDetachFromTheOldChatsFrameLeavesTheNewChatsPage() = runBlocking {
+        val host = host()
+        val other = "other-chat"
+        host.open(other)
+        val frameA = BrowserFrame(activity)
+        val frameB = BrowserFrame(activity)
+        assertTrue(host.attach(key, frameA))
+        // The user switched chats: B's panel attaches before A's panel is disposed.
+        assertTrue(host.attach(other, frameB))
+        host.detach(key, frameA)
+        assertEquals("B's page stays on screen", 1, frameB.childCount)
+        assertEquals("A's page left its old frame", 0, frameA.childCount)
+        // A detach naming the wrong frame or page takes nothing away.
+        host.detach(other, frameA)
+        host.detach(key, frameB)
+        assertEquals(1, frameB.childCount)
+    }
 }
