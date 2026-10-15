@@ -42,11 +42,23 @@ See `docs/testing/internal-browser-performance-20261015.md` for limits.
 
 Delivery: `copy_file` completed to the source chat and then local Downloads.
 Opening that exact file reached APK Manager's "Installing app-dev-debug.apk"
-screen. Phone tool replies stopped during the update; the installed version
-has not yet been verified. Do not repeat the installation without checking
-app metadata first. Probe 9's separate later screenshot check ended FAIL at
+screen. Phone tool replies stopped during the update. In the 13:32 follow-up,
+live `apps_settings(app_info)` confirmed installed 1151,
+`0.14.0-dev.browser-approval1`; browser ready with one page and accessibility
+connected. The installed base APK hash was not read. No reinstall was needed.
+Probe 9's separate later screenshot check ended FAIL at
 Screenshot unavailable after its 15 successful benchmark calls; the probe
 was then stopped. No full-probe PASS is claimed.
+
+The user's fresh hosting-phone report at 13:32 says the result click and
+form verification took 1.47s backend / 1.55s outer, with no approval wait.
+The form was filled, updated, verified and shown without submitting it.
+Scrolling commands ran but the reported scroll range was zero: this does
+not prove movement. Reported totals: 14.21s backend, 14.97s outer calls,
+79.4s wall time. The 64.43s outside calls is not split into model, orchestration
+or other time by this report. The 0.76s difference between outer and backend
+totals is not a standalone network measurement. The slowest step was Enter:
+3.09s including 3.00s settling. Raw hosting-phone traces were not inspected.
 
 ### Internal browser: measured waits and DOM plans — 2026-10-15
 

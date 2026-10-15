@@ -162,9 +162,44 @@ Its packaged page helper equals the tested source byte for byte. Code was
 committed as `9833bcc`. `copy_file` completed to `chat:browser-1151/` and
 then local Downloads. Opening that file reached APK Manager's
 "Installing app-dev-debug.apk" screen. Phone tool replies stopped during
-the update, so installed 1151 metadata is not yet verified. There was no
-second install attempt. Check metadata before retrying or replacing it.
+the update. At the 13:32 follow-up, live `apps_settings(app_info)` confirmed
+1151 / `0.14.0-dev.browser-approval1` on the hosting phone. `device_status`
+reported browser ready with one page and accessibility connected. The
+installed base APK hash was not read. There was no second install attempt.
 Logical copy size is not measured network traffic or proof of a delta.
+
+### Hosting-phone follow-up reported at 13:32
+
+The user supplied a fresh test report; these calls were made in another
+chat, not replayed here. The installed version was checked live as above.
+The report says the final name, email and delivery instructions matched,
+Large and Mushroom were checked, Bacon and the other toppings were off,
+and `show` handed the page to the user. Submit order was not pressed.
+
+| Operation | Backend seconds | Outer-call seconds |
+| --- | ---: | ---: |
+| Open Google | 3.00 | 3.07 |
+| Search plan | 3.78 | 3.93 |
+| Result click and form verification | 1.47 | 1.55 |
+| First fill plan | 3.11 | 3.21 |
+| Bottom/top scroll commands | 0.85 | 0.95 |
+| Update plan | 1.94 | 2.01 |
+
+The result click no longer reported an approval wait. This supports the
+fix on the hosting phone, in addition to the independently collected
+physical-probe results. The reported scroll range was zero because the
+whole form fit the viewport; commands succeeding is not proof of scrolling.
+
+Reported totals including the final read and show: 14.21s backend, 14.97s
+outer calls, 79.4s from opening Google until showing the form. Subtracting
+gives 0.76s between outer and backend totals and 64.43s outside tool calls.
+Neither difference is a direct measurement of network or model latency.
+The latter can include model generation, orchestration and gaps between
+calls; a raw trace with the same start/end boundaries is needed to split it.
+The slowest reported step was Enter at 3.09s, including 3.00s settling.
+This identifies remaining settling cost but does not account for most of
+the wall time. No source changes or new benchmark runs were made for this
+acceptance follow-up, and the earlier 27.7s event remains unexplained.
 
 Follow-up evidence is ignored under `artifacts/browser-approval-20261015/`,
 including the red-test XML, intermediate web/lint log, probe versions 7/8,
