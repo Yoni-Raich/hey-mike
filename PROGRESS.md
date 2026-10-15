@@ -1,5 +1,52 @@
 # Progress
 
+### Internal browser: new-window links, router back, tolerant settling — 2026-10-15
+
+The hosting phone's deep run took 3:00, with 86.2s in browser calls. Xiaomi
+`cd4928027d76` (USB, explicit serial) reproduced two causes with a new probe
+scenario `github` (production host, refusing approvals, no human input):
+
+- GitHub's external link uses target=_blank. The refused popup left a click
+  verify waiting 15.0s each time (gh-0..2 15693-15931ms, red v20) and needed a
+  second `open` call. Gesture-started new windows now load in the same page;
+  the throwaway window never fetches (local 204) and its address goes through
+  the page's own policy path. Same click after the fix: 1231-1554ms, 5/5 (v22,
+  v25), destination checked.
+- Back on GitHub stays in one document. Probe v21 run 0 reproduced the
+  hosting phone's symptom: repository URL, Issues body. `back` now reports a
+  same-document step and points to `reload`. Not reproduced in 13 later probe
+  backs; seen in both installed-app chats below.
+- Probe v21 run 1 hit `Cannot find context` while settling across the new
+  navigation. Settling now follows a replaced document (lost context, frame
+  or helper) instead of failing a sent action; timeouts still fail.
+- Skill: verify by URL or seen text, not a guessed selector (`#readme` cost
+  the hosting run a full wait). Timing logs now carry `errorType`.
+
+Evidence (ignored `artifacts/browser-nav-20261015/`): web live-Chrome suite 60
+tests per variant, 0 failures (`HEYMIKE_TEST_CHROME`); new tests cover router
+back, cross-document back, a settle read losing the document, errorType.
+Full gate (`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:app:lintDevDebug`) passed for ee81c74 (2897 executions, 34 existing skips,
+0 failures) and again for be3a7dc (exit 0; result XML later evicted by build
+storage, so counts were not re-read). `tools.test_prepare_runtime` OK, diff
+check clean. Probe v23 then v25 on Xiaomi: sites, controls, forms, keyboard,
+github (5 rounds), popup (8 rounds, after reload or wait) all `FINISHED 0`.
+
+Dev Release 1155 `0.14.0-dev.browser-nav2` (be3a7dc), non-debuggable, 16KiB
+aligned, v3 signed with the local test key, SHA-256
+`a9e8b0a58419278f042a9a1664f25d03d54c0b03975e546dcedf98f7a2061b9e`; installed
+on Xiaomi with `install -r`, base.apk hash identical, accessibility bound.
+Same prompt in a live Codex 6.1 Sol Low chat (GitHub repo, Issues, back,
+external link, show): 1154 used 6 browser calls, the external click returned
+uncertain although the page arrived; 1155 used 4 calls, the click and handoff
+ran as one 1738ms plan, PC send to final log 41.2s. In both chats the model's
+own 8s back verify timed out on the router symptom and reload recovered it.
+
+Gaps: the 1154 uncertain click was not reproduced (0/8 probe runs), so the
+settle hardening is a plausible, not proven, fix; errorType logging will name
+the next one. A same-document back still costs the model's verify timeout
+before reload. Hosting-phone delivery of 1155 pending.
+
 ### Internal browser: deep Xiaomi regressions — 2026-10-15
 
 Code `9fca73d` fixes three reproduced problems: document/visual hit-test
