@@ -151,6 +151,7 @@ class CodexRelayProcessTest {
             catch (error: IOException) { assertTrue(error.message!!.contains("not resent")) }
             assertTrue(attaches.get() > 1)
             assertFalse(process.isAlive)
+            assertFalse(process.reconnecting)
         } finally { process.destroy() }
     }
 

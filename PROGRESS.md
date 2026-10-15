@@ -15,9 +15,10 @@
   reclaimed after restart; another phone's client and external writers still
   block. Refresh never kills a process or sends a turn. Old unmarked relays
   stay blocked until their local engine releases them or their lease ends.
-- The existing retry-budget test failed intermittently in GitHub at its
-  100 ms wall-clock retry-count assertion. It now advances an injected
-  monotonic clock on each attachment; the 100 ms bound and assertions remain.
+- GitHub also exposed a retained-transport lifecycle race: readers could
+  receive the terminal exception before `isAlive` became false. Terminal
+  state is now published before waking readers. Its retry-budget test also
+  advances an injected clock; the 100 ms bound and assertions remain.
 - Real check on Pc against the live session `5a043e5e…`: old reader
   `busy:true, mike:false`, new reader `busy:false, mike:true`.
 - `:remote:testDebugUnitTest` passed (150 cases, zero failures/errors, three

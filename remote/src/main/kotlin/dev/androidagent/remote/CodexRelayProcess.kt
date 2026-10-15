@@ -178,11 +178,12 @@ internal class CodexRelayProcess(
             val message = if (error is RelayEnded) "${error.message} The task was not resent."
                 else "Computer connection could not recover. Task outcome is unknown; the task was not resent."
             terminalFailure = IOException(message)
-            stdout.fail(checkNotNull(terminalFailure))
         } finally {
             ended = true
             reconnecting = false
-            stdout.finish()
+            // Publish terminal process state before waking readers with its error.
+            // Otherwise an engine can receive the failure while isAlive still says true.
+            terminalFailure?.let(stdout::fail) ?: stdout.finish()
             stderr.finish()
             synchronized(gate) { gate.notifyAll() }
         }
