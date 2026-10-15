@@ -1,5 +1,69 @@
 # Progress
 
+### Internal browser: deep Xiaomi regressions — 2026-10-15
+
+Code `9fca73d` fixes three reproduced problems: document/visual hit-test
+coordinates after keyboard pan or scrolling; CSS smooth scrolling racing
+the next hit test; and `display:contents` wrappers hiding MDN's article from
+the snapshot and target lookup. Input remains native and trusted. No approval,
+Stop, genuine-cover check or uncertain-action retry rule was weakened.
+
+Separate non-debuggable production-host probe on USB Xiaomi 23053RN02Y,
+Android 15, WebView 154.0.8037.107: probe 17 passed eight keyboard/scroll
+cases (four frame heights, two repeats), six real httpbin form flows, and
+cover/user-control/Stop/24-step/two-chat checks. Mid-plan cancellation left
+the counter at exactly 2; the long plan added exactly 21 clicks and handed
+over in 11220ms. Two chat pages retained their independent state. No form
+was submitted. A malformed harness workspace initially triggered the host's
+correct deleted-chat cleanup; it was fixed in the test harness.
+
+Probe 19 passed two complete Wikipedia / MDN / GitHub / WHATWG site rounds,
+including link navigation, scrolling, verified history back and external
+navigation, in 48253ms without a model. Internal clicks including verification:
+Wikipedia 1411/1239ms, MDN 1140/962ms, GitHub Issues 1852/3375ms.
+GitHub opens its external link as a popup: refusal was observed, then the
+known URL was opened in the same page and independently checked. The harness
+waits for SPA body readiness after Back and allows one fresh read/re-resolution
+only for a stale node with the session input counter unchanged. Probe 19
+needed no such recovery. Earlier failed and incomplete diagnostics are kept.
+
+Six new regressions per web variant: native pan, wrong-frame cover, document
+scroll, smooth scroll, rendered contents, and hidden contents. The old code
+failed the corresponding positive tests before each fix. Final full gate:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:web:lintDebug :app:lintDevDebug --no-daemon --console=plain`, 1153 version
+overrides, passed in 2m38s. Web 80 per variant, no skips; complete matrix 2893
+executions, zero failures/errors, 34 existing skips. Runtime preparation:
+15 OK. Raw device JSONL/logcat, red tests and gate evidence are ignored under
+`artifacts/browser-batching-20261015/deep-xiaomi/`. See
+`docs/testing/internal-browser-deep-xiaomi-20261015.md` for scope and gaps.
+
+Hosting-phone metadata was independently read during this work: 1152
+`0.14.0-dev.browser-batching1`.
+
+Package: final rebuild from code `9fca73d` passed in 2m7s. Dev Release,
+non-debuggable, test-signed, version 1153 `0.14.0-dev.browser-keyboard1`.
+16KiB ZIP alignment and v3 signature pass; the existing test certificate
+is unchanged. Signed APK is 291932681 bytes, SHA-256
+`f27240b19d676d6dc20865a3f2dc8c074883e6791cf6752c3c170cc79189d21e`.
+Packaged page helper matches committed source bytes. USB update on Xiaomi
+succeeded without data removal; installed base.apk hash and version match.
+
+Full application smoke also passed on that exact installed APK, using a
+normal ChatGPT/Codex 6.1 Sol Low chat: open MDN JavaScript, follow JavaScript
+reference, show. App timing log: open 3163.4ms, one click/verify/handoff plan
+1798.0ms, both OK, zero protocol errors/timeouts. The screen showed the correct
+Reference title/domain and You have control. The PC's pre-Send UTC marker to
+the handoff timing-log timestamp was 17267.9ms; browser backend sum 4961.4ms.
+This is one short smoke, not the earlier form benchmark or a model speedup
+comparison. The previously enabled accessibility service needed a visible
+Android Settings off/on cycle after update; normal confirmation/countdown
+was respected. It ended bound with no crashed services. No secure setting
+was written, and no instrumentation runner was used.
+
+Hosting-phone transfer/installation of 1153 is separate from this confirmed
+Xiaomi package and application evidence.
+
 ### Internal browser: fewer model/tool exchanges — 2026-10-15
 
 Known forms can now fill, use a read-only `check` of live values/checked
