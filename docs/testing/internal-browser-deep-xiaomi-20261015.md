@@ -127,3 +127,16 @@ Final dumpsys showed a bound Hey Mike service and no crashed services.
 No secure setting or restricted-setting workaround was used. Full-application
 evidence is under `deep-xiaomi/app-e2e-timings.txt`, `e2e-measurement.json` and
 `xiaomi-e2e-result.png`; signed APK evidence is under `delivery-1153/`.
+
+## Hosting-phone delivery status
+
+Only after the Xiaomi module and installed-application checks above passed,
+the exact signed APK was copied with `copy_file` to
+`chat:browser-1153/app-dev-debug.apk`, then to Downloads URI
+`content://media/external_primary/downloads/1000235086`. Both copies completed.
+Hosting metadata immediately before update was 1152. APK Manager's Install
+was tapped once; the observed next screen said Installing app-dev-debug.apk
+and Silent install over ADB. The following wait and fresh app-info reads did
+not return, so their read-only waits were cancelled. Installation was not
+replayed. Hosting installed version and post-update browser operation still
+need live verification; the Xiaomi success does not fill that gap.

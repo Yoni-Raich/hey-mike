@@ -62,7 +62,14 @@ was respected. It ended bound with no crashed services. No secure setting
 was written, and no instrumentation runner was used.
 
 Hosting-phone transfer/installation of 1153 is separate from this confirmed
-Xiaomi package and application evidence.
+Xiaomi package and application evidence. `copy_file` completed to
+`chat:browser-1153/app-dev-debug.apk` and then Downloads URI
+`content://media/external_primary/downloads/1000235086`. APK Manager's Install
+was tapped once and its next screen said Installing app-dev-debug.apk / Silent
+install over ADB. No install retry was sent. The subsequent wait and two
+app-info reads did not return after installation began; those read-only waits
+were cancelled. Hosting-phone installed version remains unverified. No
+hosting-phone post-update browser success is claimed.
 
 ### Internal browser: fewer model/tool exchanges — 2026-10-15
 
