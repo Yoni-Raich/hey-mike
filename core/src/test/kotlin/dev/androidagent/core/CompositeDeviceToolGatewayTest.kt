@@ -223,6 +223,31 @@ class CompositeDeviceToolGatewayTest {
         assertFalse(composite.hidesOverlayDuringCapture("nope"))
     }
 
+    @Test fun anIndependentCallArmsOnlyItsOwnBackendThroughItsOwnHook() {
+        val calls = mutableListOf<String>()
+        fun member(name: String, tool: String, independent: Boolean) = object : DeviceToolGateway {
+            override val definitions = listOf(ToolDefinition(tool, "", buildJsonObject {}))
+            override fun beginRun(runId: String, workspace: File) { calls += "$name.beginRun" }
+            override fun beginIndependentTool(name2: String, runId: String, workspace: File) { calls += "$name.independent" }
+            override fun revokeIndependentTools() { calls += "$name.revokeIndependent"; if (name == "web") error("boom") }
+            override fun screenInUse(runId: String, workspace: File) { calls += "$name.screen"; if (name == "web") error("boom") }
+            override fun requiresDeviceLease(name2: String) = !independent
+            override fun revoke() = Unit
+            override fun needsControl(name2: String) = false
+            override suspend fun invoke(name2: String, arguments: JsonObject) = ToolResult("")
+            override suspend fun cancel() = Unit
+        }
+        val composite = CompositeDeviceToolGateway(listOf(member("web", "browser", true), member("a11y", "tap", false)))
+        composite.beginIndependentTool("browser", "1", File("w"))
+        // Not beginRun: that is what a run holding the phone does.
+        assertEquals(listOf("web.independent"), calls)
+        calls.clear()
+        // Stop reaches every member even when the first throws, and does not throw itself.
+        composite.revokeIndependentTools()
+        composite.screenInUse("1", File("w"))
+        assertEquals(listOf("web.revokeIndependent", "a11y.revokeIndependent", "web.screen", "a11y.screen"), calls)
+    }
+
     @Test fun aCompositeWithNoBackendsIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             CompositeDeviceToolGateway(emptyList())

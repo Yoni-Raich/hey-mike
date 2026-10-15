@@ -304,6 +304,8 @@ class AgentCoordinator(
             if (leased) share.lease.release(this)
             return null
         }
+        // A rule drives the screen: a browser page shown for a chat steps aside.
+        runCatching { tools.screenInUse(token.toString(), workspace) }
         runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
         return try {
             block()
@@ -1052,11 +1054,15 @@ class AgentCoordinator(
                         val independent = !tools.requiresDeviceLease(event.name)
                         if (independent) {
                             synchronized(lifecycleLock) {
-                                if (!isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
-                                tools.beginIndependentTool(event.name, token.toString(), checkNotNull(runWorkspace))
+                                val work = runWorkspace
+                                if (!isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty()) || work == null) return@withLock
+                                tools.beginIndependentTool(event.name, token.toString(), work)
                             }
                         } else if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
-                        if (usesScreen(event.name)) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+                        if (usesScreen(event.name)) {
+                            val work = synchronized(lifecycleLock) { if (deviceHeld) { screenSticky = true; runWorkspace } else null }
+                            work?.let { runCatching { tools.screenInUse(token.toString(), it) } }
+                        }
                         val visible = tools.needsControl(event.name)
                         val capture = tools.hidesOverlayDuringCapture(event.name)
                         // act_and_observe wraps the real action, so report that
@@ -1466,18 +1472,24 @@ class AgentCoordinator(
     }
 
     /**
-     * Take the phone for this run before its first tool call. Another chat may
-     * be driving it; this run waits, saying so, until that chat is done.
+     * A browser panel shown to the user, or an approval card for a browser
+     * action, changes what is on the screen, so it takes the phone like a tap
+     * would and keeps it to this run's end. False when the run is not current.
      */
-    /** Browser panels and approvals change the foreground, so they also take the phone. */
     suspend fun claimBrowserScreen(): Boolean {
         val current = synchronized(lifecycleLock) { Triple(epoch.get(), thread, turn) }
-        if (current.second == null || current.third == null) return false
-        if (!claimDevice(current.first, current.second!!, current.third!!)) return false
-        synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+        val threadId = current.second ?: return false
+        val turnId = current.third ?: return false
+        if (!claimDevice(current.first, threadId, turnId)) return false
+        val work = synchronized(lifecycleLock) { if (deviceHeld) { screenSticky = true; runWorkspace } else null } ?: return false
+        runCatching { tools.screenInUse(current.first.toString(), work) }
         return true
     }
 
+    /**
+     * Take the phone for this run before its first tool call. Another chat may
+     * be driving it; this run waits, saying so, until that chat is done.
+     */
     private suspend fun claimDevice(token: Long, threadId: String, turnId: String): Boolean {
         if (synchronized(lifecycleLock) { deviceHeld }) return true
         if (!share.lease.tryAcquire(this)) {

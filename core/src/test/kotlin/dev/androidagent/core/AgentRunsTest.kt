@@ -194,6 +194,26 @@ class AgentRunsTest {
         rig.close()
     }
 
+    @Test fun aChatAboutToUseTheScreenTellsTheBrowserToStepAside() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "Use the screen")
+        rig.runs.send("two", "Browse")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("b", "browser", buildJsonObject {}, "thread-two", "turn-thread-two"))
+        runCurrent()
+        // A browser call leaves the screen alone, so nothing is moved for it.
+        assertEquals(emptyList<String>(), rig.screenUses)
+        rig.engine.emit(EngineEvent.ToolCall("c", "contacts", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertEquals(emptyList<String>(), rig.screenUses)
+        rig.engine.emit(EngineEvent.ToolCall("s", "read_ui", buildJsonObject {}, "thread-one", "turn-thread-one"))
+        runCurrent()
+        // A shown page of any chat would cover what read_ui reads and tap presses.
+        assertEquals(listOf("session-one"), rig.screenUses)
+        assertEquals(listOf("b", "c", "s"), rig.engine.answered)
+        rig.close()
+    }
+
     private class Rig(test: TestScope) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = Engine()
@@ -201,6 +221,8 @@ class AgentRunsTest {
         val overlay = Overlay()
         val tools = Tools()
         var browserCalls = 0
+        /** Workspaces whose run told the browser it is about to use the screen. */
+        val screenUses = mutableListOf<String>()
         val runs = AgentRuns(scope, engine) { share ->
             val browser = object : DeviceToolGateway {
                 var armed = false
@@ -208,6 +230,7 @@ class AgentRunsTest {
                 override fun beginRun(runId: String, workspace: File) { armed = true }
                 override fun revoke() { armed = false }
                 override fun revokeIndependentTools() = revoke()
+                override fun screenInUse(runId: String, workspace: File) { screenUses += workspace.name }
                 override fun requiresDeviceLease(name: String) = false
                 override fun needsControl(name: String) = false
                 override suspend fun invoke(name: String, arguments: JsonObject): ToolResult { check(armed); browserCalls++; return ToolResult("Page") }
