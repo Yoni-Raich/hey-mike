@@ -100,7 +100,7 @@ def metadata(file, holders):
             "model": model or None, "busy": file.stem in holders}
 
 
-MIKE = re.compile(r"[\\/]\.hey-mike[\\/]claude[\\/]")
+MIKE = re.compile(r"[\\/]\.hey-mike[\\/](?:claude|codex-relay)[\\/]")
 
 
 class ReaderError(ValueError):
@@ -129,7 +129,8 @@ def alive(pid):
 
 def session_holders(config):
     """Per session ID: 'other' when another Claude client holds it, 'mike' when
-    only CLIs that Mike launched do. Mike's launch files live in .hey-mike/claude."""
+    only CLIs that Mike launched do. Mike's launch files live in .hey-mike/claude and, for relayed chats,
+    .hey-mike/codex-relay."""
     ids = {}
     mike_pids = set()
 

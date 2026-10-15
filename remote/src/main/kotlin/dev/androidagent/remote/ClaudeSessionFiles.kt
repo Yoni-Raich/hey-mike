@@ -27,7 +27,7 @@ object ClaudeSessionFiles {
 
     // The version is part of the name: two phones on different app versions
     // share this folder and must not run each other's reader.
-    fun scriptName(os: HostOs): String = "session-reader-v3." + if (os == HostOs.WINDOWS) "ps1" else "py"
+    fun scriptName(os: HostOs): String = "session-reader-v4." + if (os == HostOs.WINDOWS) "ps1" else "py"
 
     fun script(os: HostOs): String {
         val suffix = if (os == HostOs.WINDOWS) "ps1" else "py"

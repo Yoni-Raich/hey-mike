@@ -1,5 +1,24 @@
 # Progress
 
+### Claude chat blocked by Mike's own CLI — 2026-10-15
+
+- Claude chats on Pc kept showing "open in another Claude". Mike now launches
+  `claude` with files under `.hey-mike/codex-relay/<token>/`, but the session
+  readers only took `.hey-mike/claude` as Mike's, so Mike's own CLI counted as
+  another client. Both readers now accept either folder; reader bumped to v4 so
+  computers get the new script.
+- Real check on Pc against the live session `5a043e5e…`: old reader
+  `busy:true, mike:false`, new reader `busy:false, mike:true`.
+- `:remote:testDebugUnitTest` passed (149 cases, zero failures/errors, three
+  existing skips). `python -m unittest tools.test_claude_sessions` passed 16
+  tests on both readers. New fixtures cover old/relayed launch paths, both
+  slash styles, similarly named sibling folders, and an external writer
+  sharing Mike's session. The regression test fails on the old reader for
+  both relay path styles and passes with this fix. `git diff --check` passed.
+- Not verified: the full phone -> SSH flow after install, a live Linux host.
+  Phone build and delivery use a separate integration branch to retain the
+  browser changes already installed on the hosting phone.
+
 ### Claude session sync deep review — 2026-10-14
 
 - PR #127 brought onto dev `358d2ef`; the open 2026-10-11 merge was concluded.

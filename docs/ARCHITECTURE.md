@@ -2776,7 +2776,9 @@ Decided 2026-10-01, on top of the section above.
   Refresh reads history and ownership together, and keeps Mike's own warm
   Claude process. The versioned reader is uploaded once per app run and
   restored if it disappears. Ownership uses live process arguments and native
-  PID metadata, distinguishing Mike's launcher from external clients. A
+  PID metadata, distinguishing Mike's launcher from external clients. Both
+  `.hey-mike/claude/` and retained `.hey-mike/codex-relay/` launch paths identify
+  Mike's processes; similarly named sibling folders do not. A
   detected external writer blocks writing. Missing transcripts and failed
   ownership checks block imported sessions; chats created by Mike keep their
   previous behavior, including a first turn with no transcript yet. If only

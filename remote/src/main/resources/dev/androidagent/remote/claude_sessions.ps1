@@ -37,7 +37,8 @@ function TranscriptFiles {
 }
 function Holders {
     # Per session ID: 'other' when another Claude client holds it, 'mike' when
-    # only CLIs that Mike launched do. Mike's launch files live in .hey-mike\claude.
+    # only CLIs that Mike launched do. Mike's launch files live in .hey-mike\claude
+    # and, for relayed chats, in .hey-mike\codex-relay.
     $ids = @{}
     $mikePids = @{}
     $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
@@ -45,7 +46,7 @@ function Holders {
         if ($process.Name -notmatch 'claude|node') { continue }
         $command = [string]$process.CommandLine
         if ($command -notmatch '(?i)claude') { continue }
-        $mike = $command -match '[\\/]\.hey-mike[\\/]claude[\\/]'
+        $mike = $command -match '[\\/]\.hey-mike[\\/](?:claude|codex-relay)[\\/]'
         if ($mike) { $mikePids[[int]$process.ProcessId] = $true }
         foreach ($match in [regex]::Matches($command, '(?:--resume|--session-id|-r)(?:\s+|=)["'']?([0-9a-fA-F-]{36})(?:["''\s]|$)')) {
             $sid = $match.Groups[1].Value
