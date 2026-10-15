@@ -1199,6 +1199,7 @@ class AgentCoordinator(
                     runCatching { engine.answerTool(event.requestId, ToolResult("Run stopped. No device action was performed.", success = false)) }
                     return
                 }
+                val receivedAt = nowNanos()
                 val token = synchronized(lifecycleLock) { epoch.get() }
                 val sessionId = synchronized(lifecycleLock) { state.value.sessionId } ?: return
                 flushAssistantSegment()
@@ -1208,7 +1209,7 @@ class AgentCoordinator(
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         // The chat's own tools leave the phone alone, so they do not wait for it.
                         if (event.name in ChatTools.NAMES) {
-                            serveChatTool(token, sessionId, event)
+                            serveChatTool(token, sessionId, event, receivedAt)
                             return@withLock
                         }
                         val independent = !tools.requiresDeviceLease(event.name)
@@ -1243,6 +1244,9 @@ class AgentCoordinator(
                         var result: ToolResult
                         var callTraced = false
                         val callStarted = nowNanos()
+                        var dispatchStarted: Long? = null
+                        var dispatchFinished: Long? = null
+                        var waitedNanos = 0L
                         try {
                             if (visible) runWorkspace?.let { tools.screenInUse(token.toString(), it) }
                             if (visible) {
@@ -1270,6 +1274,7 @@ class AgentCoordinator(
                             }); callTraced = true }
                             ensureCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())
                             val toolStart = nowNanos()
+                            dispatchStarted = toolStart
                             // Any approval this call raises is subtracted below,
                             // so tool time stays device time.
                             val approvalsBefore = approvalNanos.get()
@@ -1277,6 +1282,8 @@ class AgentCoordinator(
                             try { result = tools.invoke(event.name, event.arguments) }
                             finally {
                                 val waited = approvalNanos.get() - approvalsBefore
+                                waitedNanos = waited
+                                dispatchFinished = nowNanos()
                                 toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
                             }
                         } catch (cancelled: CancellationException) {
@@ -1296,6 +1303,7 @@ class AgentCoordinator(
                             }
                             handBackUnlessOnScreen()
                         }
+                        val resultStarted = nowNanos()
                         withContext(NonCancellable) {
                             val imagePath = result.imageBase64?.let { persistTraceImage(sessionId, it) }
                             trace(sessionId, "tool_result", buildJsonObject {
@@ -1314,6 +1322,7 @@ class AgentCoordinator(
                         if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                             sessions.append(message(sessionId, "tool", "${event.name}: ${result.text.take(4_000)}", attachments = result.attachmentPaths))
                             engine.answerTool(event.requestId, result)
+                            traceToolTiming(sessionId, event, receivedAt, dispatchStarted, dispatchFinished, resultStarted, waitedNanos)
                         }
                     }
                 }
@@ -1427,7 +1436,7 @@ class AgentCoordinator(
      * Answer the chat's own tools. None takes the phone: a question
      * can wait minutes, and another chat's tools must not wait with it.
      */
-    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall) {
+    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long) {
         val threadId = event.threadId.orEmpty()
         val turnId = event.turnId.orEmpty()
         withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
@@ -1470,6 +1479,8 @@ class AgentCoordinator(
                 }
             }
         }
+        val dispatchFinished = nowNanos()
+        val waitedNanos = approvalNanos.get() - waitedBefore
         withContext(NonCancellable) { trace(sessionId, "tool_result", buildJsonObject {
             put("threadId", threadId)
             put("turnId", turnId)
@@ -1481,6 +1492,25 @@ class AgentCoordinator(
         }) }
         if (!isCurrentTurn(token, threadId, turnId)) return
         engine.answerTool(event.requestId, result)
+        traceToolTiming(sessionId, event, receivedAt, started, dispatchFinished, dispatchFinished, waitedNanos)
+    }
+
+    /** App-side boundaries only. No model-time or network-time attribution. */
+    private suspend fun traceToolTiming(
+        sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long,
+        dispatchStarted: Long?, dispatchFinished: Long?, resultStarted: Long, waitedNanos: Long,
+    ) {
+        val deliveredAt = nowNanos()
+        fun ms(ns: Long) = ns.coerceAtLeast(0) / 1_000_000
+        trace(sessionId, "tool_timing", buildJsonObject {
+            put("threadId", event.threadId.orEmpty()); put("turnId", event.turnId.orEmpty())
+            put("requestId", event.requestId); put("name", event.name)
+            put("queueMs", ms((dispatchStarted ?: resultStarted) - receivedAt))
+            put("dispatchMs", if (dispatchStarted != null && dispatchFinished != null) ms(dispatchFinished - dispatchStarted) else 0)
+            put("approvalMs", ms(waitedNanos))
+            put("resultDeliveryMs", ms(deliveredAt - (dispatchFinished ?: resultStarted)))
+            put("totalMs", ms(deliveredAt - receivedAt))
+        })
     }
 
     /**
@@ -1811,6 +1841,13 @@ class AgentCoordinator(
             approvalMs = approvalNanos.get() / 1_000_000,
         )
         metricsState.value = metricsState.value + (sessionId to metrics)
+        trace(sessionId, "run_timing", buildJsonObject {
+            put("runId", state.value.runId)
+            put("totalMs", metrics.totalMs); put("toolCalls", metrics.toolCalls)
+            put("toolMs", metrics.toolMs); put("approvalMs", metrics.approvalMs)
+            put("outsideToolsMs", metrics.outsideToolsMs)
+            metrics.firstResponseMs?.let { put("firstResponseMs", it) }
+        })
         // Into the chat, not a log: the run that felt slow is the one someone
         // will ask about, and the answer belongs where they are already looking.
         RunSummary.line(metrics)?.let { summary ->

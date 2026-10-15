@@ -195,6 +195,92 @@ class BrowserIntegrationTest {
         assertEquals(JsonPrimitive(true), value("inputs[0]"))
         assertEquals(JsonPrimitive("a & b  שאלה"), value("query.value"))
     }
+
+    @Test fun onePlanFillsChecksAndHandsOverWithoutAnotherCall() = runBlocking {
+        value("""document.querySelector('article').innerHTML='<label>Mushroom <input id="mushroom" type="checkbox"></label><label>Bacon <input id="bacon" type="checkbox"></label>';1""")
+        val result = call("""{"operation":"plan","show":true,"steps":[
+            {"operation":"fill","text":"Query","value":"בדיקה  עם רווחים"},
+            {"operation":"click","text":"Mushroom","role":"checkbox"},
+            {"operation":"check","checks":[
+                {"text":"Query","value":"בדיקה  עם רווחים"},
+                {"text":"Mushroom","role":"checkbox","checked":true},
+                {"text":"Bacon","role":"checkbox","checked":false}
+            ]}
+        ]}""")
+        assertTrue(result.text, result.success)
+        assertTrue(result.text, result.text.contains("checked 3 controls"))
+        assertTrue(result.text, result.text.contains("they have control"))
+        assertTrue(page.userControlled)
+        assertEquals(JsonPrimitive("בדיקה  עם רווחים"), value("query.value"))
+    }
+
+    @Test fun aFailedCheckStopsThePlanAndDoesNotHandOverOrRepeatInputs() = runBlocking {
+        val result = call("""{"operation":"plan","show":true,"steps":[
+            {"operation":"click","text":"Apply"},
+            {"operation":"check","timeoutMs":200,"checks":[{"text":"Query","value":"wrong"}]},
+            {"operation":"click","text":"Send"}
+        ]}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("check_failed"))
+        assertTrue(result.text, result.text.contains("must not be sent again"))
+        assertEquals(JsonPrimitive(1), value("clicks"))
+        assertEquals(JsonPrimitive(0), value("sends"))
+        assertFalse(page.userControlled)
+    }
+
+    @Test fun checksReadLivePropertiesAndNeverSendInput() = runBlocking {
+        value("""document.querySelector('article').innerHTML='<label>Toggle <input type="checkbox" id="toggle"></label>';query.value='live value';toggle.checked=true;1""")
+        val before = page.inputs
+        val result = call("""{"operation":"check","checks":[{"text":"Query","value":"live value"},{"text":"Toggle","checked":true}]}""")
+        assertTrue(result.text, result.success)
+        assertEquals(before, page.inputs)
+        assertTrue(confirmations.isEmpty())
+        val wrongType = call("""{"operation":"check","timeoutMs":200,"checks":[{"text":"Query","checked":false}]}""")
+        assertFalse(wrongType.success)
+        assertEquals(before, page.inputs)
+    }
+
+    @Test fun checksWaitForAllRequestedStateWithinOneBudget() = runBlocking {
+        value("setTimeout(()=>query.value='arrived',250);1")
+        val result = call("""{"operation":"check","timeoutMs":1500,"checks":[{"text":"Query","value":"arrived"}]}""")
+        assertTrue(result.text, result.success)
+    }
+
+    @Test fun checksNeverReadPasswordOrCardValues() = runBlocking {
+        for (label in listOf("Password", "Card")) {
+            val result = call("""{"operation":"check","checks":[{"text":"$label","value":"probe"}]}""")
+            assertFalse(result.success)
+            assertTrue(result.text, result.text.contains("secret_field"))
+            assertFalse(result.text.contains("hidden-secret"))
+            assertFalse(result.text.contains("4111111111111111"))
+        }
+    }
+
+    @Test fun aKnownLongFormFitsOnePlanAndIsCheckedBeforeHandoff() = runBlocking {
+        value("document.querySelector('article').innerHTML=Array.from({length:14},(_,i)=>'<label>Item '+i+' <input id=field'+i+'></label>').join('');1")
+        val steps = (0 until 14).map { """{"operation":"fill","selector":"#field$it","value":"value $it"}""" }
+        val checks = (0 until 14).joinToString(",") { """{"selector":"#field$it","value":"value $it"}""" }
+        val result = call("""{"operation":"plan","show":true,"steps":[${steps.joinToString(",")},{"operation":"check","checks":[$checks]}]}""")
+        assertTrue(result.text, result.success)
+        assertTrue(result.text, result.text.contains("15 of 15 steps ran"))
+        assertTrue(page.userControlled)
+    }
+
+    @Test fun aHandoffErrorKeepsTheCompletedPlanAndDoesNotInviteReplay() = runBlocking {
+        val failingHost = object : BrowserHost by host(page) {
+            override suspend fun show(key: String): Boolean {
+                page.userControlled = true
+                throw java.io.IOException("Presentation reply lost")
+            }
+        }
+        val measured = WebToolGateway(failingHost).also { it.beginRun("test", directory) }
+        val result = measured.invoke("browser", Json.parseToJsonElement("""{"operation":"plan","show":true,"steps":[{"operation":"click","text":"Apply"}]}""").jsonObject)
+        assertFalse(result.success)
+        assertTrue(result.text, result.text.startsWith("ok: false"))
+        assertTrue(result.text, result.text.contains("completed plan must not be repeated"))
+        assertEquals(JsonPrimitive(1), value("clicks"))
+        assertTrue(page.userControlled)
+    }
     @Test fun failureKeepsCompletedPrefixAndResumeSkipsIt() = runBlocking {
         val steps = """[{"id":"one","operation":"click","text":"Apply"},{"id":"two","operation":"click","text":"Missing"},{"id":"three","operation":"fill","text":"Query","value":"last"}]"""
         val first = call("""{"operation":"plan","steps":$steps}""")

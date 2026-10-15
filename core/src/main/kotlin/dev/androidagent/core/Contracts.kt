@@ -245,8 +245,8 @@ data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: 
  *
  * [toolMs] is device time only and [approvalMs] is a person deciding, so the
  * two are never the same number: a send that waited 20 seconds for Allow is not
- * 20 seconds of the phone being slow. [thinkingMs] is what is left, which is
- * model turns and engine overhead.
+ * 20 seconds of the phone being slow. [outsideToolsMs] is what is left,
+ * including model work, engine overhead and commands run on a remote computer.
  */
 data class RunMetrics(
     val firstResponseMs: Long?,
@@ -256,7 +256,9 @@ data class RunMetrics(
     /** Time a person was being waited on: a send approval, a sensitive step. */
     val approvalMs: Long = 0,
 ) {
-    val thinkingMs: Long get() = (totalMs - toolMs - approvalMs).coerceAtLeast(0)
+    /** Residual time includes model work, orchestration, queueing and delivery. */
+    val outsideToolsMs: Long get() = (totalMs - toolMs - approvalMs).coerceAtLeast(0)
+    val thinkingMs: Long get() = outsideToolsMs
 }
 
 sealed interface EngineEvent {

@@ -441,7 +441,7 @@ unchanged is reported as "Nothing was sent to the page" and resumable with
 `startAt`; one after the count moved is `mayHaveActed: true`, whatever the
 throw site said. A timeout while an approval or a target lookup is still
 waiting is therefore a step that did not happen. `browser(operation="plan")`
-validates the whole sequence before a page is even opened, then runs up to 12
+validates the whole sequence before a page is even opened, then runs up to 24
 steps in one call with an 80-second ceiling. Each target is resolved again; a
 step may `verify` text, selector or URL. The reply keeps the completed prefix,
 lists steps skipped by `startAt`, distinguishes a completed action from failed
@@ -454,6 +454,16 @@ screenshot is refused while any frame shows a blocked address. Helper calls
 are never retried after a CDP failure: a lost reply to a scroll, value set or
 option may have run the page's handlers, so it is counted as sent first and
 reported as uncertain instead of replayed.
+
+`check` is a read-only operation and plan step. Its `checks` array names up
+to 24 controls and exact live `value` and/or boolean `checked` expectations.
+One shared timeout bounds all reads and polling; password/card checks are
+refused, and no focus, typing or toggle is sent. A mismatch stops the plan
+without replaying its completed prefix. A plan may request `show:true`: it
+returns its final observation first (unless `observe:false`), then calls the
+same host handoff as a separate show only after all steps pass. A lost handoff
+reply keeps the completed ledger and says `handoff_failed`; it must not cause
+the plan to be run again. The host's screen ownership checks remain in place.
 
 **Readiness and performance (2026-10-15).** Navigation waits for an interactive
 or complete DOM, then a short quiet period; an unfinished image does not hold
@@ -1770,7 +1780,8 @@ chat removes its workspace and trace together.
 
 `RunMetrics` existed and only an instrumented test ever read it. A run that felt
 slow is the one someone asks about, so at the end of every run that touched the
-phone the coordinator writes one system line into the chat: total, thinking, time
+phone the coordinator writes one system line into the chat: total, time outside
+tool calls, time
 on the phone across how many calls, and time waiting for a person.
 
 Two decisions make the numbers honest.
@@ -1780,14 +1791,27 @@ the tool call that asks for it, so counting it as tool time reported twenty
 seconds of "the phone" for twenty seconds of somebody deciding whether to send a
 message. `awaitLocalApproval` accumulates that wait, and the tool dispatch
 subtracts the part of it that happened inside its own call - so tool time is
-device time, approval time is human time, and thinking is what is left (model
-turns and engine overhead). Three buckets, three different fixes: fewer turns, a
+device time, approval time is human time, and `outsideToolsMs` is the residual
+(model work, engine overhead, queueing, delivery and remote commands not served
+by this coordinator). It is not a measurement of pure model thinking. The old
+`thinkingMs` getter remains a compatibility alias. Three buckets suggest different fixes: fewer turns, a
 faster path on screen, or nothing at all.
 
 **The clock is injected.** `AgentCoordinator` takes `nowNanos`, for the same
 reason `WorkflowRunner` does: a summary claiming to say where time went is worth
 what it can be tested against, and a test driving a virtual clock cannot verify a
 real one. The tests advance virtual time and assert the split exactly.
+
+The trace now stores `run_timing` with those numeric totals and first reply
+time, and `tool_timing` for completed replies. Per-tool boundaries are the
+arrival of EngineEvent.ToolCall, actual invocation and its return, and the
+return from engine.answerTool. `queueMs` covers local queue/setup before
+invocation, `dispatchMs` includes approval wait, and `resultDeliveryMs` covers
+local result handling and the answerTool call. `approvalMs` overlaps dispatch;
+do not sum it twice. These are app-side boundaries, not network ACKs or model
+inference timestamps. Timing entries add no arguments, result bodies or page
+text. A virtual-clock test separates 600ms queue, 1000ms invocation and 300ms
+delivery while retaining 3601ms outside tool work in the run total.
 
 A run that called no tool gets no line. One bucket is not a breakdown, and a
 line under every short answer teaches the user to skip it.

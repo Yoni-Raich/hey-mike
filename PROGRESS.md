@@ -1,5 +1,37 @@
 # Progress
 
+### Internal browser: fewer model/tool exchanges — 2026-10-15
+
+Known forms can now fill, use a read-only `check` of live values/checked
+states, and hand over with `plan(show:true)` in one call. A failed check
+stops later steps and handoff; a lost handoff reply retains the completed
+ledger. Secrets are refused. Plans allow 24 known steps within the same
+80s ceiling. The schema and shipped agent instructions explain this path.
+
+Controlled physical comparison in separate non-debuggable probe 10 on
+Xiaomi Android 15: three alternating pairs, same two fills, Apply once,
+independently checked final DOM and user control. Split: 5 calls, median
+1451ms, 2885 reply bytes. Batch: 1 call, median 1474ms, 2365 reply bytes.
+That is 80% fewer calls and 18.0% less returned text; backend time stayed
+similar. No model delay, token measurement or wall-time speedup is claimed.
+The focused probe ended BATCHING_PASS; the separate screenshot issue remains
+open. Raw evidence is ignored under `artifacts/browser-batching-20261015/`.
+
+Trace entries now separate app-side queue, invocation and result handling
+(`tool_timing`) and record numeric run totals (`run_timing`). The residual
+summary is labelled outside tool calls rather than pure thinking. A virtual
+clock verifies 600ms queue / 1000ms invocation / 300ms delivery without
+recording private arguments in timing entries.
+
+Checks: five initial new browser tests failed before implementation. Final
+full gate passed in 2m51s with 1152 version overrides: `test assembleDevRelease
+assembleDevDebugAndroidTest :voice:lintDebug :web:lintDebug :app:lintDevDebug
+--no-daemon --console=plain`. Web: 74 per variant, core: 787, no failures or
+skips in those modules. Across all variants: 2881 test executions, zero
+failures/errors, 34 existing skips. Runtime preparation: 15 OK.
+The hosting phone's complete model-driven run with this change is not yet
+measured. See `docs/testing/internal-browser-batching-20261015.md`.
+
 ### Internal browser: false approval on navigation paths — 2026-10-15
 
 The user's hosting-phone report isolated a 120.02s approval wait on the

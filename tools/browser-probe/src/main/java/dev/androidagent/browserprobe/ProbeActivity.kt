@@ -71,8 +71,8 @@ class ProbeActivity : Activity() {
             val gateway = WebToolGateway(object : BrowserHost {
                 override fun unavailable(): WebFailure? = null
                 override suspend fun session(key: String) = page
-                override suspend fun show(key: String) = false
-                override suspend fun hide(key: String) = Unit
+                override suspend fun show(key: String): Boolean { page.userControlled = true; return true }
+                override suspend fun hide(key: String) { page.userControlled = false }
                 override suspend fun close(key: String): Boolean { page.close(); return true }
                 override fun statusLine() = "Probe"
             })
@@ -85,6 +85,12 @@ class ProbeActivity : Activity() {
             evidence += result.text
             check(result.success) { "Plan failed" }
             evidence += "plan_fill_fill_touch=PASS"
+            if (intent.getBooleanExtra("batching", false)) {
+                batching(gateway, page, client)
+                evidence += "three_split_vs_batched_pairs=PASS"
+                save("BATCHING_PASS", evidence)
+                return
+            }
             // Keep navigation measurements independent from screenshot support.
             if (intent.getBooleanExtra("benchmark", false)) benchmark(gateway, client)
             val screenshot = page.screenshot()
@@ -98,6 +104,54 @@ class ProbeActivity : Activity() {
         } catch (failure: Throwable) {
             evidence += "${failure.javaClass.simpleName}: ${failure.message}"
             save("FAIL", evidence)
+        }
+    }
+
+    /** Same known fixture actions; no synthetic model delay or network claim. */
+    private suspend fun batching(gateway: WebToolGateway, page: BrowserSession, client: CdpClient) {
+        val output = File(getExternalFilesDir(null), "batching.jsonl")
+        output.writeText("")
+        suspend fun reset() {
+            page.userControlled = false
+            page.open("https://example.com/hey-mike-probe")
+        }
+        suspend fun measure(label: String, calls: List<String>) {
+            reset()
+            val started = android.os.SystemClock.elapsedRealtime()
+            val replies = mutableListOf<String>()
+            for (call in calls) {
+                val result = gateway.invoke("browser", Json.parseToJsonElement(call).jsonObject)
+                replies += result.text
+                check(result.success) { "$label failed: ${result.text}" }
+            }
+            val elapsed = android.os.SystemClock.elapsedRealtime() - started
+            check(page.userControlled) { "Handoff did not give user control" }
+            // Judge both paths by the same independent live DOM read.
+            val state = client.call("Runtime.evaluate", buildJsonObject {
+                put("expression", "JSON.stringify([document.querySelector('#query').value,document.querySelector('#address').value,document.querySelector('#result').textContent])")
+                put("returnByValue", true)
+            })["result"]!!.jsonObject["value"]!!.jsonPrimitive.content
+            check(Json.parseToJsonElement(state) == buildJsonArray {
+                add("hello & שלום"); add("fixture"); add("Done hello & שלום true")
+            }) { "Final DOM differs: $state" }
+            output.appendText(buildJsonObject {
+                put("label", label); put("elapsedMs", elapsed); put("calls", calls.size)
+                put("replyBytes", replies.sumOf { it.toByteArray(Charsets.UTF_8).size })
+                put("finalStateMatches", true); put("userControl", page.userControlled)
+                put("replies", buildJsonArray { replies.forEach { add(it) } })
+            }.toString() + "\n")
+        }
+        val actions = listOf(
+            """{"operation":"fill","text":"Query","value":"hello & שלום"}""",
+            """{"operation":"fill","text":"Address","value":"fixture"}""",
+            """{"operation":"click","text":"Apply"}""",
+        )
+        val split = actions + listOf("""{"operation":"snapshot","force":true}""", """{"operation":"show"}""")
+        val check = """{"operation":"check","checks":[{"text":"Query","value":"hello & שלום"},{"text":"Address","value":"fixture"}]}"""
+        val batched = listOf("""{"operation":"plan","show":true,"steps":[${(actions + check).joinToString(",")}]}""")
+        repeat(3) { index ->
+            if (index % 2 == 0) { measure("split-$index", split); measure("batch-$index", batched) }
+            else { measure("batch-$index", batched); measure("split-$index", split) }
         }
     }
     private suspend fun benchmark(gateway: WebToolGateway, client: CdpClient) {

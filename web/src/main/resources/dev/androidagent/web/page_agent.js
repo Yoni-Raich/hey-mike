@@ -490,6 +490,14 @@
     return el.isContentEditable ? el.innerText : null;
   };
 
+  const stateOf = (ref) => {
+    const el = byRef(ref);
+    if (!el || isPassword(el) || isCard(el)) return null;
+    const nativeCheck = el.localName === 'input' && ['checkbox', 'radio'].includes(el.type);
+    const aria = el.getAttribute('aria-checked');
+    return { value: valueOf(ref), checked: nativeCheck ? el.checked : aria === 'true' ? true : aria === 'false' ? false : null };
+  };
+
   const setValue = (ref, value) => {
     const el = byRef(ref);
     if (!el) return false;
@@ -611,7 +619,7 @@
   };
 
   globalThis.__mike = {
-    snapshot, find, info, focusForTyping, valueOf, setValue, choose, scroll, settle, present, read, submitNeedsApproval, hitCheck,
+    snapshot, find, info, focusForTyping, valueOf, stateOf, setValue, choose, scroll, settle, present, read, submitNeedsApproval, hitCheck,
     element: (ref) => byRef(ref),
     isFocused: (ref) => deepFocus() === byRef(ref),
     focusedElement: deepFocus,

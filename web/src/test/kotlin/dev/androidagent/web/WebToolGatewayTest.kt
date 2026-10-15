@@ -94,6 +94,9 @@ class WebToolGatewayTest {
             """{"operation":"fill","text":"Query"}""",
             """{"operation":"plan","steps":[{"operation":"click","text":"Apply","verify":{}}]}""",
             """{"operation":"plan","steps":[{"operation":"click","text":"Apply","verify":"Ready"}]}""",
+            """{"operation":"plan","steps":[{"operation":"click","text":"Apply"},{"operation":"check","checks":[{"text":"Query"}]}]}""",
+            """{"operation":"check","checks":[]}""",
+            """{"operation":"check","checks":[{"text":"Query","checked":"maybe"}]}""",
         )) {
             val result = call(json)
             assertFalse(result.text, result.success)

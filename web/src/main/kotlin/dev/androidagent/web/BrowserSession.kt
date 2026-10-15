@@ -86,6 +86,9 @@ data class WebTarget(
 /** What an action did, in the words the reply uses. */
 data class WebAction(val did: String, val notes: List<String> = emptyList())
 
+/** A read-only expectation about a control's live DOM properties. */
+data class WebCheck(val target: WebTarget, val value: String? = null, val checked: Boolean? = null)
+
 /** How much of a snapshot to render, and whether to resend one the model already holds. */
 data class SnapshotQuery(
     val filter: String? = null,
@@ -405,6 +408,46 @@ class BrowserSession(
         } as? JsonObject
         settle(QUICK_SETTLE_MS)
         WebAction("scroll to ${result?.get("scrollY")?.jsonPrimitive?.intOrNull ?: 0} of ${result?.get("scrollMax")?.jsonPrimitive?.intOrNull ?: 0}")
+    }
+
+    /** Verify live state without typing, focusing, toggling or running page JS. */
+    suspend fun check(checks: List<WebCheck>, timeoutMs: Long): WebAction = lock.withLock {
+        require(checks.isNotEmpty())
+        var mismatch = "The requested controls did not match."
+        val matched = browserPhase("verify") { withTimeoutOrNull(timeoutMs.coerceIn(200, MAX_WAIT_MS)) {
+            while (true) {
+                guardRead()
+                var allMatch = true
+                for ((index, expected) in checks.withIndex()) {
+                    val found = try { resolve(expected.target) } catch (failure: WebFailure) {
+                        if (failure.errorType != "not_found") throw failure
+                        mismatch = "Check ${index + 1}: the control was not found."
+                        allMatch = false
+                        break
+                    }
+                    val info = info(found)
+                    if (info.password || info.card) throw WebFailure(
+                        "secret_field", "Password and card values cannot be checked by the agent.",
+                        "Show the page and let the user check the field.",
+                    )
+                    val state = agentValue(found.frameId, "__mike.stateOf(${found.ref})") as? JsonObject
+                    val valueMatches = expected.value == null || state?.get("value")?.jsonPrimitive?.contentOrNull == expected.value
+                    val checkedMatches = expected.checked == null || state?.get("checked")?.jsonPrimitive?.booleanOrNull == expected.checked
+                    if (!valueMatches || !checkedMatches) {
+                        mismatch = "Check ${index + 1}: ${info.label(found)} did not match the requested " +
+                            if (!valueMatches) "value." else "checked state."
+                        allMatch = false
+                        break
+                    }
+                }
+                if (allMatch) return@withTimeoutOrNull true
+                delay(POLL_MS)
+            }
+            @Suppress("UNREACHABLE_CODE") false
+        } } ?: false
+        if (!matched) throw WebFailure("check_failed", mismatch,
+            "These checks sent no input. Inspect the page; do not repeat earlier completed actions.", known = true)
+        WebAction("checked ${checks.size} controls; all requested values and checked states match")
     }
 
     /** Wait for text, a selector or an address to appear (or, with [gone], to go). */
