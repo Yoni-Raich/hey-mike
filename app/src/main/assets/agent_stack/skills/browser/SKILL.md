@@ -30,8 +30,23 @@ Example (only after the controls are visible):
 ```
 
 Resume the same steps using `startAt` only when the reply says the failed step
-had no side effect. For an uncertain action, inspect first. If an action ran
-and its verification failed, retry the verification alone.
+had no side effect ("Nothing was sent to the page"). For an uncertain action
+(`mayHaveActed: true`), inspect first. If an action ran and its verification
+failed, retry the verification alone.
+
+Some refusals mean nothing was pressed or typed:
+
+- `obscured`: something covers the control, usually a cookie banner or a
+  dialog. The reply names it with a ref; dismiss it, then click again.
+- `not_focused`: the field would not keep the focus, so no text was typed.
+- `ambiguous_target`: the label appears more than once; use a ref.
+- `frame_blocked`: the control is in a frame at a blocked address.
+
+A note saying the connection was re-established means the same page is still
+there, but earlier refs are gone: take a snapshot. A note saying the page was
+closed (to free memory, by the user, or because its renderer stopped) means a
+new blank page: open the address again. A `phone:` line says the screen is off
+or the phone is locked, which can stall the page; tell the user if it repeats.
 
 `snapshot` supports filter, interactiveOnly, offset, maxChars and force.
 `read` returns paged reading text. `screenshot` returns the page image.
@@ -42,9 +57,12 @@ and other sensitive controls use the app's approval card, including in plans.
 
 Password and payment fields are for the user. Call `show`, ask them to finish
 their login or CAPTCHA, and wait for their reply. While the panel is shown,
-agent actions are refused. `hide` returns the page to agent control. `close`
+agent actions are refused. `hide` returns the page to agent control. If any
+chat then needs the phone's screen, the shown page is put away and the next
+reply says so; call `show` again if the user still needs it. `close`
 destroys this chat's page. File uploads, downloads, popups and page requests
 for camera/microphone are refused. Local URLs and non-web schemes are blocked.
-The network checks are not a firewall: DNS rebinding and service-worker traffic
-still require device validation. Do not claim those paths are secured by a
-successful desktop test.
+A page or frame that reaches a blocked address by itself is closed or skipped,
+never read. The network checks are not a firewall: DNS rebinding, redirects
+and service-worker traffic still require device validation. Do not claim those
+paths are secured by a successful desktop test.

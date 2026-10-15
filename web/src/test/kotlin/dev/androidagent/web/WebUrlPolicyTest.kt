@@ -20,6 +20,15 @@ class WebUrlPolicyTest {
             assertTrue(it, policy.check("http://$it/x") is WebUrlPolicy.Decision.Blocked)
         }
     }
+    @Test fun refusesReservedAndEmbeddedPrivateAddresses() {
+        // Each of these reaches this phone or nothing public; none was refused before.
+        listOf("0.1.2.3", "192.0.0.8", "198.18.0.1", "240.0.0.1", "255.255.255.255", "[64:ff9b::7f00:1]", "[64:ff9b::c0a8:101]", "[::ffff:127.0.0.1]").forEach {
+            assertTrue(it, policy.check("http://$it/x") is WebUrlPolicy.Decision.Blocked)
+        }
+        // A NAT64 address of a public IPv4 host is public.
+        assertTrue(policy.check("http://[64:ff9b::5db8:d822]/") is WebUrlPolicy.Decision.Allowed)
+        assertTrue(WebUrlPolicy(resolve = { listOf(InetAddress.getByName("198.18.0.9")) }).check("https://bench.example") is WebUrlPolicy.Decision.Blocked)
+    }
     @Test fun refusesLocalNamesCredentialsAndMalformedUrls() {
         listOf("http://localhost", "https://router.local", "https://api.internal", "https://u:p@example.com", "https://", "hello world").forEach {
             assertTrue(it, policy.check(it) is WebUrlPolicy.Decision.Blocked)

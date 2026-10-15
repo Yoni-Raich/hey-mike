@@ -264,8 +264,7 @@ class AgentGraph(private val app: Application) {
         remote, sessions, computerRequests,
         bringToForeground = ::bringAppForward,
     )
-    // Explicit type: the workflow gateway's router lambda refers back to this
-    // property, and an inferred type would make that a recursive definition.
+    /** The coordinator running [key]'s chat (a chat's page is keyed by its workspace), if it is running. */
     private fun browserOwner(key: String) = coordinator.slots.firstOrNull { slot ->
         slot.state.value.active && slot.state.value.sessionId?.let { sessions.workspace(it).absolutePath == key } == true
     }
@@ -282,6 +281,13 @@ class AgentGraph(private val app: Application) {
         listOf(dev.androidagent.web.WebToolGateway(browserHost), workflowTools, knowledgeTools, automationTools,
             computerTools, copyFiles, capabilityTools, a11yTools, adbTools),
     )
+    /**
+     * The shared surface: the workflow router, automations and voice use it.
+     * Each chat's coordinator gets its own [runTools], so its browser gateway
+     * is armed and revoked with that chat alone.
+     */
+    // Explicit type: the workflow gateway's router lambda refers back to this
+    // property, and an inferred type would make that a recursive definition.
     val tools: CompositeDeviceToolGateway = runTools()
     val voice = AndroidRealtimeVoiceController(app, engine, scope)
     /** Every chat's run: several at once, with the phone to one of them at a time. */

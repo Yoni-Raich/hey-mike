@@ -43,7 +43,7 @@ import java.net.URI
  * at loopback is caught too. It is a check at navigation, not a firewall: a
  * name that changes its answer afterwards is not seen.
  */
-class WebUrlPolicy(
+open class WebUrlPolicy(
     private val allowPrivateNetwork: Boolean = false,
     private val resolve: (String) -> List<InetAddress> = { host ->
         runCatching { InetAddress.getAllByName(host).toList() }.getOrDefault(emptyList())
@@ -58,7 +58,7 @@ class WebUrlPolicy(
      * Judge [raw]. [lookUp] false skips the name lookup, for a caller on a
      * thread that must not touch the network.
      */
-    fun check(raw: String, lookUp: Boolean = true): Decision {
+    open fun check(raw: String, lookUp: Boolean = true): Decision {
         val text = raw.trim()
         if (text.equals(BLANK, ignoreCase = true)) return Decision.Allowed(BLANK)
         // Read off the raw text: an unparseable scheme is still a scheme.
@@ -123,12 +123,30 @@ class WebUrlPolicy(
             }
             val bytes = address.address
             return when (address) {
-                // 100.64.0.0/10: carrier-grade NAT, which is also where a VPN mesh lives.
-                is Inet4Address -> (bytes[0].toInt() and 0xFF) == 100 && (bytes[1].toInt() and 0xC0) == 0x40
-                // fc00::/7: unique local addresses.
-                is Inet6Address -> (bytes[0].toInt() and 0xFE) == 0xFC
+                is Inet4Address -> {
+                    val a = bytes[0].toInt() and 0xFF
+                    val b = bytes[1].toInt() and 0xFF
+                    // 0.0.0.0/8 "this network", which Linux connects to as loopback.
+                    a == 0 ||
+                        // 100.64.0.0/10: carrier-grade NAT, which is also where a VPN mesh lives.
+                        (a == 100 && (b and 0xC0) == 0x40) ||
+                        // 192.0.0.0/24: protocol assignments; 198.18.0.0/15: benchmarking.
+                        (a == 192 && b == 0 && (bytes[2].toInt() and 0xFF) == 0) ||
+                        (a == 198 && (b and 0xFE) == 18) ||
+                        // 240.0.0.0/4 reserved, with the broadcast address.
+                        a >= 240
+                }
+                is Inet6Address ->
+                    // fc00::/7: unique local addresses.
+                    (bytes[0].toInt() and 0xFE) == 0xFC ||
+                        // 64:ff9b::/96 NAT64 carries an IPv4 address in its last four bytes.
+                        (isNat64(bytes) && isPrivate(InetAddress.getByAddress(bytes.copyOfRange(12, 16))))
                 else -> false
             }
         }
+
+        private val NAT64 = byteArrayOf(0, 0x64, 0xFF.toByte(), 0x9B.toByte(), 0, 0, 0, 0, 0, 0, 0, 0)
+
+        private fun isNat64(bytes: ByteArray): Boolean = bytes.size == 16 && (0 until 12).all { bytes[it] == NAT64[it] }
     }
 }

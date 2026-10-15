@@ -42,7 +42,12 @@ class BrowserIntegrationTest {
                             val reader = it.getInputStream().bufferedReader()
                             val request = reader.readLine().orEmpty()
                             while (!reader.readLine().isNullOrEmpty()) { /* consume headers */ }
-                            val html = if (request.contains(" /frame ")) "<button onclick='this.textContent=\"Frame done\"'>Frame button</button>" else FIXTURE
+                            val html = when {
+                                request.contains(" /frame ") -> "<button onclick='this.textContent=\"Frame done\"'>Frame button</button>"
+                                request.contains(" /form ") -> "<form onsubmit='parent.frameSubmits++;return false'><label>Message <input></label></form>"
+                                request.contains(" /secret ") -> "<title>Router</title><p>Router admin password</p>"
+                                else -> FIXTURE
+                            }
                             val bytes = html.toByteArray()
                             it.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray())
                             it.getOutputStream().write(bytes); it.getOutputStream().flush()
@@ -69,7 +74,12 @@ class BrowserIntegrationTest {
           <button id="send" type="button" onclick="sends++">Send</button><p id="status">Ready</p>
           <div id="shadow"></div><iframe src="/frame" title="Inner frame"></iframe>
           <article><h2>Story</h2><p>Readable article paragraph.</p></article>
-          <script>var clicks=0,sends=0,inputs=[];query.addEventListener('input',e=>inputs.push(e.isTrusted));
+          <label>Stolen <input id="stolen" onfocus="address.focus()"></label>
+          <span style="position:relative;display:inline-block"><button id="covered" type="button" onclick="coveredClicks++">Covered</button><span onclick="bannerClicks++" style="position:absolute;left:0;top:0;right:0;bottom:0;background:#fff">Cookie banner</span></span>
+          <span class="rm">Remove row</span> <span class="rm">Remove row</span>
+          <iframe src="/form" title="Form frame"></iframe><iframe src="/secret" title="Secret frame"></iframe>
+          <script>var clicks=0,sends=0,inputs=[],coveredClicks=0,bannerClicks=0,removes=0,frameSubmits=0;query.addEventListener('input',e=>inputs.push(e.isTrusted));
+            document.querySelectorAll('.rm').forEach(s=>s.addEventListener('click',()=>removes++));
             const root=shadow.attachShadow({mode:'open'});root.innerHTML='<label>Shadow field <input></label><button type="button">Shadow button</button>';
             root.querySelector('button').onclick=function(){this.textContent='Shadow done'};
           </script>"""
@@ -79,26 +89,37 @@ class BrowserIntegrationTest {
     private lateinit var page: BrowserSession
     private lateinit var gateway: WebToolGateway
     private var approve = true
+    private var confirmDelayMs = 0L
     private val confirmations = mutableListOf<String>()
+    private val dialer = DevToolsDialer {
+        val socket = Socket("127.0.0.1", port)
+        socket.soTimeout = 10_000
+        DevToolsStream(socket.getInputStream(), socket.getOutputStream(), { socket.close() }, { socket.soTimeout = 0 })
+    }
+
+    /** The fixture is on loopback, so private addresses are allowed; "/secret" stands for a blocked address. */
+    private val policy = object : WebUrlPolicy(allowPrivateNetwork = true) {
+        override fun check(raw: String, lookUp: Boolean): Decision =
+            if (raw.contains("/secret")) Decision.Blocked("private_network_blocked", "Blocked fixture address.", "Nothing was opened.")
+            else super.check(raw, lookUp)
+    }
+
+    private fun host(session: BrowserSession) = object : BrowserHost {
+        override fun unavailable(): WebFailure? = null
+        override suspend fun session(key: String) = session
+        override suspend fun show(key: String) { session.userControlled = true }
+        override suspend fun hide(key: String) { session.userControlled = false }
+        override suspend fun close(key: String): Boolean { session.close(); return true }
+        override fun statusLine() = "Fixture"
+    }
+
     @Before fun openFixture() = runBlocking {
-        val dialer = DevToolsDialer {
-            val socket = Socket("127.0.0.1", port)
-            socket.soTimeout = 10_000
-            DevToolsStream(socket.getInputStream(), socket.getOutputStream(), { socket.close() }, { socket.soTimeout = 0 })
-        }
         cdp = CdpClient.attach(dialer, CdpClient.pages(dialer).first().id)
-        page = BrowserSession(cdp, WebUrlPolicy(allowPrivateNetwork = true), BrowserSession.Pointer.MOUSE) {
-            confirmations += it; approve
+        page = BrowserSession(cdp, policy, BrowserSession.Pointer.MOUSE) {
+            confirmations += it; delay(confirmDelayMs); approve
         }
         page.start(); page.open(fixtureUrl)
-        gateway = WebToolGateway(object : BrowserHost {
-            override fun unavailable(): WebFailure? = null
-            override suspend fun session(key: String) = page
-            override suspend fun show(key: String) { page.userControlled = true }
-            override suspend fun hide(key: String) { page.userControlled = false }
-            override suspend fun close(key: String): Boolean { page.close(); return true }
-            override fun statusLine() = "Fixture"
-        })
+        gateway = WebToolGateway(host(page))
         gateway.beginRun("test", directory)
     }
     @After fun closeFixture() { if (::page.isInitialized) page.close() }
@@ -196,5 +217,105 @@ class BrowserIntegrationTest {
         withTimeout(5000) { while (value("clicks") != JsonPrimitive(1)) delay(50) }
         gateway.revoke(); job.cancelAndJoin()
         assertEquals(JsonPrimitive(1), value("clicks"))
+    }
+
+    // --- regressions found in review --------------------------------------
+
+    @Test fun fillNeverTypesIntoAFieldThatTookTheFocus() = runBlocking {
+        // The field hands its focus to "Address" when focused. Typing then would
+        // have gone into Address, and been reported as a fill of Stolen.
+        val result = call("""{"operation":"fill","text":"Stolen","value":"typed here"}""")
+        assertEquals(JsonPrimitive(""), value("address.value"))
+        if (result.success) assertEquals(JsonPrimitive("typed here"), value("stolen.value"))
+        else assertTrue(result.text, result.text.contains("not_focused"))
+    }
+
+    @Test fun clickRefusesATargetCoveredByAnotherElement() = runBlocking {
+        val result = call("""{"operation":"click","text":"Covered","role":"button"}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("obscured"))
+        assertTrue(result.text, result.text.contains("Cookie banner"))
+        assertFalse(result.text, result.text.contains("mayHaveActed: true"))
+        assertEquals(JsonPrimitive(0), value("coveredClicks"))
+        assertEquals(JsonPrimitive(0), value("bannerClicks"))
+    }
+
+    @Test fun plainTextShownTwiceIsAmbiguousRatherThanTheFirstOne() = runBlocking {
+        val result = call("""{"operation":"click","text":"Remove row"}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("ambiguous_target"))
+        assertEquals(JsonPrimitive(0), value("removes"))
+    }
+
+    @Test fun enterInAFormInsideAFrameAsksForApproval() = runBlocking {
+        approve = false
+        val result = call("""{"operation":"fill","text":"Message","value":"hello","submit":true}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("approval_denied"))
+        assertEquals(1, confirmations.size)
+        assertEquals(JsonPrimitive(0), value("frameSubmits"))
+    }
+
+    @Test fun refsFromAnEarlierConnectionNeverNameAnotherElement() = runBlocking {
+        val ref = Regex("button \\\"Apply\\\" \\[([^]]+)]").find(page.snapshot())!!.groupValues[1]
+        value("var inserted=0;(()=>{const b=document.createElement('button');b.type='button';b.textContent='Inserted';" +
+            "b.onclick=()=>inserted++;document.body.insertBefore(b,document.body.firstChild)})();1")
+        // A dropped connection is attached again as a new session on the same page.
+        val again = BrowserSession(CdpClient.attach(dialer, CdpClient.pages(dialer).first().id), policy, BrowserSession.Pointer.MOUSE) { true }
+        try {
+            again.start()
+            again.snapshot()
+            val second = WebToolGateway(host(again)).also { it.beginRun("again", directory) }
+            second.invoke("browser", Json.parseToJsonElement("""{"operation":"click","ref":"$ref","observe":false}""").jsonObject)
+            assertEquals(JsonPrimitive(0), value("inserted"))
+        } finally {
+            again.close()
+        }
+    }
+
+    @Test fun failureRepliesKeepThePageNotes() = runBlocking {
+        page.note("A download was refused: https://example.com/file.zip")
+        val result = call("""{"operation":"click","text":"Missing"}""")
+        assertFalse(result.success)
+        assertTrue(result.text, result.text.contains("note: A download was refused"))
+    }
+
+    @Test fun planTimeoutWhileWaitingForApprovalSaysTheStepDidNotHappen() = runBlocking {
+        confirmDelayMs = 3_000
+        val result = call("""{"operation":"plan","totalBudgetMs":1000,"steps":[{"id":"send","operation":"click","text":"Send"}]}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("startAt=send"))
+        assertFalse(result.text, result.text.contains("may have happened"))
+        assertEquals(JsonPrimitive(0), value("sends"))
+    }
+
+    @Test fun anInputSentBeforeAFailureMakesTheStepUncertain() = runBlocking {
+        // The click lands, then the page takes itself to a blocked address.
+        value("document.querySelector('#apply').addEventListener('click',()=>{location.href='/secret'});1")
+        val result = call("""{"operation":"plan","steps":[{"id":"apply","operation":"click","text":"Apply"},{"operation":"click","text":"Send"}]}""")
+        assertFalse(result.text, result.success)
+        assertFalse(result.text, result.text.contains("startAt=apply"))
+        assertEquals(JsonPrimitive(0), value("typeof sends === 'undefined' ? 0 : sends"))
+    }
+
+    @Test fun blockedFramesAndPagesAreNeverRead() = runBlocking {
+        val snapshot = call("""{"operation":"snapshot","force":true}""")
+        assertFalse(snapshot.text, snapshot.text.contains("Router admin"))
+        // The page sends itself somewhere blocked without any action of the agent.
+        value("location.href='/secret';1")
+        delay(800)
+        for (operation in listOf("snapshot", "read")) {
+            val result = call("""{"operation":"$operation","force":true}""")
+            assertFalse(result.text, result.text.contains("Router admin"))
+        }
+    }
+
+    @Test fun aLostConnectionDuringAReadIsNotReportedAsAnAction() = runBlocking {
+        cdp.close()
+        val result = call("""{"operation":"snapshot"}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("browser_disconnected"))
+        assertFalse(result.text, result.text.contains("mayHaveActed: true"))
+        assertTrue(result.text, result.text.contains("Nothing was sent"))
     }
 }

@@ -66,6 +66,16 @@ interface BrowserHost {
     /** A capture the page's own protocol could not give, or null. */
     suspend fun screenshot(key: String): String? = null
 
+    /**
+     * The run working in [key] is about to read or act on the phone's screen.
+     * A page shown to the user for any other chat is put away first, so the
+     * screen work does not land in that window. Must not block.
+     */
+    fun screenInUse(key: String) {}
+
+    /** Phone conditions that may explain a lost connection or a stalled page (screen off, locked), or null. */
+    fun conditions(): String? = null
+
     /** One line for `device_status`. */
     fun statusLine(): String
 }
@@ -102,6 +112,8 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
     override fun requiresDeviceLease(name: String): Boolean = false
     override fun revokeIndependentTools() = revoke()
 
+    override fun screenInUse(runId: String, workspace: File) = host.screenInUse(workspace.absolutePath)
+
     /** The page is in a window of its own, never on the screen the user is using. */
     override fun needsControl(name: String): Boolean = false
 
@@ -119,34 +131,82 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
         if (name != TOOL) throw ToolNotServiceable("browser_unsupported", "The browser does not implement \"$name\".")
         if (revoked) throw IllegalStateException("Run stopped. No browser action was performed.")
         val chat = key
+        val call = Call()
         return try {
             host.unavailable()?.let { throw it }
-            dispatch(chat, arguments)
+            dispatch(chat, arguments, call)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: WebFailure) {
-            failed(failure)
+            failed(reconcile(failure, call.acted), call)
         } catch (failure: CdpException) {
-            failed(WebFailure("browser_protocol_error", "${failure.method}: ${failure.message}",
-                "The browser rejected or timed out on this command. Inspect the page before repeating it.", mayHaveActed = true))
+            failed(protocolFailure(failure, call.acted), call)
         } catch (failure: IOException) {
-            // The page or its connection went away mid-call. What was sent may have landed.
-            failed(
-                WebFailure(
-                    "browser_disconnected",
-                    "The browser stopped answering: ${failure.message.orEmpty().take(160)}",
-                    "The last action may or may not have happened. Take a snapshot before repeating it.",
-                ),
-            )
+            // The page or its connection went away mid-call.
+            failed(disconnected(failure, call.acted), call)
         }
     }
 
-    private suspend fun dispatch(chat: String, arguments: JsonObject): ToolResult {
+    /**
+     * The page one call works on, and how many inputs it had been sent when
+     * the call took it. A failure with the count unchanged did nothing to the
+     * page; one after the count moved may have done something.
+     */
+    private class Call {
+        var session: BrowserSession? = null
+        var inputsBefore = 0L
+        val acted: Boolean get() = session?.let { it.inputs != inputsBefore } ?: false
+    }
+
+    private suspend fun page(chat: String, call: Call): BrowserSession =
+        host.session(chat).also { call.session = it; call.inputsBefore = it.inputs }
+
+    /** Make a failure's "did it happen" agree with whether an input was actually sent. */
+    private fun reconcile(failure: WebFailure, acted: Boolean): WebFailure = when {
+        failure.known -> failure
+        acted && !failure.mayHaveActed -> WebFailure(
+            failure.errorType, failure.message,
+            listOfNotNull(failure.remedy, "An input was already sent to the page in this call, so it may have taken effect. Inspect the page before repeating it.").joinToString(" "),
+            mayHaveActed = true,
+        )
+        !acted && failure.mayHaveActed -> WebFailure(
+            failure.errorType, failure.message,
+            "Nothing was sent to the page in this call, so it did not happen.",
+            mayHaveActed = false,
+        )
+        else -> failure
+    }
+
+    private fun protocolFailure(failure: CdpException, acted: Boolean) = WebFailure(
+        "browser_protocol_error",
+        "${failure.method}: ${failure.message}",
+        if (acted) "An input was sent before the browser rejected or timed out on this command, so it may have taken effect. Inspect the page before repeating it."
+        else "Nothing was sent to the page in this call. It is safe to try again.",
+        mayHaveActed = acted,
+    )
+
+    private fun disconnected(failure: IOException, acted: Boolean) = WebFailure(
+        "browser_disconnected",
+        "The browser stopped answering: ${failure.message.orEmpty().take(160)}",
+        if (acted) "The last action may or may not have happened. The next call reconnects; take a snapshot before repeating anything."
+        else "Nothing was sent to the page in this call. The next call reconnects.",
+        mayHaveActed = acted,
+    )
+
+    private fun query(arguments: JsonObject) = SnapshotQuery(
+        filter = arguments.text("filter"),
+        interactiveOnly = arguments.flag("interactiveOnly") ?: false,
+        offset = arguments.int("offset") ?: 0,
+        maxChars = arguments.int("maxChars") ?: SnapshotQuery.DEFAULT_CHARS,
+        force = arguments.flag("force") ?: false,
+    )
+
+    private suspend fun dispatch(chat: String, arguments: JsonObject, call: Call): ToolResult {
         val operation = arguments.text("operation")?.lowercase()
             ?: throw WebFailure("no_operation", "browser needs an operation.", "One of: ${OPERATIONS.joinToString(", ")}.")
         return when (operation) {
             "show" -> {
-                host.session(chat)
+                page(chat, call)
                 host.show(chat)
                 ToolResult("ok: true\ndid: the page is in front of the user. Ask them to do their part and say when they are done, then call hide.")
             }
@@ -156,27 +216,30 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
             }
             "close" -> ToolResult("ok: true\ndid: " + if (host.close(chat)) "the page is closed." else "no page was open.")
             "screenshot" -> {
-                val session = host.session(chat)
+                val session = page(chat, call)
                 val image = session.screenshot() ?: host.screenshot(chat)
                     ?: throw WebFailure("screenshot_unavailable", "The page could not be captured.", "Use snapshot or read instead.")
                 val where = session.location()
                 ToolResult("ok: true\ndid: screenshot\nurl: ${where.first}", imageBase64 = image)
             }
-            "plan" -> plan(host.session(chat), arguments)
+            "plan" -> plan(chat, call, arguments)
             in STEP_OPERATIONS -> {
-                val session = host.session(chat)
-                checkUserControl(session)
                 validate(operation, arguments)
+                val session = page(chat, call)
+                checkUserControl(session)
                 val action = step(session, operation, arguments)
                 val observe = arguments.flag("observe") ?: (operation in OBSERVED_BY_DEFAULT)
                 ToolResult(reply(session, listOf("did: ${action.did}"), action.notes, observe, arguments))
             }
             "snapshot" -> {
-                val session = host.session(chat)
-                ToolResult(reply(session, emptyList(), emptyList(), observe = true, arguments))
+                // Called for itself, so a failed read is a failed call, not an
+                // "ok" reply that only mentions the failure.
+                val session = page(chat, call)
+                val text = session.snapshot(query(arguments))
+                ToolResult(header(emptyList(), session.drainNotes()) + text)
             }
             "read" -> {
-                val session = host.session(chat)
+                val session = page(chat, call)
                 val text = session.read(arguments.int("offset") ?: 0, arguments.int("maxChars") ?: SnapshotQuery.DEFAULT_CHARS)
                 ToolResult(header(emptyList(), session.drainNotes()) + text)
             }
@@ -233,8 +296,7 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
      * stop at the first that fails, and nothing that ran is ever run again: the
      * reply says which steps happened so the caller resumes after them.
      */
-    private suspend fun plan(session: BrowserSession, arguments: JsonObject): ToolResult {
-        checkUserControl(session)
+    private suspend fun plan(chat: String, call: Call, arguments: JsonObject): ToolResult {
         val steps = (arguments["steps"] as? JsonArray)?.map(::asStep)
             ?: throw WebFailure("no_steps", "plan needs steps: an array of operations.", "e.g. steps=[{\"operation\":\"fill\",\"text\":\"Email\",\"value\":\"a@b.c\"},{\"operation\":\"click\",\"text\":\"Next\"}]")
         if (steps.isEmpty()) throw WebFailure("no_steps", "plan was given no steps.")
@@ -256,8 +318,14 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
         if (ids.distinct().size != ids.size) throw WebFailure("duplicate_step_id", "Step IDs must be unique. Nothing ran.")
         val first = arguments.text("startAt")?.let { id -> ids.indexOf(id).takeIf { it >= 0 }
             ?: throw WebFailure("bad_start_at", "No step has id $id. Nothing ran.") } ?: 0
+        // Validated before the page is asked for: a plan that cannot run opens nothing.
+        val session = page(chat, call)
+        checkUserControl(session)
         val deadline = System.nanoTime() + (arguments.int("totalBudgetMs")?.toLong() ?: PLAN_BUDGET_MS).coerceIn(1_000, PLAN_BUDGET_MS) * 1_000_000
         val ledger = mutableListOf<String>()
+        if (first > 0) {
+            ledger += (if (first > 1) "1-$first" else "1") + " skipped: startAt=${ids[first]}; already done in an earlier call"
+        }
         val notes = mutableListOf<String>()
         var failure: WebFailure? = null
         var ran = 0
@@ -266,6 +334,8 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
             if (index < first) continue
             val number = index + 1
             val operation = step!!.text("operation")!!.lowercase()
+            val before = session.inputs
+            fun acted() = session.inputs != before
             failure = when {
                 revoked -> WebFailure("stopped", "The run was stopped before step $number.")
                 System.nanoTime() >= deadline ->
@@ -286,19 +356,25 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
                         }
                         true
                     }
-                    if (completed != true) throw WebFailure("plan_out_of_time", "The plan reached its time limit during step $number.",
-                        "This step may have happened. Inspect the page before retrying.", mayHaveActed = true)
+                    if (completed != true) {
+                        // Timed out: only an input already sent makes the step uncertain.
+                        // An approval still waiting, or a target still being found, sent none.
+                        throw WebFailure(
+                            "plan_out_of_time", "The plan reached its time limit during step $number.",
+                            if (acted()) "This step may have happened. Inspect the page before retrying."
+                            else "Nothing was sent to the page in this step.",
+                            mayHaveActed = acted(), known = true,
+                        )
+                    }
                     null
                 } catch (stepFailure: WebFailure) {
-                    stepFailure
+                    if (ran == number) stepFailure else reconcile(stepFailure, acted())
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (stepFailure: CdpException) {
-                    WebFailure("browser_protocol_error", "${stepFailure.method}: ${stepFailure.message}",
-                        "Inspect the page before repeating this step.", mayHaveActed = true)
+                    protocolFailure(stepFailure, acted())
                 } catch (stepFailure: IOException) {
-                    WebFailure("browser_disconnected", "Connection lost during step $number.",
-                        "This step may have happened. Inspect the page before retrying.", mayHaveActed = true)
+                    disconnected(stepFailure, acted())
                 }
             }
             if (failure != null) {
@@ -345,15 +421,7 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
                 catch (_: IOException) { top + "url: connection lost; do not repeat the completed actions." }
         }
         val snapshot = try {
-            session.snapshot(
-                SnapshotQuery(
-                    filter = arguments.text("filter"),
-                    interactiveOnly = arguments.flag("interactiveOnly") ?: false,
-                    offset = arguments.int("offset") ?: 0,
-                    maxChars = arguments.int("maxChars") ?: SnapshotQuery.DEFAULT_CHARS,
-                    force = arguments.flag("force") ?: false,
-                ),
-            )
+            session.snapshot(query(arguments))
         } catch (failure: WebFailure) {
             // What the action did is already known; losing it to a failed read
             // would invite the caller to do it again.
@@ -370,13 +438,17 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
         notes.distinct().forEach { append("note: ").append(it).append('\n') }
     }
 
-    private fun failed(failure: WebFailure): ToolResult = ToolResult(
+    private fun failed(failure: WebFailure, call: Call? = null): ToolResult = ToolResult(
         buildString {
             append("ok: false\n")
             append("error: ").append(failure.errorType).append('\n')
             append("message: ").append(failure.message)
             failure.remedy?.let { append('\n').append("remedy: ").append(it) }
             if (failure.mayHaveActed) append("\nmayHaveActed: true; inspect the page before repeating this action.")
+            if (failure.errorType in STALL_ERRORS) runCatching { host.conditions() }.getOrNull()?.let { append("\nphone: ").append(it) }
+            // A blocked link or a refused dialog often explains the failure itself.
+            call?.session?.let { session -> runCatching { session.drainNotes() }.getOrDefault(emptyList()) }
+                ?.distinct()?.forEach { append("\nnote: ").append(it) }
         },
         success = false,
     )
@@ -422,6 +494,9 @@ class WebToolGateway(private val host: BrowserHost) : DeviceToolGateway {
     companion object {
         const val TOOL = "browser"
         const val MAX_PLAN_STEPS = 12
+
+        /** Failures a locked or sleeping phone could explain; their reply also says how the phone is. */
+        private val STALL_ERRORS = setOf("browser_disconnected", "browser_protocol_error", "plan_out_of_time", "page_busy")
         private const val DEFAULT_KEY = "default"
         private const val DEFAULT_WAIT_MS = 8_000
         private const val MAX_EVAL_CHARS = 6_000

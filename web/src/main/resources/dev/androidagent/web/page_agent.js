@@ -297,15 +297,56 @@
     if (best) return { ref: refOf(best), count };
     if (target.role) return { error: 'not_found' };
     // Nothing the snapshot calls a control: fall back to the smallest element
-    // that shows this text, which is what a person would press.
+    // that shows this text, which is what a person would press. Every match is
+    // counted, so a label shown twice is reported as ambiguous instead of the
+    // first one being pressed.
+    if (!document.body) return { error: 'not_found' };
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const wanted = String(target.text).toLowerCase();
+    let first = null;
+    let matches = 0;
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (node.nodeValue.toLowerCase().includes(wanted) && node.parentElement && visible(node.parentElement)) {
-        return { ref: refOf(node.parentElement), count: 1 };
+        if (!first) first = node.parentElement;
+        matches++;
       }
     }
-    return { error: 'not_found' };
+    return first ? { ref: refOf(first), count: matches } : { error: 'not_found' };
+  };
+
+  // The middle of the element's first drawn box, in its own frame's viewport.
+  const pointOf = (el) => {
+    for (const rect of el.getClientRects()) {
+      if (rect.width >= 1 && rect.height >= 1) return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+    return null;
+  };
+
+  // Would a press at the element's middle reach it? A cookie banner, a dialog
+  // backdrop or a sticky header on top of it would take the press instead,
+  // and the click would be reported against the wrong element.
+  const hitCheck = (ref) => {
+    const el = byRef(ref);
+    if (!el) return { error: 'stale_ref' };
+    const point = pointOf(el);
+    if (!point) return { error: 'no_box' };
+    const view = el.ownerDocument.defaultView;
+    if (point.x < 0 || point.y < 0 || point.x >= view.innerWidth || point.y >= view.innerHeight) return { error: 'offscreen' };
+    const root = el.getRootNode();
+    let hit = (typeof root.elementFromPoint === 'function' ? root : el.ownerDocument).elementFromPoint(point.x, point.y);
+    while (hit && hit !== el && hit.shadowRoot) {
+      const inner = hit.shadowRoot.elementFromPoint(point.x, point.y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    if (!hit) return { error: 'offscreen' };
+    // The element itself, something inside it, or something it sits inside
+    // (a press on an ancestor is what a person's finger would do too).
+    if (hit === el || el.contains(hit) || hit.contains(el)) return { ok: true };
+    // A press on a control's own label activates the control.
+    const label = hit.closest && hit.closest('label');
+    if (label && label.control === el) return { ok: true };
+    return { blockedBy: (roleOf(hit) || hit.localName) + ' ' + JSON.stringify(clean(nameOf(hit), 60)), ref: refOf(hit) };
   };
 
   const info = (ref) => {
@@ -342,7 +383,20 @@
   };
   const submitNeedsApproval = () => {
     let el = document.activeElement;
-    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+    for (;;) {
+      if (el && el.shadowRoot && el.shadowRoot.activeElement) { el = el.shadowRoot.activeElement; continue; }
+      // Focus inside a frame shows here only as the frame element. Follow it
+      // into a readable frame; a frame that cannot be read is not judged as
+      // harmless, so Enter in it asks first.
+      if (el && (el.localName === 'iframe' || el.localName === 'frame')) {
+        let inner = null;
+        try { inner = el.contentDocument; } catch (error) { inner = null; }
+        if (!inner) return true;
+        el = inner.activeElement;
+        continue;
+      }
+      break;
+    }
     if (!el) return true;
     if (isPassword(el) || isCard(el)) return true;
     if (needsApproval(el)) return true;
@@ -503,7 +557,7 @@
   };
 
   globalThis.__mike = {
-    snapshot, find, info, focusForTyping, valueOf, setValue, choose, scroll, settle, present, read, submitNeedsApproval,
+    snapshot, find, info, focusForTyping, valueOf, setValue, choose, scroll, settle, present, read, submitNeedsApproval, hitCheck,
     element: (ref) => byRef(ref),
   };
 })();

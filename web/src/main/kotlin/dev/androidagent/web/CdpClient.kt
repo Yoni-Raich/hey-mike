@@ -106,6 +106,12 @@ class CdpClient private constructor(private val socket: DevToolsSocket) : Closea
         val id = nextId.incrementAndGet()
         val waiter = CompletableDeferred<JsonObject>()
         pending[id] = method to waiter
+        // The reader may have failed every waiter between the check above and
+        // this registration; this one would then wait out its whole timeout.
+        if (closed) {
+            pending.remove(id)
+            throw IOException("The browser connection is closed")
+        }
         val frame = buildJsonObject {
             put("id", id)
             put("method", method)

@@ -42,6 +42,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.Closeable
@@ -54,7 +55,14 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * [errorType] is the stable name the model acts on; [remedy] says what to do
  * instead, so a refusal is a next step rather than a dead end.
  */
-class WebFailure(val errorType: String, override val message: String, val remedy: String? = null, val mayHaveActed: Boolean = false) : Exception(message)
+class WebFailure(
+    val errorType: String,
+    override val message: String,
+    val remedy: String? = null,
+    val mayHaveActed: Boolean = false,
+    /** The message already says exactly what happened on the page; the gateway must not reword it. */
+    val known: Boolean = false,
+) : Exception(message)
 
 /** Which element an action is about. Exactly one of [ref], [selector] and [text] is the address. */
 data class WebTarget(
@@ -117,14 +125,29 @@ class BrowserSession(
 
     /** Index is the `f<n>` of a ref; 0 is the page itself. Append-only, so a ref keeps its meaning. */
     private val frames = mutableListOf<String>()
+    /** The address of each frame, as the last frame tree reported it. */
+    private val frameUrls = mutableMapOf<String, String>()
     private var revision = 0L
     private var lastDigest: String? = null
     private var lastRevision = 0L
     private var events: Closeable? = null
-    private var referenceBase = 0
     @Volatile var userControlled = false
 
+    /**
+     * How many inputs this page has been sent: a press, typed text, a value
+     * set, a navigation, a script. Counted just before each is sent, so a call
+     * that fails with this unchanged provably did nothing to the page, and one
+     * that fails after it moved may have done something.
+     */
+    @Volatile var inputs: Long = 0
+        private set
+
+    /** True while an operation runs, so the host never closes a page in use. */
+    val busy: Boolean get() = lock.isLocked
+
     val isOpen: Boolean get() = cdp.isOpen
+
+    private fun sent() { inputs += 1 }
 
     /** Something that happened to the page outside an action: the host adds a blocked link, a refused download. */
     fun note(text: String) {
@@ -156,6 +179,7 @@ class BrowserSession(
             is WebUrlPolicy.Decision.Allowed -> decision.url
             is WebUrlPolicy.Decision.Blocked -> throw WebFailure(decision.errorType, decision.message, decision.remedy)
         }
+        sent()
         val result = cdp.call("Page.navigate", buildJsonObject { put("url", allowed) }, NAVIGATE_TIMEOUT_MS)
         result["errorText"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { error ->
             // An aborted load is a download or a link another app took over.
@@ -177,6 +201,7 @@ class BrowserSession(
             throw WebFailure("no_history", "There is no earlier page to go back to.")
         }
         val id = (entries[index - 1] as JsonObject)["id"]!!.jsonPrimitive.intOrNull ?: 0
+        sent()
         cdp.call("Page.navigateToHistoryEntry", buildJsonObject { put("entryId", id) })
         awaitLoad(LOAD_TIMEOUT_MS)
         settle(SETTLE_MS)
@@ -185,9 +210,11 @@ class BrowserSession(
     }
 
     suspend fun reload(): WebAction = lock.withLock {
+        sent()
         cdp.call("Page.reload")
         awaitLoad(LOAD_TIMEOUT_MS)
         settle(SETTLE_MS)
+        enforcePolicy()
         WebAction("reload")
     }
 
@@ -209,15 +236,17 @@ class BrowserSession(
         if (info.tag == "select") {
             throw WebFailure("use_select", "${info.label(found)} is a dropdown.", "Set it with operation \"select\" and value.")
         }
+        runCatching { cdp.call("DOM.scrollIntoViewIfNeeded", buildJsonObject { put("objectId", element(found)) }) }
+        // Checked before asking the user, so nobody approves a press that would
+        // land on something else, and again after, because an approval takes
+        // long enough for the page to change under it.
+        reachable(found, info)
         authorize(info)
-        val objectId = element(found)
-        runCatching { cdp.call("DOM.scrollIntoViewIfNeeded", buildJsonObject { put("objectId", objectId) }) }
-        val point = centre(objectId)
-        if (point != null) {
-            tap(point.first, point.second)
-        } else {
-            throw WebFailure("not_visible", "This element has no clickable box. Nothing was clicked.")
-        }
+        reachable(found, info)
+        val point = centre(element(found))
+            ?: throw WebFailure("not_visible", "${info.label(found)} has no clickable box. Nothing was clicked.")
+        sent()
+        tap(point.first, point.second)
         settle(SETTLE_MS)
         enforcePolicy()
         WebAction(
@@ -242,21 +271,50 @@ class BrowserSession(
         }
         var verified: Boolean
         if (info.valueOnly) {
+            sent()
             agentValue(found.frameId, "__mike.setValue(${found.ref}, ${JsonPrimitive(value)})")
             verified = sameText(currentValue(found), value)
         } else {
-            agentValue(found.frameId, "__mike.focusForTyping(${found.ref})")
-            if (value.isEmpty()) key("Backspace") else cdp.call("Input.insertText", buildJsonObject { put("text", value) })
-            verified = sameText(currentValue(found), value)
+            // Typed text goes to whatever has the focus. A field that passes its
+            // focus on (to a sibling, a hidden proxy, a dialog) would have the
+            // text typed somewhere else, so the focus is checked first.
+            val focused = (agentValue(found.frameId, "__mike.focusForTyping(${found.ref})") as? JsonPrimitive)?.booleanOrNull == true
+            if (!focused && info.contentEditable) {
+                throw WebFailure(
+                    "not_focused",
+                    "${info.label(found)} did not keep the focus, so nothing was typed.",
+                    "Click it first, take a snapshot, then fill it again.",
+                )
+            }
+            sent()
+            if (focused) {
+                if (value.isEmpty()) key("Backspace") else cdp.call("Input.insertText", buildJsonObject { put("text", value) })
+                verified = sameText(currentValue(found), value)
+            } else {
+                verified = false
+            }
             if (!verified && !info.contentEditable) {
-                // A field that swallowed the typed text still takes its value set.
+                // A field that swallowed the typed text, or would not keep the
+                // focus, still takes its value set directly.
                 agentValue(found.frameId, "__mike.setValue(${found.ref}, ${JsonPrimitive(value)})")
                 verified = sameText(currentValue(found), value)
             }
         }
         if (!verified) throw WebFailure("fill_not_verified", "The field did not retain the requested text.",
             "The field may have changed. Read it before repeating the fill. No submit was sent.", mayHaveActed = true)
-        if (submit) { authorizeSubmit(); key("Enter") }
+        if (submit) {
+            // Asked in the field's own frame: Enter submits the form the field is in.
+            if (!submitAllowed(found.frameId)) {
+                throw WebFailure(
+                    "approval_denied",
+                    "${info.label(found)} now holds the text, but the user did not approve submitting it. Nothing was submitted.",
+                    "Do not submit it another way. Ask the user what they want.",
+                    known = true,
+                )
+            }
+            sent()
+            key("Enter")
+        }
         settle(if (submit) SETTLE_MS else QUICK_SETTLE_MS)
         if (submit) enforcePolicy()
         WebAction(
@@ -269,6 +327,7 @@ class BrowserSession(
         val found = resolve(target)
         val info = info(found)
         if (info.disabled) throw WebFailure("disabled", "${info.label(found)} is disabled.")
+        sent()
         val result = agentValue(found.frameId, "__mike.choose(${found.ref}, ${JsonPrimitive(value)})") as? JsonObject
         when (result?.get("error")?.jsonPrimitive?.contentOrNull) {
             "not_a_select" -> throw WebFailure(
@@ -289,7 +348,10 @@ class BrowserSession(
     suspend fun press(name: String): WebAction = lock.withLock {
         val known = KEYS.keys.firstOrNull { it.equals(name.trim(), ignoreCase = true) }
             ?: throw WebFailure("unknown_key", "\"$name\" is not a key the browser sends.", "Use one of: ${KEYS.keys.joinToString(", ")}.")
-        if (known == "Enter" || known == "Space") authorizeSubmit()
+        if ((known == "Enter" || known == "Space") && !submitAllowed(mainFrame())) {
+            throw WebFailure("approval_denied", "The user did not approve submitting this page. Nothing was submitted.")
+        }
+        sent()
         key(known)
         settle(SETTLE_MS)
         enforcePolicy()
@@ -332,12 +394,16 @@ class BrowserSession(
             val present = if (url != null) {
                 location().first.contains(url, ignoreCase = true)
             } else {
-                frameIds().any { frame ->
+                readableFrames().any { frame ->
                     runCatching { agentValue(frame, "__mike.present($condition)") }.getOrNull()
                         ?.let { (it as? JsonPrimitive)?.booleanOrNull } == true
                 }
             }
-            if (present != gone) break
+            if (present != gone) {
+                // What the wait saw must come from a page the browser may read.
+                if (url == null) guardRead()
+                break
+            }
             if (System.currentTimeMillis() >= deadline) {
                 throw WebFailure(
                     "wait_timeout",
@@ -355,6 +421,7 @@ class BrowserSession(
         // Arbitrary JS can send requests or read secrets, so it needs a user approval.
         if (!confirm("Run page JavaScript at ${location().first}: ${source.take(400)}"))
             throw WebFailure("approval_denied", "The user did not approve this page script. Nothing ran.")
+        sent()
         val result = cdp.call(
             "Runtime.evaluate",
             buildJsonObject {
@@ -384,6 +451,7 @@ class BrowserSession(
 
     /** A PNG of what the page shows now, as base64, or null when the browser cannot capture it. */
     suspend fun screenshot(): String? = lock.withLock {
+        guardRead()
         runCatching {
             cdp.call("Page.captureScreenshot", buildJsonObject { put("format", "png") }, NAVIGATE_TIMEOUT_MS)["data"]
                 ?.jsonPrimitive?.contentOrNull
@@ -393,10 +461,14 @@ class BrowserSession(
     // --- reading ------------------------------------------------------------
 
     /** The page as one line per thing on it, with a header that says where it is and what was left out. */
-    suspend fun snapshot(query: SnapshotQuery = SnapshotQuery()): String = lock.withLock { renderSnapshot(query) }
+    suspend fun snapshot(query: SnapshotQuery = SnapshotQuery()): String = lock.withLock {
+        guardRead()
+        renderSnapshot(query)
+    }
 
     /** The page as reading text, paged by character [offset]. */
     suspend fun read(offset: Int, maxChars: Int): String = lock.withLock {
+        guardRead()
         val page = agentValue(mainFrame(), "__mike.read()") as? JsonObject
         val text = page?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
             .lineSequence().joinToString("\n") { SecretRedactor.redactUiText(it) }
@@ -418,6 +490,11 @@ class BrowserSession(
         var scrollLine: String? = null
         frameIds().take(MAX_FRAMES).forEach { frameId ->
             val index = frameIndex(frameId)
+            if (index > 0 && !frameAllowed(frameId)) {
+                // A frame at an address the browser does not open is never read.
+                lines += "frame f$index (blocked address, not read)"
+                return@forEach
+            }
             val page = runCatching {
                 agentValue(frameId, "__mike.snapshot(${query.interactiveOnly})") as? JsonObject
             }.getOrNull()
@@ -468,7 +545,7 @@ class BrowserSession(
 
     // --- the page side -------------------------------------------------------
 
-    private data class Found(val frameId: String, val frameIndex: Int, val ref: Int)
+    private data class Found(val frameId: String, val frameIndex: Int, val ref: Long)
 
     private data class Info(
         val tag: String,
@@ -496,8 +573,9 @@ class BrowserSession(
                 ?: throw WebFailure("bad_ref", "\"$raw\" is not a ref.", "A ref looks like e12; take it from a snapshot.")
             val index = match.groupValues[1].toIntOrNull() ?: 0
             val frameId = frames.getOrNull(index) ?: throw stale(raw)
+            if (index > 0 && !frameAllowed(frameId)) throw blockedFrame(raw)
             val found = runCatching { agentValue(frameId, "__mike.find({ref: ${match.groupValues[2]}})") as? JsonObject }.getOrNull()
-            val ref = found?.get("ref")?.jsonPrimitive?.intOrNull ?: throw stale(raw)
+            val ref = found?.get("ref")?.jsonPrimitive?.longOrNull ?: throw stale(raw)
             return Found(frameId, index, ref)
         }
         val wanted = buildJsonObject {
@@ -506,12 +584,12 @@ class BrowserSession(
             target.role?.let { put("role", it) }
             if (target.exact) put("exact", true)
         }
-        for (frameId in frameIds().take(MAX_FRAMES)) {
+        for (frameId in readableFrames()) {
             val found = runCatching { agentValue(frameId, "__mike.find($wanted)") as? JsonObject }.getOrNull() ?: continue
             if (found["error"]?.jsonPrimitive?.contentOrNull == "bad_selector") {
                 throw WebFailure("bad_selector", "\"${target.selector}\" is not a valid CSS selector.")
             }
-            val ref = found["ref"]?.jsonPrimitive?.intOrNull ?: continue
+            val ref = found["ref"]?.jsonPrimitive?.longOrNull ?: continue
             if ((found["count"]?.jsonPrimitive?.intOrNull ?: 0) > 1)
                 throw WebFailure("ambiguous_target", "More than one element matches $target.", "Use a snapshot ref or a more specific selector.")
             return Found(frameId, frameIndex(frameId), ref)
@@ -547,16 +625,80 @@ class BrowserSession(
         )
     }
 
+    private fun blockedFrame(ref: String) = WebFailure(
+        "frame_blocked",
+        "$ref is inside a frame at an address the browser does not open. Nothing was done.",
+        "Work with the rest of the page, or tell the user this part needs their own browser.",
+    )
+
     private suspend fun authorize(info: Info) {
         if (info.confirmation && !confirm("At ${location().first}: activate ${info.role} ${info.name}"))
             throw WebFailure("approval_denied", "The user did not approve this action. Nothing was clicked.")
     }
 
-    private suspend fun authorizeSubmit() {
-        val required = agentValue(mainFrame(), "__mike.submitNeedsApproval()") as? JsonPrimitive
-        if (required?.booleanOrNull != false && !confirm("Submit or activate the focused control at ${location().first}"))
-            throw WebFailure("approval_denied", "The user did not approve submitting this page. Nothing was submitted.")
+    /**
+     * Whether Enter or Space on what has the focus in [frameId] may go ahead:
+     * true when it needs no approval, or the user approved it.
+     */
+    private suspend fun submitAllowed(frameId: String): Boolean {
+        val required = agentValue(frameId, "__mike.submitNeedsApproval()") as? JsonPrimitive
+        return required?.booleanOrNull == false || confirm("Submit or activate the focused control at ${location().first}")
     }
+
+    /**
+     * Fail, having pressed nothing, unless a press at the element's middle
+     * would reach it. Something covering it is scrolled past once (a sticky
+     * header), then named, so the caller can dismiss it.
+     */
+    private suspend fun reachable(found: Found, info: Info) {
+        fun check(value: JsonElement?): JsonObject? = value as? JsonObject
+        var hit = check(agentValue(found.frameId, "__mike.hitCheck(${found.ref})"))
+        val error = hit?.get("error")?.jsonPrimitive?.contentOrNull
+        if (hit?.get("blockedBy") != null || error == "offscreen") {
+            agentValue(found.frameId, "__mike.scroll(null, ${found.ref})")
+            hit = check(agentValue(found.frameId, "__mike.hitCheck(${found.ref})"))
+        }
+        when (hit?.get("error")?.jsonPrimitive?.contentOrNull) {
+            "stale_ref" -> throw stale(info.label(found))
+            "no_box", "offscreen" -> throw WebFailure(
+                "not_visible",
+                "${info.label(found)} is not in the page's visible area. Nothing was clicked.",
+                "Scroll to it, or take a snapshot to see what the page shows.",
+            )
+        }
+        val blocker = hit?.get("blockedBy")?.jsonPrimitive?.contentOrNull ?: return
+        val ref = hit["ref"]?.jsonPrimitive?.longOrNull
+        val frame = if (found.frameIndex > 0) "f${found.frameIndex}" else ""
+        throw WebFailure(
+            "obscured",
+            "${info.label(found)} is covered by ${SecretRedactor.redactUiText(blocker)}" +
+                (ref?.let { " [${frame}e$it]" } ?: "") + ", which would take the press. Nothing was clicked.",
+            "Dismiss what covers it (a cookie banner, a dialog or a menu), then click again.",
+        )
+    }
+
+    /** Child frames the browser may read and act in; a frame at a blocked address is left alone. */
+    private suspend fun readableFrames(): List<String> =
+        frameIds().take(MAX_FRAMES).filterIndexed { index, frameId -> index == 0 || frameAllowed(frameId) }
+
+    /**
+     * A child frame's address passes the URL policy. Only web addresses are
+     * judged: about:blank, about:srcdoc and their like belong to the page that
+     * made them. A failed name lookup is not a block here; the WebView did
+     * load the frame, and blanking the page on a DNS blip helps no one.
+     */
+    private suspend fun frameAllowed(frameId: String): Boolean {
+        val url = frameUrls[frameId] ?: return true
+        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) return true
+        val decision = withContext(Dispatchers.IO) { policy.check(url) }
+        return decision !is WebUrlPolicy.Decision.Blocked || decision.errorType == DNS_UNRESOLVED
+    }
+
+    /**
+     * Before anything is read off the page: a page that reached a blocked
+     * address by itself (a server redirect, a script) is closed, not read.
+     */
+    private suspend fun guardRead() = enforcePolicy(afterAction = false)
 
     private suspend fun currentValue(found: Found): String? =
         (agentValue(found.frameId, "__mike.valueOf(${found.ref})") as? JsonPrimitive)?.contentOrNull
@@ -671,11 +813,14 @@ class BrowserSession(
                 }
                 val remote = result["result"] as? JsonObject ?: JsonObject(emptyMap())
                 if (remote["value"]?.let { it is JsonPrimitive && it.isString && it.content == MISSING } == true) {
-                    referenceBase += 100_000
+                    // Each injection gets a ref range no other world, document,
+                    // frame or connection in this process has used, so an old
+                    // ref can only ever be stale, never name another element.
+                    val base = NEXT_REF_BASE.addAndGet(REF_RANGE)
                     cdp.call(
                         "Runtime.evaluate",
                         buildJsonObject {
-                            put("expression", "globalThis.__mikeRefStart = $referenceBase;\n$script")
+                            put("expression", "globalThis.__mikeRefStart = $base;\n$script")
                             put("contextId", context)
                         },
                     )
@@ -706,8 +851,13 @@ class BrowserSession(
     /** Every frame of the page, the page itself first, each given its `f<n>` on first sight. */
     private suspend fun frameIds(): List<String> {
         val found = mutableListOf<String>()
+        val urls = mutableMapOf<String, String>()
         fun collect(node: JsonObject) {
-            (node["frame"] as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull?.let { found += it }
+            val frame = node["frame"] as? JsonObject
+            frame?.get("id")?.jsonPrimitive?.contentOrNull?.let { id ->
+                found += id
+                frame["url"]?.jsonPrimitive?.contentOrNull?.let { urls[id] = it }
+            }
             (node["childFrames"] as? JsonArray)?.forEach { child -> (child as? JsonObject)?.let(::collect) }
         }
         (cdp.call("Page.getFrameTree")["frameTree"] as? JsonObject)?.let(::collect)
@@ -716,6 +866,8 @@ class BrowserSession(
             frames.clear()
         }
         for (id in found) if (id !in frames) frames += id
+        frameUrls.clear()
+        frameUrls.putAll(urls)
         return found
     }
 
@@ -756,14 +908,27 @@ class BrowserSession(
         }
     }
 
-    /** A page that took itself somewhere the browser does not go is taken back out. */
-    private suspend fun enforcePolicy() {
+    /**
+     * A page that took itself somewhere the browser does not go is taken back
+     * out. [afterAction] says whether the agent's own action may have caused
+     * it; before a read it did not.
+     *
+     * A failed name lookup does not count here: the WebView already loaded the
+     * page, and blanking it because this check could not resolve the name a
+     * moment later (offline, a DNS blip) would throw away the user's page.
+     */
+    private suspend fun enforcePolicy(afterAction: Boolean = true) {
         val url = location().first
         if (url.isEmpty() || url == "about:blank") return
         val decision = withContext(Dispatchers.IO) { policy.check(url) }
-        if (decision is WebUrlPolicy.Decision.Blocked) {
+        if (decision is WebUrlPolicy.Decision.Blocked && decision.errorType != DNS_UNRESOLVED) {
             runCatching { cdp.call("Page.navigate", buildJsonObject { put("url", "about:blank") }) }
-            throw WebFailure(decision.errorType, "The page went to an address the browser does not open. ${decision.message}", decision.remedy, mayHaveActed = true)
+            throw WebFailure(
+                decision.errorType,
+                "The page went to an address the browser does not open, so it was closed without being read. ${decision.message}",
+                decision.remedy,
+                mayHaveActed = afterAction,
+            )
         }
     }
 
@@ -809,6 +974,13 @@ class BrowserSession(
 
     companion object {
         const val MAX_WAIT_MS = 30_000L
+        private const val DNS_UNRESOLVED = "dns_unresolved"
+
+        /** Refs one helper injection may hand out; far above any page's element count. */
+        private const val REF_RANGE = 10_000_000L
+
+        /** Process-wide, so two sessions on one page (a reconnect) never share a ref range. */
+        private val NEXT_REF_BASE = java.util.concurrent.atomic.AtomicLong(0)
         private const val MAX_PLAIN_WAIT_MS = 10_000L
         private const val WORLD = "hey_mike"
         private const val MISSING = "__mike_missing__"
