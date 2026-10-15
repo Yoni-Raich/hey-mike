@@ -409,6 +409,14 @@ approval, and the approval is void if the control or its form destination
 (`approvalToken`: address, ref, name, type, href, form action/method/target)
 changed while the user decided. Approval is judged on the element that really
 activates: a `span` inside a submit button, or a label, counts as that button.
+A link-role child inside an anchor is judged as that anchor too, including
+its destination, method and button role.
+For ordinary HTTP(S) navigation links, URL/path tokens in the label do not
+make the word `post` a publishing action (for example `forms/post`). This
+exception does not cover buttons, button-role links, downloads, non-GET
+action links or non-web schemes; other sensitive verbs and form submission
+checks still inspect the full control. A standalone `Post comment` still
+asks. The local approval timeout remains 120 seconds; expiry sends no input.
 A selector or text that matches in two frames is ambiguous. `fill` types only
 when the target holds focus through every embedding frame (`hasFocus` walks
 `DOM.getFrameOwner` up to the main document, shadow roots included); a field

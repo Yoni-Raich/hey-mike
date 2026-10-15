@@ -364,7 +364,16 @@
   const activationTarget = (el) => {
     for (let node = el; node; node = node.parentElement || node.getRootNode().host) {
       if (node.localName === 'label' && node.control) return node.control;
-      if (['button', 'a', 'input', 'select', 'textarea'].includes(node.localName) || node.hasAttribute('role')) return node;
+      if (['button', 'a', 'input', 'select', 'textarea'].includes(node.localName)) return node;
+      if (node.hasAttribute('role')) {
+        // Search results can expose a link-role div inside a real anchor.
+        // Judge the anchor's action and destination, not just that inner label.
+        if (roleOf(node) === 'link') {
+          const anchor = node.closest('a[href]');
+          if (anchor) return anchor;
+        }
+        return node;
+      }
     }
     return el;
   };
@@ -409,7 +418,16 @@
   const needsApproval = (el) => {
     el = activationTarget(el);
     const name = nameOf(el);
-    if (/\b(send|post|publish|buy|pay|purchase|checkout|place order|confirm order|delete|remove account)\b|שלח|שליחה|פרסם|פרסום|רכישה|תשלום|מחק|מחיקה/i.test(name)) return true;
+    if (/\b(send|publish|buy|pay|purchase|checkout|place order|confirm order|delete|remove account)\b|שלח|שליחה|פרסם|פרסום|רכישה|תשלום|מחק|מחיקה/i.test(name)) return true;
+    // A search result named "forms/post" describes a path, not a request to
+    // publish content. Strip URL/path tokens only for this one word and only
+    // on ordinary HTTP(S) links. Buttons, action links and other sensitive
+    // verbs retain their approval checks.
+    const method = (el.getAttribute('data-method') || el.getAttribute('data-turbo-method') || 'get').toLowerCase();
+    const webLink = el.localName === 'a' && /^https?:$/.test(el.protocol) &&
+      roleOf(el) !== 'button' && !el.hasAttribute('download') && method === 'get';
+    const postName = webLink ? name.replace(/(?:https?:\/\/|www\.)\S+/gi, ' ').replace(/\S*\/\S*/g, ' ') : name;
+    if (/\bpost\b/i.test(postName)) return true;
     const form = el.form;
     if (form && (el.type === 'submit' || el.localName === 'button' && !el.type)) {
       // Search and sign-in are ordinary navigation. Other submissions send user data.

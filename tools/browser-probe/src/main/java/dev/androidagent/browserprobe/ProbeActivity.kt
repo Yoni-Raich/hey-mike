@@ -64,11 +64,8 @@ class ProbeActivity : Activity() {
             evidence += "same_uid_cdp=connected"
             val page = BrowserSession(client, WebUrlPolicy(), BrowserSession.Pointer.TOUCH,
                 nativeTap = { x, y -> WebViewInput.tap(view, x, y) }) { summary ->
-                    // The benchmark preauthorizes only its known public result
-                    // link. Form sends and arbitrary eval stay refused.
-                    intent.getBooleanExtra("benchmark", false) &&
-                        summary.startsWith("At https://www.google.com/") &&
-                        summary.contains(": activate link ") && summary.contains("forms/post")
+                    android.util.Log.i("MikeBrowserProbe", "approval refused: $summary")
+                    false
                 }
             session = page; page.start()
             val gateway = WebToolGateway(object : BrowserHost {
@@ -132,7 +129,15 @@ class ProbeActivity : Activity() {
                     {"operation":"fill","selector":"[name=q]","value":"httpbin forms post"},
                     {"operation":"press","key":"Enter","verify":{"url":"/search","timeoutMs":15000}}
                 ]}""")
-                if (query.success) call("google-click-$index", """{"operation":"click","text":"forms/post","role":"link"}""")
+                if (query.success) {
+                    // Public test-page structure only; never an approval bypass.
+                    val links = client.call("Runtime.evaluate", buildJsonObject {
+                        put("expression", "JSON.stringify(Array.from(document.querySelectorAll('a,[role=link]')).filter(e=>e.textContent.includes('forms/post')).map(e=>({tag:e.localName,role:e.getAttribute('role'),href:e.getAttribute('href'),html:e.outerHTML.slice(0,2400)})))")
+                        put("returnByValue", true)
+                    })
+                    output.appendText(buildJsonObject { put("label", "google-links-$index"); put("links", links) }.toString() + "\n")
+                    call("google-click-$index", """{"operation":"click","text":"forms/post","role":"link"}""")
+                }
             }
             val direct = call("direct-$index", """{"operation":"open","url":"https://httpbin.org/forms/post"}""")
             if (direct.success) call("form-plan-$index", """{"operation":"plan","steps":[

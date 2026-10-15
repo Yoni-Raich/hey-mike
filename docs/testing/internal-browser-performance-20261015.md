@@ -86,6 +86,86 @@ the final performance run ended `FAIL` at `Screenshot unavailable` after all
 15 benchmark calls completed. That failure is preserved in `probe-v6.txt`.
 This is not a full probe PASS, nor proof of the app host's bitmap fallback.
 
+## Follow-up: false approval on a result path
+
+The user's hosting-phone report at about 13:00 on 2026-10-15 says the result
+click spent 120.02 seconds awaiting approval, then returned `approval_denied`
+without clicking. Other successful operations took 0.79-3.56 seconds in the
+backend, and a direct form open took 1.34 seconds. This is user-supplied test
+evidence; this retained PC chat did not make those calls. The report confirms
+that the form was filled and shown, with no order submitted.
+
+Source diagnosis: `needsApproval` matched `\bpost\b` in the link label
+`forms/post`. The slash is a word boundary, so a navigation label was treated
+as a publishing action. A physical follow-up also captured Google's nested
+`<a><div role="heading"><div role="link">forms/post</div></div></a>` structure:
+the helper stopped at the inner link-role div instead of the real anchor.
+`AgentCoordinator` has a 120000 ms local approval
+timeout; the browser host maps a non-allowed outcome to false and returns
+`approval_denied`. This explains the reported approval wait. It does not
+explain the earlier, separate 27.7-second event.
+
+The fix resolves a link-role child to its enclosing anchor, then removes
+URL/path tokens only when testing `post` on ordinary HTTP(S)
+GET links. It retains the other sensitive-word checks on the full label,
+keeps form checks, and excludes buttons, button-role links, downloads,
+non-GET action links and non-web schemes. It changes neither the approval
+timeout nor the user's approval answer.
+
+Four live Chrome regressions were run before the fix: two failed for path
+and full-URL labels, while the sensitive-action and non-web checks passed.
+The first fix passed 66 web tests and lint but still refused all three
+physical Google result clicks in probe versions 7 and 8. These failed calls
+were kept, and the actual nested structure was added as another regression.
+The refusal test covers nine controls: Post comment, a button named
+forms/post, a delete link, an ordinary POST form, a button-role link, POST
+data-method/data-turbo-method links, a nested Post comment and a download.
+The probe's old Google-specific approval
+callback was removed; it now refuses every approval request again.
+
+Final focused check: `:web:testDebugUnitTest :web:lintDebug --no-daemon`
+passed in 1m2s: 67 tests, no failures/errors/skips (43 live CDP, 7 host,
+7 policy, 8 gateway, 2 wait). The final full gate passed in 1m20s with
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:web:lintDebug :app:lintDevDebug --no-daemon`, using version overrides
+1151 / `0.14.0-dev.browser-approval1`. Runtime preparation tests passed
+15 tests. An intermediate focused build was blocked before tests by the
+build-storage hook trying to prune a locked probe dex file; stopping the
+idle Gradle daemons and running builds sequentially allowed the checks to
+finish. No manual deletion or cleanup of other worktrees was done.
+
+Physical probe version 9 uses the same Xiaomi/WebView as the earlier runs,
+is non-debuggable and refuses every approval callback. All 15 benchmark
+calls succeeded in three consecutive repetitions:
+
+| Operation | Individual ms | Median ms |
+| --- | --- | ---: |
+| Open Google | 2180, 1958, 2144 | 2144 |
+| Search plan | 2810, 2633, 3798 | 2810 |
+| Click forms/post | 2179, 1477, 1126 | 1477 |
+| Direct form open | 1027, 791, 1281 | 1027 |
+| Five-action form plan | 2480, 2446, 2426 | 2446 |
+
+The result clicks recorded one redirect each, zero protocol timeouts, and
+no approval callback invocation. The approval phase still measures a tiny
+local guard check (0.0-0.1ms), not an approval wait. No order was sent.
+The later screenshot smoke check is separate from these completed calls;
+do not infer a full probe or app-host PASS from the benchmark. This is not
+a same-phone before/after latency comparison or a guarantee for other sites.
+
+The final Dev Release artifact is 1151 `0.14.0-dev.browser-approval1`,
+291916297 bytes, ZIP-aligned and test-signed with v3 and the existing test
+certificate. SHA-256:
+`56c597ceea5c368081253cdc86a1dd5645a7701c35eb76f2e0000c94ae3224eb`.
+Its packaged page helper equals the tested source byte for byte. Delivery
+and installed metadata must be checked separately from this build evidence.
+
+Follow-up evidence is ignored under `artifacts/browser-approval-20261015/`,
+including the red-test XML, intermediate web/lint log, probe versions 7/8,
+their refused benchmark calls and the public Google DOM diagnostic.
+It also holds the final `benchmark-v9.jsonl`, its derived summary, scoped
+probe logcat, final gate logs and the signed artifact in `delivery-1151/`.
+
 ## Evidence and reproduction
 
 Ignored folder: `artifacts/browser-performance-20261015/`.

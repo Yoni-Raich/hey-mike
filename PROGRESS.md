@@ -1,5 +1,45 @@
 # Progress
 
+### Internal browser: false approval on navigation paths — 2026-10-15
+
+The user's hosting-phone report isolated a 120.02s approval wait on the
+Google `forms/post` result, followed by approval_denied with no click.
+Source matched `post` inside the path as a publishing verb. Google also
+wraps the title in a link-role div inside the real anchor. The helper now
+judges that enclosing anchor and excludes URL/path tokens only from the
+`post` word check on ordinary HTTP(S) GET links. Buttons, downloads,
+non-GET action links, non-web schemes, other sensitive verbs and form
+submissions retain approval checks. No timeout or approval answer changed.
+
+The initial path-only fix passed 66 tests but failed the physical result
+click; probe versions 7/8 and the captured public DOM were retained. The
+final regression includes Google's nested structure. All 67 web tests
+(43 live CDP, 7 host, 7 policy, 8 gateway, 2 wait) pass without failures or
+skips, including nine refused sensitive controls and a non-web link.
+Web lint passes. Full gate with 1151 version overrides passed in 1m20s:
+`test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+:web:lintDebug :app:lintDevDebug --no-daemon --console=plain`. Runtime
+preparation: 15 OK. An intermediate build-storage file lock was resolved
+by stopping idle Gradle daemons and building sequentially, without manual
+cleanup or changes to other worktrees.
+
+Physical repeat, separate non-debuggable probe 9 on Xiaomi Android 15:
+all 15 benchmark calls passed with every approval callback set to false.
+Google result click: 2179/1477/1126ms, median 1477ms, one redirect each,
+no protocol timeouts or approval requests. Direct form open:
+1027/791/1281ms. Five-action fill/radio/checkbox plan:
+2480/2446/2426ms. No form submission. Logs, failed intermediate runs and
+timing/DOM evidence are ignored under `artifacts/browser-approval-20261015/`.
+These are module measurements on the test phone, not a live task on the
+hosting phone. The original 27.7s event remains unexplained.
+
+Prepared test-signed Dev Release 1151 `0.14.0-dev.browser-approval1` for
+the hosting phone. ZIP alignment, v3 signature and the existing certificate
+verified. APK SHA-256:
+`56c597ceea5c368081253cdc86a1dd5645a7701c35eb76f2e0000c94ae3224eb`.
+The packaged page helper matches the tested source byte for byte.
+See `docs/testing/internal-browser-performance-20261015.md` for limits.
+
 ### Internal browser: measured waits and DOM plans — 2026-10-15
 
 Added per-call and per-step monotonic timings, exclusive phases, CDP command

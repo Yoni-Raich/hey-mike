@@ -233,6 +233,54 @@ class BrowserIntegrationTest {
         assertFalse(call("""{"operation":"eval","script":"sends++"}""").success)
         assertEquals(JsonPrimitive(0), value("sends")); assertEquals(2, confirmations.size)
     }
+
+    @Test fun postPathInAWebLinkIsNavigationWithoutApproval() = runBlocking {
+        approve = false
+        value("""document.body.innerHTML='<a href="/form"><span id="result">forms/post</span></a>';1""")
+        val result = call("""{"operation":"click","selector":"#result"}""")
+        assertTrue(result.text, result.success)
+        assertTrue(result.text, result.text.contains("Message"))
+        assertEquals(0, confirmations.size)
+    }
+
+    @Test fun aFullUrlLabelContainingPostDoesNotAskForApproval() = runBlocking {
+        approve = false
+        value("""document.body.innerHTML='<a id="result" href="/form">https://httpbin.org/forms/post</a>';1""")
+        val result = call("""{"operation":"click","selector":"#result"}""")
+        assertTrue(result.text, result.success)
+        assertEquals(0, confirmations.size)
+    }
+
+    @Test fun aNestedLinkRoleUsesItsNavigationAnchorForApproval() = runBlocking {
+        approve = false
+        value("""document.body.innerHTML='<a href="/form"><span role="text">https://httpbin.org</span><div role="heading"><div role="link"><span>forms/post</span></div></div></a>';1""")
+        val result = call("""{"operation":"click","text":"forms/post","role":"link","exact":true}""")
+        assertTrue(result.text, result.success)
+        assertTrue(result.text, result.text.contains("Message"))
+        assertEquals(0, confirmations.size)
+    }
+
+    @Test fun postActionsAndOtherSensitiveLinksStillNeedApproval() = runBlocking {
+        approve = false
+        value("""document.body.innerHTML='<a id="publish" href="/form">Post comment</a><button id="pathButton" onclick="sends++">forms/post</button><a id="delete" href="/form">/delete-account</a><form onsubmit="sends++;return false" method="post"><button id="continue">Continue</button></form><a id="roleButton" role="button" href="/form">forms/post</a><a id="postLink" data-method="post" href="/form">forms/post</a><a id="turboLink" data-turbo-method="post" href="/form">forms/post</a><a href="/form"><div role="link" id="nestedPublish">Post comment</div></a><a id="download" download href="/form">forms/post</a>';1""")
+        for (selector in listOf("#publish", "#pathButton", "#delete", "#continue", "#roleButton", "#postLink", "#turboLink", "#nestedPublish", "#download")) {
+            val result = call("""{"operation":"click","selector":"$selector"}""")
+            assertFalse(result.text, result.success)
+            assertTrue(result.text, result.text.contains("approval_denied"))
+        }
+        assertEquals(9, confirmations.size)
+        assertEquals(JsonPrimitive(0), value("sends"))
+    }
+
+    @Test fun postOnANonWebLinkIsNotExempted() = runBlocking {
+        approve = false
+        value("""document.body.innerHTML='<a id="result" href="javascript:sends++">forms/post</a>';1""")
+        val result = call("""{"operation":"click","selector":"#result"}""")
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("approval_denied"))
+        assertEquals(1, confirmations.size)
+        assertEquals(JsonPrimitive(0), value("sends"))
+    }
     @Test fun showPausesActionsUntilHide() = runBlocking {
         call("""{"operation":"show"}""")
         assertFalse(call("""{"operation":"click","text":"Apply"}""").success)
