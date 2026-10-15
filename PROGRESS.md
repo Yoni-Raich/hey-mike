@@ -45,7 +45,20 @@ own 8s back verify timed out on the router symptom and reload recovered it.
 Gaps: the 1154 uncertain click was not reproduced (0/8 probe runs), so the
 settle hardening is a plausible, not proven, fix; errorType logging will name
 the next one. A same-document back still costs the model's verify timeout
-before reload. Hosting-phone delivery of 1155 pending.
+before reload.
+
+Hosting delivery, 17:14: rechecked the retained signed artifact (291924290
+bytes), SHA-256 above, version 1155, 16KiB alignment and v3 certificate. The
+hosting phone reported version 1153 before update. `copy_file` completed to
+`chat:browser-1155/app-dev-debug.apk` and Downloads URI
+`content://media/external_primary/downloads/1000235171`. APK Manager initially
+showed Install, but it had already moved to Installing before our tap plan
+resolved: target_not_found, zero taps sent. The observed installing screen
+reported Silent install over ADB. No install retry was made. The first app-info
+read still returned 1153. The follow-up wait and metadata read did not answer
+after the update began; the read-only wait was cancelled, without repeating
+installation. Final installed-version verification remains open, separate
+from the completed transfer and observed installation start.
 
 ### Internal browser: deep Xiaomi regressions — 2026-10-15
 
