@@ -127,6 +127,7 @@ class AndroidBrowserHost(
     private val lock = Mutex()
     private val policy = WebUrlPolicy()
     private val windows = context.getSystemService(WindowManager::class.java)
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** What a chat should hear about its page the next time it gets one: closed to free memory, renderer gone. */
     private val pendingNotes = ConcurrentHashMap<String, MutableList<String>>()
@@ -335,13 +336,64 @@ class AndroidBrowserHost(
                 callback.onReceiveValue(null); page.session?.note("File upload requires the user's browser."); return true
             }
             override fun onCreateWindow(view: WebView, dialog: Boolean, userGesture: Boolean, resultMsg: android.os.Message): Boolean {
-                page.session?.note("A popup was refused. Open its URL in this page instead."); return false
+                if (!userGesture || dialog || pages[page.key] !== page) {
+                    page.session?.note("A popup was refused. Open its URL in this page instead."); return false
+                }
+                return followInPage(page, resultMsg)
             }
         }
         view.setDownloadListener { _, _, _, _, _ -> page.session?.note("Download refused. This browser does not save files automatically.") }
         windows.addView(window, hidden())
         view.loadDataWithBaseURL(marker, String(MARKER_PAGE), "text/html", "UTF-8", marker)
         return page
+    }
+
+    /**
+     * A tapped link that asks for a new window (target=_blank) opens in this
+     * page instead, as one tab would. Main thread. The new window is a WebView
+     * that never fetches anything: its first address is read off and the
+     * window destroyed, and the page then loads that address through its own
+     * client, so the URL policy applies as for any link. A window that names
+     * no web address soon enough (a script writing into about:blank) stays
+     * refused.
+     */
+    private fun followInPage(page: Page, resultMsg: android.os.Message): Boolean {
+        val catcher = WebView(context.applicationContext)
+        var done = false
+        page.session?.popupOpening(true)
+        fun finish(url: String?) = main.post {
+            if (done) return@post
+            done = true
+            runCatching { catcher.stopLoading(); catcher.destroy() }
+            val session = page.session
+            val blocked = url?.let { policy.check(it, lookUp = false) as? WebUrlPolicy.Decision.Blocked }
+            when {
+                pages[page.key] !== page -> Unit
+                url == null -> session?.note("A popup was refused. Open its URL in this page instead.")
+                blocked != null -> session?.note(blocked.message)
+                else -> {
+                    session?.note("The link asked for a new window; it was opened in this page instead.")
+                    page.view.loadUrl(url)
+                    return@post
+                }
+            }
+            session?.popupOpening(false)
+        }
+        fun web(url: String) = url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
+        catcher.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                request.url.toString().takeIf(::web)?.let(::finish)
+                return true
+            }
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
+                if (request.isForMainFrame) request.url.toString().takeIf(::web)?.let(::finish)
+                return WebResourceResponse("text/plain", "UTF-8", 204, "No Content", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+            }
+        }
+        (resultMsg.obj as WebView.WebViewTransport).webView = catcher
+        resultMsg.sendToTarget()
+        main.postDelayed({ finish(null) }, POPUP_WAIT_MS)
+        return true
     }
 
     /** A 403 for an address the policy refuses, or null to let the request through. */
@@ -492,6 +544,8 @@ class AndroidBrowserHost(
         const val TITLE = "Mike browser"
         const val MAX_PAGES = 4
         const val SHOW_WAIT_MS = 3_000L
+        /** How long a new window may take to name its address before it stays refused. */
+        const val POPUP_WAIT_MS = 3_000L
         const val POLL_MS = 100L
         val MARKER_PAGE = "<title>Mike browser</title>".toByteArray()
     }

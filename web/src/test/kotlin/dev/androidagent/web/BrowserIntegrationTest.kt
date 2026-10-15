@@ -47,6 +47,8 @@ class BrowserIntegrationTest {
                                 request.contains(" /slow-page ") -> "<h1>Usable page</h1><input aria-label='Ready field'><img src='/slow-image'>"
                                 request.contains(" /frame ") -> "<button onclick='this.textContent=\"Frame done\"'>Frame button</button>"
                                 request.contains(" /form ") -> "<form onsubmit='parent.frameSubmits++;return false'><label>Message <input></label></form>"
+                                request.contains(" /spa ") -> "<title>Router</title><h1 id='view'>Repository</h1><button onclick=\"history.pushState({},'','/spa/issues');view.textContent='Issues list'\">Issues</button>" +
+                                    "<script>addEventListener('popstate',()=>view.textContent='Repository')</script>"
                                 request.contains(" /secret ") -> "<title>Router</title><p>Router admin password</p>"
                                 else -> FIXTURE
                             }
@@ -154,6 +156,24 @@ class BrowserIntegrationTest {
         assertTrue(result.text, result.success)
         assertTrue(result.text, result.text.contains("Ready field"))
         assertTrue("An 8s image blocked a usable document for ${elapsed}ms", elapsed < 5_000)
+    }
+
+    @Test fun backWithinAClientRouterSaysItStayedInTheSameDocument() = runBlocking {
+        assertTrue(call("""{"operation":"open","url":"${fixtureUrl}spa"}""").success)
+        val clicked = call("""{"operation":"plan","steps":[{"operation":"click","text":"Issues","role":"button","verify":{"text":"Issues list"}}]}""")
+        assertTrue(clicked.text, clicked.success)
+        val back = call("""{"operation":"back"}""")
+        assertTrue(back.text, back.success)
+        assertTrue(back.text, back.text.contains("same document"))
+        assertTrue(back.text, back.text.contains("heading \"Repository\""))
+    }
+
+    @Test fun backAcrossDocumentsHasNoSameDocumentNote() = runBlocking {
+        assertTrue(call("""{"operation":"open","url":"${fixtureUrl}slow-page"}""").success)
+        val back = call("""{"operation":"back"}""")
+        assertTrue(back.text, back.success)
+        assertFalse(back.text, back.text.contains("same document"))
+        assertTrue(back.text, back.text.contains("Browser fixture"))
     }
 
     @Test fun planReturnsStepTimingsAndOnlyOneFinalSnapshot() = runBlocking {

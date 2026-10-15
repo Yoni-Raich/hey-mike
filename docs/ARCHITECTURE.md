@@ -561,8 +561,24 @@ away from the user: Hey Mike simply goes behind the app that chat drives, and
 the page goes back to its parked window. (Before, a shown overlay was parked
 on every screen hand-over, and `show` hid its own page through that path.)
 
-**Network and permissions.** The host disables file/content access, popups,
-automatic downloads, uploads, third-party cookies, and camera/microphone
+**New-window links.** A tapped link or a gesture-started `window.open` that
+asks for a new window opens in the same page, as a one-tab browser would.
+The new window is a throwaway WebView whose first main-frame request is
+answered locally (204) and never fetched; its address is policy-checked,
+the window destroyed, and the page loads the address through its own client.
+A window with no web address within 3s (a script writing into about:blank),
+or without a user gesture, stays refused. Settling waits for that page to
+commit, and a navigation that destroys the watched document while settling is
+followed to the new document instead of failing the step. Found on Xiaomi:
+the refusal made a GitHub external-link click verify wait 15s for nothing.
+
+**History in client routers.** `back` counts main-frame commits. When none
+happened the step stayed in one document (pushState), and the reply says so:
+GitHub's router was seen on Xiaomi and on the hosting phone keeping the Issues
+view under the repository address. The remedy is `reload`, not more waiting.
+
+**Network and permissions.** The host disables file/content access, script
+popups, automatic downloads, uploads, third-party cookies, and camera/microphone
 grants. URL checks block non-web schemes, local literals/names, private and
 reserved ranges (including 0/8, 198.18/15, 240/4 and NAT64 with an embedded
 private IPv4), private DNS answers and unresolved hosts. The host checks

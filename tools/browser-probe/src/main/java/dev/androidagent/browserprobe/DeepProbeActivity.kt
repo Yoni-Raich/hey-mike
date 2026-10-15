@@ -68,6 +68,7 @@ class DeepProbeActivity : Activity() {
                     })
                     when (intent.getStringExtra("scenario")) {
                         "sites" -> sites()
+                        "github" -> github()
                         "controls" -> controls()
                         "keyboard" -> keyboard()
                         else -> forms()
@@ -227,12 +228,16 @@ class DeepProbeActivity : Activity() {
                 if (name == "github") {
                     // History updates the URL before GitHub's client router
                     // restores the repository body. Verify that body as well.
-                    call("$name-$index-repository-ready", """{"operation":"wait","text":"html.spec.whatwg.org/multipage/","timeoutMs":15000}""")
+                    val backReply = lastReply
+                    if (!call("$name-$index-repository-ready", """{"operation":"wait","text":"html.spec.whatwg.org/multipage/","timeoutMs":5000}""", required = false)) {
+                        // The router kept the Issues view: apply the reply's remedy.
+                        if (!backReply.contains("same document")) failures++
+                        call("$name-$index-reload", """{"operation":"reload","verify":{"text":"html.spec.whatwg.org/multipage/","timeoutMs":15000}}""")
+                    }
                     val external = eval("JSON.stringify(Array.from(document.querySelectorAll('a[href]')).filter(a=>a.href==='https://html.spec.whatwg.org/multipage/' && a.getClientRects().length).map(a=>({text:a.textContent.trim(),href:a.href})))")
                     row("$name-$index-cross-site-link", external ?: JsonNull)
-                    // GitHub deliberately opens this external link in a popup;
-                    // the browser refuses popups. Observe that refusal, then
-                    // navigate to the already observed URL in the same page.
+                    // GitHub opens this external link in a new window. The
+                    // browser opens it in this page instead; check the destination.
                     val beforeClick = host.session(key).inputs
                     var popupClicked = call("$name-$index-popup-link", """{"operation":"click","text":"html.spec.whatwg.org/multipage/","role":"link"}""", required = false)
                     if (!popupClicked && lastReply.contains("error: stale_ref") && host.session(key).inputs == beforeClick) {
@@ -244,18 +249,55 @@ class DeepProbeActivity : Activity() {
                         popupClicked = call("$name-$index-popup-link-resumed", """{"operation":"click","text":"html.spec.whatwg.org/multipage/","role":"link"}""", required = false)
                     }
                     if (!popupClicked) failures++
-                    val popupRefused = lastReply.contains("popup was refused") && host.session(key).location().first.startsWith("https://github.com/whatwg/html")
-                    row("$name-$index-popup-verdict", buildJsonObject { put("pass", popupRefused) })
-                    if (!popupRefused) failures++
-                    call("$name-$index-cross-site-open", """{"operation":"open","url":"https://html.spec.whatwg.org/multipage/"}""")
                     val destination = host.session(key).location().first
-                    row("$name-$index-cross-site-verdict", buildJsonObject { put("url", destination); put("pass", destination.startsWith("https://html.spec.whatwg.org/multipage/")) })
-                    if (!destination.startsWith("https://html.spec.whatwg.org/multipage/")) failures++
+                    val followed = lastReply.contains("opened in this page instead") && destination.startsWith("https://html.spec.whatwg.org/multipage/")
+                    row("$name-$index-cross-site-verdict", buildJsonObject { put("url", destination); put("pass", followed) })
+                    if (!followed) failures++
                     call("whatwg-$index-read", """{"operation":"snapshot","maxChars":16000,"force":true}""")
                 }
             }
         }
         call("sites-show", """{"operation":"show"}""")
+    }
+
+    /**
+     * The hosting phone's reported GitHub route, as a model drives it: click
+     * Issues by snapshot ref, go Back, then record what the body shows, not
+     * only the address. Also clicks the external target=_blank link.
+     */
+    private suspend fun github() {
+        val repo = "https://github.com/whatwg/html"
+        repeat(5) { index ->
+            val p = "gh-$index"
+            call("$p-open", buildJsonObject { put("operation", "open"); put("url", repo) })
+            val ref = Regex("""(?m)^link "(Issues[^"]*)" \[([^]]+)]""").find(lastReply)?.groupValues?.get(2)
+            row("$p-issues-ref", JsonPrimitive(ref ?: "none"))
+            val clicked = call("$p-click-issues", buildJsonObject {
+                put("operation", "click")
+                if (ref != null) put("ref", ref) else { put("text", "Issues"); put("role", "link") }
+                put("verify", buildJsonObject { put("url", "/whatwg/html/issues"); put("timeoutMs", 15000) })
+            })
+            if (!clicked) return@repeat
+            call("$p-back", buildJsonObject {
+                put("operation", "back"); put("verify", buildJsonObject { put("url", repo); put("timeoutMs", 15000) })
+            })
+            for (sample in listOf(0L, 3000L, 8000L)) {
+                if (sample > 0) delay(sample - if (sample == 8000L) 3000L else 0L)
+                row("$p-body-${sample}ms", eval("""JSON.stringify({url:location.href,title:document.title,
+                    readme:!!document.querySelector('article.markdown-body, #readme'),
+                    issuesList:!!document.querySelector('[data-testid="list-view-items"], [aria-label="Issues"] li'),
+                    error:/error while loading|Please reload this page/i.test(document.body.innerText),
+                    head:document.body.innerText.replace(/\s+/g,' ').slice(0,300)})""") ?: JsonNull)
+            }
+            val restored = eval("!!document.querySelector('article.markdown-body, #readme')")?.jsonPrimitive?.booleanOrNull == true
+            if (!restored && lastReply.contains("same document")) {
+                // The product's remedy for a client router that did not restore its view.
+                call("$p-reload", """{"operation":"reload","verify":{"text":"html.spec.whatwg.org/multipage/","timeoutMs":15000}}""")
+            }
+            val external = call("$p-external", """{"operation":"click","text":"html.spec.whatwg.org/multipage/","role":"link","verify":{"url":"html.spec.whatwg.org","timeoutMs":15000}}""", required = false)
+            row("$p-external-result", buildJsonObject { put("ok", external); put("url", host.session(key).location().first) })
+        }
+        call("gh-show", """{"operation":"show"}""")
     }
 
     private suspend fun keyboard() {

@@ -156,6 +156,18 @@ class BrowserSession(
 
     val isOpen: Boolean get() = cdp.isOpen
 
+    /**
+     * A link asked for a new window and the host is loading its address in
+     * this page instead. Settling waits for that page; it is cleared when the
+     * page commits or the host gives up.
+     */
+    @Volatile private var popup = false
+
+    fun popupOpening(opening: Boolean) { popup = opening }
+
+    /** Main-frame documents committed; a history step that leaves it unchanged stayed in the same document. */
+    @Volatile private var documents = 0L
+
     private fun sent() { inputs += 1 }
 
     /** Something that happened to the page outside an action: the host adds a blocked link, a refused download. */
@@ -174,6 +186,8 @@ class BrowserSession(
                 "Page.javascriptDialogOpening" -> answerDialog(params)
                 "Page.downloadWillBegin" ->
                     note("A download was refused: ${params["url"]?.jsonPrimitive?.contentOrNull.orEmpty().take(120)}")
+                "Page.frameNavigated" ->
+                    if ((params["frame"] as? JsonObject)?.get("parentId") == null) { documents += 1; popup = false }
             }
         }
         runCatching { cdp.call("Page.setDownloadBehavior", buildJsonObject { put("behavior", "deny") }) }
@@ -226,12 +240,16 @@ class BrowserSession(
             throw WebFailure("no_history", "There is no earlier page to go back to.")
         }
         val id = (entries[index - 1] as JsonObject)["id"]!!.jsonPrimitive.intOrNull ?: 0
+        val before = documents
         sent()
         cdp.call("Page.navigateToHistoryEntry", buildJsonObject { put("entryId", id) })
         awaitLoad(LOAD_TIMEOUT_MS)
         settle(SETTLE_MS)
         enforcePolicy()
-        WebAction("back")
+        // A client-side router restores the earlier view itself, and can fail
+        // to while the address already shows the earlier page.
+        WebAction("back", listOfNotNull(("The page went back by script, in the same document. If its content " +
+            "does not match the address, reload instead of waiting.").takeIf { documents == before }))
     }
 
     suspend fun reload(): WebAction = lock.withLock {
@@ -1062,6 +1080,25 @@ class BrowserSession(
     }
 
     /**
+     * Wait for the DOM to go quiet. A navigation that commits during the wait
+     * destroys the document being watched; that is the page reacting, not a
+     * failure, so the new document is waited for and watched instead.
+     */
+    private suspend fun quiet(maxMs: Long) {
+        while (true) {
+            try {
+                agentValue(mainFrame(), "__mike.settle($QUIET_MS, $maxMs)", timeoutMs = maxMs)
+                return
+            } catch (failure: CdpException) {
+                if (failure.code == CdpClient.TIMEOUT_CODE || !failure.message.contains("context", ignoreCase = true)) throw failure
+                coroutineContext[BrowserTimings]?.count("navigationReadRaces")
+                delay(POLL_MS)
+                while (!documentReady()) delay(POLL_MS)
+            }
+        }
+    }
+
+    /**
      * Give the page a moment to finish reacting: a navigation the action
      * started, then the DOM going quiet. Bounded, because some pages never do.
      */
@@ -1069,10 +1106,17 @@ class BrowserSession(
         val settled = withTimeoutOrNull(maxMs) {
             delay(50)
             while (!documentReady()) delay(POLL_MS)
-            agentValue(mainFrame(), "__mike.settle($QUIET_MS, $maxMs)", timeoutMs = maxMs)
+            quiet(maxMs)
+            if (popup) {
+                // A link meant for a new window is loading here instead.
+                while (popup) delay(POLL_MS)
+                while (!documentReady()) delay(POLL_MS)
+                quiet(maxMs)
+            }
             true
         }
         if (settled != true) {
+            popup = false
             coroutineContext[BrowserTimings]?.count("settleBudgetExpired")
             note("The page did not settle within ${maxMs}ms. The input was sent once; inspect the page or wait for a specific target before continuing.")
         }
