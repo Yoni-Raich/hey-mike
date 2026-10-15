@@ -824,9 +824,17 @@ class BrowserSession(
     /** CDP's hit test starts at the top viewport, so a parent overlay cannot be missed. */
     private suspend fun globallyReachable(found: Found): Boolean {
         val point = centre(element(found)) ?: return false
+        // Quads (and native touch input) use the visual viewport. CDP's DOM
+        // hit test uses document coordinates. Android's keyboard can pan the
+        // visual viewport without scrolling the document. Keep input in
+        // visual coordinates and translate only this hit test, including for
+        // child frames whose quads are relative to the top viewport.
+        val viewport = cdp.call("Page.getLayoutMetrics")["cssVisualViewport"] as? JsonObject
+        val x = point.first + (viewport?.get("pageX")?.jsonPrimitive?.doubleOrNull ?: 0.0)
+        val y = point.second + (viewport?.get("pageY")?.jsonPrimitive?.doubleOrNull ?: 0.0)
         val hit = cdp.call("DOM.getNodeForLocation", buildJsonObject {
-            put("x", kotlin.math.round(point.first).toInt())
-            put("y", kotlin.math.round(point.second).toInt())
+            put("x", kotlin.math.round(x).toInt())
+            put("y", kotlin.math.round(y).toInt())
             put("includeUserAgentShadowDOM", true)
         })
         if (hit["frameId"]?.jsonPrimitive?.contentOrNull != found.frameId) return false

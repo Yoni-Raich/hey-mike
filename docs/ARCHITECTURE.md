@@ -426,6 +426,19 @@ one is refused (`not_focused`), so text never lands in another field.
 after the approval; otherwise it reports the completed fill (`completedAction`)
 and sends nothing.
 
+The global hit test uses document coordinates: add `cssVisualViewport.pageX`
+and `pageY` to the visual point returned by `DOM.getContentQuads`. This covers
+both document scrolling and the visual viewport pan caused by Android's
+keyboard. Native touch keeps the original visual point. Using only viewport
+offsets misses document scrolling; using the raw quad can falsely report a
+visible radio as obscured or produce `No node found at given location`.
+Agent scrolling and field focus use instant scrolling, so a site's smooth
+scroll CSS cannot leave the next step testing a control still in motion.
+Visibility traversal also follows rendered children of `display:contents`
+wrappers, which have no box of their own. A rendered-range check preserves
+those children without exposing `aria-hidden`, hidden wrappers or
+`display:none` subtrees. MDN's main article uses this layout.
+
 **Input.** CDP types text and captures page PNGs. Android touch uses
 `WebViewInput`: the DOM point becomes a touchscreen-sourced finger
 `MotionEvent` delivered to this app's WebView, which preserves trusted input

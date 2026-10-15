@@ -46,7 +46,15 @@
   const visible = (el) => {
     if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
     if (typeof el.checkVisibility === 'function') {
-      return el.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true });
+      if (el.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true })) return true;
+      // display:contents has no box of its own. Pruning it loses its visible
+      // children (for example MDN's article). Check rendered descendant boxes
+      // while still excluding hidden wrappers and display:none ancestors.
+      const style = getComputedStyle(el);
+      if (style.display !== 'contents' || style.visibility === 'hidden' || style.contentVisibility === 'hidden') return false;
+      const range = el.ownerDocument.createRange();
+      range.selectNodeContents(el);
+      return Array.from(range.getClientRects()).some((r) => r.width > 0 && r.height > 0);
     }
     const style = getComputedStyle(el);
     return style.display !== 'none' && style.visibility !== 'hidden';
@@ -469,7 +477,7 @@
   const focusForTyping = (ref) => {
     const el = byRef(ref);
     if (!el) return false;
-    el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     el.focus();
     if (el.isContentEditable) {
       const range = document.createRange();
@@ -542,13 +550,15 @@
     if (ref !== undefined && ref !== null) {
       const el = byRef(ref);
       if (!el) return { error: 'stale_ref' };
-      el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      // Ignore a site's smooth-scroll CSS: the next step must hit the final
+      // position, not a control that is still moving toward the viewport.
+      el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     } else {
       const target = mainScroller();
       const step = Math.round((target === document.scrollingElement ? innerHeight : target.clientHeight) * 0.8);
-      if (direction === 'top') target.scrollTop = 0;
-      else if (direction === 'bottom') target.scrollTop = target.scrollHeight;
-      else target.scrollTop += direction === 'up' ? -step : step;
+      const top = direction === 'top' ? 0 : direction === 'bottom' ? target.scrollHeight :
+        target.scrollTop + (direction === 'up' ? -step : step);
+      target.scrollTo({ top, behavior: 'instant' });
     }
     const target = mainScroller();
     return {

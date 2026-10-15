@@ -188,6 +188,91 @@ class BrowserIntegrationTest {
         Unit
     }
 
+    /** Xiaomi WebView quads are visual coordinates; DOM hit testing uses layout coordinates. */
+    private suspend fun pannedClick(wrongFrame: Boolean): Pair<ToolResult, Int> {
+        val offsetX = 7.0
+        val offsetY = 12.0
+        var taps = 0
+        val connection = object : CdpConnection by cdp {
+            override suspend fun call(method: String, params: JsonObject, timeoutMs: Long): JsonObject {
+                val result = cdp.call(method, params, timeoutMs)
+                return when (method) {
+                    "DOM.getContentQuads" -> JsonObject(result + ("quads" to buildJsonArray {
+                        result["quads"]!!.jsonArray.forEach { quad -> add(buildJsonArray {
+                            quad.jsonArray.forEachIndexed { index, p -> add(p.jsonPrimitive.double - if (index % 2 == 0) offsetX else offsetY) }
+                        }) }
+                    }))
+                    "Page.getLayoutMetrics" -> JsonObject(result + ("cssVisualViewport" to buildJsonObject {
+                        put("offsetX", offsetX); put("offsetY", offsetY)
+                        put("pageX", offsetX); put("pageY", offsetY)
+                    }))
+                    "DOM.getNodeForLocation" -> if (wrongFrame) JsonObject(result + ("frameId" to JsonPrimitive("covered-frame"))) else result
+                    else -> result
+                }
+            }
+        }
+        page = BrowserSession(connection, policy, BrowserSession.Pointer.TOUCH, nativeTap = { x, y ->
+            taps++
+            // The native Android view consumes visual coordinates. This desktop
+            // fixture has no keyboard pan, so translate only its input adapter.
+            for (type in listOf("mousePressed", "mouseReleased")) cdp.call("Input.dispatchMouseEvent", buildJsonObject {
+                put("type", type); put("button", "left"); put("clickCount", 1)
+                put("x", x + offsetX); put("y", y + offsetY)
+            })
+        }) { true }
+        page.start()
+        val pannedGateway = WebToolGateway(host(page)).also { it.beginRun("panned", directory) }
+        return pannedGateway.invoke("browser", Json.parseToJsonElement("""{"operation":"click","text":"Apply"}""").jsonObject) to taps
+    }
+
+    @Test fun pannedNativeTapKeepsVisualCoordinatesAndTranslatesTheHitTest() = runBlocking {
+        val (result, taps) = pannedClick(wrongFrame = false)
+        assertTrue(result.text, result.success)
+        assertEquals(1, taps)
+        assertEquals(JsonPrimitive(1), value("clicks"))
+    }
+
+    @Test fun pannedHitTestStillRefusesAnotherFrameBeforeTapping() = runBlocking {
+        val (result, taps) = pannedClick(wrongFrame = true)
+        assertFalse(result.text, result.success)
+        assertTrue(result.text, result.text.contains("obscured"))
+        assertEquals(0, taps)
+        assertEquals(JsonPrimitive(0), value("clicks"))
+    }
+
+    @Test fun aClickAfterScrollingUsesDocumentCoordinatesForTheHitTest() = runBlocking {
+        value("""document.body.insertAdjacentHTML('beforeend','<button id="below" style="display:block;margin-top:1800px" onclick="clicks++">Below fold</button>');1""")
+        val result = call("""{"operation":"click","text":"Below fold","verify":{"text":"Below fold"}}""")
+        assertTrue(result.text, result.success)
+        assertTrue(value("scrollY")!!.jsonPrimitive.double > 1000)
+        assertEquals(JsonPrimitive(1), value("clicks"))
+    }
+
+    @Test fun aClickCanScrollPastCssSmoothScrollingBeforeHitTesting() = runBlocking {
+        value("""document.documentElement.style.scrollBehavior='smooth';document.body.insertAdjacentHTML('beforeend','<button id="below" style="display:block;margin-top:1800px" onclick="clicks++">Below fold</button>');1""")
+        val result = call("""{"operation":"click","text":"Below fold"}""")
+        assertTrue(result.text, result.success)
+        assertEquals(JsonPrimitive(1), value("clicks"))
+    }
+
+    @Test fun displayContentsKeepsItsVisibleChildrenReadableAndActionable() = runBlocking {
+        value("""document.querySelector('article').insertAdjacentHTML('beforeend','<section style="display:contents"><label>Contents field<input id=contents></label><button onclick="clicks++">Wrapped action</button><p>Wrapped article text.</p></section>');1""")
+        val snapshot = call("""{"operation":"snapshot","force":true}""")
+        assertTrue(snapshot.text, snapshot.text.contains("Contents field"))
+        val result = call("""{"operation":"plan","steps":[{"operation":"fill","text":"Contents field","value":"kept"},{"operation":"click","text":"Wrapped action"}]}""")
+        assertTrue(result.text, result.success)
+        assertEquals(JsonPrimitive("kept"), value("contents.value"))
+        assertEquals(JsonPrimitive(1), value("clicks"))
+        assertTrue(call("""{"operation":"read"}""").text.contains("Wrapped article text"))
+    }
+
+    @Test fun displayContentsDoesNotExposeAriaHiddenOrDisplayNoneSubtrees() = runBlocking {
+        value("""document.body.insertAdjacentHTML('beforeend','<section style="display:contents" aria-hidden="true"><button>Hidden contents action</button></section><div style="display:none"><section style="display:contents"><button>Hidden ancestor action</button></section></div>');1""")
+        val result = call("""{"operation":"snapshot","force":true}""")
+        assertFalse(result.text.contains("Hidden contents action"))
+        assertFalse(result.text.contains("Hidden ancestor action"))
+    }
+
     @Test fun planTypesWithTrustedInputAndClicksOnce() = runBlocking {
         val result = call("""{"operation":"plan","steps":[{"operation":"fill","text":"Query","value":"a & b  שאלה"},{"operation":"fill","text":"Address","value":"value"},{"operation":"click","text":"Apply","verify":{"text":"Applied a & b שאלה true"}}]}""")
         assertTrue(result.text, result.success)
