@@ -1,5 +1,28 @@
 # Progress
 
+### Pinned chats and projects: hosting-phone update — 2026-10-18
+
+PR #137 adds long-press Pin/Unpin for chats and projects and a searchable
+Pinned tab beside the computer tabs. Pins are local to each phone. The source
+includes current dev's internal browser and persistent Claude ownership fix.
+
+In the isolated `hey-mike-pin` worktree, `:app:assembleDevDebug
+:app:testDevDebugUnitTest :app:lintDevDebug --no-daemon` passed with version
+overrides 1158 / `0.14.0-dev.browser-pin-owner`, in-process Kotlin and two
+workers. App unit tests: 168, zero failures/errors/skips; ChatLibraryTest: 4.
+APK metadata, signature verification, 16 KiB zip alignment and diff check
+passed. The APK is Dev Debug, signed with the local Android test key.
+SHA-256: `7D0DEA706423627CCE4765F3772AAED6FC6A59646425E20016D826ABC24F4BA8`.
+`version.properties` now records those same overrides.
+
+The exact APK was copied through `copy_file` to the hosting phone and saved
+as `Download/hey-mike-pin-1158.apk`. Fresh `apps_settings(app_info)` reports
+`dev.androidagent.app.dev`, code 1158, matching version name. The user reports
+the feature works well on this phone (Nothing in this chat); this is user UI
+confirmation, not an automated visual check. No app data was cleared.
+Not checked: installed base.apk hash, automated Pin/Unpin/persistence UI flow,
+or the full release gate. Transfer success alone does not measure delta bytes.
+
 ### Internal browser: dev integration and panel handoff review — 2026-10-15
 
 Merged current `origin/dev` (`816be90`) into the browser branch as `5d005c8`.

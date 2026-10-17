@@ -1,5 +1,14 @@
 # Architecture
 
+## Pinned chats and projects — 2026-10-18
+
+`AgentViewModel` stores pinned library chat and project keys in the `pins`
+string set in the phone's `ui` preferences. Pin state is local to that phone.
+Long-press menus toggle a key. `ChatLibraryDrawer` exposes a Pinned place
+beside the device tabs, with the same search filter; without a device rail,
+pinned chats appear first. Pins reference existing library entries and do
+not copy chat content or project files.
+
 ## APK delta copies — 2026-10-12
 
 `copy_file` keeps its API. `ComputerPlace` sends APK downloads through
