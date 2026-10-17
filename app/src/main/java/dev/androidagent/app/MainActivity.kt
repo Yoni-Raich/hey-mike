@@ -360,6 +360,7 @@ class MainActivity : ComponentActivity() {
         onTogglePlanMode = model::togglePlanMode,
         onShowStatus = model::showStatus,
         onDeleteSession = { model.delete(it) },
+        onTogglePin = model::togglePin,
         onRetry = { model.prepare() },
         onDismissError = { model.editUi { it.copy(errorMessage = null) } },
         onOpenWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = true) }; model.listFiles() },

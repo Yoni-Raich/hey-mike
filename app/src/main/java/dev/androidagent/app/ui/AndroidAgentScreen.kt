@@ -70,6 +70,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -465,6 +466,8 @@ internal fun SessionRow(
     onSelect: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    pinned: Boolean = false,
+    onTogglePin: (() -> Unit)? = null,
     subtitle: String? = null,
     subtitleIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     leading: (@Composable () -> Unit)? = null,
@@ -529,10 +532,18 @@ internal fun SessionRow(
                         }
                     }
                 }
+                if (pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.size(14.dp), tint = Color(0xFF6C6A64))
             }
         }
         Box(Modifier.align(Alignment.TopEnd)) {
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                onTogglePin?.let { toggle ->
+                    DropdownMenuItem(
+                        text = { Text(if (pinned) "Unpin" else "Pin") },
+                        leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },
+                        onClick = { menuOpen = false; toggle() },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Rename") },
                     leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
