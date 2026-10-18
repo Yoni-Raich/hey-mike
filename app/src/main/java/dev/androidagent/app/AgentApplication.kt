@@ -355,6 +355,14 @@ class AgentGraph(private val app: Application) {
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
         listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
             computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), capabilityTools, a11yTools, adbTools),
+        runtimeVersions = {
+            val claude = claudeHost.updates.activePin.version.takeIf {
+                claudeHost.installState.value.phase == dev.androidagent.runtime.ClaudeInstallPhase.INSTALLED
+            } ?: "not installed"
+            "Versions on phone: Mike ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), " +
+                "Codex ${runtime.bundledVersion ?: "unknown"} (bundled in APK), Claude Code $claude. " +
+                "${runtime.updates.state.value.message}. Computer versions are in computers(mode=status)."
+        },
     )
     /**
      * The shared surface: the workflow router, automations and voice use it.
@@ -486,7 +494,11 @@ class AgentGraph(private val app: Application) {
         scope.launch(Dispatchers.IO) {
             runCatching { claudeHost.refresh() }
             appInFront.collect { foreground ->
-                if (foreground) scope.launch { claudeHost.checkForUpdates() }
+                if (foreground) {
+                    scope.launch { claudeHost.checkForUpdates() }
+                    scope.launch { runtime.updates.check() }
+                    scope.launch { remote.checkCodexUpdates() }
+                }
             }
         }
         scope.launch {
@@ -494,7 +506,11 @@ class AgentGraph(private val app: Application) {
                 // The persisted 15-minute throttle owns network checks; a one-minute
                 // wake-up avoids missing its deadline after a foreground transition.
                 kotlinx.coroutines.delay(60_000)
-                if (appInFront.value) scope.launch { claudeHost.checkForUpdates() }
+                if (appInFront.value) {
+                    scope.launch { claudeHost.checkForUpdates() }
+                    scope.launch { runtime.updates.check() }
+                    scope.launch { remote.checkCodexUpdates() }
+                }
             }
         }
         // Separate from the skills so a failed skill install cannot leave the

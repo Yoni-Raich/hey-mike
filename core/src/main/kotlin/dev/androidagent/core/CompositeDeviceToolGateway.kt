@@ -41,6 +41,7 @@ import java.io.File
  */
 class CompositeDeviceToolGateway(
     private val members: List<DeviceToolGateway>,
+    private val runtimeVersions: () -> String? = { null },
 ) : DeviceToolGateway {
 
     init {
@@ -122,7 +123,7 @@ class CompositeDeviceToolGateway(
         routes[name]?.firstOrNull()?.hidesOverlayDuringCapture(name) ?: false
 
     override fun statusLine(): String? =
-        members.mapNotNull { it.statusLine() }.joinToString(" | ").takeIf { it.isNotEmpty() }
+        (members.mapNotNull { it.statusLine() } + listOfNotNull(runtimeVersions())).joinToString(" | ").takeIf { it.isNotEmpty() }
 
     /**
      * The union over live members, restricted to what this composite actually
@@ -210,7 +211,8 @@ class CompositeDeviceToolGateway(
         const val DEVICE_STATUS = "device_status"
         const val DEVICE_STATUS_DESCRIPTION =
             "Report which device backends are live: the accessibility service, which serves screen control, " +
-                "and the optional Wireless ADB. Read-only."
+                "and the optional Wireless ADB, plus Mike and installed phone engine versions. " +
+                "Use computers(mode=status) for computer engine versions. Read-only."
 
         const val ADB_NOT_CONNECTED = "adb_not_connected"
 

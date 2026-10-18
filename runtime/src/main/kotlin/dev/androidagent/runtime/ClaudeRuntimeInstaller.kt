@@ -40,16 +40,22 @@ import kotlinx.coroutines.withContext
 /** A Claude Code build, from the bundled pin or a verified official release manifest. */
 data class ClaudeBinaryPin(val version: String, val url: String, val sha256: String, val size: Long) {
     companion object {
-        /** Official 2.1.293 linux-arm64-musl manifest, verified for Haiku 5.5. */
+        /** Official stable linux-arm64-musl manifest. */
         val CURRENT = ClaudeBinaryPin(
-            version = "2.1.293",
-            url = "https://downloads.claude.ai/claude-code-releases/2.1.293/linux-arm64-musl/claude",
-            sha256 = "00755ae106b6925c1adb2b17e4c6d9b0c41eb4cc55bcad3581345b0aa3176c85",
-            size = 244_463_424L,
+            version = "2.1.302",
+            url = "https://downloads.claude.ai/claude-code-releases/2.1.302/linux-arm64-musl/claude",
+            sha256 = "58dd401b704351f4b70a0bb6faecbc1eb1405057b4dd4cf48a7beae93b4ca143",
+            size = 277_560_568L,
         )
 
         /** Previously shipped pin. Only these exact verified bytes may be reused during upgrade. */
         val LEGACY = listOf(
+            ClaudeBinaryPin(
+                version = "2.1.293",
+                url = "https://downloads.claude.ai/claude-code-releases/2.1.293/linux-arm64-musl/claude",
+                sha256 = "00755ae106b6925c1adb2b17e4c6d9b0c41eb4cc55bcad3581345b0aa3176c85",
+                size = 244_463_424L,
+            ),
             ClaudeBinaryPin(
                 version = "2.1.285",
                 url = "https://downloads.claude.ai/claude-code-releases/2.1.285/linux-arm64-musl/claude",

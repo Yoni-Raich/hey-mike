@@ -81,6 +81,17 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
     private val _status = MutableStateFlow(RuntimeStatus())
     override val status: StateFlow<RuntimeStatus> = _status
 
+    /** Read the installed APK's own manifest, never a hard-coded display label. */
+    val bundledVersion: String? by lazy {
+        runCatching {
+            appContext.assets.open("runtime/runtime-manifest.json").bufferedReader().use {
+                val manifest = kotlinx.serialization.json.Json.parseToJsonElement(it.readText()) as kotlinx.serialization.json.JsonObject
+                (manifest["version"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }
+        }.getOrNull()
+    }
+    val updates = CodexUpdateCheck(File(appContext.filesDir, "runtime/codex-update-check.json"), { bundledVersion })
+
     /** <files>/runtime : root of all app-private runtime state. */
     val runtimeRoot: File get() = File(appContext.filesDir, "runtime")
 
@@ -377,7 +388,7 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
     }
 
     private fun setStatus(phase: RuntimePhase, message: String) {
-        _status.value = RuntimeStatus(phase = phase, message = message)
+        _status.value = RuntimeStatus(phase = phase, message = message, version = bundledVersion)
     }
 
 
@@ -424,7 +435,6 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
             "codex-path/rg" to "libcodex_rg.so",
             "codex-path/bwrap" to "libcodex_bwrap.so",
             "codex-resources/bwrap" to "libcodex_bwrap.so",
-            "codex-resources/zsh/bin/zsh" to "libcodex_zsh.so",
         )
 
         /**

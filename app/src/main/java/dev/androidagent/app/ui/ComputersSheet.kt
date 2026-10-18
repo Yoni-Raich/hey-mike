@@ -269,6 +269,7 @@ private fun ColumnScope.ComputerList(
                 computer = computer,
                 isDefault = computer.id == state.defaultComputerId,
                 setup = state.computerSetup[computer.id],
+                codex = state.computerCodexVersions[computer.id],
                 claude = state.computerClaude[computer.id],
                 claudeSignIn = state.computerClaudeSignIn[computer.id],
                 actions = actions,
@@ -311,6 +312,7 @@ private fun ComputerCard(
     computer: RemoteComputer,
     isDefault: Boolean,
     setup: RemoteSetup?,
+    codex: dev.androidagent.remote.CodexComputerVersion?,
     claude: dev.androidagent.remote.ComputerClaude?,
     claudeSignIn: dev.androidagent.remote.ComputerClaudeSignInState?,
     actions: AgentUiActions,
@@ -360,6 +362,17 @@ private fun ComputerCard(
             }
         }
         SetupLine(computer, setup, actions)
+        if (setup is RemoteSetup.Ready) {
+            Column(Modifier.padding(start = 32.dp, top = 8.dp)) {
+                DetailLine("Codex", codex?.running ?: codex?.selected ?: setup.probe.codexVersion)
+                if (codex?.running != null && codex.selected != codex.running) {
+                    Text("${codex.selected} ready for the next start", fontSize = 12.sp, color = ReadyInk)
+                }
+                claude?.takeIf { it.installed }?.let { DetailLine("Claude", it.version.removeSuffix(" (Claude Code)")) }
+                if (codex?.automatic == true) Text("Codex updates automatically", fontSize = 12.sp, color = Muted)
+                codex?.updateMessage?.let { Text(it, fontSize = 12.sp, color = Muted) }
+            }
+        }
         ComputerClaudeSetup(computer, claude, claudeSignIn, actions, enabled = !busy)
         Button(
             onClick = { actions.onConnectComputer(computer.id) },

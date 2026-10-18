@@ -122,6 +122,13 @@ class ComputerToolGateway(
                         put("default", c.id == state.defaultComputerId)
                         put("status", describe(setup))
                         put("system", c.os?.label ?: "not known yet")
+                        hub.codexVersions.value[c.id]?.let { version ->
+                            put("codexVersion", version.running ?: version.selected)
+                            put("codexSelectedVersion", version.selected)
+                            put("codexAutomaticUpdates", version.automatic)
+                            version.updateMessage?.let { put("codexUpdateMessage", it) }
+                        }
+                        hub.claudeState.value[c.id]?.takeIf { it.installed }?.let { put("claudeCodeVersion", it.version) }
                         put("access", if (c.access == RemoteAccess.ASK) "asks before commands outside the project" else "full access")
                         put("projects", buildJsonArray { projects(c.id).forEach { add(it) } })
                         put("recentConversations", buildJsonArray {

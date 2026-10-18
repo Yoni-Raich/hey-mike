@@ -33,6 +33,17 @@ import org.junit.Test
 import java.io.File
 
 class CompositeDeviceToolGatewayTest {
+    @Test fun versionsReachBothRuntimeSnapshotAndDeviceStatusWithoutADeviceCall() = runBlocking {
+        val member = FakeGateway("offline", tools = listOf("device_status"))
+        var selected = "Versions on phone: Codex 0.163.0, Claude Code 2.1.302"
+        val gateway = CompositeDeviceToolGateway(listOf(member), runtimeVersions = { selected })
+        assertTrue(gateway.statusLine()!!.contains(selected))
+        assertTrue(gateway.invoke("device_status", empty()).text.contains(selected))
+        selected = "Versions on phone: Codex 0.163.0, Claude Code 2.1.303"
+        assertTrue(gateway.invoke("device_status", empty()).text.contains("2.1.303"))
+        assertTrue(member.invoked.isEmpty())
+    }
+
     @Test fun assistantSnapshotRoutesReadOnlyWithoutArmingAnyGateway() = runBlocking {
         val absent = FakeGateway("absent", emptyList())
         val available = FakeGateway("a11y", listOf("read_ui"))

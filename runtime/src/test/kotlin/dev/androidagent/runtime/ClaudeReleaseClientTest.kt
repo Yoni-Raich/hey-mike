@@ -17,12 +17,12 @@ import org.junit.Test
 
 class ClaudeReleaseClientTest {
     private fun bytes(name: String) = javaClass.getResourceAsStream("/claude/$name")!!.use { it.readBytes() }
-    private val manifest get() = bytes("manifest-2.1.293.json")
-    private val signature get() = bytes("manifest-2.1.293.json.sig")
+    private val manifest get() = bytes("manifest-2.1.302.json")
+    private val signature get() = bytes("manifest-2.1.302.json.sig")
 
     @Test fun officialSignedManifestMatchesBundledPin() {
         ClaudeReleaseClient.verifySignature(manifest, signature)
-        assertEquals(ClaudeBinaryPin.CURRENT, ClaudeReleaseClient.parseManifest("2.1.293", manifest.toString(Charsets.UTF_8)))
+        assertEquals(ClaudeBinaryPin.CURRENT, ClaudeReleaseClient.parseManifest("2.1.302", manifest.toString(Charsets.UTF_8)))
     }
 
     @Test fun changedManifestCannotUseOriginalSignature() {
@@ -40,7 +40,7 @@ class ClaudeReleaseClientTest {
         val client = ClaudeReleaseClient { url ->
             requests += url.toString()
             val body = when {
-                url.path.endsWith("/latest") -> "2.1.293\n".toByteArray()
+                url.path.endsWith("/latest") -> "2.1.302\n".toByteArray()
                 url.path.endsWith(".sig") -> signature
                 else -> manifest
             }
@@ -49,8 +49,8 @@ class ClaudeReleaseClientTest {
         assertEquals(ClaudeBinaryPin.CURRENT, client.latest())
         assertEquals(listOf(
             "${ClaudeReleaseClient.BASE}/latest",
-            "${ClaudeReleaseClient.BASE}/2.1.293/manifest.json",
-            "${ClaudeReleaseClient.BASE}/2.1.293/manifest.json.sig",
+            "${ClaudeReleaseClient.BASE}/2.1.302/manifest.json",
+            "${ClaudeReleaseClient.BASE}/2.1.302/manifest.json.sig",
         ), requests)
     }
 
@@ -71,13 +71,13 @@ class ClaudeReleaseClientTest {
         for (bad in listOf(
             text.replace("\"harnessSchema\": 1", "\"harnessSchema\": 2"),
             text.replace("linux-arm64-musl", "unavailable"),
-            text.replace("244463424", "-1"),
-            text.replace("244463424", "99999999999999999999999"),
+            text.replace("277560568", "-1"),
+            text.replace("277560568", "99999999999999999999999"),
             text.replace("\"binary\": \"claude\"", "\"binary\": \"../claude\""),
         )) {
-            assertThrows(Exception::class.java) { ClaudeReleaseClient.parseManifest("2.1.293", bad) }
+            assertThrows(Exception::class.java) { ClaudeReleaseClient.parseManifest("2.1.302", bad) }
         }
-        assertThrows(Exception::class.java) { ClaudeReleaseClient.parseManifest("3.1.293", text.replace("2.1.293", "3.1.293")) }
+        assertThrows(Exception::class.java) { ClaudeReleaseClient.parseManifest("3.1.302", text.replace("2.1.302", "3.1.302")) }
         assertThrows(Exception::class.java) { ClaudeReleaseClient.parseManifest("2.1.294", text) }
     }
 
