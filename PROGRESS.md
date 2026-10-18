@@ -1,6 +1,15 @@
 # Progress
 
-## 0.16.0 release validation — 2026-10-18
+## 0.16.0 final candidate: pin refresh — 2026-10-18
+
+Automated review found the remembered chat filter omitted state.pins. Changing
+only pins therefore left an unpinned chat visible in Pinned. The filter now
+invalidates on pin changes. A Compose regression uses the real long-press
+Unpin action and checks removal while Pinned stays selected. Code 1161
+supersedes the initial 1160 candidate below; final build/UI/phone checks are
+pending. Version name remains 0.16.0, which has not been published.
+
+## 0.16.0 initial candidate validation (1160) — 2026-10-18
 
 Isolated branch `release/0.16.0` merges `origin/dev` c33b1681 into the
 validated `origin/main` fc53294b, retaining both branches' release records.

@@ -140,7 +140,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     val scope = location.takeIf { it in setOf(ChatLibrary.ALL, ChatLibrary.PHONE, ChatLibrary.PINNED) || state.computers.any { c -> c.id == it } }
         ?.takeIf { hasComputers } ?: ChatLibrary.ALL
     val computer = state.computers.firstOrNull { it.id == scope }
-    val chats = remember(started, state.remoteBindings, sections, scope, query) {
+    val chats = remember(started, state.remoteBindings, sections, scope, query, state.pins) {
         ChatLibrary.chats(started, state.remoteBindings, sections, scope, null, query, state.pins)
     }
     val pinnedScope = scope == ChatLibrary.PINNED

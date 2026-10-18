@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.dp
@@ -116,6 +117,25 @@ class ChatLibraryUiTest {
             fixture.copy(pcThreads = mapOf("pc" to listOf(CodexThread("native-claude", "Claude session", "C:\\projects\\app", now, engine = EngineKind.CLAUDE)))))
         compose.onNodeWithText("Claude session").performClick()
         compose.runOnIdle { assertEquals(Triple("pc", "native-claude", EngineKind.CLAUDE), opened) }
+    }
+
+    @Test fun unpinRemovesTheChatFromPinnedWithoutChangingTheScope() {
+        val current = mutableStateOf(fixture.copy(pins = setOf("this-phone:chat-phone-0")))
+        val actions = AgentUiActions(onTogglePin = { key ->
+            current.value = current.value.copy(pins = current.value.pins - key)
+        })
+        compose.setContent {
+            AndroidAgentTheme {
+                Surface(Modifier.fillMaxSize()) { ChatLibraryDrawer(current.value, actions, {}) }
+            }
+        }
+        compose.onNode(hasContentDescription("Pinned") and hasClickAction()).performClick()
+        compose.onNodeWithText("Plan the week").assertIsDisplayed()
+        compose.onNodeWithText("Plan the week").performTouchInput { longClick() }
+        compose.onNodeWithText("Unpin").performClick()
+        compose.onNodeWithText("Plan the week").assertDoesNotExist()
+        compose.onNode(hasContentDescription("Pinned") and hasClickAction()).assertIsSelected()
+        screenshot("library-unpinned-empty")
     }
 
     private fun screenshot(name: String) {

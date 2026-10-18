@@ -7,6 +7,7 @@
 - Mike can browse websites in its own browser, read page controls, fill forms,
   and show you the page when you need to sign in or take over.
 - Pin chats and projects, then find them in the Pinned tab.
+- Unpinning a chat removes it from Pinned at once, without a refresh.
 - Start child chats, follow their live progress, and control them from voice.
 - Continue local Claude Code conversations on your computer, refresh their
   history, and open them in Claude Desktop on Windows.
