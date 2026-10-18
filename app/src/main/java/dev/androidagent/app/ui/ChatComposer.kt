@@ -120,7 +120,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.app.ChatEngines
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
 import dev.androidagent.core.VoicePhase
@@ -168,36 +170,50 @@ internal fun AgentComposer(
     onVoiceButtonPlaced: (Offset) -> Unit = {},
 ) {
     var draft by rememberSaveable(state.activeSessionId) { mutableStateOf("") }
-    // A task Mike wrote for this chat waits here for the user to send.
+    var editedLocally by rememberSaveable(state.activeSessionId) { mutableStateOf(false) }
+    var appliedDraftVersion by rememberSaveable(state.activeSessionId) { mutableStateOf(-1L) }
+    // Stored per chat; reading a draft never consumes it.
     val seed = state.activeSessionId?.let(state.composerSeeds::get)
-    LaunchedEffect(state.activeSessionId, seed) {
-        val id = state.activeSessionId ?: return@LaunchedEffect
-        if (seed != null) {
+    val draftVersion = state.activeSessionId?.let(state.composerDraftVersions::get) ?: 0L
+    LaunchedEffect(state.activeSessionId, seed, draftVersion) {
+        // A delayed echo of local typing must never replace newer keystrokes.
+        // Explicit incoming drafts still replace the field through their version.
+        if (seed != null && (!editedLocally || draftVersion != appliedDraftVersion)) {
             draft = seed
-            actions.onComposerSeedUsed(id)
+            appliedDraftVersion = draftVersion
         }
+    }
+    fun updateDraft(text: String) {
+        editedLocally = true
+        appliedDraftVersion = draftVersion
+        draft = text
+        state.activeSessionId?.let { actions.onComposerDraftChanged(it, text) }
     }
     var choosingModel by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     // A skill picked from the menu rides as a chip until the message is sent.
     var skill by remember(state.activeSessionId) { mutableStateOf<AgentSkill?>(null) }
     var renaming by remember(state.activeSessionId) { mutableStateOf(false) }
-    val voiceActive = state.voiceState.active
-    val active = state.runState.active && state.runState.sessionId == state.activeSessionId && !voiceActive
+    val voiceActive = state.voiceState.active && (state.voiceSessionId == null || state.voiceSessionId == state.activeSessionId)
+    val active = state.runState.active && state.runState.sessionId == state.activeSessionId && !state.runState.delegated && !voiceActive
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)
     val hasDraft = draft.isNotBlank()
-    val canSend = state.activeSessionId != null && hasDraft && !state.isLoadingMessages && !stopping && !voiceStopping
+    val loading = state.isLoadingMessages || state.activeSessionId in state.pcChatLoading ||
+        state.activeSessionId in state.pcSyncing || state.activeSessionId in state.pcDesktopOpening ||
+        (state.activeEngine == EngineKind.CLAUDE && state.activeSessionId in state.pcBusyChats)
+    val compacting = state.activeSessionId in state.compacting
+    val canSend = state.activeSessionId != null && hasDraft && !loading && !stopping && !voiceStopping && !compacting
     val action = composerAction(
         active = active,
         hasDraft = hasDraft,
         runActive = state.runState.active,
         voiceActive = voiceActive,
-        voiceAllowed = ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
+        voiceAllowed = !state.voiceState.active && ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
     )
     val runCommand: (ComposerCommand) -> Unit = { command ->
-        draft = ""
+        updateDraft("")
         when (command) {
             ComposerCommand.NEW -> actions.onNewChat()
             ComposerCommand.COMPACT -> actions.onCompact()
@@ -207,33 +223,45 @@ internal fun AgentComposer(
             ComposerCommand.STATUS -> actions.onShowStatus()
         }
     }
+    val runEngineCommand: (AgentCommand) -> Unit = { command ->
+        skill = null
+        renaming = false
+        if (command.runsAtOnce()) {
+            updateDraft("")
+            actions.onSend(command.draft(), emptyList())
+        } else updateDraft(command.draft())
+    }
     val pickSkill: (AgentSkill) -> Unit = { picked ->
-        draft = draftAfterPicking(picked, draft)
+        updateDraft(draftAfterPicking(picked, draft))
         skill = picked
         renaming = false
     }
     val commandEnabled: (ComposerCommand) -> Boolean = { command ->
         when (command) {
-            ComposerCommand.COMPACT -> !state.runState.active
-            ComposerCommand.MODEL -> !active && !voiceActive
+            ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting
+            ComposerCommand.MODEL -> !active && !voiceActive && !compacting
             ComposerCommand.RENAME -> state.activeSessionId != null
             else -> true
         }
     }
+    // The engine's commands answer between turns, never inside a running one.
+    val engineCommandEnabled = !active && !voiceActive && state.activeSessionId != null && !loading &&
+        state.activeSessionId !in state.compacting
     val submit: () -> Unit = {
-        val text = draft.trim()
-        val command = if (skill == null && !renaming) exactCommand(text) else null
+        val text = draft
+        val command = if (skill == null && !renaming) exactCommand(text.trim()) else null
         when {
+            compacting -> Unit
             renaming -> if (text.isNotEmpty()) {
                 state.activeSessionId?.let { actions.onRenameSession(it, text) }
                 renaming = false
-                draft = ""
+                updateDraft("")
             }
             command != null -> if (commandEnabled(command)) runCommand(command)
-            text.isNotEmpty() -> {
+            text.isNotBlank() -> {
                 val message = withSkill(skill, text)
                 if (active) actions.onSteer(message) else actions.onSend(message, state.attachments)
-                draft = ""
+                updateDraft("")
                 skill = null
             }
             else -> Unit
@@ -244,6 +272,8 @@ internal fun AgentComposer(
         query?.let { q -> state.availableSkills.filter { it.matches(q.text) } }.orEmpty()
     }
     val menuCommands = if (query == null || query.skillsOnly) emptyList() else ComposerCommand.values().filter { it.matches(query.text) }
+    val offeredEngineCommands = remember(state.availableCommands) { engineCommands(state) }
+    val menuEngineCommands = if (query == null || query.skillsOnly) emptyList() else offeredEngineCommands.filter { it.matches(query.text) }
 
     Column(
         Modifier
@@ -264,10 +294,14 @@ internal fun AgentComposer(
             SlashMenu(
                 skills = menuSkills,
                 commands = menuCommands,
+                engineCommands = menuEngineCommands,
+                engineLabel = engineLabel(state.activeEngine),
+                engineCommandEnabled = engineCommandEnabled,
                 query = query.text,
                 commandEnabled = commandEnabled,
                 onSkill = pickSkill,
                 onCommand = runCommand,
+                onEngineCommand = runEngineCommand,
             )
         }
 
@@ -296,10 +330,10 @@ internal fun AgentComposer(
                         }
                     }
                     skill?.let { picked -> SkillChip(picked) { skill = null } }
-                    if (renaming) RenameChip { renaming = false; draft = "" }
+                    if (renaming) RenameChip { renaming = false; updateDraft("") }
                     MessageField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = { updateDraft(it) },
                         enabled = state.activeSessionId != null,
                         placeholder = when {
                             renaming -> "New name for this chat"
@@ -316,7 +350,7 @@ internal fun AgentComposer(
                 ComposerButton(
                     action = action,
                     enabled = when (action) {
-                        ComposerAction.VOICE -> state.activeSessionId != null && !state.isLoadingMessages && !voiceStopping
+                        ComposerAction.VOICE -> state.activeSessionId != null && !loading && !voiceStopping && !compacting
                         ComposerAction.STOP -> !stopping
                         ComposerAction.SEND, ComposerAction.STEER -> canSend
                     },
@@ -339,7 +373,7 @@ internal fun AgentComposer(
             SkillsChip(enabled = state.activeSessionId != null && !voiceActive) { browsing = true }
             // The menu hangs off the chip it was opened from, and opens above it.
             Box {
-                ModelChip(state, enabled = !active && !voiceActive) {
+                ModelChip(state, enabled = !active && !voiceActive && !compacting) {
                     if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
                 }
                 ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
@@ -350,10 +384,14 @@ internal fun AgentComposer(
     if (browsing) {
         SkillsSheet(
             skills = state.availableSkills,
+            engineCommands = offeredEngineCommands,
+            engineLabel = engineLabel(state.activeEngine),
+            engineCommandEnabled = engineCommandEnabled,
             loading = state.isLoadingSkills,
             commandEnabled = commandEnabled,
             onSkill = { browsing = false; pickSkill(it) },
             onCommand = { browsing = false; runCommand(it) },
+            onEngineCommand = { browsing = false; runEngineCommand(it) },
             onDismiss = { browsing = false },
         )
     }
@@ -576,10 +614,14 @@ private fun AgentSkill.brand(): Color = brandArgb(brandColor)?.let(::Color) ?: S
 private fun SlashMenu(
     skills: List<AgentSkill>,
     commands: List<ComposerCommand>,
+    engineCommands: List<AgentCommand>,
+    engineLabel: String,
+    engineCommandEnabled: Boolean,
     query: String,
     commandEnabled: (ComposerCommand) -> Boolean,
     onSkill: (AgentSkill) -> Unit,
     onCommand: (ComposerCommand) -> Unit,
+    onEngineCommand: (AgentCommand) -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Skills and commands list" },
@@ -589,7 +631,10 @@ private fun SlashMenu(
         shadowElevation = 8.dp,
     ) {
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 336.dp), contentPadding = PaddingValues(top = 2.dp, bottom = 8.dp)) {
-            menuItems(skills, commands, query, commandEnabled, onSkill, onCommand, empty = "Nothing matches. Keep typing to send it as a message.")
+            menuItems(
+                skills, commands, engineCommands, engineLabel, engineCommandEnabled, query, commandEnabled, onSkill, onCommand, onEngineCommand,
+                empty = "Nothing matches. Keep typing to send it as a message.",
+            )
         }
     }
 }
@@ -597,10 +642,14 @@ private fun SlashMenu(
 private fun LazyListScope.menuItems(
     skills: List<AgentSkill>,
     commands: List<ComposerCommand>,
+    engineCommands: List<AgentCommand>,
+    engineLabel: String,
+    engineCommandEnabled: Boolean,
     query: String,
     commandEnabled: (ComposerCommand) -> Boolean,
     onSkill: (AgentSkill) -> Unit,
     onCommand: (ComposerCommand) -> Unit,
+    onEngineCommand: (AgentCommand) -> Unit,
     empty: String,
 ) {
     if (skills.isNotEmpty()) {
@@ -629,7 +678,20 @@ private fun LazyListScope.menuItems(
             ) { CommandTile(command) }
         }
     }
-    if (skills.isEmpty() && commands.isEmpty()) {
+    if (engineCommands.isNotEmpty()) {
+        item(key = "engine-commands-label") { MenuLabel(engineLabel) }
+        items(engineCommands, key = { "engine-command:${it.name}" }) { command ->
+            MenuRow(
+                title = "/${command.name}",
+                query = query,
+                description = command.description,
+                tag = command.argumentHint,
+                enabled = engineCommandEnabled,
+                onClick = { onEngineCommand(command) },
+            ) { EngineCommandTile() }
+        }
+    }
+    if (skills.isEmpty() && commands.isEmpty() && engineCommands.isEmpty()) {
         item(key = "empty") { Text(empty, Modifier.padding(16.dp), fontSize = 14.sp, lineHeight = 20.sp, color = MutedInk) }
     }
 }
@@ -689,7 +751,8 @@ private fun MenuRow(
                 Text(description, fontSize = 12.5.sp, lineHeight = 17.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (tag.isNotEmpty()) Text(tag, fontSize = 12.sp, lineHeight = 16.sp, color = TagInk)
+        // An engine's argument hint can be a whole line of options; it must not squeeze the name.
+        if (tag.isNotEmpty()) Text(tag, Modifier.widthIn(max = 110.dp), fontSize = 12.sp, lineHeight = 16.sp, color = TagInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -705,6 +768,19 @@ private fun SkillTile(skill: AgentSkill) {
         Text(skill.label.take(1).uppercase(), color = brand, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     }
 }
+
+@Composable
+private fun EngineCommandTile() {
+    Box(
+        Modifier.size(34.dp).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.16f), RoundedCornerShape(10.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("/", color = MaterialTheme.colorScheme.secondary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** The menu heading for the commands the chat's own engine lists. */
+private fun engineLabel(engine: EngineKind): String = "${engine.name} COMMANDS"
 
 @Composable
 private fun CommandTile(command: ComposerCommand) {
@@ -727,10 +803,14 @@ private fun ComposerCommand.icon(): ImageVector = when (this) {
 @Composable
 private fun SkillsSheet(
     skills: List<AgentSkill>,
+    engineCommands: List<AgentCommand>,
+    engineLabel: String,
+    engineCommandEnabled: Boolean,
     loading: Boolean,
     commandEnabled: (ComposerCommand) -> Boolean,
     onSkill: (AgentSkill) -> Unit,
     onCommand: (ComposerCommand) -> Unit,
+    onEngineCommand: (AgentCommand) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -750,7 +830,7 @@ private fun SkillsSheet(
                 ) {
                     if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     Text(
-                        if (loading) "Loading skills…" else "No skills in this chat yet. Skills you add to Codex show up here.",
+                        if (loading) "Loading skills…" else "No skills in this chat yet. Skills you add for this chat's agent show up here.",
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                         color = MutedInk,
@@ -761,10 +841,14 @@ private fun SkillsSheet(
                 menuItems(
                     skills = skills.filter { it.matches(query) },
                     commands = ComposerCommand.values().filter { it.matches(query) },
+                    engineCommands = engineCommands.filter { it.matches(query) },
+                    engineLabel = engineLabel,
+                    engineCommandEnabled = engineCommandEnabled,
                     query = query,
                     commandEnabled = commandEnabled,
                     onSkill = onSkill,
                     onCommand = onCommand,
+                    onEngineCommand = onEngineCommand,
                     empty = "Nothing matches your search.",
                 )
             }

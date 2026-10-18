@@ -66,12 +66,30 @@ class AndroidClaudeHost(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    override val status: StateFlow<RuntimeStatus> = installer.state
+    val updates = ClaudeRuntimeUpdates(installer, canDownload = {
+        val network = appContext.getSystemService(android.net.ConnectivityManager::class.java)
+        network != null && !network.isActiveNetworkMetered
+    }, validate = { binary, pin ->
+        // A separate HOME keeps a compatibility check away from the real sign-in and chats.
+        val probeHome = File(runtimeRoot, "claude-update-probe")
+        ClaudeRuntimeProbe.verify(pin.version) { args ->
+            lock.withLock {
+                withContext(Dispatchers.IO) {
+                    val tmp = File(probeHome, "tmp")
+                    listOf(probeHome, tmp, ClaudeEnvironment.configDirectory(probeHome)).forEach { it.mkdirs() }
+                    launchBinary(binary, args, probeHome, emptyMap(), probeHome, tmp)
+                }
+            }
+        }
+    })
+    override val runtimeIdentity: String get() = updates.activePin.version
+
+    override val status: StateFlow<RuntimeStatus> = updates.state
         .map(::statusOf)
         .stateIn(scope, SharingStarted.Eagerly, statusOf(installer.state.value))
 
     /** Download progress with bytes, for the UI. */
-    val installState: StateFlow<ClaudeInstallState> get() = installer.state
+    val installState: StateFlow<ClaudeInstallState> get() = updates.state
 
     /** <files>/runtime */
     val runtimeRoot: File get() = runtimeRoot(appContext)
@@ -97,44 +115,55 @@ class AndroidClaudeHost(
 
     override suspend fun prepare() {
         withContext(Dispatchers.IO) { createDirectories() }
-        installer.install()
+        updates.install()
     }
+
+    suspend fun refresh() = updates.refresh()
+    suspend fun checkForUpdates(): Boolean = updates.check()
 
     override suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String>): Process =
         lock.withLock {
             withContext(Dispatchers.IO) {
                 val loader = loaderFile
                 if (!loader.isFile) error(ClaudeRuntimeInstaller.UNSUPPORTED_MESSAGE)
-                val binary = installer.refresh() ?: error("Download Claude Code in Settings")
+                val binary = updates.refresh() ?: error("Download Claude Code in Settings")
                 createDirectories()
                 require(workingDirectory.isDirectory) { "Working directory missing: ${workingDirectory.absolutePath}" }
-                val proxyUrl = ensureProxyLocked()
-                val caPath = runCatching { BundledCaFile.stage(appContext, runtimeRoot) }
-                    .onFailure { Log.w(TAG, "CA bundle unavailable: ${it.javaClass.simpleName}") }
-                    .getOrNull()
-                val childEnv = ClaudeEnvironment.build(
-                    inherited = System.getenv().orEmpty(),
-                    homeDirectory = homeDirectory,
-                    tmpDirectory = tmpDirectory,
-                    proxyUrl = proxyUrl,
-                    caFileAbsolutePath = caPath,
-                    extraEnv = extraEnv,
-                )
-                val process = ProcessBuilder(launchCommand(loader, binary, args))
-                    .directory(workingDirectory)
-                    .apply {
-                        environment().clear()
-                        environment().putAll(childEnv)
-                        redirectErrorStream(false)
-                    }
-                    .start()
-                synchronized(processes) {
-                    processes.removeAll { !it.isAlive }
-                    processes += process
-                }
-                process
+                launchBinary(binary, args, workingDirectory, extraEnv)
             }
         }
+
+    /** Caller holds the host lock. Each process keeps its immutable version path. */
+    private fun launchBinary(
+        binary: File, args: List<String>, workingDirectory: File, extraEnv: Map<String, String>,
+        childHome: File = homeDirectory, childTmp: File = tmpDirectory,
+    ): Process {
+        val proxyUrl = ensureProxyLocked()
+        val caPath = runCatching { BundledCaFile.stage(appContext, runtimeRoot) }
+            .onFailure { Log.w(TAG, "CA bundle unavailable: ${it.javaClass.simpleName}") }
+            .getOrNull()
+        val childEnv = ClaudeEnvironment.build(
+            inherited = System.getenv().orEmpty(),
+            homeDirectory = childHome,
+            tmpDirectory = childTmp,
+            proxyUrl = proxyUrl,
+            caFileAbsolutePath = caPath,
+            extraEnv = extraEnv,
+        )
+        val process = ProcessBuilder(launchCommand(loaderFile, binary, args))
+            .directory(workingDirectory)
+            .apply {
+                environment().clear()
+                environment().putAll(childEnv)
+                redirectErrorStream(false)
+            }
+            .start()
+        synchronized(processes) {
+            processes.removeAll { !it.isAlive }
+            processes += process
+        }
+        return process
+    }
 
     override suspend fun stopAll() {
         lock.withLock {

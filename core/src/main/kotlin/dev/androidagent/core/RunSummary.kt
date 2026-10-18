@@ -24,8 +24,9 @@ package dev.androidagent.core
  * One line at the end of a run saying where its time went.
  *
  * A run that felt slow is the only evidence anyone has, and "it took a while"
- * cannot be acted on. Three buckets can: thinking is turns of the model, the
- * phone is device calls, and waiting is a person who had not answered yet. They
+ * cannot be acted on. Three buckets can: time outside tool calls, time in
+ * device calls, and time waiting for a person. The residual bucket does not
+ * measure pure model thinking: it includes queueing and engine overhead. They
  * lead to different fixes - fewer turns, a faster path on the screen, or nothing
  * at all, because a user taking 20 seconds to tap Allow is not a performance
  * problem.
@@ -49,7 +50,7 @@ object RunSummary {
         val total = metrics.totalMs
         if (total <= 0L) return null
         val parts = buildList {
-            add("${duration(metrics.thinkingMs)} thinking")
+            add("${duration(metrics.outsideToolsMs)} outside tool calls")
             add(
                 "${duration(metrics.toolMs)} on the phone across " +
                     "${metrics.toolCalls} ${if (metrics.toolCalls == 1) "call" else "calls"}",

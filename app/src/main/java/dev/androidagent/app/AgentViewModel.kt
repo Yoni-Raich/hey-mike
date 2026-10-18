@@ -34,9 +34,15 @@ import dev.androidagent.remote.RemoteBinding
 import dev.androidagent.remote.RemoteComputer
 import dev.androidagent.remote.RemoteSetup
 import dev.androidagent.remote.RemoteStore
+import dev.androidagent.remote.ClaudeHistorySync
+import dev.androidagent.remote.ClaudeReaderException
+import dev.androidagent.remote.ClaudeDesktopUnknownException
 import dev.androidagent.runtime.ClaudeInstallPhase
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.UUID
 
@@ -45,6 +51,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     val updateManager = AppUpdateManager(application)
     private val preferences = application.getSharedPreferences("ui", 0)
     private val current = MutableStateFlow<String?>(null)
+    private val draftWrites = Channel<Pair<String, String>>(Channel.UNLIMITED)
     /**
      * Each engine's model list, pick and quota. The open chat is offered the
      * models of every engine that can run in it, and shows the pick and the
@@ -60,15 +67,35 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             selectedReasoningEffort = engines.of(EngineKind.CODEX).effort,
             onboarding = readOnboarding(),
             defaultEngine = ChatEngines.parse(preferences.getString(KEY_DEFAULT_ENGINE, null)),
+            pins = preferences.getStringSet(KEY_PINS, null).orEmpty().toSet(),
         )
     )
     val ui: StateFlow<AgentUiState> = mutable.asStateFlow()
     private val usageByThread = mutableMapOf<String, TokenUsage>()
     private var setupJob: Job? = null
+    private var pcThreadsRefreshJob: Job? = null
     private var purgedUnstarted = false
     private var previousChat: String? = null
+    private val pcSyncLocks = mutableMapOf<String, Mutex>()
+    private val pcImportLocks = mutableMapOf<String, Mutex>()
 
     init {
+        viewModelScope.launch {
+            for ((id, text) in draftWrites) {
+                // Keep typing off disk and coalesce changes without reordering sessions.
+                val latest = mutableMapOf(id to text)
+                delay(150)
+                while (true) {
+                    val next = draftWrites.tryReceive().getOrNull() ?: break
+                    latest[next.first] = next.second
+                }
+                for ((sessionId, draft) in latest) {
+                    try { graph.sessions.saveComposerDraft(sessionId, draft) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) { mutable.update { it.copy(errorMessage = error.message ?: "Draft could not be saved") } }
+                }
+            }
+        }
         viewModelScope.launch {
             try { checkForUpdates(manual = false) } catch (_: Exception) {}
         }
@@ -76,6 +103,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             graph.sessions.sessions.collect { list ->
                 mutable.update { it.copy(sessions = list) }
+                project()
                 if (current.value == null || list.none { it.id == current.value }) {
                     val saved = preferences.getString("session", null)
                     current.value = list.firstOrNull { it.id == saved }?.id ?: list.firstOrNull()?.id
@@ -97,13 +125,32 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             // A computer conversation may be held open by Codex on the computer.
             checkPcChatBusy(id)
             preferences.edit().putString("session", id).apply()
-            mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false) }
+            // The skills and commands of the chat just left belong to its engine, not to this one.
+            mutable.update { it.copy(activeSessionId = id, messages = emptyList(), attachments = emptyList(), isDrawerOpen = false, isLoadingMessages = true, availableSkills = emptyList(), availableCommands = emptyList()) }
             updateTitle()
             project()
-            if (graph.runtime.status.value.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) {
-                runCatching { loadSkills(id) }
+            refreshModels()
+            try {
+                val savedDraft = graph.sessions.composerDraft(id)
+                mutable.update {
+                    if (id in it.composerSeeds) it else it.copy(composerSeeds = it.composerSeeds + (id to savedDraft.orEmpty()))
+                }
+                // Reading a saved history can touch disk. Keep the loading card
+                // responsive, and do not hold the history behind skill discovery.
+                val messages = withContext(Dispatchers.IO) { graph.sessions.messages(id) }
+                coroutineScope {
+                    launch {
+                        // Codex lists its skills through its own runtime; Claude's list comes from its CLI.
+                        if (ChatEngines.of(mutable.value.sessions, id) == EngineKind.CLAUDE ||
+                            graph.runtime.status.value.phase in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) {
+                            runCatching { loadSlashCatalog(id) }
+                        }
+                    }
+                    messages.collect { items -> mutable.update { it.copy(messages = items, isLoadingMessages = false) } }
+                }
+            } finally {
+                mutable.update { if (it.activeSessionId == id) it.copy(isLoadingMessages = false) else it }
             }
-            graph.sessions.messages(id).collect { items -> mutable.update { it.copy(messages = items) } }
         } }
         viewModelScope.launch {
             graph.computers.state.collect { remote ->
@@ -121,11 +168,31 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
+        viewModelScope.launch { graph.remote.codexVersions.collect { versions -> mutable.update { it.copy(computerCodexVersions = versions) } } }
+        viewModelScope.launch { graph.runtime.updates.state.collect { info -> mutable.update { it.copy(codexUpdate = info) } } }
         // A computer's own Claude Code decides whether its chats are offered Claude models.
         viewModelScope.launch { graph.remote.claudeState.collect { found -> mutable.update { it.copy(computerClaude = found) }; project() } }
-        viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) } } }
+        viewModelScope.launch { graph.remote.claudeSignIn.state.collect { found -> mutable.update { it.copy(computerClaudeSignIn = found) } } }
+        viewModelScope.launch { graph.remote.claudeSignIn.loginLinks.collect(::openInBrowser) }
+        viewModelScope.launch { graph.remote.threads.collect { threads -> mutable.update { it.copy(pcThreads = threads) }; updateTitle() } }
+        viewModelScope.launch { graph.remote.threadErrors.collect { errors -> mutable.update { it.copy(pcThreadErrors = errors) } } }
+        viewModelScope.launch { graph.remote.threadNotices.collect { notices -> mutable.update { it.copy(pcThreadNotices = notices) } } }
         viewModelScope.launch { graph.remote.refreshing.collect { ids -> mutable.update { it.copy(pcRefreshing = ids) } } }
         viewModelScope.launch { graph.transfers.current.collect { move -> mutable.update { it.copy(fileTransfer = move) } } }
+        // The open chat's page: a card above the composer, and the page itself when opened.
+        viewModelScope.launch {
+            val keys = mutableMapOf<String, String>()
+            combine(current, graph.browserHost.pageStates) { id, pages -> id to pages }.collectLatest { (id, pages) ->
+                val key = id?.let { chat ->
+                    keys[chat] ?: runCatching { withContext(Dispatchers.IO) { graph.sessions.workspace(chat).absolutePath } }
+                        .getOrNull()?.also { keys[chat] = it }
+                }
+                val page = key?.let(pages::get)
+                mutable.update { state ->
+                    state.withBrowserPage(id, page)
+                }
+            }
+        }
         viewModelScope.launch {
             graph.computerRequests.collect { request ->
                 when (request) {
@@ -145,6 +212,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         mutable.update {
                             it.copy(
                                 composerSeeds = it.composerSeeds + (request.sessionId to request.draft),
+                                composerDraftVersions = it.composerDraftVersions +
+                                    (request.sessionId to ((it.composerDraftVersions[request.sessionId] ?: 0L) + 1L)),
                                 isComputersOpen = false,
                                 folderBrowser = null,
                                 isDrawerOpen = false,
@@ -158,10 +227,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // The open chat shows its own run; another chat running beside it is
         // not this chat's "Working", and the drawer marks it instead.
         viewModelScope.launch {
-            combine(graph.coordinator.sessionStates, current) { states, id -> states to id }.collect { (states, id) ->
-                mutable.update { it.copy(runState = id?.let(states::get) ?: RunState(), runs = states.filterValues { run -> run.active }) }
+            combine(graph.coordinator.sessionStates, current, graph.computerTasks.state, graph.sessionAgents.tasks, graph.sessions.sessions) { states, id, computers, agents, chats ->
+                val cards = agents.map { ChildAgentItem.from(it, computers, chats) } +
+                    computers.tasks.values.map { ChildAgentItem.from(it, computers) }
+                Triple(states, id, cards)
+            }.collect { (states, id, cards) ->
+                val own = id?.let(graph.coordinator::sourceState) ?: RunState()
+                val shown = if (!own.active && id != null) graph.computerTasks.sourceState(id, states) else own
+                mutable.update { it.copy(runState = shown, runs = states.filterValues { run -> run.active }, childAgents = cards) }
             }
         }
+        viewModelScope.launch { graph.agentOpenRequests.filterNotNull().collect { id ->
+            select(id)
+            graph.agentOpenRequests.value = null
+        } }
         viewModelScope.launch { current.collect { graph.openChat.value = it } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
@@ -185,6 +264,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { graph.voice.state.collect { state -> mutable.update { it.copy(voiceState = state) } } }
         viewModelScope.launch { graph.voice.muted.collect { muted -> mutable.update { it.copy(voiceMuted = muted) } } }
+        viewModelScope.launch { graph.voiceConversation.childUpdates.collect { updates -> mutable.update { it.copy(voiceChildUpdates = updates) } } }
         viewModelScope.launch { graph.sendGrants.grants.collect { grants -> mutable.update { it.copy(sendGrants = grants) } } }
         viewModelScope.launch {
             graph.voiceConversation.transcript.collect { line ->
@@ -194,7 +274,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { graph.voiceConversation.failures.collect { error(it) } }
         // Voice started from the assistant panel records into a chat this
         // screen did not pick; show that chat while the conversation is live.
-        viewModelScope.launch { graph.voiceConversation.sessionId.filterNotNull().collect { current.value = it } }
+        viewModelScope.launch { graph.voiceConversation.sessionId.collect { id ->
+            mutable.update { it.copy(voiceSessionId = id, voiceBrowsing = false) }
+            if (id != null) current.value = id
+        } }
         // Codex only: its sign-in, quota and the widget's numbers are Codex's.
         viewModelScope.launch { graph.engine.codexEvents.collect { event ->
             when (event) {
@@ -206,7 +289,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     usageChanged(EngineKind.CODEX, event)
                     event.limits?.let(::recordUsage)
                 }
-                EngineEvent.SkillsChanged -> runCatching { loadSkills(forceReload = false) }
+                EngineEvent.SkillsChanged -> runCatching { loadSlashCatalog(forceReload = false) }
                 is EngineEvent.Failure -> if (!graph.coordinator.anyActive) error(event.message)
                 else -> Unit
             }
@@ -237,7 +320,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             project()
         }
         viewModelScope.launch {
-            graph.claudeHost.installState.collect { install -> mutable.update { it.copy(claude = it.claude.copy(install = install)) } }
+            graph.claudeHost.installState.collect { install -> mutable.update { it.copy(claude = it.claude.copy(install = install,
+                version = graph.claudeHost.updates.activePin.version.takeIf { install.phase == ClaudeInstallPhase.INSTALLED })) } }
         }
         viewModelScope.launch {
             mutable.map { it.claude.account }.distinctUntilChanged().collect(::rememberClaudeAccount)
@@ -245,9 +329,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // A binary already on the phone, or one just downloaded: read the sign-in.
         viewModelScope.launch {
             graph.claudeHost.installState
-                .map { it.phase == ClaudeInstallPhase.INSTALLED }
+                .map { if (it.phase == ClaudeInstallPhase.INSTALLED) graph.claudeHost.runtimeIdentity else null }
                 .distinctUntilChanged()
-                .collect { installed -> if (installed) runCatching { refreshClaude() } }
+                .collect { version -> if (version != null) {
+                    runCatching { refreshClaude() }
+                    graph.scope.launch { graph.claudeHost.checkForUpdates() }
+                } }
+        }
+        viewModelScope.launch {
+            graph.appInFront.collectLatest { foreground ->
+                if (foreground) while (true) {
+                    refreshModels()
+                    delay(60_000)
+                }
+            }
         }
     }
 
@@ -268,7 +363,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private fun project() {
         mutable.update { state ->
             val kind = ChatEngines.of(state.sessions, current.value)
-            val choice = engines.of(kind)
+            val session = state.sessions.firstOrNull { it.id == current.value }
+            val choice = engines.of(kind).let { defaults ->
+                if (session?.model != null) defaults.copy(model = session.model, effort = session.reasoningEffort) else defaults
+            }
             val computer = current.value?.let(graph.computers::binding)?.computerId
             val offered = engines.offered(
                 enginesFor(current.value, kind, state),
@@ -314,7 +412,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshWidget() = dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
-    private fun updateTitle() { mutable.update { state -> state.copy(activeSessionTitle = state.sessions.firstOrNull { it.id == current.value }?.title, tokenUsage = usageByThread[state.sessions.firstOrNull { it.id == current.value }?.engineThreadId]) } }
+    private fun updateTitle() {
+        mutable.update { state ->
+            val session = state.sessions.firstOrNull { it.id == current.value }
+            val binding = session?.let { graph.computers.binding(it.id) }
+            state.copy(
+                activeSessionTitle = session?.let { PcChats.title(it, binding, state.pcThreads[binding?.computerId].orEmpty()) },
+                tokenUsage = usageByThread[session?.engineThreadId],
+            )
+        }
+    }
     fun editUi(change: (AgentUiState) -> AgentUiState) = mutable.update(change)
     // The chat on screen, if nobody has written in it yet, is already a new chat.
     fun newChat() = task {
@@ -337,7 +444,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Nobody wrote in it and no engine holds a thread for it, in use or parked. */
     private fun isBlank(session: ChatSession): Boolean =
-        !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty()
+        !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty() && session.parentSessionId == null
 
     private fun rememberDefaultEngine(kind: EngineKind) {
         preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
@@ -365,18 +472,26 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun useEngine(kind: EngineKind) = task {
         val id = current.value ?: return@task
-        val session = graph.sessions.getSession(id) ?: return@task
-        if (session.engine == kind) return@task
+        changeEngine(id, kind)
+    }
+    private suspend fun changeEngine(id: String, kind: EngineKind) {
+        val session = graph.sessions.getSession(id) ?: return
+        if (session.engine == kind) return
         check(graph.coordinator.phaseOf(id) == null) { "Wait for Mike to finish, or stop him, before changing the model." }
         check(!(graph.voice.state.value.active && graph.voiceConversation.sessionId.value == id)) { "End voice before changing the model." }
         // A chat nobody wrote in yet may be pointed at an engine that is still
         // being set up, as onboarding does; its first message then says what is missing.
         val computer = graph.computers.binding(id)?.let { graph.computers.computer(it.computerId) }
         check(kind in enginesFor(id, session.engine, mutable.value) || (isBlank(session) && computer == null)) {
-            if (computer != null) "Claude Code is not set up on ${computer.label}. Install it there and sign in with `claude`, then connect the computer again."
+            if (computer != null) "Set up Claude on ${computer.label} from Computers."
             else "Set up ${kind.label} in Settings first."
         }
         graph.sessions.setEngine(id, kind)
+        // Who holds the computer conversation is a question for the engine the chat now runs on.
+        if (graph.computers.binding(id) != null) checkPcChatBusy(id)
+        // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
+        mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
+        viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
         // Like any model pick, it also holds for the next new chat.
         rememberDefaultEngine(kind)
         if (session.hasMessages) {
@@ -388,6 +503,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Delete a chat that has no message and no thread, unless something is still using it. */
     private suspend fun discardIfUnstarted(id: String) = runCatching {
         val session = graph.sessions.getSession(id) ?: return@runCatching
+        if (mutable.value.composerSeeds[id]?.isNotEmpty() == true || !graph.sessions.composerDraft(id).isNullOrEmpty()) return@runCatching
         if (!isBlank(session) || id in mutable.value.pcChatLoading) return@runCatching
         if (graph.coordinator.phaseOf(id) != null) return@runCatching
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) return@runCatching
@@ -423,6 +539,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openComputers() = mutable.update { it.copy(isComputersOpen = true) }
 
+    fun computerClaudeLogin(id: String) = graph.remote.claudeSignIn.start(id)
+    fun computerClaudeCode(id: String, code: String) = graph.remote.claudeSignIn.submit(id, code)
+    fun cancelComputerClaudeLogin(id: String) = task { graph.remote.claudeSignIn.cancel(id) }
+    fun checkComputerClaude(id: String) = graph.remote.claudeSignIn.check(id)
+
     /** Connect to the computer, then pick the folder of a new project. */
     fun newProject(id: String) {
         mutable.update { it.copy(isComputersOpen = true) }
@@ -436,10 +557,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * shows on the computer's own row.
      */
     fun refreshPcThreads() {
-        graph.computers.state.value.computers.forEach { computer ->
-            viewModelScope.launch {
-                if (graph.remote.setup.value[computer.id] == null) graph.remote.connectQuietly(computer.id)
-                else graph.remote.refreshThreads(computer.id)
+        if (pcThreadsRefreshJob?.isActive == true) return
+        pcThreadsRefreshJob = viewModelScope.launch {
+            coroutineScope {
+                graph.computers.state.value.computers.forEach { computer ->
+                    launch {
+                        if (graph.remote.setup.value[computer.id] == null) graph.remote.connectQuietly(computer.id)
+                        else graph.remote.refreshThreads(computer.id, force = false)
+                    }
+                }
             }
         }
     }
@@ -448,15 +574,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun reconnectComputer(id: String) = task { graph.remote.reload(id); graph.remote.setUp(id, install = false) }
 
     /**
-     * Whether Codex on the computer (its desktop app) holds this chat's
-     * conversation open, so Mike cannot write to it. Quiet on failure: the
-     * send itself then says what went wrong.
+     * A native computer conversation may be held by another client. A Claude
+     * one is answered by its history refresh, which reads the writer status
+     * in the same round trip. Codex is quiet on failure: the send itself
+     * then says what went wrong.
      */
     fun checkPcChatBusy(sessionId: String) {
+        if (graph.coordinator.phaseOf(sessionId) != null) return
+        if (isComputerClaude(sessionId)) { syncPcChat(sessionId); return }
         val binding = graph.computers.binding(sessionId)
-        val thread = binding?.threadId
-        if (binding == null || binding.importedFromPc == false || thread == null) {
-            mutable.update { it.copy(pcBusyChats = it.pcBusyChats - sessionId) }
+        // The chat's Codex thread, also while it is parked during a turn on Claude.
+        val thread = binding?.thread(EngineKind.CODEX)?.takeIf { sessionOf(sessionId)?.engine != EngineKind.CLAUDE }
+        if (binding == null || thread == null || binding.imported(EngineKind.CODEX, thread) == false) {
+            syncState(sessionId, busy = false, problem = null)
             return
         }
         viewModelScope.launch {
@@ -473,14 +603,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun forkPcChat(sessionId: String) = task {
         val binding = graph.computers.binding(sessionId) ?: kotlin.error("This chat does not run on a computer.")
-        val thread = binding.threadId ?: kotlin.error("This chat has no conversation on the computer yet.")
-        check(binding.importedFromPc != false) { "This conversation belongs to Mike; it does not need a copy." }
+        check(sessionOf(sessionId)?.engine != EngineKind.CLAUDE) { "Close this session in Claude on the computer, then refresh it in Mike." }
+        val thread = binding.thread(EngineKind.CODEX) ?: kotlin.error("This chat has no conversation on the computer yet.")
+        check(binding.imported(EngineKind.CODEX, thread) != false) { "This conversation belongs to Mike; it does not need a copy." }
         mutable.update { it.copy(pcForking = it.pcForking + sessionId) }
         try {
             // The copy is a Codex thread, so it goes where the chat keeps its Codex thread.
             graph.sessions.setEngine(sessionId, EngineKind.CODEX)
             val copy = graph.remote.forkThread(binding.computerId, binding.cwd, thread)
-            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.copy(threadId = copy, importedFromPc = false)) }
+            withContext(Dispatchers.IO) { graph.computers.bind(sessionId, binding.opened(EngineKind.CODEX, copy)) }
             graph.sessions.setThread(sessionId, copy)
             mutable.update { it.copy(pcBusyChats = it.pcBusyChats - sessionId) }
             note(sessionId, "Mike continues here in a copy of the conversation, with its whole history. The original stays in Codex on the computer.")
@@ -496,44 +627,165 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Back in the app after the approval page: connect again without being asked. */
     fun appResumed() {
+        refreshModels()
         val ids = synchronized(awaitingApproval) { awaitingApproval.toList().also { awaitingApproval.clear() } }
         ids.forEach { id ->
             if (graph.remote.setup.value[id] is RemoteSetup.NeedsTailscaleApproval) reconnectComputer(id)
         }
+        current.value?.takeIf(::isComputerClaude)?.let(::syncPcChat)
     }
 
+    private fun sessionOf(id: String) = graph.sessions.sessions.value.firstOrNull { it.id == id }
+
     /**
-     * Open a conversation Codex keeps on the computer. A chat here that
-     * already follows it is reused; otherwise a new chat is bound to the
-     * thread and its earlier messages are copied in.
+     * The Claude session a computer chat runs on, once it has one. Every
+     * Claude thread of a chat bound to a computer lives on that computer:
+     * imported ones, ones Mike started there, and ones from builds that did
+     * not record the engine in the binding yet.
      */
-    fun openPcThread(id: String, threadId: String) = task {
-        graph.computers.state.value.bindings.entries.firstOrNull { it.value.threadId == threadId }?.let {
-            current.value = it.key
-            return@task
+    private fun computerClaudeThread(id: String): String? {
+        if (graph.computers.binding(id) == null) return null
+        return sessionOf(id)?.takeIf { it.engine == EngineKind.CLAUDE }?.engineThreadId
+    }
+
+    private fun isComputerClaude(id: String): Boolean = computerClaudeThread(id) != null
+
+    fun syncPcChat(sessionId: String) = task { refreshClaudeHistory(sessionId) }
+
+    /** What the last look at a computer chat found: held elsewhere or not, and what went wrong if anything. */
+    private fun syncState(sessionId: String, busy: Boolean, problem: String?) = mutable.update {
+        it.copy(
+            pcBusyChats = if (busy) it.pcBusyChats + sessionId else it.pcBusyChats - sessionId,
+            pcSyncProblems = if (problem == null) it.pcSyncProblems - sessionId else it.pcSyncProblems + (sessionId to problem),
+        )
+    }
+
+    /** Why sending is held back in [sessionId], in words that name the real cause. */
+    private fun pcBlockedReason(sessionId: String): String =
+        mutable.value.pcSyncProblems[sessionId] ?: "Close this session in Claude on the computer before sending in Mike."
+
+    private suspend fun refreshClaudeHistory(sessionId: String) {
+        if (!isComputerClaude(sessionId) || graph.coordinator.phaseOf(sessionId) != null) return
+        pcSyncLocks.getOrPut(sessionId) { Mutex() }.withLock {
+            if (graph.coordinator.phaseOf(sessionId) != null) return@withLock
+            var binding = graph.computers.binding(sessionId) ?: return@withLock
+            val thread = computerClaudeThread(sessionId) ?: return@withLock
+            // Park, never drop, the Codex thread this chat may have on the computer.
+            binding.opened(EngineKind.CLAUDE, thread).takeIf { it != binding }?.let { bound ->
+                binding = bound
+                withContext(Dispatchers.IO) { graph.computers.bind(sessionId, bound) }
+            }
+            // A session brought in from the computer may have another writer, so
+            // not knowing fails closed. A chat Mike started keeps working as it
+            // did before it could be synced.
+            val imported = binding.importedFromPc == true
+            mutable.update { it.copy(pcSyncing = it.pcSyncing + sessionId) }
+            try {
+                val snapshot = try {
+                    graph.remote.readClaudeSnapshot(binding.computerId, thread)
+                } catch (failure: ClaudeReaderException) {
+                    if (failure.missing && !imported) {
+                        // Its first turn never reached Claude Code: nothing to read, nobody else to wait for.
+                        syncState(sessionId, busy = false, problem = null)
+                        return@withLock
+                    }
+                    if (!failure.history) throw failure
+                    // The text cannot be shown, but Claude itself still has the whole session.
+                    val busy = graph.remote.isClaudeThreadBusy(binding.computerId, thread)
+                    syncState(sessionId, busy, "Earlier messages from the computer can't be shown here: ${failure.message}. Claude still has them.")
+                    return@withLock
+                }
+                val busy = snapshot.busy
+                val history = snapshot.messages
+                if (graph.computers.binding(sessionId) != binding || graph.coordinator.phaseOf(sessionId) != null) return@withLock
+                val local = withContext(Dispatchers.IO) { graph.sessions.messages(sessionId).first() }
+                if (binding.importedFromPc != true) withContext(Dispatchers.IO) {
+                    graph.remote.adoptLocalClaudeHistory(binding.computerId, thread, history, local)
+                }
+                val owned = withContext(Dispatchers.IO) { graph.remote.ownedClaudeMessages(binding.computerId, thread) }
+                ClaudeHistorySync.additions(sessionId, binding.computerId, thread, history, local, owned).forEach {
+                    if (graph.coordinator.phaseOf(sessionId) != null) return@withLock
+                    graph.sessions.append(it)
+                }
+                syncState(sessionId, busy, problem = null)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                // Shown above the composer, where it stays until it is solved.
+                syncState(sessionId, busy = imported, problem = "Mike couldn't check this session on the computer: ${failure.message}")
+            } finally { mutable.update { it.copy(pcSyncing = it.pcSyncing - sessionId) } }
         }
-        val thread = graph.remote.threads.value[id]?.firstOrNull { it.id == threadId }
+    }
+
+    fun openClaudeDesktop(sessionId: String) = task {
+        check(graph.coordinator.phaseOf(sessionId) == null) { "Wait for this chat to finish before opening Desktop." }
+        check(isComputerClaude(sessionId)) { "This chat is not a Claude session on a computer." }
+        mutable.update { it.copy(pcDesktopOpening = it.pcDesktopOpening + sessionId) }
+        try {
+            refreshClaudeHistory(sessionId)
+            check(graph.coordinator.phaseOf(sessionId) == null) { "Wait for this chat to finish before opening Desktop." }
+            check(sessionId !in mutable.value.pcBusyChats) { pcBlockedReason(sessionId) }
+            val binding = graph.computers.binding(sessionId) ?: kotlin.error("This chat no longer runs on a computer.")
+            val thread = computerClaudeThread(sessionId) ?: kotlin.error("Send a message first to create the Claude session.")
+            try {
+                graph.remote.openClaudeDesktop(binding.computerId, thread)
+            } catch (unknown: ClaudeDesktopUnknownException) {
+                // It may be open there now. Sending waits for a check that
+                // finds nobody else writing; the handoff is not tried again on its own.
+                syncState(sessionId, busy = true, problem = unknown.message)
+                return@task
+            }
+            mutable.update { it.copy(pcBusyChats = it.pcBusyChats + sessionId, infoMessage = "Opening the same session in Claude Desktop. Close it there, then refresh here to continue in Mike.") }
+        } finally { mutable.update { it.copy(pcDesktopOpening = it.pcDesktopOpening - sessionId) } }
+    }
+
+    /** Open a native conversation with its original computer, engine and ID. */
+    fun openPcThread(id: String, threadId: String, engine: EngineKind = EngineKind.CODEX) = task {
+        pcImportLocks.getOrPut("$id:${engine.name}:$threadId") { Mutex() }.withLock {
+            importPcThread(id, threadId, engine)
+        }
+    }
+
+    private suspend fun importPcThread(id: String, threadId: String, engine: EngineKind) {
+        // A chat here may already follow it, also one that runs on the other engine for now.
+        val wanted = PcChats.threadKey(engine, threadId)
+        graph.computers.state.value.bindings.entries.firstOrNull { (session, binding) ->
+            binding.computerId == id && wanted in PcChats.followed(binding, sessionOf(session))
+        }?.let {
+            current.value = it.key
+            if (engine == EngineKind.CLAUDE) refreshClaudeHistory(it.key)
+            return
+        }
+        val thread = graph.remote.threads.value[id]?.firstOrNull { it.engine == engine && it.id == threadId }
             ?: kotlin.error("That conversation is no longer on the computer.")
-        val session = graph.sessions.createSession()
-        withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId, importedFromPc = true)) }
-        graph.sessions.setThread(session.id, threadId)
-        graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
-        current.value = session.id
+        val session = graph.sessions.createSession(engine)
         val label = graph.computers.computer(id)?.label ?: "the computer"
         mutable.update { it.copy(pcChatLoading = it.pcChatLoading + (session.id to label)) }
-        runCatching { graph.remote.readThread(id, threadId) }
-            .onSuccess { messages ->
-                // Oldest first, a millisecond apart, so the order survives sorting.
-                val start = System.currentTimeMillis() - messages.size
-                messages.forEachIndexed { index, message ->
-                    graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), session.id, message.role, message.text, start + index))
+        try {
+            withContext(Dispatchers.IO) { graph.computers.bind(session.id, RemoteBinding(id, thread.cwd, threadId, importedFromPc = true, engine = engine)) }
+            graph.sessions.setThread(session.id, threadId)
+            graph.sessions.rename(session.id, thread.title.ifBlank { folderName(thread.cwd) })
+            current.value = session.id
+            try {
+                if (engine == EngineKind.CLAUDE) {
+                    refreshClaudeHistory(session.id)
+                } else {
+                    val messages = graph.remote.readThread(id, threadId)
+                    // Oldest first, a millisecond apart, so the order survives sorting.
+                    val start = System.currentTimeMillis() - messages.size
+                    messages.forEachIndexed { index, message ->
+                        graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), session.id, message.role, message.text, start + index))
+                    }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                note(session.id, "The earlier messages could not be read from the computer: ${failure.message}. Mike still continues this conversation there.")
             }
-            .onFailure {
-                note(session.id, "The earlier messages could not be read from the computer: ${it.message}. Mike still continues this conversation there.")
-            }
-        mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
-        checkPcChatBusy(session.id)
+        } finally {
+            mutable.update { it.copy(pcChatLoading = it.pcChatLoading - session.id) }
+        }
+        // A Claude session's refresh above already read who holds it.
+        if (engine == EngineKind.CODEX) checkPcChatBusy(session.id)
     }
 
     /**
@@ -606,8 +858,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             graph.computers.addProject(id, path)
             graph.computers.update(id) { it.copy(lastFolder = path) }
         }
-        // A title of its own, so the first message does not rename it.
-        graph.sessions.rename(session.id, folder)
+        // A location label until the first request supplies the chat's topic.
+        graph.sessions.setAutomaticTitle(session.id, folder, complete = false)
         current.value = session.id
         mutable.update { it.copy(folderBrowser = null, isComputersOpen = false) }
         note(session.id, "This chat runs on ${computer.label}, in $path. Mike works there with Codex (shell, files, git, skills) and can still use this phone.")
@@ -673,20 +925,73 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         task { pairFromDialog(timeoutMs = WIRELESS_SETUP_TIMEOUT_MS) }
         send(WIRELESS_SETUP_PROMPT, emptyList())
     }
-    fun select(id: String) { current.value = id }
-    fun rename(id: String, title: String) = task { graph.sessions.rename(id, title) }
+    fun select(id: String) {
+        if (graph.voice.state.value.active) mutable.update { it.copy(voiceBrowsing = true) }
+        current.value = id
+    }
+    fun browseVoiceChats() { mutable.update { it.copy(voiceBrowsing = true) } }
+    /** Put the open chat's page in front, if it has one. */
+    fun openBrowser() {
+        mutable.update { it.copy(browserOpenFor = it.activeSessionId.takeIf { _ -> it.activeBrowserPage() != null }) }
+    }
+    fun returnToVoice() {
+        graph.voiceConversation.sessionId.value?.let { current.value = it }
+        mutable.update { it.copy(voiceBrowsing = false) }
+    }
+    fun stopSession(id: String) {
+        graph.coordinator.stop(id)
+        if (id == graph.voiceConversation.sessionId.value) stopVoice()
+    }
+    fun composerDraftChanged(id: String, text: String) {
+        mutable.update { it.copy(composerSeeds = it.composerSeeds + (id to text)) }
+        draftWrites.trySend(id to text)
+    }
+
+    /** Put [text] back into [id]'s composer after a send that never left, unless something new was typed since. */
+    private fun restoreDraft(id: String, text: String) {
+        var restored = false
+        mutable.update {
+            restored = it.composerSeeds[id].isNullOrBlank()
+            if (!restored) return@update it
+            it.copy(
+                composerSeeds = it.composerSeeds + (id to text),
+                composerDraftVersions = it.composerDraftVersions + (id to ((it.composerDraftVersions[id] ?: 0L) + 1L)),
+            )
+        }
+        if (restored) draftWrites.trySend(id to text)
+    }
+    fun togglePin(key: String) {
+        val pins = mutable.value.pins.let { if (key in it) it - key else it + key }
+        preferences.edit().putStringSet(KEY_PINS, pins).apply()
+        mutable.update { it.copy(pins = pins) }
+    }
+
+    fun rename(id: String, title: String) = task { graph.chatTitles.rename(id, title) }
     fun delete(id: String) {
+        if (graph.coordinator.family(id).any { graph.coordinator.phaseOf(it) != null } ||
+            mutable.value.childAgents.any { it.parentSessionId == id && !it.terminal }) {
+            error("Stop this chat's subagents before deleting it."); return
+        }
+        if (graph.computers.state.value.tasks.values.any { it.originSessionId == id && !it.terminal }) {
+            error("Stop this chat's computer subagents before deleting it."); return
+        }
         if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End the voice conversation before deleting it."); return }
         task { graph.queue.cancelSession(id); graph.sessions.deleteSession(id) }
     }
     fun send(text: String, attachments: List<PendingAttachment>) {
         val id = current.value ?: return
-        if (graph.voice.state.value.active) {
-            if (id != graph.voiceConversation.sessionId.value) { error("End voice before sending in another chat."); return }
+        if (id in mutable.value.compacting) { error("Wait for compaction to finish before sending a message."); return }
+        // A subagent's existing gate is also answerable in its source chat.
+        if (attachments.isEmpty()) {
+            if (answerRunGate(id, text)) return
+        }
+        if (id in mutable.value.pcSyncing || id in mutable.value.pcDesktopOpening) {
+            error("Wait for the computer history or Desktop handoff to finish before sending.")
+            return
+        }
+        if (graph.voice.state.value.active && id == graph.voiceConversation.sessionId.value) {
             if (attachments.isNotEmpty()) { error("End voice before sending attachments."); return }
-            if (graph.coordinator.answerApprovalByReply(text, sessionId = id)) return
-            if (graph.coordinator.answerQuestionByReply(text, sessionId = id)) return
             task { graph.voiceConversation.type(text) }
             return
         }
@@ -707,10 +1012,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // The chat's own engine's pick. Plan mode is carried by a model name,
         // so it falls back to the first offered model when none is picked.
         val kind = ChatEngines.of(snapshot.sessions, id)
-        val choice = engines.of(kind)
+        val choice = ModelChoice(catalog = snapshot.modelCatalog.filter { it.engine == kind },
+            model = snapshot.selectedModel, effort = snapshot.selectedReasoningEffort)
         val model = choice.modelFor(snapshot.planMode)
         if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return }
         task {
+            if (kind == EngineKind.CLAUDE && isComputerClaude(id) && graph.coordinator.phaseOf(id) == null) {
+                refreshClaudeHistory(id)
+                if (id in mutable.value.pcBusyChats) {
+                    // Nothing was sent; the words go back where they were typed.
+                    restoreDraft(id, text)
+                    kotlin.error(pcBlockedReason(id))
+                }
+            }
             // Pictures travel inside the turn. Any other file has to be on the
             // machine the agent runs on, so a computer chat copies it there
             // first and names where it landed. A failed copy sends nothing and
@@ -734,7 +1048,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
             mutable.update { it.copy(infoMessage = null) }
             graph.queue.submit(QueuedTurn(sessionId = id, prompt = prompt, imagePaths = images.map { it.absolutePath },
-                model = model, effort = choice.turnEffort, skill = invokedSkill, planMode = snapshot.planMode, engine = kind))
+                model = model, effort = snapshot.selectedReasoningEffort ?: choice.turnEffort,
+                skill = invokedSkill, planMode = snapshot.planMode, engine = kind))
             mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
         }
     }
@@ -745,20 +1060,29 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun compact() {
         val id = current.value ?: return
+        if (id in mutable.value.compacting) return
         if (graph.coordinator.phaseOf(id) != null) { error("Wait for the agent to finish before compacting."); return }
+        if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End voice before compacting this chat."); return }
+        val started = System.currentTimeMillis()
+        mutable.update { it.copy(compacting = it.compacting + (id to started), errorMessage = null) }
         task {
-            val session = graph.sessions.getSession(id)
-            val thread = checkNotNull(session?.engineThreadId) { "There is nothing to compact yet. Send a message first." }
-            // Claude compacts in the call itself, which can take a while, so
-            // the note comes first.
-            note(id, "Compacting the chat to free up context")
-            if (session.engine == EngineKind.CLAUDE) {
-                // After a restart the Claude process for this chat is not open yet.
-                graph.engine.openSession(graph.sessions.workspace(id), thread, engines.of(EngineKind.CLAUDE).model, graph.tools.definitions)
-                graph.engine.compact(thread)
-                note(id, "Chat compacted")
-            } else {
-                graph.engine.compact(thread)
+            try {
+                val session = graph.sessions.getSession(id)
+                val thread = checkNotNull(session?.engineThreadId) { "There is nothing to compact yet. Send a message first." }
+                // Rebind the saved chat after an APK update or process restart,
+                // for either engine and for computers. Do not compact a fresh
+                // replacement if the saved thread could not be resumed.
+                val resumed = graph.engine.openSession(graph.sessions.workspace(id), thread, session.model ?: engines.of(session.engine).model, graph.tools.definitions)
+                check(resumed == thread) { "The saved chat could not be reopened for compaction. Send a message to resume it first." }
+                val result = graph.engine.compact(thread)
+                note(id, compactedNote(result, System.currentTimeMillis() - started))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                note(id, "Compaction failed: ${failure.message ?: "Completion was not confirmed."}")
+                throw failure
+            } finally {
+                mutable.update { it.copy(compacting = it.compacting - id) }
             }
         }
     }
@@ -778,14 +1102,34 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // End voice while an assistant press is still setting up cancels it.
         if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {
             assistantVoiceJob?.cancel()
-            return
         }
-        if (graph.voice.state.value.active) stopVoice() else current.value?.let(graph.coordinator::stop)
+        if (graph.voice.state.value.active && (!mutable.value.voiceBrowsing || current.value == graph.voiceConversation.sessionId.value)) {
+            // User Stop covers the voice source's children too. Ending only
+            // the microphone through toggleVoice keeps its separate meaning.
+            (graph.voiceConversation.sessionId.value ?: current.value)?.let(graph.coordinator::stop)
+            stopVoice()
+        } else current.value?.let(graph.coordinator::stop)
     }
 
     /** Words for the open chat's run, which may not be the only one running. */
+    private fun answerRunGate(id: String, text: String): Boolean {
+        val own = graph.coordinator.stateOf(id)
+        val delegatedGate = own?.approval == null && own?.question == null
+        val handled = graph.coordinator.answerApprovalByReply(text, sessionId = id) ||
+            graph.coordinator.answerQuestionByReply(text, sessionId = id)
+        if (handled && delegatedGate) task {
+            graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), id, "user", text, System.currentTimeMillis()))
+        }
+        return handled
+    }
+
     fun steer(text: String) {
-        current.value?.let { graph.coordinator.steer(it, text) }
+        val id = current.value ?: return
+        if (answerRunGate(id, text)) return
+        // The source can be idle while its subagent works. A new instruction
+        // needs a source turn (to inspect/cancel it), not a missing coordinator.
+        if (graph.coordinator.phaseOf(id) == null) send(text, emptyList())
+        else graph.coordinator.steer(id, text)
     }
     fun toggleVoice() {
         if (graph.voice.state.value.active) stopVoice() else startVoice()
@@ -800,7 +1144,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * already has messages is left alone and voice opens in a new one, the way
      * a fresh assistant press starts over.
      */
-    fun startAssistantVoice() {
+    fun startAssistantVoice(automation: dev.androidagent.core.AutomationVoiceRequest? = null) {
+        if (automation != null && (graph.voice.state.value.active || assistantVoiceJob?.isActive == true)) {
+            // A later notification belongs in the live conversation; do not
+            // restart the call or silently discard its context.
+            val starting = assistantVoiceJob
+            task {
+                starting?.join()
+                graph.voiceConversation.announce(automation)
+            }
+            return
+        }
         if (graph.voice.state.value.active || assistantVoiceJob?.isActive == true) return
         // The voice screen comes up now, not when the call starts: on a cold
         // start the runtime and the chat take seconds, and a press that shows
@@ -816,7 +1170,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     current.value = graph.sessions.createSession(EngineKind.CODEX).id
                 }
                 mutable.update { it.copy(voiceSummon = "Opening your conversation") }
-                beginVoice()
+                beginVoice(automation)
             } finally {
                 // Voice is already active by here when it started, so the
                 // screen stays up; on a failure or a cancel it goes away.
@@ -829,12 +1183,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(isDefaultAssistant = isDefault) }
     }
     private fun startVoice() = task { beginVoice() }
-    private suspend fun beginVoice() {
-        graph.queue.pause()
+    private suspend fun beginVoice(automation: dev.androidagent.core.AutomationVoiceRequest? = null) {
+        automation?.requireCurrent()
         val sessionId = current.value ?: kotlin.error("Choose a chat first.")
         mutable.update { it.copy(errorMessage = null) }
-        graph.voiceConversation.begin(sessionId, engines.of(EngineKind.CODEX).model)
+        graph.voiceConversation.begin(sessionId, mutable.value.selectedModel.takeIf { mutable.value.activeEngine == EngineKind.CODEX }
+            ?: engines.of(EngineKind.CODEX).model, automation)
     }
+    fun toggleVoiceChildUpdates() = graph.voiceConversation.setChildUpdatesPaused(!graph.voiceConversation.childUpdates.value.paused)
+
     private fun stopVoice() = task { graph.voiceConversation.stop() }
     fun prepare() {
         if (setupJob?.isActive == true) return
@@ -846,7 +1203,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 mutable.update { it.copy(accountStatus = account) }
                 rememberAccount(account)
                 loadModels()
-                loadSkills()
+                loadSlashCatalog()
                 runCatching { graph.engine.refreshUsage() }
             } finally { mutable.update { it.copy(isPreparingRuntime = false) } }
         }
@@ -889,7 +1246,35 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun cancelClaudeDownload() = graph.claudeHost.installer.cancel()
+    fun cancelClaudeDownload() = graph.claudeHost.updates.cancel()
+
+    private var modelRefreshJob: Job? = null
+    private var modelRefreshAt: Long? = null
+    private var modelRefreshComputer: String? = null
+
+    /** Fresh catalog on chat/menu open and resume; per-runtime engine caches bound repeated work. */
+    fun refreshModels() {
+        val computer = current.value?.let(graph.computers::binding)?.computerId
+        val at = System.nanoTime()
+        if (modelRefreshJob?.isActive == true) return
+        if (computer == modelRefreshComputer && modelRefreshAt?.let { at - it < 30_000_000_000L } == true) return
+        modelRefreshComputer = computer
+        modelRefreshAt = at
+        modelRefreshJob = viewModelScope.launch {
+            try {
+                if (computer != null) {
+                    graph.remote.checkClaude(computer)
+                } else if (mutable.value.claude.account?.signedIn == true) {
+                    loadClaudeModels()
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Keep the last known catalog while offline. */ }
+            finally {
+                modelRefreshJob = null
+                if (current.value?.let(graph.computers::binding)?.computerId != computer) refreshModels()
+            }
+        }
+    }
 
     /** Start `claude auth login` and open its page in the browser. */
     fun claudeLogin() = claudeTask {
@@ -1126,6 +1511,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 supported = supported,
                 now = java.time.ZonedDateTime.now(),
                 appLabel = ::appLabel,
+                supportedDeviceStates = host.supportedDeviceStates(),
             )
         }.getOrDefault(dev.androidagent.core.AutomationOverview.EMPTY)
         mutable.update { state ->
@@ -1224,13 +1610,24 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         finally { mutable.update { it.copy(isLoadingModels = false) } }
     }
-    private suspend fun loadSkills(sessionId: String? = current.value, forceReload: Boolean = true) {
+    /**
+     * The skills and commands of the open chat's own engine. They are kept
+     * only if that chat is still open on that engine when they arrive, so a
+     * quick switch between Codex and Claude never shows the other one's list.
+     */
+    private suspend fun loadSlashCatalog(sessionId: String? = current.value, forceReload: Boolean = true) {
         val id = sessionId ?: return
         mutable.update { it.copy(isLoadingSkills = true) }
         try {
             val workspace = graph.sessions.workspace(id)
+            val kind = graph.sessions.getSession(id)?.engine
             val skills = graph.engine.skillCatalog(workspace, forceReload = forceReload)
-            mutable.update { it.copy(availableSkills = skills) }
+            val commands = try {
+                graph.engine.commandCatalog(workspace, forceReload = forceReload)
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { emptyList() }
+            if (current.value == id && graph.sessions.getSession(id)?.engine == kind) {
+                mutable.update { it.copy(availableSkills = skills, availableCommands = commands) }
+            }
         } finally {
             mutable.update { it.copy(isLoadingSkills = false) }
         }
@@ -1239,18 +1636,27 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * Pick a model for the open chat. The list holds both engines' models, so
      * picking one of the other engine also moves the chat to that engine.
      */
-    fun model(value: String) {
+    fun model(value: String) = task {
         val state = mutable.value
+        val id = current.value ?: return@task
         val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.activeEngine)
+        check(graph.coordinator.phaseOf(id) == null) { "Wait for this chat to finish before changing its model." }
+        check(id !in state.compacting) { "Wait for compaction to finish before changing its model." }
         engines = engines.update(kind) { it.select(value) }
         persistChoice(kind)
-        if (kind != state.activeEngine) useEngine(kind)
+        if (kind != state.activeEngine) changeEngine(id, kind)
+        graph.sessions.setModelChoice(id, value, engines.of(kind).effort)
         project()
     }
-    fun reasoningEffort(value: String?) {
-        val kind = mutable.value.activeEngine
-        engines = engines.update(kind) { it.selectEffort(value) }
+    fun reasoningEffort(value: String?) = task {
+        val state = mutable.value
+        val id = current.value ?: return@task
+        val kind = state.activeEngine
+        val choice = ModelChoice(state.modelCatalog.filter { it.engine == kind }, state.selectedModel,
+            state.selectedReasoningEffort).selectEffort(value)
+        engines = engines.update(kind) { it.copy(model = choice.model, effort = choice.effort) }
         persistChoice(kind)
+        graph.sessions.setModelChoice(id, choice.model, choice.effort)
         project()
     }
     /** Each engine's pick under its own keys; Codex keeps the keys the assistant panel reads. */
@@ -1501,6 +1907,7 @@ private const val KEY_EFFORT = "reasoningEffort"
 private const val KEY_CLAUDE_MODEL = "claudeModel"
 private const val KEY_CLAUDE_EFFORT = "claudeReasoningEffort"
 private const val KEY_DEFAULT_ENGINE = "defaultEngine"
+private const val KEY_PINS = "pins"
 private const val CLAUDE_SIGN_IN = "Sign in to Claude"
 
 /** Long enough for Mike to reach Developer options, including turning them on. */

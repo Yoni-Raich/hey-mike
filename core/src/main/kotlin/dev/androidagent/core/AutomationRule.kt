@@ -390,6 +390,10 @@ data class AutomationAction(
             for (field in kind.requiredFields) {
                 if (json.str(field) == null) bad("a \"$wire\" action needs \"$field\".")
             }
+            if (kind == AutomationActionKind.VOICE_CALL && json["context"] != null && json["context"] !is JsonNull) {
+                val context = json["context"] as? JsonPrimitive
+                if (context?.isString != true) bad("\"context\" must be text.")
+            }
             for ((key, value) in json) {
                 if (value is JsonPrimitive && value.isString && value.content.length > MAX_TEXT_CHARS) {
                     bad("\"$key\" is longer than $MAX_TEXT_CHARS characters.")

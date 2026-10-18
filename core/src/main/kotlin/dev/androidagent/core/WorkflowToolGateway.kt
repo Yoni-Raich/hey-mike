@@ -137,6 +137,11 @@ class WorkflowToolGateway(
     override fun needsControl(name: String): Boolean =
         name == "run_workflow" || name == "workflow_runner" || name == "act_plan"
 
+    override fun needsControl(name: String, arguments: JsonObject): Boolean =
+        if (name == "workflow_runner") {
+            arguments.str("mode")?.lowercase() !in setOf("list", "describe", "save")
+        } else needsControl(name)
+
     /** Steps dispatch through the device backends; this gateway alone operates nothing. */
     override fun deviceBackendLive(): Boolean = false
 

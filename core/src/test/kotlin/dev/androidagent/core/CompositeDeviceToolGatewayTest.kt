@@ -27,11 +27,49 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 
 class CompositeDeviceToolGatewayTest {
+    @Test fun versionsReachBothRuntimeSnapshotAndDeviceStatusWithoutADeviceCall() = runBlocking {
+        val member = FakeGateway("offline", tools = listOf("device_status"))
+        var selected = "Versions on phone: Codex 0.163.0, Claude Code 2.1.302"
+        val gateway = CompositeDeviceToolGateway(listOf(member), runtimeVersions = { selected })
+        assertTrue(gateway.statusLine()!!.contains(selected))
+        assertTrue(gateway.invoke("device_status", empty()).text.contains(selected))
+        selected = "Versions on phone: Codex 0.163.0, Claude Code 2.1.303"
+        assertTrue(gateway.invoke("device_status", empty()).text.contains("2.1.303"))
+        assertTrue(member.invoked.isEmpty())
+    }
+
+    @Test fun assistantSnapshotRoutesReadOnlyWithoutArmingAnyGateway() = runBlocking {
+        val absent = FakeGateway("absent", emptyList())
+        val available = FakeGateway("a11y", listOf("read_ui"))
+        available.assistant = AssistantScreenText("reader", listOf("Post"))
+        val composite = CompositeDeviceToolGateway(listOf(absent, available))
+        assertEquals(available.assistant, composite.assistantScreenText())
+        assertEquals(0, available.runs)
+        assertTrue(available.invoked.isEmpty())
+        assertTrue(absent.invoked.isEmpty())
+    }
+    @Test fun operationArgumentsReachTheGatewayWhenDecidingScreenControl() {
+        val provider = object : DeviceToolGateway {
+            override val definitions = listOf(ToolDefinition("contacts", "Contacts", buildJsonObject {}))
+            override fun beginRun(runId: String, workspace: File) = Unit
+            override fun revoke() = Unit
+            override fun needsControl(name: String) = true
+            override fun needsControl(name: String, arguments: JsonObject) =
+                arguments["operation"]?.jsonPrimitive?.content != "search"
+            override suspend fun invoke(name: String, arguments: JsonObject) = ToolResult("OK")
+            override suspend fun cancel() = Unit
+        }
+        val composite = CompositeDeviceToolGateway(listOf(provider))
+        assertFalse(composite.needsControl("contacts", buildJsonObject { put("operation", "search") }))
+        assertTrue(composite.needsControl("contacts", buildJsonObject { put("operation", "create_draft") }))
+        assertTrue(composite.needsControl("shell", buildJsonObject {}))
+    }
 
     @Test fun aToolRoutesToTheFirstBackendThatDeclaresIt() = runBlocking {
         val first = FakeGateway("a11y", tools = listOf("read_ui", "tap"))
@@ -223,6 +261,36 @@ class CompositeDeviceToolGatewayTest {
         assertFalse(composite.hidesOverlayDuringCapture("nope"))
     }
 
+    @Test fun anIndependentCallArmsOnlyItsOwnBackendThroughItsOwnHook() = kotlinx.coroutines.test.runTest {
+        val calls = mutableListOf<String>()
+        fun member(name: String, tool: String, independent: Boolean) = object : DeviceToolGateway {
+            override val definitions = listOf(ToolDefinition(tool, "", buildJsonObject {}))
+            override fun beginRun(runId: String, workspace: File) { calls += "$name.beginRun" }
+            override fun beginIndependentTool(name2: String, runId: String, workspace: File) { calls += "$name.independent" }
+            override fun revokeIndependentTools() { calls += "$name.revokeIndependent"; if (name == "web") error("boom") }
+            override suspend fun screenInUse(runId: String, workspace: File) { calls += "$name.screen"; if (name == "web") error("boom") }
+            override fun requiresDeviceLease(name2: String) = !independent
+            override fun revoke() = Unit
+            override fun needsControl(name2: String) = false
+            override suspend fun invoke(name2: String, arguments: JsonObject) = ToolResult("")
+            override suspend fun cancel() = Unit
+        }
+        val composite = CompositeDeviceToolGateway(listOf(member("web", "browser", true), member("a11y", "tap", false)))
+        composite.beginIndependentTool("browser", "1", File("w"))
+        // Not beginRun: that is what a run holding the phone does.
+        assertEquals(listOf("web.independent"), calls)
+        calls.clear()
+        // Stop reaches every member even when the first throws, and does not throw itself.
+        composite.revokeIndependentTools()
+        try {
+            composite.screenInUse("1", File("w"))
+            error("A screen handoff failure must stop the caller")
+        } catch (failure: IllegalStateException) {
+            assertEquals("boom", failure.message)
+        }
+        assertEquals(listOf("web.revokeIndependent", "a11y.revokeIndependent", "web.screen"), calls)
+    }
+
     @Test fun aCompositeWithNoBackendsIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             CompositeDeviceToolGateway(emptyList())
@@ -312,6 +380,8 @@ class CompositeDeviceToolGatewayTest {
         var runs = 0
         var revokes = 0
         var cancels = 0
+        var assistant: AssistantScreenText? = null
+        override suspend fun assistantScreenText() = assistant
 
         override val definitions: List<ToolDefinition> =
             tools.map { ToolDefinition(it, "$id $it", buildJsonObject { }) }

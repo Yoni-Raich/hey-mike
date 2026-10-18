@@ -37,6 +37,13 @@ import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.EditText
+import android.widget.ScrollView
+import android.text.Editable
+import android.text.TextWatcher
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import dev.androidagent.overlay.OverlayOrbView
 
 /** What the panel shows. Built from the voice and run state by the session. */
@@ -47,6 +54,7 @@ internal data class PanelContent(
     val muted: Boolean = false,
     /** False until voice is live: mute means nothing before then. */
     val live: Boolean = false,
+    val sending: Boolean = false,
 )
 
 internal enum class PanelTone { WAKING, LISTENING, SPEAKING, WORKING, CONTROLLING, ERROR }
@@ -62,15 +70,27 @@ internal class AssistantPanelView(
     private val onMute: () -> Unit,
     private val onOpen: () -> Unit,
     private val onEnd: () -> Unit,
+    private val onTyping: () -> Unit,
+    private val onSend: (String) -> Unit,
 ) : FrameLayout(context) {
     private val glow = EdgeGlowView(context, level)
     private val orb = OverlayOrbView(context)
     private val status = TextView(context)
     private val transcript = TextView(context)
+    private val transcriptScroll = object : ScrollView(context) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val available = MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 } ?: dp(200)
+            super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(minOf(available, dp(200)), MeasureSpec.AT_MOST))
+        }
+    }
     private val mute = pill("Mute", onMute)
     private val card = LinearLayout(context)
     private var bottomInset = 0
     private var controlling = false
+    private val input = EditText(context)
+    private val send = pill("Send", { submit() }, filled = true)
+    private var sending = false
+    private var replacingDraft = false
 
     init {
         clipChildren = false
@@ -87,8 +107,6 @@ internal class AssistantPanelView(
         transcript.apply {
             setTextColor(INK)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-            maxLines = 4
-            ellipsize = TextUtils.TruncateAt.START
             textDirection = TEXT_DIRECTION_FIRST_STRONG
             // Read out as it changes, like a live caption.
             accessibilityLiveRegion = ACCESSIBILITY_LIVE_REGION_POLITE
@@ -96,7 +114,10 @@ internal class AssistantPanelView(
         val words = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             addView(status)
-            addView(transcript, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
+        }
+        transcriptScroll.apply {
+            isFillViewport = false
+            addView(transcript, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         }
         val top = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -111,6 +132,36 @@ internal class AssistantPanelView(
             addView(pill("Open Mike", onOpen), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
             addView(pill("End", onEnd, filled = true), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         }
+        input.apply {
+            hint = "Ask about this screen"
+            contentDescription = "Ask about this screen"
+            setTextColor(INK)
+            setHintTextColor(INK_DIM)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            imeOptions = EditorInfo.IME_ACTION_SEND or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            maxLines = 4
+            minHeight = dp(48)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = GradientDrawable().apply { setColor(FIELD); cornerRadius = dp(16).toFloat() }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    if (!replacingDraft && count > 0) onTyping()
+                    updateSend()
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+            setOnEditorActionListener { _, action, _ ->
+                if (action == EditorInfo.IME_ACTION_SEND) { submit(); true } else false
+            }
+        }
+        val composer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+            addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(send, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+        }
         card.apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(14))
@@ -122,10 +173,13 @@ internal class AssistantPanelView(
             elevation = dp(8).toFloat()
             isClickable = true
             addView(top)
+            addView(transcriptScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+            addView(composer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
             addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
         }
         addView(card, LayoutParams(minOf(dp(MAX_WIDTH_DP), resources.displayMetrics.widthPixels - dp(24)), LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         card.visibility = INVISIBLE
+        updateSend()
     }
 
     override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
@@ -161,9 +215,13 @@ internal class AssistantPanelView(
     }
 
     fun render(content: PanelContent) {
+        sending = content.sending
+        // Keep accepting the rest of a word while voice stops or a reply runs.
+        // Only Send waits; disabling EditText here drops the next keystrokes.
+        updateSend()
         status.text = content.status
         transcript.text = content.transcript
-        transcript.visibility = if (content.transcript.isBlank()) GONE else VISIBLE
+        transcriptScroll.visibility = if (content.transcript.isBlank()) GONE else VISIBLE
         mute.text = if (content.muted) "Unmute" else "Mute"
         mute.isEnabled = content.live
         mute.alpha = if (content.live) 1f else 0.4f
@@ -182,6 +240,27 @@ internal class AssistantPanelView(
             // The touchable region is read on the next layout.
             requestLayout()
         }
+    }
+
+    fun resetDraft() {
+        replacingDraft = true
+        input.setText("")
+        input.clearFocus()
+        replacingDraft = false
+        updateSend()
+    }
+
+    private fun updateSend() {
+        send.isEnabled = !sending && input.text.isNotBlank()
+        send.alpha = if (send.isEnabled) 1f else 0.4f
+    }
+
+    private fun submit() {
+        if (!send.isEnabled) return
+        val text = input.text.toString()
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(input.windowToken, 0)
+        input.clearFocus()
+        onSend(text)
     }
 
     /** Where touches go to the panel; everywhere else they reach the app below. */

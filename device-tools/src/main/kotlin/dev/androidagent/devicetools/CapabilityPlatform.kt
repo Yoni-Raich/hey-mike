@@ -44,6 +44,12 @@ data class MediaRow(
     val mimeType: String? = null,
     val sizeBytes: Long? = null,
     val dateMs: Long? = null,
+    val durationMs: Long? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val rotationDegrees: Int? = null,
+    /** Missing metadata is unknown, never a zero-duration success. */
+    val metadataStatus: String? = null,
 )
 
 /** One installed app row. */

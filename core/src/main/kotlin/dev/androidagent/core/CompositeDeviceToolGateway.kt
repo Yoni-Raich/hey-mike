@@ -41,6 +41,7 @@ import java.io.File
  */
 class CompositeDeviceToolGateway(
     private val members: List<DeviceToolGateway>,
+    private val runtimeVersions: () -> String? = { null },
 ) : DeviceToolGateway {
 
     init {
@@ -76,6 +77,11 @@ class CompositeDeviceToolGateway(
         }
     }
 
+    override suspend fun assistantScreenText(): AssistantScreenText? {
+        for (member in members) member.assistantScreenText()?.let { return it }
+        return null
+    }
+
     override fun revoke() {
         // Every member is revoked even when an earlier one throws. Skipping a
         // revocation would leave a live backend after Stop.
@@ -90,11 +96,34 @@ class CompositeDeviceToolGateway(
         // Unrouted names fail safe as visible control, matching the ADB gateway.
         routes[name]?.firstOrNull()?.needsControl(name) ?: true
 
+    override fun needsControl(name: String, arguments: JsonObject): Boolean =
+        routes[name]?.firstOrNull()?.needsControl(name, arguments) ?: true
+
+    override fun requiresDeviceLease(name: String): Boolean =
+        routes[name]?.firstOrNull()?.requiresDeviceLease(name) ?: true
+
+    override fun beginIndependentTool(name: String, runId: String, workspace: File) {
+        // The member's own hook, not beginRun: arming a member as if the run
+        // held the phone is a different statement from "one call, no lease".
+        routes[name]?.filter { !it.requiresDeviceLease(name) }?.forEach { it.beginIndependentTool(name, runId, workspace) }
+    }
+
+    override fun revokeIndependentTools() {
+        // Called first thing on Stop, before the device revocation: every
+        // member is reached, and a throwing one cannot skip the rest of Stop.
+        for (member in members) runCatching { member.revokeIndependentTools() }
+    }
+
+    override suspend fun screenInUse(runId: String, workspace: File) {
+        // Await the handoff. If a window cannot move, sending screen input is unsafe.
+        for (member in members) member.screenInUse(runId, workspace)
+    }
+
     override fun hidesOverlayDuringCapture(name: String): Boolean =
         routes[name]?.firstOrNull()?.hidesOverlayDuringCapture(name) ?: false
 
     override fun statusLine(): String? =
-        members.mapNotNull { it.statusLine() }.joinToString(" | ").takeIf { it.isNotEmpty() }
+        (members.mapNotNull { it.statusLine() } + listOfNotNull(runtimeVersions())).joinToString(" | ").takeIf { it.isNotEmpty() }
 
     /**
      * The union over live members, restricted to what this composite actually
@@ -182,7 +211,8 @@ class CompositeDeviceToolGateway(
         const val DEVICE_STATUS = "device_status"
         const val DEVICE_STATUS_DESCRIPTION =
             "Report which device backends are live: the accessibility service, which serves screen control, " +
-                "and the optional Wireless ADB. Read-only."
+                "and the optional Wireless ADB, plus Mike and installed phone engine versions. " +
+                "Use computers(mode=status) for computer engine versions. Read-only."
 
         const val ADB_NOT_CONNECTED = "adb_not_connected"
 

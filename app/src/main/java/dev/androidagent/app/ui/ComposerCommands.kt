@@ -20,6 +20,7 @@
 
 package dev.androidagent.app.ui
 
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineKind
@@ -55,6 +56,24 @@ internal fun AgentSkill.matches(query: String): Boolean =
 
 internal fun ComposerCommand.matches(query: String): Boolean =
     query.isEmpty() || label.contains(query, ignoreCase = true) || id.contains(query, ignoreCase = true)
+
+/**
+ * What the chat's engine lists behind `/`, minus what the app already does
+ * by its own command or button: a new chat, compacting, the model and effort
+ * pickers, renaming. The engine's list is shown as it gave it.
+ */
+internal fun engineCommands(state: AgentUiState): List<AgentCommand> {
+    val covered = ComposerCommand.values().map { it.id }.toSet() + setOf("clear", "effort")
+    return state.availableCommands.filter { command -> (listOf(command.name) + command.aliases).none { it in covered } }
+}
+
+internal fun AgentCommand.matches(query: String): Boolean =
+    query.isEmpty() || name.contains(query, ignoreCase = true) || aliases.any { it.contains(query, ignoreCase = true) }
+
+/** A command that is only a word runs at once; one with arguments waits in the field for them. */
+internal fun AgentCommand.runsAtOnce(): Boolean = argumentHint.isBlank()
+
+internal fun AgentCommand.draft(): String = if (runsAtOnce()) "/$name" else "/$name "
 
 /** The command a whole draft names, such as "/compact", or null. */
 internal fun exactCommand(draft: String): ComposerCommand? =

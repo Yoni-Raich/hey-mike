@@ -62,12 +62,15 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -77,6 +80,8 @@ import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -157,6 +162,7 @@ import androidx.compose.material3.rememberDrawerState
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.EngineKind
 import dev.androidagent.app.update.AppUpdateInfo
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.RunPhase
@@ -268,7 +274,15 @@ fun AndroidAgentScreen(
                 .collectLatest { actions.onDrawerChanged(it == DrawerValue.Open) }
         }
 
-        val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()))
+        val voiceMode = rememberVoiceModeMotion(voiceModeShown(state.shownVoice()) && !state.voiceBrowsing)
+        val focusManager = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(state.voiceState.active, state.voiceBrowsing) {
+            if (state.voiceState.active && !state.voiceBrowsing) {
+                focusManager.clearFocus()
+                keyboard?.hide()
+            }
+        }
         val drawerPush = rememberDrawerPush(drawerState)
         val layoutDirection = LocalLayoutDirection.current
 
@@ -307,9 +321,9 @@ fun AndroidAgentScreen(
                     .fillMaxSize()
                     .drawerPushed(drawerPush, layoutDirection)
                     .imePadding()
-                    // The chat stays composed under voice mode; keep it out
-                    // of touch exploration while it is off screen.
-                    .then(if (voiceMode.shown) Modifier.clearAndSetSemantics { } else Modifier),
+                    // The chat stays composed under voice mode and under the
+                    // browser page; keep it out of touch exploration then.
+                    .then(if (voiceMode.shown || state.browserShown()) Modifier.clearAndSetSemantics { } else Modifier),
                 contentWindowInsets = WindowInsets.safeDrawing,
                 containerColor = MaterialTheme.colorScheme.background,
                 snackbarHost = { SnackbarHost(snackbars) },
@@ -324,18 +338,46 @@ fun AndroidAgentScreen(
                 },
                 bottomBar = {
                     Column {
+                        state.activeSessionId?.let { id ->
+                            val binding = state.remoteBindings[id]
+                            if (binding?.engine == EngineKind.CLAUDE && binding.threadId != null &&
+                                state.sessions.firstOrNull { it.id == id }?.engine == EngineKind.CLAUDE) {
+                                ClaudeSessionStrip(
+                                    computer = state.computers.firstOrNull { it.id == binding.computerId }?.label ?: "the computer",
+                                    syncing = id in state.pcSyncing,
+                                    opening = id in state.pcDesktopOpening,
+                                    // A problem that blocks sending has its own banner below.
+                                    notice = state.pcSyncProblems[id].takeIf { id !in state.pcBusyChats },
+                                    enabled = !state.runState.active && id !in state.pcSyncing && id !in state.pcDesktopOpening,
+                                    canOpenDesktop = id !in state.pcBusyChats,
+                                    onRefresh = { actions.onSyncPcChat(id) },
+                                    onOpenDesktop = { actions.onOpenClaudeDesktop(id) },
+                                )
+                            }
+                        }
+                        if (state.voiceState.active && state.voiceBrowsing) {
+                            VoiceChatBanner(state, actions)
+                        }
                         // Pinned above the composer, never in the chat list: the
                         // list follows the newest message, and a card placed in it
                         // sat above everything, out of sight in any long chat.
                         state.activeSessionId?.takeIf { it in state.pcBusyChats }?.let { id ->
+                            // The engine the chat runs on now; the other one's thread may still be the binding's.
+                            val claude = state.sessions.firstOrNull { it.id == id }?.engine == EngineKind.CLAUDE
                             PcBusyBanner(
+                                claude = claude,
+                                problem = state.pcSyncProblems[id],
+                                checking = id in state.pcSyncing,
                                 forking = id in state.pcForking,
                                 onFork = { actions.onForkPcChat(id) },
-                                onCheck = { actions.onCheckPcChatBusy(id) },
+                                onCheck = { if (claude) actions.onSyncPcChat(id) else actions.onCheckPcChatBusy(id) },
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
                         TransferBanner(state.fileTransfer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                        state.activeBrowserPage()?.let { page ->
+                            BrowserPageCard(page, onOpen = actions.onOpenBrowser, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                        }
                         state.runState.approval?.let { approval ->
                             ApprovalCard(
                                 approval = approval,
@@ -361,20 +403,36 @@ fun AndroidAgentScreen(
                     }
                 },
             ) { padding ->
+                Column(Modifier.fillMaxSize().padding(padding)) {
+                Box(Modifier.voiceStage(voiceMode.topBar)) { ParentChatBanner(state, actions) }
                 AgentChatContent(
                     state = state,
                     actions = actions,
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding)
                         .voiceStage(voiceMode.chat, lift = (-32).dp, scaleFrom = 0.97f, blur = 10.dp),
                 )
+                }
             }
             VoiceModeLayer(motion = voiceMode, state = state, actions = actions, voiceLevel = voiceLevel)
         }
 
         // Sheets are windows of their own and would sit above first launch.
         val onboarding = state.onboardingStep() != dev.androidagent.core.OnboardingStep.DONE
+        val page = state.activeBrowserPage()
+        if (page != null && state.browserShown() && !onboarding) {
+            BrowserPanel(
+                page = page,
+                running = state.runState.active,
+                onBack = actions.onCloseBrowser,
+                onTakeControl = actions.onBrowserTakeControl,
+                onGiveBack = actions.onBrowserGiveBack,
+                onClosePage = actions.onBrowserClosePage,
+                onStop = actions.onStop,
+                attach = actions.onAttachBrowser,
+                detach = actions.onDetachBrowser,
+            )
+        }
         if (state.isSettingsOpen && !onboarding) {
             AgentSettingsSheet(state = state, actions = actions)
         }
@@ -408,6 +466,8 @@ internal fun SessionRow(
     onSelect: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    pinned: Boolean = false,
+    onTogglePin: (() -> Unit)? = null,
     subtitle: String? = null,
     subtitleIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     leading: (@Composable () -> Unit)? = null,
@@ -472,10 +532,18 @@ internal fun SessionRow(
                         }
                     }
                 }
+                if (pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.size(14.dp), tint = Color(0xFF6C6A64))
             }
         }
         Box(Modifier.align(Alignment.TopEnd)) {
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                onTogglePin?.let { toggle ->
+                    DropdownMenuItem(
+                        text = { Text(if (pinned) "Unpin" else "Pin") },
+                        leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },
+                        onClick = { menuOpen = false; toggle() },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Rename") },
                     leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
@@ -678,7 +746,11 @@ private fun AgentChatContent(
             } else state.messages
             items(chatRows(shown, running), key = { it.key }) { row ->
                 when (row) {
-                    is MessageRow -> MessageBubble(row.message, row.copyText)
+                    is MessageRow -> {
+                        val child = state.childAgents.firstOrNull { it.id == row.message.id }
+                        if (child != null) ChildAgentCard(child, actions)
+                        else MessageBubble(row.message, row.copyText)
+                    }
                     is ActionsRow -> DeviceActionsRow(row)
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }
@@ -686,6 +758,12 @@ private fun AgentChatContent(
             if (showStatus) {
                 item(key = "run-status", contentType = "run-status") {
                     RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem())
+                }
+            }
+            // A compaction takes a while and sends nothing meanwhile: this card is the proof it is alive.
+            state.activeSessionId?.let(state.compacting::get)?.let { startedAt ->
+                item(key = "compacting", contentType = "compacting") {
+                    CompactingCard(startedAt, Modifier.animateItem())
                 }
             }
             if (offersWorkflowSuggestion(state.messages, running)) {
@@ -792,11 +870,75 @@ private fun EmptyChatCard(state: AgentUiState, actions: AgentUiActions) {
 }
 
 /**
- * The conversation is held open by Codex on the computer, so Mike cannot
- * write to it. A copy with the whole history can go on right away.
+ * One quiet line above the composer of a Claude session that lives on a
+ * computer: where it is, what Mike is doing with it, and the two things the
+ * user can do. It is always there, so it is small; trouble that stops
+ * sending gets [PcBusyBanner] instead.
  */
 @Composable
-private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Unit, modifier: Modifier = Modifier) {
+private fun ClaudeSessionStrip(
+    computer: String,
+    syncing: Boolean,
+    opening: Boolean,
+    notice: String?,
+    enabled: Boolean,
+    canOpenDesktop: Boolean,
+    onRefresh: () -> Unit,
+    onOpenDesktop: () -> Unit,
+) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp).heightIn(min = 40.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (syncing || opening) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = muted)
+        } else {
+            Icon(
+                if (notice != null) Icons.Outlined.ErrorOutline else Icons.Outlined.Computer,
+                contentDescription = null,
+                tint = if (notice != null) MaterialTheme.colorScheme.error else muted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            when {
+                opening -> "Opening in Claude Desktop…"
+                syncing -> "Syncing with $computer…"
+                notice != null -> notice
+                else -> "Claude session on $computer"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = muted,
+            maxLines = if (notice != null && !syncing && !opening) 3 else 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+        )
+        IconButton(onClick = onRefresh, enabled = enabled) {
+            Icon(Icons.Outlined.Refresh, contentDescription = "Refresh history", modifier = Modifier.size(20.dp))
+        }
+        IconButton(onClick = onOpenDesktop, enabled = enabled && canOpenDesktop) {
+            Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Open in Claude Desktop", modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/**
+ * Mike cannot write to the conversation: another client on the computer
+ * holds it open, or (Claude only) [problem] says why that could not be
+ * checked. A Codex conversation can go on in a copy right away.
+ */
+@Composable
+private fun PcBusyBanner(
+    forking: Boolean,
+    onFork: () -> Unit,
+    onCheck: () -> Unit,
+    modifier: Modifier = Modifier,
+    claude: Boolean = false,
+    problem: String? = null,
+    checking: Boolean = false,
+) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.tertiaryContainer,
@@ -805,19 +947,32 @@ private fun PcBusyBanner(forking: Boolean, onFork: () -> Unit, onCheck: () -> Un
     ) {
         Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(if (problem != null) Icons.Outlined.ErrorOutline else Icons.Outlined.Computer, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Text("Open in Codex on the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    when {
+                        problem != null -> "Can't check this session"
+                        claude -> "Open in Claude on the computer"
+                        else -> "Open in Codex on the computer"
+                    },
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                )
             }
             Text(
-                "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer.",
+                when {
+                    problem != null -> "$problem Sending waits until Mike can see that nothing else is writing to it."
+                    claude -> "Mike can't add to this session while another Claude has it open. Close it there, then check again."
+                    else -> "Mike can't add to this conversation while the Codex app holds it. Continue in a copy with the whole history, or close it in Codex on the computer."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = 32.dp, top = 6.dp),
             )
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onCheck, enabled = !forking) { Text("Check again", color = MaterialTheme.colorScheme.onTertiaryContainer) }
+                TextButton(onClick = onCheck, enabled = !forking && !checking) {
+                    Text(if (checking) "Checking…" else if (problem != null) "Try again" else "Check again", color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
                 Spacer(Modifier.width(4.dp))
-                Button(
+                if (!claude) Button(
                     onClick = onFork,
                     enabled = !forking,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary, contentColor = MaterialTheme.colorScheme.onSecondary),
@@ -907,6 +1062,12 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
             )
             InlineMedia(message.attachmentPaths)
         }
+        return
+    }
+    // What `/context` answers is shown as a gauge, not as the CLI's table.
+    val contextUsage = remember(message.id, message.text) { if (user) null else parseContextUsage(message.text) }
+    if (contextUsage != null) {
+        ContextUsageCard(contextUsage)
         return
     }
     val bubbleColor = when {

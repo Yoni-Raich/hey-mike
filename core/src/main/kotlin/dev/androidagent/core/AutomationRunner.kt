@@ -46,7 +46,7 @@ interface AutomationActions {
      * [AutomationGuard.validForMs].
      */
     suspend fun agentTurn(prompt: String, ruleId: String, validUntil: Long): AutomationActionResult
-    suspend fun voiceCall(opening: String): AutomationActionResult
+    suspend fun voiceCall(request: AutomationVoiceRequest): AutomationActionResult
 
     /**
      * Ask the user a yes/no question and wait for the answer.
@@ -163,7 +163,8 @@ class AutomationRunner(
             }
 
             val result = try {
-                perform(action, rule.id, validUntil)
+                perform(action, rule.id, validUntil, rule.conditions.filter { it.kind == AutomationCondition.Kind.DEVICE_STATE },
+                    rule.conditions.any { it.requiresHeadphonesOutput() })
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -185,7 +186,7 @@ class AutomationRunner(
         return AutomationRunReport(rule.id, ok = true, completed = completed)
     }
 
-    private suspend fun perform(action: AutomationAction, ruleId: String, validUntil: Long): AutomationActionResult =
+    private suspend fun perform(action: AutomationAction, ruleId: String, validUntil: Long, outputConditions: List<AutomationCondition>, bluetoothOnly: Boolean): AutomationActionResult =
         when (action.kind) {
             AutomationActionKind.RUN_WORKFLOW -> actions.runWorkflow(
                 action.raw.str("workflow").orEmpty(),
@@ -208,7 +209,9 @@ class AutomationRunner(
                 validUntil,
             )
 
-            AutomationActionKind.VOICE_CALL -> actions.voiceCall(action.raw.str("opening").orEmpty())
+            AutomationActionKind.VOICE_CALL -> actions.voiceCall(
+                AutomationVoiceRequest.fromAction(ruleId, action.raw, validUntil).copy(bluetoothHeadphonesOnly = bluetoothOnly, outputConditions = outputConditions),
+            )
 
             // Handled by the approval gate above; reaching here means it was approved.
             AutomationActionKind.ASK -> AutomationActionResult.ok()

@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -38,7 +40,131 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class LocalSessionStoreTest {
 
+    @Test fun childLinksAndTaskReceiptsSurviveReopenWithoutLosingOrdinaryChatState() = runBlocking {
+        val store = LocalSessionStore(context)
+        val parent = store.createSession()
+        val child = store.createChildSession(parent.id, EngineKind.CLAUDE, "Read notes")
+        val task = dev.androidagent.core.SessionAgentTask("t1", "request", parent.id, "Read notes", "  exact task\n  ",
+            EngineKind.CLAUDE, sessionId = child.id, createdAt = 10, status = "running")
+        store.saveAgentTask(task)
+        store.setModelChoice(child.id, "model-a", "high")
+        store.append(ChatMessage("child-user", child.id, "user", "Continue here", 12))
+        store.setThread(child.id, "child-thread")
+        store.saveComposerDraft(child.id, "  my draft  ")
+        val reopened = LocalSessionStore(context)
+        assertEquals(parent.id, reopened.getSession(child.id)!!.parentSessionId)
+        assertEquals("Read notes", reopened.getSession(child.id)!!.title)
+        assertFalse(reopened.getSession(child.id)!!.titlePending)
+        assertEquals("model-a", reopened.getSession(child.id)!!.model)
+        assertEquals("high", reopened.getSession(child.id)!!.reasoningEffort)
+        assertEquals(EngineKind.CLAUDE, reopened.getSession(child.id)!!.engine)
+        assertEquals("child-thread", reopened.getSession(child.id)!!.engineThreadId)
+        assertEquals(task, reopened.loadAgentTasks().single())
+        assertEquals("  my draft  ", reopened.composerDraft(child.id))
+        assertEquals("Continue here", reopened.messages(child.id).first().single().text)
+        assertTrue(runCatching { reopened.setParent(parent.id, child.id) }.isFailure)
+        val other = reopened.createSession()
+        assertTrue(runCatching { reopened.setParent(child.id, other.id) }.isFailure)
+        reopened.deleteSession(parent.id)
+        assertNull(reopened.getSession(child.id)!!.parentSessionId)
+        assertEquals("Continue here", reopened.messages(child.id).first().single().text)
+    }
+
     private val context: Context = RuntimeEnvironment.getApplication()
+
+    @Test fun schemaEightChildrenGainModelSettingsWithoutLosingTheirReceipt() = runBlocking {
+        val file = context.getDatabasePath("sessions.db").apply { parentFile!!.mkdirs() }
+        val task = dev.androidagent.core.SessionAgentTask("t", "r", "parent", "Child", "Exact task", EngineKind.CODEX,
+            sessionId = "child", createdAt = 2)
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX',parked TEXT,catch_up INTEGER,title_pending INTEGER NOT NULL DEFAULT 0,parent_session TEXT REFERENCES sessions(id) ON DELETE SET NULL)")
+            db.execSQL("CREATE TABLE messages(id TEXT PRIMARY KEY,session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,attachments TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE agent_tasks(id TEXT PRIMARY KEY,payload TEXT NOT NULL)")
+            db.execSQL("INSERT INTO sessions(id,title,created,updated) VALUES('parent','Parent',1,1)")
+            db.execSQL("INSERT INTO sessions(id,title,created,updated,parent_session,thread) VALUES('child','Child',2,2,'parent','child-thread')")
+            db.execSQL("INSERT INTO agent_tasks VALUES(?,?)", arrayOf("t", kotlinx.serialization.json.Json.encodeToString(dev.androidagent.core.SessionAgentTask.serializer(), task)))
+            db.version = 8
+        }
+        val store = LocalSessionStore(context)
+        assertEquals("parent", store.getSession("child")!!.parentSessionId)
+        assertEquals("child-thread", store.getSession("child")!!.engineThreadId)
+        assertEquals(task, store.loadAgentTasks().single())
+        store.setModelChoice("child", "model-a", "high")
+        assertEquals("high", LocalSessionStore(context).getSession("child")!!.reasoningEffort)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
+    }
+
+    @Test fun persistentMikeSchemaSixWithoutDraftTableOpensWithoutLosingHistory() = runBlocking {
+        // The Nothing's 1113 build used v6 for is_mike, before the separate
+        // dev branch used the same version for composer_drafts.
+        val file = context.getDatabasePath("sessions.db").apply { parentFile!!.mkdirs() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX',parked TEXT,catch_up INTEGER,title_pending INTEGER NOT NULL DEFAULT 0,is_mike INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("CREATE UNIQUE INDEX mike_main_chat ON sessions(is_mike) WHERE is_mike=1")
+            db.execSQL("CREATE TABLE messages(id TEXT PRIMARY KEY,session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,attachments TEXT NOT NULL)")
+            db.execSQL("CREATE INDEX message_session ON messages(session,created)")
+            db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
+            db.execSQL("INSERT INTO sessions(id,title,created,updated,thread,engine,is_mike) VALUES(?,?,?,?,?,?,?)", arrayOf<Any>(OLD_ID, "Saved Mike", 1L, 2L, "old-thread", "CLAUDE", 1))
+            db.execSQL("INSERT INTO messages VALUES('m1',?,'user','keep my history',1,'complete','[]')", arrayOf(OLD_ID))
+            db.execSQL("INSERT INTO run_queue VALUES(0,?)", arrayOf("{\"sessionId\":\"$OLD_ID\",\"prompt\":\"keep queued work\"}"))
+            db.version = 6
+        }
+        val keptFile = java.io.File(context.filesDir, "sessions/$OLD_ID/workspace/keep.txt").apply {
+            parentFile!!.mkdirs(); writeText("untouched")
+        }
+
+        val store = LocalSessionStore(context)
+        // Opening the main chat calls this immediately, even with no draft.
+        assertNull(store.composerDraft(OLD_ID))
+        assertEquals("Saved Mike", store.getSession(OLD_ID)!!.title)
+        assertEquals(EngineKind.CLAUDE, store.getSession(OLD_ID)!!.engine)
+        assertEquals("old-thread", store.getSession(OLD_ID)!!.engineThreadId)
+        assertEquals(listOf("keep my history"), store.messages(OLD_ID).first().map { it.text })
+        assertEquals("keep queued work", store.loadQueuedTurns().single().prompt)
+        val draft = "  שלום\nkeep this exact  "
+        store.saveComposerDraft(OLD_ID, draft)
+        assertEquals(draft, LocalSessionStore(context).composerDraft(OLD_ID))
+        assertEquals("untouched", keptFile.readText())
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            assertEquals(9, db.version)
+            db.rawQuery("SELECT is_mike FROM sessions WHERE id=?", arrayOf(OLD_ID)).use {
+                assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
+            }
+            db.rawQuery("SELECT name FROM sqlite_master WHERE name='mike_main_chat'", null).use { assertTrue(it.moveToFirst()) }
+        }
+    }
+
+    @Test fun schemaSixWithExistingDraftsKeepsThemDuringUpgrade() = runBlocking {
+        val previous = LocalSessionStore(context)
+        val chat = previous.createSession(EngineKind.CLAUDE)
+        previous.append(ChatMessage("kept", chat.id, "user", "existing history", 10))
+        previous.saveComposerDraft(chat.id, "  existing draft\nשלום  ")
+        // The other shipped v6 variant already contains composer_drafts.
+        val file = context.getDatabasePath("sessions.db")
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { it.version = 6 }
+        val upgraded = LocalSessionStore(context)
+        assertEquals("  existing draft\nשלום  ", upgraded.composerDraft(chat.id))
+        assertEquals(listOf("existing history"), upgraded.messages(chat.id).first().map { it.text })
+        assertEquals(EngineKind.CLAUDE, upgraded.getSession(chat.id)!!.engine)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
+    }
+
+    @Test fun draftsSurviveReopenKeepExactWhitespaceAndStayUnsent() = runBlocking {
+        val store = LocalSessionStore(context)
+        val first = store.createSession()
+        val second = store.createSession()
+        val text = "  שלום\nreview this exactly  "
+        store.saveComposerDraft(first.id, text)
+        store.saveComposerDraft(second.id, "Other")
+        val reopened = LocalSessionStore(context)
+        assertEquals(text, reopened.composerDraft(first.id))
+        assertEquals("Other", reopened.composerDraft(second.id))
+        assertTrue(reopened.messages(first.id).first().isEmpty())
+        reopened.saveComposerDraft(first.id, "")
+        assertNull(store.composerDraft(first.id))
+        assertEquals("Other", store.composerDraft(second.id))
+    }
 
     @Test
     fun aNewChatRunsOnCodexByDefault() = runBlocking {
@@ -83,7 +209,24 @@ class LocalSessionStoreTest {
         assertEquals("thread-1", old.engineThreadId)
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(4, it.version) }
+        assertFalse(old.titlePending)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
+    }
+
+    @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {
+        val store = LocalSessionStore(context)
+        val chat = store.createSession()
+        assertTrue(chat.titlePending)
+        assertTrue(store.setAutomaticTitle(chat.id, "First request", complete = false))
+        val reopened = LocalSessionStore(context)
+        assertEquals("First request", reopened.getSession(chat.id)!!.title)
+        assertTrue(reopened.getSession(chat.id)!!.titlePending)
+        assertTrue(reopened.setAutomaticTitle(chat.id, "A short topic", complete = true))
+        assertFalse(LocalSessionStore(context).getSession(chat.id)!!.titlePending)
+        assertFalse(reopened.setAutomaticTitle(chat.id, "A later topic", complete = true))
+        store.rename(chat.id, "שם שבחרתי")
+        assertFalse(reopened.setAutomaticTitle(chat.id, "An automatic override", complete = true))
+        assertEquals("שם שבחרתי", LocalSessionStore(context).getSession(chat.id)!!.title)
     }
 
     @Test

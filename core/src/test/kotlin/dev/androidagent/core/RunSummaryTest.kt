@@ -32,7 +32,7 @@ class RunSummaryTest {
             RunMetrics(firstResponseMs = 2_400, totalMs = 107_000, toolCalls = 12, toolMs = 31_000, approvalMs = 18_000),
         )!!
         assertEquals(
-            "Run summary: 1m 47s total - 58s thinking, 31s on the phone across 12 calls, " +
+            "Run summary: 1m 47s total - 58s outside tool calls, 31s on the phone across 12 calls, " +
                 "18s waiting for you. First reply after 2.4s.",
             line,
         )
@@ -45,7 +45,7 @@ class RunSummaryTest {
         assertTrue(line, line.contains("1 call"))
         // Nothing to say about a first reply that was never measured.
         assertTrue(line, !line.contains("First reply"))
-        assertTrue(line, line.contains("7.0s thinking"))
+        assertTrue(line, line.contains("7.0s outside tool calls"))
     }
 
     @Test fun aRunThatTouchedNothingGetsNoLine() {
@@ -60,7 +60,7 @@ class RunSummaryTest {
         // produce "-1s thinking".
         val metrics = RunMetrics(firstResponseMs = null, totalMs = 1_000, toolCalls = 1, toolMs = 900, approvalMs = 400)
         assertEquals(0L, metrics.thinkingMs)
-        assertTrue(RunSummary.line(metrics)!!.contains("0ms thinking"))
+        assertTrue(RunSummary.line(metrics)!!.contains("0ms outside tool calls"))
     }
 
     @Test fun durationsReadTheWayAPersonWouldSayThem() {

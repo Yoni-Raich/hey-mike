@@ -54,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
@@ -213,7 +214,7 @@ internal fun VoiceModeLayer(
     var stage by remember { mutableStateOf(Rect.Zero) }
     var layer by remember { mutableStateOf(IntSize.Zero) }
     val voice = state.shownVoice()
-    val live = voiceModeShown(voice)
+    val live = motion.shown && voiceModeShown(voice)
     // Decided once per entry: a power-button press flies in from the button's
     // edge, and every exit still lands in the composer's voice button.
     val fromPowerButton = remember(motion.shown) { motion.shown && state.voiceSummon != null }
@@ -272,6 +273,13 @@ internal fun VoiceModeLayer(
                 )
             }
             VoiceStatus(voice, state.voiceMuted, Modifier.voiceStage(motion.status, lift = 10.dp))
+            if (motion.shown) {
+                VoiceChildAgents(state, actions)
+                VoiceChildUpdateControl(state.voiceChildUpdates, live && state.voiceState.active, actions.onVoiceChildUpdatesToggle)
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TextButton(onClick = actions.onBrowseVoiceChats) { Text("Browse chats") }
+                }
+            }
             VoiceCaption(
                 transcript = state.voiceTranscript,
                 role = state.voiceTranscriptRole,
@@ -299,6 +307,19 @@ internal fun VoiceModeLayer(
                 )
             }
         }
+    }
+}
+
+@Composable
+internal fun VoiceChildUpdateControl(updates: dev.androidagent.core.VoiceChildUpdateState, enabled: Boolean, toggle: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (updates.pendingChildren > 0) Text("${updates.pendingChildren} child updates waiting",
+            style = MaterialTheme.typography.labelSmall, color = Color(0xFFB0B0B0))
+        TextButton(onClick = toggle, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(if (updates.paused) "Resume child updates" else "Pause child updates")
+        }
+        if (updates.paused) Text("Updates paused · Call and child work stay active",
+            style = MaterialTheme.typography.labelSmall, color = Color(0xFFB0B0B0), textAlign = TextAlign.Center)
     }
 }
 

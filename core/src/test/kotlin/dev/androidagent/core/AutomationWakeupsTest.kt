@@ -23,6 +23,7 @@ package dev.androidagent.core
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,5 +86,16 @@ class AutomationWakeupsTest {
 
     @Test fun noNotificationRuleMeansTheListenerHasNothingToDo() {
         assertTrue(AutomationWakeups.watchedPackages(listOf(scheduled("a", "19:00"))).isEmpty())
+    }
+
+    @Test fun theListenerAcceptsAllAppsOnlyWhileTheWildcardRuleIsEnabled() {
+        val all = rule("""{"id":"all","when":{"type":"notification","package":"*"},"then":[{"type":"notify","text":"x"}]}""")
+        val named = rule("""{"id":"named","when":{"type":"notification","package":"com.whatsapp"},"then":[{"type":"notify","text":"x"}]}""")
+        val enabled = AutomationWakeups.watchedPackages(listOf(named, all))
+        assertTrue(AutomationWakeups.isPackageWatched("com.other.app", enabled))
+        val disabled = AutomationWakeups.watchedPackages(listOf(named, all.copy(enabled = false)))
+        assertTrue(AutomationWakeups.isPackageWatched("com.WhatsApp", disabled))
+        assertFalse(AutomationWakeups.isPackageWatched("com.other.app", disabled))
+        assertFalse(AutomationWakeups.isPackageWatched("com.whatsapp", emptySet()))
     }
 }

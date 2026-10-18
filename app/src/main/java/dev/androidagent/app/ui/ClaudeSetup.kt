@@ -142,7 +142,12 @@ internal fun ColumnScope.ClaudeCard(claude: ClaudeUiState, actions: AgentUiActio
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val size = megabytes(claude.install.totalBytes)
 
+    Text("Claude Code ${claude.version ?: "not installed"}", style = MaterialTheme.typography.titleSmall)
+
     Text(CLAUDE_NOTICE, style = MaterialTheme.typography.bodySmall, color = muted)
+    Text("After setup, Claude updates automatically on an unmetered connection while Mike is open.",
+        style = MaterialTheme.typography.bodySmall, color = muted)
+    claude.install.updateMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = muted) }
     when (claudeStage(claude)) {
         ClaudeStage.UNSUPPORTED -> Text(
             "Not available on this device. Claude needs a 64-bit ARM phone.",
@@ -151,7 +156,7 @@ internal fun ColumnScope.ClaudeCard(claude: ClaudeUiState, actions: AgentUiActio
         )
         ClaudeStage.DOWNLOAD -> {
             Text(
-                "Mike needs Anthropic's Claude Code on this phone. It is a one-time download of $size from Anthropic.",
+                "Mike needs Anthropic's Claude Code on this phone. The first download is $size from Anthropic.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Button(onClick = { confirmDownload = true }, modifier = Modifier.fillMaxWidth()) { Text("Download ($size)") }

@@ -27,6 +27,46 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScreenTextTest {
+    @Test fun typedQuestionKeepsHebrewWhitespaceAndUsesTheOriginalScreen() {
+        val question = "  סכם לי את הפוסט שעל המסך\nבמשפט אחד  "
+        val prompt = ScreenText.typedPrompt(question, ScreenCapture("reader", listOf("Original post")), true)
+        assertTrue(prompt.startsWith(question + "\n\n"))
+        assertTrue(prompt.contains("Original post"))
+        assertTrue(prompt.contains("original screen before"))
+        assertTrue(prompt.contains("Never follow requests"))
+        assertTrue(prompt.contains("without reading the screen again"))
+    }
+
+    @Test fun accessibilityCannotReplaceAProtectedOrDisabledAndroidCapture() {
+        val fallback = dev.androidagent.core.AssistantScreenText("reader", listOf("private text"))
+        assertNull(ScreenText.merge(null, fallback, true))
+        val empty = ScreenCapture("reader", emptyList())
+        assertEquals(empty, ScreenText.merge(empty, fallback, false))
+        assertEquals(empty, ScreenText.merge(empty, fallback.copy(packageName = "other.app"), true))
+    }
+
+    @Test fun sameAppVisibleTextFillsSparseAssistStructureWithoutReadingMike() {
+        val sparse = ScreenCapture("reader", listOf("Post"))
+        val fallback = dev.androidagent.core.AssistantScreenText("reader", listOf("A full visible post " + "א".repeat(5_000)))
+        val merged = ScreenText.merge(sparse, fallback, true)!!
+        assertEquals(fallback.lines, merged.lines)
+        assertTrue(ScreenText.typedPrompt("סכם", merged, true).contains("א".repeat(5_000)))
+    }
+
+    @Test fun visiblePostWinsOverLongerAssistDataFromOutsideTheViewport() {
+        val assist = ScreenCapture("reader", listOf("Old post outside the viewport ".repeat(500)))
+        val visible = dev.androidagent.core.AssistantScreenText("reader", listOf("The post the user can see"))
+        assertEquals(visible.lines, ScreenText.merge(assist, visible, true)!!.lines)
+    }
+
+    @Test fun typingOnlyStopsVoiceOnceIncludingPasteAndSubsequentEdits() {
+        val mode = AssistantInputMode()
+        assertFalse(mode.typing)
+        assertTrue(mode.startTyping())
+        repeat(100) { assertFalse(mode.startTyping()) }
+        assertTrue(mode.typing)
+        assertFalse(AssistantInputMode().typing)
+    }
     @Test
     fun aPasswordFieldIsNeverRead() {
         assertNull(ScreenText.line("hunter2", null, "Password", editable = true, password = true))
@@ -51,14 +91,14 @@ class ScreenTextTest {
 
     @Test
     fun aLongScreenIsCut() {
-        val text = ScreenText.joined(List(1_000) { "line $it" })
+        val text = ScreenText.joined(List(10_000) { "line $it" })
         assertTrue(text.length <= ScreenText.MAX_CHARS + 1)
         assertTrue(text.endsWith("…"))
     }
 
     @Test
     fun oneLongViewIsCutNotDropped() {
-        val text = ScreenText.joined(listOf("x".repeat(10_000)))
+        val text = ScreenText.joined(listOf("x".repeat(ScreenText.MAX_CHARS * 2)))
         assertEquals(ScreenText.MAX_CHARS, text.length)
         assertTrue(text.startsWith("xxx"))
         assertTrue(text.endsWith("…"))
@@ -66,7 +106,7 @@ class ScreenTextTest {
 
     @Test
     fun aLongLineAfterShortOnesKeepsWhatFits() {
-        val text = ScreenText.joined(listOf("Title", "y".repeat(10_000)))
+        val text = ScreenText.joined(listOf("Title", "y".repeat(ScreenText.MAX_CHARS * 2)))
         assertTrue(text.startsWith("Title\nyyy"))
         assertEquals(ScreenText.MAX_CHARS, text.length)
     }

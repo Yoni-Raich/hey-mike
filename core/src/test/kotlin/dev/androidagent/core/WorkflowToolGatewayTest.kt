@@ -88,6 +88,18 @@ class WorkflowToolGatewayTest {
 
     private fun parse(result: ToolResult): JsonObject = Json.parseToJsonElement(result.text).jsonObject
 
+    @Test fun libraryManagementStaysInBackgroundAndRunningTakesControl() {
+        val gateway = gateway()
+        for (mode in listOf("list", "describe", "save", "LIST")) {
+            assertFalse(mode, gateway.needsControl("workflow_runner", buildJsonObject { put("mode", mode) }))
+        }
+        assertTrue(gateway.needsControl("workflow_runner", buildJsonObject {}))
+        assertTrue(gateway.needsControl("workflow_runner", buildJsonObject { put("mode", "run") }))
+        assertTrue(gateway.needsControl("act_plan", buildJsonObject {}))
+        assertTrue(gateway.needsControl("run_workflow", buildJsonObject {}))
+        assertFalse(gateway.needsControl("list_workflows", buildJsonObject {}))
+    }
+
     @Test fun aWorkflowForAnotherPackageIsRefusedBeforeDeviceAccess() {
         val result = runBlocking {
             gateway().invoke(

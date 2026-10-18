@@ -13,6 +13,7 @@ class ComputerPlace(private val hub: RemoteHub, private val computer: RemoteComp
 
     override suspend fun download(path: String, base: String?, target: File, progress: (Long, Long) -> Unit): FilePlace.Fetched {
         val full = fullPath(path, base, computer.label)
+        if (full.endsWith(".apk", ignoreCase = true)) return hub.downloadApk(computer.id, full, target, progress)
         hub.download(computer.id, full, target, Long.MAX_VALUE, progress)
         return FilePlace.Fetched(target.length(), fileName(full))
     }

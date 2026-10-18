@@ -163,6 +163,9 @@ object CapabilityPolicy {
     const val PERM_MEDIA_SELECTED = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
     /** Pre-33 storage grant (API 30-32 gate media behind this, not READ_MEDIA_*). */
     const val PERM_STORAGE = "android.permission.READ_EXTERNAL_STORAGE"
+    const val PERM_BLUETOOTH_CONNECT = "android.permission.BLUETOOTH_CONNECT"
+    const val PERM_FINE_LOCATION = "android.permission.ACCESS_FINE_LOCATION"
+    const val PERM_COARSE_LOCATION = "android.permission.ACCESS_COARSE_LOCATION"
 
     /** Runtime permissions this gateway may ever ask about. Nothing else is requested or reported. */
     val REQUESTABLE_PERMISSIONS: Set<String> = setOf(
@@ -173,6 +176,9 @@ object CapabilityPolicy {
         PERM_MEDIA_AUDIO,
         PERM_MEDIA_SELECTED,
         PERM_STORAGE,
+        PERM_BLUETOOTH_CONNECT,
+        PERM_FINE_LOCATION,
+        PERM_COARSE_LOCATION,
     )
 
     /**

@@ -24,6 +24,7 @@ import dev.androidagent.app.update.AppUpdateInfo
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AgentModel
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.AdbEndpoint
 import dev.androidagent.a11y.A11yStatus
@@ -108,6 +109,7 @@ data class AgentUiState(
     val runState: RunState = RunState(),
     /** Every chat running now, by chat. */
     val runs: Map<String, RunState> = emptyMap(),
+    val childAgents: List<ChildAgentItem> = emptyList(),
     val queuedTurns: List<dev.androidagent.core.QueuedTurn> = emptyList(),
     val queuePaused: Boolean = false,
     val tokenUsage: dev.androidagent.core.TokenUsage? = null,
@@ -120,6 +122,7 @@ data class AgentUiState(
     /** Standing rules and the two permissions they need. Re-read on resume, like the rest. */
     val automations: AutomationsStatus = AutomationsStatus(),
     val runtimeStatus: RuntimeStatus = RuntimeStatus(),
+    val codexUpdate: dev.androidagent.runtime.CodexUpdateInfo = dev.androidagent.runtime.CodexUpdateInfo(),
     /**
      * Why the tunnel to OpenAI last failed, in one sentence, or null when it
      * has not. Without this the user sees only a retry counter and a 502.
@@ -133,14 +136,20 @@ data class AgentUiState(
     val availableModels: List<String> = emptyList(),
     val modelCatalog: List<AgentModel> = emptyList(),
     val availableSkills: List<AgentSkill> = emptyList(),
+    /** What the open chat's engine itself answers behind `/`; empty for Codex. */
+    val availableCommands: List<AgentCommand> = emptyList(),
     val selectedModel: String? = null,
     val selectedReasoningEffort: String? = null,
     /** Turns sent from the composer run in Codex plan mode. */
     val planMode: Boolean = false,
     val voiceState: VoiceState = VoiceState(),
+    val voiceSessionId: String? = null,
+    /** Browse and type in child chats while the source voice conversation keeps talking. */
+    val voiceBrowsing: Boolean = false,
     val voiceTranscript: String = "",
     val voiceTranscriptRole: String? = null,
     val voiceMuted: Boolean = false,
+    val voiceChildUpdates: dev.androidagent.core.VoiceChildUpdateState = dev.androidagent.core.VoiceChildUpdateState(),
     /** Status line while a power-button press is setting up voice, before the call exists. */
     val voiceSummon: String? = null,
     /** Sends the user chose to always allow, for review in Settings. */
@@ -151,6 +160,15 @@ data class AgentUiState(
     val isAutomationsOpen: Boolean = false,
     /** The chat folder's file sheet is showing. */
     val isWorkspaceOpen: Boolean = false,
+    /**
+     * A chat's browser page, and the chat it belongs to. Written apart from
+     * [activeSessionId], so it may briefly be another chat's: read it through
+     * [activeBrowserPage].
+     */
+    val browserPage: dev.androidagent.web.BrowserPageState? = null,
+    val browserPageChat: String? = null,
+    /** The chat whose page fills the screen; any other chat shows its own conversation. */
+    val browserOpenFor: String? = null,
     val isLoadingSessions: Boolean = false,
     val isLoadingMessages: Boolean = false,
     val isPreparingRuntime: Boolean = false,
@@ -177,6 +195,7 @@ data class AgentUiState(
     val defaultComputerId: String? = null,
     /** The latest connect step per computer. */
     val computerSetup: Map<String, dev.androidagent.remote.RemoteSetup> = emptyMap(),
+    val computerCodexVersions: Map<String, dev.androidagent.remote.CodexComputerVersion> = emptyMap(),
     val isComputersOpen: Boolean = false,
     /** Picking the folder a computer chat opens in. */
     val folderBrowser: FolderBrowserState? = null,
@@ -184,10 +203,22 @@ data class AgentUiState(
     val remoteBindings: Map<String, dev.androidagent.remote.RemoteBinding> = emptyMap(),
     /** Per computer, its own Claude Code as last checked: whether a chat there can run on Claude, and with which models. */
     val computerClaude: Map<String, dev.androidagent.remote.ComputerClaude> = emptyMap(),
+    /** Temporary login progress for each computer; no pasted codes or saved credentials. */
+    val computerClaudeSignIn: Map<String, dev.androidagent.remote.ComputerClaudeSignInState> = emptyMap(),
     /** Folders the user picked on each computer. */
     val computerProjects: List<dev.androidagent.remote.RemoteProject> = emptyList(),
     /** Per computer, the conversations Codex keeps there, as last listed. */
-    val pcThreads: Map<String, List<dev.androidagent.enginecodex.CodexThread>> = emptyMap(),
+    val pcThreads: Map<String, List<dev.androidagent.remote.ComputerConversation>> = emptyMap(),
+    /** Per computer, why part of its conversation list is missing. */
+    val pcThreadErrors: Map<String, String> = emptyMap(),
+    /** Per computer, a quiet remark about its list that is not a failure. */
+    val pcThreadNotices: Map<String, String> = emptyMap(),
+    /** Computer chats whose history is being read again. */
+    val pcSyncing: Set<String> = emptySet(),
+    /** Per computer chat, what went wrong the last time its session was checked. */
+    val pcSyncProblems: Map<String, String> = emptyMap(),
+    /** Computer chats being handed to Claude Desktop. */
+    val pcDesktopOpening: Set<String> = emptySet(),
     /** Computer chats whose conversation another Codex on the computer holds open. */
     val pcBusyChats: Set<String> = emptySet(),
     /** Computer chats being copied so Mike can continue them. */
@@ -196,12 +227,18 @@ data class AgentUiState(
     val fileTransfer: dev.androidagent.core.FileTransfer? = null,
     /** Computers whose conversations are being listed right now. */
     val pcRefreshing: Set<String> = emptySet(),
+    /** Keys of pinned chats ([LibraryChat.key]) and pinned projects ([PcProject.key]). */
+    val pins: Set<String> = emptySet(),
     /** A chat whose earlier messages are coming from its computer: chat id to computer name. */
     val pcChatLoading: Map<String, String> = emptyMap(),
+    /** Chats being compacted right now: chat id to the start time in epoch milliseconds. */
+    val compacting: Map<String, Long> = emptyMap(),
     /** A computer Mike filled in for the user to check and finish. */
     val computerProposal: ComputerDraft? = null,
-    /** Text to put in a chat's composer, unsent, once: chat id to text. */
+    /** Latest unsent text per chat, retained across navigation. */
     val composerSeeds: Map<String, String> = emptyMap(),
+    /** Only an explicit incoming draft advances this; local draft echoes do not. */
+    val composerDraftVersions: Map<String, Long> = emptyMap(),
     /**
      * The engine the open chat runs on now. [selectedModel] and [usageLimits]
      * are this engine's. [modelCatalog] holds every engine's models the chat
@@ -222,6 +259,7 @@ data class ClaudeUiState(
     val busy: Boolean = false,
     /** When Claude last reported its limits, shown as their age; null when never. */
     val usageReadAtMillis: Long? = null,
+    val version: String? = null,
 ) {
     /** Downloaded and signed in: Claude models can be picked in a chat on this phone. */
     val ready: Boolean get() = install.phase == ClaudeInstallPhase.INSTALLED && account?.signedIn == true
@@ -267,10 +305,14 @@ data class AgentUiActions(
     val onSend: (String, List<PendingAttachment>) -> Unit = { _, _ -> },
     val onSteer: (String) -> Unit = {},
     val onStop: () -> Unit = {},
+    val onStopSession: (String) -> Unit = {},
+    val onBrowseVoiceChats: () -> Unit = {},
+    val onReturnToVoice: () -> Unit = {},
     val onCancelQueued: (String) -> Unit = {},
     val onResumeQueue: () -> Unit = {},
     val onVoiceToggle: () -> Unit = {},
     val onVoiceMuteToggle: () -> Unit = {},
+    val onVoiceChildUpdatesToggle: () -> Unit = {},
     val onOpenSettings: () -> Unit = {},
     val onCloseSettings: () -> Unit = {},
     val onPrepareRuntime: () -> Unit = {},
@@ -313,18 +355,30 @@ data class AgentUiActions(
     val onDisconnect: () -> Unit = {},
     val onForgetPairing: () -> Unit = {},
     val onModelSelected: (String) -> Unit = {},
+    val onRefreshModels: () -> Unit = {},
     val onReasoningEffortSelected: (String?) -> Unit = {},
     val onRenameSession: (sessionId: String, title: String) -> Unit = { _, _ -> },
     val onCompact: () -> Unit = {},
     val onTogglePlanMode: () -> Unit = {},
     val onShowStatus: () -> Unit = {},
     val onDeleteSession: (String) -> Unit = {},
+    val onTogglePin: (key: String) -> Unit = {},
     val onRetry: () -> Unit = {},
     val onDismissError: () -> Unit = {},
     val onOpenWorkspaceFiles: () -> Unit = {},
     val onOpenWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onShareWorkspaceFile: (WorkspaceFileItem) -> Unit = {},
     val onCloseWorkspaceFiles: () -> Unit = {},
+    val onOpenBrowser: () -> Unit = {},
+    val onCloseBrowser: () -> Unit = {},
+    // Each takes the key of the page the user acted on, never "the open chat's",
+    // which may have changed by the time a click or a disposal arrives.
+    val onBrowserTakeControl: (pageKey: String) -> Unit = {},
+    val onBrowserGiveBack: (pageKey: String) -> Unit = {},
+    val onBrowserClosePage: (pageKey: String) -> Unit = {},
+    /** Put that page in this frame; false when it no longer exists. */
+    val onAttachBrowser: (pageKey: String, frame: dev.androidagent.web.BrowserFrame) -> Boolean = { _, _ -> false },
+    val onDetachBrowser: (pageKey: String, frame: dev.androidagent.web.BrowserFrame) -> Unit = { _, _ -> },
     val onApproval: (requestId: String, allow: Boolean) -> Unit = { _, _ -> },
     /** The user's answer to an `ask_user` question; null when they skip it. */
     val onAnswerQuestion: (questionId: String, answer: String?) -> Unit = { _, _ -> },
@@ -361,7 +415,9 @@ data class AgentUiActions(
     /** A new chat in a project folder on a computer. */
     val onNewChatInProject: (computerId: String, path: String) -> Unit = { _, _ -> },
     /** Open a conversation Codex keeps on the computer as a chat here. */
-    val onOpenPcThread: (computerId: String, threadId: String) -> Unit = { _, _ -> },
+    val onOpenPcThread: (computerId: String, threadId: String, engine: EngineKind) -> Unit = { _, _, _ -> },
+    val onSyncPcChat: (sessionId: String) -> Unit = {},
+    val onOpenClaudeDesktop: (sessionId: String) -> Unit = {},
     /** List the computers' conversations again. */
     val onRefreshPcThreads: () -> Unit = {},
     /** Try the computer's connection again from the side panel. */
@@ -375,11 +431,15 @@ data class AgentUiActions(
     val onForkPcChat: (sessionId: String) -> Unit = {},
     /** Look again whether the computer still holds this chat's conversation open. */
     val onCheckPcChatBusy: (sessionId: String) -> Unit = {},
-    val onComposerSeedUsed: (sessionId: String) -> Unit = {},
+    val onComposerDraftChanged: (sessionId: String, text: String) -> Unit = { _, _ -> },
     /** Hand text to another app, such as the PC setup steps to email to oneself. */
     val onShareText: (String) -> Unit = {},
     /** Connect, install Codex if needed, and use Mike's active account. */
     val onConnectComputer: (String) -> Unit = {},
+    val onComputerClaudeLogin: (computerId: String) -> Unit = {},
+    val onComputerClaudeCode: (computerId: String, code: String) -> Unit = { _, _ -> },
+    val onCancelComputerClaudeLogin: (computerId: String) -> Unit = {},
+    val onCheckComputerClaude: (computerId: String) -> Unit = {},
     val onOpenUrl: (String) -> Unit = {},
     /** Show the folders in one folder of a computer; blank is its home folder. */
     val onBrowseFolder: (computerId: String, path: String) -> Unit = { _, _ -> },

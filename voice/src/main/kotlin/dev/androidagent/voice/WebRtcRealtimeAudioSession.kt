@@ -50,6 +50,8 @@ interface RealtimeMediaSession {
     fun stopAudio()
     /** Silence the microphone without tearing the call down. Applies before and after [startAudio]. */
     fun setMicrophoneMuted(muted: Boolean)
+    /** Drop current playback while microphone and media clock stay live. */
+    fun setPlaybackSuppressed(suppressed: Boolean)
     /** Microphone and playback loudness while audio runs; `null` stops reporting. */
     fun setLevelListener(listener: VoiceLevelListener?)
     fun close()
@@ -71,6 +73,7 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
     @Volatile private var levelListener: VoiceLevelListener? = null
     @Volatile private var microphoneMuted = false
     @Volatile private var audioStarted = false
+    @Volatile private var playbackSuppressed = false
 
     private val audioDeviceModule: AudioDeviceModule
     private val factory: PeerConnectionFactory
@@ -184,8 +187,10 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
         checkOpen()
         audioStarted = true
         audioDeviceModule.setMicrophoneMute(microphoneMuted)
-        audioDeviceModule.setSpeakerMute(false)
-        localAudioTrack.setEnabled(!microphoneMuted)
+        audioDeviceModule.setSpeakerMute(playbackSuppressed)
+        // ADM replaces muted microphone samples with zeros. Keep the live track
+        // running: disabling it also stalls speakable backend updates until unmute.
+        localAudioTrack.setEnabled(true)
     }
 
     override fun stopAudio() {
@@ -200,11 +205,17 @@ internal class WebRtcRealtimeAudioSession(context: Context) : RealtimeMediaSessi
         microphoneMuted = muted
         if (closed.get() || !audioStarted) return
         audioDeviceModule.setMicrophoneMute(muted)
-        localAudioTrack.setEnabled(!muted)
+        // Mute the samples, not the media clock. Stop/close still disable the track.
+        localAudioTrack.setEnabled(true)
     }
 
     override fun setLevelListener(listener: VoiceLevelListener?) {
         levelListener = listener
+    }
+
+    override fun setPlaybackSuppressed(suppressed: Boolean) {
+        playbackSuppressed = suppressed
+        if (!closed.get() && audioStarted) audioDeviceModule.setSpeakerMute(suppressed)
     }
 
     override fun close() {

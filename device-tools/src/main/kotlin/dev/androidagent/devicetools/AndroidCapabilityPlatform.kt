@@ -33,6 +33,7 @@ import android.os.Build
 import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.MediaStore
+import android.media.MediaMetadataRetriever
 import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.core.content.ContextCompat
@@ -299,12 +300,32 @@ class AndroidCapabilityPlatform(
         } catch (_: SecurityException) {
             return@withContext null
         }
-        MediaRow(
+        val mime = runCatching { context.contentResolver.getType(parsed) }.getOrNull()
+        val row = MediaRow(
             uri = uri,
             displayName = found.first ?: "(no name)",
-            mimeType = runCatching { context.contentResolver.getType(parsed) }.getOrNull(),
+            mimeType = mime,
             sizeBytes = found.second,
         )
+        if (mime?.startsWith("video/") != true && mime?.startsWith("audio/") != true) return@withContext row
+        val retriever = MediaMetadataRetriever()
+        try {
+            // Read the actual exported file; catalog duration/dimensions can be stale.
+            retriever.setDataSource(context, parsed)
+            fun number(key: Int): Long? = retriever.extractMetadata(key)?.toLongOrNull()?.takeIf { it >= 0 }
+            val duration = number(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            val width = number(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt()
+            val height = number(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt()
+            row.copy(
+                durationMs = duration, width = width, height = height,
+                rotationDegrees = number(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.takeIf { it <= 360 }?.toInt(),
+                metadataStatus = if (duration != null && (mime?.startsWith("video/") != true || (width != null && height != null))) "available" else "unavailable",
+            )
+        } catch (_: Exception) {
+            row.copy(metadataStatus = "unavailable")
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     override suspend fun openContentUri(uri: String): Boolean {

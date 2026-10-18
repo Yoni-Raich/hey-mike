@@ -1,7 +1,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.ChatSession
-import dev.androidagent.enginecodex.CodexThread
+import dev.androidagent.remote.ComputerConversation as CodexThread
 import dev.androidagent.remote.RemoteBinding
 import dev.androidagent.remote.RemoteComputer
 import org.junit.Assert.*
@@ -39,5 +39,16 @@ class ChatLibraryTest {
         assertEquals(listOf("Server task"), ChatLibrary.chats(listOf(phone, imported), bindings, sections, query = "server").map { it.entry.title })
         assertTrue(ChatLibrary.chats(listOf(phone, imported), bindings, sections, ChatLibrary.PHONE, query = "server").isEmpty())
         assertEquals(listOf("web"), ChatLibrary.projects(sections, "desk", "Desktop task").map { it.name })
+    }
+
+    @Test fun pinnedShowsOnlyPinnedChatsAndProjectsFromEveryPlace() {
+        val web = sections.first().projects.first { it.name == "web" }
+        val pinnedChat = ChatLibrary.chats(listOf(phone, imported), bindings, sections).first { it.entry.title == "Server task" }
+        val pins = setOf(pinnedChat.key, "this-phone:chat-phone", web.key)
+        val rows = ChatLibrary.chats(listOf(phone, imported), bindings, sections, ChatLibrary.PINNED, pins = pins)
+        assertEquals(setOf("Server task", "Phone task"), rows.map { it.entry.title }.toSet())
+        assertEquals(listOf("web"), ChatLibrary.projects(sections, ChatLibrary.PINNED, "", pins).map { it.name })
+        assertTrue(ChatLibrary.chats(listOf(phone, imported), bindings, sections, ChatLibrary.PINNED).isEmpty())
+        assertTrue(ChatLibrary.projects(sections, ChatLibrary.PINNED, "").isEmpty())
     }
 }

@@ -41,6 +41,26 @@ class CapabilityToolsTest {
 
     // ---- surface ----
 
+    @Test fun providerAndWorkspaceOperationsDoNotTakeTheScreen() {
+        val tools = AndroidCapabilityTools(FakePlatform())
+        val background = mapOf(
+            "contacts" to setOf("permission_status", "search", "list", "get"),
+            "calendar" to setOf("permission_status", "list", "get"),
+            "files_media" to setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text"),
+            "communications" to setOf("notification_access_status"),
+            "apps_settings" to setOf("list_apps", "app_info", "permission_status"),
+        )
+        for (name in CapabilityPolicy.TOOLS) {
+            for (operation in CapabilityPolicy.operationsFor(name)) {
+                assertEquals("$name:$operation", operation !in background.getValue(name),
+                    tools.needsControl(name, buildJsonObject { put("operation", operation) }))
+            }
+        }
+        assertFalse(tools.needsControl("contacts", buildJsonObject { put("operation", " search ") }))
+        assertTrue(tools.needsControl("contacts", buildJsonObject {}))
+        assertTrue(tools.needsControl("contacts", buildJsonObject { put("operation", "future_operation") }))
+    }
+
     @Test fun exactlyFiveOperationBasedTools() {
         val tools = AndroidCapabilityTools(FakePlatform())
         assertEquals(
@@ -197,6 +217,24 @@ class CapabilityToolsTest {
             buildJsonObject { put("operation", "info"); put("uri", "content://media/1") },
         )
         assertFailure(result, "files_media", "permission_denied")
+    }
+
+    @Test fun exportedVideoInfoCarriesActualDurationDimensionsAndUnknownMetadataHonestly() {
+        val fake = FakePlatform().apply {
+            mediaGranted = true
+            media = listOf(MediaRow("content://media/1", "qa.mp4", "video/mp4", 99L,
+                durationMs = 4_000L, width = 720, height = 1280, rotationDegrees = 0, metadataStatus = "available"))
+        }
+        val tools = AndroidCapabilityTools(fake)
+        tools.beginRun("qa", Files.createTempDirectory("qa").toFile())
+        fun info() = Json.parseToJsonElement(runBlocking { tools.invoke("files_media", buildJsonObject {
+            put("operation", "info"); put("uri", "content://media/1")
+        }) }.text).jsonObject["file"]!!.jsonObject
+        assertEquals("4000", info()["durationMs"]!!.jsonPrimitive.content)
+        assertEquals("720", info()["width"]!!.jsonPrimitive.content)
+        fake.media = listOf(fake.media.single().copy(durationMs = null, width = null, height = null, metadataStatus = "unavailable"))
+        assertFalse(info().containsKey("durationMs"))
+        assertEquals("unavailable", info()["metadataStatus"]!!.jsonPrimitive.content)
     }
 
     @Test fun requestPermissionsRejectsOutsideAllowlistWithoutCallback() {

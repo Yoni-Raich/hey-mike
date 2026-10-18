@@ -124,7 +124,10 @@ class ClaudeComputerTest {
         // The folder is named as the computer spells it, never turned into a phone path.
         assertEquals(PROJECT, launch.cwd)
         assertEquals(id, launch.chatId)
-        assertEquals(ClaudeProtocol.CHAT_ENV, launch.env)
+        assertEquals(ClaudeProtocol.COMPUTER_CHAT_ENV, launch.env)
+        assertFalse("computer tool search follows Claude's default or the user's setting", "ENABLE_TOOL_SEARCH" in launch.env)
+        assertEquals("600000", launch.env["MCP_TOOL_TIMEOUT"])
+        assertEquals("30000", launch.env["MCP_TIMEOUT"])
         assertEquals("You are Mike, on the user's computer.", launch.files["system-prompt.md"])
         assertEquals("""{"mcpServers":{"mike":{"type":"sdk","name":"mike"}}}""", launch.files["mcp.json"])
         assertEquals("C:\\Users\\me\\.hey-mike\\claude\\system-prompt.md", chat.after("--append-system-prompt-file"))
@@ -169,6 +172,60 @@ class ClaudeComputerTest {
         assertFalse(result["isError"]!!.jsonPrimitive.boolean)
         assertEquals(listOf("text", "image"), result["content"]!!.jsonArray.map { it.jsonObject["type"]!!.jsonPrimitive.content })
         assertEquals("Tapped", result["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun anImportedMissingSessionIsNeverReplacedWithAnEmptyOne() = runBlocking {
+        val computer = FakeComputer()
+        val known = "11111111-1111-4111-8111-111111111111"
+        host.script = { process ->
+            process.err("No conversation found with session ID: $known")
+            process.finish(1)
+        }
+        val engine = engine(computer)
+        val id = engine.openSessionAt(PROJECT, known, "sonnet", emptyList(), requireExisting = true)
+        try { engine.startTurn(id, "continue", emptyList()); throw AssertionError("Missing session was resumed") }
+        catch (error: IllegalStateException) { assertTrue(error.message.orEmpty().contains("could not open")) }
+        assertEquals(1, computer.chats.size)
+        assertEquals(known, computer.chats.single().process.after("--resume"))
+    }
+
+    @Test fun handoffCannotStopAnActiveTurnButReleasesAnIdleProcess() = runBlocking {
+        val computer = FakeComputer()
+        val engine = engine(computer)
+        val (id, _, chat) = engine.begin(computer)
+        try { engine.releaseSession(id); throw AssertionError("Live turn was released") }
+        catch (_: IllegalStateException) { }
+        assertTrue(chat.isAlive)
+        chat.send("""{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"$id"}""")
+        awaitEvent<EngineEvent.TurnFinished>()
+        engine.releaseSession(id)
+        assertFalse(chat.isAlive)
+    }
+
+    @Test fun nativeIdsAreReportedBeforeCompletedText() = runBlocking {
+        val computer = FakeComputer()
+        val engine = engine(computer)
+        val ids = CopyOnWriteArrayList<String>()
+        engine.onNativeMessage = { _, message -> ids += message }
+        val (_, _, chat) = engine.begin(computer)
+        val native = "22222222-2222-4222-8222-222222222222"
+        chat.send("""{"type":"assistant","uuid":"$native","message":{"id":"msg_test","model":"sonnet","content":[{"type":"text","text":"answer"}]}}""")
+        awaitEvent<EngineEvent.MessageCompleted>()
+        assertTrue(native in ids)
+    }
+
+    /** Text shown after Stop was asked is in the transcript too; a history refresh must not add it twice. */
+    @Test fun nativeIdsShownAfterStopAreStillReported() = runBlocking {
+        val computer = FakeComputer()
+        val engine = engine(computer)
+        val ids = CopyOnWriteArrayList<String>()
+        engine.onNativeMessage = { _, message -> ids += message }
+        val (id, turn, chat) = engine.begin(computer)
+        engine.interrupt(id, turn)
+        val native = "33333333-3333-4333-8333-333333333333"
+        chat.send("""{"type":"assistant","uuid":"$native","message":{"id":"msg_stop","model":"sonnet","content":[{"type":"text","text":"partial answer"}]}}""")
+        awaitEvent<EngineEvent.MessageCompleted>()
+        assertTrue(native in ids)
     }
 
     @Test fun aToolThatNeedsPermissionAsksOnThePhoneAndRunsAfterYes() = runBlocking {

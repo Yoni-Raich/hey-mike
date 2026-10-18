@@ -56,6 +56,36 @@ class NodeTraversalTest {
 
     private fun window(root: A11yNodeView?, active: Boolean = true) = A11yWindow(root, active)
 
+    @Test fun assistantSnapshotKeepsLongPostButDropsOwnHiddenAndPasswordTrees() {
+        val text = "שלום ".repeat(1_000)
+        val captured = assistantScreenText(listOf(
+            window(FakeNode(text = "Mike panel", packageName = OWN)),
+            window(FakeNode(children = listOf(
+                FakeNode(text = text),
+                FakeNode(text = "hidden", isVisibleToUser = false),
+                FakeNode(text = "password", isPassword = true, children = listOf(FakeNode(text = "secret child"))),
+            )), false),
+        ), OWN)!!
+        assertEquals(listOf(text), captured.lines)
+        assertEquals(APP, captured.packageName)
+    }
+
+    @Test fun assistantSnapshotIsBoundedEvenForOneHugePost() {
+        val captured = assistantScreenText(listOf(window(FakeNode(text = "x".repeat(100_000)))), OWN)!!
+        assertEquals(16_000, captured.lines.single().length)
+        assertNull(assistantScreenText(listOf(window(FakeNode(packageName = OWN))), OWN))
+    }
+
+    @Test fun ownWindowReportsMaskingWithoutLeakingAnyNodeOrHandle() {
+        val result = traverse(listOf(window(FakeNode(text = "Allow", packageName = OWN))), OWN)
+        assertTrue(result.observation.nodes.isEmpty())
+        assertTrue(result.handles.isEmpty())
+        assertEquals(1, result.observation.masking!!.excludedWindows)
+        assertTrue(result.observation.masking!!.activeWindowExcluded)
+        assertEquals("agent_own_ui", result.observation.masking!!.toJson()["reason"].toString().trim('"'))
+        assertFalse(result.observation.masking!!.toJson().toString().contains("Allow"))
+    }
+
     @Test fun eachNodeNamesTheNearestAncestorThatWasItselfEmitted() {
         // rootNodeId resolves a subtree out of the flat list, so a node that
         // was dropped must not break the chain: its children adopt the nearest

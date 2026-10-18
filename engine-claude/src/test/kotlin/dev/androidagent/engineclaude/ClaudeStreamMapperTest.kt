@@ -51,6 +51,23 @@ class ClaudeStreamMapperTest {
 
     private fun JsonObject.type() = this["type"]!!.jsonPrimitive.content
 
+    @Test fun authFailureAfterABuiltinWriteDoesNotReplayTheTurn() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "frame-1")
+        mapper.map(line("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"write-1","name":"Write","input":{"file_path":"qa.txt"}}]}}"""))
+        val signals = mapper.map(line("""{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Failed to refresh OAuth token: Another Claude Code process is refreshing it or exited mid-refresh."]}"""))
+        assertTrue(signals.none { it is Signal.RetryAuth })
+        assertEquals("failed", signals.events().filterIsInstance<EngineEvent.TurnFinished>().single().status)
+    }
+
+    @Test fun permanentAuthFailureIsNotRetried() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "frame-1")
+        val signals = mapper.map(line("""{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Failed to refresh OAuth token: invalid_grant. Sign in again."]}"""))
+        assertTrue(signals.none { it is Signal.RetryAuth })
+        assertEquals("failed", signals.events().filterIsInstance<EngineEvent.TurnFinished>().single().status)
+    }
+
     @Test fun aRecordedTextTurnStreamsThenMarksTheLastTextFinal() {
         val mapper = ClaudeStreamMapper(thread)
         mapper.begin("turn-1", "frame-1")
