@@ -28,6 +28,8 @@ data class ComputerClaude(
     /** The account `claude auth status` names, when signed in. */
     val account: String = "",
     val models: List<AgentModel> = emptyList(),
+    /** A failed check is different from a computer without Claude Code. */
+    val error: String? = null,
 ) {
     /** A chat on this computer can run on Claude. */
     val ready: Boolean get() = installed && signedIn
@@ -72,7 +74,7 @@ object ClaudeLaunch {
         }
         ${'$'}v=''
         if (${'$'}c) { try { ${'$'}v=[string](& ${'$'}c --version 2>${'$'}null | Select-Object -First 1) } catch {} }
-        '$MARKER' + (ConvertTo-Json -Compress -InputObject ([ordered]@{claude=[string]${'$'}c; version=${'$'}v; home=${'$'}env:USERPROFILE}))
+        ${WindowsHost.asciiJson("ConvertTo-Json -Compress -InputObject ([ordered]@{claude=[string]${'$'}c; version=${'$'}v; home=${'$'}env:USERPROFILE})")}
     """.trimIndent()
 
     fun parseProbe(result: ExecResult): ClaudeProbe {

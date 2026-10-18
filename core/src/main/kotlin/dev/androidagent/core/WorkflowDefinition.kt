@@ -529,8 +529,10 @@ data class WorkflowStep(
                 is JsonObject -> WorkflowSelector.parse(raw) ?: bad("\"target\" names no selector field.")
                 else -> bad("\"target\" must be an object.")
             }
-            val text = json.str("text")
-                ?: arguments.str("text")
+            // A call's arguments belong to the provider, including arguments.text.
+            // Promoting them makes the saved step invalid when it is loaded again.
+            val text = if (action == WorkflowAction.CALL) null else
+                json.str("text") ?: arguments.str("text")
             if (text != null && text.length > MAX_TEXT_CHARS) bad("\"text\" is longer than $MAX_TEXT_CHARS characters.")
             if (action.needsTarget && target == null) {
                 bad("\"${action.wire}\" needs a \"target\" saying which element to act on.")

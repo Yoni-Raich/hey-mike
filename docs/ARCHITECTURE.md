@@ -1,5 +1,346 @@
 # Architecture
 
+## Engine versions and Codex updates — 2026-10-18
+
+Phone Codex and computer packages are pinned to 0.163.0. The phone's Claude
+baseline is 2.1.302; the earlier 2.1.293 and 2.1.285 pins remain reusable for
+offline upgrade and rollback. The 0.163.0 package no longer contains zsh, so
+the APK no longer stages or links it. The helper-name patch still checks the
+two expected upstream strings and every extracted native file remains lib*.so.
+
+`remote` uploads a versioned Python 3.9+ updater on each SSH connection. It
+checks stable GitHub release metadata at most every 15 minutes, downloads on
+the computer, checks the exact size and SHA-256, rejects unsafe archives,
+and probes --version and JSON-RPC initialize in a temporary HOME/CODEX_HOME.
+No prompt, tools, real account or conversation are used by that probe.
+An OS lock serializes updates; a side-by-side version directory is selected
+atomically only after validation. A failed check keeps the previous version.
+Background maintenance and a new engine preparation check for updates. Existing
+engines are never restarted or replayed by the updater. The UI and computers
+status distinguish the running version from the version selected for next start.
+Hosts without Python keep the bundled provisioning path and explain the limit.
+
+Android Codex is a static ET_EXEC musl executable, unlike the dynamically
+loaded Claude binary. It remains an APK native library: no writable-code exec,
+loader workaround or Android security change is introduced. `CodexUpdateCheck`
+checks stable availability every 15 minutes while foregrounded and directs the
+user to Mike app updates. Installing an APK still follows Android's installer.
+An independent in-place Codex binary update on the phone is not implemented.
+
+Phone settings show versions read from the installed runtime manifest and
+the active verified Claude selection. `device_status` and the trusted per-turn
+snapshot include phone engine and app versions. `computers(mode=status)` and
+the computer settings cards show observed computer versions and update notes.
+
+## Pinned chats and projects — 2026-10-18
+
+`AgentViewModel` stores pinned library chat and project keys in the `pins`
+string set in the phone's `ui` preferences. Pin state is local to that phone.
+Long-press menus toggle a key. `ChatLibraryDrawer` exposes a Pinned place
+beside the device tabs, with the same search filter; without a device rail,
+pinned chats appear first. Pins reference existing library entries and do
+not copy chat content or project files.
+
+## APK delta copies — 2026-10-12
+
+`copy_file` keeps its API. `ComputerPlace` sends APK downloads through
+`DeltaTransfers` (`core`). The phone and computer identify bytes by SHA-256,
+not by version numbers, paths or chat ids. Installation is still a separate
+phone-local `install_apk` call. It never installs a patch or starts another copy.
+
+`TransferBlobStore` (`workspace`) holds verified private blobs under
+`filesDir/transfer-cache/v1`, shared by all chats. One cancellable mutex leases
+the cache through negotiation, reconstruction and materialization. Eviction
+uses a 1.5 GiB soft budget while retaining at least two blobs; large retained
+blobs can exceed that budget. Only owned hashes and UUID parts are removed.
+Copies to chat folders are independent files, so editing a chat file cannot
+change the cached base. Startup seeds the app's own installed signed APK on
+an IO dispatcher. This lets the first full bootstrap update become a base
+without downloading it again.
+
+`SshDeltaPeer` (`remote`) provisions a versioned, checksum-checked Python
+helper on the saved computer's existing pinned SSH connection. Python 3.9+
+is needed for optimization; a missing interpreter retains normal full SFTP
+copying. This legacy path has its existing SSH/size checks, without a
+negotiated source content digest. Other helper failures fail closed. The
+helper needs no model call or server, and retains an OS cache lock until the
+request releases stdin. EOF is cancellation; it stops its owned generator.
+It never closes the shared SSH session. Java interrupted stream errors are
+converted back to coroutine cancellation before they can become a fallback.
+
+The host cache is `~/.hey-mike/file-transfer/v1`. A Windows snapshot holds a
+read-sharing-only handle; Linux also checks fstat and reads content twice to
+detect ordinary concurrent writes. Linux does not claim an OS snapshot against
+an adversarial writer. The immutable copy is served after snapshot publication,
+not the changing build path. Host cache eviction has an 8 GiB budget and runs
+under its OS lock, after the client releases the transfer lease. It never
+removes original build output. Dev Debug assembly exports its exact signed
+APK and tries to precompute one patch against the previous artifact with a
+matching filename. Rename aliases are retained. Precomputation failure does
+not invalidate a successful build; on-demand generation or full copying still
+work. Other build/signing pipelines may call the same helper's `--export` mode.
+
+The pinned generator is HDiffPatch 5.1.3. Keys include old/new SHA-256, tool
+version and all configured options. `-WD-256k -s-64 -c-zstd-3-23 -w-2m`
+creates HDIFFW26/zstd patches with xxh128 checksums. The host selects a patch
+only when it is smaller than 85% of the full target. Cached tool archives,
+executables and patches are verified before reuse. Bases are opaque APK bytes;
+Android's installer still owns package/version/signature compatibility checks.
+No normalization, signing keys or re-signing are involved in copying.
+
+`NativeDeltaApplier` (`workspace`) uses our C/JNI adapter over pinned
+HDiffPatch, zstd and xxHash source archives. Build preparation verifies the
+archives and restores their source bytes, then compiles ARM64/x86_64 libraries
+with NDK 28.2.13676358 and 16 KiB ELF alignment. Fingerprints include the build
+script and sources, and the staged binaries are also hashed. License texts are
+kept under `third_party/licenses` and included in the APK. The adapter accepts
+only the negotiated window format, with a 2 MiB old window, 256 KiB step and
+8 MiB maximum zstd dictionary. It uses one native thread. Read, write and
+buffered decode callbacks check a per-call cancellation flag; wrapping an
+uncancellable stock JNI call in Dispatchers.IO would not be enough.
+
+The receiver checks patch/base sizes and hashes, applies to a UUID temporary
+file, verifies the complete target hash and syncs before atomic publication.
+Reconstruction failure may retry the *same immutable target* as a full blob.
+Stop never triggers fallback or installation. `AtomicTransferFile` commits
+chat copies without deleting a previous target first. No-replace uses an
+atomic hard link, then removes the owned part; replace uses ATOMIC_MOVE.
+Unsupported filesystems fail instead of weakening no-clobber semantics.
+These operations do not claim directory-fsync or power-loss durability.
+
+Transfer progress reports preparation, hashing, generation, network copy,
+reconstruction, verification and publication separately. Rate/ETA apply only
+to network copying. The meter keeps records by transfer id, so a newer chat
+cannot be overwritten by an older callback; it displays the latest active
+copy and resumes another active copy when that one finishes. APK caching
+and reconstruction may need additional storage for a full target and its
+separate chat copy, even when the patch is tiny.
+
+PC tests cover real SSH/SFTP leases and cancellation, the actual generator,
+and the same JNI adapter compiled for the Windows JVM against signed APKs.
+Those checks do not prove Android JNI loading, runtime memory/Stop latency,
+Wi-Fi throughput, installation, self-update or UI behavior on a phone.
+See `docs/testing/apk-delta-transfer-20261012.md` for exact evidence.
+
+
+**Dev channel only.** `BuildConfig.DELTA_TRANSFER` is true for `dev` and false for
+`prod`. In `prod`, `AgentApplication` creates no `TransferBlobStore`/`DeltaTransfers`
+(copies use the plain full path with rename publication), and Gradle excludes
+`libmike_delta.so`, the host helper and its licenses from the APK. The Mike skill
+text for delta lives in `app/src/dev/assets/agent_stack/skills/` and overrides the
+main copy only in dev builds.
+## Claude runtime reuse across APK updates — 2026-10-11
+
+Runtime discovery keeps other version directories. The updater first restores
+the saved active or previous choice, then checks the bundled pin and known
+previous pins. A known previous pin is accepted only with its compiled size
+and SHA-256; a directory name or altered selection metadata is not enough.
+This lets an existing 2.1.285 installation remain ready while the APK upgrades
+it to the bundled 2.1.293 required for Haiku 5.5. That first update uses the
+authenticated bundled pin without depending on latest-release discovery.
+Later updates still use signed official manifests and a compatibility probe.
+
+Only a verified, launch-tested candidate replaces the active selection.
+Download failure, cancellation and probe failure leave the working runtime
+usable. The saved previous choice can recover a damaged active binary. A
+failed selection-file write does not hide an existing verified installation.
+First installation also saves the selection. Claude account files and chat
+files stay outside the runtime-selection logic.
+
+## Live child output and automatic parent continuation — 2026-10-11
+
+`SessionAgents` observes each child's ordinary message flow as well as run
+state. `SessionAgentUpdate` carries public assistant/activity text revisions
+in order, with message IDs, append offsets and explicit replacements. The
+compact status preview remains bounded; the event path carries every message
+and the full final result, including text beyond that preview. Restored history
+is a baseline, not a new event. Child text remains JSON-quoted data.
+
+`SessionAgentDelivery` batches events for 500 ms and delivers them to the
+direct parent and its ancestors. An active typed parent receives context in
+its existing turn; an idle parent starts an ordinary turn using its saved
+model and effort. Context never goes through the user's approval/question
+reply parser or seeds a chat title. Startup and pending user gates hold the
+batch. A run's Stop fence travels with its events and is checked again at
+dispatch, so queued completion cannot restart a stopped parent. A transport
+error is reported and is not automatically replayed. Restart does not resume
+pending background notifications or unknown child work.
+
+Voice receives every text segment through quiet quoted context during either
+speaker's turn. Receipt has no speakable side effect. `appendText`
+alone does not request a spoken response. The pinned Codex v0.153.4
+[`appendSpeech` handler](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/realtime_conversation.rs)
+uses the realtime backend's speakable context channel. Large context is sent
+in numbered packets without splitting Unicode surrogate pairs. The call and
+child-chat browsing remain owned by the original voice session.
+
+`core.VoiceChildUpdates` owns a separate call-local announcement queue. It
+reassembles assistant append/replacement revisions, keeps the latest complete
+useful change per child, and deduplicates previously announced revisions.
+Activity-only messages, streaming fragments, bare technical/no-change statuses
+and the coordinator's generated no-final-reply diagnostic never
+request speech; their full data still reaches the voice context. Completion,
+failure and requests for user input remain available through the child cards.
+The app sends one grouped speakable summary after both turns finish and at
+least 1.5 seconds of input/output quiet, with an 8-second minimum between
+automatic summaries. A microphone signal closes the gate before transcript
+arrival; sustained input or a user transcript holds it until a finalized user
+turn. Mike's transcript turn and actual playback also hold the gate, so the
+visualizer's 280 ms pause is not a safe announcement boundary.
+
+The voice screen has a pending-child count and Pause/Resume child updates.
+Exact user quiet/resume phrases in English or Hebrew change the same policy.
+Pausing locally mutes an in-flight child response, without stopping capture,
+the call or any child run. WebRTC uses ADM speaker mute; WebSocket playback
+pauses/flushes its track and drops suppressed frames. A normal explicit user
+turn restores playback at its finalized transcript boundary while automatic
+updates remain paused. This supports replies with audio or TranscriptDone
+only, without waiting for an assistant delta. The bundled WebRTC playout
+bytecode zeroes samples before its level callback when speaker mute is on,
+so a suppressed audio callback cannot reliably serve as the unmute trigger.
+Resume groups the newest pending changes, including an interrupted result;
+an explicit status request consumes that pending summary without resuming
+automatic announcements. Child quotes and typed/context echoes cannot change
+the policy or answer human gates. Unrecognized command phrases remain normal
+conversation text rather than being guessed from child output.
+
+Scheduling rechecks Stop fences, source user gates and call/thread identity
+before submission. Only a known unsubmitted batch can be deferred; uncertain
+speech outcomes are reported without automatic replay. Source/thread epochs
+fence context packets and scheduling across call boundaries; ending Voice
+clears call-local queue, turn and pause state. This does not alter child chat
+storage. Playback timing and microphone thresholds still need phone testing;
+the current realtime transcript events do not carry a response ID that can
+prove whether a late frame belongs to an interrupted child or a user reply.
+
+WebRTC microphone mute uses the audio device module's zeroed capture samples,
+while the live local track stays enabled. Disabling that track delayed the
+Xiaomi's incoming speakable child updates until unmute. Stop/close still mute
+capture/playback and disable the track. The exact bundled WebRTC
+`144.7559.09` bytecode confirms muted samples are replaced with zero bytes
+before native transport; this also matches the upstream
+[`WebRtcAudioRecord` capture loop](https://webrtc.googlesource.com/src/+/66f1e9eb345d2201459f1a95a6cffa8fc2311fde/sdk/android/src/java/org/webrtc/audio/WebRtcAudioRecord.java).
+Voice dispatch and submission are recorded in the private source-session
+trace; submission alone is not proof of a spoken response.
+
+Delegated `message` steering also bypasses the human gate parser: a parent's
+"yes" is never an approval or answer to `ask_user`. Only a user's reply may
+resolve those gates. Child cards show the latest public words during work.
+
+## Ordinary session subagents and voice — 2026-10-11
+
+`core.SessionAgents` owns the `session_agents` protocol. Each accepted task
+gets an ordinary `ChatSession`, its own workspace, engine thread and coordinator,
+and durable `parentSessionId` metadata. A child inherits the parent's engine
+unless explicitly selected, and the parent's saved computer/project binding
+without copying its thread ID. The existing routing engine, SSH policy and
+device gateway still own execution. Optional `computer`/`project` can select a
+different saved computer and named project or full folder path; ambiguous names
+are refused and explicit computer IDs win over labels. `computer=phone` selects
+a new phone workspace. Model and `reasoningEffort` are saved per chat and passed
+to the ordinary engine calls, including follow-up turns and direct user messages.
+`options` reads the selected target's model catalog and supported levels; invalid
+IDs/levels are refused without fallback. Spoken names are resolved through this
+catalog, rather than hard-coded aliases. The inherited location remains the default.
+Independent chat/model work can run together;
+phone screen actions share the existing exclusive lease. Trees are limited to
+four child levels and cannot form cycles or change parents.
+
+| Mode | Contract |
+|---|---|
+| `options` | Model IDs/names and supported reasoning levels for the selected engine/computer/project. No task dispatch. |
+| `start` | Exact `task`, `title`, stable `requestId`; optional engine/model/reasoningEffort/computer/project. Reserve durably before creating or dispatching. |
+| `list` | Receipts for this chat's direct children and descendants. |
+| `status` | Current progress, user gate, terminal result and ordinary chat/thread identity. |
+| `message` | Exact `message` and stable `messageId`; steer a running child or start its next turn in the same chat. |
+| `cancel` | Stop the selected child and its descendants. Completed actions remain completed. |
+| `open` | Open the ordinary child chat, where the user can continue it. |
+
+Status/message/cancel/open resolve `taskId` or `sessionId`; direct receipts can
+also be resolved by `requestId`. Access is scoped to the caller's subtree.
+Retries with identical keys/arguments return the same receipt; conflicting
+arguments fail. Start and update reservations survive restart. Unfinished work
+becomes `unknown` after restart or an uncertain dispatch/Stop and is never
+replayed. The user can inspect and continue the child directly; its new run
+identity then updates the receipt. Child results are quoted data, never approval
+or new instructions. Children keep their own approval/question gates; the source
+shows its own gate first, then waiting descendants in tree order. Stop fences
+pending setup before interrupting the source subtree. An unrelated root stays
+running. No agent may answer a child's approval on the user's behalf.
+
+The chat shows live child cards and a child-list sheet. Tapping a card opens
+the same normal session; its parent banner returns to the source. The library
+also shows each child's parent. Legacy `computers.start_task` receipts use the
+same cards and gain persistent parent metadata, but retain their separate remote
+receipt store and their original no-nested-computer-task rule.
+
+Realtime voice advertises the same chat tool and gets protocol context before
+audio starts. Terminal/waiting updates from descendants are sent as quoted
+context to the active voice source. Voice holds its coordinator while listening,
+and releases the screen after a delegated turn so children can use it. Child
+cards and Browse chats open regular chats while the source voice connection
+stays active. Typed child messages go to that child; Return restores the voice
+screen. Starting a second call from a browsed child is disabled. The voice
+banner can stop the source subtree; a child's Stop targets only that subtree.
+User speech answers only gates in the active voice source's family.
+Entering or returning to the voice screen clears composer focus and hides the
+keyboard; browsing a child keeps its ordinary text input available.
+
+Session database v8 added `parent_session` with `ON DELETE SET NULL` and the
+`agent_tasks` receipt table; v9 adds per-chat model and reasoning effort. Both
+use additive migration, including upgrade from the early v8 UI fixture. Existing chats, drafts,
+messages, engine state and workspace files remain in place. Deleting a parent
+keeps its children as ordinary chats and detaches live links. Defined child
+titles do not trigger automatic title generation.
+Changing engine clears incompatible model choices. A Claude chat temporarily
+using Codex for voice restores its original model and effort when voice ends.
+Composer draft echoes cannot overwrite newer local typing. An explicit incoming
+draft has a separate per-chat version, so it still loads while local echoes are
+ignored. Navigation and saved drafts continue to use the ordinary session store.
+
+Evidence is split: coordinator/protocol and database regression tests cover
+logic and persistence; Compose emulator fixtures cover the cards, navigation,
+child messaging and voice browsing. These fixtures do not start a model or
+microphone and do not prove physical-phone voice or live SSH orchestration.
+
+## Session schema compatibility — 2026-10-09
+
+Session database v7 repairs two deployed v6 shapes. The preserved Nothing
+1113 build had `sessions.is_mike` and `mike_main_chat`, without
+`composer_drafts`; the validation branch used the same version for drafts.
+Moving between those v6 builds skipped SQLiteOpenHelper's upgrade callback,
+so opening a saved chat could query a missing draft table. The v7 upgrade
+uses the existing additive, idempotent migration. It keeps old columns,
+indexes, sessions, messages, queued turns and exact drafts; it never rebuilds
+the database or clears private files.
+
+## QA findings contracts — 2026-10-08
+
+- Workflow call text remains in its arguments. Save validates the serialized
+  definition before replacing a stored workflow, so acknowledged definitions
+  can be loaded again.
+- Session database v7 keeps exact unsent composer drafts per chat. Computer
+  `open_chat` stores and reads back the exact proposed message before returning
+  `draftSaved` and its session id. Opening is requested, not guaranteed by that
+  acknowledgement; reading the draft does not consume it.
+- A traced tool ends with `tool_result` or explicit `tool_cancelled`, including
+  monotonic elapsed time. Stop still revokes dispatch first. Cancellation
+  preserves a workflow's completed prefix and outputs without new screenshot
+  dispatch, success conversion or automatic replay. Completed side effects
+  are not undone. `turn_finished` records the engine's terminal status.
+- Own accessibility windows stay excluded from nodes/handles. Observations
+  and unchanged replies carry masking metadata; an active own window's image
+  reply is `captured:false`. Own streamed content does not reset the screen
+  settle clock; real window changes and other apps still do.
+- Media info reads duration/dimensions/rotation from the actual content URI;
+  unknown fields are omitted. `media-output-check` adds external final-frame
+  verification to export acceptance. Metadata is not visual or decode proof.
+- Debug QA evidence is read-only, requires Android DUMP permission and is absent
+  from release. The opt-in touch-to-next-draw probe records timings, never text
+  or coordinates. QA drivers refuse UI dumps during active runs and checkpoint
+  before uncertain actions. Physical results and limits are in
+  [the validation report](testing/e2e-findings-fixes-20261008/RESULTS.md).
+
 One Android project, with replaceable modules and small core contracts.
 
 | Module | Responsibility |
@@ -15,6 +356,7 @@ One Android project, with replaceable modules and small core contracts.
 | a11y | Optional in-process accessibility screen observation and control |
 | overlay | Floating steering card, status and direct local stop |
 | remote | Computers over SSH: sealed profiles, Codex on Windows, chat routing |
+| web | Internal WebView pages, app-owned CDP, DOM reading and inline action plans |
 
 A model change is configuration. An engine change replaces the engine adapter. Runtime packaging must not affect chat or ADB APIs. The UI observes app events, never raw Codex JSON.
 
@@ -75,6 +417,248 @@ app-server copy to this exact filename, which must keep the upstream name's
 downloaded official archive stays unchanged, and the manifest records the
 staged file hashes.
 
+## Internal browser
+
+`:web` exposes one `browser` tool through the existing composite gateway.
+`AndroidBrowserHost` owns one WebView per chat (keyed by the chat's workspace).
+While nobody looks at it, the WebView sits in a parked, non-touchable,
+phone-sized overlay window, so it keeps laying out and drawing while the user
+is in another app (this is why the browser needs "display over other apps").
+The user sees it only inside Hey Mike: see "Shown inside Hey Mike" below.
+`CdpClient` speaks HTTP/WebSocket
+over the app's own abstract LocalSocket (`webview_devtools_remote_<pid>`); no
+ADB connection is used. WebView debugging is intentionally enabled while
+internal pages exist, including release builds, and disabled after the last
+page closes or the service stops. Anyone already authorized for ADB can inspect
+these pages while it is enabled; this is an intentional control channel, not a
+hidden debug flag.
+
+**Targets.** `BrowserSession` puts a helper in an isolated world to produce
+bounded semantic DOM snapshots, page reading text, stable element refs, and
+selectors. It reads open shadow roots and readable child frames. Out-of-process
+cross-origin frames and closed shadow roots have no full coverage yet. Every
+helper injection takes a ref range no other world, document, frame or
+connection in the process has used (`Long` refs), so an old ref can only be
+stale, never name another element. Plain-text targets count every match, so a
+label shown twice is `ambiguous_target`. Before a press the helper hit-tests
+the element's middle (`elementFromPoint`, shadow roots and labels included);
+an off-screen element is scrolled into view once; a covering element is
+reported as `obscured` with its ref, and nothing is pressed. A press inside a
+frame is also hit-tested from the top viewport (`DOM.getNodeForLocation`), so
+an overlay in a parent document blocks it too. The check runs again after an
+approval, and the approval is void if the control or its form destination
+(`approvalToken`: address, ref, name, type, href, form action/method/target)
+changed while the user decided. Approval is judged on the element that really
+activates: a `span` inside a submit button, or a label, counts as that button.
+A link-role child inside an anchor is judged as that anchor too, including
+its destination, method and button role.
+For ordinary HTTP(S) navigation links, URL/path tokens in the label do not
+make the word `post` a publishing action (for example `forms/post`). This
+exception does not cover buttons, button-role links, downloads, non-GET
+action links or non-web schemes; other sensitive verbs and form submission
+checks still inspect the full control. A standalone `Post comment` still
+asks. The local approval timeout remains 120 seconds; expiry sends no input.
+A selector or text that matches in two frames is ambiguous. `fill` types only
+when the target holds focus through every embedding frame (`hasFocus` walks
+`DOM.getFrameOwner` up to the main document, shadow roots included); a field
+that passes its focus on gets its value set directly, and a content-editable
+one is refused (`not_focused`), so text never lands in another field.
+`fill(submit)` sends Enter only if that focus chain still holds before and
+after the approval; otherwise it reports the completed fill (`completedAction`)
+and sends nothing.
+
+The global hit test uses document coordinates: add `cssVisualViewport.pageX`
+and `pageY` to the visual point returned by `DOM.getContentQuads`. This covers
+both document scrolling and the visual viewport pan caused by Android's
+keyboard. Native touch keeps the original visual point. Using only viewport
+offsets misses document scrolling; using the raw quad can falsely report a
+visible radio as obscured or produce `No node found at given location`.
+Agent scrolling and field focus use instant scrolling, so a site's smooth
+scroll CSS cannot leave the next step testing a control still in motion.
+Visibility traversal also follows rendered children of `display:contents`
+wrappers, which have no box of their own. A rendered-range check preserves
+those children without exposing `aria-hidden`, hidden wrappers or
+`display:none` subtrees. MDN's main article uses this layout.
+
+**Input.** CDP types text and captures page PNGs. Android touch uses
+`WebViewInput`: the DOM point becomes a touchscreen-sourced finger
+`MotionEvent` delivered to this app's WebView, which preserves trusted input
+when WebView rejects CDP touch emulation. Stop between down and up sends
+`ACTION_CANCEL`. It never taps the global screen. The CSS-to-view scale is
+exact at default zoom; pinch zoom, parked-window rendering, and moving the
+WebView between that window and Hey Mike's screen need device evidence.
+
+**Ledger and uncertainty.** `BrowserSession.inputs` counts every input just
+before it is sent (press, typed text, value set, option, navigation, script).
+The gateway compares it per call and per plan step: a failure with the count
+unchanged is reported as "Nothing was sent to the page" and resumable with
+`startAt`; one after the count moved is `mayHaveActed: true`, whatever the
+throw site said. A timeout while an approval or a target lookup is still
+waiting is therefore a step that did not happen. `browser(operation="plan")`
+validates the whole sequence before a page is even opened, then runs up to 24
+steps in one call with an 80-second ceiling. Each target is resolved again; a
+step may `verify` text, selector or URL. The reply keeps the completed prefix,
+lists steps skipped by `startAt`, distinguishes a completed action from failed
+verification, and never asks to repeat an uncertain action. Failure replies
+keep the page's notes (blocked link, refused dialog or download) and, for a
+lost connection or a stall, a `phone:` line when the screen is off or the
+phone is locked (`BrowserHost.conditions`). A read that fails is a failed
+call, not an "ok" reply: a main-frame snapshot that throws is an error, and a
+screenshot is refused while any frame shows a blocked address. Helper calls
+are never retried after a CDP failure: a lost reply to a scroll, value set or
+option may have run the page's handlers, so it is counted as sent first and
+reported as uncertain instead of replayed.
+
+`check` is a read-only operation and plan step. Its `checks` array names up
+to 24 controls and exact live `value` and/or boolean `checked` expectations.
+One shared timeout bounds all reads and polling; password/card checks are
+refused, and no focus, typing or toggle is sent. A mismatch stops the plan
+without replaying its completed prefix. A plan may request `show:true`: it
+returns its final observation first (unless `observe:false`), then calls the
+same host handoff as a separate show only after all steps pass. A lost handoff
+reply keeps the completed ledger and says `handoff_failed`; it must not cause
+the plan to be run again. The host's screen ownership checks remain in place.
+
+**Readiness and performance (2026-10-15).** Navigation waits for an interactive
+or complete DOM, then a short quiet period; an unfinished image does not hold
+the whole operation until the load event. Settling (3 s, or 800 ms for a quick
+edit) and condition waits use coroutine timeouts around their nested protocol
+reads too. Cancellation propagates. A settling budget that expires adds a
+note and counter, without sending the input again. Protocol errors are no
+longer silently treated as proof that a page is navigating. A context-lost
+readiness read may be polled again within the same budget. Read/policy guards
+and the input ledger still apply.
+
+Every `browser` reply includes `timings`: monotonic `backendMs`, exclusive
+`phasesMs`, `otherMs`, aggregate CDP counts/durations/errors/timeouts, bounded
+document event times and redirect count when present. Backend time includes
+browser work and page loading; it excludes model thinking and relay delivery.
+CDP durations overlap phases and must not be added to them. Plan results have
+per-step timings, action status and verification status (`not_requested`,
+`not_run`, `passed`, `failed`). They still take one final snapshot. This is the
+DOM equivalent of `act_plan`; it stays in the existing `browser` tool, separate
+from the phone-screen planner and its allowlist. No second browser tool or
+device gateway is introduced.
+
+`AgentApplication` writes the same timing record with per-command detail to
+the `MikeBrowserTiming` logcat tag; chunks have call ID and part numbers so
+Android's line limit does not silently cut off a large plan. The tool trace
+already stores the compact returned timings. These measurements record no
+URLs, field values, selectors, page text, HTTP headers, bodies or workspace
+paths. The separate test probe's ignored evidence contains public test-page
+snapshots. See `docs/testing/internal-browser-performance-20261015.md` for
+measurements and their limits.
+
+Hit testing uses the visual viewport as well as element bounds. Android's
+keyboard can pan that viewport while layout `innerHeight` and `scrollY` stay
+unchanged; a control outside the visible region must be scrolled into view
+and checked again before the global hit test or native touch.
+
+**Reconnect and lifecycle.** A page whose CDP connection dropped but whose
+WebView lives is attached again by its DevTools target id: the page, its login
+and its form stay; nothing is repeated, and the next reply says earlier refs
+are gone. If that fails, or the renderer died, the page is replaced by a blank
+one and the chat is told. Every path that ends a page (the user's Close,
+`onRenderProcessGone`, `close`, eviction, service stop) goes through one
+main-thread `discard`, so the page count, the shown page and WebView
+debugging agree. Four pages is a soft cap: before a new one, pages of
+deleted chats are closed, then, while four or more exist, the least recently
+used page that is not busy, not on screen and not in the user's hands; the
+chat that lost it is told on its next page. When every page is busy, shown or
+the user's, nothing is closed and the new page opens anyway, so more than four
+can exist. No test covers the cap.
+
+**Chats and the screen.** Each coordinator has its own browser gateway.
+Independent tools bypass `DeviceLease` through
+`requiresDeviceLease`/`beginIndependentTool` (the composite calls each
+member's own hook, never `beginRun`); their stop does not revoke another run's
+screen backend. A user panel or an approval changes the foreground, so
+`claimBrowserScreen` first takes the existing screen lease. Before any run
+reads or acts on the screen, raises a browser approval, or an automation
+drives the phone, the coordinator awaits `DeviceToolGateway.screenInUse`; a
+member that fails to clear the screen stops the caller. The phone host publishes
+a panel-dismissal version and awaits UI detachment (up to 3s), so the panel's
+bar and dialogs cannot cover a phone action or approval. The page stays alive
+in its hidden window. A visible page still owned by the user refuses screen
+work until the user gives it back or leaves the panel, including other chats.
+Browser profiles are app-owned and separate from Chrome, but all chats share
+the app's cookies.
+
+**Shown inside Hey Mike.** The page is part of its chat, not a floating
+window. The chat shows a card above the composer (site, title, who has the
+page, Open). Open fills Hey Mike's screen with the page: a bar with Back,
+title, host with a lock or "Not secure" for plain http, and Close (asks
+first); a strip that says who has the page, with Take control / Give back to
+Mike, and Stop while a run works. The same WebView moves into a `BrowserFrame`
+on that screen (`attach`) and back to its parked window when the screen
+closes or the activity stops (`detach`), so it keeps running while the user is
+elsewhere; its `MutableContextWrapper` follows it to the activity, so the
+user's own dropdowns and pickers have one. While the agent has the page the
+frame swallows the user's touches; the agent's own taps go to the WebView
+directly. `show` gives the page to the user (agent actions are refused with
+`user_control`), asks the app to come forward on that chat with the page open,
+and says whether the page reached the screen within 3 seconds; if not (phone
+locked), the user still has it and is told to open it from the chat. `hide`,
+or the user's Give back, returns control; the agent is told the user may have
+changed the page. Another chat taking the screen no longer takes the page
+away from the user: Hey Mike simply goes behind the app that chat drives, and
+the page goes back to its parked window. (Before, a shown overlay was parked
+on every screen hand-over, and `show` hid its own page through that path.)
+
+**New-window links.** A tapped link or a gesture-started `window.open` that
+asks for a new window opens in the same page, as a one-tab browser would.
+The new window is a throwaway WebView whose first main-frame request is
+answered locally (204) and never fetched; its address is policy-checked,
+the window destroyed, and the page loads the address through its own client.
+A window with no web address within 3s (a script writing into about:blank),
+or without a user gesture, stays refused. Settling waits for that page to
+commit, and a navigation that destroys the watched document while settling is
+followed to the new document instead of failing the step. Found on Xiaomi:
+the refusal made a GitHub external-link click verify wait 15s for nothing.
+
+**History in client routers.** `back` counts main-frame commits. When none
+happened the step stayed in one document (pushState), and the reply says so:
+GitHub's router was seen on Xiaomi and on the hosting phone keeping the Issues
+view under the repository address. The remedy is `reload`, not more waiting.
+
+**Network and permissions.** The host disables file/content access, script
+popups, automatic downloads, uploads, third-party cookies, and camera/microphone
+grants. URL checks block non-web schemes, local literals/names, private and
+reserved ranges (including 0/8, 198.18/15, 240/4 and NAT64 with an embedded
+private IPv4), private DNS answers and unresolved hosts. The host checks
+resource requests, and the app-wide `ServiceWorkerClient` applies the same
+policy to service-worker fetches. Before anything is read (snapshot, read,
+screenshot, a satisfied wait) the main page's address is checked again, and a
+page that reached a blocked address by itself is closed unread; child frames
+at blocked addresses are listed as blocked and never read or acted in. A
+failed DNS lookup in these after-the-fact checks does not blank a page that
+already loaded. These checks are not a network firewall: a server redirect to
+a name that resolves privately is judged only by the literal check while it
+loads (`shouldOverrideUrlLoading` runs on the main thread without a lookup),
+so a redirect can reach a private destination before the next read guard.
+A controlled Xiaomi test on 2026-10-15 confirmed the connection gap: direct
+navigation to a privately resolving name reached no listener, but a synthetic
+public HTTPS 302 caused two TLS ClientHello connections to an owned loopback
+listener. The fixture ended TLS before HTTP, so this proves private connection
+attempts, not receipt of an HTTP request or reading a private response. The
+plain HTTP variant was stopped by Android's cleartext policy. No certificate
+exception, DNS override or change to the browser's policy was used. The read
+guard still closes a blocked main page before reading it; it is not a firewall.
+Android documents that `shouldInterceptRequest` sees only the initial URL in
+a redirect chain ([WebViewClient reference](https://developer.android.com/reference/android/webkit/WebViewClient#shouldInterceptRequest(android.webkit.WebView,%20android.webkit.WebResourceRequest))).
+DNS rebinding and websocket traffic remain validation gaps. Password/card
+values are masked in snapshots and refused by fill. Arbitrary page eval and
+recognized sends/payments/form submissions use the app's approval card; Enter
+is judged on the control that really holds focus, found through every frame,
+and the approval is void if that control changes while the user decides.
+A frame that cannot be read asks first. This does not prove every site-specific sensitive control is
+recognizable. The bundled `browser` skill is installed normally by
+`WorkspaceSeeder`, and resumed Codex threads receive the current tool surface.
+
+The standalone `tools/browser-probe` app links the same module and checks the
+non-debuggable, test-signed WebView path without replacing or instrumenting
+Hey Mike. See its README for reproducible commands and evidence boundaries.
+
 ## Android network compatibility
 
 The app-server packages are the official `aarch64-unknown-linux-musl` and
@@ -110,6 +694,35 @@ package is bumped in `tools/prepare_runtime.py` (0.153.4 -> 0.156.0 on
 so a bump downloads the new package instead of failing the hash check.
 
 ## Chat presentation
+
+New chats keep a durable `titlePending` flag (`sessions.db` schema 5). The
+coordinator takes an initial name from the first real user message, before
+handoff text or the trusted runtime snapshot is added to the engine input.
+Computer folder labels are provisional too. During the ordinary task the
+agent calls `set_chat_title` once with a short topic name in the user's
+language; no separate model request or title-generation chat is started.
+This is a chat tool, handled without the phone's device lease.
+
+`ChatTitleManager` is shared by runs and the rename UI. It serializes naming,
+protects manual and finished titles, and leaves existing chosen names intact
+on migration. Before refinement it reads the explicit server name and keeps
+a different name already chosen in Codex. Codex names are saved with
+`thread/name/set`, routed to the
+thread's owning computer or phone. A new thread gets its provisional name
+after its first turn starts. Naming has a five-second budget; a provisional
+name's sync failure does not fail the user's task, and refinement remains
+available. A manual rename is saved locally even if the remote write fails.
+The computer catalog distinguishes an explicit `name` from an unnamed
+preview, so an already imported chat's row and header use the shared name
+after refresh, including a name chosen by another Mike. Existing sessions
+are not renamed in bulk. Claude receives local chat titles only; its adapter
+does not persist names in the computer's Claude history.
+
+Selecting a saved chat sets message loading before reading its history on IO.
+The first history emission clears it; skill discovery runs separately within
+the selection's coroutine scope. Computer imports keep their loading marker
+from binding through history import, and clear it in `finally`. Send and voice
+start stay disabled while either kind of history loading is active.
 
 The app owns presentation only: a black conversation canvas, neutral user bubbles,
 selectable assistant text, and expandable diagnostic/activity rows. The composer
@@ -728,6 +1341,26 @@ action is what checks overlay permission and shows the card. Leaving the app
 manually during a read-only turn therefore shows nothing and does not reopen
 the app on completion.
 
+Screen use includes `read_ui` and `screenshot`: their first call attaches the
+controls before any capture hides them, and the run retains the phone until
+it finishes. `DeviceToolGateway.needsControl(name, arguments)` classifies
+operation-based tools. Provider queries, permission checks, workspace files
+and workflow library management leave the card closed; editors, app launches,
+permission requests and workflow execution activate it. Background calls
+return their transient phone lease. Leaving Mike alone never activates it.
+Capture restoration runs in `NonCancellable`, including tool failure and Stop,
+and hiding survives a window rebuild or a foreground transition.
+
+When accessibility is connected, `FloatingControlOverlay` uses the bound
+service's `WindowManager` and `TYPE_ACCESSIBILITY_OVERLAY`, with the token that
+Android supplies. Settings deliberately hides `TYPE_APPLICATION_OVERLAY`
+windows, but the accessibility window is part of the active screen controls
+and remains visible. Service connect/disconnect/rebind rehosts only an already
+active card, preserving its position, collapse state, draft and capture-hidden
+state. Without accessibility, ADB control retains the permission-gated app
+overlay fallback; Android can still hide that fallback in protected screens.
+No private window API or setting that disables Android's protection is used.
+
 ## Voice audio routing
 
 `CommunicationAudioRoute` owns only the route this voice session selected. On
@@ -1227,7 +1860,8 @@ chat removes its workspace and trace together.
 
 `RunMetrics` existed and only an instrumented test ever read it. A run that felt
 slow is the one someone asks about, so at the end of every run that touched the
-phone the coordinator writes one system line into the chat: total, thinking, time
+phone the coordinator writes one system line into the chat: total, time outside
+tool calls, time
 on the phone across how many calls, and time waiting for a person.
 
 Two decisions make the numbers honest.
@@ -1237,14 +1871,27 @@ the tool call that asks for it, so counting it as tool time reported twenty
 seconds of "the phone" for twenty seconds of somebody deciding whether to send a
 message. `awaitLocalApproval` accumulates that wait, and the tool dispatch
 subtracts the part of it that happened inside its own call - so tool time is
-device time, approval time is human time, and thinking is what is left (model
-turns and engine overhead). Three buckets, three different fixes: fewer turns, a
+device time, approval time is human time, and `outsideToolsMs` is the residual
+(model work, engine overhead, queueing, delivery and remote commands not served
+by this coordinator). It is not a measurement of pure model thinking. The old
+`thinkingMs` getter remains a compatibility alias. Three buckets suggest different fixes: fewer turns, a
 faster path on screen, or nothing at all.
 
 **The clock is injected.** `AgentCoordinator` takes `nowNanos`, for the same
 reason `WorkflowRunner` does: a summary claiming to say where time went is worth
 what it can be tested against, and a test driving a virtual clock cannot verify a
 real one. The tests advance virtual time and assert the split exactly.
+
+The trace now stores `run_timing` with those numeric totals and first reply
+time, and `tool_timing` for completed replies. Per-tool boundaries are the
+arrival of EngineEvent.ToolCall, actual invocation and its return, and the
+return from engine.answerTool. `queueMs` covers local queue/setup before
+invocation, `dispatchMs` includes approval wait, and `resultDeliveryMs` covers
+local result handling and the answerTool call. `approvalMs` overlaps dispatch;
+do not sum it twice. These are app-side boundaries, not network ACKs or model
+inference timestamps. Timing entries add no arguments, result bodies or page
+text. A virtual-clock test separates 600ms queue, 1000ms invocation and 300ms
+delivery while retaining 3601ms outside tool work in the run total.
 
 A run that called no tool gets no line. One bucket is not a breakdown, and a
 line under every short answer teaches the user to skip it.
@@ -1348,11 +1995,39 @@ Mike as the digital assistant and reach voice mode by holding the power button.
 No app can take `ROLE_ASSISTANT` for itself, so Settings only reads the holder
 and opens the system picker.
 
-- The session draws nothing. It starts `MainActivity` with
-  `AssistLaunch.EXTRA_START_VOICE` and `CLEAR_TOP | SINGLE_TOP`, so a press lands
-  on the one chat screen (via `onNewIntent` when it is open). It uses a plain
-  `startActivity` first: `startAssistantActivity` creates a second copy in an
-  assistant task, whose view model does not own the voice conversation.
+- A ready session draws `AssistantPanelView` over the current app, with a
+  scrollable transcript, a text field, Send, Mute, Open Mike and End. Only the card takes
+  touches. IME insets move it above the keyboard. Without voice permission or
+  consent it keeps the `MainActivity` onboarding path.
+- Each invocation starts its own bounded screen capture before the panel is
+  drawn. Android supplies `AssistStructure` and its original screenshot.
+  The device gateway can also take a passive accessibility text snapshot:
+  application windows only, no passwords, own windows, actionable handles,
+  run arming or ADB fallback. This text is used only with Android's text and
+  screenshot consent, a non-null platform screenshot and a matching app.
+  Visible accessibility text takes priority over potentially off-viewport
+  assist views. Context is capped at 16,000 characters. Disabled or protected
+  captures remain unavailable; the panel does not recapture them later.
+- `VoiceConversation.begin(initialContext)` sends app guidance as developer
+  text and quoted screen content as ordinary conversation data, through
+  `AndroidRealtimeVoiceController.beforeAudio`. Both audio transports keep
+  microphone input and playback closed until delivery finishes. The panel
+  waits at most two seconds for Android's callbacks; missing context does not
+  indefinitely hold voice. The current realtime protocol accepts text
+  context, not screenshot image items.
+- The first insertion or paste in the field cancels voice startup, mutes the
+  microphone and ends local audio before waiting for the remote stop. The
+  panel stays open in text mode; Send waits for shutdown before starting a
+  normal local chat turn. That turn carries the invocation's quoted text and
+  original screenshot as an image attachment, including for follow-up
+  questions. It never captures Mike's window or the newly opened keyboard.
+  An empty chat with a draft or a computer binding is not reused. The normal
+  selected engine/model is retained or restored after voice.
+- `QueuedTurn.displayPrompt` keeps the user's exact text in the chat and title
+  while the engine and trace receive the enriched prompt. Send failure keeps
+  the field. End/Back cancels panel-owned work; Open Mike hands the same chat
+  and work to the main screen. Closing voice restores a guest engine before
+  typed work can start. Stop does not undo completed actions.
 - `AgentViewModel.startAssistantVoice` never ends a conversation, waits for the
   runtime and the saved chat on a cold start, and opens a new chat unless the
   current one is empty.
@@ -1415,9 +2090,12 @@ rule's own actions interpolate (`AutomationRule.exportedFields`). A rule that
 matches on the body of a message and writes only `{{notification.title}}` never
 sends that body anywhere, and the `create` reply lists the exported fields back
 so the model can tell the user exactly what will be transmitted. A
-`notification` trigger must also name its package: no package would mean every
-notification on the phone, which is never what was meant and is the widest
-possible read of a person.
+`notification` trigger must choose its package scope explicitly: a named app,
+or `package:"*"` when the user asks for all apps. An omitted, empty or null
+package is still refused, so an incomplete rule cannot silently widen access.
+The wildcard round-trips as `"*"`, matches notification events from any actual
+package, and reads as "Any app" in the rules panel. Sender filters, conditions,
+exported fields, attention gates and rate limits apply to either scope.
 
 **The clock is verified, not trusted.** Android coalesces, delays and batches
 alarms. Whether a schedule is due is re-checked against the event's own
@@ -1532,10 +2210,99 @@ checks are written.** Our own notifications are dropped first, so a rule's
 notifications are dropped as status rather than events; then **the package is
 checked before the title or body is touched**, against
 `AutomationWakeups.watchedPackages` — the union over enabled notification
-rules. An app no rule names is never read, and with no notification rule at all
-the service reads nothing. Only then are title and text extracted, and they go
+rules, with `"*"` included only by an enabled all-apps rule. An app outside that
+scope is never read, and with no notification rule at all the service reads
+nothing. Only then are title and text extracted, and they go
 no further than the evaluator unless the rule's own actions interpolate them.
 Nothing is stored: there is no notification log and no tool that can ask for one.
+
+**A voice rule carries its context through startup and speaks first.**
+`voice_call.opening` is the first utterance; optional `context` carries the
+rule's event details for follow-up. The evaluator binds placeholders in both
+fields and reports their exports. The runner packages them with the rule ID
+and expiry in `AutomationVoiceRequest`, and the Android action sends that
+payload through `AssistLaunch` to `MainActivity`. Intent extras are consumed
+once, ignored when reopening from Recents, and a pending microphone grant
+keeps the payload through recreation.
+
+`VoiceConversation` waits for the realtime connection, sends fixed developer
+guidance plus JSON-quoted rule/event data through its existing context path,
+then calls the existing app-server `thread/realtime/appendSpeech` boundary for
+the opening. No microphone turn is required by this dispatch. Notification
+text never becomes developer instructions or a user reply; the context echo
+is not recorded as something the user said. A failed context injection stops
+the opening; expiry is checked before launch, before context and before speech.
+A later rule firing is serialized into the live voice conversation rather
+than restarting it. Normal mic and assistant starts have no automation payload.
+
+The current screen-on/unlocked attention gate remains. Requesting activity
+startup is not evidence of audible output: background activity restrictions,
+microphone permission, cold starts, Bluetooth audio, interruption, expiry and
+real first speech still need physical-device verification on this change.
+
+### Device and network connection conditions
+
+`AutomationDeviceStates` is the closed list of real signal names and values:
+power, screen, Bluetooth headphones, Bluetooth devices and Wi-Fi. Conditions
+require `equals`; unknown names, values and fields (including a mistaken `is`)
+are refused when saved or updated. Missing/unavailable state fails closed even
+for a negated condition. Screen `unlocked` is a transition, not a persistent
+condition value. The host reads a fresh `AutomationDeviceSnapshot` under the
+run lock; test overrides never enter this live firing path.
+
+`automation_rule(mode:"signals")` returns current connection identifiers and
+display names on an explicit request. Bluetooth conditions can name
+`deviceAddress` and `profile`; Wi-Fi conditions can name an exact `ssid` and/or
+`bssid`. Names do not act as Bluetooth identity. MAC address comparison ignores
+case; SSID comparison preserves case and whitespace. Identity fields are not
+added to event exports or voice model context automatically. These identifiers
+select connections; they do not authenticate a device or access point.
+
+The `:voice` module's `BluetoothHeadphones` class uses connected Android audio
+endpoints (SCO/HFP, A2DP and BLE headset), plus the remote classic device class.
+Watches, speakers, wired audio and paired-only devices do not qualify. BLE
+headsets can lack a classic class; Android's BLE-headset endpoint type is then
+the evidence. An unclassified classic device fails closed. `:automations`
+reuses this reader rather than maintaining a second audio classifier.
+
+`AutomationBluetooth` separately reads connected HFP/A2DP/LE Audio profile
+proxies and the system's connected GATT list. It can identify a watch by an
+explicit device condition without calling it headphones. Profile proxy startup
+or binder/permission failure is unknown; it never substitutes the bonded list.
+Only the supported public profiles are promised, not arbitrary Bluetooth
+transports. Broadcast extras are ignored; current state and identifiers are
+queried again, and an unchanged snapshot does not emit another state event.
+
+`AutomationWifi` reads the current Wi-Fi association without scanning, querying
+credentials or connecting. Network callbacks refresh it, including a switch
+between access points while still connected. Redacted SSID/BSSID and missing
+precise Location permission or Location toggle are unknown. Android documents
+these redactions in [WifiInfo](https://developer.android.com/reference/android/net/wifi/WifiInfo).
+Bluetooth identity uses Nearby devices (`BLUETOOTH_CONNECT`) on Android 12+;
+Android 11 uses the normal Bluetooth permission. The capability gateway can
+request the new runtime permissions visibly. Missing signal permissions are
+reported dormant by the tool and blocked by the rules summary. The Location
+permissions support Wi-Fi identity here, not a geofence or coordinates source.
+
+The runner carries device conditions in `AutomationVoiceRequest`. They are
+checked again before activity launch, during startup, before context and speech,
+and throughout voice. A positive connected-headphones condition also restricts
+the communication route to the matching address/profile. Local WebRTC playback
+is muted (or PCM playback paused/flushed) before asynchronous stop on loss; no
+speaker fallback or automatic replay is selected. Route callbacks and a bounded
+100 ms watchdog check route, identity and permission changes. HFP may take up
+to three seconds to become the active route, before new voice media starts.
+The output gate latches a lost condition until a new call.
+
+Protected voice needs Android 12+ and a usable Bluetooth communication route:
+A2DP-only headphones can satisfy the connection condition but cannot safely
+serve this realtime communication route. They are refused rather than routed
+to the speaker. Android callback delivery and buffered physical audio are not
+instantaneous guarantees. Required physical tests include classic HFP and BLE
+audio, two headphones with the same name, selected-device/profile loss while
+another device stays connected, watch-only and speaker-only connections,
+permission revocation, cold starts, stop/reconnection, A2DP-only refusal, Wi-Fi
+roaming, VPN, redacted identity and foreground/background Location behavior.
 
 **A rule takes the device the way a turn does.** `run_workflow` and
 `open_intent` go through `AgentCoordinator.runAutomation`, which claims the same
@@ -1620,6 +2387,17 @@ computers is one entry in the device picker.
 
 The title, New chat, close, Files and Settings stay reachable while the filters
 and list scroll on short screens. Large text moves New chat to its own row.
+
+Opening the drawer uses a quiet computer-thread refresh. The view model keeps
+one refresh batch in flight, and `RemoteHub` serializes attempts per computer.
+Quiet attempts use a 15-second monotonic interval, including failed attempts;
+they retain the last list. An explicit connection/setup refresh skips the quiet
+interval, but joins the existing in-flight attempt by leaving it running.
+Refreshing flags and thread lists use atomic updates so two computers cannot
+overwrite each other's state. Cancellation propagates and releases the gate.
+This bounds repeated SSH list requests; it does not establish the cause of
+every slow drawer frame.
+
 Automations use one compact footer entry with a count and an attention dot.
 Its accessibility label states blocked or on/off status. The detailed rule list
 stays in `AutomationsSheet`; the hamburger
@@ -1767,9 +2545,14 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   thread go to the same place. Sign-in, models, usage and voice stay the
   phone's. Both app-servers number requests from zero, so a computer's tool
   and approval requests are tagged `remote|<computer>|<id>` before the
-  coordinator sees them. An unscoped failure from a computer that is not
-  running the current turn is dropped, because the coordinator ends any
-  active run on one.
+  coordinator sees them. An unscoped computer connection failure becomes
+  one scoped failure for each thread owned by that computer and engine.
+  Unrelated phone and computer runs stay active. A lost remote connection
+  marks the affected task outcome unknown; it cannot prove whether a command
+  completed. Phone Codex and Claude failures are scoped to their own threads
+  too, so they cannot end computer subagents. Unexpected clean stdio EOF is
+  a connection failure. Disconnecting or reloading a saved computer explicitly
+  reports its unfinished runs as unknown; app-wide intentional shutdown is silent.
 - **Account and model.** Before any remote app-server call, `RemoteHub`
   supplies an externally managed ChatGPT access token from the active Mike
   account on the phone. The phone's refresh token stays on the phone; the
@@ -1808,13 +2591,74 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   or both. Connect tries the one that answered last first and moves on only
   when an address does not answer at all; a refused password or a changed
   key stops there. The pin holds for both addresses.
-- **Codex on Windows.** Setup runs short PowerShell scripts through
+  - **Codex on Windows.** Setup runs short PowerShell scripts through
   `powershell.exe -EncodedCommand`, which reads the same under OpenSSH's cmd
   and PowerShell default shells. The computer downloads the official
   `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz` for the version
   pinned on the phone (0.159.2), checks its sha256 against hashes compiled
   into the app, and unpacks it under `%LOCALAPPDATA%\HeyMike\codex\<version>`.
-  The phone and computer therefore speak one protocol version.
+    The phone and computer therefore speak one protocol version.
+  - **Temporary network loss on Windows.** A private helper retains that same
+    app-server while its SSH attachment reconnects. Its hidden Windows process
+    explicitly breaks away from OpenSSH's
+    kill-on-close job and inherits no SSH pipe handles. Startup checks an
+    authenticated health response, rather than trusting a leftover metadata
+    file. Broker PID and process start time identify stale or reused PIDs;
+    attachment to a dead broker fails immediately without retrying a new task.
+    The helper listens only on loopback, requires a random per-instance
+    capability, and keeps output and
+    input receipts in memory. Complete frames carry a sequence, byte length
+    and SHA-256; incomplete frames never reach the engine's JSON reader.
+    Reattachment replays unread output and deduplicates unacknowledged input
+    before forwarding it to Codex. It does not start another turn, initialize
+    another app-server, or acquire another thread writer. Response timeouts
+    pause during recovery. Heartbeats detect a stalled attachment, byte progress
+    keeps large frames alive, and retries back off up to ten seconds. Setup
+    retries only unreachable hosts; changed host keys and rejected passwords
+    still fail closed. Connection status is scoped to that computer's chats.
+    The helper bounds frames to 32 MiB and unread output to 64 MiB. It ends its
+    owned child after five minutes without an authenticated client heartbeat;
+    recovery exhaustion or lost relay state reports an unknown outcome rather
+    than submitting work to a replacement process. Stop revokes local writes
+    first and asks only the capability's own child to stop. When offline,
+    immediate remote interruption cannot be confirmed; the lease bounds it.
+    A replacement relay does not wait for that lease. Each relay holds an
+    owner lock: one per chat for Claude, one per phone-saved computer for
+    Codex. A relay that finds its owner held reads the earlier relay's
+    metadata path from `<owner>.relay`, ends that relay's child and broker
+    only if each PID still has its recorded start time, then takes the lock
+    (20 s at most). Before this, a phone that gave up a relay (engine
+    restart, engine switch, app restart) met the old process for up to five
+    minutes as "thread already has an active writer" or "Could not start
+    Claude's retained connection". A turn still running in the replaced
+    relay is ended: the phone can no longer read or stop it. No token is
+    written to the owner record.
+    Windows attachments use an SSH `direct-tcpip` channel to the authenticated
+    broker on `127.0.0.1`. The app reads and verifies that instance's process
+    identity before opening the tunnel, then sends its capability and replay
+    cursor. There is no shell stdin reader in this path and no listening port
+    exposed outside loopback. Closing a tunnel leaves the broker and child
+    alive. The SSH server must permit TCP forwarding. Native broker startup
+    explicitly breaks away from OpenSSH's kill-on-close job, with a hidden
+    private console and no inherited SSH pipe handles; a health response must
+    confirm startup before readiness is reported.
+    Already launched commands may outlive Codex. Tokens and transcripts are
+    not written into helper metadata or logs. A phone process restart does not
+    restore the in-memory attachment/receipt state; Linux still uses the direct
+    stdio path. These limits must not be described as full network/voice E2E.
+    Native Windows Claude chats use the same retained transport. The helper
+    starts the `.exe` directly with literal arguments, a working folder and
+    launch environment; it inherits the computer's existing sign-in. Each
+    instance has separate prompt/config files. A per-chat exclusive owner file
+    prevents another retained helper from starting that same Claude session
+    while its previous process is still alive. Short auth/model probes and
+    Linux or Windows npm `.cmd` installs retain their existing transport.
+    An ambiguous startup receipt leads only to attachment to the same helper,
+    never a second launch. Claude Stop destroys a recovering transport before
+    closing its buffered writer. Damaged Claude protocol messages fail with
+    a payload-free error instead of silently dropping a possible final answer.
+    Existing direct-SSH Claude processes are not acquired or killed by this
+    ownership guard; legacy sessions need a separate verified migration.
 - **Access is the user's choice per computer.** *Ask me first*:
   `workspace-write` with `on-request` approvals, answered on the phone's
   approval card. *Full access*: `danger-full-access` with no approvals, as on
@@ -1871,8 +2715,17 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   carry the same recipes, since Codex there reads the computer's skills,
   not the phone's. `push_file`, `pull_file` and `copy_to_phone` are gone:
   one tool per kind of copy is how the tool list grew without order. The
-  thread instructions forbid using adb on the computer to reach the phone:
-  it can see other devices and skips the app's controls.
+  thread instructions allow computer-side ADB when the user requests a build,
+  install, debug or test task on a connected Android device, or explicitly
+  requests ADB. No separate ADB permission is needed for that authorized task,
+  including when the selected device is the chat's phone. First identify the
+  requested target in `adb devices -l`, use only state `device`, ask if the
+  target is ambiguous, and pass `adb -s <serial>` for every device command.
+  Phone tools still target the chat's phone; its Wireless ADB status says
+  nothing about the computer's USB or wireless ADB connection. Existing
+  sandbox, approval, Stop, deletion and Android security rules still apply.
+  A source change does not replace instructions already loaded into a chat;
+  the updated app must supply the new instructions.
 - **The desktop.** Commands over SSH run in a Windows session with no screen.
   For screenshots, windows and the clipboard, the instructions teach a
   one-off scheduled task that runs as the signed-in user, interactively. It
@@ -1911,16 +2764,45 @@ would be a mobile round trip wrapped in `cat` and heredocs.
   any size; the user decides what is copied. Screenshots keep their cap
   because they go to the model.
 - **The `computers` tool, from any chat.** One tool with modes: `status`,
-  `browse`, `new_project`, `open_chat`, `add`. It is a tool and not a skill
+  `browse`, `new_project`, `open_chat`, `start_task`, `task_status`,
+  `cancel_task`, `add`. It is a tool and not a skill
   because it crosses the sealed store's line: the agent's shell has no SSH
   and must never read a password or rebind a chat. Two modes only prepare
   what the user finishes: `add` fills in the app's add-computer form, which
   says Mike suggested the address (an injected address is how a password
   would be sent to someone else), and the password is typed there, never
   seen by the model; `open_chat` opens a chat in a project with the task in
-  the composer, unsent, so an instruction picked up elsewhere cannot reach a
-  PC that may have full access. A phone chat does not move to the computer;
+  the composer, unsent. A phone chat does not move to the computer;
   `open_chat` starts a new chat there with what was decided.
+- **Computer subagents.** `start_task` creates a separate Codex child session
+  bound to a saved computer/project and dispatches the exact authorized message
+  through `AgentRuns`, `RoutingAgentEngine` and the existing SSH app-server.
+  The source stays open. `ComputerTasks` records its source, request key,
+  destination, child session/thread, state, progress and result in the sealed
+  `RemoteStore`. A short task note in the source updates as it works and keeps
+  the final result; `task_status` reads the same receipt in later source turns.
+  It does not start an extra model turn to summarize a result. Ordinary child
+  history remains available as a computer chat. Subagents cannot dispatch
+  nested computer subagents.
+- **Retry and interruption.** A caller must reuse a stable `requestId` within
+  its source chat. It is reserved durably before creating a child or dispatching
+  a turn; conflicting arguments fail. Retries return that receipt, including
+  after completion, rather than sending again. A process restart makes unfinished
+  receipts `unknown`, never replayed. An unconfirmed Stop or a lost dispatch/
+  connection reply also leaves the outcome unknown. An uncertain outcome requires a
+  user decision and inspection of the computer session, not a replacement key.
+  `cancel_task` stops only that child; source Stop stops its children too, and
+  global Stop covers setup jobs and active coordinators, including setup before
+  a receipt exists. User Stop during voice also stops that source's children.
+  No completed actions
+  are undone. Pending setup is fenced against a Stop before dispatch.
+- **Subagent gates.** Children keep the saved computer's sandbox and approval
+  policy, host-key pin and phone-account exchange. Their existing approval or
+  question is also shown in the source chat and answered by the same child
+  coordinator, never by the agent. Source replies select the visible gate;
+  the source's own gate wins, then children in dispatch order. Results are
+  quoted task data, never authorization for another task. Coordinator outcomes
+  are retained only after history is flushed, so slot reuse cannot lose a result.
 - **Where a new chat runs.** A new chat starts on the phone. Until its first
   message it can be moved to a recent project on a computer, or to another
   folder; after that its thread lives where it started. A computer chat's
@@ -1972,11 +2854,52 @@ voice works in a Claude chat.
 - **On-phone runtime.** `AndroidClaudeHost` runs the official, unmodified
   `claude` binary through the pinned Alpine musl loader, packaged as
   `libld_musl.so` for arm64-v8a only; the binary itself is never exec'd, so
-  W^X does not apply. The binary (2.1.285, pinned sha256 and size) is never
+  W^X does not apply. The binary (2.1.293, pinned sha256 and size) is never
   bundled: it is downloaded from `downloads.claude.ai` only after the user
-  saw its size (232 MB) and tapped Download, with progress and cancel, and
+  saw its size (244 MB) and tapped Download, with progress and cancel, and
   hashed before use. At app start the host only re-checks a binary that is
   already there. On other ABIs the card says "Not available on this device".
+  Claude Code 2.1.293 adds Haiku 5.5 (`claude-haiku-5-5`); the picker uses
+  the CLI's `initialize` catalog, including its effort options. Until a
+  catalog is available, the pinned Haiku alias is shown as "Haiku 5.5".
+  A computer's own CLI catalog still supplies its names, so an older
+  computer can keep showing Haiku 4.5. Claude sign-in and chat files live
+  outside the versioned binary directory.
+- **Automatic Claude updates (2026-10-07).** The first phone installation
+  still uses the explicit Download action and the bundled 2.1.293 pin.
+  After that, `ClaudeRuntimeUpdates` checks the official `latest` endpoint
+  when Mike enters the foreground and every 15 minutes while it stays open.
+  The last attempt is stored across app restarts, so reopening cannot flood
+  the service. Binary downloads wait for an unmetered connection; checking
+  release metadata is small and does not require a model request.
+  `ClaudeReleaseClient` accepts only bounded HTTPS responses from the fixed
+  official origin without redirects. It verifies the detached GPG manifest
+  signature with the bundled Anthropic key, whose fingerprint is
+  `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`, before trusting its ARM64 musl
+  checksum and size. Bouncy Castle 1.86 provides OpenPGP verification without
+  registering a new global security provider. Unknown major versions or
+  harness schemas are refused until an app compatibility update.
+  A candidate downloads beside the active version and must pass its exact
+  `--version` and a tool-free, message-free stream-json `initialize` probe
+  using a separate HOME and no session persistence. Only then is the active
+  pointer atomically replaced. The working binary remains available during
+  downloads, cancellation, offline checks and incompatible releases. On
+  restart, a damaged active file falls back to the previous verified build,
+  then the bundled pin. Old version files are retained so live processes
+  can continue reading them; automatic disk pruning is not implemented.
+  The candidate probe HOME is excluded from backup and device transfer.
+- **Catalog refresh and turn boundaries.** Claude catalogs expire after
+  one minute and refresh immediately when the host's runtime identity changes.
+  Failed refreshes keep the last good catalog and back off for 30 seconds;
+  cancellation propagates and destroys the probe. Mike requests the current
+  chat's catalog on app resume, chat change, model-menu open and each foreground
+  minute. Computer checks re-probe the installed CLI version and keep account
+  and models scoped to that computer. The phone never installs or changes
+  computer update settings. An updated runtime identity becomes part of each
+  chat's running config: a live turn keeps its old immutable binary, and the
+  next idle turn restarts with `--resume`. A release can appear on the next
+  successful check, subject to account availability and protocol compatibility;
+  Android background execution and a closed app do not promise instant updates.
 - **Phone tools over loopback MCP.** Each chat process gets its own
   `LoopbackMcpServer` (127.0.0.1, fresh port and bearer token per start), so
   a tool call is always tied to the chat that made it. A `tools/call` becomes
@@ -1995,7 +2918,8 @@ voice works in a Claude chat.
   across configuration changes and is cleared on submit; the code is not
   logged or stored. Sign-in state comes only from `claude auth status`.
 - **Compliance rules** (from the spec): official unmodified binary checked
-  against its pinned hash; never bundled; sign-in only inside `claude`; the
+  against the bundled pin or an authenticated official manifest pin; never
+  bundled; sign-in only inside `claude`; the
   app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
   excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
   headers or `--bare`; API keys and base-URL variables are scrubbed from the
@@ -2006,6 +2930,17 @@ voice works in a Claude chat.
   accounts. `/compact` works: after a restart the view model opens the chat
   before compacting, and the note shows before the call, which waits for
   Claude to finish.
+- **One bounded retry for a rejected sign-in refresh (2026-10-09).** Only a
+  terminal CLI error explicitly saying another Claude Code process is refreshing
+  OAuth, before any visible text, thinking, tool request or steering, permits a
+  second user frame. After two seconds the same CLI receives the exact original
+  content under a new frame UUID, within the same app turn. It never changes or
+  copies credentials, restarts a competing process, or retries a tool. The next
+  failure ends normally; permanent sign-in errors, process loss and uncertain
+  outcomes are not replayed. Stop cancels the delayed attempt; steering discards
+  the old replay content. Replay content is also discarded at first work, turn
+  completion and process shutdown. Unit tests prove this policy; reproducing a
+  real competing OAuth refresh safely is still separate device evidence.
 - **Privacy and consent.** The consent text and the privacy page name both
   providers, with OpenAI's and Anthropic's policy links, and say that a chat
   which changes model, or uses voice in a Claude chat, gives its earlier
@@ -2050,12 +2985,30 @@ Decided 2026-10-01, on top of the section above.
   phone's ChatGPT account for each run, Claude uses the computer's own. The
   compliance rules above therefore hold unchanged; the binary is the user's
   own install, started unmodified.
+  - Computer chats pass only the MCP timeouts in `COMPUTER_CHAT_ENV`.
+    They leave `ENABLE_TOOL_SEARCH` to the user's environment/settings and
+    Claude Code's default, which discovers tools on demand. This includes
+    Mike's SDK MCP server. Phone chats keep their existing `CHAT_ENV`.
   - `RemoteHub.claude(computerId)` is a `ClaudeCodeEngine` whose host starts
     `claude` over the computer's SSH link. `ClaudeLaunch.probe` finds it on
     `PATH` or in the usual install places (an SSH command gets a bare `PATH`);
     `claude auth status` gives the sign-in and `initialize` the models, kept
     per computer in `RemoteHub.claudeState`. Nothing is installed for the
     user: a computer without Claude Code offers no Claude models.
+  - **Sign in from the phone (2026-10-06).** The Computers card offers
+    `Connect Claude to <computer>` when Claude is installed but signed out.
+    A computer chat's model menu also links to this setup. `ComputerClaudeSignIn`
+    runs the computer's unmodified `claude auth login --claudeai`, opens the
+    official link on the phone, and relays the pasted code to that process's
+    stdin. `BROWSER=true` keeps the computer from opening a browser. After a
+    successful process exit, `auth status` verifies the account and the model
+    catalog refreshes for that computer. Credentials remain on the computer;
+    no phone login or token is copied. The masked code field is not saveable
+    and clears before submission. Progress and errors are in memory and keyed
+    by computer; repeated taps cannot start two logins on one computer. Cancel
+    or disconnect stops the waiting login without signing out an existing
+    account. Raw login output never becomes a UI error. A failed connection
+    check is shown separately from a missing Claude installation.
   - A launch writes a small script under `~/.hey-mike/claude` on the computer
     and runs it by path. The arguments include an empty string and paths with
     spaces, which cmd, PowerShell and a POSIX shell each quote differently;
@@ -2089,9 +3042,101 @@ Decided 2026-10-01, on top of the section above.
   and moves it back when voice ends; Claude is told what was said on its next
   turn. This needs the ChatGPT sign-in; without it a Claude chat has no voice
   button.
+- **Native computer history (2026-10-10).** `ComputerConversation` carries its
+  engine as well as the native ID. The project drawer lists Codex and local
+  Claude Code conversations together; following a conversation is keyed by
+  computer, engine and ID. Claude imports keep the original working folder
+  and UUID and resume with the computer's official CLI. An imported session
+  that disappeared fails rather than silently starting without its history.
+  This covers the Desktop **Code** tab, not cloud Chat or Cowork history.
+  `ClaudeSessionFiles` uploads a read-only, versioned projection helper:
+  PowerShell on Windows, Python 3 on Linux. It reads the computer's own
+  `CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), never auth
+  files. Only bounded metadata and user/assistant text cross SSH. It follows
+  the latest main `parentUuid` chain, excludes sidechains/internal context and
+  tool/image payloads, ignores an uncommitted tail, and reports malformed
+  complete records or missing parents. Fork ancestors may retain another
+  `sessionId`; the transcript filename remains the native resume ID. A
+  compaction boundary has no `parentUuid`; the reader crosses it once through
+  `logicalParentUuid` to a record in the same file, never back to a record it
+  already showed, so the earlier history stays visible. The compaction summary
+  (`isCompactSummary`, transcript-only) is Claude's own note and is not shown
+  as a user message (revised 2026-10-14; a real 2.1.284 transcript went from 6
+  shown messages, summary included, to 63). Previously saved local messages
+  remain intact.
+  The project is the first valid working folder in the transcript; later
+  directory changes do not move the session. File/record/display limits are
+  256/32/8 MiB. Empty and folderless stubs are ignored; duplicate native IDs
+  are omitted with a quiet notice. Reader failures remain explicit errors.
+- **Claude refresh and ownership.** Selection, app resume, manual Refresh
+  history and an idle Send refresh external messages. Stable source UUIDs
+  prevent duplicate imports; local messages, notes, attachments, drafts and
+  queued work are retained. A persistent ID ledger distinguishes live Mike
+  messages from Desktop additions and recovers IDs whose text was not saved
+  before an interruption. Legacy local text is matched once, with role, text
+  and a five-minute timestamp window. This migration is best effort: unmatched
+  or clock-skewed records can appear again, rather than losing local history.
+  Multiple live text blocks can
+  match one native assistant message. Refresh never interrupts an active turn.
+  Refresh reads history and ownership together, and keeps Mike's own warm
+  Claude process. The versioned reader is uploaded once per app run and
+  restored if it disappears. Ownership uses live process arguments and native
+  PID metadata, distinguishing Mike's launcher from external clients. Both
+  `.hey-mike/claude/` and retained `.hey-mike/codex-relay/` launch paths identify
+  Mike's processes; similarly named sibling folders do not. A
+  Windows Claude relay also has a stable client UUID in its launch path,
+  derived from this phone's saved computer ID. Reader v5 receives that UUID:
+  this client's relay is marked `owned`, another client's is an external
+  writer. This survives an app/engine restart, when the live engine map is
+  empty. Refresh only reads; a later explicit Send uses the existing verified
+  owner-lock takeover to replace the previous owned relay and resume native
+  history. No earlier user turn is replayed. Unmarked legacy Mike processes
+  still need a live local engine or must release their old offline lease.
+  Desktop handoff requires every process to release the session, even an
+  owned relay. A
+  detected external writer blocks writing. Missing transcripts and failed
+  ownership checks block imported sessions; chats created by Mike keep their
+  previous behavior, including a first turn with no transcript yet. If only
+  history text is unreadable, ownership is checked separately and the UI shows
+  a notice. The router repeats the ownership check, including queued runs.
+  A send that the check holds back puts its text back in an empty composer.
+  Text shown after Stop is recorded as Mike's too, so a refresh does not add
+  it a second time.
+- **One binding, two engines (2026-10-14).** A chat bound to a computer keeps
+  the thread of the engine it runs on in `RemoteBinding.threadId` and the
+  other engine's thread in `parked`, each with its own origin. Moving a chat
+  from Codex to Claude and back resumes the same Codex thread there instead of
+  starting an empty one, and only the session that was actually brought in
+  from the computer fails closed; a Claude session Mike started in an
+  imported Codex chat is Mike's. The drawer and import treat a native
+  conversation as followed when any chat on that computer holds it, current
+  or parked, including Claude chats saved before bindings named an engine.
+  These are advisory writer checks, not an
+  atomic lock shared by every external client; a concurrent external launch
+  can still race. Reopening after idle release resumes native disk history.
+- **Desktop handoff.** Open in Claude Desktop releases Mike's idle process
+  and calls official `claude --desktop --resume <uuid>` from a one-off
+  scheduled task in the signed-in Windows user's desktop. A short command
+  starts an uploaded script, avoiding Windows' command-length limit. The
+  task, scripts and result are removed when the bridge exits; an SSH failure
+  before execution can leave an app-owned staged script. Windows PowerShell
+  5.1 reads a script file without a byte order mark in the ANSI code page, so
+  both scripts are pure ASCII: every path (CLI, working folder, result, job)
+  is carried as Base64 UTF-8 and decoded in the script, and the files are
+  written with a UTF-8 BOM as well. The job uses `Process.Start`, not
+  `Start-Process`, so `[` in a folder is not a wildcard. Every Windows JSON
+  answer Mike reads (probes, folder lists, the Desktop result) escapes
+  non-ASCII as `\uXXXX`, because PowerShell prints to the SSH pipe in the OEM
+  code page. Once the task has started, a missing or unreadable answer is an
+  unknown outcome: the chat shows it, sending waits for a check that finds no
+  other writer, and the handoff is not repeated on its own. A launch request
+  is not proof of a visible Desktop session or a resumed model turn. Close
+  the session there and refresh Mike before continuing here. This first
+  handoff supports Windows and the default Claude store; custom stores can
+  still be read/continued in Mike, but Desktop handoff is refused. Desktop
+  needs its own install/sign-in; Mike's phone MCP connection is not migrated.
 - **Not done.** A computer still has to be set up through Codex (and so with
-  a ChatGPT sign-in) before its Claude can be used. Claude conversations kept
-  on a computer are not listed or imported the way Codex's are. The
-  computer's Claude skills are not listed in the composer. A Claude session
-  file the CLI removed (its own clean-up of old sessions) starts again under
-  the same id without the chat's history being sent again.
+  a ChatGPT sign-in) before its Claude can be used. The computer's Claude
+  skills are not listed in the composer. Mac Desktop handoff and real
+  phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
+  evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.

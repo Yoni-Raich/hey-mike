@@ -63,6 +63,7 @@ class AgentService : Service() {
         stopAll()
         graph.adb.stopAutoReconnect()
         graph.scope.launch {
+            runCatching { graph.browserHost.closeAll() }
             runCatching { graph.voice.stop() }
             runCatching { graph.engine.close() }
             runCatching { graph.adb.disconnect() }

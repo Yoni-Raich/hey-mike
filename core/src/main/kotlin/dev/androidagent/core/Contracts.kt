@@ -84,6 +84,13 @@ data class ChatSession(
     val parked: Map<EngineKind, ParkedThread> = emptyMap(),
     /** Messages newer than this have not reached [engine]'s thread yet. Null when it has seen them all. */
     val catchUpFrom: Long? = null,
+    /** A new chat's provisional name may be refined once by the agent. */
+    val titlePending: Boolean = false,
+    /** A delegated chat is still an ordinary chat; this link keeps its context visible. */
+    val parentSessionId: String? = null,
+    /** Explicit choices belong to this session, including delegated sessions. */
+    val model: String? = null,
+    val reasoningEffort: String? = null,
 )
 
 /** An engine's thread for a chat that now runs on another engine, and the time up to which it saw the chat. */
@@ -96,6 +103,12 @@ interface SessionStore {
     /** A new chat that starts on [engine]. */
     suspend fun createSession(engine: EngineKind): ChatSession
     suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
+    suspend fun createChildSession(parentSessionId: String, engine: EngineKind, title: String): ChatSession =
+        error("This store does not support child chats.")
+    suspend fun setParent(sessionId: String, parentSessionId: String) {}
+    suspend fun setModelChoice(sessionId: String, model: String?, reasoningEffort: String?) {}
+    suspend fun loadAgentTasks(): List<SessionAgentTask> = emptyList()
+    suspend fun saveAgentTask(task: SessionAgentTask) { error("This store does not support agent receipts.") }
     suspend fun getSession(id: String): ChatSession?
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
@@ -110,22 +123,32 @@ interface SessionStore {
     /** The chat's engine has now been given everything said so far. */
     suspend fun markCaughtUp(sessionId: String) {}
     suspend fun rename(sessionId: String, title: String)
+    /** Update a provisional name only; manual and finished names are protected. */
+    suspend fun setAutomaticTitle(sessionId: String, title: String, complete: Boolean): Boolean = false
     suspend fun deleteSession(sessionId: String)
     fun workspace(sessionId: String): File
     /** Append one visible, ordered session event to the user's private workspace. */
     suspend fun appendTrace(sessionId: String, entry: JsonObject) {}
+    /** Exact, unsent composer text. Kept per chat across navigation and restarts. */
+    suspend fun saveComposerDraft(sessionId: String, text: String) {}
+    suspend fun composerDraft(sessionId: String): String? = null
     suspend fun loadQueuedTurns(): List<QueuedTurn> = emptyList()
     suspend fun saveQueuedTurns(turns: List<QueuedTurn>) {}
 }
 
 enum class RuntimePhase { MISSING, PREPARING, READY, RUNNING, ERROR }
-data class RuntimeStatus(val phase: RuntimePhase = RuntimePhase.MISSING, val message: String = "Runtime not ready", val progress: Float? = null)
+data class RuntimeStatus(val phase: RuntimePhase = RuntimePhase.MISSING, val message: String = "Runtime not ready", val progress: Float? = null, val version: String? = null)
 interface RuntimeHost {
     val status: StateFlow<RuntimeStatus>
     val homeDirectory: File
     suspend fun prepare()
     suspend fun startAppServer(): Process
     suspend fun stop()
+}
+
+/** A process transport can reconnect while keeping the same agent and turn. */
+interface RecoverableConnection {
+    val reconnecting: Boolean
 }
 
 /** Which agent engine runs a turn. A chat can change it between turns. */
@@ -147,11 +170,13 @@ val EngineKind.label: String
  * environment; engines only pass `claude` arguments.
  */
 interface ClaudeProcessHost {
-    /** Install state of the pinned binary; READY once it is present and verified. */
+    /** Changes when new chat processes will use a different runtime. Existing turns keep their process. */
+    val runtimeIdentity: String get() = ""
+    /** Install state of the active binary; READY once it is present and verified. */
     val status: StateFlow<RuntimeStatus>
     /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its files. */
     val homeDirectory: File
-    /** Download and verify the pinned binary if needed. Fails closed on any mismatch. */
+    /** Explicit first installation, or use an already verified active build. */
     suspend fun prepare()
     /** Start `claude <args>` in [workingDirectory] with [extraEnv] on top of the host environment. */
     suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String> = emptyMap()): Process
@@ -203,6 +228,16 @@ data class AgentSkill(
     val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: name
     val summary: String get() = shortDescription?.takeIf { it.isNotBlank() } ?: description
 }
+/** A command the connected engine answers itself, such as Claude Code's `/context`. */
+data class AgentCommand(
+    val name: String,
+    val description: String,
+    /** How the engine spells its arguments, such as `[low|high]`; empty when it takes none. */
+    val argumentHint: String = "",
+    val aliases: List<String> = emptyList(),
+)
+/** What a compaction did, in tokens, when the engine says; null where it does not. */
+data class CompactResult(val tokensBefore: Long? = null, val tokensAfter: Long? = null, val durationMs: Long? = null)
 data class TokenUsage(val total: Long, val input: Long, val output: Long, val cachedInput: Long = 0, val contextWindow: Long? = null)
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
 /**
@@ -210,8 +245,8 @@ data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: 
  *
  * [toolMs] is device time only and [approvalMs] is a person deciding, so the
  * two are never the same number: a send that waited 20 seconds for Allow is not
- * 20 seconds of the phone being slow. [thinkingMs] is what is left, which is
- * model turns and engine overhead.
+ * 20 seconds of the phone being slow. [outsideToolsMs] is what is left,
+ * including model work, engine overhead and commands run on a remote computer.
  */
 data class RunMetrics(
     val firstResponseMs: Long?,
@@ -221,7 +256,9 @@ data class RunMetrics(
     /** Time a person was being waited on: a send approval, a sensitive step. */
     val approvalMs: Long = 0,
 ) {
-    val thinkingMs: Long get() = (totalMs - toolMs - approvalMs).coerceAtLeast(0)
+    /** Residual time includes model work, orchestration, queueing and delivery. */
+    val outsideToolsMs: Long get() = (totalMs - toolMs - approvalMs).coerceAtLeast(0)
+    val thinkingMs: Long get() = outsideToolsMs
 }
 
 sealed interface EngineEvent {
@@ -232,7 +269,9 @@ sealed interface EngineEvent {
     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
-    data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null,
+        /** Transport progress may span turns, but must be scoped to its own threads. */
+        val connectionStatus: Boolean = false) : EngineEvent
     /** One Codex item. The router marks it remote before it reaches chat history. */
     data class ItemActivity(
         val itemId: String, val title: String, val detail: String, val state: String,
@@ -241,7 +280,9 @@ sealed interface EngineEvent {
     data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent
-    data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null,
+        /** The transport failed after work may have reached the computer. */
+        val uncertain: Boolean = false) : EngineEvent
 }
 interface AgentEngine {
     val events: Flow<EngineEvent>
@@ -280,7 +321,17 @@ interface AgentEngine {
      */
     suspend fun modelCatalog(): List<AgentModel> = models().map { AgentModel(id = it) }
     suspend fun skillCatalog(workspace: File, forceReload: Boolean = false): List<AgentSkill> = emptyList()
+    /**
+     * The commands the engine itself answers when a message begins with
+     * `/name`, as the engine reports them. Empty for an engine that has no
+     * such list: Codex keeps its terminal commands in its own code.
+     */
+    suspend fun commandCatalog(workspace: File, forceReload: Boolean = false): List<AgentCommand> = emptyList()
     suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String
+    /** Persist a name where the engine keeps the thread, when supported. */
+    suspend fun renameThread(threadId: String, title: String) {}
+    /** An explicitly saved name, excluding the engine's first-message preview. */
+    suspend fun threadName(threadId: String): String? = null
     suspend fun startTurn(threadId: String, prompt: String, images: List<File> = emptyList()): String
     /** Start a turn with an optional model-advertised reasoning effort. */
     suspend fun startTurn(threadId: String, prompt: String, images: List<File> = emptyList(), reasoningEffort: String?): String =
@@ -330,8 +381,11 @@ interface AgentEngine {
         capabilities: DeviceCapabilities,
         planModel: String?,
     ): String = startTurn(threadId, prompt, images, reasoningEffort, skill, capabilities)
-    /** Summarize the thread's history to free up context. */
-    suspend fun compact(threadId: String): Unit = throw UnsupportedOperationException("This engine cannot compact a chat.")
+    /**
+     * Summarize the thread's history to free up context. Returns when the
+     * summary is in place, with the sizes the engine reported, if it did.
+     */
+    suspend fun compact(threadId: String): CompactResult? = throw UnsupportedOperationException("This engine cannot compact a chat.")
     suspend fun steer(threadId: String, turnId: String, prompt: String)
     suspend fun interrupt(threadId: String, turnId: String)
     suspend fun answerTool(requestId: String, result: ToolResult)
@@ -413,6 +467,14 @@ data class RunState(
     val phase: RunPhase = RunPhase.IDLE, val sessionId: String? = null, val status: String = "Ready", val controlling: Boolean = false, val approval: EngineEvent.Approval? = null, val toolName: String? = null,
     /** What the agent asked with `ask_user` and is waiting on. */
     val question: UserQuestion? = null,
+    /** This source screen shows a child run; its own composer can start a new turn. */
+    val delegated: Boolean = false,
+    /** False when local Stop could not confirm remote interruption or connection shutdown. */
+    val stopConfirmed: Boolean? = null,
+    /** A lost dispatch/connection reply cannot establish the remote task's outcome. */
+    val outcomeUnknown: Boolean = false,
+    /** Identifies this execution, so a previous turn's outcome cannot finish a new task. */
+    val runId: String? = null,
 ) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
 
@@ -432,12 +494,36 @@ data class OverlayState(val phase: OverlayPhase, val detail: String? = null) {
         get() = if (this == OverlayPhase.THINKING || this == OverlayPhase.RUNNING) "Working" else name.lowercase().replaceFirstChar { it.uppercase() }
 }
 interface DeviceToolGateway {
+    /** Passive, read-only snapshot at an assistant press. Never arms a run or exports node handles. */
+    suspend fun assistantScreenText(): AssistantScreenText? = null
     val definitions: List<ToolDefinition>
     fun beginRun(runId: String, workspace: File)
     fun revoke()
     fun needsControl(name: String): Boolean
+    /** Operation-based tools only need the floating controls when they use the screen. */
+    fun needsControl(name: String, arguments: JsonObject): Boolean = needsControl(name)
     suspend fun invoke(name: String, arguments: JsonObject): ToolResult
     suspend fun cancel()
+
+    /**
+     * False for a tool that never touches the phone's screen (the internal
+     * browser's own page), so it runs while another chat holds [DeviceLease].
+     */
+    fun requiresDeviceLease(name: String): Boolean = true
+
+    /** Arm only what serves [name], for one call that holds no lease. */
+    fun beginIndependentTool(name: String, runId: String, workspace: File) { beginRun(runId, workspace) }
+
+    /** Stop: refuse further independent calls of this run. */
+    fun revokeIndependentTools() {}
+
+    /**
+     * The run with [workspace] is about to read or act on the phone's screen,
+     * or to raise an approval over it. A backend that can cover the screen
+     * with a window of its own moves it out of the way before this returns,
+     * so a tap never lands in that window instead of the app.
+     */
+    suspend fun screenInUse(runId: String, workspace: File) {}
 
     /**
      * True when the overlay must be taken off the captured surface for this

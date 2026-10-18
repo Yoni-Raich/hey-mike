@@ -36,6 +36,16 @@ import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentCoordinatorTest {
+    @Test fun assistantContextReachesTheEngineButTheChatKeepsTheOriginalQuestion() = runTest {
+        val rig = Rig(this)
+        val question = "  סכם את הפוסט\nבמשפט אחד  "
+        val enriched = question + "\n\nQuoted screen data"
+        rig.coordinator.send(QueuedTurn(sessionId = "one", prompt = enriched, displayPrompt = question))
+        runCurrent()
+        assertEquals(question, rig.store.messages.first { it.role == "user" }.text)
+        assertEquals(enriched, rig.engine.prompts.single())
+        rig.close()
+    }
     @Test fun stopRevokesBeforeWaitingForEngineAndBlocksAnActionWaitingForOverlay() = runTest {
         val rig = Rig(this)
         rig.overlay.waitForShow = CompletableDeferred()
@@ -230,7 +240,7 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
-    @Test fun uiControlWaitsForOverlayAndBackendReadsDoNotShowIt() = runTest {
+    @Test fun screenReadShowsControlsBeforeCaptureAndKeepsThemForTheNextAction() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Read and tap")
         runCurrent()
@@ -238,7 +248,9 @@ class AgentCoordinatorTest {
         assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.THINKING })
         rig.engine.emit(EngineEvent.ToolCall("read", "read_ui", buildJsonObject {}, "thread", "turn"))
         runCurrent()
-        assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.RUNNING && it.detail == "read ui" })
+        assertEquals(1, rig.overlay.shown)
+        assertTrue(rig.overlay.captureWasAttached)
+        assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.CONTROLLING && it.detail == "read ui" })
         rig.engine.emit(EngineEvent.ToolCall("tap", "tap", buildJsonObject {}, "thread", "turn"))
         runCurrent()
         assertTrue(rig.overlay.states.any { it.phase == OverlayPhase.CONTROLLING && it.detail == "tap" })
@@ -283,7 +295,7 @@ class AgentCoordinatorTest {
         assertEquals(1, metrics.toolCalls)
         assertEquals(0L, metrics.approvalMs)
         // The three seconds on the phone are the phone's, and the two before
-        // the tool call are the model's.
+        // the tool call are outside the measured tool work.
         assertTrue("toolMs=${metrics.toolMs}", metrics.toolMs >= 3_000)
         assertTrue("thinkingMs=${metrics.thinkingMs}", metrics.thinkingMs >= 2_000)
         rig.close()
@@ -297,6 +309,35 @@ class AgentCoordinatorTest {
         runCurrent()
 
         assertTrue(rig.store.messages.none { it.text.startsWith("Run summary:") })
+        rig.close()
+    }
+
+    @Test fun timingTraceSeparatesQueueDispatchAndResultDelivery() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read the test screen")
+        runCurrent()
+        advanceTimeBy(2_000)
+        rig.tools.workMs = 1_000
+        rig.engine.answerDelayMs = 300
+        rig.overlay.waitForShow = CompletableDeferred()
+        rig.engine.emit(EngineEvent.ToolCall("timed", "tap", buildJsonObject { put("private", "not-in-timings") }, "thread", "turn"))
+        runCurrent()
+        advanceTimeBy(600)
+        rig.overlay.waitForShow!!.complete(Unit)
+        runCurrent()
+        advanceTimeBy(1_301)
+        runCurrent()
+        advanceTimeBy(700)
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        val timing = rig.store.traces.single { it["type"]?.jsonPrimitive?.content == "tool_timing" }
+        assertEquals("600", timing["queueMs"]!!.jsonPrimitive.content)
+        assertEquals("1000", timing["dispatchMs"]!!.jsonPrimitive.content)
+        assertEquals("300", timing["resultDeliveryMs"]!!.jsonPrimitive.content)
+        assertFalse(timing.toString().contains("not-in-timings"))
+        val total = rig.store.traces.single { it["type"]?.jsonPrimitive?.content == "run_timing" }
+        assertEquals("1000", total["toolMs"]!!.jsonPrimitive.content)
+        assertEquals("3601", total["outsideToolsMs"]!!.jsonPrimitive.content)
         rig.close()
     }
 
@@ -324,7 +365,7 @@ class AgentCoordinatorTest {
         )
         runCurrent()
 
-        val entries = rig.store.traces
+        val entries = rig.store.traces.filter { it["type"]?.jsonPrimitive?.content != "tool_timing" }
         assertEquals(listOf("user", "tool_call", "tool_result", "assistant"), entries.map {
             it["type"]!!.jsonPrimitive.content
         })
@@ -346,6 +387,23 @@ class AgentCoordinatorTest {
         val assistant = entries[3]
         assertEquals(assistantText, assistant["text"]!!.jsonPrimitive.content)
         assertEquals("final_answer", assistant["phase"]!!.jsonPrimitive.content)
+        rig.close()
+    }
+
+    @Test fun stopPairsAnInFlightCallWithExplicitCancellationAndNeverAnswersSuccess() = runTest {
+        val rig = Rig(this)
+        rig.tools.workMs = 45_000
+        rig.coordinator.send("one", "Wait")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("cancel-request", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        rig.coordinator.stop()
+        runCurrent()
+        val terminal = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "cancel-request" }
+        assertEquals(listOf("tool_call", "tool_cancelled"), terminal.map { it["type"]!!.jsonPrimitive.content })
+        assertEquals("false", terminal.last()["success"]!!.jsonPrimitive.content)
+        assertTrue(rig.engine.answers.isEmpty())
+        assertTrue(rig.tools.revoked)
         rig.close()
     }
 
@@ -542,6 +600,49 @@ class AgentCoordinatorTest {
         runCurrent()
         // tap captures nothing, so the card stays where it is.
         assertTrue(rig.overlay.captureHistory.isEmpty())
+        rig.close()
+    }
+
+    @Test fun providerReadsStayInBackgroundButAnEditorTakesTheScreen() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Find a contact")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("read", "contacts", buildJsonObject { put("operation", "search") }, "thread", "turn"))
+        runCurrent()
+        assertEquals(listOf("contacts"), rig.tools.names)
+        assertEquals(0, rig.overlay.shown)
+        assertFalse(rig.overlay.visible)
+        assertTrue(rig.tools.revoked) // A background call returns the phone lease.
+
+        rig.engine.emit(EngineEvent.ToolCall("editor", "contacts", buildJsonObject { put("operation", "create_draft") }, "thread", "turn"))
+        runCurrent()
+        assertEquals(1, rig.overlay.shown)
+        assertTrue(rig.tools.controlWasVisible)
+        assertFalse(rig.tools.revoked) // Keep control across screen work.
+        rig.close()
+    }
+
+    @Test fun captureFailureAndStopRestoreEvenASuspendingOverlay() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Read the screen")
+        runCurrent()
+        rig.tools.fail = true
+        rig.engine.emit(EngineEvent.ToolCall("failure", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertFalse(rig.overlay.captureHidden)
+        assertEquals(listOf(true, false), rig.overlay.captureHistory)
+
+        rig.tools.fail = false
+        rig.tools.workMs = 10_000
+        rig.overlay.restoreMs = 10
+        rig.engine.emit(EngineEvent.ToolCall("cancel", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertTrue(rig.overlay.captureHidden)
+        rig.coordinator.stop()
+        advanceUntilIdle()
+        assertFalse(rig.overlay.captureHidden)
+        assertFalse(rig.overlay.visible)
+        assertTrue(rig.tools.revoked)
         rig.close()
     }
 
@@ -789,6 +890,27 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aTopicNameIsSavedOnTheThreadWithoutTakingThePhone() = runTest {
+        val rig = Rig(this)
+        rig.store.sessions.value = rig.store.sessions.value.map {
+            if (it.id == "one") it.copy(title = "New chat", titlePending = true) else it
+        }
+        rig.coordinator.send("one", "Fix the session names")
+        runCurrent()
+        assertEquals("Fix the session names", rig.store.getSession("one")!!.title)
+        assertTrue(rig.tools.revoked)
+        rig.engine.emit(EngineEvent.ToolCall("title", ChatTools.TITLE,
+            buildJsonObject { put("title", "Smart session names") }, "thread", "turn"))
+        runCurrent()
+        assertEquals("Smart session names", rig.store.getSession("one")!!.title)
+        assertFalse(rig.store.getSession("one")!!.titlePending)
+        assertEquals("thread" to "Smart session names", rig.engine.names.last())
+        assertTrue(rig.engine.answers.single().success)
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        rig.close()
+    }
+
     @Test fun aQuestionWaitsForTheUsersChoiceWithoutTakingThePhone() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Book a table")
@@ -941,7 +1063,10 @@ class AgentCoordinatorTest {
         var planModel: String? = null
         var closed = false
         var waitForInterrupt: CompletableDeferred<Unit>? = null
+        var answerDelayMs = 0L
         val answers = mutableListOf<ToolResult>()
+        val names = mutableListOf<Pair<String, String>>()
+        override suspend fun renameThread(threadId: String, title: String) { names += threadId to title }
         val approvalAnswers = mutableListOf<Pair<String, Boolean>>()
         val connectedKinds = mutableListOf<EngineKind>()
         val accountKinds = mutableListOf<EngineKind>()
@@ -1003,7 +1128,7 @@ class AgentCoordinatorTest {
         val steers = mutableListOf<String>()
         override suspend fun steer(threadId: String, turnId: String, prompt: String) { steers += prompt }
         override suspend fun interrupt(threadId: String, turnId: String) { waitForInterrupt?.await() }
-        override suspend fun answerTool(requestId: String, result: ToolResult) { answers.add(result) }
+        override suspend fun answerTool(requestId: String, result: ToolResult) { delay(answerDelayMs); answers.add(result) }
         override suspend fun answerApproval(requestId: String, allow: Boolean) {
             approvalAnswers += requestId to allow
         }
@@ -1031,7 +1156,12 @@ class AgentCoordinatorTest {
         override suspend fun setEngine(sessionId: String, engine: EngineKind) =
             change(sessionId) { EngineSwitch.switch(it.copy(hasMessages = messages.any { m -> m.sessionId == sessionId }), engine, now = messages.size.toLong()) }
         override suspend fun markCaughtUp(sessionId: String) = change(sessionId) { it.copy(catchUpFrom = null) }
-        override suspend fun rename(sessionId: String, title: String) = Unit
+        override suspend fun rename(sessionId: String, title: String) = change(sessionId) { it.copy(title = title, titlePending = false) }
+        override suspend fun setAutomaticTitle(sessionId: String, title: String, complete: Boolean): Boolean {
+            if (getSession(sessionId)?.titlePending != true) return false
+            change(sessionId) { it.copy(title = title, titlePending = !complete) }
+            return true
+        }
         override suspend fun deleteSession(sessionId: String) = Unit
         override fun workspace(sessionId: String) = File("session-$sessionId")
     }
@@ -1044,14 +1174,18 @@ class AgentCoordinatorTest {
         override fun beginRun(runId: String, workspace: File) { revoked = false }
         override fun revoke() { revoked = true }
         override fun needsControl(name: String) = name == "tap"
+        override fun needsControl(name: String, arguments: JsonObject) =
+            needsControl(name) || name == "contacts" && arguments["operation"]?.jsonPrimitive?.content == "create_draft"
         override fun hidesOverlayDuringCapture(name: String) = name == "read_ui"
         /** How long a call takes on this fake phone, on the test's clock. */
         var workMs = 0L
         var nextResult = ToolResult("Done")
+        var fail = false
         override suspend fun invoke(name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
             check(!revoked)
-            if (needsControl(name)) controlWasVisible = overlay.visible
+            if (needsControl(name, arguments)) controlWasVisible = overlay.visible
             executions++; names.add(name)
+            if (fail) error("Capture failed")
             if (workMs > 0) delay(workMs)
             return nextResult
         }
@@ -1063,6 +1197,8 @@ class AgentCoordinatorTest {
         var visible = false
         var fail = false
         var captureHidden = false
+        var captureWasAttached = false
+        var restoreMs = 0L
         val captureHistory = mutableListOf<Boolean>()
         val states = mutableListOf<OverlayState>()
         val finished = mutableListOf<OverlayState>()
@@ -1074,6 +1210,10 @@ class AgentCoordinatorTest {
         override fun finish(state: OverlayState) { finished += state; updateState(state); hide() }
         override fun hide() { visible = false }
         override fun say(text: String) { spoken += text }
-        override suspend fun setCaptureHidden(hidden: Boolean) { captureHidden = hidden; captureHistory += hidden }
+        override suspend fun setCaptureHidden(hidden: Boolean) {
+            if (hidden) captureWasAttached = visible
+            else if (restoreMs > 0) delay(restoreMs)
+            captureHidden = hidden; captureHistory += hidden
+        }
     }
 }

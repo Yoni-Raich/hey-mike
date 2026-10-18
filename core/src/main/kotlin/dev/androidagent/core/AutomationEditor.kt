@@ -184,7 +184,7 @@ object AutomationEditor {
                 field("days", "On these days", FieldType.DAYS, days(schedule.days), optional = true, hint = "None picked means every day.")
             }
             AutomationTriggerKind.NOTIFICATION -> {
-                field("package", "App (package name)", FieldType.TEXT, trigger.packageName.orEmpty(), hint = "For example com.whatsapp")
+                field("package", "App (package name)", FieldType.TEXT, trigger.packageName.orEmpty(), hint = "Use * for all apps, or an app package such as com.whatsapp.")
                 field("from", "From (sender name contains)", FieldType.TEXT, trigger.from.orEmpty(), optional = true, hint = "Empty means anyone.")
             }
             AutomationTriggerKind.PLACE -> field("place", "Place", FieldType.TEXT, trigger.place.orEmpty())
@@ -253,8 +253,10 @@ object AutomationEditor {
             }
             AutomationActionKind.AGENT_TURN ->
                 field("prompt", "What Mike should do", FieldType.LONG_TEXT, action.raw.str("prompt").orEmpty(), hint = PLACEHOLDER_HINT)
-            AutomationActionKind.VOICE_CALL ->
-                field("opening", "What Mike opens with", FieldType.LONG_TEXT, action.raw.str("opening").orEmpty())
+            AutomationActionKind.VOICE_CALL -> {
+                field("opening", "What Mike opens with", FieldType.LONG_TEXT, action.raw.str("opening").orEmpty(), hint = PLACEHOLDER_HINT)
+                field("context", "Context for the conversation", FieldType.LONG_TEXT, action.raw.str("context").orEmpty(), optional = true, hint = PLACEHOLDER_HINT)
+            }
             AutomationActionKind.ASK -> field("question", "Question", FieldType.LONG_TEXT, action.raw.str("question").orEmpty())
         }
         if (action.kind != AutomationActionKind.ASK) {

@@ -23,6 +23,7 @@ package dev.androidagent.app
 import android.app.Application
 import android.content.Intent
 import dev.androidagent.a11y.A11yDeviceTools
+import dev.androidagent.a11y.A11yServiceHandle
 import dev.androidagent.adb.AndroidAdbTransport
 import dev.androidagent.automations.AndroidAutomationActions
 import dev.androidagent.automations.AutomationHost
@@ -99,6 +100,14 @@ class AgentGraph(private val app: Application) {
         java.io.File(app.filesDir, "remote/computers.bin"),
         dev.androidagent.remote.KeystoreSecretBox(),
     )
+    /** Dev channel only: the official release never ships delta APK transfer. */
+    private val deltaEnabled = BuildConfig.DELTA_TRANSFER
+    val transferCache = if (deltaEnabled) dev.androidagent.workspace.TransferBlobStore(java.io.File(app.filesDir, "transfer-cache/v1")) else null
+    private val seedTransferCache = if (!deltaEnabled) null else scope.launch(Dispatchers.IO) {
+        try { transferCache?.seedInstalled(java.io.File(app.applicationInfo.sourceDir)) }
+        catch (stopped: kotlinx.coroutines.CancellationException) { throw stopped }
+        catch (_: Exception) { /* An optimization: storage failure keeps normal full copying available. */ }
+    }
     val remote = dev.androidagent.remote.RemoteHub(
         computers,
         authTokens = { refresh, previous ->
@@ -108,6 +117,9 @@ class AgentGraph(private val app: Application) {
             ).current(refresh, previous)
         },
         claudeScratch = java.io.File(runtime.runtimeRoot, "claude-computers"),
+        deltaTransfers = transferCache?.let { cache ->
+            dev.androidagent.core.DeltaTransfers(cache, dev.androidagent.workspace.NativeDeltaApplier())
+        },
     )
     /**
      * Anthropic's Claude Code on this phone. Never bundled: it is downloaded
@@ -132,6 +144,7 @@ class AgentGraph(private val app: Application) {
     )
     /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
     val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
+    val chatTitles = dev.androidagent.core.ChatTitleManager(sessions, engine)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
     // The last quota of every saved account, for the home screen widget.
@@ -147,6 +160,7 @@ class AgentGraph(private val app: Application) {
         onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
         onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
+        accessibilityService = { A11yServiceHandle.service.value },
     )
     // One counter for every backend, so an observation revision never moves
     // backwards when a call falls through from one gateway to another.
@@ -164,6 +178,7 @@ class AgentGraph(private val app: Application) {
         home = { workspace -> remote.fileHome(workspace) },
         meter = transfers,
         scratch = java.io.File(app.cacheDir, "copies"),
+        publishFile = if (deltaEnabled) dev.androidagent.workspace.NativeAtomicPublisher()::commit else ::publishWithoutNative,
     )
     val adbTools = AndroidDeviceTools(
         adb,
@@ -269,7 +284,7 @@ class AgentGraph(private val app: Application) {
             Intent(app, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         },
-        voiceIntent = { dev.androidagent.app.assist.AssistLaunch.voiceIntent(app) },
+        voiceIntent = { request -> dev.androidagent.app.assist.AssistLaunch.voiceIntent(app, request) },
     )
     lateinit var automationHost: AutomationHost
         private set
@@ -286,25 +301,80 @@ class AgentGraph(private val app: Application) {
         // A rule the agent writes, edits or deletes changes when the alarm is
         // next due; without this it waited for an unrelated firing to be armed.
         onChanged = { if (::automationHost.isInitialized) automationHost.rearm() },
+        deviceState = { if (::automationHost.isInitialized) automationHost.readDeviceState() else emptyMap() },
+        supportedDeviceStates = { if (::automationHost.isInitialized) automationHost.supportedDeviceStates() else emptySet() },
+        liveDeviceSnapshot = { if (::automationHost.isInitialized) automationHost.deviceSnapshot() else dev.androidagent.core.AutomationDeviceSnapshot() },
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
+    val agentOpenRequests = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    lateinit var sessionAgents: dev.androidagent.core.SessionAgents
+        private set
+    val computerTasks = dev.androidagent.remote.ComputerTasks(
+        computers, sessions, scope,
+        runner = { dev.androidagent.remote.RunsComputerTaskRunner(runCoordinator) },
+        prepare = { id, path ->
+            val ready = remote.setup.value[id].takeIf { it is dev.androidagent.remote.RemoteSetup.Ready }
+                ?: remote.setUp(id, install = false)
+            check(ready is dev.androidagent.remote.RemoteSetup.Ready) { "The computer is not ready: $ready" }
+            remote.listFolders(id, path) // Validate the directory through the existing connection.
+        },
+    )
     /** The user's computers, from any chat. Passwords and bindings stay with the app. */
     val computerTools = dev.androidagent.remote.ComputerToolGateway(
         remote, sessions, computerRequests,
+        tasks = computerTasks,
         bringToForeground = ::bringAppForward,
     )
+    /** The coordinator running [key]'s chat (a chat's page is keyed by its workspace), if it is running. */
+    private fun browserOwner(key: String) = coordinator.slots.firstOrNull { slot ->
+        slot.state.value.active && slot.state.value.sessionId?.let { sessions.workspace(it).absolutePath == key } == true
+    }
+    val browserHost = dev.androidagent.web.AndroidBrowserHost(app, takeScreen = { key ->
+        browserOwner(key)?.claimBrowserScreen() == true
+    }, confirm = { key, summary ->
+        val owner = browserOwner(key)
+        owner?.claimBrowserScreen() == true && owner.authorizeWorkflowStep(dev.androidagent.core.WorkflowConfirmation(
+            workflowId = "browser", stepId = "action", action = "browser",
+            summary = summary, packageName = app.packageName, appLabel = "Mike browser",
+        )) == dev.androidagent.core.WorkflowConfirmationOutcome.ALLOWED
+    }, present = { key ->
+        // The page opens on Hey Mike's own screen, in the chat it belongs to.
+        browserOwner(key)?.state?.value?.sessionId?.let { chat ->
+            runCatching {
+                app.startActivity(
+                    android.content.Intent(app, MainActivity::class.java)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        .putExtra(QuestionNotifier.EXTRA_OPEN_CHAT, chat)
+                        .putExtra(EXTRA_OPEN_BROWSER, true),
+                )
+            }
+        }
+    })
+    private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
+        listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
+            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), capabilityTools, a11yTools, adbTools),
+        runtimeVersions = {
+            val claude = claudeHost.updates.activePin.version.takeIf {
+                claudeHost.installState.value.phase == dev.androidagent.runtime.ClaudeInstallPhase.INSTALLED
+            } ?: "not installed"
+            "Versions on phone: Mike ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), " +
+                "Codex ${runtime.bundledVersion ?: "unknown"} (bundled in APK), Claude Code $claude. " +
+                "${runtime.updates.state.value.message}. Computer versions are in computers(mode=status)."
+        },
+    )
+    /**
+     * The shared surface: the workflow router, automations and voice use it.
+     * Each chat's coordinator gets its own [runTools], so its browser gateway
+     * is armed and revoked with that chat alone.
+     */
     // Explicit type: the workflow gateway's router lambda refers back to this
     // property, and an inferred type would make that a recursive definition.
-    val tools: CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(
-            workflowTools, knowledgeTools, automationTools, computerTools, copyFiles,
-            // ask_user and show_media: listed here, answered by each chat's own coordinator.
-            dev.androidagent.core.ChatToolGateway(),
-            capabilityTools, a11yTools, adbTools,
-        ),
-    )
-    val voice = AndroidRealtimeVoiceController(app, engine, scope)
+    val tools: CompositeDeviceToolGateway = runTools()
+    val voice = AndroidRealtimeVoiceController(app, engine, scope, automationSnapshot = {
+        if (::automationHost.isInitialized) automationHost.deviceSnapshot() else dev.androidagent.core.AutomationDeviceSnapshot()
+    })
     /**
      * Pictures and videos Mike showed from a computer: loaded when looked at,
      * kept in a cache the system may clear, saved to the phone on request.
@@ -328,9 +398,16 @@ class AgentGraph(private val app: Application) {
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
-        runCoordinator = AgentRuns(scope, engine) { share ->
+        scope.launch {
+            A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
+        }
+        runCoordinator = AgentRuns(scope, engine, onStopSession = { id ->
+            if (::sessionAgents.isInitialized) sessionAgents.stop(id)
+            if (id != null) runCoordinator.family(id).forEach(computerTasks::stopOrigin)
+            else computerTasks.stopAll()
+        }, create = { share ->
             AgentCoordinator(
-                scope, engine, sessions, tools, overlay,
+                scope, engine, sessions, runTools(), overlay,
                 sendGrants = sendGrants,
                 adbStatus = { adb.status.value },
                 // An approval card lives only in the app, and device control means
@@ -340,9 +417,41 @@ class AgentGraph(private val app: Application) {
                 share = share,
                 // show_media reads addresses as copy_file does: this chat, the phone, a computer.
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
+                chatTitles = chatTitles,
+                sessionAgents = { sessionAgents },
             )
-        }
-        questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat)
+        })
+        val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
+        sessionAgents = dev.androidagent.core.SessionAgents(sessions, scope,
+            runner = { dev.androidagent.core.RunsSessionAgentRunner(runCoordinator) },
+            prepareChild = childSetup::prepare, options = childSetup::options,
+            openChat = { child -> agentOpenRequests.value = child; bringAppForward() },
+        )
+        dev.androidagent.core.SessionAgentDelivery(scope, sessionAgents.events,
+            changes = kotlinx.coroutines.flow.combine(runCoordinator.sessionStates, voice.state, voiceConversation.sessionId) { a, b, c -> Triple(a, b, c) },
+            active = { runCoordinator.stateOf(it) != null },
+            deliver = { source, updates, allowed ->
+                val chat = sessions.getSession(source)
+                val state = runCoordinator.stateOf(source)
+                when {
+                    chat == null || !allowed() -> true
+                    state?.approval != null || state?.question != null || state?.phase == dev.androidagent.core.RunPhase.STOPPING -> false
+                    voiceConversation.sessionId.value == source -> voiceConversation.deliverChildUpdates(source, updates, allowed)
+                    else -> runCoordinator.deliverAgentContext(chat, dev.androidagent.core.SessionAgentUpdate.prompt(updates), allowed)
+                }
+            },
+            failed = { source, error -> sessions.append(dev.androidagent.core.ChatMessage(
+                java.util.UUID.randomUUID().toString(), source, "system",
+                "A child update could not be delivered automatically. Inspect its chat before continuing. ${error.message.orEmpty()}",
+                System.currentTimeMillis())) },
+        )
+        questions = QuestionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat,
+            conversationOwner = { child -> runCoordinator.ancestorsOf(child).lastOrNull() ?: child },
+            conversationOrder = { child ->
+                val source = runCoordinator.ancestorsOf(child).lastOrNull()
+                if (source == null) -1 else runCoordinator.family(source).indexOf(child).takeIf { it >= 0 } ?: Int.MAX_VALUE
+            },
+        )
         queue = SessionRunQueue(
             scope,
             coordinator,
@@ -382,11 +491,38 @@ class AgentGraph(private val app: Application) {
         }
         // Report a binary downloaded in an earlier run as ready. This checks
         // its hash and never downloads.
-        scope.launch(Dispatchers.IO) { runCatching { claudeHost.installer.refresh() } }
+        scope.launch(Dispatchers.IO) {
+            runCatching { claudeHost.refresh() }
+            appInFront.collect { foreground ->
+                if (foreground) {
+                    scope.launch { claudeHost.checkForUpdates() }
+                    scope.launch { runtime.updates.check() }
+                    scope.launch { remote.checkCodexUpdates() }
+                }
+            }
+        }
+        scope.launch {
+            while (true) {
+                // The persisted 15-minute throttle owns network checks; a one-minute
+                // wake-up avoids missing its deadline after a foreground transition.
+                kotlinx.coroutines.delay(60_000)
+                if (appInFront.value) {
+                    scope.launch { claudeHost.checkForUpdates() }
+                    scope.launch { runtime.updates.check() }
+                    scope.launch { remote.checkCodexUpdates() }
+                }
+            }
+        }
         // Separate from the skills so a failed skill install cannot leave the
         // user without their preferences, or the reverse.
         runCatching {
             WorkspaceSeeder.ensureGlobalPreferences(runtime.homeDirectory, File(app.filesDir, "sessions"), app)
         }
     }
+}
+
+/** The official release's copy publication: unchanged behaviour, no native library. */
+private fun publishWithoutNative(part: File, target: File, @Suppress("UNUSED_PARAMETER") replace: Boolean) {
+    if (target.exists()) target.delete()
+    check(part.renameTo(target)) { "Could not finish the copy at ${target.name}." }
 }

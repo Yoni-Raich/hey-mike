@@ -1,6 +1,8 @@
 package dev.androidagent.remote
 
 import com.jcraft.jsch.ChannelExec
+import com.jcraft.jsch.Channel
+import com.jcraft.jsch.ChannelDirectTCPIP
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.HostKey
 import com.jcraft.jsch.HostKeyRepository
@@ -79,6 +81,12 @@ class SshLink(private val target: SshTarget) : Closeable {
     // Keep TOFU trust for this link too, including after close() or a lost session.
     private var trustedHostKey: String? = target.pinnedHostKey
 
+    /** Transfer processes own their connection, never the active chat's Windows SSH job. */
+    @Synchronized
+    internal fun isolated(): SshLink = SshLink(target.copy(
+        pinnedHostKey = checkNotNull(trustedHostKey) { "Connect and verify the computer before isolating a transfer" },
+    ))
+
     /** Connect if needed and return the host key the server presented. */
     @Synchronized
     fun connect(): HostKeySeen {
@@ -155,6 +163,28 @@ class SshLink(private val target: SshTarget) : Closeable {
         val stdin = channel.outputStream
         channel.connect(CONNECT_TIMEOUT_MS)
         return SshProcess(channel, stdin, stdout, stderr)
+    }
+
+    /** A private loopback connection inside SSH, with no Windows shell stdin. */
+    internal fun loopback(port: Int): Process {
+        require(port in 1..65535) { "Invalid relay port" }
+        connect()
+        val live = synchronized(this) { session } ?: error("Not connected")
+        val channel = (live.openChannel("direct-tcpip") as ChannelDirectTCPIP).apply {
+            setHost("127.0.0.1")
+            setPort(port)
+            setOrgIPAddress("127.0.0.1")
+            setOrgPort(0)
+        }
+        try {
+            val stdout = channel.inputStream
+            val stdin = channel.outputStream
+            channel.connect(CONNECT_TIMEOUT_MS)
+            return SshProcess(channel, stdin, stdout, ByteArrayInputStream(ByteArray(0)))
+        } catch (error: Exception) {
+            channel.disconnect()
+            throw error
+        }
     }
 
     /** The size in bytes of the file at [remotePath], without copying it. Fails for a folder or a missing file. */
@@ -396,7 +426,7 @@ class SshLink(private val target: SshTarget) : Closeable {
 
 /** A remote command seen through [Process], so the engine treats it like a local one. */
 internal class SshProcess(
-    private val channel: ChannelExec,
+    private val channel: Channel,
     private val stdin: OutputStream,
     private val stdout: InputStream,
     private val stderr: InputStream,

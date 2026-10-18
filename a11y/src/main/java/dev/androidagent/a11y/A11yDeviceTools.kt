@@ -54,6 +54,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
+import dev.androidagent.core.AssistantScreenText
+import android.view.accessibility.AccessibilityWindowInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Device gateway backed by the accessibility service, so observation and
@@ -120,6 +124,14 @@ class A11yDeviceTools(
     @Volatile private var handleObservationIds: Set<String> = emptySet()
 
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
+
+    override suspend fun assistantScreenText(): AssistantScreenText? = withContext(Dispatchers.Main.immediate) {
+        val service = A11yServiceHandle.service.value ?: return@withContext null
+        val windows = service.windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }.map {
+            A11yWindow(it.root?.let(::RealNodeView), it.isActive)
+        }
+        assistantScreenText(windows, context.packageName)
+    }
 
     override fun beginRun(runId: String, workspace: File) {
         require(runId.isNotBlank()) { "runId cannot be blank" }
@@ -312,6 +324,13 @@ class A11yDeviceTools(
     /** Capture the screen without ADB, and without our floating card in it. */
     private suspend fun screenshot(): ToolResult {
         val service = requireService()
+        val masking = traverse(service.visibleWindows(), context.packageName).observation.masking
+        // Do not fall back to a whole-display capture of our own active UI.
+        if (masking?.activeWindowExcluded == true) return ToolResult(buildJsonObject {
+            put("ok", true)
+            put("captured", false)
+            put("masking", masking.toJson())
+        }.toString())
         val png = captureWithoutOverlay(service)
         if (png.size > MAX_SCREENSHOT_BYTES) {
             // Bigger than the model will accept. Say so rather than truncating
@@ -326,7 +345,11 @@ class A11yDeviceTools(
         image.parentFile!!.mkdirs()
         image.writeBytes(png)
         return ToolResult(
-            text = "Screenshot captured (${png.size} bytes, PNG, accessibility)",
+            text = buildJsonObject {
+                put("ok", true); put("captured", true); put("format", "PNG")
+                put("sizeBytes", png.size); put("source", "accessibility")
+                masking?.let { put("masking", it.toJson()) }
+            }.toString(),
             imageBase64 = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP),
             attachmentPaths = listOf(image.absolutePath),
         )

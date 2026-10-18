@@ -95,18 +95,26 @@ class AutomationHost(
     private val evaluator = AutomationEvaluator(history)
     private val runner = AutomationRunner(actions, history, { ZonedDateTime.now(zone()) })
     private val alarms = AutomationAlarms(context)
+    private val headphones = dev.androidagent.voice.BluetoothHeadphones(context)
+    private val wifi = AutomationWifi(context)
+    private val bluetooth = AutomationBluetooth(context)
     private val runLock = Mutex()
 
     @Volatile private var started = false
 
     /** Charging and screen, refreshed by [deviceStateReceiver] and read on every event. */
     @Volatile private var lastDeviceState: Map<String, String> = emptyMap()
+    @Volatile private var lastConnections: List<dev.androidagent.core.AutomationConnection> = emptyList()
+    private val connectionLock = Any()
 
     fun start() {
         if (started) return
         started = true
         context.registerReceiver(deviceStateReceiver, deviceStateFilter)
         lastDeviceState = readDeviceState()
+        headphones.start { connectionChanged(dev.androidagent.core.AutomationDeviceStates.BLUETOOTH_HEADPHONES) }
+        wifi.start { connectionChanged("wifi") }
+        bluetooth.start { connectionChanged("bluetooth_device") }
         catchUp()
     }
 
@@ -114,6 +122,9 @@ class AutomationHost(
         if (!started) return
         started = false
         runCatching { context.unregisterReceiver(deviceStateReceiver) }
+        headphones.stop()
+        wifi.stop()
+        bluetooth.stop()
         alarms.cancel()
     }
 
@@ -134,6 +145,13 @@ class AutomationHost(
 
     /** True when the clock can be trusted to the minute rather than to the hour. */
     fun canFireOnTime(): Boolean = alarms.canScheduleExact()
+    fun supportedDeviceStates(): Set<String> = buildSet {
+        add("power")
+        add("screen")
+        if (headphones.permitted()) add(dev.androidagent.core.AutomationDeviceStates.BLUETOOTH_HEADPHONES)
+        if (bluetooth.permitted()) add("bluetooth_device")
+        if (wifi.permitted()) add("wifi")
+    }
 
     /**
      * Packages the notification listener may look at, read before it touches a
@@ -192,15 +210,47 @@ class AutomationHost(
         if (next == null) alarms.cancel() else alarms.armFor(next)
     }
 
-    private fun snapshot(now: ZonedDateTime) = AutomationContext(
+    private fun snapshot(now: ZonedDateTime): AutomationContext {
+        val devices = deviceSnapshot()
+        return AutomationContext(
         now = now,
         // No geofence source yet, so nothing is ever inside a place and an
         // `at_place` condition is false rather than quietly true.
         places = emptySet(),
-        deviceState = lastDeviceState,
+        deviceState = devices.states,
         userReachable = userReachable(),
         agentAvailable = agentAvailable(),
+        connections = devices.connections,
     )
+    }
+
+    fun deviceSnapshot(): dev.androidagent.core.AutomationDeviceSnapshot {
+        val headphoneConnections = runCatching { headphones.connections() }.getOrNull()
+        val wifiState = wifi.snapshot()
+        val bluetoothState = bluetooth.snapshot()
+        val states = readPowerAndScreen() + wifiState.states + bluetoothState.states + mapOf(
+            dev.androidagent.core.AutomationDeviceStates.BLUETOOTH_HEADPHONES to when {
+                headphoneConnections == null -> "unknown"
+                headphoneConnections.isEmpty() -> "disconnected"
+                else -> "connected"
+            }
+        )
+        return dev.androidagent.core.AutomationDeviceSnapshot(states, headphoneConnections.orEmpty() + wifiState.connections + bluetoothState.connections)
+    }
+
+    private fun connectionChanged(name: String) = synchronized(connectionLock) {
+        val snapshot = deviceSnapshot()
+        val value = snapshot.states[name]
+        val entries = snapshot.connections.filter { it.state == name }.toSet()
+        val previous = lastConnections.filter { it.state == name }.toSet()
+        val changed = value != lastDeviceState[name] || entries != previous
+        // Update only this source; another callback still owes its own change.
+        lastDeviceState = lastDeviceState + mapOf(name to (value ?: "unknown"))
+        lastConnections = lastConnections.filter { it.state != name } + entries
+        if (started && changed && value != null && value != "unknown") {
+            onEvent(AutomationEvent.DeviceState(name, value, ZonedDateTime.now(zone())))
+        }
+    }
 
     /**
      * True when a person could answer a question right now.
@@ -215,7 +265,8 @@ class AutomationHost(
         power?.isInteractive == true && keyguard?.isKeyguardLocked != true
     }.getOrDefault(false)
 
-    private fun readDeviceState(): Map<String, String> = runCatching {
+    fun readDeviceState(): Map<String, String> = deviceSnapshot().states
+    private fun readPowerAndScreen(): Map<String, String> = runCatching {
         val battery = context.getSystemService(BatteryManager::class.java)
         val power = context.getSystemService(PowerManager::class.java)
         buildMap {

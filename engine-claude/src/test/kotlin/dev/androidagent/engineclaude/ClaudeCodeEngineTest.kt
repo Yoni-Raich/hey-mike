@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -68,8 +69,8 @@ class ClaudeCodeEngineTest {
     private val engines = mutableListOf<ClaudeCodeEngine>()
     private val tapTool = ToolDefinition("tap", "Tap the screen", buildJsonObject { put("type", "object") })
 
-    private fun engine(grace: Long = 3_000): ClaudeCodeEngine =
-        ClaudeCodeEngine(host, servers, interruptGraceMs = grace, clock = { ZonedDateTime.of(2026, 9, 30, 12, 0, 0, 0, ZoneId.of("UTC")) })
+    private fun engine(grace: Long = 3_000, retryDelay: Long = 2_000, catalogClock: () -> Long = System::nanoTime): ClaudeCodeEngine =
+        ClaudeCodeEngine(host, servers, interruptGraceMs = grace, authRetryDelayMs = retryDelay, clock = { ZonedDateTime.of(2026, 9, 30, 12, 0, 0, 0, ZoneId.of("UTC")) }, catalogClock = catalogClock)
             .also { engine ->
                 engines += engine
                 scope.launch(start = CoroutineStart.UNDISPATCHED) { engine.events.collect { events += it } }
@@ -108,6 +109,95 @@ class ClaudeCodeEngineTest {
         return id to turn
     }
 
+    private fun transientAuthFailure() = result(""""subtype":"error_during_execution","is_error":true,"errors":["Failed to refresh OAuth token: Another Claude Code process is refreshing it or exited mid-refresh. This is usually transient; retry in a minute."]""")
+
+    @Test fun transientPreWorkAuthFailureRetriesExactlyOnceWithTheSameContentAndTurn() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin("exact אבג\nkeep spaces  ")
+        val chat = host.chats().single()
+        val first = chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        val second = chat.nextFrame { it.type() == "user" }
+        assertEquals(first["message"], second["message"])
+        assertTrue(first["uuid"] != second["uuid"])
+        assertTrue(events.none { it is EngineEvent.TurnFinished })
+        chat.send(result())
+        assertEquals("completed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        assertEquals(1, events.filterIsInstance<EngineEvent.TurnStarted>().size)
+        assertEquals(1, events.filterIsInstance<EngineEvent.TurnFinished>().size)
+    }
+
+    @Test fun aSecondAuthFailureEndsTheTurnWithoutAThirdRequest() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(100)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun stopDuringAuthBackoffPreventsReplay() = runBlocking {
+        val engine = engine(grace = 20, retryDelay = 200)
+        val (threadId, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        awaitEvent<EngineEvent.Activity> { it.text.contains("retrying once") }
+        engine.interrupt(threadId, turnId)
+        assertEquals("interrupted", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(250)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun authLookingFailureAfterVisibleOutputIsNeverReplayed() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send("""{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Started work"}]}}""")
+        chat.send(transientAuthFailure())
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(100)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun authLookingFailureAfterAPhoneToolIsNeverReplayed() = runBlocking {
+        val engine = engine(retryDelay = 20)
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        val tool = async(Dispatchers.Default) { servers.servers.single().call("tap", JsonObject(emptyMap())) }
+        val request = awaitEvent<EngineEvent.ToolCall>()
+        engine.answerTool(request.requestId, ToolResult("done"))
+        tool.await()
+        chat.send(transientAuthFailure())
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished> { it.turnId == turnId }.status)
+        Thread.sleep(100)
+        assertEquals(1, events.filterIsInstance<EngineEvent.ToolCall>().size)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+    }
+
+    @Test fun steeringDuringAuthBackoffDoesNotReplayTheEarlierPrompt() = runBlocking {
+        val engine = engine(retryDelay = 200)
+        val (threadId, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.nextFrame { it.type() == "user" }
+        chat.send(transientAuthFailure())
+        awaitEvent<EngineEvent.Activity> { it.text.contains("retrying once") }
+        engine.steer(threadId, turnId, "changed intent")
+        val steer = chat.nextFrame { it.type() == "user" }
+        assertTrue(steer.toString().contains("changed intent"))
+        Thread.sleep(250)
+        assertTrue(chat.lines.none { it.contains("\"type\":\"user\"") })
+        chat.send("""{"type":"command_lifecycle","state":"started","command_uuid":${steer["uuid"]}}""")
+        chat.send(result())
+        assertEquals("completed", awaitEvent<EngineEvent.TurnFinished>().status)
+    }
+
     @Test fun aTurnRunsInItsOwnProcessAndStreamsTheRecordedReply() = runBlocking {
         File(workspace, "AGENTS.md").writeText("# Mike manual\nUse act_plan.")
         val engine = engine()
@@ -122,6 +212,7 @@ class ClaudeCodeEngineTest {
         assertEquals("opus", chat.after("--model"))
         assertEquals("high", chat.after("--effort"))
         assertEquals(ClaudeProtocol.CHAT_ENV, chat.env)
+        assertEquals("false", chat.env["ENABLE_TOOL_SEARCH"])
         val mcpConfig = File(chat.after("--mcp-config"))
         assertTrue(mcpConfig.readText().contains("Bearer test-token"))
         assertTrue("the MCP token stays in the private home", mcpConfig.canonicalPath.startsWith(home.canonicalPath))
@@ -243,6 +334,20 @@ class ClaudeCodeEngineTest {
         assertEquals(id, second.after("--resume"))
     }
 
+    @Test fun damagedOutputFailsWithoutPayloadOrAutomaticTaskReplay() = runBlocking {
+        val engine = engine()
+        val (_, turnId) = engine.begin()
+        val chat = host.chats().single()
+        chat.send("{\"private\":\"personal-content\", BROKEN}")
+        val failure = awaitEvent<EngineEvent.Failure>()
+        assertEquals(turnId, failure.turnId)
+        assertTrue(failure.message.contains("Invalid Claude protocol message"))
+        assertFalse(failure.message.contains("personal-content"))
+        assertEquals("failed", awaitEvent<EngineEvent.TurnFinished>().status)
+        assertEquals(1, host.chats().size)
+        assertFalse(chat.isAlive)
+    }
+
     @Test fun aSessionThatNeverGotAMessageStartsAgainUnderTheSameId() = runBlocking {
         val known = "0b9f6a8e-3f7d-4c1a-9e2b-5d6c7e8f9a0b"
         host.script = { process ->
@@ -331,9 +436,11 @@ class ClaudeCodeEngineTest {
         val frame = chat.nextFrame { it.type() == "user" && it.toString().contains("/compact") }
         assertNotNull(frame["uuid"])
         assertFalse(compact.isCompleted)
-        chat.send("""{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual"}}""")
+        chat.send("""{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":7015,"post_tokens":911}}""")
         chat.send(result(""""subtype":"success","is_error":false,"result":"""""))
-        compact.await()
+        val done = compact.await()
+        assertEquals(7015L, done?.tokensBefore)
+        assertEquals(911L, done?.tokensAfter)
         assertEquals(1, events.filterIsInstance<EngineEvent.TurnFinished>().size)
     }
 
@@ -360,6 +467,7 @@ class ClaudeCodeEngineTest {
         val login = host.started.single()
         assertEquals(listOf("auth", "login", "--claudeai"), login.args)
         assertEquals(home, login.cwd)
+        assertEquals("true", login.env["BROWSER"])
 
         try {
             engine.completeLogin("a\nb")
@@ -372,6 +480,63 @@ class ClaudeCodeEngineTest {
         assertEquals("user@example.com", status.label)
         assertEquals(status, awaitEvent<EngineEvent.AccountChanged>().status)
         assertEquals(listOf("auth", "status", "--json"), host.started.last().args)
+    }
+
+    @Test fun cancelLoginStopsOnlyTheWaitingProcessAndTheCodeCannotBeSubmittedAfterwards() = runBlocking {
+        val url = "https://claude.ai/oauth/authorize?state=xyz"
+        host.script = { it.send("If the browser didn't open, visit: $url") }
+        val engine = engine()
+        engine.login()
+        val process = host.started.single()
+        engine.cancelLogin()
+        assertFalse(process.isAlive)
+        assertEquals(0, host.stopAllCalls)
+        try {
+            engine.completeLogin("unused-code")
+            fail("cancelled login must reject the code")
+        } catch (_: IllegalStateException) { }
+        assertEquals(1, host.started.size)
+    }
+
+    @Test fun cancellingWhileWaitingForTheLinkDestroysTheStartedProcess() = runBlocking {
+        host.script = { }
+        val engine = engine()
+        val pending = launch { engine.login() }
+        withTimeout(5_000) { while (host.started.isEmpty()) kotlinx.coroutines.delay(10) }
+        val process = host.started.single()
+        pending.cancelAndJoin()
+        assertFalse(process.isAlive)
+        engine.cancelLogin()
+    }
+
+    @Test fun aFailedLoginDoesNotReportAnOlderSavedAccountAsSuccessful() = runBlocking {
+        host.script = { process ->
+            if (process.args.take(2) == listOf("auth", "login")) {
+                process.send("If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=xyz")
+                process.onLine = { p, _ -> p.finish(1) }
+            } else {
+                process.send("""{"loggedIn":true,"email":"older@example.com"}""")
+                process.finish(0)
+            }
+        }
+        val engine = engine()
+        engine.login()
+        try {
+            engine.completeLogin("bad-code")
+            fail("nonzero login exit must not report success")
+        } catch (_: IllegalStateException) { }
+        assertEquals(1, host.started.size)
+    }
+
+    @Test fun cancellationDuringCodeSubmissionDoesNotWaitForTheLoginTimeout() = runBlocking {
+        host.script = { it.send("If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=xyz") }
+        val engine = engine()
+        engine.login()
+        val process = host.started.single()
+        val pending = launch { engine.completeLogin("code") }
+        withTimeout(5_000) { while (process.lines.isEmpty()) kotlinx.coroutines.delay(10) }
+        withTimeout(5_000) { pending.cancelAndJoin() }
+        assertFalse(process.isAlive)
     }
 
     @Test fun nothingRunsBeforeTheBinaryIsDownloaded() = runBlocking {
@@ -398,6 +563,90 @@ class ClaudeCodeEngineTest {
         assertFalse("the probe never sends a message", probe.lines.any { it.contains("\"type\":\"user\"") })
         assertFalse(probe.isAlive)
     }
+
+    private fun catalogScript(name: String): (FakeClaude) -> Unit = { process ->
+        process.onLine = { p, line ->
+            val frame = Json.parseToJsonElement(line).jsonObject
+            if (frame.requestSubtype() == "initialize") {
+                val id = frame["request_id"]!!.jsonPrimitive.content
+                p.send(FakeClaude.initializeResponse(id).toString().replace("Haiku 4.5", name))
+            }
+        }
+    }
+
+    @Test fun modelCatalogExpiresAndDiscoversNewModelsWithoutAppRestart() = runBlocking {
+        var at = 0L
+        val engine = engine(catalogClock = { at })
+        assertEquals("Haiku 4.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        host.script = catalogScript("Haiku 5.5")
+        at = 59_000_000_000L
+        assertEquals("Haiku 4.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        assertEquals(1, host.started.size)
+        at = 60_000_000_000L
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        assertEquals(2, host.started.size)
+    }
+
+    @Test fun runtimeChangeRefreshesModelsImmediatelyWithoutWaitingForTtl() = runBlocking {
+        val engine = engine(catalogClock = { 0 })
+        engine.modelCatalog()
+        host.script = catalogScript("Haiku 5.5")
+        host.runtimeIdentity = "2.1.294"
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+        assertEquals(2, host.started.size)
+    }
+
+    @Test fun failedCatalogRefreshKeepsLastGoodModelsAndBacksOff() = runBlocking {
+        var at = 0L
+        val engine = engine(catalogClock = { at })
+        val before = engine.modelCatalog()
+        host.script = { process ->
+            process.onLine = { p, line ->
+                val frame = Json.parseToJsonElement(line).jsonObject
+                p.send(ClaudeProtocol.controlError(frame["request_id"]!!.jsonPrimitive.content, "offline"))
+            }
+        }
+        at = 60_000_000_000L
+        assertEquals(before, engine.modelCatalog())
+        at += 29_000_000_000L
+        assertEquals(before, engine.modelCatalog())
+        assertEquals(2, host.started.size)
+        host.script = catalogScript("Haiku 5.5")
+        at += 1_000_000_000L
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+    }
+
+    @Test fun cancellingCatalogProbeStopsItAndAllowsImmediateRetry() = runBlocking {
+        val engine = engine(catalogClock = { 0 })
+        host.script = {}
+        val work = async(Dispatchers.IO) { engine.modelCatalog() }
+        waitUntil { host.started.size == 1 }
+        work.cancelAndJoin()
+        assertFalse(host.started.single().isAlive)
+        host.script = catalogScript("Haiku 5.5")
+        assertEquals("Haiku 5.5", engine.modelCatalog().first { it.id == "haiku" }.displayName)
+    }
+
+    @Test fun runtimeChangeKeepsActiveTurnAndResumesOnNewProcessAtNextTurn() = runBlocking {
+        val engine = engine()
+        val (id, turn) = engine.begin()
+        val old = host.chats().single()
+        old.nextFrame { it.type() == "user" }
+        host.runtimeIdentity = "2.1.294"
+        engine.modelCatalog()
+        assertTrue(old.isAlive)
+        assertEquals(1, host.chats().size)
+        old.send(result())
+        awaitEvent<EngineEvent.TurnFinished> { it.turnId == turn }
+        engine.startTurn(id, "next", emptyList())
+        assertFalse(old.isAlive)
+        val fresh = host.chats().last()
+        assertEquals(2, host.chats().size)
+        assertEquals(id, fresh.after("--resume"))
+        fresh.nextFrame { it.type() == "user" }
+        fresh.send(result())
+    }
+
 
     private fun usageAnswer(requestId: String, error: String? = null): JsonObject =
         if (error == null) ClaudeProtocol.controlSuccess(requestId, GET_USAGE_REPLY) else ClaudeProtocol.controlError(requestId, error)
@@ -492,6 +741,30 @@ class ClaudeCodeEngineTest {
         val catalog = engine().skillCatalog(workspace)
         assertEquals(listOf("device-automation", "quick-actions"), catalog.map { it.name })
         assertEquals("Drive the phone", catalog.first().description)
+    }
+
+    @Test fun commandsComeFromTheCliAndAreAskedOnceForAMinute() = runBlocking {
+        host.script = probeScript()
+        var now = 0L
+        val engine = engine(catalogClock = { now })
+        val commands = engine.commandCatalog(workspace)
+        assertEquals(listOf("deep-research", "design", "slides"), commands.map { it.name })
+        assertEquals("[what to design]", commands.first { it.name == "design" }.argumentHint)
+        val probe = host.started.single()
+        assertTrue("the user's settings and skills load", probe.args.zipWithNext().any { it == "--setting-sources" to "user" })
+        assertFalse("the probe never sends a message", probe.lines.any { it.contains("\"type\":\"user\"") })
+        now += 10_000_000_000L
+        engine.commandCatalog(workspace, forceReload = false)
+        engine.commandCatalog(workspace, forceReload = true)
+        assertEquals("one process answers both within the cache", 1, host.started.size)
+        now += 61_000_000_000L
+        engine.commandCatalog(workspace, forceReload = false)
+        assertEquals("an old answer is asked for again", 2, host.started.size)
+    }
+
+    @Test fun anAnswerThatFailsLeavesNoCommandsInsteadOfAMadeUpList() = runBlocking {
+        host.script = { process -> process.finish(1) }
+        assertTrue(engine().commandCatalog(workspace).isEmpty())
     }
 
     @Test fun closeStopsEveryChatAndTheHost() = runBlocking {

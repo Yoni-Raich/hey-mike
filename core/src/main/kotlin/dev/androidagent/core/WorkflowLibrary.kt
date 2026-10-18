@@ -94,7 +94,10 @@ class WorkflowLibrary(private val root: File) {
      */
     fun save(definition: WorkflowDefinition): File {
         require(WorkflowDefinition.ID_RE.matches(definition.id)) { "\"${definition.id}\" is not a usable workflow id" }
-        val payload = definition.toJson().toString().toByteArray(Charsets.UTF_8)
+        val serialized = definition.toJson()
+        // A successful save must produce a definition the library can reload.
+        WorkflowDefinition.parse(serialized, source = definition.id + SUFFIX)
+        val payload = serialized.toString().toByteArray(Charsets.UTF_8)
         require(payload.size <= MAX_FILE_BYTES) {
             "\"${definition.id}\" is larger than $MAX_FILE_BYTES bytes and could not be loaded later"
         }

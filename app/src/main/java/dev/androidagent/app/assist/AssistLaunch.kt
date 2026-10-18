@@ -30,18 +30,21 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import dev.androidagent.app.MainActivity
 import dev.androidagent.core.Onboarding
+import dev.androidagent.core.AutomationVoiceRequest
 
 /** How an assistant press reaches the app, and whether the app holds the role. */
 object AssistLaunch {
     /** Set on the intent that opens `MainActivity` straight into voice mode. */
     const val EXTRA_START_VOICE = "dev.androidagent.app.extra.START_VOICE"
+    const val EXTRA_AUTOMATION_VOICE = "dev.androidagent.app.extra.AUTOMATION_VOICE"
 
     /**
      * Reuses the chat screen if it is already open: CLEAR_TOP with SINGLE_TOP
      * delivers to `onNewIntent` instead of creating a second one.
      */
-    fun voiceIntent(context: Context): Intent = Intent(context, MainActivity::class.java)
+    fun voiceIntent(context: Context, automation: AutomationVoiceRequest? = null): Intent = Intent(context, MainActivity::class.java)
         .putExtra(EXTRA_START_VOICE, true)
+        .apply { automation?.let { putExtra(EXTRA_AUTOMATION_VOICE, it.toJson()) } }
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
     /**

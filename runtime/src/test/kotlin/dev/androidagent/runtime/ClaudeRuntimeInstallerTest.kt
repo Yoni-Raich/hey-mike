@@ -172,7 +172,7 @@ class ClaudeRuntimeInstallerTest {
     }
 
     @Test
-    fun `other versions and stale partials are removed`() = runBlocking<Unit> {
+    fun `other versions are retained and only this versions stale partial is removed`() = runBlocking<Unit> {
         File(root, "claude/2.0.0").mkdirs()
         File(root, "claude/2.0.0/claude").writeText("old")
         File(root, "claude/9.9.9").mkdirs()
@@ -181,12 +181,12 @@ class ClaudeRuntimeInstallerTest {
         val installer = installer()
 
         installer.install()
-        assertEquals(listOf("claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
-        assertFalse(File(root, "claude/2.0.0").exists())
+        assertEquals(listOf("claude/2.0.0/claude", "claude/9.9.9/claude", "claude/9.9.9/claude.verified", "claude/stray-file"), leftovers())
+        assertTrue(File(root, "claude/2.0.0").exists())
     }
 
     @Test
-    fun `refresh removes old versions and accepts a verified binary`() = runBlocking<Unit> {
+    fun `refresh keeps old versions and accepts a verified binary`() = runBlocking<Unit> {
         File(root, "claude/2.0.0").mkdirs()
         File(root, "claude/2.0.0/claude").writeText("old")
         File(root, "claude/9.9.9").mkdirs()
@@ -195,7 +195,7 @@ class ClaudeRuntimeInstallerTest {
 
         assertEquals(File(root, "claude/9.9.9/claude"), installer.refresh())
         assertEquals(ClaudeInstallPhase.INSTALLED, installer.state.value.phase)
-        assertEquals(listOf("claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
+        assertEquals(listOf("claude/2.0.0/claude", "claude/9.9.9/claude", "claude/9.9.9/claude.verified"), leftovers())
         assertTrue(opened.isEmpty())
         assertEquals(1, hashes)
     }
@@ -328,12 +328,13 @@ class ClaudeRuntimeInstallerTest {
     }
 
     @Test
-    fun `current pin matches the approved spec`() {
+    fun `current pin matches the verified stable release and keeps the Haiku pin reusable`() {
         val current = ClaudeBinaryPin.CURRENT
-        assertEquals("2.1.285", current.version)
-        assertEquals("https://downloads.claude.ai/claude-code-releases/2.1.285/linux-arm64-musl/claude", current.url)
-        assertEquals("31efc4136bc678575f4c6730e248d34f89dbfea0468be1c5d012af199cd62ee8", current.sha256)
-        assertEquals(232_077_120L, current.size)
+        assertEquals("2.1.302", current.version)
+        assertEquals("https://downloads.claude.ai/claude-code-releases/2.1.302/linux-arm64-musl/claude", current.url)
+        assertEquals("58dd401b704351f4b70a0bb6faecbc1eb1405057b4dd4cf48a7beae93b4ca143", current.sha256)
+        assertEquals(277_560_568L, current.size)
+        assertTrue(ClaudeBinaryPin.LEGACY.any { it.version == "2.1.293" })
         assertTrue(ClaudeRuntimeInstaller.requiredFreeBytes(current) > 250L * 1024 * 1024)
     }
 

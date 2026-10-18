@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.16.0 — 2026-10-18
+
+- Mike can browse websites in its own browser, read page controls, fill forms,
+  and show you the page when you need to sign in or take over.
+- Pin chats and projects, then find them in the Pinned tab.
+- Unpinning a chat removes it from Pinned at once, without a refresh.
+- Start child chats, follow their live progress, and control them from voice.
+- Continue local Claude Code conversations on your computer, refresh their
+  history, and open them in Claude Desktop on Windows.
+- Computer chats recover more safely from dropped SSH connections and keep
+  the same conversation without replaying an uncertain task.
+- Sign in to a computer's Claude from the phone. Claude model menus refresh
+  when the installed runtime changes.
+- Updated bundled Codex to 0.163.0 and the Claude baseline to 2.1.302.
+  Settings show engine versions; computers can stage verified runtime updates.
+  Phone Codex updates still arrive through a Mike app update.
+- Improved floating controls, assistant startup, screen handoff, Bluetooth
+  audio, and error handling during active chats.
+
+## Earlier development notes
+
 - The updater checks the release package before offering it and checks the APK
   package, version code and signing certificate before installation.
 - Direct `shell uiautomator dump` is refused; use `read_ui` so a screen

@@ -2,6 +2,8 @@ package dev.androidagent.core
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -10,6 +12,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import java.io.File
+import java.io.FileOutputStream
 import java.util.UUID
 
 /**
@@ -72,6 +75,7 @@ class CopyFileGateway(
     private val meter: TransferMeter?,
     /** Where a copy between two outside places waits on the phone. */
     private val scratch: File,
+    private val publishFile: (File, File, Boolean) -> Unit = AtomicTransferFile::commit,
 ) : DeviceToolGateway {
 
     @Volatile private var workspace: File? = null
@@ -294,7 +298,19 @@ class CopyFileGateway(
             when {
                 source is Spot.Chat && target is Spot.Chat -> {
                     val final = chatTarget(target, source.file.name, replace)
-                    withContext(Dispatchers.IO) { whole(final) { part -> source.file.copyTo(part, overwrite = true) } }
+                    withContext(Dispatchers.IO) { whole(final, replace) { part ->
+                        source.file.inputStream().use { input -> FileOutputStream(part).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var bytes = 0L
+                            while (true) {
+                                currentCoroutineContext().ensureActive(); checkActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count); bytes += count; progress(bytes, source.file.length())
+                            }
+                            output.fd.sync()
+                        } }
+                    } }
                     Copied(chatAddress(target.folder, final), final.length())
                 }
                 source is Spot.Chat && target is Spot.Away -> {
@@ -313,8 +329,8 @@ class CopyFileGateway(
                         val fetched = source.place.download(source.path, source.base, part, progress)
                         checkActive()
                         val final = chatTarget(target, fetched.name, replace)
-                        if (final.exists()) final.delete()
-                        check(part.renameTo(final)) { "Could not finish the copy at ${final.name}." }
+                        currentCoroutineContext().ensureActive()
+                        publishFile(part, final, replace)
                         Copied(chatAddress(target.folder, final), fetched.size)
                     } finally {
                         part.delete()
@@ -362,12 +378,12 @@ class CopyFileGateway(
         "chat:" + file.canonicalFile.relativeTo(folder.canonicalFile).invariantSeparatorsPath
 
     /** Written as a part file and renamed once whole. */
-    private fun whole(final: File, write: (File) -> Unit) {
-        val part = File(final.parentFile, ".${final.name}.part")
+    private suspend fun whole(final: File, replace: Boolean, write: suspend (File) -> Unit) {
+        val part = File(final.parentFile, ".${UUID.randomUUID()}.part")
         try {
             write(part)
-            if (final.exists()) final.delete()
-            check(part.renameTo(final)) { "Could not finish the copy at ${final.name}." }
+            currentCoroutineContext().ensureActive(); checkActive()
+            publishFile(part, final, replace)
         } finally {
             part.delete()
         }

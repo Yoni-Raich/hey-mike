@@ -49,6 +49,8 @@ import java.util.UUID
 
 private const val MAX_PHOTOS = 10
 private const val STATE_PENDING_SHOT = "pending_shot"
+/** With [QuestionNotifier.EXTRA_OPEN_CHAT]: open that chat with its browser page in front. */
+internal const val EXTRA_OPEN_BROWSER = "dev.androidagent.app.OPEN_BROWSER"
 
 class MainActivity : ComponentActivity() {
     private val model: AgentViewModel by viewModels()
@@ -77,13 +79,17 @@ class MainActivity : ComponentActivity() {
     // Set while the permission dialog is up for an assistant press, so the
     // grant starts voice the assistant way rather than toggling it.
     private var voiceForAssistant = false
+    private var pendingAutomationVoice: dev.androidagent.core.AutomationVoiceRequest? = null
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         model.refreshPermissions()
         val forAssistant = voiceForAssistant.also { voiceForAssistant = false }
-        if (granted) { ensureService(); if (forAssistant) model.startAssistantVoice() else model.toggleVoice() }
+        val automation = pendingAutomationVoice.also { pendingAutomationVoice = null }
+        if (granted) { ensureService(); if (forAssistant) model.startAssistantVoice(automation) else model.toggleVoice() }
         else model.error("Microphone permission is required for voice.")
     }
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(AssistLaunch.EXTRA_START_VOICE, voiceForAssistant)
+        pendingAutomationVoice?.let { outState.putString(AssistLaunch.EXTRA_AUTOMATION_VOICE, it.toJson()) }
         super.onSaveInstanceState(outState)
         pendingShot?.let { outState.putString(STATE_PENDING_SHOT, it.absolutePath) }
     }
@@ -102,6 +108,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) latencyProbe = UiLatencyProbe(window.decorView).apply {
+            enabled = intent.getBooleanExtra(UiLatencyProbe.EXTRA, false)
+        }
+        voiceForAssistant = savedInstanceState?.getBoolean(AssistLaunch.EXTRA_START_VOICE) == true
+        pendingAutomationVoice = savedInstanceState?.getString(AssistLaunch.EXTRA_AUTOMATION_VOICE)?.let {
+            runCatching { dev.androidagent.core.AutomationVoiceRequest.fromJson(it) }.getOrNull()
+        }
         pendingShot = savedInstanceState?.getString(STATE_PENDING_SHOT)?.let(::File)
         model.graph.runtimePermissions.attach(this, capabilityPermissions)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
@@ -145,16 +158,23 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.hasExtra(UiLatencyProbe.EXTRA)) latencyProbe?.enabled = BuildConfig.DEBUG && intent.getBooleanExtra(UiLatencyProbe.EXTRA, false)
         handleAssistantPress(intent)
         openAskedChat(intent)
     }
 
-    /** A tap on a question's notification opens the chat that asked. */
+    /**
+     * A tap on a question's notification opens the chat that asked. Mike
+     * handing the user a page opens that chat with its page in front.
+     */
     private fun openAskedChat(intent: Intent?) {
         val chat = intent?.getStringExtra(QuestionNotifier.EXTRA_OPEN_CHAT) ?: return
+        val browser = intent.getBooleanExtra(EXTRA_OPEN_BROWSER, false)
         intent.removeExtra(QuestionNotifier.EXTRA_OPEN_CHAT)
-        model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false) }
+        intent.removeExtra(EXTRA_OPEN_BROWSER)
+        model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false, isComputersOpen = false, isAutomationsOpen = false) }
         model.select(chat)
+        if (browser) model.editUi { it.copy(browserOpenFor = chat) }
     }
 
     /**
@@ -164,15 +184,24 @@ class MainActivity : ComponentActivity() {
      */
     private fun handleAssistantPress(intent: Intent?): Boolean {
         if (intent?.getBooleanExtra(AssistLaunch.EXTRA_START_VOICE, false) != true) return false
+        val automationJson = intent.getStringExtra(AssistLaunch.EXTRA_AUTOMATION_VOICE)
+        intent.removeExtra(AssistLaunch.EXTRA_START_VOICE)
+        intent.removeExtra(AssistLaunch.EXTRA_AUTOMATION_VOICE)
         // Reopening from Recents replays the press that created the task.
         if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return false
-        intent.removeExtra(AssistLaunch.EXTRA_START_VOICE)
+        val automation = if (automationJson == null) null else try {
+            dev.androidagent.core.AutomationVoiceRequest.fromJson(automationJson).also { it.requireCurrent() }
+        } catch (failure: Exception) {
+            model.error(failure.message ?: "The voice automation could not start.")
+            return true
+        }
         model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false) }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             ensureService()
-            model.startAssistantVoice()
+            model.startAssistantVoice(automation)
         } else {
             voiceForAssistant = true
+            pendingAutomationVoice = automation
             microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
         }
         return true
@@ -204,8 +233,14 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
     override fun onDestroy() {
+        latencyProbe?.close()
         model.graph.runtimePermissions.detach(this)
         super.onDestroy()
+    }
+    private var latencyProbe: UiLatencyProbe? = null
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_UP) latencyProbe?.input()
+        return super.dispatchTouchEvent(event)
     }
     private fun ensureService() { runCatching { ContextCompat.startForegroundService(this, Intent(this, AgentService::class.java)) }.onFailure { model.error("Could not start the agent service: ${it.message}") } }
     private fun actions() = AgentUiActions(
@@ -217,20 +252,26 @@ class MainActivity : ComponentActivity() {
         onSetDefaultComputer = { id -> model.setDefaultComputer(id) },
         onNewProject = { id -> ensureService(); model.newProject(id) },
         onNewChatInProject = { id, path -> model.openFolderChat(id, path) },
-        onOpenPcThread = { id, thread -> ensureService(); model.openPcThread(id, thread) },
+        onOpenPcThread = { id, thread, engine -> ensureService(); model.openPcThread(id, thread, engine) },
+        onSyncPcChat = { id -> model.syncPcChat(id) },
+        onOpenClaudeDesktop = { id -> model.openClaudeDesktop(id) },
         onRefreshPcThreads = { ensureService(); model.refreshPcThreads() },
         onReconnectComputer = { id -> ensureService(); model.reconnectComputer(id) },
         onMoveNewChat = { id, path -> model.moveNewChat(id, path) },
         onComputerProposalShown = { model.editUi { it.copy(computerProposal = null) } },
         onForkPcChat = { id -> model.forkPcChat(id) },
         onCheckPcChatBusy = { id -> model.checkPcChatBusy(id) },
-        onComposerSeedUsed = { id -> model.editUi { it.copy(composerSeeds = it.composerSeeds - id) } },
+        onComposerDraftChanged = model::composerDraftChanged,
         onShareText = { text ->
             val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
             runCatching { startActivity(Intent.createChooser(send, "Send the setup steps")) }
                 .onFailure { model.error("No app on this phone can share text.") }
         },
         onConnectComputer = { id -> ensureService(); model.connectComputer(id) },
+        onComputerClaudeLogin = { id -> ensureService(); model.computerClaudeLogin(id) },
+        onComputerClaudeCode = { id, code -> model.computerClaudeCode(id, code) },
+        onCancelComputerClaudeLogin = { id -> model.cancelComputerClaudeLogin(id) },
+        onCheckComputerClaude = { id -> ensureService(); model.checkComputerClaude(id) },
         onOpenTailscaleApproval = { id, url ->
             model.openedTailscaleApproval(id)
             runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
@@ -252,10 +293,14 @@ class MainActivity : ComponentActivity() {
         onSend = { text, attachments -> ensureService(); model.send(text, attachments) },
         onSteer = { model.steer(it) },
         onStop = model::stop,
+        onStopSession = model::stopSession,
+        onBrowseVoiceChats = model::browseVoiceChats,
+        onReturnToVoice = model::returnToVoice,
         onCancelQueued = model::cancelQueued,
         onResumeQueue = { model.resumeQueue() },
         onVoiceToggle = ::toggleVoice,
         onVoiceMuteToggle = model::toggleVoiceMute,
+        onVoiceChildUpdatesToggle = model::toggleVoiceChildUpdates,
         onOpenSettings = { model.editUi { it.copy(isSettingsOpen = true) } },
         onCloseSettings = { model.editUi { it.copy(isSettingsOpen = false) } },
         onOpenAutomations = {
@@ -308,18 +353,27 @@ class MainActivity : ComponentActivity() {
         onConnect = { model.connect(it) },
         onDiscover = { model.discover() },
         onModelSelected = model::model,
+        onRefreshModels = model::refreshModels,
         onReasoningEffortSelected = model::reasoningEffort,
         onRenameSession = { id, title -> model.rename(id, title) },
         onCompact = { ensureService(); model.compact() },
         onTogglePlanMode = model::togglePlanMode,
         onShowStatus = model::showStatus,
         onDeleteSession = { model.delete(it) },
+        onTogglePin = model::togglePin,
         onRetry = { model.prepare() },
         onDismissError = { model.editUi { it.copy(errorMessage = null) } },
         onOpenWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = true) }; model.listFiles() },
         onOpenWorkspaceFile = { item -> openFile(item) },
         onShareWorkspaceFile = { item -> shareFile(item) },
         onCloseWorkspaceFiles = { model.editUi { it.copy(isWorkspaceOpen = false) } },
+        onOpenBrowser = model::openBrowser,
+        onCloseBrowser = { model.editUi { it.copy(browserOpenFor = null) } },
+        onBrowserTakeControl = model.graph.browserHost::takeControl,
+        onBrowserGiveBack = model.graph.browserHost::giveBack,
+        onBrowserClosePage = model.graph.browserHost::closeByUser,
+        onAttachBrowser = model.graph.browserHost::attach,
+        onDetachBrowser = model.graph.browserHost::detach,
         onApproval = { requestId, allow -> model.graph.coordinator.approve(requestId, allow) },
         onAnswerQuestion = { questionId, answer -> model.graph.coordinator.answerQuestion(questionId, answer) },
         onApproveAlways = { requestId, scope ->

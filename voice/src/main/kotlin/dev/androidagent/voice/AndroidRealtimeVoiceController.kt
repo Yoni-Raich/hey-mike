@@ -69,10 +69,11 @@ class AndroidRealtimeVoiceController(
     private val engine: RealtimeVoiceEngine,
     private val scope: CoroutineScope,
     private val webRtcSessionFactory: (Context) -> RealtimeMediaSession = { WebRtcRealtimeAudioSession(it) },
+    private val automationSnapshot: () -> dev.androidagent.core.AutomationDeviceSnapshot = { dev.androidagent.core.AutomationDeviceSnapshot() },
 ) {
     private val app = context.applicationContext
     private val audioManager = app.getSystemService(AudioManager::class.java)
-    private val audioRoute = CommunicationAudioRoute(audioManager)
+    private val audioRoute = CommunicationAudioRoute(audioManager, BluetoothHeadphones(app), ::bluetoothLost)
     private val lifecycle = Mutex()
     private val mutableState = MutableStateFlow(VoiceState())
     val state: StateFlow<VoiceState> = mutableState.asStateFlow()
@@ -87,9 +88,11 @@ class AndroidRealtimeVoiceController(
      * listening, Codex's audio while it speaks. Updated every 10-20 ms.
      */
     val level: StateFlow<Float> = mutableLevel.asStateFlow()
+    val childUpdates = dev.androidagent.core.VoiceChildUpdates()
 
     private var activeThreadId: String? = null
     private var recorder: AudioRecord? = null
+    private val playbackLock = Any()
     private var player: AudioTrack? = null
     private var playerFormat: Pair<Int, Int>? = null
     private var echoCanceler: AcousticEchoCanceler? = null
@@ -98,6 +101,8 @@ class AndroidRealtimeVoiceController(
     private var captureJob: Job? = null
     private var senderJob: Job? = null
     private var playbackJob: Job? = null
+    private var routeWatchJob: Job? = null
+    private val outputGate = dev.androidagent.core.AutomationOutputGate()
     private var speakingResetJob: Job? = null
     private var inputFrames: Channel<RealtimeAudioChunk>? = null
     private var outputFrames: Channel<RealtimeAudioChunk>? = null
@@ -107,6 +112,7 @@ class AndroidRealtimeVoiceController(
     // Also read from the UI thread by setMuted.
     @Volatile private var webRtcSession: RealtimeMediaSession? = null
     @Volatile private var lastCodexAudioAt = 0L
+    private var playbackSuppressed = false
     private var activeTransport: RealtimeTransport = RealtimeTransport.WEBRTC
     private var previousAudioMode: Int? = null
     private var previousSpeakerphoneState: Boolean? = null
@@ -121,6 +127,9 @@ class AndroidRealtimeVoiceController(
         threadId: String,
         model: String? = null,
         transport: RealtimeTransport = RealtimeTransport.WEBRTC,
+        bluetoothHeadphonesOnly: Boolean = false,
+        outputConditions: List<dev.androidagent.core.AutomationCondition> = emptyList(),
+        beforeAudio: suspend () -> Unit = {},
     ) {
         val started = CompletableDeferred<Unit>()
         val answer = if (transport == RealtimeTransport.WEBRTC) CompletableDeferred<String>() else null
@@ -139,7 +148,13 @@ class AndroidRealtimeVoiceController(
                 mutableMuted.value = false
                 activeThreadId = threadId
                 activeTransport = transport
+                outputGate.reset(outputConditions)
+                audioRoute.restrictTo(outputConditions)
+                if (bluetoothHeadphonesOnly) audioRoute.requireBluetooth()
                 requestAudioFocus()
+                awaitOutputRoute()
+                checkAutomationOutput()
+                if (bluetoothHeadphonesOnly || outputConditions.isNotEmpty()) watchBluetoothOutput()
                 startedSignal = started
                 sdpSignal = answer
 
@@ -160,6 +175,7 @@ class AndroidRealtimeVoiceController(
                     mediaSession = webRtcSessionFactory(app).also { session ->
                         session.setLevelListener(::onAudioLevel)
                         session.setMicrophoneMuted(mutableMuted.value)
+                        session.setPlaybackSuppressed(childUpdates.playbackSuppressed())
                     }
                     webRtcSession = mediaSession
                 }
@@ -176,6 +192,9 @@ class AndroidRealtimeVoiceController(
             // The start RPC only means "accepted". Audio waits for the
             // separate started notification and, for WebRTC, the SDP answer.
             withTimeout(VOICE_START_TIMEOUT_MS) { started.await() }
+            // The assistant's screen must arrive before the first microphone frame.
+            // Both transports keep capture/playback closed until this succeeds.
+            prepareVoiceInput(beforeAudio)
             if (transport == RealtimeTransport.WEBRTC) {
                 val remoteSdp = withTimeout(VOICE_START_TIMEOUT_MS) { checkNotNull(answer).await() }
                 checkNotNull(mediaSession).setRemoteAnswer(remoteSdp)
@@ -184,7 +203,9 @@ class AndroidRealtimeVoiceController(
                     check(activeThreadId == threadId && state.value.phase != VoicePhase.STOPPING) {
                         "Voice start was cancelled."
                     }
+                    checkAutomationOutput()
                     checkNotNull(mediaSession).startAudio()
+                    checkAutomationOutput()
                     mutableState.value = VoiceState(VoicePhase.LISTENING, "Listening", threadId)
                     startedSignal = null
                     sdpSignal = null
@@ -276,12 +297,91 @@ class AndroidRealtimeVoiceController(
         engine.appendText(text, role)
     }
 
+    /** Speak a rule's opening immediately, without needing a microphone turn. */
+    suspend fun appendSpeech(text: String) {
+        check(state.value.active && state.value.phase != VoicePhase.STOPPING) { "Voice is not active." }
+        checkAutomationOutput()
+        engine.appendSpeech(text)
+    }
+
+    /** Applies to an already live call too; kept until the call ends. */
+    suspend fun requireBluetoothHeadphones() {
+        audioRoute.requireBluetooth()
+        awaitOutputRoute()
+        watchBluetoothOutput()
+    }
+    private suspend fun awaitOutputRoute() {
+        // HFP can take a moment to become the active route. No new voice media runs during startup.
+        withTimeout(3_000) { while (!audioRoute.outputReady()) delay(50) }
+        audioRoute.arm()
+    }
+    fun requireAutomationConnections(conditions: List<dev.androidagent.core.AutomationCondition>) {
+        outputGate.require(conditions)
+        audioRoute.restrictTo(outputGate.conditions())
+        checkAutomationOutput()
+        if (outputGate.conditions().isNotEmpty()) watchBluetoothOutput()
+    }
+    fun checkAutomationOutput() {
+        try {
+            if (outputGate.conditions().isNotEmpty()) {
+                if (!outputGate.allows(automationSnapshot())) {
+                    bluetoothLost()
+                    error("A required automation connection changed; voice stopped.")
+                }
+            }
+            audioRoute.checkOutput()
+        } catch (failure: Exception) {
+            // A disconnect can race startAudio: mute again even if the loss was already latched.
+            webRtcSession?.stopAudio()
+            player?.runCatching { pause(); flush() }
+            throw failure
+        }
+    }
+
+    private fun bluetoothLost() {
+        // Do not wait for a coroutine or remote acknowledgement to mute playback.
+        webRtcSession?.stopAudio()
+        player?.runCatching { pause(); flush() }
+        playbackJob?.cancel()
+        val id = activeThreadId ?: return
+        scope.launch { fail(id, "A required connection changed; voice stopped.") }
+    }
+
+    private fun watchBluetoothOutput() {
+        if (routeWatchJob?.isActive == true) return
+        routeWatchJob = scope.launch {
+            while (state.value.active) {
+                if (runCatching { checkAutomationOutput() }.isFailure) break
+                delay(100)
+            }
+        }
+    }
+
     /** Silence or restore the microphone without ending the conversation. */
     fun setMuted(muted: Boolean) {
         if (!state.value.active) return
         mutableMuted.value = muted
         webRtcSession?.setMicrophoneMuted(muted)
+        if (muted) childUpdates.microphoneMuted()
         if (muted && state.value.phase != VoicePhase.SPEAKING) mutableLevel.value = 0f
+    }
+
+    /** This controls child announcements, never the microphone, call, or child run. */
+    fun setChildUpdatesPaused(paused: Boolean) {
+        childUpdates.setPaused(paused)
+        applyChildPlaybackPolicy()
+    }
+
+    fun applyChildPlaybackPolicy() {
+        synchronized(playbackLock) {
+            val suppressed = childUpdates.playbackSuppressed()
+            if (playbackSuppressed == suppressed) return
+            playbackSuppressed = suppressed
+            webRtcSession?.setPlaybackSuppressed(suppressed)
+            player?.runCatching {
+                if (suppressed) { pause(); flush() } else play()
+            }
+        }
     }
 
     // Audio-thread callback from capture and playback.
@@ -289,8 +389,10 @@ class AndroidRealtimeVoiceController(
         val current = state.value
         if (!current.active || current.phase == VoicePhase.STOPPING) return
         when (source) {
-            VoiceLevelSource.INPUT -> if (current.phase != VoicePhase.SPEAKING) {
-                mutableLevel.value = if (mutableMuted.value) 0f else value
+            VoiceLevelSource.INPUT -> {
+                if (!mutableMuted.value) childUpdates.input(value)
+                applyChildPlaybackPolicy()
+                if (current.phase != VoicePhase.SPEAKING) mutableLevel.value = if (mutableMuted.value) 0f else value
             }
             VoiceLevelSource.OUTPUT -> {
                 // Over WebRTC Codex's audio arrives on the media track, so its
@@ -304,6 +406,7 @@ class AndroidRealtimeVoiceController(
 
     /** Codex audio just arrived: show Codex as speaking until it has been quiet for [SPEAKING_IDLE_MS]. */
     private fun heardCodex(threadId: String) {
+        childUpdates.output()
         lastCodexAudioAt = System.nanoTime()
         mutableState.update { current ->
             if (current.threadId == threadId && current.active && current.phase != VoicePhase.STOPPING) {
@@ -408,49 +511,59 @@ class AndroidRealtimeVoiceController(
         }
     }
 
-    private fun play(chunk: RealtimeAudioChunk) {
+    private suspend fun play(chunk: RealtimeAudioChunk) {
+        checkAutomationOutput()
+        if (childUpdates.playbackSuppressed()) return
         if (chunk.data.isEmpty()) return
         onAudioLevel(VoiceLevelSource.OUTPUT, VoiceLevelMeter.level(chunk.data))
         val channels = chunk.numChannels.coerceIn(1, 2)
         val format = chunk.sampleRate to channels
-        if (player == null || playerFormat != format) {
-            player?.runCatching { stop() }
-            player?.release()
-            val channelMask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
-            val minBuffer = AudioTrack.getMinBufferSize(
-                chunk.sampleRate,
-                channelMask,
-                AudioFormat.ENCODING_PCM_16BIT,
-            )
-            check(minBuffer > 0) { "Unsupported voice output format." }
-            player = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
+        val track = synchronized(playbackLock) {
+            if (childUpdates.playbackSuppressed() || !state.value.active || state.value.phase == VoicePhase.STOPPING) return
+            if (player == null || playerFormat != format) {
+                player?.runCatching { stop() }
+                player?.release()
+                val channelMask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
+                val minBuffer = AudioTrack.getMinBufferSize(
+                    chunk.sampleRate,
+                    channelMask,
+                    AudioFormat.ENCODING_PCM_16BIT,
                 )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(chunk.sampleRate)
-                        .setChannelMask(channelMask)
-                        .build()
-                )
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(max(minBuffer, chunk.sampleRate * channels * 2 / 5))
-                .build()
-                .also { track ->
-                    check(track.state == AudioTrack.STATE_INITIALIZED) { "Android could not start voice playback." }
-                    track.play()
-                }
-            playerFormat = format
+                check(minBuffer > 0) { "Unsupported voice output format." }
+                player = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(chunk.sampleRate)
+                            .setChannelMask(channelMask)
+                            .build()
+                    )
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(max(minBuffer, chunk.sampleRate * channels * 2 / 5))
+                    .build()
+                    .also { track ->
+                        check(track.state == AudioTrack.STATE_INITIALIZED) { "Android could not start voice playback." }
+                        track.play()
+                    }
+                playerFormat = format
+            }
+            checkNotNull(player).also { it.play() }
         }
-        val track = checkNotNull(player)
         var offset = 0
         while (offset < chunk.data.size) {
-            val written = track.write(chunk.data, offset, chunk.data.size - offset, AudioTrack.WRITE_BLOCKING)
-            check(written > 0) { "Voice playback failed ($written)." }
+            checkAutomationOutput()
+            val written = synchronized(playbackLock) {
+                if (childUpdates.playbackSuppressed() || player !== track || !state.value.active || state.value.phase == VoicePhase.STOPPING) return
+                track.write(chunk.data, offset, chunk.data.size - offset, AudioTrack.WRITE_NON_BLOCKING)
+            }
+            check(written >= 0) { "Voice playback failed ($written)." }
+            if (written == 0) delay(10) // Let a local pause or Stop discard this chunk, without a blocked writer.
             offset += written
         }
     }
@@ -527,6 +640,10 @@ class AndroidRealtimeVoiceController(
     }
 
     private fun releaseLocalAudio() {
+        childUpdates.reset()
+        outputGate.reset()
+        routeWatchJob?.cancel()
+        routeWatchJob = null
         stopCapture()
         senderJob?.cancel()
         playbackJob?.cancel()
@@ -553,10 +670,13 @@ class AndroidRealtimeVoiceController(
         mutableMuted.value = false
         sdpSignal?.cancel()
         sdpSignal = null
-        player?.runCatching { stop() }
-        player?.release()
-        player = null
-        playerFormat = null
+        synchronized(playbackLock) {
+            player?.runCatching { stop() }
+            player?.release()
+            player = null
+            playerFormat = null
+            playbackSuppressed = false
+        }
         audioRoute.close()
         focusRequest?.let(audioManager::abandonAudioFocusRequest)
         focusRequest = null

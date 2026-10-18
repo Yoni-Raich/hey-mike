@@ -38,6 +38,35 @@ import org.junit.rules.TemporaryFolder
 class RoutingAgentEngineTest {
     @get:Rule val temp = TemporaryFolder()
 
+    @Test fun aRenameAfterRestartIsPersistedOnTheCorrectComputerOnly() = runBlocking {
+        val box = object : SecretBox {
+            override fun seal(plain: ByteArray) = plain
+            override fun open(sealed: ByteArray) = sealed
+        }
+        val store = RemoteStore(File(temp.root, "computers.bin"), box)
+        val peers = mutableListOf<ReplyRuntime>()
+        val profiles = mutableListOf<dev.androidagent.enginecodex.EngineProfile>()
+        for (pc in listOf("one", "two")) {
+            store.save(RemoteComputer(pc, pc, "localhost", user = "test"), "test-only")
+            store.bind("chat-$pc", RemoteBinding(pc, "C:\\project", "thread-$pc"))
+        }
+        val local = ReplyRuntime()
+        val hub = RemoteHub(store, { _, _ -> ExternalChatgptTokens("test-token", "test-account") }) { _, profile ->
+            profiles += profile
+            CodexEngine(ReplyRuntime().also { peers += it }, profile)
+        }
+        val router = RoutingAgentEngine(CodexEngine(local), hub)
+        try {
+            router.renameThread("thread-two", "תיקון שמות הסשנים")
+            assertTrue(local.requests.isEmpty())
+            assertEquals(1, peers.size)
+            assertTrue(profiles.single().developerInstructions.contains("computer \"two\""))
+            val request = peers.single().requests.single { it["method"]?.jsonPrimitive?.content == "thread/name/set" }
+            assertEquals("thread-two", request["params"]?.jsonObject?.get("threadId")?.jsonPrimitive?.content)
+            assertEquals("תיקון שמות הסשנים", request["params"]?.jsonObject?.get("name")?.jsonPrimitive?.content)
+        } finally { router.close() }
+    }
+
     @Test fun resumingAnImportedThreadKeepsItsOriginAcrossReconnects() = runBlocking {
         val box = object : SecretBox {
             override fun seal(plain: ByteArray) = plain
@@ -84,6 +113,30 @@ class RoutingAgentEngineTest {
                 it["method"]?.jsonPrimitive?.content == "thread/resume" &&
                     it["params"]?.jsonObject?.get("model")?.jsonPrimitive?.content == "gpt-6-sol"
             } })
+        } finally { router.close() }
+    }
+
+    /** Back from Claude, the chat resumes the Codex thread it had on the computer instead of starting an empty one. */
+    @Test fun aCodexThreadParkedDuringClaudeTurnsIsResumed() = runBlocking {
+        val box = object : SecretBox {
+            override fun seal(plain: ByteArray) = plain
+            override fun open(sealed: ByteArray) = sealed
+        }
+        val store = RemoteStore(File(temp.root, "computers.bin"), box)
+        store.save(RemoteComputer("pc", "PC", "localhost", user = "test"), "test-only")
+        val remote = mutableListOf<ReplyRuntime>()
+        val hub = RemoteHub(store, { _, _ -> ExternalChatgptTokens("t", "a") }) { _, profile -> CodexEngine(ReplyRuntime().also { remote += it }, profile) }
+        val router = RoutingAgentEngine(CodexEngine(ReplyRuntime()), hub)
+        try {
+            store.bind("chat", RemoteBinding("pc", "C:\\project", "claude-id", false, EngineKind.CLAUDE,
+                ParkedBinding(EngineKind.CODEX, "codex-thread", true)))
+            val workspace = File(temp.root, "sessions/chat/workspace").apply { mkdirs() }
+            assertEquals("codex-thread", withTimeout(5_000) { router.openSession(workspace, "codex-thread", null, emptyList()) })
+            val methods = remote.flatMap { runtime -> runtime.requests.mapNotNull { it["method"]?.jsonPrimitive?.content } }
+            assertTrue(methods.contains("thread/resume"))
+            assertFalse(methods.contains("thread/start"))
+            assertEquals(RemoteBinding("pc", "C:\\project", "codex-thread", true, EngineKind.CODEX,
+                ParkedBinding(EngineKind.CLAUDE, "claude-id", false)), store.binding("chat"))
         } finally { router.close() }
     }
 
@@ -192,7 +245,7 @@ class RoutingAgentEngineTest {
             return threadId ?: "claude-thread"
         }
         override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String { turns++; return "turn" }
-        override suspend fun compact(threadId: String) { compacted += threadId }
+        override suspend fun compact(threadId: String): dev.androidagent.core.CompactResult? { compacted += threadId; return null }
         override suspend fun steer(threadId: String, turnId: String, prompt: String) { steers += prompt }
         override suspend fun interrupt(threadId: String, turnId: String) { interrupts += threadId }
         override suspend fun answerTool(requestId: String, result: ToolResult) { answered += requestId }

@@ -69,6 +69,7 @@ object WorkspaceSeeder {
         "workflows",
         "automations",
         "files-across-devices",
+        "browser",
     )
 
     /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */

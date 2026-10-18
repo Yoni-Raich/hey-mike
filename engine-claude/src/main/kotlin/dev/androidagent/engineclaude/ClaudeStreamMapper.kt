@@ -20,6 +20,7 @@
 
 package dev.androidagent.engineclaude
 
+import dev.androidagent.core.CompactResult
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.SecretRedactor
 import dev.androidagent.engineclaude.ClaudeProtocol.string
@@ -65,9 +66,14 @@ internal class ClaudeStreamMapper(
         @Volatile var interruptRequested = false
         var rejection: String? = null
         var syntheticError: String? = null
+        var workStarted = false
+        var authRetries = 0
         var ended = false
             internal set
         var error: String? = null
+            internal set
+        /** What the CLI reported when this turn compacted the chat. */
+        var compact: CompactResult? = null
             internal set
         /** Completes with the final status once the turn has ended. */
         val done = CompletableDeferred<String>()
@@ -79,6 +85,7 @@ internal class ClaudeStreamMapper(
         data class ControlRequest(val requestId: String, val request: JsonObject) : Signal
         data class Init(val message: JsonObject) : Signal
         data class Ended(val turn: Turn, val status: String) : Signal
+        data class RetryAuth(val turn: Turn) : Signal
     }
 
     /** The turn the app considers running. */
@@ -110,11 +117,26 @@ internal class ClaudeStreamMapper(
         turn.frames += frameUuid
     }
 
+    /** Only an explicitly rejected pre-work authentication cycle may be replayed. */
+    fun replayAuth(turn: Turn, frameUuid: String): Boolean {
+        if (active !== turn || turn.ended || turn.interruptRequested || turn.workStarted) return false
+        turn.syntheticError = null
+        turn.frames += frameUuid
+        owner = turn
+        return true
+    }
+
     /**
      * The turn a tool call from the CLI right now belongs to, or null when
      * none may run: no turn, an orphan cycle, compaction, or a stop.
      */
     fun toolTurn(): Turn? = owner?.takeIf { it === active && !it.internal && !it.ended && !it.interruptRequested }
+
+    /**
+     * The turn whose visible messages the current cycle writes, also after a
+     * stop was asked: what it shows the user before ending is the user's too.
+     */
+    fun shownTurn(): Turn? = cycleTurn()?.takeIf { !it.internal }
 
     /** Forget [turn] without any event, for a turn whose frame never reached the CLI. */
     fun abandon(turn: Turn) {
@@ -202,6 +224,11 @@ internal class ClaudeStreamMapper(
 
     private fun system(message: JsonObject): List<Signal> {
         val turn = visibleTurn(message)
+        if (message.string("subtype") == "compact_boundary") {
+            // A compaction the app asked for is internal and shows no events; keep its sizes for the caller.
+            (cycleTurn() ?: active)?.takeIf { it.internal && !it.ended }
+                ?.let { it.compact = compactResult(message["compact_metadata"] as? JsonObject) }
+        }
         return when (message.string("subtype")) {
             "init" -> {
                 busy = true
@@ -218,6 +245,12 @@ internal class ClaudeStreamMapper(
             }.orEmpty()
             else -> emptyList()
         }
+    }
+
+    private fun compactResult(metadata: JsonObject?): CompactResult? {
+        if (metadata == null) return null
+        fun number(key: String) = (metadata[key] as? JsonPrimitive)?.longOrNull
+        return CompactResult(number("pre_tokens"), number("post_tokens"), number("duration_ms"))
     }
 
     private fun user(message: JsonObject): List<Signal> {
@@ -251,7 +284,10 @@ internal class ClaudeStreamMapper(
                 val index = (event["index"] as? JsonPrimitive)?.longOrNull?.toInt()
                 when (block?.string("type")) {
                     "text" -> { textIndex = index; emptyList() }
-                    "thinking", "redacted_thinking" -> listOf(Signal.Emit(EngineEvent.Activity("Working", threadId, turn.turnId)))
+                    "thinking", "redacted_thinking", "tool_use" -> {
+                        turn.workStarted = true
+                        listOf(Signal.Emit(EngineEvent.Activity("Working", threadId, turn.turnId)))
+                    }
                     else -> emptyList()
                 }
             }
@@ -259,6 +295,7 @@ internal class ClaudeStreamMapper(
                 val delta = event["delta"] as? JsonObject
                 if (delta?.string("type") != "text_delta") return emptyList()
                 val text = delta.string("text").ifEmpty { return emptyList() }
+                turn.workStarted = true
                 val index = (event["index"] as? JsonPrimitive)?.longOrNull?.toInt() ?: textIndex
                 listOf(Signal.Emit(EngineEvent.TextDelta(text, threadId, turn.turnId, itemId(index))))
             }
@@ -287,6 +324,8 @@ internal class ClaudeStreamMapper(
                 .trim().takeIf { it.isNotEmpty() }?.let { turn.syntheticError = SecretRedactor.redactUiText(it) }
             return emptyList()
         }
+        if (blocks.any { it.string("type") in setOf("tool_use", "thinking", "redacted_thinking") ||
+                it.string("type") == "text" && it.string("text").isNotBlank() }) turn.workStarted = true
         val bodyId = body.string("id").ifBlank { null }
         if (bodyId != null && bodyId != messageId) { messageId = bodyId; textIndex = null }
         val signals = mutableListOf<Signal>()
@@ -361,6 +400,26 @@ internal class ClaudeStreamMapper(
             else -> "completed"
         }
         val error = if (status == "failed") errorOf(message, turn) else null
+        // A command the CLI answers itself (`/context`, `/usage`) never calls
+        // the model: its answer is a made-up assistant message and the result's
+        // text, with no turn of Mike's own words around it.
+        if (status == "completed" && !turn.internal && !turn.workStarted && lastText == null) {
+            val answer = SecretRedactor.redactUiText(message.string("result").trim()).ifEmpty { turn.syntheticError.orEmpty() }
+            if (answer.isNotEmpty()) {
+                val completed = EngineEvent.MessageCompleted(answer, threadId, turn.turnId, "command:${turn.turnId}", "commentary")
+                lastText = completed
+                signals += Signal.Emit(completed)
+            }
+        }
+        if (status == "failed" && !turn.internal && !turn.workStarted && turn.authRetries == 0 &&
+            error?.startsWith("Failed to refresh OAuth token:", ignoreCase = true) == true &&
+            error.contains("Claude Code process is refreshing it", ignoreCase = true)) {
+            turn.authRetries++
+            retired += turn.frames
+            while (retired.size > MAX_RETIRED) retired.remove(retired.first())
+            turn.frames.clear()
+            return signals + Signal.RetryAuth(turn)
+        }
         return signals + end(turn, status, error)
     }
 

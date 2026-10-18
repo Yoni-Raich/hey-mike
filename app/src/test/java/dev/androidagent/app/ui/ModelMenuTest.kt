@@ -2,11 +2,39 @@ package dev.androidagent.app.ui
 
 import dev.androidagent.core.AgentModel
 import dev.androidagent.core.ReasoningEffortOption
+import dev.androidagent.core.EngineKind
+import dev.androidagent.remote.ComputerClaude
+import dev.androidagent.remote.RemoteBinding
+import dev.androidagent.runtime.ClaudeInstallPhase
+import dev.androidagent.runtime.ClaudeInstallState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ModelMenuTest {
+    @Test fun aComputerChatOffersSetupOnItsComputerEvenWhenPhoneClaudeIsUnsupported() {
+        val state = AgentUiState(
+            activeSessionId = "chat",
+            remoteBindings = mapOf("chat" to RemoteBinding("pc", "C:\\project")),
+            claude = ClaudeUiState(ClaudeInstallState(ClaudeInstallPhase.UNSUPPORTED)),
+            computerClaude = mapOf("pc" to ComputerClaude(installed = true, signedIn = false)),
+        )
+        assertTrue(offersClaudeSetup(state))
+        assertEquals("pc", claudeSetupComputerId(state))
+        assertFalse(offersClaudeSetup(state.copy(computerClaude = mapOf("pc" to ComputerClaude(true, signedIn = true)))))
+        assertTrue(offersClaudeSetup(state.copy(computerClaude = emptyMap())))
+        assertFalse(offersClaudeSetup(state.copy(modelCatalog = listOf(AgentModel("sonnet", engine = EngineKind.CLAUDE)))))
+    }
+
+    @Test fun aPhoneChatStillOffersPhoneSetupOnlyOnSupportedPhones() {
+        val state = AgentUiState(claude = ClaudeUiState(ClaudeInstallState(ClaudeInstallPhase.NOT_INSTALLED)))
+        assertTrue(offersClaudeSetup(state))
+        assertNull(claudeSetupComputerId(state))
+        assertFalse(offersClaudeSetup(state.copy(claude = ClaudeUiState(ClaudeInstallState(ClaudeInstallPhase.UNSUPPORTED)))))
+    }
+
     private val luna = AgentModel(
         id = "gpt-6-luna",
         reasoningEfforts = listOf("low", "medium", "high", "xhigh", "max").map { ReasoningEffortOption(it) },

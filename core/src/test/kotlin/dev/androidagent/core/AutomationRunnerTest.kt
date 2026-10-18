@@ -32,6 +32,19 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 class AutomationRunnerTest {
+    @Test fun connectedHeadphonesConditionIsCarriedAsVoiceOutputRequirement() {
+        val rule = AutomationRule.parse(Json.parseToJsonElement(
+            """{"id":"headphones","when":{"type":"notification","package":"*"},
+            "if":[{"type":"device_state","state":"bluetooth_headphones","equals":"connected"}],
+            "then":[{"type":"voice_call","opening":"Hi"}]}"""
+        ).jsonObject)
+        val actions = Recorder()
+        val report = runBlocking { AutomationRunner(actions, history, { now }).run(
+            AutomationEvaluator.Outcome.Fired(rule, rule.actions, emptyMap())
+        ) }
+        assertTrue(report.ok)
+        assertTrue(actions.lastVoiceRequest!!.bluetoothHeadphonesOnly)
+    }
 
     private val zone = ZoneId.of("Asia/Jerusalem")
     private val now = ZonedDateTime.parse("2026-09-15T19:00:00+03:00[Asia/Jerusalem]")
@@ -67,8 +80,10 @@ class AutomationRunnerTest {
             return AutomationActionResult.ok()
         }
 
-        override suspend fun voiceCall(opening: String): AutomationActionResult {
-            calls += "voiceCall:$opening"
+        var lastVoiceRequest: AutomationVoiceRequest? = null
+        override suspend fun voiceCall(request: AutomationVoiceRequest): AutomationActionResult {
+            lastVoiceRequest = request
+            calls += "voiceCall:${request.opening}"
             return AutomationActionResult.ok()
         }
 
@@ -102,6 +117,26 @@ class AutomationRunnerTest {
         assertTrue(report.ok)
         assertEquals(listOf("runWorkflow:post-to-facebook", "notify:Posted"), actions.calls)
         assertEquals(2, report.completed.size)
+    }
+
+    @Test fun aNotificationVoiceActionKeepsItsOpeningContextAndDeadline() {
+        val rule = AutomationRule.parse(Json.parseToJsonElement(
+            """{"id":"notification-voice","when":{"type":"notification","package":"*"},
+             "then":[{"type":"voice_call","opening":"Hi, Yoni, you have a new notification.",
+             "context":"{{notification.package}}: {{notification.title}}: {{notification.text}}"}]}""",
+        ).jsonObject)
+        val event = AutomationEvent.Notification("com.example", "Dad", "Meet at eight", now)
+        val fired = AutomationEvaluator(history).evaluate(
+            listOf(rule), event, AutomationContext(now, userReachable = true),
+        ).single() as AutomationEvaluator.Outcome.Fired
+        val actions = Recorder()
+        val result = runBlocking { AutomationRunner(actions, history, { now }).run(fired) }
+        assertTrue(result.ok)
+        assertEquals(
+            AutomationVoiceRequest("notification-voice", "Hi, Yoni, you have a new notification.",
+                "com.example: Dad: Meet at eight", now.toInstant().toEpochMilli() + rule.guard.validForMs),
+            actions.lastVoiceRequest,
+        )
     }
 
     @Test fun theFireIsRecordedBeforeTheFirstAction() {

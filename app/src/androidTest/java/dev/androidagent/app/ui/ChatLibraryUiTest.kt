@@ -5,17 +5,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.androidagent.core.ChatSession
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.AutomationAttention
 import dev.androidagent.core.AutomationOverview
 import dev.androidagent.core.AutomationSummary
-import dev.androidagent.enginecodex.CodexThread
+import dev.androidagent.remote.ComputerConversation as CodexThread
 import dev.androidagent.remote.*
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -84,7 +88,7 @@ class ChatLibraryUiTest {
         ))
         compose.onNodeWithText("New chat").assertIsDisplayed()
         compose.onNodeWithContentDescription("Close chats").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Settings, needs attention").assertIsDisplayed()
         screenshot("library-rail")
         compose.onNodeWithContentDescription("Automations, 1 needs you").performClick()
         compose.runOnIdle { assertEquals(true, openedAutomations) }
@@ -107,6 +111,35 @@ class ChatLibraryUiTest {
         show()
         compose.onNodeWithText("Add a computer").assertDoesNotExist()
         compose.onNodeWithContentDescription("Manage computers").assertIsDisplayed()
+    }
+
+    @Test fun claudeConversationOpensWithItsComputerAndEngine() {
+        var opened: Triple<String, String, EngineKind>? = null
+        show(AgentUiActions(onOpenPcThread = { computer, id, engine -> opened = Triple(computer, id, engine) }),
+            fixture.copy(pcThreads = mapOf("pc" to listOf(CodexThread("native-claude", "Claude session", "C:\\projects\\app", now, engine = EngineKind.CLAUDE)))))
+        compose.onNodeWithText("Claude session").performClick()
+        compose.runOnIdle { assertEquals(Triple("pc", "native-claude", EngineKind.CLAUDE), opened) }
+    }
+
+    @Test fun unpinRemovesTheChatFromPinnedWithoutChangingTheScope() {
+        val current = mutableStateOf(fixture.copy(pins = setOf("this-phone:chat-phone-0")))
+        val actions = AgentUiActions(onTogglePin = { key ->
+            current.value = current.value.copy(pins = current.value.pins - key)
+        })
+        compose.setContent {
+            AndroidAgentTheme {
+                Surface(Modifier.fillMaxSize()) { ChatLibraryDrawer(current.value, actions, {}) }
+            }
+        }
+        val pinnedTab = hasContentDescription("Pinned") and
+            SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
+        compose.onNode(pinnedTab).performClick()
+        compose.onNodeWithText("Plan the week").assertIsDisplayed()
+        compose.onNodeWithText("Plan the week").performTouchInput { longClick() }
+        compose.onNodeWithText("Unpin").performClick()
+        compose.onNodeWithText("Plan the week").assertDoesNotExist()
+        compose.onNode(pinnedTab).assertIsSelected()
+        screenshot("library-unpinned-empty")
     }
 
     private fun screenshot(name: String) {

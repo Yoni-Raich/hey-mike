@@ -123,6 +123,7 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!ScreenChangePolicy.counts(event?.packageName?.toString(), packageName, event?.eventType)) return
         // Deliberately does not read the event. AccessibilityEvent carries the
         // text that changed, and none of it is ours to look at or to log.
         lastEventNanos = System.nanoTime()

@@ -22,6 +22,7 @@ package dev.androidagent.app
 
 import dev.androidagent.app.ui.videoLength
 import dev.androidagent.core.UserQuestion
+import dev.androidagent.core.RunState
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -29,6 +30,22 @@ class QuestionNoticesTest {
     private val evening = UserQuestion("q1", "Which evening?", listOf("Friday", "Saturday", "Sunday"))
     private val name = UserQuestion("q2", "What name?")
     private val waiting = mapOf("chat-a" to evening, "chat-b" to name)
+
+    @Test fun aSubagentQuestionUsesTheSourceChatAndIsNotNotifiedWhileItIsVisible() {
+        val projected = QuestionNotices.waiting(mapOf("child" to RunState(question = evening)),
+            owner = { "source" }, order = { 0 })
+        assertEquals(mapOf("source" to evening), projected)
+        assertEquals(emptyMap<String, UserQuestion>(), QuestionNotices.due(projected, true, "source"))
+        assertEquals(projected, QuestionNotices.due(projected, false, "source"))
+    }
+
+    @Test fun sourceQuestionWinsThenTheFirstDispatchedChildWins() {
+        val children = linkedMapOf("later" to RunState(question = name), "first" to RunState(question = evening))
+        val owner: (String) -> String = { "source" }
+        val order: (String) -> Int = { if (it == "first") 0 else 1 }
+        assertEquals(evening, QuestionNotices.waiting(children, owner, order)["source"])
+        assertEquals(name, QuestionNotices.waiting(children + ("source" to RunState(question = name)), owner, order)["source"])
+    }
 
     @Test fun aQuestionWhoseCardIsOnScreenIsNotAlsoANotification() {
         assertEquals(setOf("chat-b"), QuestionNotices.due(waiting, appInFront = true, openChat = "chat-a").keys)

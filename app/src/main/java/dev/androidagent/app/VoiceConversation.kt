@@ -21,15 +21,22 @@
 package dev.androidagent.app
 
 import dev.androidagent.core.AgentRuns
+import dev.androidagent.core.AutomationVoiceRequest
 import dev.androidagent.core.ChatHandoff
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.SessionStore
 import dev.androidagent.core.VoiceEvent
+import dev.androidagent.core.VoiceChildUpdates
+import dev.androidagent.core.VoiceChildUpdateState
 import dev.androidagent.remote.RoutingAgentEngine
 import dev.androidagent.voice.AndroidRealtimeVoiceController
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -37,8 +44,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
+import dev.androidagent.app.assist.ScreenContext
 
 /** The line being spoken right now, before it is final. */
 data class VoiceTranscript(val text: String = "", val role: String? = null)
@@ -61,18 +72,50 @@ class VoiceConversation(
     private val mutableSessionId = MutableStateFlow<String?>(null)
     private val mutableTranscript = MutableStateFlow(VoiceTranscript())
     private val mutableFailures = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    private val mutableChildUpdates = MutableStateFlow(VoiceChildUpdateState())
     private val pendingTypedTexts = java.util.ArrayDeque<String>()
+    private val announcementLock = Mutex()
+    private val contextLock = Mutex()
+    private val beginLock = Mutex()
+    @Volatile private var activeThreadId: String? = null
+    @Volatile private var callEpoch = 0L
     /** The chat that left its engine for this voice conversation, and the engine to give it back. */
-    @Volatile private var returnTo: Pair<String, EngineKind>? = null
+    @Volatile private var returnTo: dev.androidagent.core.ChatSession? = null
 
     /** The chat the live conversation records into, or null when none is live. */
     val sessionId: StateFlow<String?> = mutableSessionId.asStateFlow()
     val transcript: StateFlow<VoiceTranscript> = mutableTranscript.asStateFlow()
+    val childUpdates: StateFlow<VoiceChildUpdateState> = mutableChildUpdates.asStateFlow()
     /** Voice failures reported by the engine, for whichever surface is showing. */
     val failures: SharedFlow<String> = mutableFailures.asSharedFlow()
 
     init {
         scope.launch { engine.voiceEvents.collect(::handle) }
+        scope.launch {
+            sessionId.collectLatest { source ->
+                if (source == null) return@collectLatest
+                val epoch = callEpoch
+                while (sessionId.value == source && callEpoch == epoch) {
+                    delay(250)
+                    try { flushChildUpdates(source, epoch) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) {
+                        // The batch was reserved before submission. An unknown reply is not replayed.
+                        mutableFailures.emit("A child announcement could not be delivered. Inspect its chat. ${failure.message.orEmpty()}")
+                    }
+                }
+            }
+        }
+        scope.launch {
+            voice.state.collect { state ->
+                // Local route/permission loss ends ownership even if the network stop fails.
+                if (state.phase == dev.androidagent.core.VoicePhase.ERROR && mutableSessionId.value != null) {
+                    coordinator().endVoice()
+                    clear()
+                    mutableFailures.tryEmit(state.message)
+                }
+            }
+        }
     }
 
     /**
@@ -83,8 +126,10 @@ class VoiceConversation(
      * side is told what the other said: Codex here, as context for the voice
      * session, and the chat's engine on its next turn (see [EngineSwitch]).
      */
-    suspend fun begin(sessionId: String, model: String?) {
-        check(!coordinator().state.value.active) { "Stop the current agent run before starting voice." }
+    suspend fun begin(sessionId: String, model: String?, automation: AutomationVoiceRequest? = null, initialContext: ScreenContext? = null): Unit = beginLock.withLock {
+        automation?.requireCurrent()
+        check(mutableSessionId.value == null && !voice.state.value.active) { "Voice is already active. Return to its chat or end the call first." }
+        check(coordinator().phaseOf(sessionId) == null) { "Stop this chat's current run before starting voice." }
         val opened = sessions.getSession(sessionId) ?: error("Chat no longer exists.")
         val guest = opened.engine.takeIf { it != EngineKind.CODEX }
         engine.connect()
@@ -94,20 +139,36 @@ class VoiceConversation(
         }
         if (guest != null) {
             sessions.setEngine(sessionId, EngineKind.CODEX)
-            returnTo = sessionId to guest
+            returnTo = opened
         }
+        var voiceStarted = false
         try {
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists.")
             val workspace = sessions.workspace(sessionId)
             val threadId = engine.openSession(workspace, session.engineThreadId, model, tools.definitions)
             sessions.setThread(sessionId, threadId)
+            callEpoch++
+            voice.childUpdates.reset()
+            mutableChildUpdates.value = VoiceChildUpdateState()
+            activeThreadId = threadId
             mutableSessionId.value = sessionId
             mutableTranscript.value = VoiceTranscript()
             coordinator().beginVoice(sessionId, threadId, workspace)
             try {
                 // Realtime selects its own compatible voice model. The normal Codex
                 // model remains a thread setting and is not forced into this RPC.
-                voice.start(threadId)
+                voice.start(threadId, bluetoothHeadphonesOnly = automation?.bluetoothHeadphonesOnly == true,
+                    outputConditions = automation?.outputConditions.orEmpty(),
+                    beforeAudio = {
+                        addContext("You are talking in a Mike chat. You can manage ordinary child chats with session_agents: " +
+                            "start with a title, exact task and stable requestId; list/status to check; message with a stable messageId " +
+                            "to steer or continue the same child; cancel to stop its subtree; open to show its chat while this voice call continues. " +
+                            "Each child can choose engine, model, reasoningEffort, computer and project. Use session_agents options to get " +
+                            "the target's real model IDs and supported levels, and computers status to discover projects. Never guess model IDs from speech. " +
+                            "Only delegate authorized work. Never replay unknown outcomes or approve a child yourself.")
+                        initialContext?.let { addContext(it.guidance, it.quoted) }
+                    })
+                voiceStarted = true
             } catch (failure: Throwable) {
                 coordinator().endVoice()
                 throw failure
@@ -120,30 +181,51 @@ class VoiceConversation(
                     ?.let { addContext(HANDOFF_GUIDANCE, it) }
                 sessions.markCaughtUp(sessionId)
             }
+            automation?.let { announce(it) }
         } catch (failure: Throwable) {
+            if (voiceStarted) {
+                coordinator().endVoice()
+                runCatching { voice.stop() }
+            }
             clear()
             throw failure
         }
+    }
+
+    /** Add a rule's context, then speak its opening without waiting for microphone input. */
+    suspend fun announce(request: AutomationVoiceRequest) = announcementLock.withLock {
+        check(mutableSessionId.value != null) { "Voice is not active." }
+        voice.requireAutomationConnections(request.outputConditions)
+        if (request.bluetoothHeadphonesOnly) voice.requireBluetoothHeadphones()
+        request.deliver(
+            addContext = { guidance, quoted -> addContext(guidance, quoted) },
+            speak = { opening -> voice.appendSpeech(opening) },
+            checkOutput = { voice.checkAutomationOutput() },
+        )
     }
 
     suspend fun stop() {
         // Revoke before the remote stop so no new device action can begin while
         // the voice session is ending. Completed side effects are not undone.
         coordinator().endVoice()
-        voice.stop()
-        clear()
+        try { voice.stop() } finally { clear() }
     }
 
     /** A line the user typed during voice: sent, and recorded once rather than again on its echo. */
     suspend fun type(text: String) {
         val id = mutableSessionId.value ?: error("Voice is not active.")
-        synchronized(pendingTypedTexts) { pendingTypedTexts.addLast(text) }
-        try {
-            voice.appendText(text)
-            sessions.append(ChatMessage(UUID.randomUUID().toString(), id, "user", text, System.currentTimeMillis()))
-        } catch (failure: Exception) {
-            synchronized(pendingTypedTexts) { pendingTypedTexts.removeLastOccurrence(text) }
-            throw failure
+        val epoch = callEpoch
+        userLine(text)
+        contextLock.withLock {
+            check(mutableSessionId.value == id && callEpoch == epoch) { "Voice has ended." }
+            synchronized(pendingTypedTexts) { pendingTypedTexts.addLast(text) }
+            try {
+                voice.appendText(text)
+                sessions.append(ChatMessage(UUID.randomUUID().toString(), id, "user", text, System.currentTimeMillis()))
+            } catch (failure: Exception) {
+                synchronized(pendingTypedTexts) { pendingTypedTexts.removeLastOccurrence(text) }
+                throw failure
+            }
         }
     }
 
@@ -156,17 +238,93 @@ class VoiceConversation(
      * never said them.
      */
     suspend fun addContext(guidance: String, quoted: String? = null) {
-        voice.appendText(guidance, role = "developer")
-        if (quoted == null) return
-        // Its echo, if one comes back as a user transcript, is dropped like a typed line's.
-        val echo = quoted.trim()
-        synchronized(pendingTypedTexts) { pendingTypedTexts.addLast(echo) }
-        try {
-            voice.appendText(quoted)
-        } catch (failure: Exception) {
-            synchronized(pendingTypedTexts) { pendingTypedTexts.removeLastOccurrence(echo) }
-            throw failure
+        val thread = activeThreadId ?: return
+        val epoch = callEpoch
+        contextLock.withLock {
+            if (activeThreadId != thread || callEpoch != epoch) return@withLock
+            voice.appendText(guidance, role = "developer")
+            if (quoted == null || activeThreadId != thread || callEpoch != epoch) return@withLock
+            // Its echo, if one comes back as a user transcript, is dropped like a typed line's.
+            val echo = quoted.trim()
+            synchronized(pendingTypedTexts) { pendingTypedTexts.addLast(echo) }
+            try {
+                voice.appendText(quoted)
+            } catch (failure: Exception) {
+                synchronized(pendingTypedTexts) { pendingTypedTexts.removeLastOccurrence(echo) }
+                throw failure
+            }
         }
+    }
+
+    /** Receive full context during either person's speech; schedule playback separately. */
+    suspend fun deliverChildUpdates(source: String, updates: List<dev.androidagent.core.SessionAgentUpdate>, allowed: () -> Boolean): Boolean =
+        announcementLock.withLock {
+            val thread = activeThreadId
+            val epoch = callEpoch
+            fun current() = allowed() && sessionId.value == source && activeThreadId == thread && thread != null && callEpoch == epoch
+            if (!allowed()) return@withLock true
+            if (!current()) return@withLock false
+            if (voice.state.value.phase != dev.androidagent.core.VoicePhase.LISTENING &&
+                voice.state.value.phase != dev.androidagent.core.VoicePhase.SPEAKING) return@withLock false
+            traceChildUpdates(source, updates, "dispatching")
+            updates.forEach { update ->
+                update.deliverVoiceContext(::addContext, ::current)
+            }
+            if (current()) {
+                voice.childUpdates.receive(updates, source)
+                mutableChildUpdates.value = voice.childUpdates.state(source)
+                traceChildUpdates(source, updates, "context_submitted")
+            }
+            true
+        }
+
+    /** Immediate local playback gate; changing it never cancels a child or the call. */
+    fun setChildUpdatesPaused(paused: Boolean) {
+        if (sessionId.value == null) return
+        voice.setChildUpdatesPaused(paused)
+        mutableChildUpdates.value = voice.childUpdates.state(sessionId.value ?: return)
+    }
+
+    private fun userLine(text: String) {
+        val command = VoiceChildUpdates.command(text)
+        if (command != null) setChildUpdatesPaused(command)
+        if (VoiceChildUpdates.statusRequest(text)) sessionId.value?.let(voice.childUpdates::acknowledgePending)
+        voice.childUpdates.userFinished(expectReply = command == null)
+        voice.applyChildPlaybackPolicy()
+        sessionId.value?.let { mutableChildUpdates.value = voice.childUpdates.state(it) }
+    }
+
+    private suspend fun flushChildUpdates(source: String, epoch: Long) = announcementLock.withLock {
+        val thread = activeThreadId ?: return@withLock
+        fun current() = sessionId.value == source && activeThreadId == thread && callEpoch == epoch
+        if (!current()) return@withLock
+        mutableChildUpdates.value = voice.childUpdates.state(source)
+        val state = coordinator().stateOf(source)
+        if (state?.approval != null || state?.question != null || state?.phase == dev.androidagent.core.RunPhase.STOPPING) return@withLock
+        val batch = voice.childUpdates.take(source, voice.state.value.phase)
+        if (batch.isEmpty()) return@withLock
+        // A microphone event, local quiet control, or Stop may have won during scheduling.
+        if (!current() || batch.any { !it.allowed(source) } || !voice.childUpdates.canSubmit(voice.state.value.phase)) {
+            if (current()) voice.childUpdates.defer(batch, source)
+            return@withLock
+        }
+        mutableChildUpdates.value = voice.childUpdates.state(source)
+        voice.applyChildPlaybackPolicy()
+        voice.appendSpeech(VoiceChildUpdates.handoff(batch))
+        // A new user speech/quiet event during the RPC already closes the local playback gate.
+        voice.applyChildPlaybackPolicy()
+    }
+
+    /** Private session evidence separates app dispatch from an actual spoken response. */
+    private suspend fun traceChildUpdates(source: String, updates: List<dev.androidagent.core.SessionAgentUpdate>, stage: String) {
+        try {
+            sessions.appendTrace(source, buildJsonObject {
+                put("timestampMs", System.currentTimeMillis()); put("type", "child_update")
+                put("source", "voice_child"); put("stage", stage)
+                put("text", dev.androidagent.core.SessionAgentUpdate.prompt(updates))
+            })
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { android.util.Log.w("VoiceConversation", "Child update trace could not be saved") }
     }
 
     private suspend fun handle(event: VoiceEvent) {
@@ -175,10 +333,16 @@ class VoiceConversation(
                 mutableTranscript.value = mutableTranscript.value.let { current ->
                     VoiceTranscript(if (current.role == event.role) current.text + event.delta else event.delta, event.role)
                 }
+                val line = mutableTranscript.value.text
+                val echo = synchronized(pendingTypedTexts) { pendingTypedTexts.peekFirst()?.startsWith(line) == true }
+                if (event.role.equals("user", ignoreCase = true) && !echo) voice.childUpdates.userStarted()
+                if (event.role.equals("assistant", ignoreCase = true)) voice.childUpdates.assistantStarted()
+                voice.applyChildPlaybackPolicy()
             }
             is VoiceEvent.TranscriptDone -> {
                 val localSessionId = mutableSessionId.value ?: return
                 if (event.threadId != voice.state.value.threadId) return
+                if (!event.role.equals("user", ignoreCase = true) && !event.role.equals("assistant", ignoreCase = true)) return
                 val text = event.text.trim()
                 val skipTypedUserEcho = event.role.equals("user", ignoreCase = true) && synchronized(pendingTypedTexts) {
                     if (pendingTypedTexts.peekFirst() == text) {
@@ -191,19 +355,30 @@ class VoiceConversation(
                     // Saying "yes" / "כן" answers a waiting approval: in voice
                     // mode the card is under the voice screen. Only the user's
                     // own transcript can do this, never the agent's speech.
-                    if (role == "user") coordinator().answerApprovalByReply(text, record = false)
+                    if (role == "user") {
+                        userLine(text)
+                        val approved = coordinator().answerApprovalByReply(text, record = false, sessionId = localSessionId)
+                        if (!approved) coordinator().answerQuestionByReply(text, localSessionId)
+                    }
+                    if (role == "assistant") voice.childUpdates.assistantFinished()
                     sessions.append(ChatMessage(UUID.randomUUID().toString(), localSessionId, role, text, System.currentTimeMillis()))
                     val session = sessions.getSession(localSessionId)
                     if (role == "user" && session?.title == "New chat") sessions.rename(localSessionId, text.take(48))
                 }
+                // An empty real transcript still closes its speech turn; quoted echoes do not.
+                if (text.isBlank() && !skipTypedUserEcho && event.role.equals("user", ignoreCase = true)) voice.childUpdates.userFinished(false)
+                if (text.isBlank() && event.role.equals("assistant", ignoreCase = true)) voice.childUpdates.assistantFinished()
+                voice.applyChildPlaybackPolicy()
                 if (mutableTranscript.value.role == event.role) mutableTranscript.value = VoiceTranscript()
             }
             is VoiceEvent.Failure -> {
+                if (event.threadId != null && event.threadId != activeThreadId) return
                 coordinator().endVoice()
                 clear()
                 mutableFailures.tryEmit(event.message)
             }
             is VoiceEvent.Closed -> {
+                if (event.threadId != activeThreadId) return
                 coordinator().endVoice()
                 clear()
             }
@@ -211,13 +386,21 @@ class VoiceConversation(
         }
     }
 
-    private fun clear() {
+    private suspend fun clear() {
         // A chat that only came to Codex to talk goes back to its own engine.
-        returnTo?.let { (id, kind) -> scope.launch { runCatching { sessions.setEngine(id, kind) } } }
+        val previousEngine = returnTo
         returnTo = null
+        callEpoch++
+        voice.childUpdates.reset()
+        mutableChildUpdates.value = VoiceChildUpdateState()
         mutableSessionId.value = null
+        activeThreadId = null
         synchronized(pendingTypedTexts) { pendingTypedTexts.clear() }
         mutableTranscript.value = VoiceTranscript()
+        previousEngine?.let { previous ->
+            sessions.setEngine(previous.id, previous.engine)
+            sessions.setModelChoice(previous.id, previous.model, previous.reasoningEffort)
+        }
     }
 }
 

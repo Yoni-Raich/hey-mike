@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Read-only QA evidence, available only to the shell/system DUMP grant. -->
+        <receiver android:name=".QaEvidenceReceiver" android:exported="true" android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

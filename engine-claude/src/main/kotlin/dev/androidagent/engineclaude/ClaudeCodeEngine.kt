@@ -24,11 +24,14 @@ import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.AgentEngine
 import dev.androidagent.core.AgentModel
+import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.ClaudeProcessHost
+import dev.androidagent.core.CompactResult
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.RuntimePhase
+import dev.androidagent.core.RecoverableConnection
 import dev.androidagent.core.SecretRedactor
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolResult
@@ -42,10 +45,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -93,6 +98,8 @@ class ClaudeCodeEngine(
     private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
     /** Set when this engine runs the Claude Code of one of the user's computers, reached through [host]. */
     private val computer: ClaudeComputer? = null,
+    private val authRetryDelayMs: Long = 2_000,
+    private val catalogClock: () -> Long = System::nanoTime,
 ) : AgentEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 256)
@@ -104,10 +111,20 @@ class ClaudeCodeEngine(
     private val pendingApprovals = ConcurrentHashMap<String, PendingApproval>()
     private val modelLock = Mutex()
     @Volatile private var models: List<AgentModel>? = null
+    @Volatile private var modelReadAt: Long? = null
+    @Volatile private var modelRuntime: String = ""
+    @Volatile private var modelAttemptAt: Long? = null
+    private val slashLock = Mutex()
+    @Volatile private var slash: ClaudeProtocol.SlashCatalog? = null
+    @Volatile private var slashReadAt: Long? = null
+    @Volatile private var slashAttemptAt: Long? = null
+    @Volatile private var slashRuntime: String = ""
     private val usageLock = Mutex()
     private val loginLock = Mutex()
     @Volatile private var loginProcess: Process? = null
     @Volatile private var accountCache: Pair<Long, AccountStatus>? = null
+    /** Records native transcript IDs owned by a Mike turn before its UI events are delivered. */
+    var onNativeMessage: suspend (threadId: String, messageId: String) -> Unit = { _, _ -> }
 
     private class PendingTool(val threadId: String, val turnId: String, val result: CompletableDeferred<ToolResult>)
 
@@ -156,9 +173,7 @@ class ClaudeCodeEngine(
                 if (chat != null) {
                     withTimeoutOrNull(USAGE_TIMEOUT_MS) { chat.usage() }
                 } else {
-                    if (models == null) {
-                        probeModels().takeIf { it.isNotEmpty() }?.let { models = it }
-                    }
+                    modelCatalog()
                     null
                 }
             } catch (error: CancellationException) {
@@ -182,22 +197,32 @@ class ClaudeCodeEngine(
             loginProcess?.destroyForcibly()
             loginProcess = null
             accountCache = null
-            val process = host.start(ClaudeProtocol.AUTH_LOGIN_ARGS, home(), emptyMap())
+            val process = host.start(ClaudeProtocol.AUTH_LOGIN_ARGS, home(), mapOf("BROWSER" to "true"))
+            loginProcess = process
             val url = CompletableDeferred<String>()
             scope.launch { readLoginOutput(process.inputStream, url) }
             scope.launch { drain(process.errorStream) }
-            val found = try {
-                withTimeoutOrNull(LOGIN_URL_TIMEOUT_MS) { url.await() }
-            } catch (error: IllegalStateException) {
-                null
-            }
-            if (found == null) {
+            try {
+                val found = try {
+                    withTimeoutOrNull(LOGIN_URL_TIMEOUT_MS) { url.await() }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: IllegalStateException) {
+                    null
+                } ?: error("Claude did not give a sign-in link. Try again.")
+                AccountStatus(false, ClaudeProtocol.SIGN_IN_LABEL, loginUrl = found)
+            } catch (failure: Throwable) {
                 process.destroyForcibly()
-                error("Claude did not give a sign-in link. Try again.")
+                loginProcess = null
+                throw failure
             }
-            loginProcess = process
-            AccountStatus(false, ClaudeProtocol.SIGN_IN_LABEL, loginUrl = found)
         }
+    }
+
+    /** Stop a waiting login without logging out or stopping any chat. */
+    suspend fun cancelLogin() = loginLock.withLock {
+        loginProcess?.destroyForcibly()
+        loginProcess = null
     }
 
     /** Write the pasted code to the waiting login process, then read the result from `claude auth status`. */
@@ -208,18 +233,29 @@ class ClaudeCodeEngine(
         }
         loginLock.withLock {
             val process = loginProcess?.takeIf { it.isAlive } ?: error("The sign-in expired. Start it again.")
-            withContext(Dispatchers.IO) {
-                try {
-                    process.outputStream.write((clean + "\n").toByteArray(Charsets.UTF_8))
-                    process.outputStream.flush()
-                } catch (error: IOException) {
-                    throw IllegalStateException("The sign-in expired. Start it again.")
+            try {
+                withContext(Dispatchers.IO) {
+                    try {
+                        process.outputStream.write((clean + "\n").toByteArray(Charsets.UTF_8))
+                        process.outputStream.flush()
+                    } catch (error: IOException) {
+                        throw IllegalStateException("The sign-in expired. Start it again.")
+                    }
+                    val finished = withTimeoutOrNull(LOGIN_EXIT_TIMEOUT_MS) {
+                        while (process.isAlive) delay(50)
+                        true
+                    } == true
+                    check(finished && process.exitValue() == 0) { "Sign-in did not finish. Start it again." }
                 }
-                if (!process.waitFor(LOGIN_EXIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) process.destroyForcibly()
+            } finally {
+                if (process.isAlive) process.destroyForcibly()
+                loginProcess = null
             }
-            loginProcess = null
         }
         accountCache = null
+        models = null
+        modelReadAt = null
+        modelAttemptAt = null
         val status = account().let { if (it.signedIn) it else AccountStatus(false, "Sign-in did not finish. Try again.") }
         stream.emit(EngineEvent.AccountChanged(status))
         return status
@@ -229,6 +265,9 @@ class ClaudeCodeEngine(
         connect()
         runCommand(ClaudeProtocol.AUTH_LOGOUT_ARGS, COMMAND_TIMEOUT_MS)
         accountCache = null
+        models = null
+        modelReadAt = null
+        modelAttemptAt = null
         chatsLock.withLock { chats.values.forEach { it.shutdown() } }
         stream.emit(EngineEvent.AccountChanged(AccountStatus(false, ClaudeProtocol.SIGN_IN_LABEL)))
     }
@@ -237,18 +276,81 @@ class ClaudeCodeEngine(
 
     override suspend fun models(): List<String> = modelCatalog().map { it.id }
 
-    /** The CLI's own list from `initialize`, read once; the fixed aliases until then. */
+    /** Refresh the CLI's catalog after a minute or a runtime change. Keep the last good list offline. */
     override suspend fun modelCatalog(): List<AgentModel> {
-        models?.let { return it }
         if (!installed()) return ClaudeProtocol.FALLBACK_MODELS
         return modelLock.withLock {
-            models ?: runCatching { probeModels() }.getOrNull()?.takeIf { it.isNotEmpty() }?.also { models = it }
-                ?: ClaudeProtocol.FALLBACK_MODELS
+            val at = catalogClock()
+            val identity = host.runtimeIdentity
+            val sameRuntime = modelRuntime == identity
+            val fresh = modelReadAt?.let { at >= it && at - it < 60_000_000_000L } == true
+            val retryWait = modelAttemptAt?.let { at >= it && at - it < 30_000_000_000L } == true
+            if (sameRuntime && (fresh || retryWait)) return@withLock models ?: ClaudeProtocol.FALLBACK_MODELS
+            if (!sameRuntime) modelReadAt = null
+            modelAttemptAt = at
+            // A runtime change allows an immediate retry, but repeated failures still back off.
+            modelRuntime = identity
+            try {
+                probeModels().takeIf { it.isNotEmpty() }?.let {
+                    models = it
+                    modelReadAt = catalogClock()
+                }
+            } catch (cancelled: CancellationException) {
+                modelAttemptAt = null
+                throw cancelled
+            } catch (_: Exception) { /* Keep the catalog while offline. */ }
+            models ?: ClaudeProtocol.FALLBACK_MODELS
         }
     }
 
-    /** The skills the app installed under `<claudeHome>/.claude/skills`. Only `SKILL.md` files are read. */
-    override suspend fun skillCatalog(workspace: File, forceReload: Boolean): List<AgentSkill> = withContext(Dispatchers.IO) {
+    /**
+     * What the CLI itself offers behind `/`: its commands and its skills. A
+     * throwaway process answers `initialize`, as for the model list, and the
+     * answer is kept for a minute. Null until one has answered. A failed ask
+     * keeps the last answer of the same runtime and waits before it asks again.
+     */
+    private suspend fun slashCatalog(forceReload: Boolean): ClaudeProtocol.SlashCatalog? {
+        if (!installed()) return null
+        return slashLock.withLock {
+            val at = catalogClock()
+            val identity = host.runtimeIdentity
+            val sameRuntime = slashRuntime == identity
+            fun within(since: Long?, limit: Long) = since?.let { at >= it && at - it < limit } == true
+            val fresh = sameRuntime && within(slashReadAt, if (forceReload) SLASH_FORCE_MIN_NS else SLASH_CACHE_NS)
+            val retryWait = sameRuntime && within(slashAttemptAt, SLASH_RETRY_NS)
+            if (fresh || retryWait) return@withLock slash.takeIf { sameRuntime }
+            if (!sameRuntime) { slash = null; slashReadAt = null }
+            slashAttemptAt = at
+            slashRuntime = identity
+            try {
+                val args = ClaudeProtocol.commandProbeArgs(userSettingsOnly = computer == null)
+                probe(usage = false, args = args).initialize?.let(ClaudeProtocol::parseSlashCatalog)?.let {
+                    slash = it
+                    slashReadAt = catalogClock()
+                }
+            } catch (cancelled: CancellationException) {
+                slashAttemptAt = null
+                throw cancelled
+            } catch (_: Exception) { /* Keep what was known while the CLI cannot answer. */ }
+            slash
+        }
+    }
+
+    /** The CLI's built-in commands, as it lists them for a headless chat. Empty until it has answered. */
+    override suspend fun commandCatalog(workspace: File, forceReload: Boolean): List<AgentCommand> =
+        slashCatalog(forceReload)?.commands.orEmpty()
+
+    /**
+     * On the phone, the skills the app installed under
+     * `<claudeHome>/.claude/skills`; only `SKILL.md` files are read. A
+     * computer's skills are whatever its Claude Code loaded.
+     */
+    override suspend fun skillCatalog(workspace: File, forceReload: Boolean): List<AgentSkill> {
+        if (computer != null) return slashCatalog(forceReload)?.skills.orEmpty()
+        return installedSkills()
+    }
+
+    private suspend fun installedSkills(): List<AgentSkill> = withContext(Dispatchers.IO) {
         val root = File(host.homeDirectory, ".claude/skills")
         val rootPath = runCatching { root.canonicalFile.toPath() }.getOrNull() ?: return@withContext emptyList()
         root.listFiles().orEmpty().filter { it.isDirectory }.mapNotNull { dir ->
@@ -269,8 +371,21 @@ class ClaudeCodeEngine(
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
         openSessionAt(workspace.absolutePath, threadId, model, tools)
 
+    /** Give an idle native session back to another client, without stopping a running turn. */
+    suspend fun releaseSession(threadId: String) {
+        // Stopping can take seconds; it must not hold up every other chat.
+        val chat = chats[threadId] ?: return
+        chat.lock.withLock {
+            check(chat.idle()) { "Claude is still working in this chat. Stop or wait before switching clients." }
+            chat.stopProcess()
+        }
+    }
+
+    /** Whether this engine keeps a live `claude` for [threadId], so a holder seen on the computer is its own. */
+    fun holdsSession(threadId: String): Boolean = chats[threadId]?.alive == true
+
     /** [openSession] for a folder named as the machine that runs `claude` spells it: a computer's project folder. */
-    suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
+    suspend fun openSessionAt(cwd: String, threadId: String?, model: String?, tools: List<ToolDefinition>, requireExisting: Boolean = false): String {
         connect()
         val known = ClaudeProtocol.isSessionId(threadId)
         val id = if (known) threadId!! else UUID.randomUUID().toString()
@@ -284,6 +399,7 @@ class ClaudeCodeEngine(
             }
             val chat = chats.getOrPut(id) { Chat(id, dir, resumable = known) }
             chat.lock.withLock {
+                chat.requireExisting = requireExisting
                 chat.model = wantedModel
                 chat.tools = tools
                 chat.touch()
@@ -344,10 +460,12 @@ class ClaudeCodeEngine(
             val turnId = UUID.randomUUID().toString()
             val frame = UUID.randomUUID().toString()
             val turn = synchronized(chat.state) { chat.mapper.begin(turnId, frame) }
+            chat.rememberAuthReplay(turn, content)
             stream.emit(EngineEvent.TurnStarted(threadId, turnId))
             try {
                 chat.write(ClaudeProtocol.userFrame(frame, content))
             } catch (error: Exception) {
+                chat.forgetAuthReplay()
                 synchronized(chat.state) { chat.mapper.abandon(turn) }
                 throw error
             }
@@ -356,9 +474,9 @@ class ClaudeCodeEngine(
     }
 
     /** Write `/compact` and wait for its `result`. */
-    override suspend fun compact(threadId: String) {
+    override suspend fun compact(threadId: String): CompactResult? {
         val chat = chats[threadId] ?: error("Send a message in this chat before compacting it.")
-        chat.lock.withLock {
+        return chat.lock.withLock {
             chat.ensureRunning()
             val frame = UUID.randomUUID().toString()
             val turn = synchronized(chat.state) { chat.mapper.begin("compact-$frame", frame, internal = true) }
@@ -375,21 +493,28 @@ class ClaudeCodeEngine(
                 error("Compacting took too long.")
             }
             check(status == "completed") { turn.error ?: "Claude could not compact this chat." }
+            turn.compact
         }
     }
 
     /** A new user message inside the running turn. Fails when the turn has already ended. */
     override suspend fun steer(threadId: String, turnId: String, prompt: String) {
         val chat = chats[threadId] ?: error(TURN_OVER)
-        val frame = UUID.randomUUID().toString()
-        synchronized(chat.state) {
-            val turn = chat.mapper.active
-            check(turn != null && turn.turnId == turnId && !turn.ended && !turn.interruptRequested && !turn.internal) { TURN_OVER }
-            chat.mapper.addFrame(turn, frame)
+        // Serialize the intent change and write with retry, so an older frame
+        // cannot overtake the steered message after its content was selected.
+        chat.lock.withLock {
+            val frame = UUID.randomUUID().toString()
+            synchronized(chat.state) {
+                val turn = chat.mapper.active
+                check(turn != null && turn.turnId == turnId && !turn.ended && !turn.interruptRequested && !turn.internal) { TURN_OVER }
+                turn.workStarted = true
+                chat.cancelAuthReplay()
+                chat.mapper.addFrame(turn, frame)
+            }
+            chat.write(
+                ClaudeProtocol.userFrame(frame, JsonArray(listOf(ClaudeProtocol.textBlock(prompt))), ClaudeProtocol.STEER_PRIORITY),
+            )
         }
-        chat.write(
-            ClaudeProtocol.userFrame(frame, JsonArray(listOf(ClaudeProtocol.textBlock(prompt))), ClaudeProtocol.STEER_PRIORITY),
-        )
     }
 
     /**
@@ -402,6 +527,7 @@ class ClaudeCodeEngine(
         val turn = synchronized(chat.state) {
             chat.mapper.active?.takeIf { it.turnId == turnId && !it.ended }?.also { it.interruptRequested = true }
         } ?: return
+        chat.cancelAuthReplay()
         failPendingTools(threadId, turnId)
         val sent = runCatching { chat.write(ClaudeProtocol.interruptRequest("interrupt-${UUID.randomUUID()}")) }.isSuccess
         scope.launch {
@@ -463,11 +589,12 @@ class ClaudeCodeEngine(
 
     // ---- one chat process ---------------------------------------------------------
 
-    private data class RunningConfig(val model: String, val effort: String?, val toolNames: List<String>)
+    private data class RunningConfig(val model: String, val effort: String?, val toolNames: List<String>, val runtime: String)
 
     private class ChatStartException(message: String, val notFound: Boolean) : IllegalStateException(message)
 
     private inner class Chat(val threadId: String, val cwd: String, @Volatile var resumable: Boolean) {
+        @Volatile var requireExisting = false
         val lock = Mutex()
         val state = Any()
         // Paths are shown relative to the chat folder only where this JVM can name it.
@@ -486,6 +613,20 @@ class ClaudeCodeEngine(
         private val controls = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
         private val stderrLock = Any()
         private val stderrTail = ArrayDeque<String>()
+        private var authReplay: Pair<ClaudeStreamMapper.Turn, JsonArray>? = null
+        private var authRetryJob: Job? = null
+
+        fun rememberAuthReplay(turn: ClaudeStreamMapper.Turn, content: JsonArray) {
+            synchronized(state) { authReplay = turn to content }
+        }
+
+        fun forgetAuthReplay() {
+            synchronized(state) { authReplay = null }
+        }
+
+        fun cancelAuthReplay() {
+            synchronized(state) { authReplay = null; authRetryJob?.cancel() }
+        }
 
         val alive: Boolean get() = process?.isAlive == true
 
@@ -497,7 +638,7 @@ class ClaudeCodeEngine(
 
         /** Start or restart the process when it is gone or its model, effort or tools changed. Caller holds [lock]. */
         suspend fun ensureRunning() {
-            val wanted = RunningConfig(model, effort, tools.map { it.name })
+            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity)
             if (alive && running == wanted) return
             check(idle()) { "A turn is already running in this chat." }
             stopProcess()
@@ -508,7 +649,7 @@ class ClaudeCodeEngine(
                 } catch (error: ChatStartException) {
                     // A session that never got a message has no file to resume.
                     // Starting it under the same id keeps the chat's id stable.
-                    if (!error.notFound) throw error
+                    if (!error.notFound || requireExisting) throw error
                     start(resume = false)
                 }
             } else {
@@ -531,7 +672,7 @@ class ClaudeCodeEngine(
                     PROMPT_FILE to place.instructions,
                     MCP_CONFIG_FILE to StdioMcp.config(ClaudeProtocol.MCP_SERVER_NAME),
                 )
-                attach(place.startChat(threadId, cwd, files, ClaudeProtocol.CHAT_ENV) { paths ->
+                attach(place.startChat(threadId, cwd, files, ClaudeProtocol.COMPUTER_CHAT_ENV) { paths ->
                     ClaudeProtocol.computerChatArgs(
                         threadId, resume, model, effort,
                         mcpConfig = paths.getValue(MCP_CONFIG_FILE),
@@ -607,24 +748,38 @@ class ClaudeCodeEngine(
         }
 
         private suspend fun readLoop(started: Process, ended: CompletableDeferred<Unit>) {
+            var failure = ""
             try {
                 started.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                     while (true) {
                         val line = reader.readLine() ?: break
                         if (line.isBlank()) continue
-                        // Stdout is never logged: a bad line is dropped, not printed.
-                        val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
-                        dispatch(synchronized(state) { mapper.map(message) })
+                        // A damaged final frame cannot silently become successful
+                        // completion with no answer. Never include its payload.
+                        val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull()
+                            ?: throw IOException("Invalid Claude protocol message; task outcome is unknown")
+                        val signals = synchronized(state) {
+                            mapper.map(message).also {
+                                if (mapper.active?.workStarted == true) authReplay = null
+                            }
+                        }
+                        if (message.string("type") in setOf("user", "assistant") && synchronized(state) { mapper.shownTurn() != null }) {
+                            message.string("uuid")?.takeIf(ClaudeProtocol::isSessionId)?.let { onNativeMessage(threadId, it) }
+                        }
+                        dispatch(signals)
                     }
                 }
-            } catch (_: IOException) {
+            } catch (error: IOException) {
+                failure = SecretRedactor.redactUiText(error.message.orEmpty()).take(500)
             } finally {
                 withContext(NonCancellable) {
                     ended.complete(Unit)
                     stderrJob?.let { job -> withTimeoutOrNull(500) { job.join() } }
                     if (process === started) {
+                        started.destroy()
                         failControls()
-                        dispatch(synchronized(state) { mapper.processEnded(stderrSnapshot(3)) })
+                        val detail = listOf(failure, stderrSnapshot(3)).filter { it.isNotBlank() }.joinToString("; ")
+                        dispatch(synchronized(state) { mapper.processEnded(detail) })
                     }
                 }
             }
@@ -640,7 +795,32 @@ class ClaudeCodeEngine(
                     }
                     is Signal.ControlRequest -> onControlRequest(signal)
                     is Signal.Init -> checkInit(signal.message)
-                    is Signal.Ended -> failPendingTools(threadId, signal.turn.turnId)
+                    is Signal.Ended -> {
+                        synchronized(state) { authReplay = null }
+                        authRetryJob?.cancel()
+                        failPendingTools(threadId, signal.turn.turnId)
+                    }
+                    is Signal.RetryAuth -> retryAuthentication(signal.turn)
+                }
+            }
+        }
+
+        private suspend fun retryAuthentication(turn: ClaudeStreamMapper.Turn) {
+            stream.emit(EngineEvent.Activity("Claude is refreshing sign-in; retrying once before any work", threadId, turn.turnId))
+            authRetryJob = scope.launch {
+                delay(authRetryDelayMs)
+                lock.withLock {
+                    val frame = UUID.randomUUID().toString()
+                    val content = synchronized(state) {
+                        authReplay?.takeIf { it.first === turn && mapper.replayAuth(turn, frame) }?.second
+                    } ?: return@withLock
+                    try {
+                        write(ClaudeProtocol.userFrame(frame, content))
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        dispatch(synchronized(state) { mapper.end(turn, "failed", SecretRedactor.redactUiText(error.message ?: "Claude stopped before retrying sign-in")) })
+                    }
                 }
             }
         }
@@ -654,7 +834,15 @@ class ClaudeCodeEngine(
         private suspend fun onControlRequest(signal: Signal.ControlRequest) {
             val place = computer
             val subtype = signal.request.string("subtype")
+            if (subtype == "can_use_tool") synchronized(state) {
+                mapper.toolTurn()?.workStarted = true
+                authReplay = null
+            }
             val mcp = if (place != null && subtype == "mcp_message") StdioMcp.messageOf(signal.request, ClaudeProtocol.MCP_SERVER_NAME) else null
+            if (mcp?.string("method") == "tools/call") synchronized(state) {
+                mapper.toolTurn()?.workStarted = true
+                authReplay = null
+            }
             when {
                 mcp != null -> scope.launch {
                     val body = try {
@@ -673,7 +861,9 @@ class ClaudeCodeEngine(
         }
 
         private suspend fun askUser(signal: Signal.ControlRequest) {
-            val turn = synchronized(state) { mapper.toolTurn() }
+            val turn = synchronized(state) {
+                mapper.toolTurn()?.also { it.workStarted = true; authReplay = null }
+            }
             if (turn == null) {
                 runCatching { write(ClaudeProtocol.controlSuccess(signal.requestId, ClaudePermission.deny("No task is running in this chat."))) }
                 return
@@ -736,9 +926,11 @@ class ClaudeCodeEngine(
             writeLock.withLock {
                 val out = writer ?: error("Claude is not running for this chat.")
                 try {
-                    out.write(message.toString())
-                    out.newLine()
-                    out.flush()
+                    runInterruptible {
+                        out.write(message.toString())
+                        out.newLine()
+                        out.flush()
+                    }
                 } catch (error: IOException) {
                     throw IllegalStateException("Claude is not running for this chat.", error)
                 }
@@ -746,7 +938,9 @@ class ClaudeCodeEngine(
         }
 
         private suspend fun onToolCall(name: String, arguments: JsonObject): ToolResult {
-            val turn = synchronized(state) { mapper.toolTurn() }
+            val turn = synchronized(state) {
+                mapper.toolTurn()?.also { it.workStarted = true; authReplay = null }
+            }
                 ?: return ToolResult("No task is running in this chat, so the tool was not run.", success = false)
             val requestId = "claude-${UUID.randomUUID()}"
             val pending = PendingTool(threadId, turn.turnId, CompletableDeferred())
@@ -767,6 +961,8 @@ class ClaudeCodeEngine(
          * it is marked unusable: the next turn starts a new one.
          */
         fun kill() {
+            forgetAuthReplay()
+            authRetryJob?.cancel()
             running = null
             process?.destroyForcibly()
             server?.stop()
@@ -775,12 +971,17 @@ class ClaudeCodeEngine(
 
         /** Stop an idle process: close stdin so the CLI exits by itself, then force it after 2 s. */
         suspend fun stopProcess() {
+            forgetAuthReplay()
+            authRetryJob?.cancel()
             val started = process
             process = null
             running = null
             val out = writer
             writer = null
             withContext(Dispatchers.IO) {
+                // A recovering writer may be waiting for a receipt. Destroy the
+                // transport first to wake it before BufferedWriter.close takes its lock.
+                if (started is RecoverableConnection) started.destroy()
                 runCatching { out?.close() }
                 if (started != null && !started.waitFor(STOP_GRACE_MS, TimeUnit.MILLISECONDS)) started.destroyForcibly()
             }
@@ -841,8 +1042,8 @@ class ClaudeCodeEngine(
      * Ask a throwaway process for `initialize` and, with [usage], `get_usage`.
      * It sends no message, so no usage is spent.
      */
-    private suspend fun probe(usage: Boolean): Probe = withContext(Dispatchers.IO) {
-        val process = host.start(ClaudeProtocol.probeArgs(), home(), emptyMap())
+    private suspend fun probe(usage: Boolean, args: List<String> = ClaudeProtocol.probeArgs()): Probe = withContext(Dispatchers.IO) {
+        val process = host.start(args, home(), emptyMap())
         try {
             launch { drain(process.errorStream) }
             val wanted = if (usage) setOf(PROBE_ID, PROBE_USAGE_ID) else setOf(PROBE_ID)
@@ -953,6 +1154,9 @@ class ClaudeCodeEngine(
         private const val ACCOUNT_CACHE_NS = 30_000_000_000L
         private const val MAX_CODE_CHARS = 4_096
         private const val MAX_SKILL_BYTES = 256L * 1024
+        private const val SLASH_CACHE_NS = 60_000_000_000L
+        private const val SLASH_FORCE_MIN_NS = 5_000_000_000L
+        private const val SLASH_RETRY_NS = 30_000_000_000L
         private const val MAX_AGENTS_MD_BYTES = 1024L * 1024
         private const val MAX_LOGIN_OUTPUT = 64 * 1024
         private const val MAX_COMMAND_OUTPUT = 256 * 1024

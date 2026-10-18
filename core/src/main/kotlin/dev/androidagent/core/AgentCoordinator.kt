@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -78,6 +80,8 @@ class AgentCoordinator(
      * nowhere to read from; the tool then says so.
      */
     private val chatMedia: (suspend (address: String, workspace: File) -> String)? = null,
+    private val chatTitles: ChatTitleManager = ChatTitleManager(sessions, engine),
+    private val sessionAgents: (() -> SessionAgents)? = null,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -97,6 +101,9 @@ class AgentCoordinator(
     }
     private val mutableState = MutableStateFlow(RunState())
     val state: StateFlow<RunState> = mutableState.asStateFlow()
+    private val mutableOutcomes = MutableStateFlow<Map<String, RunState>>(emptyMap())
+    /** Retained after a coordinator is reused, and only after history is flushed. */
+    val outcomes: StateFlow<Map<String, RunState>> = mutableOutcomes.asStateFlow()
     private val availableState = MutableStateFlow(true)
     val available = availableState.asStateFlow()
     private val epoch = AtomicLong()
@@ -135,7 +142,6 @@ class AgentCoordinator(
     private val traceFailureReported = AtomicBoolean(false)
     private val assistantText = StringBuilder()
     private var assistantOutcome = "complete"
-    private var controlTakeover = false
     private var awaitingTurn = false
     private var voiceMode = false
     private val startupEvents = ArrayDeque<EngineEvent>()
@@ -172,6 +178,11 @@ class AgentCoordinator(
     /** Whether events of [threadId] belong to this coordinator's run. */
     internal fun ownsThread(threadId: String): Boolean = synchronized(lifecycleLock) { thread == threadId }
 
+    /** A new turn must not be mistaken for a retained result from an older one. */
+    internal fun clearOutcome(sessionId: String) = synchronized(lifecycleLock) {
+        mutableOutcomes.value = mutableOutcomes.value - sessionId
+    }
+
     override val freed: Flow<*> get() = available
     override fun canStart(): Boolean = availableState.value && !state.value.active
     override fun phaseOf(sessionId: String): RunPhase? = state.value.takeIf { it.active && it.sessionId == sessionId }?.phase
@@ -186,6 +197,14 @@ class AgentCoordinator(
         skill: AgentSkill?,
         planMode: Boolean,
         engineKind: EngineKind?,
+    ) = sendRequest(sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind, null)
+
+    override fun send(turn: QueuedTurn) = sendRequest(turn.sessionId, turn.prompt, turn.imagePaths.map(::File),
+        turn.model, turn.effort, turn.skill, turn.planMode, turn.engine, turn.displayPrompt, turn.agentContext)
+
+    private fun sendRequest(
+        sessionId: String, prompt: String, images: List<File>, model: String?, reasoningEffort: String?,
+        skill: AgentSkill?, planMode: Boolean, engineKind: EngineKind?, displayPrompt: String?, agentContext: Boolean = false,
     ) {
         if (prompt.isBlank() && images.isEmpty()) return
         synchronized(lifecycleLock) {
@@ -195,12 +214,13 @@ class AgentCoordinator(
             }
             if (!availableState.value) return
             availableState.value = false
+            mutableOutcomes.value = mutableOutcomes.value - sessionId
             val token = epoch.incrementAndGet()
             val runCompletion = CompletableDeferred<Unit>()
             // The chat's engine names every message this run shows; run() reads
             // it again from the store before anything is checked.
             runEngine = engineKind ?: sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine ?: EngineKind.CODEX
-            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}")
+            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}", runId = UUID.randomUUID().toString())
             completion = runCompletion
             thread = null
             turn = null
@@ -214,7 +234,6 @@ class AgentCoordinator(
             approvalNanos.set(0)
             assistantText.clear()
             assistantOutcome = "complete"
-            controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
             remoteItems.clear()
@@ -222,7 +241,7 @@ class AgentCoordinator(
             overlaySpeech = null
             runWorkspace = null
             screenSticky = false
-            runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind) }
+            runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind, displayPrompt, agentContext) }
         }
     }
 
@@ -237,6 +256,7 @@ class AgentCoordinator(
             check(availableState.value && !state.value.active) { "Another agent run is already active." }
             availableState.value = false
             epoch.incrementAndGet()
+            mutableOutcomes.value = mutableOutcomes.value - sessionId
             // The phone is taken at the first tool call, as for a typed turn.
             runWorkspace = workspace
             screenSticky = false
@@ -246,13 +266,12 @@ class AgentCoordinator(
             assistantId = null
             assistantText.clear()
             assistantOutcome = "complete"
-            controlTakeover = false
             awaitingTurn = false
             startupEvents.clear()
             overlaySpeech = null
             completion = null
             runJob = null
-            mutableState.value = RunState(RunPhase.THINKING, sessionId, "Voice ready")
+            mutableState.value = RunState(RunPhase.THINKING, sessionId, "Voice ready", runId = UUID.randomUUID().toString())
         }
     }
 
@@ -319,8 +338,10 @@ class AgentCoordinator(
             if (leased) share.lease.release(this)
             return null
         }
+        // A rule drives the screen: a browser page shown for a chat steps aside.
         runCatching { overlay.showState(OverlayState(OverlayPhase.CONTROLLING, label)) }
         return try {
+            tools.screenInUse(token.toString(), workspace)
             block()
         } finally {
             val stillOurs = synchronized(lifecycleLock) {
@@ -365,7 +386,6 @@ class AgentCoordinator(
                 device = deviceHeld.also { deviceHeld = false },
             )
             turn = null
-            controlTakeover = false
             mutableState.value = state.value.copy(
                 phase = RunPhase.STOPPING,
                 status = "Ending voice",
@@ -375,6 +395,7 @@ class AgentCoordinator(
             )
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING, "Voice")) }
         scope.launch {
@@ -399,7 +420,8 @@ class AgentCoordinator(
                         assistantId = null
                         assistantText.clear()
                         completion = null
-                        mutableState.value = RunState(sessionId = context.sessionId, status = "Voice ended")
+                        mutableState.value = RunState(sessionId = context.sessionId, status = "Voice ended", runId = state.value.runId)
+                        context.sessionId?.let { id -> mutableOutcomes.value = mutableOutcomes.value + (id to mutableState.value) }
                     }
                 }
                 runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, "Voice ended")) }
@@ -420,6 +442,8 @@ class AgentCoordinator(
         skill: AgentSkill?,
         planMode: Boolean,
         engineKind: EngineKind?,
+        displayPrompt: String?,
+        agentContext: Boolean,
     ) {
         try {
             traceFailureReported.set(false)
@@ -429,14 +453,15 @@ class AgentCoordinator(
             // The turn names its engine, and the chat moves to it first.
             val before = sessions.getSession(sessionId) ?: error("Chat no longer exists")
             if (engineKind != null && before.engine != engineKind) sessions.setEngine(sessionId, engineKind)
-            val sent = message(sessionId, "user", prompt, attachments = images.map { it.absolutePath })
+            val sent = message(sessionId, if (agentContext) "note" else "user", displayPrompt ?: prompt, attachments = images.map { it.absolutePath })
             sessions.append(sent)
-            trace(sessionId, "user", buildJsonObject {
+            trace(sessionId, if (agentContext) "child_update" else "user", buildJsonObject {
                 put("text", prompt)
+                displayPrompt?.let { put("displayText", it) }
                 put("attachments", buildJsonArray { images.forEach { add(it.absolutePath) } })
             })
+            if (!agentContext) chatTitles.seed(sessionId, displayPrompt ?: prompt)
             val session = sessions.getSession(sessionId) ?: error("Chat no longer exists")
-            if (session.title == "New chat") sessions.rename(sessionId, prompt.take(48).ifBlank { "Image chat" })
             val work = sessions.workspace(sessionId)
             // The phone is taken at the first tool call, so a chat that only
             // thinks never waits for one that is driving it.
@@ -474,8 +499,18 @@ class AgentCoordinator(
                 DeviceCapabilities.of(tools, adbStatus()),
                 planModel = if (planMode) model else null,
             )
+            if (!activateTurn(token, startedTurn)) {
+                // Some transports finish a sent request after cancellation.
+                // The returned ID still belongs to the original turn, so stop
+                // it without activating its tools or affecting another chat.
+                withContext(NonCancellable) {
+                    runCatching { withTimeout(2_000) { engine.interrupt(openedThread, startedTurn) } }
+                }
+                return
+            }
             if (session.catchUpFrom != null) sessions.markCaughtUp(sessionId)
-            if (!activateTurn(token, startedTurn)) return
+            ensureCurrent(token)
+            if (session.engineThreadId != openedThread) chatTitles.nameNewThread(sessionId, openedThread)
             ensureCurrent(token)
             runCompletion.await()
         } catch (cancelled: CancellationException) {
@@ -486,7 +521,10 @@ class AgentCoordinator(
                 synchronized(lifecycleLock) {
                     if (isCurrentLocked(token)) {
                         assistantOutcome = "error"
-                        mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = error.message ?: "Run failed", controlling = false)
+                        mutableState.value = state.value.copy(
+                            phase = RunPhase.ERROR, status = error.message ?: "Run failed", controlling = false,
+                            outcomeUnknown = awaitingTurn || turn != null,
+                        )
                     }
                 }
             }
@@ -548,14 +586,18 @@ class AgentCoordinator(
         return answerQuestion(id, reply)
     }
 
-    fun steer(prompt: String) {
+    fun steer(prompt: String) = steer(prompt, userReply = true)
+
+    internal fun steerAgentMessage(prompt: String) = steer(prompt, userReply = false)
+
+    private fun steer(prompt: String, userReply: Boolean) {
         if (prompt.isBlank()) return
         // Typing "yes" while an approval waits answers it. Steering it to the
         // agent instead would leave the tool call blocked on a card the user
         // may not be looking at.
-        if (answerApprovalByReply(prompt)) return
+        if (userReply && answerApprovalByReply(prompt)) return
         // The same for a question: what the user types while one waits is its answer.
-        if (answerQuestionByReply(prompt)) return
+        if (userReply && answerQuestionByReply(prompt)) return
         val request = synchronized(lifecycleLock) {
             val current = state.value
             val currentThread = thread
@@ -584,6 +626,39 @@ class AgentCoordinator(
         }
     }
 
+    internal fun acceptsAgentMessage(): Boolean = synchronized(lifecycleLock) {
+        state.value.active && state.value.phase !in setOf(RunPhase.STARTING, RunPhase.STOPPING) && thread != null && turn != null
+    }
+
+    /** Background child data never goes through the user's approval/question reply parser. */
+    internal suspend fun receiveAgentContext(prompt: String, allowed: () -> Boolean): Boolean {
+        val request = synchronized(lifecycleLock) {
+            val current = state.value
+            if (!allowed() || voiceMode || !current.active || current.phase in setOf(RunPhase.STARTING, RunPhase.STOPPING) ||
+                current.approval != null || current.question != null || thread == null || turn == null) null
+            else SteerRequest(epoch.get(), current.sessionId, thread!!, turn!!, prompt)
+        } ?: return false
+        val delivered = CompletableDeferred<Boolean>()
+        val job = launchControl {
+            try {
+                if (!allowed() || !isCurrentTurn(request.token, request.threadId, request.turnId)) {
+                    delivered.complete(false)
+                    return@launchControl
+                }
+                engine.steer(request.threadId, request.turnId, request.prompt)
+                request.sessionId?.let { id ->
+                    trace(id, "child_update", buildJsonObject { put("text", prompt); put("source", "live_child") })
+                }
+                delivered.complete(true)
+            } catch (cancelled: CancellationException) {
+                delivered.complete(true) // Stop consumes the pending dispatch; it must not resume later.
+                throw cancelled
+            } catch (error: Exception) { delivered.completeExceptionally(error) }
+        }
+        job.invokeOnCompletion { if (!delivered.isCompleted) delivered.complete(true) }
+        return delivered.await()
+    }
+
     fun stop() {
         if (synchronized(lifecycleLock) { voiceMode }) {
             endVoice()
@@ -609,6 +684,7 @@ class AgentCoordinator(
                 snapshot = snapshot,
                 threadId = thread,
                 turnId = turn,
+                dispatchPending = awaitingTurn,
                 assistantId = assistantId,
                 text = assistantText.toString(),
                 controls = controls,
@@ -619,10 +695,10 @@ class AgentCoordinator(
             )
             awaitingTurn = false
             startupEvents.clear()
-            controlTakeover = false
             mutableState.value = snapshot.copy(phase = RunPhase.STOPPING, status = "Stopping", controlling = false, approval = null, question = null)
             result
         }
+        tools.revokeIndependentTools()
         if (context.device) tools.revoke()
         runCatching { overlay.updateState(OverlayState(OverlayPhase.STOPPING)) }
         context.runJob?.cancel()
@@ -636,15 +712,22 @@ class AgentCoordinator(
                 val engineStop = async {
                     val interrupted = runCatching {
                         withTimeout(2_000) {
-                            if (context.threadId != null && context.turnId != null) engine.interrupt(context.threadId, context.turnId)
-                            else if (!share.othersActive()) engine.close()
+                            when {
+                                context.threadId != null && context.turnId != null -> {
+                                    engine.interrupt(context.threadId, context.turnId)
+                                    true
+                                }
+                                !context.dispatchPending -> true // No turn/start was sent.
+                                !share.othersActive() -> { engine.close(); true }
+                                else -> false
+                            }
                         }
-                    }.isSuccess
-                    if (!interrupted && !share.othersActive()) runCatching { engine.close() }
+                    }.getOrDefault(false)
+                    interrupted || (!share.othersActive() && runCatching { withTimeout(2_000) { engine.close() } }.isSuccess)
                 }
                 deviceStop.await()
                 context.toolsInFlight.forEach { job -> runCatching { withTimeout(2_000) { job.join() } } }
-                engineStop.await()
+                val stopConfirmed = engineStop.await()
                 context.flush?.let { job -> runCatching { withTimeout(1_000) { job.join() } } }
                 context.assistantId?.let { id ->
                     runCatching {
@@ -662,7 +745,13 @@ class AgentCoordinator(
                         assistantText.clear()
                         assistantOutcome = "complete"
                         completion = null
-                        mutableState.value = RunState(sessionId = context.snapshot.sessionId, status = "Stopped")
+                        mutableState.value = RunState(
+                            sessionId = context.snapshot.sessionId,
+                            status = if (stopConfirmed) "Stopped" else "Stopped locally; computer interruption could not be confirmed",
+                            stopConfirmed = stopConfirmed,
+                            runId = context.snapshot.runId,
+                        )
+                        context.snapshot.sessionId?.let { id -> mutableOutcomes.value = mutableOutcomes.value + (id to mutableState.value) }
                     }
                 }
                 runCatching { overlay.finish(OverlayState(OverlayPhase.DONE, "Stopped")) }
@@ -934,8 +1023,13 @@ class AgentCoordinator(
     private suspend fun activateTurn(token: Long, startedTurn: String): Boolean {
         val replay = synchronized(lifecycleLock) {
             if (!isCurrentLocked(token) || startedTurn.isBlank()) {
-                startupEvents.clear()
-                awaitingTurn = false
+                // A late reply may arrive after this coordinator was reused.
+                // Only the old turn's interruption may run; its reply must not
+                // clear the new turn's buffered calls or startup marker.
+                if (epoch.get() == token) {
+                    startupEvents.clear()
+                    awaitingTurn = false
+                }
                 null
             } else {
                 turn = startedTurn
@@ -951,12 +1045,18 @@ class AgentCoordinator(
 
     private fun bufferStartupEvent(event: EngineEvent): Boolean = synchronized(lifecycleLock) {
         if (!awaitingTurn) return@synchronized false
+        // A lost connection also loses the start reply; waiting for that reply
+        // before handling its failure would strand the whole run.
+        if (event is EngineEvent.Failure && event.uncertain) return@synchronized false
         val expectedThread = thread
         val eventThread = threadIdOf(event)
         val eventTurn = turnIdOf(event)
         if (expectedThread.isNullOrBlank() || eventThread != expectedThread || eventTurn.isNullOrBlank()) {
             false
         } else {
+            // Keep the started ID only for Stop. All startup events still wait
+            // for the turn/start reply before any text or tool can be handled.
+            if (event is EngineEvent.TurnStarted) turn = eventTurn
             startupEvents.addLast(event)
             true
         }
@@ -976,7 +1076,7 @@ class AgentCoordinator(
     private fun failureMatches(event: EngineEvent.Failure): Boolean = synchronized(lifecycleLock) {
         if (!state.value.active || state.value.phase == RunPhase.STOPPING) return@synchronized false
         if (event.threadId.isNullOrBlank() && event.turnId.isNullOrBlank()) true
-        else event.threadId == thread && event.turnId == turn
+        else event.threadId == thread && (event.turnId == turn || (event.uncertain && event.turnId.isNullOrBlank()))
     }
 
     private fun isCurrent(token: Long): Boolean = synchronized(lifecycleLock) { isCurrentLocked(token) }
@@ -1099,6 +1199,7 @@ class AgentCoordinator(
                     runCatching { engine.answerTool(event.requestId, ToolResult("Run stopped. No device action was performed.", success = false)) }
                     return
                 }
+                val receivedAt = nowNanos()
                 val token = synchronized(lifecycleLock) { epoch.get() }
                 val sessionId = synchronized(lifecycleLock) { state.value.sessionId } ?: return
                 flushAssistantSegment()
@@ -1108,12 +1209,21 @@ class AgentCoordinator(
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         // The chat's own tools leave the phone alone, so they do not wait for it.
                         if (event.name in ChatTools.NAMES) {
-                            serveChatTool(token, sessionId, event)
+                            serveChatTool(token, sessionId, event, receivedAt)
                             return@withLock
                         }
-                        if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
-                        if (usesScreen(event.name)) synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
-                        val visible = tools.needsControl(event.name)
+                        val independent = !tools.requiresDeviceLease(event.name)
+                        if (independent) {
+                            synchronized(lifecycleLock) {
+                                val work = runWorkspace
+                                if (!isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty()) || work == null) return@withLock
+                                tools.beginIndependentTool(event.name, token.toString(), work)
+                            }
+                        } else if (!claimDevice(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
+                        val visible = usesScreen(event.name, event.arguments)
+                        if (visible) {
+                            synchronized(lifecycleLock) { if (deviceHeld) screenSticky = true }
+                        }
                         val capture = tools.hidesOverlayDuringCapture(event.name)
                         // act_and_observe wraps the real action, so report that
                         // instead: callers care that a tap is happening, not
@@ -1132,35 +1242,39 @@ class AgentCoordinator(
                         }
                         var captureHidden = false
                         var result: ToolResult
+                        var callTraced = false
+                        val callStarted = nowNanos()
+                        var dispatchStarted: Long? = null
+                        var dispatchFinished: Long? = null
+                        var waitedNanos = 0L
                         try {
-                            if (capture) {
-                                overlay.setCaptureHidden(true)
-                                captureHidden = true
-                            }
+                            if (visible) runWorkspace?.let { tools.screenInUse(token.toString(), it) }
                             if (visible) {
-                                val takeover = synchronized(lifecycleLock) { controlTakeover }
-                                if (takeover) overlay.updateState(overlayState)
-                                else {
-                                    overlay.showState(overlayState)
-                                    synchronized(lifecycleLock) {
-                                        if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) controlTakeover = true
-                                    }
-                                }
-                            } else {
+                                // Idempotent show also checks a replaced/reconnected window host.
+                                overlay.showState(overlayState)
+                            } else if (!independent) {
                                 overlay.updateState(overlayState)
+                            }
+                            // Attach before hiding: a first screen read must not create
+                            // a visible card after the capture has already hidden it.
+                            if (capture) {
+                                captureHidden = true
+                                overlay.setCaptureHidden(true)
                             }
                             ensureCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())
                             synchronized(lifecycleLock) {
                                 mutableState.value = state.value.copy(phase = if (visible) RunPhase.CONTROLLING else RunPhase.TOOL, controlling = visible, status = status, toolName = toolName)
                             }
-                            trace(sessionId, "tool_call", buildJsonObject {
+                            withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
                                 put("threadId", event.threadId.orEmpty())
                                 put("turnId", event.turnId.orEmpty())
                                 put("requestId", event.requestId)
                                 put("name", event.name)
                                 put("arguments", event.arguments)
-                            })
+                            }); callTraced = true }
+                            ensureCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())
                             val toolStart = nowNanos()
+                            dispatchStarted = toolStart
                             // Any approval this call raises is subtracted below,
                             // so tool time stays device time.
                             val approvalsBefore = approvalNanos.get()
@@ -1168,23 +1282,29 @@ class AgentCoordinator(
                             try { result = tools.invoke(event.name, event.arguments) }
                             finally {
                                 val waited = approvalNanos.get() - approvalsBefore
+                                waitedNanos = waited
+                                dispatchFinished = nowNanos()
                                 toolMs += ((nowNanos() - toolStart) - waited).coerceAtLeast(0) / 1_000_000
                             }
                         } catch (cancelled: CancellationException) {
+                            if (callTraced) traceToolCancelled(sessionId, event, callStarted, cancelled)
                             throw cancelled
                         } catch (error: Exception) {
                             result = ToolResult(error.message ?: "Device action failed", success = false)
                         } finally {
-                            if (captureHidden) runCatching { overlay.setCaptureHidden(false) }
+                            if (captureHidden) withContext(NonCancellable) {
+                                runCatching { overlay.setCaptureHidden(false) }
+                            }
                             synchronized(lifecycleLock) {
                                 if (isCurrentTurnLocked(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                                     mutableState.value = state.value.copy(phase = RunPhase.THINKING, controlling = false, status = "Working")
-                                    overlay.updateState(OverlayState(OverlayPhase.THINKING))
+                                    if (!independent) overlay.updateState(OverlayState(OverlayPhase.THINKING))
                                 }
                             }
                             handBackUnlessOnScreen()
                         }
-                        if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
+                        val resultStarted = nowNanos()
+                        withContext(NonCancellable) {
                             val imagePath = result.imageBase64?.let { persistTraceImage(sessionId, it) }
                             trace(sessionId, "tool_result", buildJsonObject {
                                 put("threadId", event.threadId.orEmpty())
@@ -1192,20 +1312,25 @@ class AgentCoordinator(
                                 put("requestId", event.requestId)
                                 put("name", event.name)
                                 put("success", result.success)
+                                put("elapsedMs", (nowNanos() - callStarted).coerceAtLeast(0) / 1_000_000)
                                 put("text", result.text)
                                 put("attachments", buildJsonArray { result.attachmentPaths.forEach { add(it) } })
                                 imagePath?.let { put("imageArtifact", it) }
                                 if (result.imageBase64 != null && imagePath == null) put("imageArtifactError", "Image could not be saved")
                             })
+                        }
+                        if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                             sessions.append(message(sessionId, "tool", "${event.name}: ${result.text.take(4_000)}", attachments = result.attachmentPaths))
                             engine.answerTool(event.requestId, result)
+                            traceToolTiming(sessionId, event, receivedAt, dispatchStarted, dispatchFinished, resultStarted, waitedNanos)
                         }
                     }
                 }
             }
             is EngineEvent.Activity -> synchronized(lifecycleLock) {
                 if (isCurrentLocked(epoch.get()) && !state.value.controlling &&
-                    (event.threadId == null || (event.threadId == thread && event.turnId == turn))) {
+                    (event.threadId == null || (event.threadId == thread &&
+                        (event.turnId == turn || (event.connectionStatus && event.turnId == null))))) {
                     mutableState.value = state.value.copy(status = event.text)
                     overlay.updateState(OverlayState(OverlayPhase.RUNNING, event.text))
                 }
@@ -1241,6 +1366,9 @@ class AgentCoordinator(
                 }
             }
             is EngineEvent.TurnFinished -> if (matches(event.threadId, event.turnId)) {
+                state.value.sessionId?.let { sessionId -> trace(sessionId, "turn_finished", buildJsonObject {
+                    put("threadId", event.threadId); put("turnId", event.turnId); put("status", event.status)
+                }) }
                 if (isVoiceMode()) {
                     if (event.status == "failed") {
                         state.value.sessionId?.let { sessions.append(message(it, "system", event.error ?: "Voice task failed")) }
@@ -1254,8 +1382,12 @@ class AgentCoordinator(
                                 controlling = false,
                                 approval = null,
                             )
+                            screenSticky = false
                         }
                     }
+                    // The voice conversation keeps listening between tasks;
+                    // only its delegated turn owns these screen handles.
+                    handBackUnlessOnScreen()
                 } else when (event.status) {
                     "failed" -> {
                         val error = event.error ?: "${runEngine.label} could not finish"
@@ -1289,7 +1421,9 @@ class AgentCoordinator(
                 } else {
                     synchronized(lifecycleLock) {
                         assistantOutcome = "error"
-                        mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = event.message)
+                        mutableState.value = state.value.copy(
+                            phase = RunPhase.ERROR, status = event.message, outcomeUnknown = event.uncertain,
+                        )
                     }
                     completion?.complete(Unit)
                 }
@@ -1299,26 +1433,39 @@ class AgentCoordinator(
     }
 
     /**
-     * Answer `ask_user` or `show_media`. Neither takes the phone: a question
+     * Answer the chat's own tools. None takes the phone: a question
      * can wait minutes, and another chat's tools must not wait with it.
      */
-    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall) {
+    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long) {
         val threadId = event.threadId.orEmpty()
         val turnId = event.turnId.orEmpty()
-        trace(sessionId, "tool_call", buildJsonObject {
+        withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
             put("threadId", threadId)
             put("turnId", turnId)
             put("requestId", event.requestId)
             put("name", event.name)
             put("arguments", event.arguments)
-        })
+        }) }
         toolCalls++
         val started = nowNanos()
         val waitedBefore = approvalNanos.get()
         val result = try {
-            if (event.name == ChatTools.ASK) askUser(token, sessionId, threadId, turnId, event.arguments)
-            else showMedia(token, sessionId, threadId, turnId, event.arguments)
+            ensureCurrentTurn(token, threadId, turnId)
+            when (event.name) {
+                ChatTools.ASK -> askUser(token, sessionId, threadId, turnId, event.arguments)
+                ChatTools.TITLE -> {
+                    ensureCurrentTurn(token, threadId, turnId)
+                    val title = event.arguments["title"]?.let { it as? kotlinx.serialization.json.JsonPrimitive }
+                        ?.takeIf { it.isString }?.contentOrNull.orEmpty()
+                    chatTitles.refine(sessionId, threadId, title)
+                }
+                SessionAgentTools.NAME -> sessionAgents?.invoke()?.invoke(sessionId, event.arguments) {
+                    isCurrentTurn(token, threadId, turnId)
+                } ?: ChatTools.refused("not_available", "Session agents are not configured.")
+                else -> showMedia(token, sessionId, threadId, turnId, event.arguments)
+            }
         } catch (cancelled: CancellationException) {
+            traceToolCancelled(sessionId, event, started, cancelled)
             throw cancelled
         } catch (error: Exception) {
             ChatTools.refused("failed", error.message ?: "${event.name} failed")
@@ -1332,16 +1479,38 @@ class AgentCoordinator(
                 }
             }
         }
-        if (!isCurrentTurn(token, threadId, turnId)) return
-        trace(sessionId, "tool_result", buildJsonObject {
+        val dispatchFinished = nowNanos()
+        val waitedNanos = approvalNanos.get() - waitedBefore
+        withContext(NonCancellable) { trace(sessionId, "tool_result", buildJsonObject {
             put("threadId", threadId)
             put("turnId", turnId)
             put("requestId", event.requestId)
             put("name", event.name)
             put("success", result.success)
             put("text", result.text)
-        })
+            put("elapsedMs", (nowNanos() - started).coerceAtLeast(0) / 1_000_000)
+        }) }
+        if (!isCurrentTurn(token, threadId, turnId)) return
         engine.answerTool(event.requestId, result)
+        traceToolTiming(sessionId, event, receivedAt, started, dispatchFinished, dispatchFinished, waitedNanos)
+    }
+
+    /** App-side boundaries only. No model-time or network-time attribution. */
+    private suspend fun traceToolTiming(
+        sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long,
+        dispatchStarted: Long?, dispatchFinished: Long?, resultStarted: Long, waitedNanos: Long,
+    ) {
+        val deliveredAt = nowNanos()
+        fun ms(ns: Long) = ns.coerceAtLeast(0) / 1_000_000
+        trace(sessionId, "tool_timing", buildJsonObject {
+            put("threadId", event.threadId.orEmpty()); put("turnId", event.turnId.orEmpty())
+            put("requestId", event.requestId); put("name", event.name)
+            put("queueMs", ms((dispatchStarted ?: resultStarted) - receivedAt))
+            put("dispatchMs", if (dispatchStarted != null && dispatchFinished != null) ms(dispatchFinished - dispatchStarted) else 0)
+            put("approvalMs", ms(waitedNanos))
+            put("resultDeliveryMs", ms(deliveredAt - (dispatchFinished ?: resultStarted)))
+            put("totalMs", ms(deliveredAt - receivedAt))
+        })
     }
 
     /**
@@ -1448,6 +1617,21 @@ class AgentCoordinator(
     }
 
     private fun isVoiceMode(): Boolean = synchronized(lifecycleLock) { voiceMode }
+
+    private suspend fun traceToolCancelled(sessionId: String, event: EngineEvent.ToolCall, started: Long, cancelled: CancellationException) = withContext(NonCancellable) {
+        trace(sessionId, "tool_cancelled", buildJsonObject {
+            put("threadId", event.threadId.orEmpty()); put("turnId", event.turnId.orEmpty())
+            put("requestId", event.requestId); put("name", event.name)
+            put("success", false); put("errorType", "cancelled")
+            put("elapsedMs", (nowNanos() - started).coerceAtLeast(0) / 1_000_000)
+            put("message", "Run cancelled. Completed side effects are not undone. Do not automatically replay this request.")
+            put("outcomeUnknown", true)
+            (cancelled as? WorkflowCancelledException)?.let {
+                val report = it.report
+                put("progress", runCatching { Json.parseToJsonElement(report) }.getOrElse { JsonPrimitive(report) })
+            }
+        })
+    }
 
     private suspend fun trace(sessionId: String, type: String, details: JsonObject) {
         val entry = buildJsonObject {
@@ -1590,11 +1774,11 @@ class AgentCoordinator(
                 awaitingTurn = false
                 voiceMode = false
                 startupEvents.clear()
-                controlTakeover = false
                 AssistantFinal(assistantId, assistantText.toString(), assistantOutcome, flush, deviceHeld.also { deviceHeld = false })
             }
         } ?: return
         final.flush?.let { job -> runCatching { withTimeout(1_000) { job.join() } } }
+        tools.revokeIndependentTools()
         if (final.device) runCatching { tools.revoke() }
         runCatching { overlay.setCaptureHidden(false) }
         final.id?.let { id ->
@@ -1633,8 +1817,10 @@ class AgentCoordinator(
                     mutableState.value = RunState(
                         sessionId = sessionId,
                         status = if (final.outcome == "interrupted") "Interrupted" else "Ready",
+                        runId = state.value.runId,
                     )
                 }
+                mutableOutcomes.value = mutableOutcomes.value + (sessionId to mutableState.value)
                 thread = null
                 turn = null
                 assistantId = null
@@ -1655,12 +1841,34 @@ class AgentCoordinator(
             approvalMs = approvalNanos.get() / 1_000_000,
         )
         metricsState.value = metricsState.value + (sessionId to metrics)
+        trace(sessionId, "run_timing", buildJsonObject {
+            put("runId", state.value.runId)
+            put("totalMs", metrics.totalMs); put("toolCalls", metrics.toolCalls)
+            put("toolMs", metrics.toolMs); put("approvalMs", metrics.approvalMs)
+            put("outsideToolsMs", metrics.outsideToolsMs)
+            metrics.firstResponseMs?.let { put("firstResponseMs", it) }
+        })
         // Into the chat, not a log: the run that felt slow is the one someone
         // will ask about, and the answer belongs where they are already looking.
         RunSummary.line(metrics)?.let { summary ->
             runCatching { sessions.append(message(sessionId, "system", summary)) }
         }
         availableState.value = true
+    }
+
+    /**
+     * A browser panel shown to the user, or an approval card for a browser
+     * action, changes what is on the screen, so it takes the phone like a tap
+     * would and keeps it to this run's end. False when the run is not current.
+     */
+    suspend fun claimBrowserScreen(): Boolean {
+        val current = synchronized(lifecycleLock) { Triple(epoch.get(), thread, turn) }
+        val threadId = current.second ?: return false
+        val turnId = current.third ?: return false
+        if (!claimDevice(current.first, threadId, turnId)) return false
+        val work = synchronized(lifecycleLock) { if (deviceHeld) { screenSticky = true; runWorkspace } else null } ?: return false
+        tools.screenInUse(current.first.toString(), work)
+        return true
     }
 
     /**
@@ -1709,8 +1917,8 @@ class AgentCoordinator(
         if (released) share.lease.release(this)
     }
 
-    private fun usesScreen(name: String): Boolean =
-        tools.needsControl(name) || tools.hidesOverlayDuringCapture(name) || name in SCREEN_READS
+    private fun usesScreen(name: String, arguments: JsonObject): Boolean =
+        tools.needsControl(name, arguments) || tools.hidesOverlayDuringCapture(name) || name in SCREEN_READS
 
     private fun launchControl(block: suspend CoroutineScope.() -> Unit): Job {
         val job = scope.launch(start = CoroutineStart.LAZY, block = block)
@@ -1780,6 +1988,7 @@ class AgentCoordinator(
         val snapshot: RunState,
         val threadId: String?,
         val turnId: String?,
+        val dispatchPending: Boolean,
         val assistantId: String?,
         val text: String,
         val controls: List<Job>,
