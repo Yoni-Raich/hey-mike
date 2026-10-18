@@ -20,7 +20,7 @@
 - Improved floating controls, assistant startup, screen handoff, Bluetooth
   audio, and error handling during active chats.
 
-Earlier development notes follow.
+## Earlier development notes
 
 - The updater checks the release package before offering it and checks the APK
   package, version code and signing certificate before installation.

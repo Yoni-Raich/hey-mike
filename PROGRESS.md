@@ -1,5 +1,54 @@
 # Progress
 
+## 0.16.0 release validation — 2026-10-18
+
+Isolated branch `release/0.16.0` merges `origin/dev` c33b1681 into the
+validated `origin/main` fc53294b, retaining both branches' release records.
+Version is 0.16.0 / 1160, Prod Release, package `dev.androidagent.app`.
+The existing main checkout and its uncommitted work are untouched.
+
+Full gate passed: `test assembleDevRelease assembleDevDebugAndroidTest
+:voice:lintDebug :app:lintDevDebug :app:assembleProdRelease
+:app:lintProdRelease :app:testProdReleaseUnitTest --no-daemon`, with two
+workers, in-process Kotlin and Chrome enabled. The first PowerShell wrapper
+lost its final status while handling native stderr; a recheck with cmd-owned
+stdout/stderr redirection returned 0 and `BUILD SUCCESSFUL` (1,330 tasks,
+1,326 already up to date). XML reports contain 2,928 test executions across
+variants, zero failures/errors and 34 existing skips. Python staging/updater/
+Claude-reader gate: 41 tests passed. App lint: Dev Debug 0 errors/21 warnings;
+Prod Release 0 errors/20 warnings. `git diff --check` passed.
+
+Signed asset: `artifacts/hey-mike-0.16.0.apk`, 297,113,612 bytes, SHA-256
+`3635b05f374bf7dc820bb9445bfb12e0035b3eea33d9b30e2f8721eaf4e074eb`.
+`aapt2` confirms `dev.androidagent.app`, code 1160, version 0.16.0, label
+Hey Mike, ARM64/x86_64, not debuggable. APK Signature Scheme v3 and 16 KiB
+zip alignment pass. Signer SHA-256 is
+`f65c3469483d5b059543c7a67d369578bf3627a02795d77fc76a244444dda1ee`,
+matching 0.15.0's Android test certificate; production-key signing is pending.
+All native entries are lib*.so, including the Codex code-mode helper.
+Prod contains no delta native library or host helper; its three dependency
+license notices remain packaged. No delta-transfer behavior is enabled.
+
+`copy_file` completed the signed candidate to the hosting chat and then
+Download/hey-mike-0.16.0.apk. APK Manager displayed Installed. Fresh native
+package metadata confirms the regular app updated from 0.15.0/1100 to
+0.16.0/1160 on the hosting Nothing phone; no app data was cleared. Existing
+sign-in and three older chats remained visible. No patch/wire measurement
+was reported, so no delta savings are claimed.
+
+A new on-phone Codex GPT-6 Luna/medium task requested Android Settings through
+apps_settings. It completed with two device calls. The expanded tool record
+shows `apps_settings`, `operation:open_system_setting`, `ok:true`,
+`opened:true`; Settings was independently observed as the active package
+during that run. The second call was read_ui. This proves runtime startup
+and device-tool dispatch in this exact non-debuggable Prod candidate.
+
+Remaining gaps: installed base.apk hash/native-directory read-back (hosting
+Mike's optional ADB pairing is stale), the final rich-text reply marker,
+production signing, broad voice/account/updater/browser and cross-device
+E2E coverage. The separate Dev app remains on 1159. No new tag or public
+0.16.0 release had been created when this validation record was written.
+
 ## 0.15.0 release validation — 2026-10-05
 
 Release candidate: versionName `0.15.0`, versionCode `1100`, **Prod Release**,
