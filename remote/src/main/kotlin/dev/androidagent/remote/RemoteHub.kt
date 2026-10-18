@@ -99,6 +99,17 @@ class RemoteHub(
     /** The latest setup step per computer. */
     val setup: StateFlow<Map<String, RemoteSetup>> = mutableSetup.asStateFlow()
 
+    private val mutableCodexVersions = MutableStateFlow<Map<String, CodexComputerVersion>>(emptyMap())
+    val codexVersions: StateFlow<Map<String, CodexComputerVersion>> = mutableCodexVersions.asStateFlow()
+    private val codexUpdateLocks = ConcurrentHashMap<String, Mutex>()
+
+    /** Foreground maintenance of connected computers only; live engines stay attached. */
+    suspend fun checkCodexUpdates() {
+        for ((id, connection) in links.entries.toList()) {
+            if (mutableSetup.value[id] is RemoteSetup.Ready) refreshCodex(id, connection)
+        }
+    }
+
     private val mutableThreads = MutableStateFlow<Map<String, List<ComputerConversation>>>(emptyMap())
     private val threadRefresh = ThreadRefreshGate()
     /** Per computer, the conversations Codex keeps there, as last listed. */
@@ -383,7 +394,9 @@ class RemoteHub(
             val connection = connection(computerId) { route ->
                 report(computerId, RemoteSetup.Working(if (route.viaVpn) "Trying the VPN address ${route.host}" else "Connecting to ${route.host}"))
             }
-            var probe = withContext(Dispatchers.IO) { connection.probe(refresh = true) }
+            withContext(Dispatchers.IO) { connection.probe(refresh = true) }
+            refreshCodex(computerId, connection)
+            var probe = connection.probe(refresh = false)
             if (!probe.installed) {
                 // A background connect never downloads 120 MB on its own.
                 check(install) { "Codex is not on this computer yet. Start a new project on it to set it up." }
@@ -392,6 +405,8 @@ class RemoteHub(
                 probe = withContext(Dispatchers.IO) { connection.probe(refresh = true) }
                 check(probe.installed) { "Codex did not install on the computer." }
             }
+            refreshCodex(computerId, connection)
+            probe = connection.probe(refresh = false)
             report(computerId, RemoteSetup.Working("Starting Codex on ${probe.computerName.ifBlank { "the computer" }}"))
             val account = engine(computerId).account()
             check(account.signedIn) { "Mike could not use the phone account on this computer." }
@@ -603,10 +618,22 @@ class RemoteHub(
         val scripts: HostScripts = if (os == HostOs.LINUX) LinuxHost else WindowsHost
 
         @Volatile private var cached: HostProbe? = null
+        @Volatile var updaterUploaded = false
+        @Volatile var lastUpdateAt = 0L
+        @Volatile private var selected: Pair<String, String>? = null
+
+        fun selectCodex(path: String, version: String) {
+            selected = path to version
+            cached = cached?.copy(appServer = path, codexVersion = version, installed = true)
+        }
 
         fun probe(refresh: Boolean): HostProbe {
-            if (!refresh) cached?.let { return it }
-            return WindowsHost.parseProbe(link.run(scripts.probe(), 60_000))
+            if (!refresh) cached?.let { probe ->
+                return selected?.let { (path, version) -> probe.copy(appServer = path, codexVersion = version, installed = true) } ?: probe
+            }
+            return WindowsHost.parseProbe(link.run(scripts.probe(), 60_000)).let { probe ->
+                selected?.let { (path, version) -> probe.copy(appServer = path, codexVersion = version, installed = true) } ?: probe
+            }
                 .also { cached = it }
         }
 
@@ -615,8 +642,44 @@ class RemoteHub(
             val installed = WindowsHost.parseInstall(link.run(scripts.install(), 15 * 60_000))
             check(installed) { "Codex did not install on the computer." }
             cached = null
+            lastUpdateAt = 0L
         }
     }
+
+    /** Stage a verified version for the next launch; never reconnect or replay a turn here. */
+    private suspend fun refreshCodex(computerId: String, connection: Connection) =
+        codexUpdateLocks.getOrPut(computerId) { Mutex() }.withLock {
+            val at = System.currentTimeMillis()
+            if (at - connection.lastUpdateAt in 0 until 15 * 60_000L) return@withLock
+            connection.lastUpdateAt = at
+            val before = withContext(Dispatchers.IO) { connection.probe(refresh = false) }
+            try {
+                val path = before.home.replace('\\', '/') + "/.hey-mike/" + CodexComputerUpdates.SCRIPT_NAME
+                if (!connection.updaterUploaded) {
+                    val local = File.createTempFile("codex-updater-", ".py", claudeScratch.apply { mkdirs() })
+                    try {
+                        local.writeText(CodexComputerUpdates.source())
+                        connection.link.upload(local, path, replace = true)
+                        connection.updaterUploaded = true
+                    } finally { local.delete() }
+                }
+                val reply = runInterruptible(Dispatchers.IO) {
+                    WindowsHost.payload(connection.link.run(CodexComputerUpdates.command(connection.os, path), 5 * 60_000L))
+                }
+                val version = (reply["version"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                val executable = (reply["exe"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                if (reply["installed"]?.toString() == "true" && version?.matches(Regex("[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}")) == true && !executable.isNullOrBlank()) {
+                    connection.selectCodex(executable, version)
+                }
+                val selected = connection.probe(refresh = false).codexVersion
+                val note = (reply["updateMessage"] as? kotlinx.serialization.json.JsonPrimitive)?.takeUnless { it.isString.not() }?.content
+                mutableCodexVersions.update { versions -> versions + (computerId to CodexComputerVersion(selected, versions[computerId]?.running, note, reply["automatic"]?.toString() == "true")) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                mutableCodexVersions.update { versions -> versions + (computerId to CodexComputerVersion(before.codexVersion, versions[computerId]?.running, "Update check failed; keeping the installed version")) }
+            }
+        }
 
     /** The app-server on one computer, as the engine's [RuntimeHost]. */
     private inner class ComputerRuntime(private val computerId: String) : RuntimeHost {
@@ -628,24 +691,30 @@ class RemoteHub(
         override val homeDirectory: File get() = File("/")
 
         override suspend fun prepare() {
-            val probe = withContext(Dispatchers.IO) { connection(computerId).probe(refresh = false) }
+            val connection = connection(computerId)
+            refreshCodex(computerId, connection)
+            val probe = withContext(Dispatchers.IO) { connection.probe(refresh = false) }
             check(probe.installed) { "Codex is not set up on this computer yet. Open Computers and connect it." }
-            mutableStatus.value = RuntimeStatus(RuntimePhase.READY, "Codex ready on ${probe.computerName}")
+            mutableStatus.value = RuntimeStatus(RuntimePhase.READY, "Codex ${probe.codexVersion} ready on ${probe.computerName}")
         }
 
         override suspend fun startAppServer(): Process = withContext(Dispatchers.IO) {
             process?.destroy()
+            val connection = connection(computerId)
+            val probe = connection.probe(refresh = false)
             // Never launch another process after an ambiguous startup result.
-            val started = launchOnce()
+            val started = launchOnce(connection, probe)
             process = started
-            mutableStatus.value = RuntimeStatus(RuntimePhase.RUNNING, "Codex running on the computer")
+            val selected = probe.codexVersion
+            mutableCodexVersions.update { versions ->
+                versions + (computerId to (versions[computerId]?.copy(running = selected) ?: CodexComputerVersion(selected, selected)))
+            }
+            mutableStatus.value = RuntimeStatus(RuntimePhase.RUNNING, "Codex $selected running on the computer")
             started
         }
 
-        private suspend fun launchOnce(): Process {
-            val connection = connection(computerId)
+        private suspend fun launchOnce(connection: Connection, probe: HostProbe): Process {
             if (connection.os == HostOs.WINDOWS) {
-                val probe = connection.probe(refresh = false)
                 val instance = CodexRelayScripts.install(connection.link, probe, File(claudeScratch.parentFile, "codex-relay"))
                 // One app-server per computer for this phone: a replacement ends the earlier one,
                 // which would otherwise keep each thread's writer for its offline lease.
@@ -663,12 +732,13 @@ class RemoteHub(
                     status = { text -> connectionStatus(computerId, text) },
                 )
             }
-            return connection.link.start(connection.scripts.appServer(connection.probe(refresh = false)))
+            return connection.link.start(connection.scripts.appServer(probe))
         }
 
         override suspend fun stop() {
             withContext(Dispatchers.IO) { process?.destroy() }
             process = null
+            mutableCodexVersions.update { versions -> versions[computerId]?.let { versions + (computerId to it.copy(running = null)) } ?: versions }
             mutableStatus.value = RuntimeStatus(RuntimePhase.READY, "Codex stopped on the computer")
         }
     }

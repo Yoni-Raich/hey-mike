@@ -168,6 +168,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { graph.remote.setup.collect { steps -> mutable.update { it.copy(computerSetup = steps) } } }
+        viewModelScope.launch { graph.remote.codexVersions.collect { versions -> mutable.update { it.copy(computerCodexVersions = versions) } } }
+        viewModelScope.launch { graph.runtime.updates.state.collect { info -> mutable.update { it.copy(codexUpdate = info) } } }
         // A computer's own Claude Code decides whether its chats are offered Claude models.
         viewModelScope.launch { graph.remote.claudeState.collect { found -> mutable.update { it.copy(computerClaude = found) }; project() } }
         viewModelScope.launch { graph.remote.claudeSignIn.state.collect { found -> mutable.update { it.copy(computerClaudeSignIn = found) } } }
@@ -318,7 +320,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             project()
         }
         viewModelScope.launch {
-            graph.claudeHost.installState.collect { install -> mutable.update { it.copy(claude = it.claude.copy(install = install)) } }
+            graph.claudeHost.installState.collect { install -> mutable.update { it.copy(claude = it.claude.copy(install = install,
+                version = graph.claudeHost.updates.activePin.version.takeIf { install.phase == ClaudeInstallPhase.INSTALLED })) } }
         }
         viewModelScope.launch {
             mutable.map { it.claude.account }.distinctUntilChanged().collect(::rememberClaudeAccount)

@@ -1,5 +1,37 @@
 # Architecture
 
+## Engine versions and Codex updates — 2026-10-18
+
+Phone Codex and computer packages are pinned to 0.163.0. The phone's Claude
+baseline is 2.1.302; the earlier 2.1.293 and 2.1.285 pins remain reusable for
+offline upgrade and rollback. The 0.163.0 package no longer contains zsh, so
+the APK no longer stages or links it. The helper-name patch still checks the
+two expected upstream strings and every extracted native file remains lib*.so.
+
+`remote` uploads a versioned Python 3.9+ updater on each SSH connection. It
+checks stable GitHub release metadata at most every 15 minutes, downloads on
+the computer, checks the exact size and SHA-256, rejects unsafe archives,
+and probes --version and JSON-RPC initialize in a temporary HOME/CODEX_HOME.
+No prompt, tools, real account or conversation are used by that probe.
+An OS lock serializes updates; a side-by-side version directory is selected
+atomically only after validation. A failed check keeps the previous version.
+Background maintenance and a new engine preparation check for updates. Existing
+engines are never restarted or replayed by the updater. The UI and computers
+status distinguish the running version from the version selected for next start.
+Hosts without Python keep the bundled provisioning path and explain the limit.
+
+Android Codex is a static ET_EXEC musl executable, unlike the dynamically
+loaded Claude binary. It remains an APK native library: no writable-code exec,
+loader workaround or Android security change is introduced. `CodexUpdateCheck`
+checks stable availability every 15 minutes while foregrounded and directs the
+user to Mike app updates. Installing an APK still follows Android's installer.
+An independent in-place Codex binary update on the phone is not implemented.
+
+Phone settings show versions read from the installed runtime manifest and
+the active verified Claude selection. `device_status` and the trusted per-turn
+snapshot include phone engine and app versions. `computers(mode=status)` and
+the computer settings cards show observed computer versions and update notes.
+
 ## Pinned chats and projects — 2026-10-18
 
 `AgentViewModel` stores pinned library chat and project keys in the `pins`

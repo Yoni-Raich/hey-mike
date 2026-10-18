@@ -549,13 +549,20 @@ internal fun Explanation(text: String) {
 }
 
 @Composable
-private fun ColumnScope.RuntimeSettings(state: AgentUiState, actions: AgentUiActions) {
+internal fun ColumnScope.RuntimeSettings(state: AgentUiState, actions: AgentUiActions) {
+    Text("Engine versions on this phone", style = MaterialTheme.typography.titleMedium)
+    Text("Codex ${state.runtimeStatus.version ?: state.codexUpdate.installed ?: "unknown"}")
+    Text("Claude Code ${state.claude.version ?: "not installed"}")
+    Explanation(state.codexUpdate.message)
+    Explanation("Claude updates automatically on Wi-Fi. Codex on computers updates automatically before a new engine starts. Running tasks keep their current version.")
+    OutlinedButton(onClick = { actions.onCheckForUpdates() }, modifier = Modifier.fillMaxWidth()) { Text("Check Mike app updates") }
+    Spacer(Modifier.height(8.dp))
     StatusLine(
         title = readableRuntimePhase(state.runtimeStatus.phase),
         detail = state.runtimeStatus.message,
         color = readinessColor(setupState(state, SetupItem.RUNTIME)),
     )
-    Explanation("Codex runs on this phone. Preparing unpacks the engine and its tools into the app's own storage.")
+    Explanation("Codex runs on this phone. Preparing checks the engine and its tools from the installed Mike app.")
     state.runtimeStatus.progress?.let { progress ->
         LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
     }

@@ -69,6 +69,20 @@ def fake_apk(loader: bytes, data_cut: bool = False, extra=None) -> bytes:
 
 
 class PrepareRuntimeTest(unittest.TestCase):
+    def test_phone_computer_and_updater_pins_match_official_package_sources(self):
+        from tools import prepare_runtime as runtime
+        repo = Path(__file__).parents[1]
+        windows = (repo / "remote/src/main/kotlin/dev/androidagent/remote/WindowsHost.kt").read_text()
+        linux = (repo / "remote/src/main/kotlin/dev/androidagent/remote/LinuxHost.kt").read_text()
+        helper = (repo / "remote/src/main/resources/codex_runtime.py").read_text()
+        self.assertIn('CODEX_VERSION = "' + runtime.PACKAGE_VERSION + '"', windows)
+        self.assertIn('BUNDLED_VERSION = "' + runtime.PACKAGE_VERSION + '"', helper)
+        args = runtime.parse_args([])
+        self.assertIn('/rust-v' + runtime.PACKAGE_VERSION + '/', args.url)
+        self.assertIn('/rust-v' + runtime.PACKAGE_VERSION + '/', args.x86_url)
+        self.assertIn(runtime.EXPECTED_SHA256, linux)
+        self.assertIn(args.x86_expected_sha256, linux)
+
     def test_android_alias_matches_fixed_width_without_nul(self):
         self.assertEqual(len(CODE_MODE_HOST_ANDROID_NAME), len(CODE_MODE_HOST_NAME))
         self.assertNotIn(b"\0", CODE_MODE_HOST_ANDROID_NAME)

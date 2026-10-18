@@ -142,6 +142,8 @@ internal fun ColumnScope.ClaudeCard(claude: ClaudeUiState, actions: AgentUiActio
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val size = megabytes(claude.install.totalBytes)
 
+    Text("Claude Code ${claude.version ?: "not installed"}", style = MaterialTheme.typography.titleSmall)
+
     Text(CLAUDE_NOTICE, style = MaterialTheme.typography.bodySmall, color = muted)
     Text("After setup, Claude updates automatically on an unmetered connection while Mike is open.",
         style = MaterialTheme.typography.bodySmall, color = muted)

@@ -1,5 +1,53 @@
 # Progress
 
+### Engine updates and visible versions — 2026-10-18
+
+Isolated branch `feat/runtime-updates-20261018` starts at `origin/dev` 7f0a1d54.
+Phone and computer Codex pins are 0.163.0; Claude's phone baseline is 2.1.302,
+with the earlier verified pins retained. Codex 0.163.0 removed bundled zsh;
+staging now reflects that layout and still checks the helper-name patch.
+
+Computer Codex updates use stable official metadata, exact package hashes and
+sizes, bounded safe extraction, a separate HOME for --version/initialize,
+an OS lock and atomic side-by-side activation. A 15-minute foreground check
+stages updates without restarting or replaying live runs. Phone settings,
+computer cards, device_status, the per-turn context and computers status expose
+installed/selected/running versions. Android's static Codex binary still needs
+a Mike APK update; the phone checks availability and explains that limit.
+
+On Pc, the native Claude updater changed 2.1.299 to 2.1.302. The real Codex
+updater downloaded and validated 0.163.0, saved it as active for future launches,
+and retained 0.159.2. The already-running 0.159.2 process was left alone.
+The probe used no real account, prompt or device tool.
+
+Focused Gradle gate (core/runtime/remote/Codex/app unit tests, Dev Debug and
+app lint) passed. App lint: zero errors, 21 warnings, three information items.
+Python runtime/updater tests: 24 passed; Claude session-reader tests: 17 passed.
+Signed Claude 2.1.302 manifest fixtures pass authentication with the existing
+release key. The full gate passed in 13m28s: `test assembleDevRelease
+:app:assembleDevDebug :app:assembleDevDebugAndroidTest :voice:lintDebug
+:app:lintDevDebug --no-daemon`, with in-process Kotlin, two workers and Chrome
+enabled. XML totals: 2,928 cases, zero failures/errors, 34 existing skips.
+The final scoped remote/app unit, Dev Debug and app-lint check passed in 2m06s
+after the last remote selection race fix; release compilation already included
+that fix. Final package: `dev.androidagent.app.dev`, Dev Debug, code 1159 /
+`0.14.0-dev.runtime-updates`, signed with the local Android test key (v2).
+Signature verification and 16 KiB zip alignment passed. APK SHA-256:
+`0e42dc94d5ed41d420eba64e7f990e50098894e52baf05b6130213afd5f11774`.
+`copy_file` completed the final 340,033,271-byte APK to the hosting chat, then
+published `Download/hey-mike-runtime-1159.apk` through MediaStore. The tool did
+not report patch/wire bytes, so this does not measure delta savings. The hosting
+phone still reports 1158; Android installer approval remains pending. Installed
+base.apk hashing and a real ARM64 Codex/Claude task on 1159 are not yet checked.
+
+The two new Compose checks passed on a dedicated API 35 x86_64 emulator using
+the direct instrumentation runner, without uninstalling either APK. Screenshots
+were visually checked under ignored `artifacts/runtime-updates-20261018/ui/`.
+The UI candidate was `9b7468bc...`, before the final remote-only race fix.
+They use synthetic 0.164.0 availability to prove current-versus-next labels;
+they do not claim 0.164.0 exists. This is UI evidence only, not phone runtime,
+SSH recovery, Claude sign-in or end-to-end model/device-control proof.
+
 ### Pinned chats and projects: hosting-phone update — 2026-10-18
 
 PR #137 adds long-press Pin/Unpin for chats and projects and a searchable

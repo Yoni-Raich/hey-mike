@@ -122,6 +122,7 @@ data class AgentUiState(
     /** Standing rules and the two permissions they need. Re-read on resume, like the rest. */
     val automations: AutomationsStatus = AutomationsStatus(),
     val runtimeStatus: RuntimeStatus = RuntimeStatus(),
+    val codexUpdate: dev.androidagent.runtime.CodexUpdateInfo = dev.androidagent.runtime.CodexUpdateInfo(),
     /**
      * Why the tunnel to OpenAI last failed, in one sentence, or null when it
      * has not. Without this the user sees only a retry counter and a 502.
@@ -194,6 +195,7 @@ data class AgentUiState(
     val defaultComputerId: String? = null,
     /** The latest connect step per computer. */
     val computerSetup: Map<String, dev.androidagent.remote.RemoteSetup> = emptyMap(),
+    val computerCodexVersions: Map<String, dev.androidagent.remote.CodexComputerVersion> = emptyMap(),
     val isComputersOpen: Boolean = false,
     /** Picking the folder a computer chat opens in. */
     val folderBrowser: FolderBrowserState? = null,
@@ -257,6 +259,7 @@ data class ClaudeUiState(
     val busy: Boolean = false,
     /** When Claude last reported its limits, shown as their age; null when never. */
     val usageReadAtMillis: Long? = null,
+    val version: String? = null,
 ) {
     /** Downloaded and signed in: Claude models can be picked in a chat on this phone. */
     val ready: Boolean get() = install.phase == ClaudeInstallPhase.INSTALLED && account?.signedIn == true

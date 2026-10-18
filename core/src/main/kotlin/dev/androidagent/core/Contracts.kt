@@ -137,7 +137,7 @@ interface SessionStore {
 }
 
 enum class RuntimePhase { MISSING, PREPARING, READY, RUNNING, ERROR }
-data class RuntimeStatus(val phase: RuntimePhase = RuntimePhase.MISSING, val message: String = "Runtime not ready", val progress: Float? = null)
+data class RuntimeStatus(val phase: RuntimePhase = RuntimePhase.MISSING, val message: String = "Runtime not ready", val progress: Float? = null, val version: String? = null)
 interface RuntimeHost {
     val status: StateFlow<RuntimeStatus>
     val homeDirectory: File
