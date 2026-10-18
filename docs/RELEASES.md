@@ -5,7 +5,7 @@ and complete phone E2E are established.
 
 ## 0.16.0 release artifact
 
-Version 0.16.0 uses code 1160 and the regular Prod Release package
+Version 0.16.0 uses code 1161 and the regular Prod Release package
 `dev.androidagent.app`. The asset name is `hey-mike-0.16.0.apk`.
 It retains the Android test certificate used by 0.15.0, so the regular app
 can update in place. Production-key signing remains unfinished.
@@ -18,14 +18,17 @@ remains exclusive to the separate Dev app.
 The full local/Prod gate passed: 2,928 test executions, zero failures/errors
 and 34 existing skips. Python tests: 41 passed. Both app lint variants have
 zero errors. APK metadata, Signature Scheme v3 and 16 KiB alignment passed.
-SHA-256: `3635b05f374bf7dc820bb9445bfb12e0035b3eea33d9b30e2f8721eaf4e074eb`.
+SHA-256: `e0c59e945b07f718d5dadf25648528d7a58e07478e2f670ed9296a66c4048290`.
 
-The transferred candidate updated the hosting Nothing phone in place from
-0.15.0/1100 to 0.16.0/1160. A new on-phone Codex task successfully opened
-Android Settings through apps_settings, with both the tool result and the
-foreground Settings package observed. Installed base.apk hash/native-folder
-read-back and broad account, voice, updater and cross-device E2E checks remain
-unverified. Full evidence is at the top of `PROGRESS.md`.
+The hosting Nothing phone updated in place from 0.15.0/1100 through the initial
+1160 candidate to final code 1161. The final build adds an Unpin refresh fix;
+its real Compose regression fails on 1159 and passes on 1161. The initial
+1160 on-phone Codex smoke successfully opened Android Settings. At the source
+documentation commit, the same final-artifact smoke on 1161 is waiting for
+an active phone call to end. Publication requires it; the GitHub release notes
+record its final result. Installed base.apk hash/native-folder read-back and
+broad account, voice, updater and cross-device E2E checks remain unverified.
+Full command evidence is at the top of `PROGRESS.md`.
 
 ## 0.15.0 release artifact
 

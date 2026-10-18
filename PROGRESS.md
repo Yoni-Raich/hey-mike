@@ -4,10 +4,40 @@
 
 Automated review found the remembered chat filter omitted state.pins. Changing
 only pins therefore left an unpinned chat visible in Pinned. The filter now
-invalidates on pin changes. A Compose regression uses the real long-press
-Unpin action and checks removal while Pinned stays selected. Code 1161
-supersedes the initial 1160 candidate below; final build/UI/phone checks are
-pending. Version name remains 0.16.0, which has not been published.
+invalidates on pin changes. Code 1161 supersedes the initial 1160 candidate
+below; version name remains 0.16.0.
+
+The full gate, including Dev Debug, Dev Release, AndroidTest compilation,
+voice/app lint and Prod Release build/tests/lint, passed again in 3m43s:
+1,348 tasks, 102 executed. Reports still contain 2,928 test executions,
+zero failures/errors and 34 existing skips. App lint is unchanged at zero
+errors (Dev 21 warnings, Prod 20 warnings). The corrected UI test APK
+compiled in a separate successful 19s scoped build.
+
+The real long-press Unpin regression failed on the earlier 1159 Dev app:
+assertDoesNotExist found the stale chat after its pin icon disappeared.
+It passed on 1161 (1 test, zero failures), with Pinned still selected and
+0 pinned chats displayed. Both direct instrumentation runs used a dedicated
+read-only API 35 x86_64 emulator, never the physical phone. A synthetic
+screenshot was pulled and visually checked at ignored
+`artifacts/release-0.16.0-evidence/ui/library-unpinned-empty.png`.
+The emulator was then stopped. This proves UI recomposition, not real Codex
+execution on the emulator.
+
+Final asset: `artifacts/hey-mike-0.16.0.apk`, 297,113,612 bytes, SHA-256
+`e0c59e945b07f718d5dadf25648528d7a58e07478e2f670ed9296a66c4048290`.
+Package `dev.androidagent.app`, 0.16.0/1161, non-debuggable Prod Release,
+ARM64/x86_64; v3 signature and 16 KiB alignment pass with the same test
+certificate. copy_file completed the final candidate through the chat and
+Downloads. Fresh hosting-phone package metadata confirms 1161 is installed.
+
+At this documentation commit, the final 1161 on-phone tool task is waiting
+for an active phone call to finish. Publication remains gated on that task;
+its final result belongs in the publication-time GitHub release notes at
+`https://github.com/Yoni-Raich/hey-mike/releases/tag/v0.16.0`. The earlier
+1160 runtime smoke below does not stand in for that final-artifact check.
+Installed APK hash/native-folder read-back, production signing and broad
+voice/account/updater/browser/cross-device E2E remain unverified.
 
 ## 0.16.0 initial candidate validation (1160) — 2026-10-18
 
@@ -27,7 +57,7 @@ variants, zero failures/errors and 34 existing skips. Python staging/updater/
 Claude-reader gate: 41 tests passed. App lint: Dev Debug 0 errors/21 warnings;
 Prod Release 0 errors/20 warnings. `git diff --check` passed.
 
-Signed asset: `artifacts/hey-mike-0.16.0.apk`, 297,113,612 bytes, SHA-256
+Initial asset: `artifacts/hey-mike-0.16.0-initial-1160.apk`, 297,113,612 bytes, SHA-256
 `3635b05f374bf7dc820bb9445bfb12e0035b3eea33d9b30e2f8721eaf4e074eb`.
 `aapt2` confirms `dev.androidagent.app`, code 1160, version 0.16.0, label
 Hey Mike, ARM64/x86_64, not debuggable. APK Signature Scheme v3 and 16 KiB

@@ -8,6 +8,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -129,12 +131,14 @@ class ChatLibraryUiTest {
                 Surface(Modifier.fillMaxSize()) { ChatLibraryDrawer(current.value, actions, {}) }
             }
         }
-        compose.onNode(hasContentDescription("Pinned") and hasClickAction()).performClick()
+        val pinnedTab = hasContentDescription("Pinned") and
+            SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
+        compose.onNode(pinnedTab).performClick()
         compose.onNodeWithText("Plan the week").assertIsDisplayed()
         compose.onNodeWithText("Plan the week").performTouchInput { longClick() }
         compose.onNodeWithText("Unpin").performClick()
         compose.onNodeWithText("Plan the week").assertDoesNotExist()
-        compose.onNode(hasContentDescription("Pinned") and hasClickAction()).assertIsSelected()
+        compose.onNode(pinnedTab).assertIsSelected()
         screenshot("library-unpinned-empty")
     }
 
