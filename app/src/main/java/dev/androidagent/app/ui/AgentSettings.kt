@@ -132,7 +132,7 @@ private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
     MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
-    PRIVACY,
+    PRIVACY, CONNECTED_APPS,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -163,6 +163,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.ASSISTANT -> "Power button assistant"
     SettingsRoute.AUTOMATIONS -> "Standing rules"
     SettingsRoute.PRIVACY -> "Privacy and consent"
+    SettingsRoute.CONNECTED_APPS -> "Connected apps"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -182,6 +183,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.ASSISTANT -> Icons.Outlined.Assistant
     SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
     SettingsRoute.PRIVACY -> Icons.Outlined.Shield
+    SettingsRoute.CONNECTED_APPS -> Icons.Outlined.Key
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -321,6 +323,11 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     // No dots here on purpose: these are choices, not steps, and marking them
     // green would teach the eye to skip the markers that do mean something.
     HubGroup("How Mike works") {
+        SettingsHubRow(
+            icon = SettingsRoute.CONNECTED_APPS.icon(), title = "Connected apps",
+            summary = connectedAppsHubSummary(),
+            onClick = { onOpen(SettingsRoute.CONNECTED_APPS) },
+        )
         SettingsHubRow(
             icon = SettingsRoute.AUTOMATIONS.icon(),
             title = "Standing rules",
@@ -512,6 +519,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
             SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
             SettingsRoute.PRIVACY -> PrivacySettings(state, actions)
+            SettingsRoute.CONNECTED_APPS -> ConnectedAppsSettings()
         }
     }
 }

@@ -47,6 +47,102 @@ under ignored `artifacts/pin-subtabs-20261019/`; APK/reports are in the ignored
 central bucket `build/e02b9362a42a9b9a/` in the main checkout. Not checked:
 the full release gate, another phone, or real model/device-tool execution.
 
+### Connected apps screen: one switch per app — merged to dev, 2026-10-19
+
+Settings > Connected apps used to need "Review capabilities" before the
+"Enable connection" switch appeared. Each app is now a card with its icon and a
+single switch (the whole top row toggles). Turning on reads the app's abilities
+and opens one dialog (look things up / make changes / ask you first) with
+"Turn on"; turning off is immediate and needs no reply from the app. Per-ability
+switches, ask-first, publisher, installer and recent activity moved under
+"Details". The screen refreshes on resume; the Settings hub row says "1 app on"
+or "Off · choose which apps Mike can use". Abilities the user never saw stay off
+and show as "N new abilities" with a Review button.
+
+Evidence, on the tree rebased onto origin/dev cc02886: `:core:test`,
+`:connect-protocol:test`, `:connect-sdk:testDebugUnitTest`,
+`:connect-host:testDebugUnitTest`, `:workspace:testDebugUnitTest` and
+`:app:testDevDebugUnitTest` pass with no failures or errors in any result XML,
+including 9 new ConnectedAppStatusTest cases; `:app:lintDevDebug` 0 errors;
+`:app:assembleDevDebug` builds. APK checked with aapt2: dev.androidagent.app.dev,
+versionCode 1164, 0.14.0-dev.connect-sdk, 338,653,662 bytes, SHA-256 prefix
+98aa1c883cbda190. An earlier build of the same screen (1161) was installed on the
+Nothing A059 by the user; the merged 1164 build was not installed.
+
+Untested: the layout on a real screen (dark/light, Hebrew phone), the dialog
+with a long ability list, the TalkBack reading of the toggle row, the ON_RESUME
+refresh, and turning on LumaStand through the new dialog. No Compose UI test
+covers this screen yet.
+
+### Mike Connect developer kit — local preview, 2026-10-18
+
+Prepared connect-sdk/developer-kit with two portable external-developer skills:
+mike-connect-app-audit (read-only source evidence and capability planning) and
+mike-connect-integrate (SDK provider implementation, domain checks, trust and
+validation). Each includes its own references; the audit includes a handoff
+template and distinguishes preset selection from missing creative app features.
+These skills are not shipped inside Mike's runtime asset catalog.
+
+tools/package_mike_connect.py packages only the three public Apache-2.0 Maven
+modules, developer docs/skills and a standalone preferences-provider example.
+It checks Maven hashes/dependencies, portable references, exact payload hashes
+and existing-version refusal. Output is ignored artifacts/connect-distribution/
+mike-connect-developer-kit-1.0.0-preview.1.zip (209272 bytes), SHA-256
+d9cce4828b5a693fc2f0666437e01206ae1d84d533a4d6fdc2fae2933dd7ffeb.
+SDK AAR/protocol hashes remain identical to the prior validated SDK. The old
+local ZIP is unchanged. The kit records its dirty source state, preview status
+and production/Central gaps rather than claiming a published stable SDK.
+
+Both SKILL.md frontmatter checks passed with Python UTF-8 mode. Local links
+also pass when each skill is checked as a standalone folder. The ZIP was
+extracted under a fresh system-temp directory; its independent app assembled
+and passed lintDebug with Gradle 8.9, AGP 8.7.3, Kotlin 2.1.0 and JDK 21 in 28s
+(44 tasks), resolving the extracted Maven repository without Mike app modules.
+This is consumer build evidence, not a live agent skill benchmark or physical
+Binder/device test. Packaging unit checks and detailed commands are recorded in
+docs/history/2026-10-18-mike-connect-developer-kit.md.
+
+Recommendation: keep source in this repository with independent SDK tags and
+GitHub prerelease assets, then add Maven Central for stable distribution after
+production trust, namespace, POM/Javadoc/PGP and release CI are ready. Nothing
+was committed, tagged, uploaded or published by this packaging work.
+
+### Mike Connect v1 — installed on Nothing; user test pending, 2026-10-18
+
+At the user's request, the hosting Nothing A059 was updated without clearing
+data: Mike Dev 1159 -> 1160 and LumaStand 1.6.0 (8) -> 1.7.1 (10). copy_file
+delivered both APKs; APK Manager installed them. Installed package versions
+and both base.apk SHA-256 values were independently checked through the
+deliberately selected A059 ADB connection and match the exact build artifacts.
+Mike was reopened. The runtime now reports 1160 and Connected apps: none enabled.
+The user still needs to review and enable LumaStand in Connected apps before
+testing its capabilities. No connection grant was enabled by the agent.
+
+Isolated feat/mike-connect-sdk starts at origin/dev c33b168. Three public
+Apache-2.0 modules, the Android host, Keystore grants, Connected apps settings,
+one connected_apps gateway and a sample clock are implemented. The separate
+LumaStand project uses the real published local SDK for get_theme, set_theme
+and open_clock. No per-app integration code is required in Mike.
+
+Final full gate passed in 9m38s: test, Dev Release, Dev Debug, app/test APKs,
+voice/app/SDK/host lint. XML totals across variants: 2,958 cases, zero failures
+or errors, 34 skips. Lint has zero errors. Runtime Python tests: 16 passed.
+New protocol (6), SDK (6 per variant) and gateway (12) cases include cancellation,
+duplicate writes, unknown callers with a stubbed certificate lookup, Parcel
+bounds, elicitation, live grant revocation and preserved per-function consent.
+
+Mike test artifacts: versionCode 1160, 0.14.0-dev.connect-sdk1. Dev Release is
+non-debuggable, aligned and v3-signed with the test certificate pinned by the
+SDK. LumaStand 1.7.1 (10) is signed with its existing key; 39 tests and lint pass.
+The Maven SDK bundle and quickstart were copied to the hosting phone's Downloads.
+
+The USB Xiaomi rejected the LumaStand install with INSTALL_FAILED_USER_RESTRICTED
+(Install canceled by user). Its Mike remains at 1156; no new app was installed,
+and no app data was cleared. Human confirmation in Xiaomi's security UI is
+pending. Physical discovery, background calls, real approvals, UI handoff and
+cross-UID rejection remain untested. These build checks do not prove those flows.
+Commands, hashes and limits: docs/history/2026-10-18-mike-connect-sdk.md.
+
 ### Engine updates and visible versions — 2026-10-18
 
 Isolated branch `feat/runtime-updates-20261018` starts at `origin/dev` 7f0a1d54.

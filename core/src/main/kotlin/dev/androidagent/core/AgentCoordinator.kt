@@ -26,6 +26,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -1518,6 +1520,20 @@ class AgentCoordinator(
      * [RunState.question]: it draws the card, and posts a notification the
      * user can answer from when the app is not in front.
      */
+    suspend fun askConnectedApp(question: String, options: List<String>): String? {
+        val snapshot = synchronized(lifecycleLock) {
+            val id = state.value.sessionId ?: return null
+            val th = thread ?: return null
+            val tr = turn ?: return null
+            Triple(id, th, tr)
+        }
+        val reply = askUser(epoch.get(), snapshot.first, snapshot.second, snapshot.third, buildJsonObject {
+            put("question", question)
+            put("options", JsonArray(options.map(::JsonPrimitive)))
+        })
+        return runCatching { Json.parseToJsonElement(reply.text).jsonObject["answer"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+    }
+
     private suspend fun askUser(token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject): ToolResult {
         val question = ChatTools.question("ask-${UUID.randomUUID()}", arguments).getOrElse {
             return ChatTools.refused("bad_question", it.message ?: "The question could not be read.")

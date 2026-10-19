@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries><package android:name="dev.androidagent.app.dev" /><package android:name="dev.androidagent.app" /></queries>
+    <application>
+        <activity android:name="dev.heymike.connect.UiTrampolineActivity" android:exported="true"
+            android:excludeFromRecents="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+    </application>
+</manifest>

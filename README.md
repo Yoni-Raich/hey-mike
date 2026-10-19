@@ -174,6 +174,18 @@ flowchart LR
   `a11y`, `device-tools`, `overlay`, `voice`. See
   [Architecture](docs/ARCHITECTURE.md).
 
+### Connect your app to Mike
+
+The [Mike Connect SDK](connect-sdk/README.md) lets Android apps expose named
+functions through a local authenticated service. Its public libraries use
+Apache-2.0 and do not depend on Mike's app modules.
+
+The [developer kit](connect-sdk/developer-kit/README.md) includes a standalone
+example and two portable coding-agent skills: inspect your app and choose useful
+capabilities, then implement the selected provider. It is currently a local
+developer preview. See [SDK publishing](docs/MIKE_CONNECT_PUBLISHING.md) for
+package contents, release versions and the remaining production gates.
+
 ### Build from source
 
 You need Git, JDK 17, Python 3, and the Android SDK with platform tools.
@@ -214,6 +226,11 @@ Hey Mike is dual-licensed.
   support, a warranty, or an indemnity. Contact yoniraich@gmail.com.
 
 Contributions are accepted under the [CLA](CLA.md).
+
+The public `connect-protocol`, `connect-sdk` and `connect-sdk-testing` modules,
+including the SDK developer kit and its standalone example, are separately
+licensed under [Apache-2.0](connect-sdk/LICENSE). Mike's app and host modules
+retain the repository's licensing above.
 
 Bundled and downloaded third-party components keep their own licenses and are
 not covered by either option; see [NOTICE](NOTICE) and the
