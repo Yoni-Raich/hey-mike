@@ -90,3 +90,4 @@ Only say a task needs Wireless ADB when a remedy explicitly says that tool needs
 - **`media-output-check`** — verify the actual exported video duration, resolution and final frames before reporting an editing task complete.
 - **`user-preferences`** — the user's default apps and named places, in one file shared by every chat. Check it before asking which app or place the user means.
 - **`browser`** — Hey Mike's internal web pages, DOM targets, page reading and a sequence of actions in one call. Read it before browsing a website.
+- **`connected-apps`** — apps that expose their own functions to Mike. Use `connected_apps` to discover, describe and call enabled capabilities. Read this before using a direct app connection.

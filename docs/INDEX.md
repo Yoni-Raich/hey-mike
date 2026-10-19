@@ -7,6 +7,8 @@
 - [Release process](RELEASES.md)
 - [Known issues](KNOWN_ISSUES.md)
 - [Architecture](ARCHITECTURE.md)
+- [Mike Connect developer kit and skills](../connect-sdk/developer-kit/README.md)
+- [Mike Connect SDK publishing](MIKE_CONNECT_PUBLISHING.md)
 - [New user experience design](design/NEW_USER_EXPERIENCE.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Contributor License Agreement](../CLA.md)

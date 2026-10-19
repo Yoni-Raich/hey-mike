@@ -1,5 +1,54 @@
 # Architecture
 
+## Mike Connect local app SDK — 2026-10-18
+
+Developer distribution source lives under connect-sdk/developer-kit: portable
+app-audit and integration skills, references and an independent consumer example.
+tools/package_mike_connect.py builds an allowlisted local Maven/skills ZIP under
+ignored artifacts/connect-distribution, records exact binary hashes, validates
+links/checksums and refuses existing bundle versions. Public skills are separate
+from repository maintenance and on-device runtime skills. SDK releases use their
+own version/tag line in the same repository; see docs/MIKE_CONNECT_PUBLISHING.md.
+The current bundle is a preview, not production caller trust or a Central upload.
+
+The public Apache-2.0 modules are connect-protocol (JVM message and schema
+profile), connect-sdk (Android provider service and DSL), and
+connect-sdk-testing (in-process conformance helpers). connect-host owns Android
+discovery and Binder clients and depends on core's ConnectTransport contract.
+None of the public SDK modules depends on core or app.
+
+ConnectedAppsGateway joins the existing tool composite with one connected_apps
+tool. Each run has a separate revoke boundary. Background calls use no screen
+lease; approval and UI handoff explicitly claim the existing lease. Codex,
+Claude and the computer relay receive the same tool definition.
+
+Providers verify caller package and certificate on every Binder transaction.
+Mike pins provider signers and uses Keystore-sealed per-capability grants;
+schema, access and UI-mode changes require review. Writes use durable provider
+reservations and stable request ids. An uncertain write is never automatically
+replayed. Descriptions and results are external data, not instructions.
+
+Settings > Connected apps owns enabling, disabling, capability switches,
+ask-first choices and bounded activity history. The model cannot write grants.
+Each app is one card whose whole top row is a single switch (off by default).
+Turning it on reads the app's abilities and shows them in one dialog, grouped
+as look things up / make changes / ask you first, with a single "Turn on";
+that tap is the review, so there is no separate review step. Turning it off
+needs no reply from the app and works even when the app cannot be reached.
+Abilities the user never saw (new or changed since the last review) stay off
+and show as "N new abilities", which Details lets the user allow one by one.
+The status line, ability counts and hub summary come from the pure
+`connectedAppStatus` in core, so the screen cannot disagree with the grants the
+gateway checks. Only apps already turned on have their ability list read when
+the screen opens (to spot additions after an update); discovery alone never
+starts an app.
+Developer JSON Try is available only in a debug build and keeps the same gates.
+samples/connect-clock is a small provider and caller-security test fixture.
+The real clock integration lives in the separate LumaStand project.
+
+See docs/design/MIKE_CONNECT_IMPLEMENTATION.md for the implemented v1 profile,
+SDK usage, limits and differences from the original proposal.
+
 ## Engine versions and Codex updates — 2026-10-18
 
 Phone Codex and computer packages are pinned to 0.163.0. The phone's Claude

@@ -212,6 +212,9 @@ class AgentGraph(private val app: Application) {
     @Volatile var foregroundActivity: java.lang.ref.WeakReference<android.app.Activity>? = null
     /** "Always allow" answers to send approvals, signed so the agent cannot add its own. */
     val sendGrants = KeystoreSendGrantStore(app)
+    val connectionGrants = KeystoreConnectionGrantStore(app)
+    val connectTransport = dev.androidagent.connect.AndroidConnectTransport(app)
+    val connectedApps = ConnectedAppsController(app, connectTransport, connectionGrants, scope)
     // Under homeDirectory, which is global across chats and is the one place
     // WorkspaceSeeder does not rewrite on every access.
     val knowledge = KnowledgeStore(KnowledgeStore.directoryIn(runtime.homeDirectory))
@@ -352,9 +355,28 @@ class AgentGraph(private val app: Application) {
             }
         }
     })
+    private fun connectedTools(): dev.androidagent.core.ConnectedAppsGateway {
+        lateinit var gateway: dev.androidagent.core.ConnectedAppsGateway
+        gateway = dev.androidagent.core.ConnectedAppsGateway(
+            connectTransport, connectionGrants,
+            confirm = { provider, capability, arguments ->
+                val owner = browserOwner(gateway.workspaceKey)
+                owner?.claimBrowserScreen() == true &&
+                    owner.authorizeWorkflowStep(dev.androidagent.core.WorkflowConfirmation(
+                        workflowId = "connected_apps", stepId = capability.name, action = capability.access.name.lowercase(),
+                        summary = capability.title + "\n" + arguments.toString().take(2_000),
+                        packageName = provider.packageName, appLabel = provider.label,
+                    )) == dev.androidagent.core.WorkflowConfirmationOutcome.ALLOWED
+            },
+            ask = { question, choices -> browserOwner(gateway.workspaceKey)?.askConnectedApp(question, choices) },
+            takeScreen = { browserOwner(gateway.workspaceKey)?.claimBrowserScreen() == true },
+            record = connectedApps::record,
+        )
+        return gateway
+    }
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
         listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
-            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), capabilityTools, a11yTools, adbTools),
+            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), connectedTools(), capabilityTools, a11yTools, adbTools),
         runtimeVersions = {
             val claude = claudeHost.updates.activePin.version.takeIf {
                 claudeHost.installState.value.phase == dev.androidagent.runtime.ClaudeInstallPhase.INSTALLED
