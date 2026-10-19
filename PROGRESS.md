@@ -2,6 +2,19 @@
 
 ### Separate Pinned project/chat tabs — 2026-10-19
 
+Follow-up: New chat now sits above both Pinned tabs and outside the scrolling
+lists, as requested. The scoped Dev Debug build, app unit tests (168, no
+failures/errors/skips), app lint (zero errors, 21 warnings, three information
+items), signature/alignment and diff checks passed again for code 1163.
+It was installed in place on the same Xiaomi. Live UI bounds confirm one New
+chat button above the tabs; both tab/empty-state checks passed. Pins were
+retained and accessibility remains bound. Visually reviewed screenshots:
+ignored `artifacts/pin-subtabs-20261019/xiaomi-1163-*.png`. Installed base.apk
+matches the built APK SHA-256:
+`fdc6c036b5a5ca18050c0fc8da9ce793b900e5694c57a7badc433aca017ccd7e`.
+The detailed search/Pin/Unpin checks below were on 1162; 1163 changes layout
+only. No instrumentation or full release gate was run for this follow-up.
+
 Isolated branch `feat/pinned-project-chat-tabs` starts at `origin/dev`
 `c33b1681`. Pinned now has Projects (first) and Chats tabs, separate scroll
 positions, matching counts, search hints and empty states. Projects retain

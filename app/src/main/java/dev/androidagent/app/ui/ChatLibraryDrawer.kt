@@ -207,6 +207,9 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                     onClose = dismiss,
                 )
                 if (pinnedScope) {
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 12.dp)) {
+                        NewChatCard(hint = "on this phone", onClick = newChat)
+                    }
                     PinnedTabs(pinnedTab) { focus.clearFocus(); pinnedTab = it }
                 }
                 LibraryStatus(state, scope, computer, chats.size, sections.size, if (pinnedProjects) projects.size else null)
@@ -241,7 +244,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                     modifier = Modifier.weight(1f).testTag("chat-library"),
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),
                 ) {
-                    item(key = "new-chat", contentType = "new-chat") {
+                    if (!pinnedScope) item(key = "new-chat", contentType = "new-chat") {
                         NewChatCard(
                             hint = when {
                                 computer != null -> "pick a folder"
