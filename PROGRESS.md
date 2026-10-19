@@ -1,5 +1,52 @@
 # Progress
 
+### Separate Pinned project/chat tabs — 2026-10-19
+
+Follow-up: New chat now sits above both Pinned tabs and outside the scrolling
+lists, as requested. The scoped Dev Debug build, app unit tests (168, no
+failures/errors/skips), app lint (zero errors, 21 warnings, three information
+items), signature/alignment and diff checks passed again for code 1163.
+It was installed in place on the same Xiaomi. Live UI bounds confirm one New
+chat button above the tabs; both tab/empty-state checks passed. Pins were
+retained and accessibility remains bound. Visually reviewed screenshots:
+ignored `artifacts/pin-subtabs-20261019/xiaomi-1163-*.png`. Installed base.apk
+matches the built APK SHA-256:
+`fdc6c036b5a5ca18050c0fc8da9ce793b900e5694c57a7badc433aca017ccd7e`.
+The detailed search/Pin/Unpin checks below were on 1162; 1163 changes layout
+only. No instrumentation or full release gate was run for this follow-up.
+
+Isolated branch `feat/pinned-project-chat-tabs` starts at `origin/dev`
+`c33b1681`. Pinned now has Projects (first) and Chats tabs, separate scroll
+positions, matching counts, search hints and empty states. Projects retain
+their expandable chats; Chats contains only individually pinned chats.
+Pin changes now invalidate the remembered chat list immediately.
+
+`:app:assembleDevDebug :app:testDevDebugUnitTest :app:lintDevDebug
+:app:assembleDevDebugAndroidTest --no-daemon` passed with two workers and
+in-process Kotlin. App unit tests: 168, zero failures/errors/skips. App lint:
+zero errors, 21 warnings, three information items. The three new Compose
+regressions compile; they were not run under instrumentation. Build storage
+used the existing isolated Gradle home and no-prune init script; no other
+worktree output was removed. `git diff --check` passed.
+
+At the user's request the emulator was closed and validation moved to the
+USB-connected Xiaomi Redmi 12 / 23053RN02Y, Android 15. Dev Debug code 1162 /
+`0.14.0-dev.pin-tabs` installed with `adb -s <selected-device> install -r`.
+This was a direct USB install to the selected test phone, not a network copy
+to the phone hosting this chat. APK metadata, test-key v2 signature and 16 KiB
+zip alignment passed. Installed base.apk SHA-256 matches the local APK:
+`b42e8844652bd81365c48ec302530746d0509dfe63b56236337ccee0c9bdd6a5`.
+
+Direct UI checks on 1162 passed: project/chat separation, native tab selection,
+retaining the tab when leaving Pinned, search across tabs, and immediate Unpin
+updates with both empty states. Two temporary pins survived the updates and
+were then restored to the original empty pin set. Accessibility stayed bound
+with no crashed service. No test APK was installed, no data was cleared, and
+no session was created or deleted. Raw UI evidence and command helpers remain
+under ignored `artifacts/pin-subtabs-20261019/`; APK/reports are in the ignored
+central bucket `build/e02b9362a42a9b9a/` in the main checkout. Not checked:
+the full release gate, another phone, or real model/device-tool execution.
+
 ### Engine updates and visible versions — 2026-10-18
 
 Isolated branch `feat/runtime-updates-20261018` starts at `origin/dev` 7f0a1d54.

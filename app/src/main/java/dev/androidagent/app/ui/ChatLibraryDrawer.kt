@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -63,6 +64,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -118,6 +120,8 @@ private val LibraryTeal = Color(0xFF7FC8B6)
 private val LibraryOffline = Color(0xFF55534E)
 private const val CHATS_PER_PROJECT = 5
 
+private enum class PinnedTab(val label: String) { PROJECTS("Projects"), CHATS("Chats") }
+
 /**
  * The chat library. With computers, a rail on the left picks the place
  * (everything, this phone, or one computer) and the page beside it shows
@@ -127,6 +131,7 @@ private const val CHATS_PER_PROJECT = 5
 @Composable
 internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, close: () -> Unit) {
     var location by rememberSaveable { mutableStateOf(ChatLibrary.ALL) }
+    var pinnedTab by rememberSaveable { mutableStateOf(PinnedTab.PROJECTS) }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
@@ -140,10 +145,11 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     val scope = location.takeIf { it in setOf(ChatLibrary.ALL, ChatLibrary.PHONE, ChatLibrary.PINNED) || state.computers.any { c -> c.id == it } }
         ?.takeIf { hasComputers } ?: ChatLibrary.ALL
     val computer = state.computers.firstOrNull { it.id == scope }
-    val chats = remember(started, state.remoteBindings, sections, scope, query) {
+    val chats = remember(started, state.remoteBindings, sections, scope, query, state.pins) {
         ChatLibrary.chats(started, state.remoteBindings, sections, scope, null, query, state.pins)
     }
     val pinnedScope = scope == ChatLibrary.PINNED
+    val pinnedProjects = pinnedScope && pinnedTab == PinnedTab.PROJECTS
     val projects = remember(sections, scope, query, state.pins) {
         if (computer == null && !pinnedScope) emptyList() else ChatLibrary.projects(sections, scope, query, state.pins)
     }
@@ -151,9 +157,10 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     val pinnedHere = remember(chats, state.pins, hasComputers) {
         if (hasComputers) emptyList() else chats.filter { it.key in state.pins }
     }
-    var limit by remember(scope, query) { mutableStateOf(40) }
+    val listKey = if (pinnedScope) "$scope/${pinnedTab.name}" else scope
+    var limit by remember(listKey, query) { mutableStateOf(40) }
     val listStates = remember { mutableMapOf<String, LazyListState>() }
-    val listState = listStates.getOrPut(scope) { LazyListState() }
+    val listState = listStates.getOrPut(listKey) { LazyListState() }
     val attention = SetupChecklist.outstanding(state.setupRows()) > 0
     val focus = LocalFocusManager.current
     val dismiss = { focus.clearFocus(); close() }
@@ -199,7 +206,13 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                     onSearch = { searching = !searching; if (!searching) query = "" },
                     onClose = dismiss,
                 )
-                LibraryStatus(state, scope, computer, chats.size, sections.size)
+                if (pinnedScope) {
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 12.dp)) {
+                        NewChatCard(hint = "on this phone", onClick = newChat)
+                    }
+                    PinnedTabs(pinnedTab) { focus.clearFocus(); pinnedTab = it }
+                }
+                LibraryStatus(state, scope, computer, chats.size, sections.size, if (pinnedProjects) projects.size else null)
                 AnimatedVisibility(visible = searching, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                     val focusRequester = remember { FocusRequester() }
                     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
@@ -207,7 +220,12 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                         value = query, onValueChange = { query = it }, singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
-                        placeholder = { Text(if (computer != null) "Search ${computer.label}" else if (pinnedScope) "Search pinned" else "Search chats") },
+                        placeholder = { Text(when {
+                            computer != null -> "Search ${computer.label}"
+                            pinnedProjects -> "Search pinned projects"
+                            pinnedScope -> "Search pinned chats"
+                            else -> "Search chats"
+                        }) },
                         trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, "Clear search") } }) else null,
                         shape = RoundedCornerShape(14.dp),
                         colors = TextFieldDefaults.colors(
@@ -226,7 +244,7 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                     modifier = Modifier.weight(1f).testTag("chat-library"),
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),
                 ) {
-                    item(key = "new-chat", contentType = "new-chat") {
+                    if (!pinnedScope) item(key = "new-chat", contentType = "new-chat") {
                         NewChatCard(
                             hint = when {
                                 computer != null -> "pick a folder"
@@ -258,12 +276,16 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                             )
                         }
                         projectItems(projects, state, actions, query, expanded, showAll, computer, focus::clearFocus, dismiss)
-                    } else {
-                        if (pinnedScope && projects.isNotEmpty()) {
-                            item(key = "pinned-projects-label", contentType = "label") { Caps("Projects", Modifier.padding(start = 12.dp, top = 14.dp)) }
-                            projectItems(projects, state, actions, query, expanded, showAll, null, focus::clearFocus, dismiss)
-                            if (chats.isNotEmpty()) item(key = "pinned-chats-label", contentType = "label") { Caps("Chats", Modifier.padding(start = 12.dp, top = 18.dp)) }
+                    } else if (pinnedProjects) {
+                        if (projects.isEmpty()) item(key = "empty-projects", contentType = "empty") {
+                            LibraryEmpty(
+                                icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else Icons.Outlined.Folder,
+                                title = if (query.isNotBlank()) "Nothing matches" else "No pinned projects",
+                                detail = if (query.isNotBlank()) "Try another word." else "Press and hold a project to pin it here.",
+                            )
                         }
+                        projectItems(projects, state, actions, query, expanded, showAll, null, focus::clearFocus, dismiss)
+                    } else {
                         if (pinnedHere.isNotEmpty()) {
                             item(key = "pinned-label", contentType = "label") { Caps("Pinned", Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp)) }
                             items(pinnedHere, key = { "pin-${it.key}" }, contentType = { "chat" }) { row ->
@@ -278,11 +300,11 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                                 Spacer(Modifier.width(12.dp))
                                 Text("Loading chats", style = MaterialTheme.typography.bodyMedium, color = LibraryMuted)
                             }
-                        } else if (chats.isEmpty() && !(pinnedScope && projects.isNotEmpty())) item(key = "empty", contentType = "empty") {
+                        } else if (chats.isEmpty()) item(key = "empty", contentType = "empty") {
                             LibraryEmpty(
                                 icon = if (query.isNotBlank()) Icons.Outlined.SearchOff else if (pinnedScope) Icons.Outlined.PushPin else Icons.Outlined.Forum,
-                                title = if (query.isNotBlank()) "Nothing matches" else if (pinnedScope) "Nothing pinned" else "No chats yet",
-                                detail = if (query.isNotBlank()) "Try another word." else if (pinnedScope) "Press and hold a chat or a project to pin it here." else "Start one with New chat.",
+                                title = if (query.isNotBlank()) "Nothing matches" else if (pinnedScope) "No pinned chats" else "No chats yet",
+                                detail = if (query.isNotBlank()) "Try another word." else if (pinnedScope) "Press and hold a chat to pin it here." else "Start one with New chat.",
                             )
                         }
                         val visible = chats.filter { c -> pinnedHere.none { it.key == c.key } }.take(limit)
@@ -470,7 +492,7 @@ private fun LibraryHeader(title: String, searching: Boolean, onSearch: () -> Uni
 
 /** One line under the title: how much is here, or how the computer is. */
 @Composable
-private fun LibraryStatus(state: AgentUiState, scope: String, computer: RemoteComputer?, chatCount: Int, computers: Int) {
+private fun LibraryStatus(state: AgentUiState, scope: String, computer: RemoteComputer?, chatCount: Int, computers: Int, pinnedProjectCount: Int?) {
     val (text, color) = when {
         computer != null -> when (val setup = state.computerSetup[computer.id]) {
             is RemoteSetup.Ready -> listOfNotNull(
@@ -481,6 +503,7 @@ private fun LibraryStatus(state: AgentUiState, scope: String, computer: RemoteCo
             is RemoteSetup.Working -> setup.step to LibraryAmber
             else -> "Not connected" to LibraryMuted
         }
+        pinnedProjectCount != null -> (if (pinnedProjectCount == 1) "1 pinned project" else "$pinnedProjectCount pinned projects") to LibraryMuted
         scope == ChatLibrary.PINNED -> (if (chatCount == 1) "1 pinned chat" else "$chatCount pinned chats") to LibraryMuted
         scope == ChatLibrary.ALL && computers > 0 -> "${computers + 1} places · $chatCount chats" to LibraryMuted
         else -> (if (chatCount == 1) "1 chat" else "$chatCount chats") to LibraryMuted
@@ -491,6 +514,34 @@ private fun LibraryStatus(state: AgentUiState, scope: String, computer: RemoteCo
             Spacer(Modifier.width(7.dp))
         }
         Text(text, style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun PinnedTabs(selected: PinnedTab, onSelect: (PinnedTab) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+            .clip(RoundedCornerShape(14.dp)).background(LibraryTile).padding(4.dp).selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        PinnedTab.entries.forEach { tab ->
+            val chosen = selected == tab
+            Tab(
+                selected = chosen,
+                onClick = { onSelect(tab) },
+                selectedContentColor = LibraryAmber,
+                unselectedContentColor = LibraryMuted,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                    .background(if (chosen) LibraryRaised else Color.Transparent)
+                    .semantics { contentDescription = "Pinned ${tab.label.lowercase()}" },
+            ) {
+                Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Icon(if (tab == PinnedTab.PROJECTS) Icons.Outlined.Folder else Icons.Outlined.Forum, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(tab.label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                }
+            }
+        }
     }
 }
 
