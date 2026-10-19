@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.dp
@@ -116,6 +117,82 @@ class ChatLibraryUiTest {
             fixture.copy(pcThreads = mapOf("pc" to listOf(CodexThread("native-claude", "Claude session", "C:\\projects\\app", now, engine = EngineKind.CLAUDE)))))
         compose.onNodeWithText("Claude session").performClick()
         compose.runOnIdle { assertEquals(Triple("pc", "native-claude", EngineKind.CLAUDE), opened) }
+    }
+
+    private fun pinnedFixture(): AgentUiState {
+        val project = PcProject("pc", fixture.pcThreads.getValue("pc").first().cwd, emptyList())
+        val thread = fixture.pcThreads.getValue("server").single()
+        return fixture.copy(pins = setOf(project.key, "this-phone:chat-phone-0", "server:thread-${thread.key}"))
+    }
+
+    @Test fun pinnedTabsSeparateProjectsFromIndividuallyPinnedChats() {
+        show(state = pinnedFixture())
+        compose.onNodeWithContentDescription("Pinned").performClick()
+        compose.onNodeWithContentDescription("Pinned projects").assertIsSelected()
+        compose.onNodeWithText("1 pinned project").assertIsDisplayed()
+        compose.onNodeWithText("project-0 · Work PC").assertIsDisplayed()
+        compose.onNodeWithText("Review project 0").assertIsDisplayed()
+        compose.onNodeWithText("Plan the week").assertDoesNotExist()
+        compose.onNodeWithText("Fix the upload").assertDoesNotExist()
+        screenshot("library-pinned-projects")
+
+        compose.onNodeWithContentDescription("Pinned chats").performClick()
+        compose.onNodeWithContentDescription("Pinned chats").assertIsSelected()
+        compose.onNodeWithContentDescription("Pinned projects").assertIsNotSelected()
+        compose.onNodeWithText("2 pinned chats").assertIsDisplayed()
+        compose.onNodeWithText("Plan the week").assertIsDisplayed()
+        compose.onNodeWithText("Fix the upload").assertIsDisplayed()
+        compose.onNodeWithText("project-0 · Work PC").assertDoesNotExist()
+        compose.onNodeWithText("Review project 0").assertDoesNotExist()
+        screenshot("library-pinned-chats")
+
+        compose.onNodeWithContentDescription("All devices").performClick()
+        compose.onNodeWithContentDescription("Pinned chats").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Pinned").performClick()
+        compose.onNodeWithContentDescription("Pinned chats").assertIsSelected()
+    }
+
+    @Test fun pinnedSearchOnlyShowsMatchesInTheSelectedTab() {
+        show(state = pinnedFixture())
+        compose.onNodeWithContentDescription("Pinned").performClick()
+        compose.onNodeWithContentDescription("Search").performClick()
+        compose.onNodeWithContentDescription("Search chats or projects").performTextInput("Plan")
+        compose.onNodeWithText("Nothing matches").assertIsDisplayed()
+        compose.onNodeWithText("Plan the week").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Pinned chats").performClick()
+        compose.onNodeWithText("Plan the week").assertIsDisplayed()
+        compose.onNodeWithText("Fix the upload").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Search chats or projects").performTextReplacement("Review")
+        compose.onNodeWithText("Nothing matches").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Pinned projects").performClick()
+        compose.onNodeWithText("project-0 · Work PC").assertIsDisplayed()
+        compose.onNodeWithText("Review project 0").assertIsDisplayed()
+    }
+
+    @Test fun unpinImmediatelyUpdatesEachTabAndItsEmptyState() {
+        val state = mutableStateOf(pinnedFixture().let { it.copy(pins = it.pins.filterNot { key -> key.startsWith("server:") }.toSet()) })
+        compose.setContent {
+            AndroidAgentTheme {
+                ChatLibraryDrawer(state.value, AgentUiActions(onTogglePin = { key ->
+                    state.value = state.value.copy(pins = state.value.pins - key)
+                }), {})
+            }
+        }
+        compose.onNodeWithContentDescription("Pinned").performClick()
+        compose.onNodeWithText("project-0 · Work PC").performTouchInput { longClick() }
+        compose.onNodeWithText("Unpin").performClick()
+        compose.onNodeWithText("No pinned projects").assertIsDisplayed()
+        compose.onNodeWithText("0 pinned projects").assertIsDisplayed()
+        compose.onNodeWithText("Plan the week").assertDoesNotExist()
+        screenshot("library-pinned-projects-empty")
+
+        compose.onNodeWithContentDescription("Pinned chats").performClick()
+        compose.onNodeWithText("Plan the week").performTouchInput { longClick() }
+        compose.onNodeWithText("Unpin").performClick()
+        compose.onNodeWithText("Plan the week").assertDoesNotExist()
+        compose.onNodeWithText("No pinned chats").assertIsDisplayed()
+        compose.onNodeWithText("0 pinned chats").assertIsDisplayed()
+        screenshot("library-pinned-chats-empty")
     }
 
     private fun screenshot(name: String) {

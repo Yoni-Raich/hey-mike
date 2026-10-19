@@ -37,7 +37,11 @@ the computer settings cards show observed computer versions and update notes.
 `AgentViewModel` stores pinned library chat and project keys in the `pins`
 string set in the phone's `ui` preferences. Pin state is local to that phone.
 Long-press menus toggle a key. `ChatLibraryDrawer` exposes a Pinned place
-beside the device tabs, with the same search filter; without a device rail,
+beside the device tabs, split into Projects and Chats tabs. Projects opens
+first and retains the expandable project/chat rows; Chats shows only chats
+that were pinned individually. Each tab has its own scroll position, count
+and empty state. Search applies to the selected tab and stays when switching.
+Changing pins immediately refreshes both lists. Without a device rail,
 pinned chats appear first. Pins reference existing library entries and do
 not copy chat content or project files.
 
