@@ -1,5 +1,14 @@
 # Architecture
 
+## Repository worktree lifecycle — 2026-10-20
+
+The development-only skill at `.agents/skills/worktree-lifecycle/SKILL.md`
+owns worktree locations, temporary-build handling and cleanup. Its helper
+validates Git state and build-bucket ownership, holds the bucket lease, and
+lets Git remove the worktree before deleting build output. Failed checks or
+Git refusals stop removal; there is no raw folder-delete fallback. This does
+not change on-device skills, runtime packaging or the global Gradle policy.
+
 ## Mike Connect local app SDK — 2026-10-18
 
 Developer distribution source lives under connect-sdk/developer-kit: portable

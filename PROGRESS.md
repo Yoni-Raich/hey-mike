@@ -1,5 +1,21 @@
 # Progress
 
+### Worktree and temporary-build lifecycle — 2026-10-20
+
+Added a repository development skill and a PowerShell status/removal helper.
+Removal checks dirty/unpushed work, Git failures, locks and bucket ownership.
+Git must remove the worktree before its build bucket is deleted; a refusal
+never triggers a recursive folder-delete fallback. Existing checkout changes
+are kept separate from this PR.
+
+`python .agents/skills/worktree-lifecycle/scripts/test_worktree.py`: 11 tests
+passed on Windows PowerShell 5.1. Disposable Git repositories covered normal
+removal, merged local branches, untracked work, unpushed commits, failed Git
+checks, Git locks, an active build lease, a wrong bucket owner, the main/current
+checkout and a subfolder, and Git removal failing on a Windows file lock.
+Skill frontmatter validation and `git diff --check` passed. Fixtures were
+removed. No Gradle build, APK change or device test was needed or run.
+
 ### Separate Pinned project/chat tabs — 2026-10-19
 
 Follow-up: New chat now sits above both Pinned tabs and outside the scrolling

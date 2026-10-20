@@ -25,6 +25,12 @@ powershell -NoProfile -File .agents\skills\worktree-lifecycle\scripts\worktree.p
 
 Run it from the main checkout, never from inside the worktree you remove.
 
+After changing the helper, run its safety tests on disposable repositories:
+
+```powershell
+python .agents/skills/worktree-lifecycle/scripts/test_worktree.py
+```
+
 ## 1. Opening a worktree
 
 Open one only when the work really needs a separate checkout: parallel work
@@ -122,11 +128,13 @@ is still running), say so in your final report with its path and why.
    ```
 
    The script refuses on uncommitted work, commits that exist on no remote, a
-   locked worktree, a running build, or when the shell is inside the
-   worktree. Then it deletes the build bucket (only the one whose marker names
-   this worktree), runs `git worktree remove`, deletes leftover ignored files,
-   runs `git worktree prune`, and with `-DeleteBranch` deletes the local
-   branch only if Git says it is merged (`git branch -d`).
+   locked worktree, a running build, or a failed Git check. It also refuses
+   when the shell is inside the worktree, including a subfolder. It validates
+   the bucket marker and holds its build lock, then runs `git worktree remove`.
+   Only after Git succeeds and both the folder and registration are gone does
+   it delete the bucket. A Git refusal never falls back to a recursive folder
+   delete. With `-DeleteBranch`, it deletes the local branch only if Git says
+   it is merged (`git branch -d`).
 6. Check the result: the path is gone, `git worktree list` no longer shows it,
    and its bucket is gone from `<main checkout>\build\`.
 7. Delete `%TEMP%\hey-mike\<task>\` if you made one.
@@ -143,9 +151,10 @@ If the script cannot run, do the same by hand, in this order:
 git -C <worktree> status --short               # must be empty
 git -C <worktree> rev-list HEAD --not --remotes  # must be empty
 # find the bucket: build\<id>\.hey-mike-build.json must name <worktree>
-Remove-Item -LiteralPath <main checkout>\build\<id> -Recurse -Force
 git worktree remove <worktree>
-git worktree prune
+# Stop on ANY error. Confirm the folder and Git registration are both gone.
+# Recheck the bucket marker and take its .active.lock before deleting it.
+Remove-Item -LiteralPath <main checkout>\build\<id> -Recurse -Force
 git branch -d <branch>                          # only if merged
 ```
 
@@ -159,8 +168,10 @@ denied" or "Directory not empty". A process still has files open there.
    **no** worktree shows `BUILD RUNNING`, run `.\gradlew.bat --stop` from the
    main checkout. It stops every Gradle daemon of that version, including
    other agents' builds, so never run it while any build runs.
-3. Run `remove` again. If Git already dropped the worktree but the folder
-   stayed, delete the folder, then run `git worktree prune`.
+3. Run `remove` again only if Git still lists the worktree. If Git dropped
+   its metadata but left the folder, inspect its remaining files first. Delete
+   that exact leftover folder and bucket only after confirming they contain
+   no work to keep and no build runs; then run `git worktree prune`.
 4. If it still fails, stop and tell the user the path and the error. Do not
    kill processes you cannot identify.
 

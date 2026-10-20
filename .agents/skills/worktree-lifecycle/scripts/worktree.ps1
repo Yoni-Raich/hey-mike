@@ -5,8 +5,8 @@ Hey Mike worktree helper. Two modes:
           commits that exist on no remote, merged or not, build bucket size,
           active build) plus orphan build buckets and stray folders.
   remove  Closes one worktree safely: refuses on uncommitted or unpushed work,
-          a lock, an active build, or the current folder; then deletes its build
-          bucket, removes the worktree, prunes Git metadata and, with
+          a lock, an active build, a failed check, or the current folder; then
+          removes the worktree before its marked build bucket and, with
           -DeleteBranch, deletes the local branch only if it is merged.
 
   powershell -NoProfile -File worktree.ps1 status
@@ -37,6 +37,11 @@ function BucketId([string]$P) {
         return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').Substring(0, 16).ToLowerInvariant()
     } finally { $sha.Dispose() }
 }
+function CheckedGit([string]$Dir, [string[]]$GitArgs) {
+    $result = RunGit $Dir $GitArgs
+    if (-not $result.Ok) { throw "Git check failed in $Dir : git $($GitArgs -join ' '). Nothing else will be deleted." }
+    return $result
+}
 function TreeBytes([string]$P) {
     if (-not (Test-Path -LiteralPath $P)) { return 0 }
     $sum = (Get-ChildItem -LiteralPath $P -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
@@ -63,7 +68,7 @@ $buildRoot = Join-Path $repo 'build'
 
 function Worktrees {
     $list = @(); $cur = $null
-    foreach ($line in (RunGit $repo @('worktree', 'list', '--porcelain')).Out) {
+    foreach ($line in (CheckedGit $repo @('worktree', 'list', '--porcelain')).Out) {
         if ($line -like 'worktree *') { if ($cur) { $list += $cur }; $cur = [ordered]@{ Path = (FullPath $line.Substring(9)); Branch = $null; Locked = $false; Prunable = $false } }
         elseif ($line -like 'branch refs/heads/*') { $cur.Branch = $line.Substring(18) }
         elseif ($line -like 'locked*') { $cur.Locked = $true }
@@ -75,8 +80,8 @@ function Worktrees {
 function Inspect($W) {
     $p = $W.Path
     $exists = Test-Path -LiteralPath $p
-    $dirty = if ($exists) { @((RunGit $p @('status', '--porcelain')).Out | Where-Object { $_ }) } else { @() }
-    $unpushed = if ($exists) { @((RunGit $p @('rev-list', 'HEAD', '--not', '--remotes')).Out | Where-Object { $_ }) } else { @() }
+    $dirty = if ($exists) { @((CheckedGit $p @('status', '--porcelain')).Out | Where-Object { $_ }) } else { @() }
+    $unpushed = if ($exists) { @((CheckedGit $p @('rev-list', 'HEAD', '--not', '--remotes')).Out | Where-Object { $_ }) } else { @() }
     $merged = $false
     if ($exists) {
         foreach ($base in 'origin/dev', 'origin/main') {
@@ -149,6 +154,7 @@ if ($here -eq $target -or $here.StartsWith($target + '\', [StringComparison]::Or
     throw 'Refusing: the shell is inside that worktree. cd to the main checkout first.'
 }
 $i = Inspect $entry
+if (-not $i.Exists) { throw 'Refusing: the worktree folder is missing. Inspect its metadata before pruning it.' }
 if ($i.Locked) { throw 'Refusing: the worktree is locked (git worktree lock). Ask the user why before unlocking.' }
 if ($i.BuildActive) { throw 'Refusing: a Gradle build is running in that worktree. Wait for it or stop it first.' }
 if (($i.Dirty.Count -or $i.Unpushed.Count) -and -not $DiscardChanges) {
@@ -159,31 +165,44 @@ if (($i.Dirty.Count -or $i.Unpushed.Count) -and -not $DiscardChanges) {
     throw $msg
 }
 
-# 1. Build bucket: only the one whose marker names this worktree.
+# Validate the exact bucket before changing anything. Hold its lease until
+# both removals finish, so a new build cannot start between the two checks.
+$lease = $null
 if (Test-Path -LiteralPath $i.Bucket) {
+    if ((FullPath (Split-Path -Parent $i.Bucket)) -ne (FullPath $buildRoot)) { throw 'Refusing: bucket is outside the build root.' }
+    foreach ($folder in @($buildRoot, $i.Bucket)) {
+        if ((Get-Item -LiteralPath $folder -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Refusing: build folder is a link: $folder"
+        }
+    }
     $marker = Join-Path $i.Bucket '.hey-mike-build.json'
     $owner = if (Test-Path -LiteralPath $marker) { FullPath (Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json).worktree } else { $null }
     if ($owner -ne $target) { throw "Refusing: $($i.Bucket) is not marked as this worktree's bucket." }
     $lease = [IO.File]::Open((Join-Path $i.Bucket '.active.lock'), 'OpenOrCreate', 'ReadWrite', 'Delete')
-    try { Remove-Item -LiteralPath $i.Bucket -Recurse -Force } finally { $lease.Dispose() }
-    Write-Output "Deleted build bucket $($i.Bucket) ($(Size $i.BucketBytes))."
 }
 
-# 2. The worktree itself.
+try {
+# Let Git remove the worktree first. A refusal must never turn into a raw
+# recursive folder delete, and must leave the build bucket intact.
 $gitArgs = @('worktree', 'remove')
 if ($DiscardChanges) { $gitArgs += '--force' }
 $gitArgs += $target
 $r = RunGit $repo $gitArgs
-if (Test-Path -LiteralPath $target) {
-    # Git can drop its metadata yet fail to delete ignored files (.gradle, local
-    # build output) that Windows still has open.
-    try { Remove-Item -LiteralPath $target -Recurse -Force }
-    catch {
-        throw "Could not delete $target : $($_.Exception.Message)`nA process still has files open there (a Gradle or Kotlin daemon, an IDE, a shell). See the skill's 'Locked files' section, then run remove again."
-    }
+if (-not $r.Ok) {
+    throw "Git refused to remove $target. No folder-delete fallback was attempted; the build bucket was kept. Check git status, locks and open files before retrying."
 }
-RunGit $repo @('worktree', 'prune') | Out-Null
+if (@(Worktrees | Where-Object { $_.Path -eq $target }).Count) {
+    throw "Git still lists $target. The build bucket was kept."
+}
+if (Test-Path -LiteralPath $target) {
+    throw "Git left files at $target. Inspect them before deleting anything by hand; the build bucket was kept."
+}
 Write-Output "Removed worktree $target."
+if ($lease) {
+    Remove-Item -LiteralPath $i.Bucket -Recurse -Force
+    Write-Output "Deleted build bucket $($i.Bucket) ($(Size $i.BucketBytes))."
+}
+} finally { if ($lease) { $lease.Dispose() } }
 
 # 3. Local branch, only if fully merged. Remote branches are never touched.
 if ($DeleteBranch -and $i.Branch) {
