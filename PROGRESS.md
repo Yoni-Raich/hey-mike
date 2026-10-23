@@ -18,7 +18,9 @@ Local checks passed: eight helper tests; 24 existing runtime tests; 13 trigger
 scenarios and an exact comparison preserving the baseline check job; skill
 validation; `actionlint` 1.7.12; and `git diff --check`. No local Gradle build,
 device run or release gate was performed. Hosted CI and live trigger evidence
-are tracked in the focused PR.
+are tracked in [PR #143](https://github.com/Yoni-Raich/hey-mike/pull/143).
+Its first head (`4cc4b7c2`) started one PR run and no duplicate push run; the
+evidence-only follow-up checks cancellation of the superseded PR run.
 Other checkout changes and worktrees were preserved.
 
 ### Worktree and temporary-build lifecycle — 2026-10-20

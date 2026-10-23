@@ -70,7 +70,15 @@ expressions. A local YAML comparison checks that the baseline job is preserved
 apart from the added audit tests, and exercises the trigger filter matrix.
 Skill frontmatter and `git diff --check` are also checked.
 
-The focused PR's Actions result is the next check of the new configuration.
+## First live trigger observation
+
+[Draft PR #143](https://github.com/Yoni-Raich/hey-mike/pull/143), initial head
+`4cc4b7c26ac912b3816a51cfe4ae8d02bc31d75a`, produced exactly one Android run:
+[pull_request run 39905235016](https://github.com/Yoni-Raich/hey-mike/actions/runs/39905235016).
+The branch push produced no second run. The check was running when this
+evidence update was prepared. Pushing this documentation update also exercises
+same-PR supersession; the PR records that outcome and the final head's result.
+
 No phone, APK installation or release gate is needed for this development-only
-change. Future total CI savings and superseded-PR cancellation need further
-live history; local checks cannot prove either.
+change. Future total CI savings and integration/tag dispatch still need later
+live history. Local checks cannot prove those outcomes.
