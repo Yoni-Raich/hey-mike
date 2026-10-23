@@ -9,6 +9,21 @@ and no fallback. `kotlinx-coroutines-test` is a test-only `:device-tools`
 dependency; production observation timing and dispatch are unchanged. See
 [the maintenance evidence](history/maintenance-tests-2026-10-23.md).
 
+## Repository maintenance and CI triggers — 2026-10-23
+
+The development-only `.agents/skills/repo-maintenance/SKILL.md` guides small
+maintenance changes with source/runtime evidence and bounded validation. Its
+read-only CI helper measures paired push/PR job time using GitHub CLI. It is
+not bundled in the APK and creates no background job or live-service access.
+
+Android CI checks every PR, including drafts, and pushes to `dev`, `main` and
+all tags. Feature work gets its check through a PR, avoiding a second full
+build for the same head. New revisions cancel only older runs of that PR;
+integration, tag and manual runs keep separate groups. All existing Python,
+unit, build and lint checks remain, with tests for the audit helper added.
+Manual dispatch needs this workflow to exist on the default branch first.
+See [the baseline audit](history/maintenance-ci-2026-10-23.md).
+
 ## Repository worktree lifecycle — 2026-10-20
 
 The development-only skill at `.agents/skills/worktree-lifecycle/SKILL.md`
