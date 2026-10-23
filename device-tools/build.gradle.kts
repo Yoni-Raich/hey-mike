@@ -12,6 +12,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     // Android provides XmlPullParser at runtime; kxml supplies it to local JVM tests.
     testImplementation("net.sf.kxml:kxml2:2.3.0")
 }

@@ -1,5 +1,14 @@
 # Architecture
 
+## Deterministic UI timeout regression — 2026-10-23
+
+The ADB UI observation timeout regression uses a virtual coroutine scheduler
+with the production default budget, rather than a 10ms wall-clock race. It
+checks dispatch, suspension before the deadline, typed timeout, cancellation
+and no fallback. `kotlinx-coroutines-test` is a test-only `:device-tools`
+dependency; production observation timing and dispatch are unchanged. See
+[the maintenance evidence](history/maintenance-tests-2026-10-23.md).
+
 ## Repository worktree lifecycle — 2026-10-20
 
 The development-only skill at `.agents/skills/worktree-lifecycle/SKILL.md`

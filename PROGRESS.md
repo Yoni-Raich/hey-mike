@@ -1,5 +1,31 @@
 # Progress
 
+### Maintenance: remove a timeout-test timing race — 2026-10-23
+
+Baseline `origin/dev` is `ff5729f7`; unrelated checkout changes were preserved.
+The unchanged `readUiTimeoutIsTypedAndNeverFallsBack` passed once in Gradle,
+but failed 1/100 repetitions under `java -Xint`: its 10ms real deadline could
+expire before the first dump, yielding `expected:<1> but was:<0>`.
+
+The regression now uses virtual coroutine time and the default 6s budget.
+It verifies one dispatch, no early completion, completion at the deadline,
+typed timeout, one cancellation and no fallback. Its own workspace is cleaned.
+Only the test and a test-only dependency changed; runtime timing is unchanged.
+
+After: focused test PASS; same interpreted-JVM comparison 100/100 PASS;
+`:device-tools:testDebugUnitTest :core:test --no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process` PASS on Windows/JDK 21.
+XML: device-tools 106 + core 809 = 915 tests, zero failures/errors/skips.
+Task-specific storage init/config kept other build buckets (`removed:[]`).
+Hosted CI is tracked in the focused PR. No local app assembly, install,
+physical-device test or full release gate was run for this test-only change.
+
+The six failures in the latest 100 CI runs were triaged: four already have
+merged fixes, two browser class-setup failures need deeper diagnostics. A
+narrow scan of 241 production Kotlin files yielded no removal candidate;
+no dead-code safety or instruction A/B claim is made. Evidence and limits:
+`docs/history/maintenance-tests-2026-10-23.md`.
+
 ### Worktree and temporary-build lifecycle — 2026-10-20
 
 Added a repository development skill and a PowerShell status/removal helper.
