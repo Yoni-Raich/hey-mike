@@ -1,5 +1,19 @@
 name: Android
-on: [push, pull_request]
+# Feature branches are checked through their PR, including draft PRs. Keep
+# integration and tag pushes checked without building every PR head twice.
+on:
+  push:
+    branches: [dev, main]
+    tags: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Only a newer revision of the same PR may cancel a running check. Push and
+# manual runs have unique groups, so integration/tag evidence is kept.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -21,6 +35,7 @@ jobs:
       - run: sdkmanager 'ndk;28.2.13676358'
       - run: chmod +x gradlew
       - run: python -m unittest tools.test_prepare_runtime tools.test_codex_runtime
+      - run: python .agents/skills/repo-maintenance/scripts/test_ci_history.py
       - run: ./gradlew :web:testDebugUnitTest :core:test :engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest :mcp-loopback:testDebugUnitTest :runtime:testDebugUnitTest :workspace:testDebugUnitTest :remote:testDebugUnitTest :device-tools:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
         env:
           HEYMIKE_TEST_CHROME: /usr/bin/google-chrome

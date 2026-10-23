@@ -1,5 +1,26 @@
 # Progress
 
+### Evidence-based maintenance: CI duplicate runs — 2026-10-23
+
+Added the development-only `repo-maintenance` skill and a read-only Actions
+history helper. Baseline `origin/dev` is `ff5729f7`. The latest 50 Android runs
+contained 19 completed push/PR pairs at the same branch/head. Their push jobs
+used 7,099 seconds (118.32 runner minutes), excluding queue time. This is a
+historical opportunity estimate, not measured savings or billing.
+
+Android CI now checks every PR, integration pushes (`dev`/`main`) and all tags;
+feature branches use draft/regular PRs for automatic checks. Only superseded
+runs of the same PR are cancelled. Existing checks remain, with audit-helper
+tests added. Manual dispatch needs the workflow on default `main` first.
+See `docs/history/maintenance-ci-2026-10-23.md` for source links and limits.
+
+Local checks passed: eight helper tests; 24 existing runtime tests; 13 trigger
+scenarios and an exact comparison preserving the baseline check job; skill
+validation; `actionlint` 1.7.12; and `git diff --check`. No local Gradle build,
+device run or release gate was performed. Hosted CI and live trigger evidence
+are tracked in the focused PR.
+Other checkout changes and worktrees were preserved.
+
 ### Worktree and temporary-build lifecycle — 2026-10-20
 
 Added a repository development skill and a PowerShell status/removal helper.
