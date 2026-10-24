@@ -40,6 +40,17 @@ version `0.14.0-dev.connect-sdk` / 1164, Android Debug certificate, v2 signed
 combined build, 170 unit tests and four UI tests passed after the RTL styling
 change; the mixed Hebrew/English selection screenshot was checked again.
 
+Phone follow-up: built the same source head `8685f2a9` with version overrides
+`1166` / `0.14.0-dev.chat-copy1166`. Dev Debug assembly and app lint passed;
+APK v2 signature and 16 KiB ZIP alignment passed. SHA-256:
+`7fa6cbcb55de3b76632f0ba12a5a3312827eccd6f70b882cff8c61ece8397e5e`.
+`copy_file` completed to the current phone; the installer updated the app.
+Fresh `apps_settings(app_info)` confirms installed code 1166 and the matching
+version name. The user reported that the UI looks good and requested merge to
+`dev`. No app data was cleared. The installed base-APK hash was not read;
+live model, accessibility and full release validation remain outside this check.
+Hosted Android CI passed for source head `8685f2a9` in PR #145.
+
 ### Maintenance: remove a timeout-test timing race — 2026-10-23
 
 Baseline `origin/dev` is `ff5729f7`; unrelated checkout changes were preserved.
