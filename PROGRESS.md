@@ -1,5 +1,56 @@
 # Progress
 
+### Shared chat copy actions and full-screen selection — 2026-10-24
+
+Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's
+long-press menu has Copy and Select text; selection opens a full screen, and
+agent answers have a Copy shortcut below them. Hey Mike now shares the same
+menu for both roles, adds one shortcut under each finished agent reply, and
+opens a full-screen selection view with Back and Copy all. Original prompt
+text and the existing whole-reply copy scope are retained; tool output is
+excluded. Text is frozen while selecting, and copied prompts have no injected
+RTL display markers.
+
+From isolated `origin/dev` baseline `07883212`, Windows/JDK 21:
+`:app:testDevDebugUnitTest :app:assembleDevDebug
+:app:assembleDevDebugAndroidTest :app:lintDevDebug --no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process` PASS. App unit XML: 170
+tests, zero failures/errors/skips. Lint: zero errors, 21 warnings. Final
+AndroidTest assembly and lint rerun also PASS after fixture changes.
+
+Installed app/test APKs with `adb -s <selected-emulator> install -r`, then ran
+`am instrument -w -e class dev.androidagent.app.ui.MessageActionsUiTest
+dev.androidagent.app.dev.test/androidx.test.runner.AndroidJUnitRunner` directly
+on an Android 15/API 35 x86_64 emulator: four tests PASS. They cover original
+Hebrew prompt copying, the reply shortcut and copied feedback, actual partial
+selection/copy through Android's toolbar, both long-press menus, and returning
+from selection. A synthetic selection-screen screenshot was inspected. Initial
+fixture failures were fixed by scoping to the dialog and using Android's real
+long-press gesture for the native TextView.
+
+The clean runtime preparation hit HTTP 404 at the unchanged pinned Alpine
+musl URL. The local build used existing cached inputs; the preparation script
+verified their pinned hashes, including musl archive `ac281d1e...703782`.
+No runtime pins or build gates changed. Task-specific central-build config
+reported `removed:[]`, preserving other worktrees and build buckets. No
+physical Hey Mike install, real chat/runtime test, or full release gate.
+The emulator APK is Dev Debug `dev.androidagent.app.dev`, unchanged source
+version `0.14.0-dev.connect-sdk` / 1164, Android Debug certificate, v2 signed
+(not v3 or a release artifact). Installed emulator metadata matches. The final
+combined build, 170 unit tests and four UI tests passed after the RTL styling
+change; the mixed Hebrew/English selection screenshot was checked again.
+
+Phone follow-up: built the same source head `8685f2a9` with version overrides
+`1166` / `0.14.0-dev.chat-copy1166`. Dev Debug assembly and app lint passed;
+APK v2 signature and 16 KiB ZIP alignment passed. SHA-256:
+`7fa6cbcb55de3b76632f0ba12a5a3312827eccd6f70b882cff8c61ece8397e5e`.
+`copy_file` completed to the current phone; the installer updated the app.
+Fresh `apps_settings(app_info)` confirms installed code 1166 and the matching
+version name. The user reported that the UI looks good and requested merge to
+`dev`. No app data was cleared. The installed base-APK hash was not read;
+live model, accessibility and full release validation remain outside this check.
+Hosted Android CI passed for source head `8685f2a9` in PR #145.
+
 ### Maintenance: remove a timeout-test timing race — 2026-10-23
 
 Baseline `origin/dev` is `ff5729f7`; unrelated checkout changes were preserved.
