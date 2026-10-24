@@ -118,11 +118,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.material.icons.outlined.SelectAll
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.semantics.CustomAccessibilityAction
-import androidx.compose.ui.semantics.customActions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -749,7 +744,7 @@ private fun AgentChatContent(
                     is MessageRow -> {
                         val child = state.childAgents.firstOrNull { it.id == row.message.id }
                         if (child != null) ChildAgentCard(child, actions)
-                        else MessageBubble(row.message, row.copyText)
+                        else MessageBubble(row.message, row.copyText, row.showCopyAction)
                     }
                     is ActionsRow -> DeviceActionsRow(row)
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
@@ -1045,7 +1040,8 @@ private fun LoadingMessagesCard() {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showCopyAction: Boolean = false) {
     val role = message.role.lowercase()
     val user = role == "user"
     val system = role == "system" || role == "tool"
@@ -1107,43 +1103,23 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
                     )
                 }
                 if (message.text.isNotBlank()) {
-                    // A long press on a block opens its menu. A user's prompt is
-                    // one block; an agent's reply is everything after that prompt.
-                    val clipboard = LocalClipboardManager.current
                     val blockText = if (user) message.text else copyText ?: message.text
-                    var menuOpen by remember(message.id) { mutableStateOf(false) }
-                    var selectOpen by remember(message.id) { mutableStateOf(false) }
-                    Box(
-                        Modifier.semantics {
-                            customActions = listOf(
-                                CustomAccessibilityAction("Copy message") { clipboard.setText(AnnotatedString(blockText)); true },
-                            )
-                        },
-                    ) {
+                    MessageActions(message.id, blockText, showCopyAction = !user && showCopyAction) { onLongPress ->
                         if (user) {
                             Text(
                                 withRtlLines(message.text),
-                                modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onLongPress = { menuOpen = true }) },
+                                modifier = Modifier.fillMaxWidth().combinedClickable(
+                                    onClick = {},
+                                    onLongClickLabel = "Message actions",
+                                    onLongClick = onLongPress,
+                                ),
                                 color = textColor,
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                         } else {
-                            MarkdownMessage(message.text, textColor, onLongPress = { menuOpen = true })
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Copy") },
-                                leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
-                                onClick = { menuOpen = false; clipboard.setText(AnnotatedString(blockText)) },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Select text") },
-                                leadingIcon = { Icon(Icons.Outlined.SelectAll, contentDescription = null) },
-                                onClick = { menuOpen = false; selectOpen = true },
-                            )
+                            MarkdownMessage(message.text, textColor, onLongPress = onLongPress)
                         }
                     }
-                    if (selectOpen) SelectTextDialog(blockText) { selectOpen = false }
                 } else if (message.state.equals("streaming", ignoreCase = true)) {
                     Row(
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -1172,20 +1148,6 @@ private fun MessageBubble(message: ChatMessage, copyText: String? = null) {
             }
         }
     }
-}
-
-/** The block's text where part of it can be selected, since a long press opens the menu instead. */
-@Composable
-private fun SelectTextDialog(text: String, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        text = {
-            SelectionContainer {
-                Text(text, Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodyLarge)
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
 }
 
 @Composable
