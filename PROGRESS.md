@@ -34,6 +34,21 @@ Worktree retained for review:
 Build bucket: `build/136485a0c2ca6505`. Logs and task build config:
 `%TEMP%\hey-mike\pc-sensitive-command-approvals-20261025`.
 
+Phone update attempt: built source `56feee2` with overrides `1167` /
+`0.14.0-dev.pc-approvals1167`. Dev Debug assembly and app lint PASS (zero
+errors, 21 warnings); APK v2 signature and 16 KiB ZIP alignment PASS. SHA-256:
+`67274eecf73467a628e693ac6ce62d8c0574617a3b580cc576981316b8372a8c`,
+338,671,122 bytes. `copy_file` completed to this phone's chat workspace and
+then Downloads; the workspace listing matches the APK size. Wire bytes were
+not measured, so no small-delta claim is made. The APK was opened through
+MediaStore; APK Manager displayed "Installing hey-mike-pc-approvals-1167.apk"
+and "Silent install over ADB". No install success was observed. Subsequent
+phone read/metadata calls stopped responding; reopening Mike is needed to
+verify the installed version and runtime. Pre-install metadata was code 1166.
+The computer's only authorized USB device had code 1163, so it was not used
+as the chat phone or modified. Installed base-APK hash and live native command
+approval remain unverified. No uninstall, data clear or MorningGuard cleanup.
+
 ### Shared chat copy actions and full-screen selection — 2026-10-24
 
 Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's
