@@ -25,11 +25,10 @@ same Gradle options PASS. App XML: 170 tests, zero failures/errors/skips.
 App lint: zero errors, 21 warnings. `git diff --check` PASS. Across these four
 modules: 1,189 cases, zero failures/errors, three skips. Cached runtime inputs
 were staged with their pinned hashes verified; no runtime pins changed.
-No phone install, live native approval test, UI capture or full release gate
-has been performed. The next app update and remote engine start/resume are
-needed to apply this to an installed saved computer.
+At initial verification, no phone install, live native approval test, UI capture
+or full release gate had been performed. Phone follow-up is recorded below.
 Task build config leaves other buckets intact (`removed:[]` in both runs).
-Worktree retained for review:
+Task worktree (cleanup follows merge):
 `C:\Users\SHIRA\.codex\worktrees\pc-sensitive-command-approvals-20261025`.
 Build bucket: `build/136485a0c2ca6505`. Logs and task build config:
 `%TEMP%\hey-mike\pc-sensitive-command-approvals-20261025`.
@@ -48,6 +47,15 @@ verify the installed version and runtime. Pre-install metadata was code 1166.
 The computer's only authorized USB device had code 1163, so it was not used
 as the chat phone or modified. Installed base-APK hash and live native command
 approval remain unverified. No uninstall, data clear or MorningGuard cleanup.
+
+Phone follow-up at 14:32: fresh `apps_settings(app_info)` confirms installed
+code 1167 / `0.14.0-dev.pc-approvals1167`; the user reports that it works and
+requests merge to `dev`. This existing Pc chat's newest Codex `turn_context`
+also confirms `approval_policy: on-request` and `sandbox_policy:
+danger-full-access`, so the corrected remote profile reached the native
+runtime after update/resume. No deletion was run to test it. Installed
+base-APK hash, a separately observed live command-approval card and full
+release validation remain outside this evidence.
 
 ### Shared chat copy actions and full-screen selection — 2026-10-24
 
