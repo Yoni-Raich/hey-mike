@@ -18,7 +18,9 @@ object RemoteInstructions {
             RemoteAccess.ASK ->
                 if (claude) "A command or a change outside the chat's folder that needs permission asks the user first; their answer comes from the phone."
                 else "Commands that need more than the workspace sandbox allows ask the user first; their answer comes from the phone."
-            RemoteAccess.FULL -> "The user gave you full access to this computer without approval prompts. Be careful with anything destructive or hard to undo."
+            RemoteAccess.FULL ->
+                if (claude) "The user gave you full access to this computer without approval prompts. Be careful with anything destructive or hard to undo."
+                else "The user gave you full file access to this computer. Codex still asks the user before risky commands; their answer comes from the phone. Submit the intended command to show its approval card. Approval applies only to that request. If a command is denied or blocked by policy, do not retry through another shell or file API. Be careful with anything destructive or hard to undo."
         }
         val linux = computer.os == HostOs.LINUX
         val desktop = if (linux) LINUX_DESKTOP else WINDOWS_DESKTOP

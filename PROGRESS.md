@@ -1,5 +1,39 @@
 # Progress
 
+### Computer full access keeps native Codex approvals — 2026-10-25
+
+From isolated `origin/dev` baseline `053cc14a`, changed the saved computer
+`FULL` profile to `danger-full-access` + `on-request`. Full file access is
+retained; risky native commands can now ask on the phone instead of being
+rejected because prompts were disabled. The persisted `FULL` name, saved
+credentials, host keys and chat bindings are retained. Computer labels, tool
+status and Codex instructions describe the approval path. Claude's full-access
+mode and the phone's Codex profile are unchanged. No user Codex config/rules or
+MorningGuard files were changed, and no rejected deletion was retried.
+
+Windows/JDK 21: `:remote:testDebugUnitTest :engine-codex:testDebugUnitTest
+:core:test --no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process` PASS. XML: remote 152
+(three skips), engine-codex 58, core 809; zero failures/errors. Tests cover
+saved FULL data/profile, start and resume policy, accept/decline for both
+computer presets, wrong-source replies, one-use answers, and Stop while a
+full-access command approval is pending. The protocol peer is simulated; no
+model, SSH command or deletion runs in these approval tests.
+
+`:app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug` with the
+same Gradle options PASS. App XML: 170 tests, zero failures/errors/skips.
+App lint: zero errors, 21 warnings. `git diff --check` PASS. Across these four
+modules: 1,189 cases, zero failures/errors, three skips. Cached runtime inputs
+were staged with their pinned hashes verified; no runtime pins changed.
+No phone install, live native approval test, UI capture or full release gate
+has been performed. The next app update and remote engine start/resume are
+needed to apply this to an installed saved computer.
+Task build config leaves other buckets intact (`removed:[]` in both runs).
+Worktree retained for review:
+`C:\Users\SHIRA\.codex\worktrees\pc-sensitive-command-approvals-20261025`.
+Build bucket: `build/136485a0c2ca6505`. Logs and task build config:
+`%TEMP%\hey-mike\pc-sensitive-command-approvals-20261025`.
+
 ### Shared chat copy actions and full-screen selection — 2026-10-24
 
 Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's

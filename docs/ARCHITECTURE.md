@@ -2745,9 +2745,19 @@ would be a mobile round trip wrapped in `cat` and heredocs.
     ownership guard; legacy sessions need a separate verified migration.
 - **Access is the user's choice per computer.** *Ask me first*:
   `workspace-write` with `on-request` approvals, answered on the phone's
-  approval card. *Full access*: `danger-full-access` with no approvals, as on
-  the phone. What *Ask* can enforce depends on the Codex Windows sandbox on
-  that PC; it is not set up by Hey Mike.
+  approval card. *Full access*: `danger-full-access` with `on-request`
+  approvals. Codex can access all files but still asks before risky commands.
+  `never` would reject commands that its native safety guard marks dangerous,
+  including forced PowerShell deletion, without offering an approval card.
+  Keep the persisted `FULL` name so saved computers use the corrected profile
+  on their next engine start/resume; no state or local Codex config is migrated.
+  Both settings are passed on thread start and resume. User text authorizing
+  work does not replace a native command-approval response. Approval still goes
+  through the request-id-scoped phone card; denial and Stop remain effective.
+  Claude's full-access `bypassPermissions` mode is unchanged and named in the
+  computer form. The phone's own Codex profile is unchanged.
+  What *Ask* can enforce depends on the Codex Windows sandbox on that PC;
+  it is not set up by Hey Mike.
   Permission requests retain their requested profile by request id. Allow
   returns that profile with turn scope; Deny returns an empty profile.
   Command and file-change requests still return accept/decline decisions.

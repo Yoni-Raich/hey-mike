@@ -79,25 +79,45 @@ class ComputerSubagentIntegrationTest {
     }
 
     @Test fun computerApprovalIsNamespacedAndOnlyAUserReplyInItsSourceAnswersIt() = runBlocking<Unit> {
-        val rig = Rig(temp.root, RemoteAccess.ASK)
+        for (access in RemoteAccess.entries) for (allow in listOf(true, false)) {
+            val rig = Rig(File(temp.root, "approval-$access-$allow").apply { mkdirs() }, access)
+            try {
+                val task = rig.start()
+                rig.remote.awaitRequest("thread/name/set")
+                rig.remote.approval(7, "computer-thread-1", "computer-turn-1")
+                val waiting = rig.awaitTask(task.id, "waiting_for_user")
+                assertEquals("computer-thread-1", waiting.threadId)
+                val source = rig.manager.sourceState("source", rig.runs.sessionStates.value)
+                assertEquals("remote|pc|7", source.approval!!.requestId)
+                assertTrue(rig.remote.responses.value.isEmpty())
+                assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "other"))
+                assertTrue(rig.remote.responses.value.isEmpty())
+                assertTrue(rig.runs.answerApprovalByReply(if (allow) "yes" else "no", sessionId = "source"))
+                val answers = withTimeout(5_000) { rig.remote.responses.first { it.isNotEmpty() } }
+                assertEquals(JsonPrimitive(7), answers.single()["id"])
+                assertEquals(if (allow) "accept" else "decline", answers.single().getValue("result").jsonObject.getValue("decision").jsonPrimitive.content)
+                assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "source"))
+                assertEquals(1, rig.remote.responses.value.size)
+                assertTrue(rig.local.responses.value.isEmpty())
+                rig.remote.complete("computer-thread-1", "computer-turn-1", "Fixture approval answered")
+                assertEquals("Fixture approval answered", rig.awaitTask(task.id, "completed").result)
+            } finally { rig.close() }
+        }
+    }
+
+    @Test fun stoppingFullAccessWhileApprovalIsPendingCannotApproveTheCommandLater() = runBlocking<Unit> {
+        val rig = Rig(temp.root, RemoteAccess.FULL)
         try {
             val task = rig.start()
             rig.remote.awaitRequest("thread/name/set")
             rig.remote.approval(7, "computer-thread-1", "computer-turn-1")
-            val waiting = rig.awaitTask(task.id, "waiting_for_user")
-            assertEquals("computer-thread-1", waiting.threadId)
-            val source = rig.manager.sourceState("source", rig.runs.sessionStates.value)
-            assertEquals("remote|pc|7", source.approval!!.requestId)
-            assertTrue(rig.remote.responses.value.isEmpty())
-            assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "other"))
-            assertTrue(rig.remote.responses.value.isEmpty())
-            assertTrue(rig.runs.answerApprovalByReply("no", sessionId = "source"))
-            val answers = withTimeout(5_000) { rig.remote.responses.first { it.isNotEmpty() } }
-            assertEquals(JsonPrimitive(7), answers.single()["id"])
-            assertEquals("decline", answers.single().getValue("result").jsonObject.getValue("decision").jsonPrimitive.content)
-            assertTrue(rig.local.responses.value.isEmpty())
-            rig.remote.complete("computer-thread-1", "computer-turn-1", "Approval declined; no command ran")
-            assertEquals("Approval declined; no command ran", rig.awaitTask(task.id, "completed").result)
+            rig.awaitTask(task.id, "waiting_for_user")
+            rig.runs.stop("source")
+            rig.remote.awaitRequest("turn/interrupt")
+            rig.awaitTask(task.id, "cancelled")
+            assertNull(rig.manager.sourceState("source", rig.runs.sessionStates.value).approval)
+            assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "source"))
+            assertFalse(rig.remote.responses.value.any { it["result"]?.jsonObject?.get("decision") == JsonPrimitive("accept") })
         } finally { rig.close() }
     }
 
