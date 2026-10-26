@@ -75,6 +75,18 @@
         <service android:name=".AgentService" android:exported="false" android:foregroundServiceType="specialUse|microphone">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-started local AI agent with an on-device Codex process and visible device control" />
         </service>
+        <!-- A few seconds each time a usage window ends: one short message to start the next one. -->
+        <service android:name=".UsageWindowService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled start of the user's own AI plan usage window at the time it resets" />
+        </service>
+        <receiver android:name=".UsageWindowReceiver" android:exported="false" />
+        <!-- An alarm does not survive a restart or an app update: re-arm it. -->
+        <receiver android:name=".UsageWindowBootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <service android:name=".ime.AgentInputMethodService" android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true">
             <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/agent_input_method" />

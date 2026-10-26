@@ -133,6 +133,8 @@ data class AgentUiState(
     val savedAccounts: dev.androidagent.core.AccountVaultState = dev.androidagent.core.AccountVaultState(),
     /** An account switch is stopping and restarting Codex. */
     val isSwitchingAccount: Boolean = false,
+    /** Starting each account's 5-hour window by itself when the last one ends. */
+    val usageWindows: UsageWindowsUi = UsageWindowsUi(),
     val availableModels: List<String> = emptyList(),
     val modelCatalog: List<AgentModel> = emptyList(),
     val availableSkills: List<AgentSkill> = emptyList(),
@@ -293,6 +295,19 @@ data class FolderBrowserState(
  * UI events are callbacks so the root app can keep all device and engine
  * operations behind its core gateways.
  */
+/** Settings > Accounts: Mike starts each account's 5-hour window when the last one ends. */
+data class UsageWindowsUi(
+    val enabled: Boolean = false,
+    /** A start is running now. */
+    val busy: Boolean = false,
+    /** Off, Android may land the start late under Doze. */
+    val exactAlarms: Boolean = true,
+    val rows: List<UsageWindowRow> = emptyList(),
+)
+
+/** One account: its name and what happens next ("Started 06:41 · next start 11:42"). */
+data class UsageWindowRow(val name: String, val engine: dev.androidagent.core.EngineKind, val line: String, val failing: Boolean)
+
 data class AgentUiActions(
     val onDrawerChanged: (Boolean) -> Unit = {},
     val onNewChat: () -> Unit = {},
@@ -325,6 +340,10 @@ data class AgentUiActions(
     /** Forget a saved account that is not live. */
     val onRemoveAccount: (String) -> Unit = {},
     val onRefreshAccount: () -> Unit = {},
+    /** Turn the automatic start of 5-hour windows on or off. */
+    val onUsageWindows: (Boolean) -> Unit = {},
+    /** Start every window that is not running, now. */
+    val onStartUsageWindows: () -> Unit = {},
     val onPair: (code: String, port: String) -> Unit = { _, _ -> },
     val onConnect: (port: String) -> Unit = {},
     val onDiscover: () -> Unit = {},

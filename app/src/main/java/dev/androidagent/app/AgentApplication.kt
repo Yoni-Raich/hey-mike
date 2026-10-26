@@ -151,6 +151,30 @@ class AgentGraph(private val app: Application) {
     val usageBook = AccountUsageBook(java.io.File(runtime.runtimeRoot, "accounts/usage.json"))
     // Claude's last 5-hour and weekly limits, so the usage sheet has them after a restart.
     val claudeUsage = LastUsageStore(java.io.File(runtime.runtimeRoot, "claude-usage.json"))
+    /** Held by an account switch and by a usage-window start, so a sign-in is never swapped while it is lent. */
+    val accountFiles = kotlinx.coroutines.sync.Mutex()
+    /** Starts each account's 5-hour window when the last one ends, when the user turned that on. */
+    val usageWindows = UsageWindowKeeper(
+        app,
+        dev.androidagent.core.UsageWindowJournal(java.io.File(runtime.runtimeRoot, "accounts/usage-windows.json")),
+        accounts,
+        usageBook,
+        claudeUsage,
+        claudeEngine,
+        liveTokens = { refresh, previous ->
+            dev.androidagent.remote.PhoneAccountTokens(phoneEngine, java.io.File(runtime.codexHomeDirectory, "auth.json"))
+                .current(refresh, previous)
+        },
+        accountFiles = accountFiles,
+        onReading = { engine, live ->
+            dev.androidagent.app.widget.UsageWidget.refresh(app)
+            // The open screen shows the live account's quota from the main
+            // app-server; read it there too, but never start it for this.
+            if (engine == dev.androidagent.core.EngineKind.CODEX && live &&
+                runtime.status.value.phase == dev.androidagent.core.RuntimePhase.RUNNING
+            ) runCatching { phoneEngine.refreshUsage() }
+        },
+    )
     val adb = AndroidAdbTransport(app)
     private lateinit var runCoordinator: AgentRuns
     // Declared before the gateways: they take `overlay` as a constructor argument,
@@ -423,6 +447,8 @@ class AgentGraph(private val app: Application) {
         scope.launch {
             A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
         }
+        // Any process start (boot, update, an alarm) re-arms the next window start.
+        scope.launch(Dispatchers.IO) { runCatching { usageWindows.rearm() } }
         runCoordinator = AgentRuns(scope, engine, onStopSession = { id ->
             if (::sessionAgents.isInitialized) sessionAgents.stop(id)
             if (id != null) runCoordinator.family(id).forEach(computerTasks::stopOrigin)
