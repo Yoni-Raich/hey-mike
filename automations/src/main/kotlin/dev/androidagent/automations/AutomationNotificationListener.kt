@@ -41,7 +41,10 @@ import kotlinx.coroutines.*
  * than abandoned, and the narrowing is enforced here in the order the checks
  * are written:
  *
- * 1. our own notifications are dropped first, so a rule's `notify` can never
+ * 0. only this app's personal Android user is accepted, before reading any
+ *    notification payload or consulting either consumer; other profiles and
+ *    unknown users never reach automations or the task board,
+ * 1. our own notifications are dropped, so a rule's `notify` can never
  *    trigger the rule that posted it,
  * 2. ongoing notifications (the foreground-service card, a media player) are
  *    dropped: they are status, not events, and they repost constantly,
@@ -73,9 +76,10 @@ class AutomationNotificationListener : NotificationListenerService() {
                 if (board?.ready == true) {
                     // Restore collection after process death. Never replay automation actions.
                     runCatching { activeNotifications.orEmpty().forEach { posted ->
+                        if (!PersonalNotificationPolicy.allows(this@AutomationNotificationListener, posted)) return@forEach
                         val notification = posted.notification
                         if (posted.packageName != packageName && notification.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_GROUP_SUMMARY) == 0 && board.wants(posted.packageName)) {
-                            TaskNotificationReader.messages(posted).forEach(board::onMessage)
+                            TaskNotificationReader.messages(this@AutomationNotificationListener, posted).forEach(board::onMessage)
                         }
                     } }
                     return@launch
@@ -89,6 +93,7 @@ class AutomationNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val posted = sbn ?: return
+        if (!PersonalNotificationPolicy.allows(this, posted)) return
         if (posted.packageName == packageName) return
         val notification = posted.notification ?: return
         if (notification.flags and Notification.FLAG_ONGOING_EVENT != 0) return
@@ -115,7 +120,7 @@ class AutomationNotificationListener : NotificationListenerService() {
                 ),
             )
         }
-        if (boardWants) runCatching { TaskNotificationReader.messages(posted).forEach(board!!::onMessage) }
+        if (boardWants) runCatching { TaskNotificationReader.messages(this, posted).forEach(board!!::onMessage) }
     }
 
     /** Dismissals are not events any rule can name, so they are not delivered. */

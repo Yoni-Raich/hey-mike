@@ -2363,7 +2363,20 @@ land an hour late. `AutomationHost.canFireOnTime()` reports which, because
 "19:00" arriving at 20:10 is a different action rather than a slow one.
 
 **The notification listener enforces the privacy contract in the order its
-checks are written.** Our own notifications are dropped first, so a rule's
+checks are written.** `PersonalNotificationPolicy` first requires the
+`StatusBarNotification.user` to equal `Process.myUserHandle()`. Work, private,
+other-user and all-user notifications are rejected before accessing the
+notification payload or consulting automation/task consumers. Missing handles,
+unavailable user metadata/services and exceptions fail closed. The app's own
+context must also be outside a managed profile (API 30+), and outside any
+profile on API 33+. The check uses public APIs and does not assume user 0 or
+globally exclude a package that can also be used personally. It runs for live
+callbacks, active-notification replay after reconnect, and direct calls to
+`TaskNotificationReader`. The task board's startup chat backfill does not read
+Android notifications. Existing signals/cards are not deleted or reclassified;
+old stored signals do not retain Android profile provenance.
+
+Our own notifications are then dropped, so a rule's
 `notify` can never trigger the rule that posted it; ongoing and group-summary
 notifications are dropped as status rather than events; then **the package is
 checked before the title or body is touched**, against
@@ -2372,7 +2385,11 @@ rules, with `"*"` included only by an enabled all-apps rule. An app outside that
 scope is never read, and with no notification rule at all the service reads
 nothing. Only then are title and text extracted, and they go
 no further than the evaluator unless the rule's own actions interpolate them.
-Nothing is stored: there is no notification log and no tool that can ask for one.
+Automation rules store no notification log. The task board's separate, bounded
+signal inbox keeps only messages admitted by this profile boundary and its
+existing collection settings. See
+[notification profile checks](testing/personal-notification-profile-20261026.md)
+for supported settings, API behavior, tests and deployment limits.
 
 **A voice rule carries its context through startup and speaks first.**
 `voice_call.opening` is the first utterance; optional `context` carries the

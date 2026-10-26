@@ -1,5 +1,40 @@
 # Progress
 
+### Personal-profile notification capture — 2026-10-26
+
+Isolated branch `fix/personal-profile-notifications` uses a verified local
+tasks1170 source snapshot at `bd25170` above `origin/dev` (`053cc14a`). The
+original task-board checkout and main checkout were not edited. A shared
+fail-closed policy now rejects other Android users/profiles before payload
+access in live notification callbacks, active replay and the task message
+reader. Personal capture and existing collection settings remain downstream.
+No app setting previously offered profile filtering.
+
+Windows/JDK 21: `:automations:testDebugUnitTest` PASS (19 cases, API 30/35);
+`:core:test :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug`
+PASS with `--no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process`. Core 839 + app 170 cases:
+zero failures/errors/skips. App lint: zero errors, 21 warnings, three
+informational findings. Extra `:automations:lintDebug` FAIL: three missing-
+permission errors at unchanged `AndroidAutomationActions.kt` (145/233) and
+`AutomationWifi.kt` (66); these permissions exist in the app manifest.
+No baseline, suppression or lint setting was added. `git diff --check` PASS.
+
+Dev Debug APK: `dev.androidagent.app.dev`, code 1171 /
+`0.14.0-dev.personal1171` via build overrides. SHA-256:
+`3ca184098d41b851f90b0e341ca6af2b47d7f8a12e149970820d2c7a71e09436`.
+Android Debug/v2 signature and 16 KiB ZIP alignment PASS; its certificate
+matches the existing task-worktree APK, not independently the phone.
+Kept APK/logs: `C:\Users\SHIRA\AppData\Local\Temp\hey-mike\personal-profile-notifications-20261026\`.
+Worktree retained for review at `C:\Users\SHIRA\.codex\worktrees\personal-profile-notifications-20261026`;
+central build bucket retained at `build/031650f34452e280`. Task-local storage
+reported `removed:[]`; no other build bucket was removed.
+
+No phone install, physical work-profile test, live notification-body read,
+push/merge or full release gate. The running tasks1170 app is unchanged.
+Previously saved signals/cards remain, and old queued work can still run.
+Details: [policy and evidence](docs/testing/personal-notification-profile-20261026.md).
+
 ### Task board and background team — 2026-10-25
 
 Continued the saved `feat/proactive-task-board` work in

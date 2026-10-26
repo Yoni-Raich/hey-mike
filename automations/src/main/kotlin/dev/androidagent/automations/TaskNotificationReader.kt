@@ -21,6 +21,7 @@
 package dev.androidagent.automations
 
 import android.app.Notification
+import android.content.Context
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
 import dev.androidagent.core.CapturedMessage
@@ -35,7 +36,9 @@ import dev.androidagent.core.CapturedMessage
  * the title is who or what it is from, the longest text is what it says.
  */
 internal object TaskNotificationReader {
-    fun messages(posted: StatusBarNotification): List<CapturedMessage> {
+    fun messages(context: Context, posted: StatusBarNotification): List<CapturedMessage> {
+        // Keep direct/future snapshot callers behind the same boundary as the listener.
+        if (!PersonalNotificationPolicy.allows(context, posted)) return emptyList()
         val notification = posted.notification ?: return emptyList()
         val app = posted.packageName
         val style = runCatching { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification) }.getOrNull()
