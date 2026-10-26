@@ -100,6 +100,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             try { checkForUpdates(manual = false) } catch (_: Exception) {}
         }
         viewModelScope.launch { refreshSavedAccounts() }
+        viewModelScope.launch { graph.usageWindows.state.collect(::showUsageWindows) }
         viewModelScope.launch {
             graph.sessions.sessions.collect { list ->
                 mutable.update { it.copy(sessions = list) }
@@ -395,6 +396,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { graph.claudeUsage.save(limits) }
             refreshWidget()
+            // A new reset time moves the next window start.
+            runCatching { graph.usageWindows.rearm() }
         }
     }
 
@@ -1421,8 +1424,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(isSwitchingAccount = true, errorMessage = null) }
         project()
         try {
-            graph.engine.close()
-            block()
+            // A usage-window start may have a sign-in lent; wait for it to come back.
+            graph.accountFiles.withLock {
+                graph.engine.close()
+                block()
+            }
         } finally {
             refreshSavedAccounts()
             mutable.update { it.copy(isSwitchingAccount = false) }
@@ -1443,7 +1449,45 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val changed = saved != mutable.value.savedAccounts
         mutable.update { it.copy(savedAccounts = saved) }
         // Which account is in use, and which are saved, is on the widget too.
-        if (changed) dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+        if (changed) {
+            dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+            withContext(Dispatchers.IO) { runCatching { graph.usageWindows.rearm() } }
+        }
+    }
+
+    private fun showUsageWindows(windows: UsageWindowsState) {
+        val now = System.currentTimeMillis()
+        val zone = java.time.ZoneId.systemDefault()
+        val ui = dev.androidagent.app.ui.UsageWindowsUi(
+            enabled = windows.enabled,
+            busy = windows.busy,
+            exactAlarms = UsageWindowAlarm.canScheduleExact(getApplication()),
+            rows = windows.accounts.map { status ->
+                dev.androidagent.app.ui.UsageWindowRow(
+                    name = status.target.label,
+                    engine = status.target.engine,
+                    line = status.line(now, zone, windows.busy),
+                    failing = status.failing,
+                )
+            },
+        )
+        mutable.update { it.copy(usageWindows = ui) }
+    }
+
+    /** On: the next start is planned at once, and windows that are not running start now. */
+    fun setUsageWindows(enabled: Boolean) = task {
+        withContext(Dispatchers.IO) { graph.usageWindows.setEnabled(enabled) }
+        if (enabled) mutable.update { it.copy(infoMessage = "Mike will start each account's 5-hour window when the last one ends.") }
+    }
+
+    /**
+     * Start every window that is not running, now, rather than at the next
+     * alarm. Through the service, as an alarm would: the start outlives this
+     * screen.
+     */
+    fun startUsageWindows() = task {
+        val app = getApplication<Application>()
+        androidx.core.content.ContextCompat.startForegroundService(app, android.content.Intent(app, UsageWindowService::class.java))
     }
 
     /**
@@ -1459,6 +1503,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 val live = vault.activeId ?: return@runCatching
                 graph.usageBook.record(live, limits, vault.accounts.map { it.id })
                 dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
+                graph.usageWindows.rearm()
             }
         }
     }

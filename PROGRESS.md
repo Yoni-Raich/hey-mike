@@ -69,6 +69,46 @@ the install before reading current state. The feature worktree, build bucket
 and task temp evidence are retained for that follow-up. Details and runtime limits:
 [validation](docs/testing/task-board-20261025.md).
 
+### Start each account's 5-hour window by itself — 2026-10-26
+
+The user has two Codex accounts and one Claude account in Mike. A plan's
+5-hour window starts only at the first message after it resets, so they sent
+"hi" by hand to start the clock. New switch in Settings > Accounts (off by
+default): when an account's window ends, Mike sends it one short message and
+the next window starts then. Covers every saved Codex account without
+switching (second private app-server; a saved sign-in is lent by the vault,
+the live one signs in with its current tokens) and the Claude account
+(throwaway `claude -p` to Haiku). One alarm, a short `specialUse` foreground
+service, a journal with back-off. Design in `docs/ARCHITECTURE.md` ("Starting
+5-hour windows by themselves"). Not an automation rule: a rule's actions run
+on the live account only, so they cannot reach the other accounts.
+
+From `origin/dev` `053cc14a`, Windows/JDK 21: `:core:test
+:engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest
+:runtime:testDebugUnitTest :remote:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --max-workers=2` PASS.
+Result XML: core 827, engine-codex 63, engine-claude 105, runtime 85, remote
+150 (3 skipped, unchanged), app 170; zero failures or errors. Lint: zero
+errors. The two new warnings (API-level check on the foreground type) were
+fixed afterwards. New tests: `UsageWindowsTest` (planner, journal, settings
+line), vault lend/take-back, `CodexWindowStarterTest` against a scripted
+app-server, `ClaudeUsageWindowTest` against the fake CLI.
+`git diff --check` clean.
+
+Protocol check on the PC's Codex app-server 0.130 (signed out, empty
+CODEX_HOME, no message sent): `thread/start` with `ephemeral`, `read-only`,
+`never` and developer instructions is accepted and writes no rollout. The PC's
+Claude Code 2.1.302 lists `--system-prompt`, `--no-session-persistence`,
+`--setting-sources` and `--tools`. The phone runs Codex 0.163.0 and pins
+Claude Code 2.1.293; neither was exercised here.
+
+Runtime staging hit HTTP 404 on the pinned Alpine musl URL again; the build
+used the cached archive, whose SHA-256 matches the pin (`ac281d1e...703782`).
+
+Not yet tested on a phone: a real start for a saved and a live Codex account
+and for Claude, the alarm and foreground service in the background, and
+whether the reading right after a start already shows the new reset time.
+
 ### Shared chat copy actions and full-screen selection — 2026-10-24
 
 Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's

@@ -1379,6 +1379,55 @@ shapes the raw reading with the same reset rule as the Codex rows
 (`readSaved`, `AccountUsageOverview.rows(..., claude)`). When there are more
 than four orbs the Claude row keeps its place and the Codex accounts make room.
 
+### Starting 5-hour windows by themselves
+
+A plan's 5-hour window does not start when the last one ends; it starts at
+the first message after that. An account nobody writes to sits with no window
+running, and the next five hours begin only when the person comes back. With
+the switch in Settings > Accounts on (off by default), Mike sends each account
+one short message ("hi") the minute its window ends, so the next reset comes
+five hours after that minute.
+
+- **Deciding** is `UsageWindowPlanner` (`:core`, pure). It reads the readings
+  already kept for the widget (`AccountUsageBook`, `LastUsageStore`): a window
+  whose reset time is ahead waits for it (plus a grace minute); one that has
+  reset, or was never read, is due. A used-up limit of the same plan (the
+  weekly one) holds everything until it resets, since a message would only
+  fail; a limit of one model ("weekly · Opus", a Codex model bucket) does not.
+  A Codex account's plan window is the shortest `Codex · …` one.
+- **Remembering** is `UsageWindowJournal` (`accounts/usage-windows.json`):
+  the switch and the last try per account. A try since the last reset counts:
+  a success waits one window even when no new reading came back, a failure
+  backs off from 10 minutes, doubling, to at most 3 hours. Times and short
+  messages only, never credentials.
+- **Codex** runs on a second app-server (`AndroidRuntimeHost` with its own
+  CODEX_HOME, `runtime/usage-windows/.codex`, its own process and proxy), never
+  the one chats use, through `CodexWindowStarter` (`:engine-codex`): an
+  ephemeral thread, read-only, no approvals, no tools, the account's default
+  model at its lowest effort, then `account/rateLimits/read`. The default
+  model, not the cheapest: a smaller model can carry a limit of its own, and a
+  message there would not start the plan's window. A saved account's sign-in
+  is lent by the vault (`lend`, then `takeBack` keeps a token the side run
+  refreshed) and deleted from the side home afterwards. The live account is
+  never lent - two processes refreshing one sign-in leave one with a spent
+  refresh token - so the side app-server signs in with its current tokens
+  (`chatgptAuthTokens`, the same path a computer chat uses) and asks the main
+  app-server to refresh them. Every start and every account switch hold
+  `AgentGraph.accountFiles`, so a switch waits for a lent sign-in to come back.
+- **Claude** has one sign-in: `ClaudeCodeEngine.startUsageWindow` sends "hi"
+  to Haiku from a throwaway `claude -p` with no tools, no settings and no
+  transcript, then asks `get_usage` for both windows.
+- **Running** is `UsageWindowKeeper` (`:app`). One alarm, exact when allowed,
+  re-armed after every start, reading, account change and process start (and
+  by `UsageWindowBootReceiver` after a restart or update). It starts
+  `UsageWindowService`, a short `specialUse` foreground service with a quiet
+  notification, which runs the due starts one at a time and stops. If Android
+  refuses the foreground start (an inexact alarm does not allow one), the
+  receiver runs them within the broadcast's time instead.
+
+The reading a start brings back is recorded under its account like any other,
+which redraws the widget and tells the planner when the new window ends.
+
 ## Rich chat presentation
 
 Assistant markdown is rendered with Markwon (tables, strikethrough, prism4j

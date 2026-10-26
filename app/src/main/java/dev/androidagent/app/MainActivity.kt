@@ -344,6 +344,8 @@ class MainActivity : ComponentActivity() {
         onSwitchAccount = { id -> ensureService(); model.switchAccount(id) },
         onRemoveAccount = { id -> model.removeAccount(id) },
         onRefreshAccount = { model.refreshAccount() },
+        onUsageWindows = { enabled -> model.setUsageWindows(enabled) },
+        onStartUsageWindows = { model.startUsageWindows() },
         onOpenWirelessSettings = ::openWirelessDebugging,
         onTurnOnWireless = { if (!model.turnOnWireless()) openWirelessDebugging() },
         onOpenAccessibilitySettings = { openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },

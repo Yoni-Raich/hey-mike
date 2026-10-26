@@ -91,6 +91,7 @@ import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -613,6 +614,56 @@ private fun ColumnScope.AccountSettings(state: AgentUiState, actions: AgentUiAct
     Spacer(Modifier.height(8.dp))
     Text(providerName(EngineKind.CLAUDE), style = MaterialTheme.typography.titleMedium)
     ClaudeCard(state.claude, actions)
+    Spacer(Modifier.height(8.dp))
+    UsageWindowSettings(state.usageWindows, actions)
+}
+
+/**
+ * A plan's 5-hour window starts at the first message after it resets, so an
+ * account nobody writes to has no window running. This starts it for them.
+ */
+@Composable
+private fun ColumnScope.UsageWindowSettings(windows: UsageWindowsUi, actions: AgentUiActions) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text("Start 5-hour windows by themselves", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Switch(checked = windows.enabled, onCheckedChange = actions.onUsageWindows)
+    }
+    Explanation(
+        "The 5-hour limit only starts counting at your first message after it resets. With this on, Mike sends " +
+            "each account one short message (\"hi\") the minute its window ends, so the next five hours start " +
+            "right away. Every saved Codex account and the Claude account, without switching account or touching " +
+            "your chats. Each start uses a very small part of the quota.",
+    )
+    if (!windows.enabled) return
+    windows.rows.forEach { row ->
+        StatusLine(
+            title = "${row.name} · ${providerName(row.engine)}",
+            detail = row.line,
+            color = if (row.failing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+        )
+    }
+    if (windows.rows.isEmpty()) Explanation("No account is signed in yet.")
+    if (!windows.exactAlarms) {
+        Explanation(
+            "Alarms are approximate: Android may start a window up to an hour late while the phone sleeps. " +
+                "Turn on \"Alarms & reminders\" for Hey Mike to start it on the minute.",
+        )
+        OutlinedButton(onClick = actions.onOpenExactAlarmSettings, modifier = Modifier.fillMaxWidth()) {
+            LoadingButtonContent(loading = false, icon = Icons.Outlined.Schedule, label = "Allow exact alarms")
+        }
+    }
+    OutlinedButton(
+        onClick = actions.onStartUsageWindows,
+        enabled = !windows.busy,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        LoadingButtonContent(
+            loading = windows.busy,
+            icon = Icons.Outlined.PlayArrow,
+            label = "Start idle windows now",
+            loadingLabel = "Starting…",
+        )
+    }
 }
 
 @Composable

@@ -192,6 +192,20 @@ internal object ClaudeProtocol {
         add("--no-session-persistence")
     }
 
+    /** The model that starts a usage window: the smallest, since the answer is never read. */
+    const val WINDOW_MODEL = "haiku"
+
+    /**
+     * A process that sends one short message to start the plan's 5-hour
+     * window: no tools, no settings, no transcript, a one-line system prompt.
+     */
+    fun windowStartArgs(): List<String> = listOf(
+        "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+        "--model", WINDOW_MODEL,
+        "--system-prompt", "This is an automatic message from Hey Mike that starts the usage window. Reply with one word.",
+    )
+
     val AUTH_STATUS_ARGS = listOf("auth", "status", "--json")
     val AUTH_LOGIN_ARGS = listOf("auth", "login", "--claudeai")
     val AUTH_LOGOUT_ARGS = listOf("auth", "logout")
