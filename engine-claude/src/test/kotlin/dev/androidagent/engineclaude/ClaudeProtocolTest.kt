@@ -41,6 +41,15 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 class ClaudeProtocolTest {
+    @Test fun backgroundChatHasNoNativeToolsOrUserSettings() {
+        val args = ClaudeProtocol.chatArgs("11111111-2222-4333-8444-555555555555", false, "sonnet", null, "/mcp", "/prompt", readOnly = true)
+        fun value(flag: String) = args[args.indexOf(flag) + 1]
+        assertEquals("", value("--tools"))
+        assertEquals("", value("--setting-sources"))
+        assertEquals("mcp__mike__*", value("--allowedTools"))
+        assertEquals("dontAsk", value("--permission-mode"))
+        assertTrue("--strict-mcp-config" in args)
+    }
     private fun fixture(name: String): List<JsonObject> =
         javaClass.getResource("/claude/$name")!!.readText().lines().filter { it.isNotBlank() }
             .map { Json.parseToJsonElement(it).jsonObject }

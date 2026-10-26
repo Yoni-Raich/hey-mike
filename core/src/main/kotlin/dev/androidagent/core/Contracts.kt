@@ -103,6 +103,13 @@ interface SessionStore {
     /** A new chat that starts on [engine]. */
     suspend fun createSession(engine: EngineKind): ChatSession
     suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
+    /** A durable app-owned conversation, visible only after its initial context is saved. */
+    suspend fun createRetainedSession(engine: EngineKind, title: String, context: String): ChatSession {
+        val chat = createSession(engine)
+        rename(chat.id, title)
+        append(ChatMessage(java.util.UUID.randomUUID().toString(), chat.id, "system", context, chat.createdAt))
+        return getSession(chat.id) ?: error("The retained chat was not saved.")
+    }
     suspend fun createChildSession(parentSessionId: String, engine: EngineKind, title: String): ChatSession =
         error("This store does not support child chats.")
     suspend fun setParent(sessionId: String, parentSessionId: String) {}
@@ -114,6 +121,12 @@ interface SessionStore {
     suspend fun append(message: ChatMessage)
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
     suspend fun setThread(sessionId: String, threadId: String)
+    /**
+     * Start the chat's next turn on a new engine thread, keeping its visible
+     * history. Used by the board's backstage chats so each pass is a fresh,
+     * self-contained context rather than one thread that grows every pass.
+     */
+    suspend fun clearThread(sessionId: String) {}
     /**
      * Run the chat's next turn on [engine]. The thread of the engine it leaves
      * is kept, and the one it had on [engine] before, if any, comes back; see
@@ -328,6 +341,9 @@ interface AgentEngine {
      */
     suspend fun commandCatalog(workspace: File, forceReload: Boolean = false): List<AgentCommand> = emptyList()
     suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String
+    /** Fresh background context. Hosts must enforce read-only native tools or refuse it. */
+    suspend fun openReadOnlySession(workspace: File, model: String?, tools: List<ToolDefinition>): String =
+        throw UnsupportedOperationException("This engine cannot run a restricted background task.")
     /** Persist a name where the engine keeps the thread, when supported. */
     suspend fun renameThread(threadId: String, title: String) {}
     /** An explicitly saved name, excluding the engine's first-message preview. */

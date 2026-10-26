@@ -30,6 +30,7 @@ import dev.androidagent.core.AutomationEvent
 import dev.androidagent.core.AutomationWakeups
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import kotlinx.coroutines.*
 
 /**
  * The one trigger that reads content, and the one that is fenced.
@@ -51,11 +52,40 @@ import java.time.ZonedDateTime
  * 4. only then are the title and text extracted, and they travel no further
  *    than the evaluator unless a rule's own actions interpolate them.
  *
- * Nothing is stored. There is no notification log and no tool that can ask for
- * one: a record of everything that arrived on the phone would quietly become
- * the most sensitive file on it.
+ * Rules store nothing. There is no notification log and no tool that can ask
+ * for one: a record of everything that arrived on the phone would quietly
+ * become the most sensitive file on it.
+ *
+ * The task board is the one deliberate exception, and it is narrowed the same
+ * way: the board's sink is asked with the package name alone, before anything
+ * is read, so an excluded app is never read; verification codes and payment
+ * confirmations are dropped before storage; and the text it keeps lives only
+ * until a discovery pass has used it. No tool lists what it collected.
  */
 class AutomationNotificationListener : NotificationListenerService() {
+    private val taskScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        taskScope.launch {
+            repeat(50) {
+                val board = (applicationContext as? AutomationHostOwner)?.taskSignals
+                if (board?.ready == true) {
+                    // Restore collection after process death. Never replay automation actions.
+                    runCatching { activeNotifications.orEmpty().forEach { posted ->
+                        val notification = posted.notification
+                        if (posted.packageName != packageName && notification.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_GROUP_SUMMARY) == 0 && board.wants(posted.packageName)) {
+                            TaskNotificationReader.messages(posted).forEach(board::onMessage)
+                        }
+                    } }
+                    return@launch
+                }
+                delay(200)
+            }
+        }
+    }
+
+    override fun onDestroy() { taskScope.cancel(); super.onDestroy() }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val posted = sbn ?: return
@@ -64,23 +94,28 @@ class AutomationNotificationListener : NotificationListenerService() {
         if (notification.flags and Notification.FLAG_ONGOING_EVENT != 0) return
         if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
 
-        val host = automationHost() ?: return
-        val watched = host.watchedNotificationPackages()
-        if (watched.isEmpty()) return
-        if (!AutomationWakeups.isPackageWatched(posted.packageName, watched)) return
+        val host = automationHost()
+        val watched = host?.watchedNotificationPackages().orEmpty()
+        val ruleWatched = host != null && watched.isNotEmpty() && AutomationWakeups.isPackageWatched(posted.packageName, watched)
+        val board = (applicationContext as? AutomationHostOwner)?.taskSignals
+        val boardWants = board != null && runCatching { board.wants(posted.packageName) }.getOrDefault(false)
+        if (!ruleWatched && !boardWants) return
 
         // Only now is anything read.
-        val extras = notification.extras
-        val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-        host.onEvent(
-            AutomationEvent.Notification(
-                packageName = posted.packageName,
-                title = title,
-                text = text,
-                at = ZonedDateTime.now(ZoneId.systemDefault()),
-            ),
-        )
+        if (ruleWatched) {
+            val extras = notification.extras
+            val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+            val text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+            host!!.onEvent(
+                AutomationEvent.Notification(
+                    packageName = posted.packageName,
+                    title = title,
+                    text = text,
+                    at = ZonedDateTime.now(ZoneId.systemDefault()),
+                ),
+            )
+        }
+        if (boardWants) runCatching { TaskNotificationReader.messages(posted).forEach(board!!::onMessage) }
     }
 
     /** Dismissals are not events any rule can name, so they are not delivered. */

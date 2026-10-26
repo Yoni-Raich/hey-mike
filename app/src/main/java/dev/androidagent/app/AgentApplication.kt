@@ -75,6 +75,9 @@ class AgentApplication : Application(), AutomationHostOwner {
     override val automationHost: AutomationHost?
         get() = if (::graph.isInitialized) graph.automationHost else null
 
+    override val taskSignals: dev.androidagent.core.TaskSignalSink?
+        get() = if (::graph.isInitialized) graph.taskDesk.sink else null
+
     override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
 }
 
@@ -157,7 +160,7 @@ class AgentGraph(private val app: Application) {
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
-        onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
+        onStop = { taskDesk.pauseBackground(); queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
         onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
         accessibilityService = { A11yServiceHandle.service.value },
@@ -417,6 +420,21 @@ class AgentGraph(private val app: Application) {
     val coordinator: AgentRuns
         get() = runCoordinator
     val queue: SessionRunQueue
+    /**
+     * Mike's task board: the Manager, the team, discovery in the background.
+     * Declared before the coordinators, which ask it which tools a chat may use.
+     */
+    val taskDesk = TaskDesk(
+        app, scope, sessions, runtime.homeDirectory,
+        agents = { sessionAgents },
+        runs = { runCoordinator },
+        queue = { queue },
+        quotaLow = { kind ->
+            val reading = if (kind == dev.androidagent.core.EngineKind.CLAUDE) claudeUsage.read()?.limits
+                else accounts.state().activeId?.let { usageBook.all()[it]?.limits }
+            LastUsageStore.current(reading.orEmpty(), System.currentTimeMillis() / 1000L).any { (it.usedPercent ?: 0.0) >= 90.0 }
+        },
+    )
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
@@ -441,6 +459,9 @@ class AgentGraph(private val app: Application) {
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
                 sessionAgents = { sessionAgents },
+                taskTools = { taskDesk.tools },
+                toolPolicy = { session, name, arguments -> taskDesk.toolRefusal(session, name, arguments) },
+                readOnlySession = { taskDesk.isBackgroundSession(it) },
             )
         })
         val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
@@ -507,6 +528,8 @@ class AgentGraph(private val app: Application) {
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.
         runCatching { automationHost.start() }
+        taskDesk.start()
+        TaskBackgroundHost(app, scope, taskDesk).start()
         runCatching {
             // Claude reads the same skills from its own home.
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app, claudeHost.homeDirectory)

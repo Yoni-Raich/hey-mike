@@ -59,6 +59,7 @@ class WorkspaceSeederTest {
                 "device-capabilities", "device-automation", "app-cards",
                 "user-preferences", "quick-actions", "workflows", "automations", "browser",
                 "files-across-devices", "media-output-check", "connected-apps",
+                "task-board", "task-discovery", "task-review", "memory-upkeep",
             ),
             shippedSkills,
         )

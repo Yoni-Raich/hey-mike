@@ -1,5 +1,39 @@
 # Progress
 
+### Task board and background team — 2026-10-25
+
+Continued the saved `feat/proactive-task-board` work in
+`.claude/worktrees/proactive-tasks-20261025`. Adds the board, Manager eye,
+inspectable team, notification/chat/calendar collection, user-selected
+models, memory compaction and bounded learned playbooks. Fixed uncertain
+dispatch recovery, Stop during start, dedupe after raw deletion, protected
+memory links and restricted engine sessions. Also carries the installed
+1167 PC-approval behavior forward.
+
+The combined scoped unit/build/AndroidTest assembly/lint gate passed twice:
+1,369 tests, zero failures/errors, 17 existing skips. Four final emulator UI
+fixtures passed; the modal content color was corrected after screenshot
+inspection. Python runtime-preparation tests: 16 passed. No runtime pins
+changed; cached inputs passed their pinned hashes. No other buckets removed.
+
+1168 was installed on the hosting Nothing A059, including a matching installed
+base-APK hash. A reported Manager failure then exposed empty-draft cleanup
+deleting team sessions. 1169 creates retained team chats atomically, protects
+them from cleanup and repairs missing built-ins. Its scoped gate passed;
+five emulator tests passed, including the real Activity/ViewModel lifecycle.
+Phone metadata confirms 1169 installed. A second phone report exposed Android
+app-home aliases rejected by the playbook link guard. Source is now 1170;
+the trusted home is normalized and internal links remain blocked. Its scoped
+build/unit/lint gate passed (1,370 latest JVM cases, zero failures/errors,
+17 skips). The exact Android error reproduced twice on 1169; all seven final
+Android tests pass on 1170 (8.875s). The test fixture now avoids waiting on the
+Manager's continuous animation. 1170 was transferred and installation started,
+but Mike disconnected during replacement: installed version/hash and live
+Manager/discovery verification await reopening the phone app. Do not repeat
+the install before reading current state. The feature worktree, build bucket
+and task temp evidence are retained for that follow-up. Details and runtime limits:
+[validation](docs/testing/task-board-20261025.md).
+
 ### Shared chat copy actions and full-screen selection — 2026-10-24
 
 Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's

@@ -400,6 +400,7 @@ fun AndroidAgentScreen(
             ) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding)) {
                 Box(Modifier.voiceStage(voiceMode.topBar)) { ParentChatBanner(state, actions) }
+                Box(Modifier.voiceStage(voiceMode.topBar)) { BoardChatPresence(state, actions) }
                 AgentChatContent(
                     state = state,
                     actions = actions,
@@ -433,6 +434,9 @@ fun AndroidAgentScreen(
         }
         if (state.isAutomationsOpen && !onboarding) {
             AutomationsSheet(state = state, actions = actions)
+        }
+        if (state.isTaskBoardOpen && !onboarding) {
+            TaskBoardSheet(state = state, actions = actions)
         }
         if (state.isWorkspaceOpen && !onboarding) {
             WorkspaceFilesSheet(state = state, actions = actions)
