@@ -1,5 +1,32 @@
 # Progress
 
+### Chat context size beside the composer — 2026-10-27
+
+The user saw Opus 5.5 use up the 5-hour quota much faster than before. Their
+Claude Code transcripts on the PC show the same weighted token budget per
+window as earlier (about 6.5-9M), but contexts of 300-900k tokens on every
+call, so each call costs far more. A chat's context size is now on screen:
+a ring and `412.0k · 41%` at the end of the composer's chip row, and in the
+settings usage line.
+
+`TokenUsage.context` is what the model read on its latest call. Claude: input
+plus cache writes and reads of each top-level assistant message, kept by the
+chat's stream mapper, carried into the turn's result totals, and set to
+`post_tokens` at a compaction. Codex: `tokenUsage.last.totalTokens`. The view
+model now reads per-chat usage from the routed event stream, the only one
+that carries a computer's Claude chats.
+
+From `origin/dev` `053cc14`, Windows: `:engine-claude:test :engine-codex:test
+:core:test`, `:app:testDevDebugUnitTest --tests 'dev.androidagent.app.*'`,
+`:app:assembleDevDebug` and `:app:lintDevDebug` PASS; `git diff --check` clean.
+The pinned Alpine musl URL still answers 404; the build used a cached copy
+whose pinned hash the script verified.
+
+Untested: no install on a phone, no live Claude or Codex chat, no screenshot.
+The size is in memory only, so after an app restart a chat shows no size
+until its next model call. Before a chat's first result the window is not
+known and the chip shows tokens without a percent.
+
 ### Shared chat copy actions and full-screen selection — 2026-10-24
 
 Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's

@@ -860,8 +860,10 @@ class CodexEngine(
         internal fun parseTokenUsage(value: JsonObject?): TokenUsage? {
             val total = value?.get("total") as? JsonObject ?: return null
             fun count(key: String) = (total[key] as? JsonPrimitive)?.longOrNull?.coerceAtLeast(0) ?: 0L
+            // `last` is the latest turn alone; its total is what the context holds now.
+            val context = ((value["last"] as? JsonObject)?.get("totalTokens") as? JsonPrimitive)?.longOrNull?.takeIf { it > 0 }
             return TokenUsage(count("totalTokens"), count("inputTokens"), count("outputTokens"),
-                count("cachedInputTokens"), (value["modelContextWindow"] as? JsonPrimitive)?.longOrNull)
+                count("cachedInputTokens"), (value["modelContextWindow"] as? JsonPrimitive)?.longOrNull, context)
         }
 
         internal fun parseRateLimits(value: JsonObject): List<UsageLimit> {

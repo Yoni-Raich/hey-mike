@@ -366,7 +366,7 @@ internal fun AgentComposer(
             }
         }
         Row(
-            Modifier.padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -379,6 +379,10 @@ internal fun AgentComposer(
                 ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
             }
             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
+            contextFill(state.tokenUsage)?.let { fill ->
+                Spacer(Modifier.weight(1f))
+                ContextChip(fill, Modifier.padding(end = 6.dp))
+            }
         }
     }
     if (browsing) {

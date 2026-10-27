@@ -238,7 +238,18 @@ data class AgentCommand(
 )
 /** What a compaction did, in tokens, when the engine says; null where it does not. */
 data class CompactResult(val tokensBefore: Long? = null, val tokensAfter: Long? = null, val durationMs: Long? = null)
-data class TokenUsage(val total: Long, val input: Long, val output: Long, val cachedInput: Long = 0, val contextWindow: Long? = null)
+/**
+ * A chat's token counts. [context] is how many tokens the model read on its
+ * latest call: what the chat's context holds now, out of [contextWindow].
+ */
+data class TokenUsage(
+    val total: Long,
+    val input: Long,
+    val output: Long,
+    val cachedInput: Long = 0,
+    val contextWindow: Long? = null,
+    val context: Long? = null,
+)
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
 /**
  * Where one run's wall clock went.

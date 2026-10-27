@@ -576,6 +576,17 @@ internal object ClaudeProtocol {
     }
 
     /**
+     * What one model call read: fresh input plus cache writes and reads, the
+     * whole context as it stood. Null without usage, or for an empty count.
+     */
+    fun contextTokens(message: JsonObject): Long? {
+        val usage = message["usage"] as? JsonObject ?: return null
+        fun count(key: String) = (usage[key] as? JsonPrimitive)?.longOrNull?.coerceAtLeast(0) ?: 0L
+        return (count("input_tokens") + count("cache_creation_input_tokens") + count("cache_read_input_tokens"))
+            .takeIf { it > 0 }
+    }
+
+    /**
      * One skill from its `SKILL.md` front matter. Only `name` and
      * `description` are read, including YAML folded (`>`) and literal (`|`)
      * descriptions.

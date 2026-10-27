@@ -21,12 +21,14 @@
 package dev.androidagent.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,8 +48,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.core.CompactResult
 import dev.androidagent.core.RunPhase
+import dev.androidagent.core.TokenUsage
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -128,6 +136,46 @@ internal fun CompactingCard(startedAt: Long, modifier: Modifier = Modifier) {
                 Text(elapsedLabel(now - startedAt), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+/** How full the chat's context is, from the engine's own counts. */
+internal data class ContextFill(val tokens: Long, val window: Long?) {
+    val fraction: Float? get() = window?.takeIf { it > 0 }?.let { (tokens.toDouble() / it).toFloat().coerceIn(0f, 1f) }
+    val percent: Int? get() = fraction?.let { (it * 100).roundToInt() }
+    /** `412.0k · 41%`, or only the tokens while the window is not known yet. */
+    val label: String get() = formatTokens(tokens) + (percent?.let { " · $it%" } ?: "")
+    val spoken: String get() = "Context: ${formatTokens(tokens)} tokens" +
+        (window?.let { " of ${formatTokens(it)}" } ?: "") + (percent?.let { ", $it% full" } ?: "")
+}
+
+/** Null until the chat's first model call has reported its size. */
+internal fun contextFill(usage: TokenUsage?): ContextFill? = usage?.context?.let { ContextFill(it, usage.contextWindow) }
+
+/**
+ * The chat's context size beside the composer. A long chat reads its whole
+ * context on every call, so a full context spends the usage quota faster.
+ */
+@Composable
+internal fun ContextChip(fill: ContextFill, modifier: Modifier = Modifier) {
+    val fraction = fill.fraction
+    val ink = MaterialTheme.colorScheme.onSurfaceVariant
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    Row(
+        modifier.heightIn(min = 32.dp).semantics(mergeDescendants = true) { contentDescription = fill.spoken },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Canvas(Modifier.size(14.dp)) {
+            val stroke = 2.dp.toPx()
+            val inset = stroke / 2f
+            val arc = Size(size.width - stroke, size.height - stroke)
+            drawArc(track, 0f, 360f, false, Offset(inset, inset), arc, style = Stroke(stroke))
+            if (fraction != null) {
+                drawArc(quotaColor(fraction), -90f, 360f * fraction, false, Offset(inset, inset), arc, style = Stroke(stroke, cap = StrokeCap.Round))
+            }
+        }
+        Text(fill.label, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1)
     }
 }
 

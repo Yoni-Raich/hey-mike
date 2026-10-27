@@ -311,6 +311,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 else -> Unit
             }
         } }
+        // Token counts by chat. Only the routed stream carries a computer's
+        // Claude chats; the two streams above are the phone's and Codex's.
+        viewModelScope.launch { graph.engine.events.collect { event ->
+            if (event is EngineEvent.UsageChanged) {
+                val thread = event.threadId
+                val usage = event.usage
+                if (thread != null && usage != null) threadUsageChanged(thread, usage)
+            }
+        } }
         // Claude's last limits from disk, until Claude reports new ones.
         viewModelScope.launch {
             val saved = withContext(Dispatchers.IO) { runCatching { graph.claudeUsage.read() }.getOrNull() } ?: return@launch
@@ -347,13 +356,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun usageChanged(kind: EngineKind, event: EngineEvent.UsageChanged) {
-        val eventThread = event.threadId
-        val eventUsage = event.usage
-        if (eventThread != null && eventUsage != null) usageByThread[eventThread] = eventUsage
-        event.limits?.let { engines = engines.withLimits(kind, it) }
-        val threadId = mutable.value.sessions.firstOrNull { it.id == current.value }?.engineThreadId
-        mutable.update { it.copy(tokenUsage = usageByThread[threadId]) }
+        val limits = event.limits ?: return
+        engines = engines.withLimits(kind, limits)
         project()
+    }
+
+    /** One chat's token counts, from any engine on the phone or a computer. */
+    private fun threadUsageChanged(threadId: String, usage: TokenUsage) {
+        usageByThread[threadId] = usage
+        val open = mutable.value.sessions.firstOrNull { it.id == current.value }?.engineThreadId
+        if (open == threadId) mutable.update { it.copy(tokenUsage = usage) }
     }
 
     /**

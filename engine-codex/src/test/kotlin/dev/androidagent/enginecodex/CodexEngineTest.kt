@@ -49,6 +49,9 @@ class CodexEngineTest {
         assertEquals(180L, usage.total)
         assertEquals(40L, usage.cachedInput)
         assertEquals(200000L, usage.contextWindow)
+        assertNull(usage.context)
+        val latest = CodexEngine.parseTokenUsage(Json.parseToJsonElement("""{"total":{"totalTokens":900},"last":{"totalTokens":300},"modelContextWindow":200000}""").jsonObject)!!
+        assertEquals(300L, latest.context)
         assertNull(CodexEngine.parseTokenUsage(null))
         val limits = CodexEngine.parseRateLimits(Json.parseToJsonElement("""{"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":25,"resetsAt":12345,"windowDurationMins":300},"secondary":{"usedPercent":null}}}}""").jsonObject)
         assertEquals(2, limits.size)
