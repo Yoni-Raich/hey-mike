@@ -1,5 +1,62 @@
 # Progress
 
+### Long context switch in the model menu — 2026-10-27
+
+Claude Code gives every model a 1M window on the user's plan, and every reply
+reads the whole context again, so a long chat drains the 5-hour quota. The
+model menu of a Claude chat now has a "Long context" switch. Off starts each
+chat process with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` (found in the Claude Code
+2.1.302 binary) and drops an explicit `[1m]` alias, which the CLI refuses
+then; the window is 200k and Claude compacts before it. The choice is one
+setting for all chats, kept in the "ui" preferences (default on, as before),
+and reaches the phone's Claude and every computer's Claude through
+`AgentEngine.setLongContext`. A chat picks it up at its next turn: the window
+is part of the chat process's running config, so a change restarts the
+process with `--resume`, like a model or effort change.
+
+Codex is not switched. Its models list a 272k or 500k window and a larger
+`max_context_window` (872k in the PC's `models_cache.json`), and the bundled
+app-server knows `model_context_window`, but `model/list` does not report
+either size and an override above a model's maximum was not tried.
+
+### Chat context size beside the composer — 2026-10-27
+
+The user saw Opus 5.5 use up the 5-hour quota much faster than before. Their
+Claude Code transcripts on the PC show the same weighted token budget per
+window as earlier (about 6.5-9M), but contexts of 300-900k tokens on every
+call, so each call costs far more. A chat's context size is now on screen:
+a ring and `412.0k · 41%` at the end of the composer's chip row, and in the
+settings usage line.
+
+`TokenUsage.context` is what the model read on its latest call. Claude: input
+plus cache writes and reads of each top-level assistant message, kept by the
+chat's stream mapper, carried into the turn's result totals, and set to
+`post_tokens` at a compaction. Codex: `tokenUsage.last.totalTokens`. The view
+model now reads per-chat usage from the routed event stream, the only one
+that carries a computer's Claude chats.
+
+From `origin/dev` `053cc14`, Windows: `:engine-claude:test :engine-codex:test
+:core:test`, `:app:testDevDebugUnitTest --tests 'dev.androidagent.app.*'`,
+`:app:assembleDevDebug` and `:app:lintDevDebug` PASS; `git diff --check` clean.
+The pinned Alpine musl URL still answers 404; the build used a cached copy
+whose pinned hash the script verified.
+
+Tapping the chip opens a small menu: size out of the window, percent and bar,
+why it matters for the quota, the chat's running totals, and a Compact button
+(enabled between replies, same action as `/compact`).
+
+Installed as `0.14.0-dev.context-meter1176` (1176) on the user's phone, built
+from this change plus another agent's unsaved task-board work, and the user
+confirmed on the phone that the chip and menu work. That build had unit tests
+and assembly only; no `:app:lintDevDebug`, no screenshot kept, no emulator UI
+test. This branch itself was not installed.
+
+Untested: lint on the menu change, a compaction started from the menu, a Codex
+chat's size, a chat that runs on a computer.
+The size is in memory only, so after an app restart a chat shows no size
+until its next model call. Before a chat's first result the window is not
+known and the chip shows tokens without a percent.
+
 ### Shared chat copy actions and full-screen selection — 2026-10-24
 
 Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's

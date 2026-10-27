@@ -355,6 +355,7 @@ class MainActivity : ComponentActivity() {
         onModelSelected = model::model,
         onRefreshModels = model::refreshModels,
         onReasoningEffortSelected = model::reasoningEffort,
+        onLongContextChanged = model::longContext,
         onRenameSession = { id, title -> model.rename(id, title) },
         onCompact = { ensureService(); model.compact() },
         onTogglePlanMode = model::togglePlanMode,

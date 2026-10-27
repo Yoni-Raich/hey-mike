@@ -50,6 +50,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -383,6 +384,25 @@ class ClaudeCodeEngineTest {
             assertTrue(error.message!!.startsWith("Claude could not open this chat"))
             assertFalse(error.message!!.contains("ZZZZZZZZZZZZ"))
         }
+    }
+
+    @Test fun turningTheLongWindowOffRestartsTheChatWithTheStandardWindow() = runBlocking {
+        val engine = engine()
+        val id = engine.openSession(workspace, null, "sonnet[1m]", listOf(tapTool))
+        engine.startTurn(id, "hello", emptyList(), null, null, DeviceCapabilities(), null)
+        val first = host.chats().single()
+        assertEquals("sonnet[1m]", first.after("--model"))
+        assertNull(first.env[ClaudeProtocol.DISABLE_LONG_CONTEXT])
+        first.send(result())
+        awaitEvent<EngineEvent.TurnFinished>()
+
+        engine.setLongContext(false)
+        engine.startTurn(id, "again", emptyList(), null, null, DeviceCapabilities(), null)
+        val second = host.chats()[1]
+        assertEquals(id, second.after("--resume"))
+        assertEquals("1", second.env[ClaudeProtocol.DISABLE_LONG_CONTEXT])
+        assertEquals("the CLI refuses a 1M alias while the window is off", "sonnet", second.after("--model"))
+        assertFalse(first.isAlive)
     }
 
     @Test fun anEffortChangeRestartsTheChatWithResume() = runBlocking {

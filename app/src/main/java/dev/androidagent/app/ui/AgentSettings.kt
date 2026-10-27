@@ -1185,7 +1185,8 @@ private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActio
     windows.forEach { window -> UsageWindowRow(window) }
     Text(
         if (usage == null) "Token usage is not available yet." else
-            "${usage.total} tokens · ${usage.input} input · ${usage.output} output · ${usage.cachedInput} cached",
+            "${usage.total} tokens · ${usage.input} input · ${usage.output} output · ${usage.cachedInput} cached" +
+                (contextFill(usage)?.let { " · context ${it.label}" } ?: ""),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

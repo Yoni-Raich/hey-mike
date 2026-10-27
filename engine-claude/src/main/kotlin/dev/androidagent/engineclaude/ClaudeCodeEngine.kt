@@ -123,6 +123,7 @@ class ClaudeCodeEngine(
     private val loginLock = Mutex()
     @Volatile private var loginProcess: Process? = null
     @Volatile private var accountCache: Pair<Long, AccountStatus>? = null
+    @Volatile private var longContext = true
     /** Records native transcript IDs owned by a Mike turn before its UI events are delivered. */
     var onNativeMessage: suspend (threadId: String, messageId: String) -> Unit = { _, _ -> }
 
@@ -191,6 +192,10 @@ class ClaudeCodeEngine(
      * stays alive, waiting for the code the user pastes back through
      * [completeLogin].
      */
+    override fun setLongContext(enabled: Boolean) {
+        longContext = enabled
+    }
+
     override suspend fun login(): AccountStatus {
         connect()
         return loginLock.withLock {
@@ -589,7 +594,13 @@ class ClaudeCodeEngine(
 
     // ---- one chat process ---------------------------------------------------------
 
-    private data class RunningConfig(val model: String, val effort: String?, val toolNames: List<String>, val runtime: String)
+    private data class RunningConfig(
+        val model: String,
+        val effort: String?,
+        val toolNames: List<String>,
+        val runtime: String,
+        val longContext: Boolean,
+    )
 
     private class ChatStartException(message: String, val notFound: Boolean) : IllegalStateException(message)
 
@@ -636,45 +647,46 @@ class ClaudeCodeEngine(
 
         private fun dir(): File = File(host.homeDirectory, "mike-chats/$threadId")
 
-        /** Start or restart the process when it is gone or its model, effort or tools changed. Caller holds [lock]. */
+        /** Start or restart the process when it is gone or its model, effort, tools or window changed. Caller holds [lock]. */
         suspend fun ensureRunning() {
-            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity)
+            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, longContext)
             if (alive && running == wanted) return
             check(idle()) { "A turn is already running in this chat." }
             stopProcess()
             trimLive(this)
             if (resumable) {
                 try {
-                    start(resume = true)
+                    start(resume = true, wanted.longContext)
                 } catch (error: ChatStartException) {
                     // A session that never got a message has no file to resume.
                     // Starting it under the same id keeps the chat's id stable.
                     if (!error.notFound || requireExisting) throw error
-                    start(resume = false)
+                    start(resume = false, wanted.longContext)
                 }
             } else {
-                start(resume = false)
+                start(resume = false, wanted.longContext)
             }
             resumable = true
             running = wanted
         }
 
-        private suspend fun start(resume: Boolean) = if (computer != null) startOnComputer(computer, resume) else startOnPhone(resume)
+        private suspend fun start(resume: Boolean, long: Boolean) =
+            if (computer != null) startOnComputer(computer, resume, long) else startOnPhone(resume, long)
 
         /**
          * The computer's own Claude Code, in the chat's project folder. The
          * phone tools ride on this process's streams, so there is no server
          * to start and no token to write.
          */
-        private suspend fun startOnComputer(place: ClaudeComputer, resume: Boolean) = withContext(Dispatchers.IO) {
+        private suspend fun startOnComputer(place: ClaudeComputer, resume: Boolean, long: Boolean) = withContext(Dispatchers.IO) {
             try {
                 val files = mapOf(
                     PROMPT_FILE to place.instructions,
                     MCP_CONFIG_FILE to StdioMcp.config(ClaudeProtocol.MCP_SERVER_NAME),
                 )
-                attach(place.startChat(threadId, cwd, files, ClaudeProtocol.COMPUTER_CHAT_ENV) { paths ->
+                attach(place.startChat(threadId, cwd, files, ClaudeProtocol.windowEnv(ClaudeProtocol.COMPUTER_CHAT_ENV, long)) { paths ->
                     ClaudeProtocol.computerChatArgs(
-                        threadId, resume, model, effort,
+                        threadId, resume, ClaudeProtocol.windowModel(model, long), effort,
                         mcpConfig = paths.getValue(MCP_CONFIG_FILE),
                         appendPromptFile = paths.getValue(PROMPT_FILE),
                         permissionMode = place.permissionMode,
@@ -705,7 +717,7 @@ class ClaudeCodeEngine(
             )
         }
 
-        private suspend fun startOnPhone(resume: Boolean) = withContext(Dispatchers.IO) {
+        private suspend fun startOnPhone(resume: Boolean, long: Boolean) = withContext(Dispatchers.IO) {
             val dir = dir().apply { mkdirs() }
             val promptFile = File(dir, PROMPT_FILE)
             promptFile.writeText(ClaudeInstructions.systemPrompt(readAgentsMd()))
@@ -716,8 +728,10 @@ class ClaudeCodeEngine(
             try {
                 val mcpFile = File(dir, MCP_CONFIG_FILE)
                 writePrivate(mcpFile, toolServer.start())
-                val args = ClaudeProtocol.chatArgs(threadId, resume, model, effort, mcpFile.absolutePath, promptFile.absolutePath)
-                attach(host.start(args, File(cwd).apply { mkdirs() }, ClaudeProtocol.CHAT_ENV))
+                val args = ClaudeProtocol.chatArgs(
+                    threadId, resume, ClaudeProtocol.windowModel(model, long), effort, mcpFile.absolutePath, promptFile.absolutePath,
+                )
+                attach(host.start(args, File(cwd).apply { mkdirs() }, ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, long)))
                 val reply = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { control("initialize") }
                     ?: error("Claude did not start in time")
                 ClaudeProtocol.parseModels(reply).takeIf { it.isNotEmpty() }?.let { models = it }

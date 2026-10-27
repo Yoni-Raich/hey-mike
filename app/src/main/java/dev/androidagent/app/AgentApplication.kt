@@ -144,6 +144,15 @@ class AgentGraph(private val app: Application) {
     )
     /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
     val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
+    private val windowPreferences = app.getSharedPreferences("ui", 0)
+    /** Whether chats may use a model's long context window (Claude's 1M). Kept on this phone, read at start. */
+    var longContext: Boolean = windowPreferences.getBoolean(KEY_LONG_CONTEXT, true)
+        set(value) {
+            field = value
+            windowPreferences.edit().putBoolean(KEY_LONG_CONTEXT, value).apply()
+            engine.setLongContext(value)
+        }
+    init { engine.setLongContext(longContext) }
     val chatTitles = dev.androidagent.core.ChatTitleManager(sessions, engine)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
@@ -548,3 +557,5 @@ private fun publishWithoutNative(part: File, target: File, @Suppress("UNUSED_PAR
     if (target.exists()) target.delete()
     check(part.renameTo(target)) { "Could not finish the copy at ${target.name}." }
 }
+
+private const val KEY_LONG_CONTEXT = "longContext"

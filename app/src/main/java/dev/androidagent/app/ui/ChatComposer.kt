@@ -190,6 +190,7 @@ internal fun AgentComposer(
         state.activeSessionId?.let { actions.onComposerDraftChanged(it, text) }
     }
     var choosingModel by remember { mutableStateOf(false) }
+    var showingContext by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     // A skill picked from the menu rides as a chip until the message is sent.
     var skill by remember(state.activeSessionId) { mutableStateOf<AgentSkill?>(null) }
@@ -366,7 +367,7 @@ internal fun AgentComposer(
             }
         }
         Row(
-            Modifier.padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -379,6 +380,21 @@ internal fun AgentComposer(
                 ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
             }
             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
+            contextFill(state.tokenUsage)?.let { fill ->
+                Spacer(Modifier.weight(1f))
+                // The details hang off the chip, as the model menu does.
+                Box {
+                    ContextChip(fill, onClick = { showingContext = true })
+                    ContextMenu(
+                        fill = fill,
+                        usage = state.tokenUsage,
+                        canCompact = commandEnabled(ComposerCommand.COMPACT),
+                        expanded = showingContext,
+                        onDismiss = { showingContext = false },
+                        onCompact = actions.onCompact,
+                    )
+                }
+            }
         }
     }
     if (browsing) {

@@ -103,6 +103,20 @@ internal object ClaudeProtocol {
     /** Keep the computer's own tool-search setting and Claude Code's default deferral. */
     val COMPUTER_CHAT_ENV: Map<String, String> = CHAT_ENV - "ENABLE_TOOL_SEARCH"
 
+    /** Claude Code's switch for the 1M window; while set, the CLI keeps models at their standard window. */
+    const val DISABLE_LONG_CONTEXT = "CLAUDE_CODE_DISABLE_1M_CONTEXT"
+
+    /** [env] for a chat process, with the 1M window turned off unless [longContext]. */
+    fun windowEnv(env: Map<String, String>, longContext: Boolean): Map<String, String> =
+        if (longContext) env else env + (DISABLE_LONG_CONTEXT to "1")
+
+    /**
+     * [model] for a chat process. With the long window off, an explicit
+     * `[1m]` alias is dropped, since the CLI refuses it then.
+     */
+    fun windowModel(model: String, longContext: Boolean): String =
+        if (longContext) model else model.removeSuffix("[1m]")
+
     /** Arguments for one chat process. Never `--bare`: it ignores subscriptions. */
     fun chatArgs(
         sessionId: String,
@@ -573,6 +587,17 @@ internal object ClaudeProtocol {
             ?.mapNotNull { ((it as? JsonObject)?.get("contextWindow") as? JsonPrimitive)?.longOrNull }
             ?.maxOrNull()
         return TokenUsage(input + output, input, output, cached, window)
+    }
+
+    /**
+     * What one model call read: fresh input plus cache writes and reads, the
+     * whole context as it stood. Null without usage, or for an empty count.
+     */
+    fun contextTokens(message: JsonObject): Long? {
+        val usage = message["usage"] as? JsonObject ?: return null
+        fun count(key: String) = (usage[key] as? JsonPrimitive)?.longOrNull?.coerceAtLeast(0) ?: 0L
+        return (count("input_tokens") + count("cache_creation_input_tokens") + count("cache_read_input_tokens"))
+            .takeIf { it > 0 }
     }
 
     /**
