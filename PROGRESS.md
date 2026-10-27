@@ -22,7 +22,18 @@ From `origin/dev` `053cc14`, Windows: `:engine-claude:test :engine-codex:test
 The pinned Alpine musl URL still answers 404; the build used a cached copy
 whose pinned hash the script verified.
 
-Untested: no install on a phone, no live Claude or Codex chat, no screenshot.
+Tapping the chip opens a small menu: size out of the window, percent and bar,
+why it matters for the quota, the chat's running totals, and a Compact button
+(enabled between replies, same action as `/compact`).
+
+Installed as `0.14.0-dev.context-meter1176` (1176) on the user's phone, built
+from this change plus another agent's unsaved task-board work, and the user
+confirmed on the phone that the chip and menu work. That build had unit tests
+and assembly only; no `:app:lintDevDebug`, no screenshot kept, no emulator UI
+test. This branch itself was not installed.
+
+Untested: lint on the menu change, a compaction started from the menu, a Codex
+chat's size, a chat that runs on a computer.
 The size is in memory only, so after an app restart a chat shows no size
 until its next model call. Before a chat's first result the window is not
 known and the chip shows tokens without a percent.
