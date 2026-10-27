@@ -22,6 +22,13 @@ package dev.androidagent.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.outlined.Compress
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -157,12 +164,14 @@ internal fun contextFill(usage: TokenUsage?): ContextFill? = usage?.context?.let
  * context on every call, so a full context spends the usage quota faster.
  */
 @Composable
-internal fun ContextChip(fill: ContextFill, modifier: Modifier = Modifier) {
+internal fun ContextChip(fill: ContextFill, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val fraction = fill.fraction
     val ink = MaterialTheme.colorScheme.onSurfaceVariant
     val track = MaterialTheme.colorScheme.surfaceVariant
     Row(
-        modifier.heightIn(min = 32.dp).semantics(mergeDescendants = true) { contentDescription = fill.spoken },
+        modifier.heightIn(min = 32.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick)
+            .padding(horizontal = 6.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "${fill.spoken}. Open context details" },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -176,6 +185,72 @@ internal fun ContextChip(fill: ContextFill, modifier: Modifier = Modifier) {
             }
         }
         Text(fill.label, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1)
+    }
+}
+
+/**
+ * The chip's details: the size and how full the window is, what it costs, and
+ * the one thing to do about it. Compacting is offered while the chat is idle.
+ */
+@Composable
+internal fun ContextMenu(
+    fill: ContextFill,
+    usage: TokenUsage?,
+    canCompact: Boolean,
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    onCompact: () -> Unit,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        Column(
+            Modifier.widthIn(min = 240.dp, max = 300.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Context", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    formatTokens(fill.tokens) + (fill.window?.let { " / ${formatTokens(it)}" } ?: ""),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                fill.percent?.let { Text("$it% full", fontSize = 13.sp, color = quotaColor(fill.fraction ?: 0f), fontWeight = FontWeight.Medium) }
+            }
+            fill.fraction?.let {
+                LinearProgressIndicator(
+                    progress = { it },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                    color = quotaColor(it),
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+            }
+            Text(
+                "Every reply reads the whole context again, so a fuller chat spends your usage faster.",
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            usage?.takeIf { it.total > 0 }?.let {
+                Text(
+                    "Since the chat began: ${formatTokens(it.input)} read · ${formatTokens(it.output)} written · ${formatTokens(it.cachedInput)} from cache",
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(onClick = { onDismiss(); onCompact() }, enabled = canCompact, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Compress, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Compact")
+            }
+            if (!canCompact) {
+                Text(
+                    "Available between replies.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
