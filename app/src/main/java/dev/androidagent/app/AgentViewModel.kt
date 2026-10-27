@@ -65,6 +65,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         AgentUiState(
             selectedModel = engines.of(EngineKind.CODEX).model,
             selectedReasoningEffort = engines.of(EngineKind.CODEX).effort,
+            longContext = graph.longContext,
             onboarding = readOnboarding(),
             defaultEngine = ChatEngines.parse(preferences.getString(KEY_DEFAULT_ENGINE, null)),
             pins = preferences.getStringSet(KEY_PINS, null).orEmpty().toSet(),
@@ -1670,6 +1671,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         persistChoice(kind)
         graph.sessions.setModelChoice(id, choice.model, choice.effort)
         project()
+    }
+    /** The long context window on or off for every chat, from its next turn. */
+    fun longContext(enabled: Boolean) {
+        graph.longContext = enabled
+        mutable.update { it.copy(longContext = enabled) }
     }
     /** Each engine's pick under its own keys; Codex keeps the keys the assistant panel reads. */
     private fun persistChoice(kind: EngineKind) {

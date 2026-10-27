@@ -32,6 +32,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,8 +42,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -152,6 +157,14 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                     trailingIcon = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) },
                     onClick = { page = ModelPage.MODELS },
                 )
+                if (state.activeEngine == EngineKind.CLAUDE) {
+                    // Stays open: the switch is a setting, not a pick.
+                    SwitchRow(
+                        label = "Long context",
+                        note = if (state.longContext) "1M window" else "200k window, uses less quota",
+                        checked = state.longContext,
+                    ) { actions.onLongContextChanged(!state.longContext) }
+                }
             } else {
                 DropdownMenuItem(
                     text = { Text("Model", fontSize = 14.sp, color = MenuMuted) },
@@ -190,6 +203,24 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
             }
         }
     }
+}
+
+@Composable
+private fun SwitchRow(label: String, note: String, checked: Boolean, onToggle: () -> Unit) {
+    DropdownMenuItem(
+        text = {
+            Column {
+                Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                Text(note, fontSize = 13.sp, color = MenuMuted)
+            }
+        },
+        trailingIcon = { Switch(checked = checked, onCheckedChange = null) },
+        onClick = onToggle,
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            role = Role.Switch
+            toggleableState = ToggleableState(checked)
+        },
+    )
 }
 
 @Composable

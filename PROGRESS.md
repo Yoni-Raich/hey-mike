@@ -1,5 +1,24 @@
 # Progress
 
+### Long context switch in the model menu — 2026-10-27
+
+Claude Code gives every model a 1M window on the user's plan, and every reply
+reads the whole context again, so a long chat drains the 5-hour quota. The
+model menu of a Claude chat now has a "Long context" switch. Off starts each
+chat process with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` (found in the Claude Code
+2.1.302 binary) and drops an explicit `[1m]` alias, which the CLI refuses
+then; the window is 200k and Claude compacts before it. The choice is one
+setting for all chats, kept in the "ui" preferences (default on, as before),
+and reaches the phone's Claude and every computer's Claude through
+`AgentEngine.setLongContext`. A chat picks it up at its next turn: the window
+is part of the chat process's running config, so a change restarts the
+process with `--resume`, like a model or effort change.
+
+Codex is not switched. Its models list a 272k or 500k window and a larger
+`max_context_window` (872k in the PC's `models_cache.json`), and the bundled
+app-server knows `model_context_window`, but `model/list` does not report
+either size and an override above a model's maximum was not tried.
+
 ### Chat context size beside the composer — 2026-10-27
 
 The user saw Opus 5.5 use up the 5-hour quota much faster than before. Their

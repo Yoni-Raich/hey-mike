@@ -90,6 +90,7 @@ class RemoteHub(
     private val links = ConcurrentHashMap<String, Connection>()
     private val engines = ConcurrentHashMap<String, Pair<CodexEngine, Job>>()
     private val claudeEngines = ConcurrentHashMap<String, Triple<ClaudeCodeEngine, ComputerClaudeHost, Job>>()
+    @Volatile private var longContext = true
     /** The address that last answered per computer, tried first next time. */
     private val lastHost = ConcurrentHashMap<String, String>()
     private val stream = MutableSharedFlow<RemoteEvent>(extraBufferCapacity = 128)
@@ -194,11 +195,18 @@ class RemoteHub(
      * The Claude Code of [computerId]. Its first use looks for `claude` on the
      * computer and fails with words for the user when there is none.
      */
+    /** [dev.androidagent.core.AgentEngine.setLongContext] for every computer's Claude, now and later. */
+    fun setLongContext(enabled: Boolean) {
+        longContext = enabled
+        claudeEngines.values.forEach { it.first.setLongContext(enabled) }
+    }
+
     suspend fun claude(computerId: String): ClaudeCodeEngine = lock.withLock {
         claudeEngines[computerId]?.first ?: run {
             store.computer(computerId) ?: error("That computer was removed.")
             val host = ComputerClaudeHost(computerId)
             val created = createClaude(host, host)
+            created.setLongContext(longContext)
             created.onNativeMessage = { thread, message -> claudeMessages.record(computerId, thread, message) }
             val job = scope.launch { created.events.collect { stream.emit(RemoteEvent(computerId, it, EngineKind.CLAUDE)) } }
             claudeEngines[computerId] = Triple(created, host, job)

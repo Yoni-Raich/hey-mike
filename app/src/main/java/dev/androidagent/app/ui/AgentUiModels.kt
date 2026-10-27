@@ -140,6 +140,8 @@ data class AgentUiState(
     val availableCommands: List<AgentCommand> = emptyList(),
     val selectedModel: String? = null,
     val selectedReasoningEffort: String? = null,
+    /** Chats may use a model's long context window (Claude's 1M); off keeps the standard window. */
+    val longContext: Boolean = true,
     /** Turns sent from the composer run in Codex plan mode. */
     val planMode: Boolean = false,
     val voiceState: VoiceState = VoiceState(),
@@ -357,6 +359,7 @@ data class AgentUiActions(
     val onModelSelected: (String) -> Unit = {},
     val onRefreshModels: () -> Unit = {},
     val onReasoningEffortSelected: (String?) -> Unit = {},
+    val onLongContextChanged: (Boolean) -> Unit = {},
     val onRenameSession: (sessionId: String, title: String) -> Unit = { _, _ -> },
     val onCompact: () -> Unit = {},
     val onTogglePlanMode: () -> Unit = {},

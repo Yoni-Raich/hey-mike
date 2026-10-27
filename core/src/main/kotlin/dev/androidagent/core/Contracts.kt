@@ -315,6 +315,13 @@ interface AgentEngine {
     /** [account] for the chat whose folder is [workspace]: the sign-in its turn will run on. */
     suspend fun account(kind: EngineKind, workspace: File): AccountStatus = account(kind)
     suspend fun refreshUsage() {}
+    /**
+     * Whether chats may use a model's long context window, such as Claude's
+     * 1M. Off keeps the standard window: every reply reads the whole context
+     * again, so a long window spends the usage quota faster. Takes effect at
+     * a chat's next turn. Engines without a choice ignore it.
+     */
+    fun setLongContext(enabled: Boolean) {}
     suspend fun login(): AccountStatus
     suspend fun logout()
     /**
