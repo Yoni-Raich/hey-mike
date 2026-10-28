@@ -98,6 +98,7 @@ data class ChatSession(
 data class ParkedThread(val threadId: String, val seenUntil: Long)
 @Serializable
 data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
+data class SessionMessageChange(val sequence: Long, val message: ChatMessage)
 interface SessionStore {
     val sessions: StateFlow<List<ChatSession>>
     /** A new chat that starts on [engine]. */
@@ -120,6 +121,9 @@ interface SessionStore {
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
+    val hasMessageFeed: Boolean get() = false
+    suspend fun messageChanges(after: Long, limit: Int = 40): List<SessionMessageChange> = emptyList()
+    suspend fun acknowledgeMessageChanges(through: Long) {}
     suspend fun setThread(sessionId: String, threadId: String)
     /**
      * Start the chat's next turn on a new engine thread, keeping its visible
@@ -251,7 +255,18 @@ data class AgentCommand(
 )
 /** What a compaction did, in tokens, when the engine says; null where it does not. */
 data class CompactResult(val tokensBefore: Long? = null, val tokensAfter: Long? = null, val durationMs: Long? = null)
-data class TokenUsage(val total: Long, val input: Long, val output: Long, val cachedInput: Long = 0, val contextWindow: Long? = null)
+/**
+ * A chat's token counts. [context] is how many tokens the model read on its
+ * latest call: what the chat's context holds now, out of [contextWindow].
+ */
+data class TokenUsage(
+    val total: Long,
+    val input: Long,
+    val output: Long,
+    val cachedInput: Long = 0,
+    val contextWindow: Long? = null,
+    val context: Long? = null,
+)
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
 /**
  * Where one run's wall clock went.
@@ -317,6 +332,13 @@ interface AgentEngine {
     /** [account] for the chat whose folder is [workspace]: the sign-in its turn will run on. */
     suspend fun account(kind: EngineKind, workspace: File): AccountStatus = account(kind)
     suspend fun refreshUsage() {}
+    /**
+     * Whether chats may use a model's long context window, such as Claude's
+     * 1M. Off keeps the standard window: every reply reads the whole context
+     * again, so a long window spends the usage quota faster. Takes effect at
+     * a chat's next turn. Engines without a choice ignore it.
+     */
+    fun setLongContext(enabled: Boolean) {}
     suspend fun login(): AccountStatus
     suspend fun logout()
     /**

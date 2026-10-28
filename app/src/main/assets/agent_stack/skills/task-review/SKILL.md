@@ -19,7 +19,12 @@ never a reason for a rule by themselves.
 
 ## What to change
 
-Edit files under the playbook directory named in the prompt, never `user.md`.
+Read and write rules only through `tasks mode=playbook operation=list/read/write`.
+Do not use native file or shell tools. The app stages your writes, checks source
+permissions again, then commits the whole result with a run-specific report.
+Never change `user.md`.
+To remove an old learned subfile and free space, write empty content to that
+subfile. Do not remove the main index or the user's rules.
 
 - **What to skip**: many dismissals of one kind or source, with the same reason, become a
   rule in `SKILL.md` or `sources/<source>.md`. Example:
@@ -31,7 +36,8 @@ Edit files under the playbook directory named in the prompt, never `user.md`.
 - **Prune**: remove rules whose evidence is old and contradicted. Keep `SKILL.md` under
   about 150 lines; merge before you add.
 
-Every rule carries its evidence and dates. Add one dated entry to `CHANGELOG.md` saying
+Every rule carries real user event IDs and dates. A machine-completed result is
+not proof that the user liked the work. Add one dated entry to `CHANGELOG.md` saying
 what changed and why.
 
 ## Report
@@ -41,7 +47,7 @@ If you changed anything, post one report card:
 ```text
 tasks(mode="propose", category="report", title="What I changed tonight",
       why="<one line>", plan="<the changes and their evidence>",
-      action={type: "undo_snapshot", value: "<snapshot id from the prompt>"})
+      action={type: "undo_snapshot", value: "<run id from the prompt>"})
 ```
 
 You may also post a **settings card** when the evidence is clear, for example an app
