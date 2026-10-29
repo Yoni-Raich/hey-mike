@@ -85,11 +85,11 @@ LIB_MAPPING = {
 # Claude Code binary from app storage (targetSdk 35 cannot exec app files, and
 # /system/bin/linker64 cannot load a musl binary). Pinned package and file;
 # every mismatch fails the build. The Claude binary itself is never bundled.
-MUSL_APK_URL = "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/aarch64/musl-1.2.5-r12.apk"
-MUSL_APK_SHA256 = "ac281d1e7f9e9c447c51e309317b975f48be6edaf3ab91ae73b959cf86703782"
-DEFAULT_MUSL_APK = os.path.join(".codex-work", "runtime", "musl-1.2.5-r12-aarch64.apk")
+MUSL_APK_URL = "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/aarch64/musl-1.2.5-r13.apk"
+MUSL_APK_SHA256 = "d616c430bcbe0bf452b7f6ea2669f2cad14e85644a7599f4f495115d021742ef"
+DEFAULT_MUSL_APK = os.path.join(".codex-work", "runtime", "musl-1.2.5-r13-aarch64.apk")
 MUSL_LOADER_MEMBER = "lib/ld-musl-aarch64.so.1"
-MUSL_LOADER_SHA256 = "b5afeb0dcc9e22e92f1088566b0d1c1562ef567a4abebaf4b0fd14000800b8ed"
+MUSL_LOADER_SHA256 = "42fb025bc758b76e60e7b3b0fcdcfab93b6ba1694b363244c2e8e6f51847e28c"
 MUSL_LOADER_SIZE = 723480
 MUSL_LOADER_LIB_NAME = "libld_musl.so"
 MUSL_LOADER_ABIS = ("arm64-v8a",)

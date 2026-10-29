@@ -204,6 +204,20 @@ internal object ClaudeProtocol {
         add("--no-session-persistence")
     }
 
+    /** The model that starts a usage window: the smallest, since the answer is never read. */
+    const val WINDOW_MODEL = "haiku"
+
+    /**
+     * A process that sends one short message to start the plan's 5-hour
+     * window: no tools, no settings, no transcript, a one-line system prompt.
+     */
+    fun windowStartArgs(): List<String> = listOf(
+        "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+        "--model", WINDOW_MODEL,
+        "--system-prompt", "This is an automatic message from Hey Mike that starts the usage window. Reply with one word.",
+    )
+
     val AUTH_STATUS_ARGS = listOf("auth", "status", "--json")
     val AUTH_LOGIN_ARGS = listOf("auth", "login", "--claudeai")
     val AUTH_LOGOUT_ARGS = listOf("auth", "logout")
@@ -567,13 +581,20 @@ internal object ClaudeProtocol {
         val type = info.string("rateLimitType")
         if (type == "overage") return null
         val name = windowName(type.ifBlank { "five_hour" }).first
-        val resetsAt = (info["resetsAt"] as? JsonPrimitive)?.longOrNull
-            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull }
+        val resetsAt = rejectionReset(info)
         val base = "You have reached your Claude $name usage limit."
         if (resetsAt == null || resetsAt <= 0) return base
         val reset = Instant.ofEpochSecond(resetsAt).atZone(zone)
         val pattern = if (resetsAt - now.epochSecond < 24 * 3600) "HH:mm" else "EEE d MMM, HH:mm"
         return "$base It resets at ${reset.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))}."
+    }
+
+    /** Epoch seconds at which a `rejected` limit resets, when the CLI said. */
+    fun rejectionReset(info: JsonObject): Long? {
+        val type = info.string("rateLimitType")
+        return ((info["resetsAt"] as? JsonPrimitive)?.longOrNull
+            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull })
+            ?.takeIf { it > 0 }
     }
 
     /** Token usage from a `result` frame. Input counts cache reads and writes, as the context does. */

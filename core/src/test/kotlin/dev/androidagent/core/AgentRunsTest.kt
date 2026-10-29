@@ -364,6 +364,28 @@ class AgentRunsTest {
         rig.close()
     }
 
+    @Test fun resolvedPluginApprovalClearsOnlyItsOwnCardAndCannotBeAnsweredLater() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "Computer test")
+        rig.runs.send("two", "Other test")
+        runCurrent()
+        for (id in listOf("one", "two")) {
+            rig.engine.emit(EngineEvent.Approval(id, "mcpServer/elicitation/request", buildJsonObject {}, "thread-$id", "turn-thread-$id"))
+        }
+        runCurrent()
+        rig.engine.emit(EngineEvent.ApprovalResolved("one", "thread-two", "turn-thread-two"))
+        runCurrent()
+        assertNotNull(rig.runs.stateOf("one")!!.approval)
+        assertNotNull(rig.runs.stateOf("two")!!.approval)
+        rig.engine.emit(EngineEvent.ApprovalResolved("one", "thread-one", "turn-thread-one"))
+        runCurrent()
+        assertNull(rig.runs.stateOf("one")!!.approval)
+        assertNotNull(rig.runs.stateOf("two")!!.approval)
+        assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "one"))
+        assertTrue(rig.engine.approvals.isEmpty())
+        rig.close()
+    }
+
     @Test fun childApprovalCanBeAnsweredFromTheSourceWithoutAutoApproval() = runTest {
         val rig = Rig(this)
         rig.runs.linkChild("two", "one")

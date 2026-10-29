@@ -526,6 +526,7 @@ class AgentCoordinator(
                         mutableState.value = state.value.copy(
                             phase = RunPhase.ERROR, status = error.message ?: "Run failed", controlling = false,
                             outcomeUnknown = awaitingTurn || turn != null,
+                            limit = UsageLimitText.recognize(error.message)?.copy(engine = runEngine),
                         )
                     }
                 }
@@ -1353,6 +1354,13 @@ class AgentCoordinator(
                     }
                 }
             }
+            is EngineEvent.ApprovalResolved -> synchronized(lifecycleLock) {
+                val approval = state.value.approval
+                if (approval?.requestId == event.requestId && approval.threadId == event.threadId && approval.turnId == event.turnId) {
+                    mutableState.value = state.value.copy(approval = null, status = "Working")
+                    overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Working"))
+                }
+            }
             is EngineEvent.Approval -> {
                 val accepted = synchronized(lifecycleLock) {
                     if (approvalMatchesLocked(event) && state.value.approval == null && pendingLocalApproval == null) {
@@ -1395,7 +1403,10 @@ class AgentCoordinator(
                         val error = event.error ?: "${runEngine.label} could not finish"
                         synchronized(lifecycleLock) {
                             assistantOutcome = "error"
-                            mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = error)
+                            mutableState.value = state.value.copy(
+                                phase = RunPhase.ERROR, status = error,
+                                limit = (event.limitReached ?: UsageLimitText.recognize(error))?.copy(engine = runEngine),
+                            )
                         }
                         state.value.sessionId?.let { sessions.append(message(it, "system", error)) }
                     }
@@ -1425,6 +1436,7 @@ class AgentCoordinator(
                         assistantOutcome = "error"
                         mutableState.value = state.value.copy(
                             phase = RunPhase.ERROR, status = event.message, outcomeUnknown = event.uncertain,
+                            limit = (event.limitReached ?: UsageLimitText.recognize(event.message))?.copy(engine = runEngine),
                         )
                     }
                     completion?.complete(Unit)
@@ -1958,6 +1970,7 @@ class AgentCoordinator(
         is EngineEvent.ToolCall -> event.threadId
         is EngineEvent.TurnFinished -> event.threadId
         is EngineEvent.Approval -> event.threadId
+        is EngineEvent.ApprovalResolved -> event.threadId
         is EngineEvent.Failure -> event.threadId
         is EngineEvent.MessageCompleted -> event.threadId
         is EngineEvent.GeneratedImage -> event.threadId
@@ -1972,6 +1985,7 @@ class AgentCoordinator(
         is EngineEvent.ToolCall -> event.turnId
         is EngineEvent.TurnFinished -> event.turnId
         is EngineEvent.Approval -> event.turnId
+        is EngineEvent.ApprovalResolved -> event.turnId
         is EngineEvent.Failure -> event.turnId
         is EngineEvent.MessageCompleted -> event.turnId
         is EngineEvent.GeneratedImage -> event.turnId

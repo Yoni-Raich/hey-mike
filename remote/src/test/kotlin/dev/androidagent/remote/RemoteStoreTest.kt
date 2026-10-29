@@ -45,6 +45,24 @@ class RemoteStoreTest {
         assertFalse(file.readText(Charsets.ISO_8859_1).contains("secret"))
     }
 
+    @Test fun savedFullAccessKeepsAllFilesButAllowsCodexToAskForApproval() {
+        val box = SoftwareBox()
+        val file = File(temp.root, "full-access.bin")
+        val original = computer.copy(access = RemoteAccess.FULL, hostKey = "KEY", fingerprint = "SHA256:fixture")
+        RemoteStore(file, box).apply {
+            save(original, "secret")
+            bind("chat-1", RemoteBinding("pc", "D:\\project", threadId = "existing-thread"))
+        }
+        val reopened = RemoteStore(file, box)
+        val saved = reopened.computer("pc")!!
+        assertEquals(original, saved)
+        assertEquals("secret", reopened.password("pc"))
+        assertEquals("existing-thread", reopened.binding("chat-1")?.threadId)
+        val profile = RemoteHub.profileFor(saved)
+        assertEquals("danger-full-access", profile.sandbox)
+        assertEquals("on-request", profile.approvalPolicy)
+    }
+
     @Test fun importedThreadOriginSurvivesUntilMikeOwnsTheChat() {
         val box = SoftwareBox()
         val file = File(temp.root, "origin.bin")

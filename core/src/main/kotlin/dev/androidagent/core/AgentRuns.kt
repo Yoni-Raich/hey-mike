@@ -198,6 +198,8 @@ class AgentRuns(
     override fun send(turn: QueuedTurn) {
         if (turn.prompt.isBlank() && turn.imagePaths.isEmpty()) return
         synchronized(this) {
+            // Stop uses this same monitor: a revoked recovery cannot start a fresh run afterwards.
+            if (!turn.dispatchAllowed()) return
             val active = slotFor(turn.sessionId)
             val slot = active ?: freeSlot()
             if (active == null) slots.forEach { it.clearOutcome(turn.sessionId) }
@@ -366,6 +368,7 @@ internal fun EngineEvent.threadIdOrNull(): String? = when (this) {
     is EngineEvent.ToolCall -> threadId
     is EngineEvent.TurnFinished -> threadId
     is EngineEvent.Approval -> threadId
+    is EngineEvent.ApprovalResolved -> threadId
     is EngineEvent.Failure -> threadId
     is EngineEvent.MessageCompleted -> threadId
     is EngineEvent.GeneratedImage -> threadId

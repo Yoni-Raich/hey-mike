@@ -261,6 +261,33 @@ class BrowserSession(
         WebAction("reload")
     }
 
+    /** The viewport rewrite of [DesktopView] for every new document, while the page is a desktop site. */
+    private var desktopScript: String? = null
+
+    /**
+     * Lay pages out as a desktop site, or as the phone again. The host has
+     * already set the user agent; [reload] then loads the page once more, so
+     * the site sees both. A page that came from a form may send it again.
+     */
+    suspend fun desktopLayout(desktop: Boolean, reload: Boolean = true): WebAction = lock.withLock {
+        desktopScript?.let { id ->
+            runCatching { cdp.call("Page.removeScriptToEvaluateOnNewDocument", buildJsonObject { put("identifier", id) }) }
+            desktopScript = null
+        }
+        if (desktop) {
+            desktopScript = cdp.call("Page.addScriptToEvaluateOnNewDocument", buildJsonObject { put("source", DesktopView.VIEWPORT_SCRIPT) })["identifier"]
+                ?.jsonPrimitive?.contentOrNull
+        }
+        val did = if (desktop) "desktop site: the page lays out ${DesktopView.WIDTH}px wide and the site sees desktop Chrome" else "mobile site"
+        if (!reload) return@withLock WebAction(did)
+        sent()
+        cdp.call("Page.reload")
+        val loaded = awaitLoad(LOAD_TIMEOUT_MS)
+        settle(SETTLE_MS)
+        enforcePolicy()
+        WebAction("$did; the page was reloaded", listOfNotNull("The page was still loading after ${LOAD_TIMEOUT_MS / 1000}s.".takeIf { !loaded }))
+    }
+
     /** The address and title, from the browser rather than the page, so a page mid-load still answers. */
     suspend fun location(): Pair<String, String> {
         val history = cdp.call("Page.getNavigationHistory")

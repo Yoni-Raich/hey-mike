@@ -556,8 +556,11 @@ class RemoteHub(
         stream.tryEmit(RemoteEvent(computerId, EngineEvent.Activity(text, threadId = threadId, connectionStatus = true), engine))
     }
 
-    private fun dropLink(computerId: String) {
-        links.remove(computerId)?.let { runCatching { it.link.close() } }
+    /** An attachment owns its transport. Retrying it never tears down another chat or upload. */
+    private suspend fun attachRelay(computerId: String, instance: CodexRelayScripts.Instance, after: Long): Process {
+        val link = connection(computerId).link.isolated()
+        try { return SshPreparation.own(CodexRelayScripts.attach(link, instance, after), link) }
+        catch (error: Exception) { link.close(); throw error }
     }
 
     private suspend fun connection(computerId: String, onAttempt: (RemoteRoute) -> Unit = {}): Connection = linkLock.withLock {
@@ -728,14 +731,13 @@ class RemoteHub(
                 // which would otherwise keep each thread's writer for its offline lease.
                 require(computerId.matches(LinuxHost.THREAD_ID)) { "Unexpected computer id" }
                 val owner = probe.home.replace('\\', '/') + "/.hey-mike/codex/owners/$computerId.lock"
-                val result = startRelay(computerId, connection.link, instance, probe.appServer, owner)
+                val result = startRelay(connection.link, instance, probe.appServer, owner)
                 check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") {
                     "Could not start the computer's Codex relay. No task was sent."
                 }
                 return CodexRelayProcess(
                     attach = { after -> runBlocking {
-                        try { CodexRelayScripts.attach(connection(computerId).link, instance, after) }
-                        catch (error: SshUnreachable) { dropLink(computerId); throw error }
+                        attachRelay(computerId, instance, after)
                     } },
                     status = { text -> connectionStatus(computerId, text) },
                 )
@@ -753,19 +755,19 @@ class RemoteHub(
 
     /** A lost startup receipt is followed by attachment to that same instance only. */
     private suspend fun startRelay(
-        computerId: String,
         link: SshLink,
         instance: CodexRelayScripts.Instance,
         exe: String? = null,
         owner: String? = null,
     ): ExecResult? =
         try {
-            link.run(CodexRelayScripts.start(instance, exe, owner), CodexRelayScripts.START_TIMEOUT_MS).takeIf { it.exitCode >= 0 }
+            runInterruptible(Dispatchers.IO) {
+                link.run(CodexRelayScripts.start(instance, exe, owner), CodexRelayScripts.START_TIMEOUT_MS).takeIf { it.exitCode >= 0 }
+            }
         } catch (error: Exception) {
             if (error is CancellationException || error is HostKeyChanged || error is TailscaleCheck) throw error
             // Attach can prove whether that very instance started. Never replace
             // an unknown result with another launch, even after a command timeout.
-            dropLink(computerId)
             null
         }
 
@@ -797,7 +799,9 @@ class RemoteHub(
             if (!refresh) cached?.let { return it }
             val found = withContext(Dispatchers.IO) {
                 val connection = connection(computerId)
-                ClaudeLaunch.parseProbe(connection.link.run(ClaudeLaunch.probe(connection.os), 60_000))
+                connection.link.isolated().use { probeLink ->
+                    runInterruptible { ClaudeLaunch.parseProbe(probeLink.run(ClaudeLaunch.probe(connection.os), 60_000)) }
+                }
             }
             cached = found
             mutableStatus.value =
@@ -829,52 +833,49 @@ class RemoteHub(
             files: Map<String, String>,
             env: Map<String, String>,
             args: (Map<String, String>) -> List<String>,
-        ): Process = withContext(Dispatchers.IO) {
-            try {
-                launchOnce(name, cwd, files, env, args)
-            } catch (error: Exception) {
-                // The link may have dropped while idle; one fresh connection, then the error stands.
-                if (name.startsWith("chat-") || error is IllegalArgumentException || error is CancellationException) throw error
-                dropLink(computerId)
-                cached = null
-                launchOnce(name, cwd, files, env, args)
-            }.also { started += it; started.removeAll { old -> !old.isAlive } }
-        }
-
-        private suspend fun launchOnce(
-            name: String,
-            cwd: String?,
-            files: Map<String, String>,
-            env: Map<String, String>,
-            args: (Map<String, String>) -> List<String>,
         ): Process {
-            val connection = connection(computerId)
             val found = probe(refresh = false)
             val claude = found.path ?: error(notReady)
-            if (name.startsWith("chat-") && connection.os == HostOs.WINDOWS && claude.endsWith(".exe", ignoreCase = true)) {
-                val instance = CodexRelayScripts.install(connection.link, connection.probe(refresh = false),
-                    File(claudeScratch.parentFile, "codex-relay"), ClaudeSessionFiles.clientId(computerId))
-                val paths = files.mapValues { (file, text) -> put(connection, "${instance.folder}/$file", text) }
-                val owner = found.home.replace('\\', '/') + "/.hey-mike/claude/owners/${name.removePrefix("chat-")}.lock"
-                val config = CodexRelayScripts.launchConfig(claude, args(paths), checkNotNull(cwd), env, owner)
-                put(connection, "${instance.folder}/launch.json", config)
-                val result = startRelay(computerId, connection.link, instance)
-                check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") {
-                    "Could not start Claude's retained connection. An earlier process may still own this chat. No task was sent."
-                }
-                return CodexRelayProcess(
-                    attach = { after -> runBlocking {
-                        try { CodexRelayScripts.attach(connection(computerId).link, instance, after) }
-                        catch (error: SshUnreachable) { dropLink(computerId); throw error }
-                    } },
-                    status = { text -> connectionStatus(computerId, text, EngineKind.CLAUDE, name.removePrefix("chat-")) },
-                )
-            }
-            val folder = ClaudeLaunch.folder(found.home, connection.os)
-            val paths = files.mapValues { (file, text) -> put(connection, ClaudeLaunch.file(folder, file, connection.os), text) }
-            val script = ClaudeLaunch.script(connection.os, claude, cwd, env, args(paths))
-            val scriptPath = put(connection, ClaudeLaunch.file(folder, ClaudeLaunch.scriptName(name, connection.os), connection.os), script)
-            return connection.link.start(ClaudeLaunch.command(connection.os, scriptPath, connection.probe(refresh = false).powerShellDefault))
+            val base = connection(computerId)
+            return SshPreparation.start(
+                open = { base.link.isolated() },
+                prepare = { link ->
+                    val connection = Connection(link, base.route, base.os)
+                    val host = runInterruptible { connection.probe(refresh = false) }
+                    if (name.startsWith("chat-") && connection.os == HostOs.WINDOWS && claude.endsWith(".exe", ignoreCase = true)) {
+                        val instance = CodexRelayScripts.install(link, host,
+                            File(claudeScratch.parentFile, "codex-relay"), ClaudeSessionFiles.clientId(computerId))
+                        val paths = files.mapValues { (file, text) -> put(connection, "${instance.folder}/$file", text) }
+                        val owner = found.home.replace('\\', '/') + "/.hey-mike/claude/owners/${name.removePrefix("chat-")}.lock"
+                        put(connection, "${instance.folder}/launch.json", CodexRelayScripts.launchConfig(claude, args(paths), checkNotNull(cwd), env, owner))
+                        instance to null
+                    } else {
+                        val folder = ClaudeLaunch.folder(found.home, connection.os)
+                        // Per-operation names keep probes and concurrent starts from replacing a live script.
+                        val suffix = java.util.UUID.randomUUID().toString()
+                        val paths = files.mapValues { (file, text) -> put(connection, ClaudeLaunch.file(folder, "$suffix-$file", connection.os), text) }
+                        val script = ClaudeLaunch.script(connection.os, claude, cwd, env, args(paths))
+                        val path = put(connection, ClaudeLaunch.file(folder, ClaudeLaunch.scriptName("$name-$suffix", connection.os), connection.os), script)
+                        null to ClaudeLaunch.command(connection.os, path, host.powerShellDefault)
+                    }
+                },
+                launch = { link, (instance, command) ->
+                    if (instance == null) link.start(checkNotNull(command))
+                    else {
+                        val result = startRelay(link, instance)
+                        check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") {
+                            "Could not start Claude's retained connection. An earlier process may still own this chat. No task was sent."
+                        }
+                        link.close() // The retained process has its own lifetime; attach only to this instance.
+                        CodexRelayProcess(
+                            attach = { after -> runBlocking { attachRelay(computerId, instance, after) } },
+                            status = { text -> connectionStatus(computerId, text, EngineKind.CLAUDE, name.removePrefix("chat-")) },
+                        )
+                    }
+                },
+                // Fixed labels only: never log commands, paths, arguments, or error messages.
+                diagnostic = { phase, reason -> android.util.Log.i("MikeSsh", "claude $phase $reason") },
+            ).also { started += it; started.removeAll { old -> !old.isAlive } }
         }
 
         /** Write [text] to [remotePath] on the computer and return the path. */

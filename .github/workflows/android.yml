@@ -36,6 +36,6 @@ jobs:
       - run: chmod +x gradlew
       - run: python -m unittest tools.test_prepare_runtime tools.test_codex_runtime
       - run: python .agents/skills/repo-maintenance/scripts/test_ci_history.py
-      - run: ./gradlew :web:testDebugUnitTest :core:test :engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest :mcp-loopback:testDebugUnitTest :runtime:testDebugUnitTest :workspace:testDebugUnitTest :remote:testDebugUnitTest :device-tools:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+      - run: ./gradlew :web:testDebugUnitTest :core:test :automations:testDebugUnitTest :engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest :mcp-loopback:testDebugUnitTest :runtime:testDebugUnitTest :workspace:testDebugUnitTest :remote:testDebugUnitTest :device-tools:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
         env:
           HEYMIKE_TEST_CHROME: /usr/bin/google-chrome

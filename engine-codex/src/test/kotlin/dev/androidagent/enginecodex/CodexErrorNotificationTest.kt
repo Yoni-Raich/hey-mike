@@ -49,6 +49,17 @@ class CodexErrorNotificationTest {
         }
     }
 
+    @Test fun aUsageLimitSaysSoInTheFailureAndTheFinishedTurn() = runBlocking {
+        withServer { server, _, events ->
+            server.send("error", """{"threadId":"t","turnId":"u","willRetry":false,"error":{"message":"You've hit your usage limit.","codexErrorInfo":"usageLimitExceeded"}}""")
+            assertNotNull((events.next() as EngineEvent.Failure).limitReached)
+            server.send("turn/completed", """{"threadId":"t","turn":{"id":"u","status":"failed","error":{"message":"limit","codexErrorInfo":{"usageLimitExceeded":{}}}}}""")
+            assertNotNull((events.next() as EngineEvent.TurnFinished).limitReached)
+            server.send("turn/completed", """{"threadId":"t","turn":{"id":"v","status":"failed","error":{"message":"down","codexErrorInfo":"internalServerError"}}}""")
+            assertNull((events.next() as EngineEvent.TurnFinished).limitReached)
+        }
+    }
+
     @Test fun unrelatedStderrIsLoggedSeparatelyFromRpcAndTurnFailures() = runBlocking {
         val diagnostic = CompletableDeferred<String>()
         withServer(stderr = "old account refresh failed; Bearer fake-token-12345678\n", diagnosticSink = { diagnostic.complete(it) }) { server, engine, events ->

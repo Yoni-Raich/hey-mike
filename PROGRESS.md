@@ -1,5 +1,26 @@
 # Progress
 
+### Selected account, privacy and control features — 2026-10-29
+
+Integrated the user's selected seven changes from fetched `dev` `b9ea1510`:
+usage-limit recovery, idle usage-window starts, personal-profile notification
+filtering, MCP confirmation cards, isolated SSH/SFTP preparation, risky-command
+approvals with full PC access, and desktop browser mode. Original worktrees
+were preserved. Task-board, Manager and assistant-flow work is not included.
+
+Integration review added synchronous Stop fences for waits, account switches
+and queued recovery, plus the shared vault/window account-file lock. Old
+recovery queue entries cannot replay after restart. The privacy tests are now
+part of Android CI. Repaired two existing build blockers: removed Alpine musl
+r12 (now pinned r13) and nightly's missing pinned NDK installation.
+
+The local combined build, app/test-APK assembly and app lint passed; lint has
+zero errors, 21 warnings and three information findings. Runtime/update Python
+tests passed (24), as did maintenance helper tests (8). The final CI-sized
+validation and device gaps are recorded in
+[`selected-features-20261029.md`](docs/testing/selected-features-20261029.md).
+No phone installation, real quota/window start or production release is claimed.
+
 ### Long context switch in the model menu — 2026-10-27
 
 Claude Code gives every model a 1M window on the user's plan, and every reply

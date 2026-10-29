@@ -80,6 +80,13 @@ interface BrowserHost {
      */
     suspend fun screenInUse(key: String) {}
 
+    /**
+     * Ask for [key]'s page as a desktop site, or as a phone one again, and
+     * reload it. The choice stays with the chat for its next pages.
+     */
+    suspend fun layout(key: String, desktop: Boolean): WebAction =
+        throw WebFailure("layout_unavailable", "This browser has only one layout.")
+
     /** Phone conditions that may explain a lost connection or a stalled page (screen off, locked), or null. */
     fun conditions(): String? = null
 
@@ -249,6 +256,17 @@ class WebToolGateway(private val host: BrowserHost, private val timingLog: (Stri
                 ToolResult("ok: true\ndid: screenshot\nurl: ${where.first}", imageBase64 = image)
             }
             "plan" -> plan(chat, call, arguments)
+            "layout" -> {
+                val desktop = when (arguments.text("mode")?.lowercase()) {
+                    "desktop" -> true
+                    "mobile" -> false
+                    else -> throw WebFailure("no_mode", "layout needs a mode: desktop or mobile.")
+                }
+                val session = page(chat, call)
+                checkUserControl(session)
+                val action = browserPhase("action") { host.layout(chat, desktop) }
+                ToolResult(reply(session, listOf("did: ${action.did}"), action.notes, arguments.flag("observe") ?: true, arguments))
+            }
             in STEP_OPERATIONS -> {
                 validate(operation, arguments)
                 val session = page(chat, call)
@@ -589,7 +607,7 @@ class WebToolGateway(private val host: BrowserHost, private val timingLog: (Stri
 
         /** What may be a plan step: everything that acts on or waits for the page. */
         val STEP_OPERATIONS = listOf("open", "click", "fill", "select", "press", "scroll", "check", "wait", "eval", "back", "reload")
-        private val OPERATIONS = STEP_OPERATIONS + listOf("snapshot", "read", "screenshot", "plan", "show", "hide", "close")
+        private val OPERATIONS = STEP_OPERATIONS + listOf("snapshot", "read", "screenshot", "plan", "show", "hide", "close", "layout")
 
         /** A wait or an eval is asked for its own answer; the rest change the page, so the reply shows it. */
         private val OBSERVED_BY_DEFAULT = setOf("open", "click", "fill", "select", "press", "scroll", "back", "reload")
@@ -604,7 +622,8 @@ class WebToolGateway(private val host: BrowserHost, private val timingLog: (Stri
                 "ArrowDown...). scroll (direction up, down, top or bottom, or an element to bring into view). " +
                 "wait (text, selector or url to appear; gone=true to disappear; timeoutMs). read - the page as " +
                 "reading text, paged by offset. eval (script, JavaScript run in the page). back, reload, " +
-                "screenshot, close. show gives the page to the user inside Hey Mike and hide takes it back: password and " +
+                "screenshot, close. layout (mode desktop or mobile) asks for the desktop site, as Chrome's " +
+                "\"Desktop site\" does, or the phone site again, and reloads the page. show gives the page to the user inside Hey Mike and hide takes it back: password and " +
                 "card fields are the user's to type, so the browser refuses to fill them. plan runs steps - an " +
                 "array of these operations - in ONE call and stops at the first that fails; use it as soon as a " +
                 "snapshot shows you the whole sequence, e.g. fill, fill, click, check. check reads live control values " +
@@ -662,6 +681,7 @@ class WebToolGateway(private val host: BrowserHost, private val timingLog: (Stri
                         put("submit", boolean())
                         put("key", string())
                         put("direction", enumOf(listOf("up", "down", "top", "bottom")))
+                        put("mode", enumOf(listOf("desktop", "mobile")))
                         put("script", string())
                         put("gone", boolean())
                         put("timeoutMs", integer())

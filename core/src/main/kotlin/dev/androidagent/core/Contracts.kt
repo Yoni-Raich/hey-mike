@@ -280,6 +280,8 @@ sealed interface EngineEvent {
     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    /** The server cancelled or otherwise settled this exact pending request. */
+    data class ApprovalResolved(val requestId: String, val threadId: String?, val turnId: String?) : EngineEvent
     data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null,
         /** Transport progress may span turns, but must be scoped to its own threads. */
         val connectionStatus: Boolean = false) : EngineEvent
@@ -288,12 +290,16 @@ sealed interface EngineEvent {
         val itemId: String, val title: String, val detail: String, val state: String,
         val threadId: String, val turnId: String, val remote: Boolean = false,
     ) : EngineEvent
-    data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null,
+        /** The turn stopped because the account is out of usage, as the engine itself said. */
+        val limitReached: LimitReached? = null) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent
     data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null,
         /** The transport failed after work may have reached the computer. */
-        val uncertain: Boolean = false) : EngineEvent
+        val uncertain: Boolean = false,
+        /** The turn stopped because the account is out of usage, as the engine itself said. */
+        val limitReached: LimitReached? = null) : EngineEvent
 }
 interface AgentEngine {
     val events: Flow<EngineEvent>
@@ -493,6 +499,8 @@ data class RunState(
     val outcomeUnknown: Boolean = false,
     /** Identifies this execution, so a previous turn's outcome cannot finish a new task. */
     val runId: String? = null,
+    /** The run ended at a usage limit of [engine][LimitReached], not on an ordinary error. */
+    val limit: LimitReached? = null,
 ) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
 

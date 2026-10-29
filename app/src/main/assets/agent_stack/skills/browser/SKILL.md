@@ -105,6 +105,12 @@ page JavaScript and requires the user's approval because it can send data.
 Use ordinary actions when they solve the task. Sending, publishing, payment
 and other sensitive controls use the app's approval card, including in plans.
 
+`layout` with mode `desktop` asks for the desktop site, as Chrome's "Desktop
+site" does; `mobile` goes back. It reloads the page, so a page that came from
+a form may send it again; switch before filling a form. The choice stays with
+the chat's later pages. Use it when the user asks for the desktop site or a
+feature exists only there. The user has the same switch in the page's bar.
+
 Password and payment fields are for the user. Call `show`: it opens this
 chat's page inside Hey Mike and gives the user control. Ask them to finish
 their login or CAPTCHA, and wait for their reply. While the user has control,
