@@ -48,14 +48,25 @@ class LocalSessionStore(context: Context) : SessionStore {
     init { db.execSQL("UPDATE messages SET state='interrupted' WHERE state='streaming'") }
 
     override suspend fun createSession(engine: EngineKind): ChatSession = mutate { create(engine) }
+    override suspend fun createRetainedSession(engine: EngineKind, title: String, context: String): ChatSession = mutate {
+        create(engine, title = title, initialContext = context)
+    }
     override suspend fun createChildSession(parentSessionId: String, engine: EngineKind, title: String): ChatSession = mutate {
         check(loadSessions().any { it.id == parentSessionId }) { "Parent chat no longer exists." }
         create(engine, parentSessionId, title)
     }
-    private fun create(engine: EngineKind, parent: String? = null, title: String = "New chat"): ChatSession {
+    private fun create(engine: EngineKind, parent: String? = null, title: String = "New chat", initialContext: String? = null): ChatSession {
         val now = System.currentTimeMillis()
-        val session = ChatSession(UUID.randomUUID().toString(), title, now, now, hasMessages = false, engine = engine, titlePending = parent == null, parentSessionId = parent)
-        db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now); put("engine", engine.name); put("title_pending", if (session.titlePending) 1 else 0); put("parent_session", parent) })
+        val session = ChatSession(UUID.randomUUID().toString(), title, now, now, hasMessages = initialContext != null, engine = engine, titlePending = parent == null && initialContext == null, parentSessionId = parent)
+        db.beginTransaction()
+        try {
+            db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now); put("engine", engine.name); put("title_pending", if (session.titlePending) 1 else 0); put("parent_session", parent) })
+            if (initialContext != null) db.insertOrThrow("messages", null, ContentValues().apply {
+                put("id", UUID.randomUUID().toString()); put("session", session.id); put("role", "system"); put("text", initialContext)
+                put("created", now); put("state", "complete"); put("attachments", "[]")
+            })
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
         workspace(session.id).mkdirs()
         refresh()
         return session
@@ -92,6 +103,17 @@ class LocalSessionStore(context: Context) : SessionStore {
         Unit
     }
     override suspend fun getSession(id: String): ChatSession? = withContext(Dispatchers.IO) { loadSessions().firstOrNull { it.id == id } }
+    override val hasMessageFeed: Boolean get() = true
+    override suspend fun messageChanges(after: Long, limit: Int): List<SessionMessageChange> = mutate {
+        db.rawQuery("SELECT seq,message,session,role,text,created,state FROM message_changes WHERE seq>? ORDER BY seq LIMIT ?",
+            arrayOf(after.toString(), limit.coerceIn(1, 100).toString())).use { c -> buildList {
+                while (c.moveToNext()) add(SessionMessageChange(c.getLong(0), ChatMessage(c.getString(1), c.getString(2),
+                    c.getString(3), c.getString(4), c.getLong(5), c.getString(6))))
+            } }
+    }
+    override suspend fun acknowledgeMessageChanges(through: Long) = mutate {
+        db.delete("message_changes", "seq<=?", arrayOf(through.toString())); Unit
+    }
     override fun messages(sessionId: String): Flow<List<ChatMessage>> = streams.getOrPut(sessionId) { MutableStateFlow(loadMessages(sessionId)) }.asStateFlow()
     override suspend fun append(message: ChatMessage) = mutate {
         db.insertOrThrow("messages", null, ContentValues().apply {
@@ -112,6 +134,7 @@ class LocalSessionStore(context: Context) : SessionStore {
         Unit
     }
     override suspend fun setThread(sessionId: String, threadId: String) = mutate { db.execSQL("UPDATE sessions SET thread=? WHERE id=?", arrayOf(threadId, sessionId)); refresh() }
+    override suspend fun clearThread(sessionId: String) = mutate { db.execSQL("UPDATE sessions SET thread=NULL, catch_up=NULL WHERE id=?", arrayOf(sessionId)); refresh() }
     override suspend fun setEngine(sessionId: String, engine: EngineKind) = mutate {
         val session = loadSessions().firstOrNull { it.id == sessionId } ?: return@mutate
         val next = EngineSwitch.switch(session, engine, System.currentTimeMillis())
@@ -211,7 +234,7 @@ class LocalSessionStore(context: Context) : SessionStore {
     // v6 had two shipped schemas: persistent Mike's is_mike column and the
     // dev branch's composer_drafts table. v7 runs the additive migration for
     // both, even when Android sees no version change between those v6 builds.
-    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 9) {
+    private class Database(context: Context) : SQLiteOpenHelper(context, "sessions.db", null, 10) {
         override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true); db.enableWriteAheadLogging() }
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL,thread TEXT,engine TEXT NOT NULL DEFAULT 'CODEX',parked TEXT,catch_up INTEGER,title_pending INTEGER NOT NULL DEFAULT 0,parent_session TEXT REFERENCES sessions(id) ON DELETE SET NULL,model TEXT,reasoning_effort TEXT)")
@@ -220,6 +243,7 @@ class LocalSessionStore(context: Context) : SessionStore {
             db.execSQL("CREATE TABLE run_queue(position INTEGER PRIMARY KEY,payload TEXT NOT NULL)")
             db.execSQL("CREATE TABLE composer_drafts(session TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,text TEXT NOT NULL)")
             db.execSQL("CREATE TABLE agent_tasks(id TEXT PRIMARY KEY,payload TEXT NOT NULL)")
+            messageFeed(db)
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             db.execSQL("CREATE TABLE IF NOT EXISTS composer_drafts(session TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,text TEXT NOT NULL)")
@@ -242,6 +266,17 @@ class LocalSessionStore(context: Context) : SessionStore {
                 db.execSQL("ALTER TABLE sessions ADD COLUMN title_pending INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("UPDATE sessions SET title_pending=1 WHERE title='New chat' AND thread IS NULL AND NOT EXISTS(SELECT 1 FROM messages WHERE session=sessions.id AND role='user')")
             }
+            messageFeed(db)
+        }
+        private fun messageFeed(db: SQLiteDatabase) {
+            val exists = db.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_changes'", null).use { it.moveToFirst() }
+            db.execSQL("CREATE TABLE IF NOT EXISTS message_changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,message TEXT NOT NULL,session TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS message_changes_age ON message_changes(created)")
+            if (!exists) db.execSQL("INSERT INTO message_changes(message,session,role,text,created,state) SELECT id,session,role,text,created,state FROM messages WHERE role IN ('user','assistant') AND state IN ('complete','interrupted') AND length(text)>0 AND created >= (SELECT COALESCE(MAX(created),0)-1209600000 FROM messages) ORDER BY created,rowid")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS task_message_insert AFTER INSERT ON messages WHEN NEW.role IN ('user','assistant') AND NEW.state IN ('complete','interrupted') AND length(NEW.text)>0 BEGIN INSERT INTO message_changes(message,session,role,text,created,state) VALUES(NEW.id,NEW.session,NEW.role,NEW.text,NEW.created,NEW.state); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS task_message_final AFTER UPDATE OF text,state ON messages WHEN NEW.role IN ('user','assistant') AND NEW.state IN ('complete','interrupted') AND length(NEW.text)>0 AND (OLD.text<>NEW.text OR OLD.state<>NEW.state) BEGIN INSERT INTO message_changes(message,session,role,text,created,state) VALUES(NEW.id,NEW.session,NEW.role,NEW.text,NEW.created,NEW.state); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS task_message_forget AFTER DELETE ON messages BEGIN DELETE FROM message_changes WHERE message=OLD.id; END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS task_feed_age AFTER INSERT ON message_changes BEGIN DELETE FROM message_changes WHERE created<NEW.created-1209600000; END")
         }
         // A newer build may have written this file. Its extra columns are
         // harmless here, so keep the history instead of letting SQLite refuse

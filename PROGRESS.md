@@ -1,5 +1,23 @@
 # Progress
 
+### Unified task board and personal assistant — 2026-10-29
+
+Integrated the complete 1179 board/Manager/UI/follow-through source onto fetched
+`dev` `851d9e8f`, in one feature. Original worktrees and their uncommitted work
+remain untouched. Repository version and runtime pins are unchanged. Resolved
+overlap with the earlier seven-feature merge, retaining usage-limit recovery,
+Stop fences, account locks, MCP confirmations and personal-profile filtering.
+Notification replay now uses that same profile boundary before any payload read.
+
+Added a queue regression for Stop during suspended turn preparation. The combined
+build, app/test APK assembly and lint passed. JVM: 1,733 cases, 17 existing skips,
+zero failures/errors. Python: 24 runtime checks and 8 maintenance checks passed.
+Fifteen synthetic API 35 emulator UI/lifecycle/storage tests passed. App lint:
+zero errors, 21 warnings, three information items. UI evidence and remaining
+phone-runtime gaps are recorded in
+[`tasks-assistant-unified-20261029.md`](docs/testing/tasks-assistant-unified-20261029.md).
+No hosting-phone update or real account/background task is part of this merge.
+
 ### Selected account, privacy and control features — 2026-10-29
 
 Integrated the user's selected seven changes from fetched `dev` `b9ea1510`:

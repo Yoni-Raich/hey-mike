@@ -55,6 +55,8 @@ import java.time.ZonedDateTime
  */
 interface AutomationHostOwner {
     val automationHost: AutomationHost?
+    /** The task board's collector, when the app has one. */
+    val taskSignals: dev.androidagent.core.TaskSignalSink? get() = null
 }
 
 internal fun Context.automationHost(): AutomationHost? =

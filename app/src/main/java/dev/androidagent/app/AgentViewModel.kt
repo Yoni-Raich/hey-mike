@@ -245,6 +245,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         } }
         viewModelScope.launch { current.collect { graph.openChat.value = it } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
+        viewModelScope.launch { graph.taskDesk.state.collect { desk -> mutable.update { it.copy(taskDesk = desk) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
         viewModelScope.launch { graph.adb.status.collect { state -> mutable.update { it.copy(adbStatus = state) } } }
         // Connection is a flow; whether the user switched it on is a settings
@@ -539,6 +540,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Delete a chat that has no message and no thread, unless something is still using it. */
     private suspend fun discardIfUnstarted(id: String) = runCatching {
         val session = graph.sessions.getSession(id) ?: return@runCatching
+        // Named/app-owned chats are not abandoned composer placeholders.
+        if (!session.titlePending || id in graph.taskDesk.team.sessionIds) return@runCatching
         if (mutable.value.composerSeeds[id]?.isNotEmpty() == true || !graph.sessions.composerDraft(id).isNullOrEmpty()) return@runCatching
         if (!isBlank(session) || id in mutable.value.pcChatLoading) return@runCatching
         if (graph.coordinator.phaseOf(id) != null) return@runCatching
@@ -975,6 +978,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(voiceBrowsing = false) }
     }
     fun stopSession(id: String) {
+        if (id == graph.taskDesk.state.value.managerSessionId || graph.taskDesk.isBackgroundSession(id)) graph.taskDesk.pauseBackground()
         graph.coordinator.stop(id)
         if (id == graph.voiceConversation.sessionId.value) stopVoice()
     }
@@ -1083,9 +1087,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 text + "\n\n$place:\n" + where.joinToString("\n")
             }
             mutable.update { it.copy(infoMessage = null) }
-            graph.queue.submit(QueuedTurn(sessionId = id, prompt = prompt, imagePaths = images.map { it.absolutePath },
+            // The Manager's and a member's chat carry the board's state before the
+            // user's words; the chat shows only what the user typed.
+            val owner = graph.taskDesk.ownerContext(id, text)
+            graph.queue.submit(QueuedTurn(sessionId = id, prompt = owner?.let { it + "\n" + prompt } ?: prompt,
+                imagePaths = images.map { it.absolutePath },
                 model = model, effort = snapshot.selectedReasoningEffort ?: choice.turnEffort,
-                skill = invokedSkill, planMode = snapshot.planMode, engine = kind))
+                skill = invokedSkill, planMode = snapshot.planMode, engine = kind,
+                displayPrompt = if (owner != null) text else null))
             mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
         }
     }
@@ -1184,6 +1193,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), sessionId, "note", text, System.currentTimeMillis()))
 
     fun stop() {
+        val id = current.value
+        if (id == graph.taskDesk.state.value.managerSessionId || (id != null && graph.taskDesk.isBackgroundSession(id))) graph.taskDesk.pauseBackground()
         graph.queue.pause()
         // End voice while an assistant press is still setting up cancels it.
         if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {
@@ -1600,6 +1611,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * observable, so the app has to look again every time it comes back.
      */
     fun refreshPermissions() {
+        graph.taskDesk.refreshPermissions()
         val app = getApplication<Application>()
         val notifications = android.os.Build.VERSION.SDK_INT < 33 ||
             androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) ==

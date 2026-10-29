@@ -44,6 +44,18 @@ import org.junit.Test
 import java.io.File
 
 class CodexEngineTest {
+    @Test fun backgroundProfileKeepsNativeWritesAndExecutionClosed() {
+        val profile = EngineProfile("background", sandbox = "read-only", approvalPolicy = "never", readOnly = true)
+        val start = CodexEngine.startSessionParams("/background", null, emptyList(), profile)
+        assertEquals("read-only", start["sandbox"]?.jsonPrimitive?.content)
+        assertEquals("never", start["approvalPolicy"]?.jsonPrimitive?.content)
+        val config = start.getValue("config").jsonObject
+        for (feature in listOf("shell_tool", "unified_exec", "js_repl", "multi_agent", "multi_agent_v2", "apps", "plugins", "image_generation")) {
+            assertEquals("false", config["features.$feature"]?.jsonPrimitive?.content)
+        }
+        assertEquals("disabled", config["web_search"]?.jsonPrimitive?.content)
+        assertEquals(config, CodexEngine.resumeSessionParams("/background", "t", null, emptyList(), profile)["config"])
+    }
     @Test fun tokenUsageAndMultipleLimitWindowsAreParsedWithoutInventingMissingQuota() {
         val usage = CodexEngine.parseTokenUsage(Json.parseToJsonElement("""{"total":{"totalTokens":180,"inputTokens":120,"outputTokens":60,"cachedInputTokens":40},"modelContextWindow":200000}""").jsonObject)!!
         assertEquals(180L, usage.total)

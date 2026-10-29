@@ -310,6 +310,42 @@ class MainActivity : ComponentActivity() {
             model.editUi { it.copy(isAutomationsOpen = true) }
         },
         onCloseAutomations = { model.editUi { it.copy(isAutomationsOpen = false) } },
+        onOpenTaskBoard = { page -> model.editUi { it.copy(isTaskBoardOpen = true, taskBoardPage = page, isDrawerOpen = false) } },
+        onCloseTaskBoard = { model.editUi { it.copy(isTaskBoardOpen = false, taskBoardPage = null) } },
+        onTaskDecide = { id, choice, note, reason ->
+            // Work started from the board runs like any chat: keep the service up.
+            if (choice == "do" || choice == "continue") ensureService()
+            model.graph.taskDesk.decide(id, choice, note, reason)
+        },
+        onTaskNote = { id, note -> model.graph.taskDesk.setNote(id, note) },
+        onTaskRenameMember = { id, name, role -> model.graph.taskDesk.renameMember(id, name, role) },
+        onTaskRemoveMember = { id -> model.graph.taskDesk.removeMember(id) },
+        onTaskMergeMember = { id, into -> model.graph.taskDesk.mergeMember(id, into) },
+        onTaskAssign = { id, member -> model.graph.taskDesk.assign(id, member) },
+        onTaskContext = { id ->
+            model.graph.taskDesk.state.value.managerSessionId?.let { chat ->
+                model.editUi { it.copy(isTaskBoardOpen = false, taskBoardPage = null, isDrawerOpen = false,
+                    composerSeeds = it.composerSeeds + (chat to dev.androidagent.app.ui.taskText(
+                        "Read the missing context for task $id. Explain what you need to open first. Do not execute the task yet.",
+                        "קרא את ההקשר החסר למשימה $id. הסבר קודם מה צריך לפתוח. אל תבצע את המשימה עדיין.")),
+                    composerDraftVersions = it.composerDraftVersions + (chat to ((it.composerDraftVersions[chat] ?: 0L) + 1))) }
+                model.select(chat)
+            }
+        },
+        onOpenBoardChat = { id ->
+            model.editUi { it.copy(isTaskBoardOpen = false, taskBoardPage = null, isDrawerOpen = false) }
+            model.select(id)
+        },
+        onTaskDiscovery = { on -> if (on) ensureService(); model.graph.taskDesk.setDiscovery(on) },
+        onTaskSettings = { change -> model.graph.taskDesk.editSettings(change) },
+        onTaskForgetCollected = { model.graph.taskDesk.forgetCollected() },
+        onTaskForgetNote = { id -> model.graph.taskDesk.forgetNote(id) },
+        onTaskPinNote = { id, pinned -> model.graph.taskDesk.pinNote(id, pinned) },
+        onTaskForgetSubject = { subject -> model.graph.taskDesk.forgetSubject(subject) },
+        onTaskAddRule = { rule -> model.graph.taskDesk.addUserRule(rule) },
+        onTaskLiftSuppression = { entry -> model.graph.taskDesk.liftSuppression(entry) },
+        onTaskClearError = { model.graph.taskDesk.clearError() },
+        onTaskCalendarPermission = { capabilityPermissions.launch(arrayOf(Manifest.permission.READ_CALENDAR)) },
         onToggleRule = { id, enabled -> model.setRuleEnabled(id, enabled) },
         onRunRule = { id -> ensureService(); model.runRule(id) },
         onDeleteRule = { id -> model.deleteRule(id) },
