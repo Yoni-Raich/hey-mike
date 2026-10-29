@@ -1,5 +1,61 @@
 # Architecture
 
+## Selected feature integration — 2026-10-29
+
+This integration carries the seven changes selected after the conversation
+audit onto `dev`. Task-board, Manager and personal-assistant work remain in
+their original worktrees. The changes below do not enable account starts,
+collection or automatic continuation without the user's setting.
+
+- **Usage-limit recovery:** `UsageLimitRecovery` stores each chat's plan,
+  stopped target and reset time. It can wait for a reset or choose the next
+  available account/provider. Every continuation is a new queued turn with
+  app-owned context, never a replay of the original tool calls. The chat's
+  `/limits` sheet and limit card expose the plan and one-time actions.
+- **Stop:** the run manager synchronously revokes recovery permission for
+  the selected family, or all chats for global Stop. Pending switches check
+  this permission before changing an account; queued recovery turns check it
+  again at dispatch under the same run-manager monitor as Stop. A recovery
+  queue entry cannot run after restart without its live guard. Interrupted
+  continuations are left stopped for review, not replayed. Explicit recovery
+  actions resume only that chat. Saved waits are cleared asynchronously.
+- **Usage windows:** `UsageWindowKeeper` is off by default. When enabled it
+  starts due accounts with one short, tool-free message using a separate
+  runtime. Its single alarm is exact only when Android permits exact alarms.
+  Vault lending, manual account changes and limit-recovery account changes
+  share `accountFiles`; an automatic switch also waits for active runs and
+  Voice to finish. It never switches a sign-in while a window starter borrows it.
+- **Personal notifications:** `PersonalNotificationPolicy` rejects unknown,
+  other-user and profile notifications before payload access or consumer
+  lookup. It compares Android user identity, never a package blocklist. The
+  current `dev` listener has no active-notification replay or task-board reader;
+  adding either requires applying the same boundary before reading content.
+  Already stored data is not removed by this change.
+- **MCP confirmations:** supported empty form confirmations use the existing
+  per-chat Allow/Deny card. Responses carry MCP `action`/`content`, are consumed
+  once and are revoked when the request resolves. Thread/turn/computer scope
+  is preserved. Value forms, URL verification and unknown constraints are
+  declined; there is no standing desktop-app grant.
+- **SSH preparation:** probes, uploads and retained-relay attachments own
+  isolated connections pinned to the known host key. Preparation may retry
+  one transport failure. After a possible launch, only that relay instance
+  may be attached; the task is not launched again. Uploads use unique parts
+  and bounded shared destination locks. Diagnostics contain fixed phase labels.
+- **Full PC access:** native Codex keeps full filesystem access with
+  `on-request` command approvals. Required risky-command approval is shown
+  through the existing card instead of being pre-declined by `never`.
+- **Desktop browser:** `browser.layout` and the panel's desktop/phone button
+  reload the current chat's page with desktop or mobile settings. The choice
+  stays with that browser session. Website push notifications are not added.
+
+Build repair: Alpine's removed musl r12 package is replaced with the official
+v3.22 r13 package. Both archive and loader remain SHA-256 pinned; Codex stays
+at 0.163.0. Dev nightly now installs the exact NDK already required by Android
+CI and `prepareFileDelta`. This is not physical Claude-runtime validation.
+
+Current checks and remaining device proof:
+[`selected-features-20261029.md`](testing/selected-features-20261029.md).
+
 ## Deterministic UI timeout regression — 2026-10-23
 
 The ADB UI observation timeout regression uses a virtual coroutine scheduler

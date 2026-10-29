@@ -513,7 +513,13 @@ class CodexEngine(
     }
 
     override suspend fun answerApproval(requestId: String, allow: Boolean) {
-        val approval = approvals[requestId] ?: return
+        // Consume first: two taps, or a late reply after cancellation, must
+        // never answer the same server request twice.
+        val approval = approvals.remove(requestId) ?: return
+        if (approval.method == "mcpServer/elicitation/request") {
+            respond(requestId, mcpConfirmationResult(allow))
+            return
+        }
         val result = buildJsonObject {
             if (approval.method == "item/permissions/requestApproval") {
                 // Grant only the requested profile, for this turn. A rejection
@@ -525,7 +531,6 @@ class CodexEngine(
             }
         }
         respond(requestId, result)
-        approvals.remove(requestId, approval)
     }
 
     /** Use Mike's current ChatGPT account in a remote app-server, without saving it on the PC. */
@@ -649,12 +654,31 @@ class CodexEngine(
                 val value = when (args) { is JsonObject -> args; is JsonPrimitive -> runCatching { json.parseToJsonElement(args.content).jsonObject }.getOrDefault(buildJsonObject {}); else -> buildJsonObject {} }
                 stream.emit(EngineEvent.ToolCall(id, params.string("tool"), value, params.string("threadId"), params.string("turnId")))
             }
+            method == "mcpServer/elicitation/request" && id != null -> {
+                if (isMcpConfirmation(params)) {
+                    val approval = EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId"))
+                    approvals[id] = approval
+                    stream.emit(approval)
+                } else {
+                    // URL flows, structured forms and device-verification
+                    // proofs need a different UI. Do not turn Allow into
+                    // invented answers or silently grant persistent access.
+                    respond(id, mcpConfirmationResult(false))
+                    runCatching { diagnosticSink("MCP elicitation declined: unsupported form or missing turn scope") }
+                    stream.emit(EngineEvent.Activity("This plugin request needs an approval form Mike cannot show yet.",
+                        params.string("threadId"), params.string("turnId")))
+                }
+            }
             id != null && method.endsWith("requestApproval") -> {
                 val approval = EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId"))
                 approvals[id] = approval
                 stream.emit(approval)
             }
-            method == "serverRequest/resolved" -> params["requestId"]?.toString()?.let { approvals.remove(it) }
+            method == "serverRequest/resolved" -> params["requestId"]?.toString()?.let { requestId ->
+                approvals.remove(requestId)?.let { approval ->
+                    stream.emit(EngineEvent.ApprovalResolved(requestId, approval.threadId, approval.turnId))
+                }
+            }
             method == "thread/realtime/started" -> {
                 val threadId = params.string("threadId")
                 val sessionId = params.string("realtimeSessionId").ifBlank { null }
@@ -746,7 +770,8 @@ class CodexEngine(
                 compactions[params.string("threadId")]?.let {
                     if (it.turnId == turn.string("id")) it.finished.complete(TurnEnd(turn.string("status"), turnError))
                 }
-                stream.emit(EngineEvent.TurnFinished(turn.string("status"), turnError, params.string("threadId"), turn.string("id")))
+                stream.emit(EngineEvent.TurnFinished(turn.string("status"), turnError, params.string("threadId"), turn.string("id"),
+                    limitReached = usageLimitOf(turn["error"] as? JsonObject)))
             }
             method == "account/login/completed" -> {
                 if (params["success"]?.jsonPrimitive?.booleanOrNull == false) stream.emit(EngineEvent.Failure(params.string("error").ifBlank { "Sign-in failed" }))
@@ -771,6 +796,7 @@ class CodexEngine(
                 } else {
                     stream.emit(EngineEvent.Failure(
                         error?.let(::rpcErrorMessage) ?: "Codex reported an error", threadId, turnId,
+                        limitReached = usageLimitOf(error),
                     ))
                 }
             }
@@ -806,6 +832,22 @@ class CodexEngine(
     }
 
     companion object {
+        /**
+         * The turn stopped because the ChatGPT account is out of usage, as
+         * Codex says it: `codexErrorInfo` is `usageLimitExceeded`, as a plain
+         * value or as the key of an object. When it resets is not in the
+         * error; the account's last rate-limit reading says.
+         */
+        internal fun usageLimitOf(error: JsonObject?): LimitReached? {
+            val info = error?.get("codexErrorInfo") ?: return null
+            val kind = when (info) {
+                is JsonPrimitive -> info.contentOrNull
+                is JsonObject -> info.keys.singleOrNull()
+                else -> null
+            }
+            return if (kind.equals("usageLimitExceeded", ignoreCase = true)) LimitReached(engine = EngineKind.CODEX) else null
+        }
+
         /** How long a compaction may run before the caller stops waiting; Codex goes on without it. */
         private const val COMPACT_WAIT_MS = 5 * 60_000L
 

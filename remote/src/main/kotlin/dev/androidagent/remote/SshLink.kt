@@ -21,6 +21,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -30,6 +32,7 @@ import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -228,7 +231,7 @@ class SshLink(private val target: SshTarget) : Closeable {
 
     /**
      * Copy [source] to [remotePath] on the computer. A file already there is
-     * refused unless [replace]. Written as `.<name>.part` beside it and renamed
+     * refused unless [replace]. Written to a unique part beside it and renamed
      * once whole, so the computer never shows half a file under its name.
      */
     suspend fun upload(
@@ -236,23 +239,51 @@ class SshLink(private val target: SshTarget) : Closeable {
         remotePath: String,
         replace: Boolean = true,
         progress: (Long, Long) -> Unit = { _, _ -> },
-    ) = withSftp(remotePath) { sftp ->
-        val path = sftpPath(remotePath)
-        val exists = runCatching { sftp.stat(path) }.isSuccess
-        check(!exists || replace) { "$remotePath already exists. Pass replace: true to overwrite it." }
-        val folder = path.substringBeforeLast('/')
-        val part = "$folder/." + path.substringAfterLast('/') + ".part"
-        val size = source.length()
-        progress(0, size)
-        makeFolders(sftp, folder)
-        try {
-            source.inputStream().use { sftp.put(it, part, Counting(size, progress), ChannelSftp.OVERWRITE) }
-            if (exists) sftp.rm(path)
-            sftp.rename(part, path)
-        } catch (error: Exception) {
-            runCatching { sftp.rm(part) }
-            throw error
+    ) = withContext(Dispatchers.IO) {
+        // Establish the pinned identity before choosing a lock, also on first use.
+        runInterruptible { connect() }
+        uploadLock(remotePath).withLock {
+            val context = currentCoroutineContext()
+            withSftp(remotePath) { sftp ->
+                val path = sftpPath(remotePath)
+                val exists = exists(sftp, path)
+                check(!exists || replace) { "$remotePath already exists. Pass replace: true to overwrite it." }
+                val folder = path.substringBeforeLast('/')
+                val part = "$folder/." + path.substringAfterLast('/') + ".${UUID.randomUUID()}.part"
+                val size = source.length()
+                progress(0, size)
+                makeFolders(sftp, folder)
+                try {
+                    source.inputStream().use { sftp.put(it, part, Counting(size, progress), ChannelSftp.OVERWRITE) }
+                    context.ensureActive()
+                    check(sftp.stat(part).size == size) { "The upload ended early." }
+                    if (exists && sftp.getExtension("posix-rename@openssh.com") != "1") sftp.rm(path)
+                    sftp.rename(part, path)
+                } catch (error: Exception) {
+                    runCatching { sftp.rm(part) }
+                    throw error
+                }
+            }
         }
+    }
+
+    // Shared across isolated links too. A fixed set avoids retaining every uploaded
+    // path forever. Collisions only serialize unrelated uploads; they cannot mix bytes.
+    private fun uploadLock(remotePath: String): Mutex {
+        val path = sftpPath(remotePath).let {
+            if (it.matches(Regex("^/?[A-Za-z]:/.*"))) it.lowercase(java.util.Locale.ROOT) else it
+        }
+        val host = synchronized(this) { trustedHostKey } ?: target.host
+        val key = "$host|${target.port}|${target.user}|$path"
+        return uploadLocks[(key.hashCode() and Int.MAX_VALUE) % uploadLocks.size]
+    }
+
+    private fun exists(sftp: ChannelSftp, path: String): Boolean = try {
+        sftp.stat(path)
+        true
+    } catch (error: com.jcraft.jsch.SftpException) {
+        if (error.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) throw error
+        false
     }
 
     /** Creates the folders on the way to [folder] that are not there yet, like `mkdir -p`. */
@@ -260,7 +291,13 @@ class SshLink(private val target: SshTarget) : Closeable {
         var at = ""
         for (name in folder.split('/').filter { it.isNotEmpty() }) {
             at += "/$name"
-            if (runCatching { sftp.stat(at) }.isFailure) sftp.mkdir(at)
+            if (!exists(sftp, at)) {
+                try { sftp.mkdir(at) }
+                catch (error: com.jcraft.jsch.SftpException) {
+                    // A different upload may have made this parent in the meantime.
+                    if (!sftp.stat(at).isDir) throw error
+                }
+            }
         }
     }
 
@@ -358,6 +395,7 @@ class SshLink(private val target: SshTarget) : Closeable {
     }
 
     companion object {
+        private val uploadLocks = Array(64) { Mutex() }
         const val CONNECT_TIMEOUT_MS = 15_000
         private const val KEEPALIVE_MS = 20_000
         private const val KEEPALIVE_MISSES = 3

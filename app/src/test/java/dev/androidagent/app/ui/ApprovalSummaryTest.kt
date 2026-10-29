@@ -30,6 +30,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ApprovalSummaryTest {
+    @Test fun computerUseConfirmationShowsThePluginAndExactRequestWithoutStandingGrants() {
+        val summary = EngineEvent.Approval(
+            requestId = "remote|pc|confirmation",
+            method = "mcpServer/elicitation/request",
+            details = buildJsonObject {
+                put("serverName", "cua")
+                put("message", "Allow Codex to use Google Chrome?")
+            },
+        ).summary()
+        assertEquals("Allow this plugin request?", summary.headline)
+        assertEquals(listOf("Plugin" to "cua", "Request" to "Allow Codex to use Google Chrome?", "For" to "This request only"), summary.lines)
+        assertEquals(null, summary.sendApp)
+    }
+
 
     private fun approval(uri: String, pkg: String? = null, reason: String = "Open a prefilled message.") =
         EngineEvent.Approval(

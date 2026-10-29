@@ -66,6 +66,19 @@ class WebToolGatewayTest {
         assertEquals(1, host.opened)
     }
 
+    @Test fun layoutWithoutAModeOpensNothing() = runBlocking {
+        val result = call("""{"operation":"layout","mode":"tablet"}""")
+        assertFalse(result.success)
+        assertTrue(result.text, result.text.contains("error: no_mode"))
+        assertEquals(0, host.opened)
+    }
+
+    @Test fun layoutIsOneOfTheToolsModes() {
+        val properties = WebToolGateway.DEFINITION.inputSchema.getValue("properties").jsonObject
+        assertTrue(properties.getValue("operation").toString().contains("\"layout\""))
+        assertTrue(properties.getValue("mode").toString().contains("\"desktop\""))
+    }
+
     @Test fun screenUseByARunReachesTheHostWithThatRunsPage() = runBlocking {
         gateway.screenInUse("run", File("chat-two"))
         assertEquals(listOf(File("chat-two").absolutePath), host.screens)

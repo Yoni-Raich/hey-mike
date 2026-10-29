@@ -503,15 +503,18 @@ class CodexEngineTest {
 
     @Test fun aComputersThreadCarriesItsOwnPathAccessAndInstructions() {
         // A Windows path is not a File on the phone: it must reach Codex as typed.
-        val profile = EngineProfile("computer rules", sandbox = "workspace-write", approvalPolicy = "on-request", inlineImages = true)
-        val start = CodexEngine.startSessionParams("C:\\Users\\Yoni Raich\\src\\app", null, emptyList(), profile)
-        assertEquals("C:\\Users\\Yoni Raich\\src\\app", start["cwd"]?.jsonPrimitive?.content)
-        assertEquals("workspace-write", start["sandbox"]?.jsonPrimitive?.content)
-        assertEquals("on-request", start["approvalPolicy"]?.jsonPrimitive?.content)
-        assertEquals("computer rules", start["developerInstructions"]?.jsonPrimitive?.content)
-        val resume = CodexEngine.resumeSessionParams("D:\\work", "t1", null, null, profile)
-        assertEquals("D:\\work", resume["cwd"]?.jsonPrimitive?.content)
-        assertEquals("on-request", resume["approvalPolicy"]?.jsonPrimitive?.content)
+        for (sandbox in listOf("workspace-write", "danger-full-access")) {
+            val profile = EngineProfile("computer rules", sandbox = sandbox, approvalPolicy = "on-request", inlineImages = true)
+            val start = CodexEngine.startSessionParams("C:\\Users\\Yoni Raich\\src\\app", null, emptyList(), profile)
+            assertEquals("C:\\Users\\Yoni Raich\\src\\app", start["cwd"]?.jsonPrimitive?.content)
+            assertEquals(sandbox, start["sandbox"]?.jsonPrimitive?.content)
+            assertEquals("on-request", start["approvalPolicy"]?.jsonPrimitive?.content)
+            assertEquals("computer rules", start["developerInstructions"]?.jsonPrimitive?.content)
+            val resume = CodexEngine.resumeSessionParams("D:\\work", "t1", null, null, profile)
+            assertEquals("D:\\work", resume["cwd"]?.jsonPrimitive?.content)
+            assertEquals(sandbox, resume["sandbox"]?.jsonPrimitive?.content)
+            assertEquals("on-request", resume["approvalPolicy"]?.jsonPrimitive?.content)
+        }
     }
 
     @Test fun aPictureForAnotherMachineTravelsInsideTheRequest() {

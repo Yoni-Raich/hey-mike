@@ -37,6 +37,7 @@ internal enum class ComposerCommand(val id: String, val label: String, val descr
     MODEL("model", "Model", "Choose model and reasoning"),
     RENAME("rename", "Rename", "Give this chat a new name"),
     STATUS("status", "Status", "Model, limits and phone connection"),
+    LIMITS("limits", "Usage limits", "What this chat does when it hits a usage limit"),
 }
 
 /** What a leading `/` (skills and commands) or `$` (skills only) is searching for. */

@@ -354,7 +354,7 @@ private fun ComputerCard(
                 "Access",
                 when (computer.access) {
                     RemoteAccess.ASK -> "Asks before anything outside the project folder"
-                    RemoteAccess.FULL -> "Full access, no questions"
+                    RemoteAccess.FULL -> "All files; Codex asks before risky commands"
                 },
             )
             computer.fingerprint?.let {
@@ -666,12 +666,12 @@ private fun ColumnScope.ComputerForm(
         AccessOption(
             selected = draft.access == RemoteAccess.ASK,
             title = "Ask me first (recommended)",
-            detail = "Edits and commands inside the project folder run. Anything else waits for your answer on the phone.",
+            detail = "Edits and commands stay in the project folder. Extra access and risky commands need your approval.",
         ) { draft = draft.copy(access = RemoteAccess.ASK) }
         AccessOption(
             selected = draft.access == RemoteAccess.FULL,
             title = "Full access",
-            detail = "Mike runs any command as your user on the computer without asking.",
+            detail = "All files are available. Codex asks before risky commands. Claude runs without tool prompts.",
         ) { draft = draft.copy(access = RemoteAccess.FULL) }
 
         val missing = buildList {

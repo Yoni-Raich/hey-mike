@@ -62,6 +62,9 @@ data class QueuedTurn(
     val validUntil: Long? = null,
     /** App-supplied child context must never masquerade as the user's words or answer a gate. */
     val agentContext: Boolean = false,
+    /** Recovery work loses permission after Stop or a restart; it must not be replayed. */
+    val requiresLiveGuard: Boolean = false,
+    @kotlinx.serialization.Transient val dispatchGuard: (() -> Boolean)? = null,
 )
 
 /**
@@ -108,9 +111,10 @@ class SessionRunQueue(
     suspend fun submit(request: QueuedTurn) {
         loaded.join()
         lock.withLock {
+            if (!request.dispatchAllowed()) return
             check(store.getSession(request.sessionId) != null) { "Chat no longer exists." }
             val phase = coordinator.phaseOf(request.sessionId)
-            if (phase != null) {
+            if (phase != null && !request.requiresLiveGuard) {
                 check(phase != RunPhase.STARTING && phase != RunPhase.STOPPING) { "Wait for the current turn to start or stop." }
                 check(request.imagePaths.isEmpty()) { "Send attachments after this run finishes." }
                 coordinator.steer(request.sessionId, request.prompt)
@@ -140,7 +144,9 @@ class SessionRunQueue(
             // Stale turns are dropped before anything is chosen, so an expired one
             // at the head cannot hold up the turn behind it.
             val now = clock()
-            val fresh = pending.value.filter { it.validUntil == null || it.validUntil >= now }
+            val permitted = pending.value.filter { it.dispatchAllowed() }
+            if (permitted.size != pending.value.size) save(permitted)
+            val fresh = permitted.filter { it.validUntil == null || it.validUntil >= now }
             if (fresh.size != pending.value.size) {
                 val dropped = pending.value - fresh.toSet()
                 save(fresh)
@@ -154,7 +160,9 @@ class SessionRunQueue(
             // Dequeue durably before starting, so a process crash cannot replay side effects.
             save(pending.value - next)
             submittedNow -= next.id
-            coordinator.send(next)
+            if (next.dispatchAllowed()) coordinator.send(next)
         }
     }
 }
+
+internal fun QueuedTurn.dispatchAllowed(): Boolean = !requiresLiveGuard || dispatchGuard?.invoke() == true

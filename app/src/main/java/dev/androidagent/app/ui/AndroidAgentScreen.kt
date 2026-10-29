@@ -158,6 +158,7 @@ import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.EngineKind
+import dev.androidagent.core.LimitPhase
 import dev.androidagent.app.update.AppUpdateInfo
 import dev.androidagent.app.update.UpdateStatus
 import dev.androidagent.core.RunPhase
@@ -423,6 +424,7 @@ fun AndroidAgentScreen(
                 onTakeControl = actions.onBrowserTakeControl,
                 onGiveBack = actions.onBrowserGiveBack,
                 onClosePage = actions.onBrowserClosePage,
+                onToggleLayout = actions.onBrowserToggleLayout,
                 onStop = actions.onStop,
                 attach = actions.onAttachBrowser,
                 detach = actions.onDetachBrowser,
@@ -761,6 +763,14 @@ private fun AgentChatContent(
                     CompactingCard(startedAt, Modifier.animateItem())
                 }
             }
+            // A chat stopped by a usage limit says so, with what it can do next.
+            state.limits.stop
+                ?.takeIf { it.sessionId == state.activeSessionId && it.phase != LimitPhase.CONTINUING && !running }
+                ?.let { stop ->
+                    item(key = "limit-${stop.stoppedAt}", contentType = "limit") {
+                        LimitCard(stop, state.limits, actions, Modifier.animateItem())
+                    }
+                }
             if (offersWorkflowSuggestion(state.messages, running)) {
                 item(key = "suggest-workflows-${state.messages.last().id}") {
                     AssistChip(

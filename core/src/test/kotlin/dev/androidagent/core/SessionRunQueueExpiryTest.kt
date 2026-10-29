@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,6 +44,31 @@ import java.io.File
  * from running at 23:40; everything without a deadline is unchanged.
  */
 class SessionRunQueueExpiryTest {
+
+    @Test fun stoppedRecoveryIsDroppedWhenTheQueueBecomesFree() = runTest {
+        val rig = Rig(this)
+        rig.occupy()
+        advanceUntilIdle()
+        var allowed = true
+        rig.queue.submit(QueuedTurn(sessionId = "two", prompt = "continue", requiresLiveGuard = true, dispatchGuard = { allowed }))
+        allowed = false
+        rig.release()
+        advanceUntilIdle()
+        assertEquals(listOf("occupying"), rig.sent)
+        assertTrue(rig.queue.turns.value.isEmpty())
+        rig.close()
+    }
+
+    @Test fun restoredRecoveryCannotRunWithoutItsLiveStopPermission() = runTest {
+        val rig = Rig(this)
+        val original = QueuedTurn(sessionId = "one", prompt = "old recovery", requiresLiveGuard = true, dispatchGuard = { true })
+        val restored = Json.decodeFromString(QueuedTurn.serializer(), Json.encodeToString(QueuedTurn.serializer(), original))
+        rig.queue.submit(restored)
+        rig.queue.resume()
+        advanceUntilIdle()
+        assertTrue(rig.sent.isEmpty())
+        rig.close()
+    }
 
     @Test fun aTurnWithNoDeadlineIsNeverDropped() = runTest {
         val rig = Rig(this)
