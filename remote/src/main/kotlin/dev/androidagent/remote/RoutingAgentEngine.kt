@@ -181,6 +181,13 @@ class RoutingAgentEngine(
     /** The computer's Claude Code, or null when it cannot be reached: a list that is missing is not an error. */
     private suspend fun computerClaude(computerId: String): ClaudeCodeEngine? = runCatching { hub.claude(computerId) }.getOrNull()
 
+    override suspend fun openReadOnlySession(workspace: File, model: String?, tools: List<ToolDefinition>): String {
+        check(bindingOf(workspace) == null) { "Background tasks must run on the phone." }
+        return if (engineOf(workspace) == EngineKind.CLAUDE) {
+            claude().openReadOnlySession(workspace, model, tools).also { claudeThreads += it }
+        } else local.openReadOnlySession(workspace, model, tools).also { localCodexThreads += it }
+    }
+
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
         val sessionId = sessionIdOf(workspace)
         if (engineOf(workspace) == EngineKind.CLAUDE) {

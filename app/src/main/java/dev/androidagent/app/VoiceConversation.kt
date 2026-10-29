@@ -67,6 +67,8 @@ class VoiceConversation(
     private val engine: RoutingAgentEngine,
     private val voice: AndroidRealtimeVoiceController,
     private val tools: DeviceToolGateway,
+    private val restricted: (String) -> Boolean = { false },
+    private val ownerContext: (String) -> String? = { null },
     private val coordinator: () -> AgentRuns,
 ) {
     private val mutableSessionId = MutableStateFlow<String?>(null)
@@ -131,6 +133,7 @@ class VoiceConversation(
         check(mutableSessionId.value == null && !voice.state.value.active) { "Voice is already active. Return to its chat or end the call first." }
         check(coordinator().phaseOf(sessionId) == null) { "Stop this chat's current run before starting voice." }
         val opened = sessions.getSession(sessionId) ?: error("Chat no longer exists.")
+        check(!restricted(sessionId)) { "This team member uses read-only typed chat. Voice cannot enforce its restricted native tool profile yet." }
         val guest = opened.engine.takeIf { it != EngineKind.CODEX }
         engine.connect()
         check(engine.account().signedIn) {
@@ -160,6 +163,7 @@ class VoiceConversation(
                 voice.start(threadId, bluetoothHeadphonesOnly = automation?.bluetoothHeadphonesOnly == true,
                     outputConditions = automation?.outputConditions.orEmpty(),
                     beforeAudio = {
+                        ownerContext(sessionId)?.let { addContext(it.removeSuffix("The user said:")) }
                         addContext("You are talking in a Mike chat. You can manage ordinary child chats with session_agents: " +
                             "start with a title, exact task and stable requestId; list/status to check; message with a stable messageId " +
                             "to steer or continue the same child; cancel to stop its subtree; open to show its chat while this voice call continues. " +

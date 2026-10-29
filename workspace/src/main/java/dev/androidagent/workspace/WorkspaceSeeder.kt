@@ -71,6 +71,10 @@ object WorkspaceSeeder {
         "files-across-devices",
         "browser",
         "connected-apps",
+        "task-board",
+        "task-discovery",
+        "task-review",
+        "memory-upkeep",
     )
 
     /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */

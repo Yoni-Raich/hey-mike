@@ -76,6 +76,9 @@ class AgentApplication : Application(), AutomationHostOwner {
     override val automationHost: AutomationHost?
         get() = if (::graph.isInitialized) graph.automationHost else null
 
+    override val taskSignals: dev.androidagent.core.TaskSignalSink?
+        get() = if (::graph.isInitialized) graph.taskDesk.sink else null
+
     override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
 }
 
@@ -191,7 +194,7 @@ class AgentGraph(private val app: Application) {
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
-        onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
+        onStop = { taskDesk.pauseBackground(); queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
         onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
         accessibilityService = { A11yServiceHandle.service.value },
@@ -458,8 +461,24 @@ class AgentGraph(private val app: Application) {
     val accountChange = kotlinx.coroutines.sync.Mutex()
     /** A switch made outside Settings finished, with the new live account's id; the screen reads it again. */
     val accountSwitched = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+    /**
+     * Mike's task board: the Manager, the team, discovery in the background.
+     * Declared before the coordinators, which ask it which tools a chat may use.
+     */
+    val taskDesk = TaskDesk(
+        app, scope, sessions, runtime.homeDirectory,
+        agents = { sessionAgents },
+        runs = { runCoordinator },
+        queue = { queue },
+        quotaLow = { kind ->
+            val reading = if (kind == dev.androidagent.core.EngineKind.CLAUDE) claudeUsage.read()?.limits
+                else accounts.state().activeId?.let { usageBook.all()[it]?.limits }
+            LastUsageStore.current(reading.orEmpty(), System.currentTimeMillis() / 1000L).any { (it.usedPercent ?: 0.0) >= 90.0 }
+        },
+    )
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
-    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools,
+        restricted = taskDesk::isBackgroundSession, ownerContext = taskDesk::ownerContext) { runCoordinator }
     init {
         scope.launch {
             A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
@@ -488,6 +507,9 @@ class AgentGraph(private val app: Application) {
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
                 sessionAgents = { sessionAgents },
+                taskTools = { taskDesk.tools },
+                toolPolicy = { session, name, arguments -> taskDesk.toolRefusal(session, name, arguments) },
+                readOnlySession = { taskDesk.isBackgroundSession(it) },
             )
         })
         val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
@@ -525,6 +547,7 @@ class AgentGraph(private val app: Application) {
             scope,
             coordinator,
             sessions,
+            prepare = taskDesk::prepareTurn,
             // A turn a rule queued has a moment; a turn a person sent does not
             // expire. Dropping a stale one is reported, never silent.
             onExpired = { turn ->
@@ -535,7 +558,8 @@ class AgentGraph(private val app: Application) {
                                 id = java.util.UUID.randomUUID().toString(),
                                 sessionId = turn.sessionId,
                                 role = "assistant",
-                                text = "This did not run: the phone was busy until after the moment it was for.",
+                                text = if(turn.boardJobId == null) "This did not run: the phone was busy until after the moment it was for."
+                                    else "This background job did not run. Its window expired or its source settings changed. Retained input will be checked in a fresh pass.",
                                 createdAt = System.currentTimeMillis(),
                             ),
                         )
@@ -559,6 +583,8 @@ class AgentGraph(private val app: Application) {
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.
         runCatching { automationHost.start() }
+        taskDesk.start()
+        TaskBackgroundHost(app, scope, taskDesk).start()
         runCatching {
             // Claude reads the same skills from its own home.
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app, claudeHost.homeDirectory)

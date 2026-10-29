@@ -21,8 +21,10 @@
 package dev.androidagent.core
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -44,6 +46,39 @@ import java.io.File
  * from running at 23:40; everything without a deadline is unchanged.
  */
 class SessionRunQueueExpiryTest {
+    @Test fun stopWhilePreparingAQueuedTurnStillPreventsDispatch() = runTest {
+        var allowed = true
+        val preparing = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val rig = Rig(this, prepare = { preparing.complete(Unit); release.await(); it.copy(prompt = "prepared") })
+        val submitted = launch {
+            rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "continue", requiresLiveGuard = true, dispatchGuard = { allowed }))
+        }
+        preparing.await()
+        allowed = false
+        release.complete(Unit)
+        submitted.join()
+        advanceUntilIdle()
+        assertTrue(rig.sent.isEmpty())
+        assertTrue(rig.queue.turns.value.isEmpty())
+        rig.close()
+    }
+
+    @Test fun aChangedBoardPolicyRefusesTheQueuedReferenceBeforeAnyModelStarts() = runTest {
+        var allowed = true
+        val rig = Rig(this, prepare = { if(it.boardJobId == null || allowed) it else null })
+        rig.occupy(); advanceUntilIdle()
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "Background board job job-a", boardJobId = "job-a"))
+        advanceUntilIdle()
+        assertEquals(1, rig.queue.turns.value.size)
+        assertEquals(listOf("occupying"), rig.sent)
+        allowed = false
+        rig.release(); advanceUntilIdle()
+        assertEquals(listOf("occupying"), rig.sent)
+        assertEquals("job-a", rig.expired.single().boardJobId)
+        assertTrue(rig.queue.turns.value.isEmpty())
+        rig.close()
+    }
 
     @Test fun stoppedRecoveryIsDroppedWhenTheQueueBecomesFree() = runTest {
         val rig = Rig(this)
@@ -116,7 +151,7 @@ class SessionRunQueueExpiryTest {
         rig.close()
     }
 
-    private class Rig(test: TestScope) {
+    private class Rig(test: TestScope, prepare: suspend (QueuedTurn) -> QueuedTurn? = { it }) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = QuietEngine()
         val store = QuietStore()
@@ -130,6 +165,7 @@ class SessionRunQueueExpiryTest {
             store,
             clock = { clock },
             onExpired = { expired += it },
+            prepare = prepare,
         )
 
         init {

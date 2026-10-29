@@ -125,6 +125,7 @@ internal object ClaudeProtocol {
         effort: String?,
         mcpConfig: String,
         systemPromptFile: String,
+        readOnly: Boolean = false,
     ): List<String> = buildList {
         add("-p")
         add("--input-format"); add("stream-json")
@@ -135,16 +136,17 @@ internal object ClaudeProtocol {
         if (resume) { add("--resume"); add(sessionId) } else { add("--session-id"); add(sessionId) }
         add("--model"); add(model)
         if (effort != null) { add("--effort"); add(effort) }
-        add("--tools"); add(BUILTIN_TOOLS.joinToString(","))
+        add("--tools"); add(if (readOnly) "" else BUILTIN_TOOLS.joinToString(","))
         add("--strict-mcp-config")
         add("--mcp-config"); add(mcpConfig)
-        add("--allowedTools"); add(ALLOWED_TOOLS.joinToString(","))
+        add("--allowedTools"); add(if (readOnly) "$MCP_TOOL_PREFIX*" else ALLOWED_TOOLS.joinToString(","))
         add("--permission-mode"); add("dontAsk")
         // Only the app-owned user settings under the private HOME: that is
         // where the on-device skills are installed. Project and local
         // settings never apply.
-        add("--setting-sources"); add("user")
+        add("--setting-sources"); add(if (readOnly) "" else "user")
         add("--system-prompt-file"); add(systemPromptFile)
+        if (readOnly) add("--no-session-persistence")
     }
 
     /**

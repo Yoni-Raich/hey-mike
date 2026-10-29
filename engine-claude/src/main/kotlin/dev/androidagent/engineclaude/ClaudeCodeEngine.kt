@@ -445,6 +445,13 @@ class ClaudeCodeEngine(
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
         openSessionAt(workspace.absolutePath, threadId, model, tools)
 
+    override suspend fun openReadOnlySession(workspace: File, model: String?, tools: List<ToolDefinition>): String {
+        check(computer == null) { "Background tasks must run on the phone." }
+        val id = openSessionAt(workspace.absolutePath, null, model, tools)
+        chats.getValue(id).readOnly = true
+        return id
+    }
+
     /** Give an idle native session back to another client, without stopping a running turn. */
     suspend fun releaseSession(threadId: String) {
         // Stopping can take seconds; it must not hold up every other chat.
@@ -668,6 +675,7 @@ class ClaudeCodeEngine(
         val effort: String?,
         val toolNames: List<String>,
         val runtime: String,
+        val readOnly: Boolean,
         val longContext: Boolean,
     )
 
@@ -675,6 +683,7 @@ class ClaudeCodeEngine(
 
     private inner class Chat(val threadId: String, val cwd: String, @Volatile var resumable: Boolean) {
         @Volatile var requireExisting = false
+        @Volatile var readOnly = false
         val lock = Mutex()
         val state = Any()
         // Paths are shown relative to the chat folder only where this JVM can name it.
@@ -718,7 +727,7 @@ class ClaudeCodeEngine(
 
         /** Start or restart the process when it is gone or its model, effort, tools or window changed. Caller holds [lock]. */
         suspend fun ensureRunning() {
-            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, longContext)
+            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, readOnly, longContext)
             if (alive && running == wanted) return
             check(idle()) { "A turn is already running in this chat." }
             stopProcess()
@@ -798,7 +807,7 @@ class ClaudeCodeEngine(
                 val mcpFile = File(dir, MCP_CONFIG_FILE)
                 writePrivate(mcpFile, toolServer.start())
                 val args = ClaudeProtocol.chatArgs(
-                    threadId, resume, ClaudeProtocol.windowModel(model, long), effort, mcpFile.absolutePath, promptFile.absolutePath,
+                    threadId, resume, ClaudeProtocol.windowModel(model, long), effort, mcpFile.absolutePath, promptFile.absolutePath, readOnly,
                 )
                 attach(host.start(args, File(cwd).apply { mkdirs() }, ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, long)))
                 val reply = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { control("initialize") }

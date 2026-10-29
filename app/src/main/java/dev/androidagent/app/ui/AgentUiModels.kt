@@ -162,6 +162,11 @@ data class AgentUiState(
     val isSettingsOpen: Boolean = false,
     /** The standing-rules sheet, opened from the panel's strip. */
     val isAutomationsOpen: Boolean = false,
+    /** Mike's task board, its team, memory and sources. */
+    val taskDesk: dev.androidagent.app.TaskDeskState = dev.androidagent.app.TaskDeskState(),
+    /** The task board sheet is showing, opened at [taskBoardPage] (null is the board). */
+    val isTaskBoardOpen: Boolean = false,
+    val taskBoardPage: String? = null,
     /** The chat folder's file sheet is showing. */
     val isWorkspaceOpen: Boolean = false,
     /**
@@ -387,6 +392,29 @@ data class AgentUiActions(
     /** Open the rules list from the panel's strip. */
     val onOpenAutomations: () -> Unit = {},
     val onCloseAutomations: () -> Unit = {},
+    /** The task board: `page` is null for the board, or team, memory, sources, card:<id>, member:<id>. */
+    val onOpenTaskBoard: (page: String?) -> Unit = {},
+    val onCloseTaskBoard: () -> Unit = {},
+    /** The user's decision on a card. Only a tap or the user's own words decide. */
+    val onTaskDecide: (id: String, choice: String, note: String?, reason: dev.androidagent.core.DismissReason?) -> Unit = { _, _, _, _ -> },
+    val onTaskNote: (id: String, note: String?) -> Unit = { _, _ -> },
+    val onTaskRenameMember: (id: String, name: String, role: String) -> Unit = { _, _, _ -> },
+    val onTaskRemoveMember: (id: String) -> Unit = {},
+    val onTaskMergeMember: (id: String, into: String) -> Unit = { _, _ -> },
+    val onTaskAssign: (id: String, member: String?) -> Unit = { _, _ -> },
+    val onTaskContext: (id: String) -> Unit = {},
+    /** Open one of the board's chats: the Manager's, a member's, or a task's own. */
+    val onOpenBoardChat: (sessionId: String) -> Unit = {},
+    val onTaskDiscovery: (on: Boolean) -> Unit = {},
+    val onTaskSettings: ((dev.androidagent.core.TaskBoardSettings) -> dev.androidagent.core.TaskBoardSettings) -> Unit = {},
+    val onTaskForgetCollected: () -> Unit = {},
+    val onTaskForgetNote: (id: String) -> Unit = {},
+    val onTaskPinNote: (id: String, pinned: Boolean) -> Unit = { _, _ -> },
+    val onTaskForgetSubject: (subject: String) -> Unit = {},
+    val onTaskAddRule: (rule: String) -> Unit = {},
+    val onTaskLiftSuppression: (entry: dev.androidagent.core.TaskSuppression) -> Unit = {},
+    val onTaskClearError: () -> Unit = {},
+    val onTaskCalendarPermission: () -> Unit = {},
     /** Turn one rule on or off. */
     val onToggleRule: (id: String, enabled: Boolean) -> Unit = { _, _ -> },
     /** Fire one rule now: naming it supplies its trigger, nothing else is waived. */

@@ -65,6 +65,7 @@ data class QueuedTurn(
     /** Recovery work loses permission after Stop or a restart; it must not be replayed. */
     val requiresLiveGuard: Boolean = false,
     @kotlinx.serialization.Transient val dispatchGuard: (() -> Boolean)? = null,
+    val boardJobId: String? = null,
 )
 
 /**
@@ -84,6 +85,7 @@ class SessionRunQueue(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Told about a turn dropped for being stale, so it is reported rather than vanishing. */
     private val onExpired: (QueuedTurn) -> Unit = {},
+    private val prepare: suspend (QueuedTurn) -> QueuedTurn? = { it },
 ) {
     private val lock = Mutex()
     private val pending = MutableStateFlow<List<QueuedTurn>>(emptyList())
@@ -114,7 +116,7 @@ class SessionRunQueue(
             if (!request.dispatchAllowed()) return
             check(store.getSession(request.sessionId) != null) { "Chat no longer exists." }
             val phase = coordinator.phaseOf(request.sessionId)
-            if (phase != null && !request.requiresLiveGuard) {
+            if (phase != null && !request.requiresLiveGuard && request.boardJobId == null) {
                 check(phase != RunPhase.STARTING && phase != RunPhase.STOPPING) { "Wait for the current turn to start or stop." }
                 check(request.imagePaths.isEmpty()) { "Send attachments after this run finishes." }
                 coordinator.steer(request.sessionId, request.prompt)
@@ -154,13 +156,19 @@ class SessionRunQueue(
             }
             // While paused, only turns submitted since the pause may start. A
             // chat still running keeps its next turn until that run ends.
-            val next = fresh.firstOrNull { turn ->
+            val eligible = fresh.filter { turn ->
                 (!pausedState.value || turn.id in submittedNow) && coordinator.phaseOf(turn.sessionId) == null
-            } ?: return@withLock
+            }
+            val next = eligible.firstOrNull { it.boardJobId == null } ?: eligible.firstOrNull() ?: return@withLock
             // Dequeue durably before starting, so a process crash cannot replay side effects.
             save(pending.value - next)
             submittedNow -= next.id
-            if (next.dispatchAllowed()) coordinator.send(next)
+            if (next.dispatchAllowed()) {
+                val ready = prepare(next)
+                if (ready != null) {
+                    if (ready.dispatchAllowed()) coordinator.send(ready)
+                } else onExpired(next)
+            }
         }
     }
 }

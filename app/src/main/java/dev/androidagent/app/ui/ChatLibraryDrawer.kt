@@ -136,8 +136,13 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
     var searching by rememberSaveable { mutableStateOf(false) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     val showAll = remember { mutableStateMapOf<String, Boolean>() }
-    // A chat nobody has written in is not history.
-    val started = remember(state.sessions) { state.sessions.filter { it.hasMessages } }
+    // A chat nobody has written in is not history. The board's chats live on the
+    // board: the team never appears here, and the Manager has its own row.
+    val hidden = state.taskDesk.hiddenChats
+    val manager = state.taskDesk.managerSessionId
+    val started = remember(state.sessions, hidden, manager) {
+        state.sessions.filter { it.hasMessages && it.id !in hidden && it.id != manager }
+    }
     val sections = remember(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, started, state.pcThreads) {
         PcChats.sections(state.computers, state.defaultComputerId, state.computerProjects, state.remoteBindings, started, state.pcThreads)
     }
@@ -244,6 +249,16 @@ internal fun ChatLibraryDrawer(state: AgentUiState, actions: AgentUiActions, clo
                     modifier = Modifier.weight(1f).testTag("chat-library"),
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),
                 ) {
+                    if (!pinnedScope && computer == null && query.isBlank() && state.taskDesk.ready) {
+                        item(key = "tasks-strip", contentType = "tasks-strip") {
+                            Box(Modifier.padding(bottom = 6.dp)) { TasksStrip(state) { dismiss(); actions.onOpenTaskBoard(null) } }
+                        }
+                        item(key = "manager", contentType = "manager") {
+                            ManagerLibraryRow(state, selected = state.activeSessionId == manager) {
+                                manager?.let { dismiss(); actions.onOpenBoardChat(it) }
+                            }
+                        }
+                    }
                     if (!pinnedScope) item(key = "new-chat", contentType = "new-chat") {
                         NewChatCard(
                             hint = when {
