@@ -1,5 +1,15 @@
 # Progress
 
+### Dev update version — 2026-10-30
+
+The published dev-nightly code 1166 is lower than the user's installed dev
+code 1182, so Android would reject it as an update. Raise the source base to
+1183: the nightly workflow chooses the greater of the previous nightly plus one
+and this base plus one, yielding at least 1184 for the next changed dev commit.
+Version name is `0.14.0-dev.unified`. This does not prove signing compatibility
+or installation; the published APK and installed certificate must be checked.
+Locally overridden builds still need a number above the latest published one.
+
 ### Unified task board and personal assistant — 2026-10-29
 
 Integrated the complete 1179 board/Manager/UI/follow-through source onto fetched
