@@ -33,6 +33,13 @@ tap, open apps or ask the user. If something needs action, it becomes a card.
    with every exact batch id, including ignored signals. If a save failed, do not finish the batch.
    End with one line: what you proposed, updated and remembered.
 
+A duplicate or `suppressed=true` result is successful handling: no card is needed.
+Respect the user's ignore preference, continue the batch and include that signal
+in `finish`. Do not retry a suppressed suggestion. `propose` requires `title`,
+`why` and `plan`; `remember` requires `subject` and `text`. Correct missing-field
+errors within this pass and retry only the failed save. A normal final reply
+does not replace the exact-batch `finish` call.
+
 ## Judgement
 
 - A request is someone asking the user to do or decide something. Information is not a

@@ -328,7 +328,7 @@ interface TaskBoardStore {
     suspend fun forgetNotes(ids: Collection<String>) { deleteNotes(ids) }
     suspend fun forgottenNoteIds(): Set<String> = emptySet()
     suspend fun loadSignals(): List<TaskSignal>
-    /** False when a signal with this id is already stored. */
+    /** False for a duplicate; throws [SignalInboxFullException] without changing input when full. */
     suspend fun insertSignal(signal: TaskSignal): Boolean
     suspend fun saveSignals(signals: List<TaskSignal>)
     suspend fun deleteSignals(ids: Collection<String>)
@@ -365,7 +365,7 @@ class InMemoryTaskBoardStore : TaskBoardStore {
     override suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>) = synchronized(this) {
         check((cursors[source] ?: 0) == expected) { "The source cursor changed." }
         val fresh = signals.filter { it.id !in this.signals && it.id !in seenSignals }
-        check(this.signals.size + fresh.size <= SignalInbox.MAX_PENDING) { "Capture is waiting: the inbox is full." }
+        if (this.signals.size + fresh.size > SignalInbox.MAX_PENDING) throw SignalInboxFullException()
         fresh.forEach { this.signals[it.id] = it; seenSignals[it.id] = it.capturedAt }
         fresh.mapNotNull(TaskFollowThrough::feedback).forEach { events[it.id] = it }
         events.values.filter { it.kind == "feedback" }.dropLast(500).forEach { events.remove(it.id) }
@@ -389,7 +389,7 @@ class InMemoryTaskBoardStore : TaskBoardStore {
     override suspend fun insertSignal(signal: TaskSignal) = synchronized(this) {
         seenSignals.entries.removeAll { signal.capturedAt - it.value > SignalInbox.DEDUPE_MS }
         if (signal.id in signals || signal.id in seenSignals) false else {
-            check(signals.size < SignalInbox.MAX_PENDING) { "Capture inbox full. New input could not be saved." }
+            if (signals.size >= SignalInbox.MAX_PENDING) throw SignalInboxFullException()
             signals[signal.id] = signal; seenSignals[signal.id] = signal.capturedAt
             while (seenSignals.size > SignalInbox.MAX_RECEIPTS) seenSignals.remove(seenSignals.keys.first())
             true

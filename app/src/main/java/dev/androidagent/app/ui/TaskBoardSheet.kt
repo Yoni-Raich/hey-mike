@@ -360,12 +360,13 @@ private fun DiscoveryStatus(desk: TaskDeskState) {
         "off" -> taskText("Background discovery is paused", "החיפוש ברקע מושהה")
         "idle" -> taskText("Listening for new input", "ממתין למידע חדש")
         "excluded" -> taskText("Waiting input is excluded or has unverified old sources", "המידע שממתין מוחרג או נאסף ממקור ישן שלא אומת")
+        "backpressure" -> taskText("Inbox full. Waiting for the next processing pass", "התור מלא. ממתין לסבב העיבוד הבא")
         else -> taskText("Collecting a batch before the next pass", "אוסף מידע לסבב הבא")
     }
     Surface(color = Color(0xFF1A2523), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { LiveLine(status, if(desk.waitReason in setOf("cap", "quota", "off")) BoardAmber else BoardTeal) }
+                Box(Modifier.weight(1f)) { LiveLine(status, if(desk.waitReason in setOf("cap", "quota", "off", "backpressure")) BoardAmber else BoardTeal) }
                 TextButton(onClick = { expanded = !expanded }) {
                     Text(if (expanded) taskText("Less", "פחות") else taskText("Details", "פרטים"), style = MaterialTheme.typography.labelMedium)
                 }
@@ -373,7 +374,7 @@ private fun DiscoveryStatus(desk: TaskDeskState) {
             if (expanded) Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(taskText("${desk.pendingSignals} inputs waiting · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} passes today",
                     "${desk.pendingSignals} פריטי מידע ממתינים · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} סבבים היום"), style = MaterialTheme.typography.labelMedium)
-                desk.nextCheckAt?.takeIf { desk.waitReason == "waiting" }?.let {
+                desk.nextCheckAt?.takeIf { desk.waitReason in setOf("waiting", "backpressure") }?.let {
                     Text(taskText("Next eligible check: ${shortTime(it)}", "הסבב הבא יוכל להתחיל ב־${shortTime(it)}"), style = MaterialTheme.typography.labelMedium)
                 }
                 if(desk.settings.captureGaps > 0) Text(taskText("${desk.settings.captureGaps} inputs were missed or expired. Coverage is partial.",
@@ -382,8 +383,10 @@ private fun DiscoveryStatus(desk: TaskDeskState) {
                     "${desk.blockedSignals} פריטים לא מועברים למודל בגלל הגדרות המקורות."), color = BoardAmber, style = MaterialTheme.typography.labelMedium)
             }
             if (!expanded && (desk.settings.captureGaps > 0 || desk.blockedSignals > 0)) {
-                Text(taskText("Some inputs need attention", "חלק מהמידע דורש בדיקה"), Modifier.padding(bottom = 8.dp),
-                    color = BoardAmber, style = MaterialTheme.typography.labelMedium)
+                Text(if (desk.blockedSignals > 0) taskText("Some input is excluded by your source settings", "חלק מהמידע מוחרג בהגדרות המקורות")
+                    else taskText("Earlier input was missed or expired", "חלק מהמידע הקודם לא נאסף או פג תוקפו"), Modifier.padding(bottom = 8.dp),
+                    color = if (desk.blockedSignals > 0) BoardAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium)
             }
         }
     }
