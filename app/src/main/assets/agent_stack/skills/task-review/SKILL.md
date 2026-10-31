@@ -19,6 +19,17 @@ never a reason for a rule by themselves.
 
 ## What to change
 
+The app also supplies text-free source counters. They count deliveries, distinct bodies,
+successful reviews and reviews that saved useful work or memory. Reposted status can
+raise deliveries without adding new work. Use a large repeated sample and the owner's
+rules to consider a settings card to stop Mike reading an app. Missing/partial context
+and messages from people argue against exclusion. Never infer a user preference or
+write an ignore rule from counters alone. Never change a source yourself.
+
+An exclude_app card must say that only Mike would stop reading: Android notifications
+from the app, including emergency alerts, continue normally. Cite the period/counts and
+explain the choice. Check existing cards first. Only the user's approval applies it.
+
 Read and write rules only through `tasks mode=playbook operation=list/read/write`.
 Do not use native file or shell tools. The app stages your writes, checks source
 permissions again, then commits the whole result with a run-specific report.

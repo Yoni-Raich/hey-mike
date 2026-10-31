@@ -42,17 +42,17 @@ class TaskReliabilityTest {
         assertNotNull(TaskRolePolicy.refusal(TaskChatRole.COORDINATOR, "calendar", kotlinx.serialization.json.buildJsonObject { }))
     }
 
-    @Test fun longNotificationsAreStoredInFullAndOverflowKeepsExistingInput() = runTest {
+    @Test fun longMessagesUseOneBoundedRowAndGlobalOverflowKeepsExistingInput() = runTest {
         val store = InMemoryTaskBoardStore()
         val inbox = SignalInbox(store).apply { load() }
         val text = "x".repeat(5_001)
-        inbox.capture(CapturedMessage("com.whatsapp", "Dana", "Dana", text, 1, false), TaskBoardSettings(discoveryOn = true), "own")
-        assertEquals(text, inbox.pending.value.joinToString("") { it.text })
+        inbox.capture(CapturedMessage("com.whatsapp", "Dana", "Dana", text, 1, false, fromPerson = true), TaskBoardSettings(discoveryOn = true), "own")
+        assertEquals(text, inbox.pending.value.single().items.single().text)
         val remaining = SignalInbox.MAX_PENDING - inbox.pending.value.size
         repeat(remaining) { inbox.add(TaskSignal("s$it", "chat", text = "keep", at = 1, capturedAt = 1)) }
         assertTrue(runCatching { inbox.add(TaskSignal("overflow", "chat", text = "new", at = 1, capturedAt = 1)) }.isFailure)
         assertEquals(SignalInbox.MAX_PENDING, store.loadSignals().size)
-        assertTrue(store.loadSignals().any { it.text == text.take(SignalInbox.MAX_TEXT) })
+        assertTrue(store.loadSignals().any { it.items.singleOrNull()?.text == text })
     }
 
     @Test fun publishedRulesAreReadOnlyAndTamperingIsDetected() {

@@ -54,7 +54,7 @@ object TaskFollowThrough {
     fun captureBoardMessage(role: String, ownerChat: Boolean, executionResult: Boolean): Boolean =
         (ownerChat && role == "user") || (executionResult && role == "assistant")
 
-    fun feedback(signal: TaskSignal): TaskEvent? = signal.takeIf { it.ownerFeedback && it.source == "chat" && it.sourceVerified }?.let {
+    fun feedback(signal: TaskSignal): TaskEvent? = signal.takeIf { it.ownerFeedback && it.source == "chat" && it.sourceVerified && it.text.isNotBlank() }?.let {
         TaskEvent("feedback:${it.id}", "owner:${it.sessionId}", 0, "feedback", "user", it.at,
             note = it.text, sourceRefs = listOf(TaskSourcePolicy.of(it)))
     }

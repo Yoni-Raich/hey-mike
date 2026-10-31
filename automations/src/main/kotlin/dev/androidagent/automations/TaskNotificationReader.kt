@@ -58,6 +58,7 @@ internal object TaskNotificationReader {
                     at = message.timestamp.takeIf { it > 0 } ?: posted.postTime,
                     group = group,
                     notificationKey = posted.key,
+                    fromPerson = true,
                 )
             }
         }
@@ -71,7 +72,7 @@ internal object TaskNotificationReader {
         val body = listOf(title, text).filter { it.isNotEmpty() }.distinct().joinToString(": ")
         if (body.isEmpty()) return emptyList()
         return listOf(CapturedMessage(app, title.ifEmpty { null }, title.ifEmpty { null }, body, posted.postTime, group = false,
-            notificationKey = posted.key))
+            notificationKey = posted.key, fromPerson = dev.androidagent.core.SignalFilter.sourceOf(app) in setOf("whatsapp", "email", "message")))
     }
 
     private const val MAX_PER_NOTIFICATION = 12
