@@ -15,7 +15,9 @@ data class MemberChange(val before: TeamMember? = null, val after: TeamMember? =
 @Serializable
 data class TaskRun(val id: String, val sessionId: String, val purpose: String, val policyRevision: Long,
     val inputIds: List<String>, val startedAt: Long, val state: String = "running", val error: String? = null,
-    val eventIds: List<String> = emptyList(), val deepUpkeep: Boolean = false, val nextUpkeepCursor: Int? = null)
+    val eventIds: List<String> = emptyList(), val deepUpkeep: Boolean = false, val nextUpkeepCursor: Int? = null,
+    /** Text-free reservation; new input merged during a pass must survive its commit. */
+    val inputVersions: Map<String, Long> = emptyMap())
 @Serializable
 data class TaskChangeSet(val id: String, val policyRevision: Long,
     val tasks: List<TaskChange> = emptyList(), val notes: List<NoteChange> = emptyList(),

@@ -39,6 +39,7 @@ import dev.androidagent.core.TaskWritePermit
 import dev.androidagent.core.TaskRun
 import dev.androidagent.core.TaskChangeSet
 import dev.androidagent.core.TaskUndoResult
+import dev.androidagent.core.SourceStat
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -226,7 +227,22 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
                     if(change.after == null) db.delete("records", "kind=? AND id=?", arrayOf(MEMBER, change.id))
                     else write(MEMBER, change.id, json.encodeToString(TeamMember.serializer(), change.after!!))
                 }
-                run.inputIds.forEach { db.delete("records", "kind=? AND id=?", arrayOf(SIGNAL, it)) }
+                val inputs = run.inputIds.mapNotNull { id -> payload(SIGNAL, id)?.let { json.decodeFromString(TaskSignal.serializer(), it) } }
+                inputs.forEach { signal ->
+                    if (run.inputVersions[signal.id]?.let { it == signal.revision } != false)
+                        db.delete("records", "kind=? AND id=?", arrayOf(SIGNAL, signal.id))
+                }
+                if (run.purpose == "scout") {
+                    inputs.mapNotNull { it.app }.distinct().forEach { app ->
+                        val clock = run.startedAt
+                        val base = SourceStat.base(app, clock)
+                        val stat = payload("source_stat", base.key)?.let { json.decodeFromString(SourceStat.serializer(), it) } ?: base
+                        val useful = changes.tasks.any { change -> change.after.sourceRefs.any { it.app == app } } ||
+                            changes.notes.any { change -> change.after?.sourceRefs.orEmpty().any { it.app == app } }
+                        val next = stat.copy(reviewed = stat.reviewed + 1, useful = stat.useful + if (useful) 1 else 0, updatedAt = maxOf(stat.updatedAt, clock))
+                        write("source_stat", next.key, json.encodeToString(SourceStat.serializer(), next))
+                    }
+                }
                 write("change_set", changes.id, json.encodeToString(TaskChangeSet.serializer(), changes))
                 if(run.purpose in setOf("manager", "coach")) run.eventIds.forEach { write("consumed_${run.purpose}", it, "1") }
                 val succeeded = when(run.purpose) {
@@ -276,17 +292,21 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
     override suspend fun sourceCursor(source: String): Long = io { cursorNow(source) }
     private fun cursorNow(source: String): Long = db.rawQuery("SELECT payload FROM records WHERE kind='source_cursor' AND id=?", arrayOf(source))
         .use { if (it.moveToFirst()) it.getString(0).toLong() else 0 }
-    override suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>): List<TaskSignal> = io {
+    override suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>,
+        receipts: List<String>, events: List<TaskEvent>, stats: List<SourceStat>): List<TaskSignal> = io {
         db.beginTransaction()
         try {
             check(cursorNow(source) == expected) { "The source cursor changed." }
             val settings = payload(SETTINGS, SETTINGS)?.let { json.decodeFromString(TaskBoardSettings.serializer(), it) } ?: TaskBoardSettings()
             check(signals.all { TaskSourcePolicy.allows(TaskSourcePolicy.of(it), settings) }) { "A capture source was excluded before it was saved." }
+            check(signals.none { row -> row.items.any { "${row.app}|${it.title}" in settings.excludedConversations } }) {
+                "A notification title was excluded before it was saved."
+            }
             val fresh = signals.distinctBy { it.id }.filter { signal ->
-                db.rawQuery("SELECT 1 FROM records WHERE id=? AND kind IN (?,?)", arrayOf(signal.id, SIGNAL, RECEIPT)).use { !it.moveToFirst() }
+                signal.revision > 0 || payload(SIGNAL, signal.id) != null || payload(RECEIPT, signal.id) == null
             }
             val count = db.rawQuery("SELECT count(*) FROM records WHERE kind=?", arrayOf(SIGNAL)).use { it.moveToFirst(); it.getInt(0) }
-            if (count + fresh.size > SignalInbox.MAX_PENDING) throw SignalInboxFullException()
+            if (count + fresh.count { payload(SIGNAL, it.id) == null } > SignalInbox.MAX_PENDING) throw SignalInboxFullException()
             fresh.forEach {
                 write(SIGNAL, it.id, json.encodeToString(TaskSignal.serializer(), it)); write(RECEIPT, it.id, it.capturedAt.toString())
                 write("source_ref", it.id, json.encodeToString(TaskSourceRef.serializer(), TaskSourcePolicy.of(it)))
@@ -294,7 +314,15 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
                     write(EVENT, event.id, json.encodeToString(TaskEvent.serializer(), event))
                 }
             }
-            val cutoff = signals.maxOfOrNull { it.capturedAt }?.minus(SignalInbox.DEDUPE_MS)
+            events.forEach { write(EVENT, it.id, json.encodeToString(TaskEvent.serializer(), it)) }
+            stats.forEach { stat ->
+                check(stat.app !in settings.excludedApps && settings.discoveryOn) { "A source was excluded." }
+                val current = payload("source_stat", stat.key)?.let { json.decodeFromString(SourceStat.serializer(), it) } ?: SourceStat.base(stat.app, stat.updatedAt)
+                write("source_stat", stat.key, json.encodeToString(SourceStat.serializer(), current.plus(stat)))
+            }
+            val stamp = maxOf(signals.maxOfOrNull { it.touchedAt } ?: 0, stats.maxOfOrNull { it.updatedAt } ?: 0)
+            receipts.forEach { write(RECEIPT, it, stamp.toString()) }
+            val cutoff = stamp.takeIf { it > 0 }?.minus(SignalInbox.DEDUPE_MS)
             db.execSQL("DELETE FROM records WHERE kind=? AND id LIKE 'feedback:%' AND rowid NOT IN " +
                 "(SELECT rowid FROM records WHERE kind=? AND id LIKE 'feedback:%' ORDER BY rowid DESC LIMIT 500)", arrayOf(EVENT, EVENT))
             if(cutoff != null) db.execSQL("DELETE FROM records WHERE kind=? AND CAST(payload AS INTEGER) < ?", arrayOf<Any>(RECEIPT, cutoff))
@@ -305,6 +333,32 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
             fresh
         } finally { db.endTransaction() }
     }
+
+    override suspend fun seenSignal(id: String, since: Long): Boolean = io { (payload(RECEIPT, id)?.toLongOrNull() ?: Long.MIN_VALUE) >= since }
+
+    override suspend fun replaceSignals(remove: Collection<String>, add: List<TaskSignal>, receipts: List<String>) = io {
+        db.beginTransaction()
+        try {
+            remove.forEach { db.delete("records", "kind=? AND id=?", arrayOf(SIGNAL, it)) }
+            add.forEach {
+                write(SIGNAL, it.id, json.encodeToString(TaskSignal.serializer(), it))
+                write("source_ref", it.id, json.encodeToString(TaskSourceRef.serializer(), TaskSourcePolicy.of(it)))
+            }
+            val stamp = add.maxOfOrNull { it.touchedAt } ?: 0
+            receipts.forEach { write(RECEIPT, it, stamp.toString()) }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+    override suspend fun loadSourceStats(): List<SourceStat> = all("source_stat", SourceStat.serializer())
+    override suspend fun saveSourceStats(stats: List<SourceStat>, remove: Collection<String>) = io {
+        db.beginTransaction()
+        try {
+            remove.forEach { db.delete("records", "kind=? AND id=?", arrayOf("source_stat", it)) }
+            stats.forEach { write("source_stat", it.key, json.encodeToString(SourceStat.serializer(), it)) }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+    override suspend fun clearSourceStats() = io { db.delete("records", "kind=?", arrayOf("source_stat")); Unit }
 
     /** Turning the board off for good: every card, note, signal and member. */
     suspend fun clearAll() = io { db.delete("records", null, null); Unit }

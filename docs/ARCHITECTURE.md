@@ -23,28 +23,60 @@ user settings or persisted session. App tool allowlists and write provenance
 checks apply again at dispatch. Backstage voice is refused before engine open.
 These controls share the app UID and still need physical native-runtime proof.
 
-Collection is opt-in. Final chat revisions use a durable SQLite feed cursor;
-bounded signals, dedupe receipts and visible coverage gaps prevent silent loss.
+Collection is opt-in. The discovery queue holds one open row per conversation
+or app, not message fragments. Mike chat rows contain a session pointer and
+read boundary, not transcript copies. Notification rows retain at most twenty
+human messages or eight app messages, within a 12,000-character row budget.
+Overflow removes the oldest lines only inside that row and marks partial context.
+Content/time receipts dedupe human messages; app status dedupes across repost times.
+Daily source counters retain no message bodies, titles or conversation names.
 Both live notifications and reconnect replay reject non-personal or unknown
 Android users before payload access. Replay feeds only the task reader, never
 automation actions. Enabled packages/conversations are checked before extraction.
 Calendar reads need their explicit permission. Collection never opens another
 app or reads its database. Historical WhatsApp/mail sync is outside this feature.
 
-Inbox capacity is backpressure, not a process failure. Calendar observers only
-mark a bounded dirty revision; the serialized board tick coalesces it into one
-calendar signal when space is available, before importing more chat history.
-A change during that write stays dirty for a later pass. The six-hour calendar
-poll remains the restart fallback. Capacity rejection leaves pending text and
-replayable source cursors intact; it never evicts unprocessed input. With at
-least 60 ready signals, Scout may start once a minute instead of every twenty
-minutes. Quiet-time, not-before, batch size, daily cap and quota gates still
-apply. Successful staged commits remove only their own input IDs atomically
-with the outputs; failed or interrupted results do not acknowledge that input.
-Expected capacity rejection records notification coverage gaps without setting
-a sticky error banner. Replayable chat input simply keeps its cursor. A full
-idle inbox has its own backpressure status, including the next eligible check;
-historical missed/expired-input counts remain visible separately from live errors.
+Only human input opens ordinary Mike-chat work, after fifteen quiet minutes.
+Assistant progress can delay an existing row but cannot open one. The coordinator
+stores engine final-answer metadata separately from text; Scout receives requests
+and marked final replies. Real owner messages in Manager/role chats and marked
+task results enter the immediate lane. Messaging notifications enter the people
+lane; other apps and ordinary Mike chats enter background. Calendar observers
+coalesce dirty revisions into one row, with a six-hour polling fallback.
+
+The initial feed sequence/time boundary excludes automatic historical import,
+including a v10 seeded message feed. A new edit of an older message still qualifies
+by its new sequence. The upgrade converts retained notifications and existing
+owner/task inputs to rows; automatic historical chat fragments are released while
+the original session history stays intact. An explicit source-screen history scan
+adds one background row. Old unmarked replies in that scan are labelled as having
+unknown final status; only their last reply per request is used.
+
+The 400-row limit reserves 100 places for non-background work. Separate priority
+and regular feed cursors, with atomic per-change receipts, let owner feedback
+pass a blocked background page without consuming that page or duplicating feedback.
+Failed writes leave the source cursor unchanged. Each prepared run records
+text-free row revisions. Its successful staged transaction removes only the
+versions it read: newer input merged during the run remains queued. Failed or
+interrupted runs do not acknowledge the batch.
+
+The normal twenty-minute interval remains; immediate work can start after one
+minute. A large backlog no longer accelerates background processing. Background-only
+attempts get at most half of the daily cap (24 of 48 by default); people/owner work
+keeps the remaining budget. Quiet time, active-chat, batch-character, quota, Stop
+and daily-attempt gates still apply. The UI shows row admission reasons, separate
+lost-human-message and expired-background counts, and labels historical mixed
+capture gaps without claiming they are unique lost messages.
+
+Seven-day UTC source counters track deliveries, distinct body hashes, successful
+reviews, useful reviews, human-message deliveries and bounded-buffer losses.
+Capture counters, receipts, row updates and feed cursors commit together; successful
+review/usefulness counters commit with the staged result. Coach may consider these
+numbers even if the source never produced a card. It can propose excluding a source,
+but cannot apply that proposal or learn an ignore rule from counters alone. Its
+card must explain that only Mike stops reading: Android notifications keep working.
+Settings-card identity follows the action/source so changed wording cannot repeat
+the same proposal. Source exclusions, retention and explicit forget apply to counters.
 
 For Scout, an owner suppression or tested learned filter returns successful
 `suppressed=true` handling with no new card or action. It does not acknowledge

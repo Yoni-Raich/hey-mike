@@ -97,7 +97,8 @@ data class ChatSession(
 @Serializable
 data class ParkedThread(val threadId: String, val seenUntil: Long)
 @Serializable
-data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
+data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList(),
+    val phase: String? = null)
 data class SessionMessageChange(val sequence: Long, val message: ChatMessage)
 interface SessionStore {
     val sessions: StateFlow<List<ChatSession>>
@@ -121,7 +122,10 @@ interface SessionStore {
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
+    /** App/engine metadata, never inferred from the assistant's words. */
+    suspend fun setMessagePhase(id: String, phase: String) {}
     val hasMessageFeed: Boolean get() = false
+    suspend fun latestMessageSequence(): Long? = null
     suspend fun messageChanges(after: Long, limit: Int = 40): List<SessionMessageChange> = emptyList()
     suspend fun acknowledgeMessageChanges(through: Long) {}
     suspend fun setThread(sessionId: String, threadId: String)

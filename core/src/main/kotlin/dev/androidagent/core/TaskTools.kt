@@ -380,7 +380,7 @@ class TaskTools(
                 val path = args.text("path") ?: error("Give the learned path.")
                 val content = (args["content"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: error("Give the full learned file content.")
                 TaskSuggestionFilter.parse(content) // Executable filters must pass positive and negative cases.
-                if(role == TaskChatRole.COACH && content.isNotBlank() && reviewEvidence.isNotEmpty()) {
+                if(role == TaskChatRole.COACH && content.isNotBlank()) {
                     require(reviewEvidence.any { content.contains(it) }) { "Cite a real owner feedback event ID from this review before saving a learned change." }
                 }
                 book.writeLearned(path, TaskSuggestionFilter.stamp(content, book.read("user.md")), sources(session, emptyList()))

@@ -339,6 +339,7 @@ class MainActivity : ComponentActivity() {
         onTaskDiscovery = { on -> if (on) ensureService(); model.graph.taskDesk.setDiscovery(on) },
         onTaskSettings = { change -> model.graph.taskDesk.editSettings(change) },
         onTaskForgetCollected = { model.graph.taskDesk.forgetCollected() },
+        onTaskScanChat = { id -> model.graph.taskDesk.scanChat(id) },
         onTaskForgetNote = { id -> model.graph.taskDesk.forgetNote(id) },
         onTaskPinNote = { id, pinned -> model.graph.taskDesk.pinNote(id, pinned) },
         onTaskForgetSubject = { subject -> model.graph.taskDesk.forgetSubject(subject) },

@@ -153,8 +153,11 @@ class TaskBoard(
                 return@withLock refused("bad_action", "A report card's only action is undo_snapshot.")
             }
         }
-        val topic = if (proposal.category == TaskCategory.REPORT && action?.type == TaskAction.UNDO_SNAPSHOT)
-            "report-${action.value}" else topicKey(proposal.topicKey?.takeIf { it.isNotBlank() } ?: title)
+        val topic = when {
+            proposal.category == TaskCategory.REPORT && action?.type == TaskAction.UNDO_SNAPSHOT -> "report-${action.value}"
+            proposal.category == TaskCategory.SETTINGS -> topicKey("source-${action!!.type}-${action.value}")
+            else -> topicKey(proposal.topicKey?.takeIf { it.isNotBlank() } ?: title)
+        }
         val kind = proposal.kind?.let(::topicKey)?.takeIf { it.isNotEmpty() }
         val clock = now()
         val settings = mutableSettings.value
@@ -162,7 +165,8 @@ class TaskBoard(
             return@withLock refused("suppressed", "The user asked not to suggest this kind of task. Do not propose it again.")
         }
         val all = mutableTasks.value
-        all.firstOrNull { it.topicKey == topic && (!it.status.closed || clock - (it.closedAt ?: it.updatedAt) < RECENT_MS) }?.let {
+        all.firstOrNull { (it.topicKey == topic || (proposal.category == TaskCategory.SETTINGS && it.category == TaskCategory.SETTINGS && it.action == action)) &&
+            (!it.status.closed || clock - (it.closedAt ?: it.updatedAt) < RECENT_MS) }?.let {
             return@withLock ProposeOutcome.Duplicate(it)
         }
         val today = Instant.ofEpochMilli(clock).atZone(zone()).toLocalDate()

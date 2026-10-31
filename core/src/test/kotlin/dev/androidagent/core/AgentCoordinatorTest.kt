@@ -532,6 +532,7 @@ class AgentCoordinatorTest {
         assertEquals(listOf("user", "assistant", "tool", "assistant"), rig.store.messages.map { it.role })
         assertEquals("The screen is ready.", rig.store.messages.last().text)
         assertEquals("complete", rig.store.messages.last().state)
+        assertEquals(listOf("commentary", "final_answer"), rig.store.messages.filter { it.role == "assistant" }.map { it.phase })
         assertTrue(rig.coordinator.available.value)
         rig.close()
     }
@@ -1203,6 +1204,7 @@ class AgentCoordinatorTest {
         override suspend fun append(message: ChatMessage) { messages.add(message) }
         override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
+        override suspend fun setMessagePhase(id: String, phase: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(phase = phase) }
         private fun change(sessionId: String, change: (ChatSession) -> ChatSession) {
             sessions.value = sessions.value.map { if (it.id == sessionId) change(it) else it }
         }

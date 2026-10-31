@@ -1,5 +1,50 @@
 # Progress
 
+### Conversation-based discovery intake — 2026-10-31
+
+Continued the interrupted `feat/task-inbox-conversations` work from
+`f1ee0a30` (the separate inbox-backpressure branch / PR #151).
+Discovery now keeps one row per conversation/app. Chat rows are pointers;
+the coordinator stores final-answer phase metadata and Scout reads human
+requests with final replies. Progress alone opens nothing. Sequence/time
+cutoffs prevent automatic historical import; source settings offer an explicit
+old-chat scan. Existing session history is unchanged by the queue migration.
+
+Notification lists are bounded within their own conversation/app, app status
+dedupes across repost times, and partial context is marked. Background has a
+300-row ceiling and at most half of the 48 daily attempts. The priority feed
+cursor can cross a blocked background page without consuming it; receipts
+prevent duplicate feedback. Successful commit removes only the row revision
+actually read, so input arriving during a pass survives. Owner approvals,
+source-policy revision checks, atomic staged output and Stop remain enforced.
+
+Seven-day source counters contain no notification text/titles. Coach can
+review a source that never made a card and propose that Mike stop reading it.
+The proposal does not affect Android notifications and needs the user's
+decision. Counters alone cannot authorize a learned rule. Settings-card
+identity follows the action/source to prevent repeats under a new title.
+The UI explains row admission and separates human-message losses from expired
+background rows and the older mixed capture-gap count.
+
+Windows/JDK 21 scoped gate:
+`:core:test :workspace:testDebugUnitTest :automations:testDebugUnitTest
+:app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+--no-daemon --console=plain`.
+Selected XML: core 924, workspace 63, automations 19, app 172; zero
+failures/errors, 14 existing workspace skips. App lint: zero errors,
+21 warnings and four information findings. `git diff --check` passed.
+New cases cover 1,000 progress/status events, source permissions, priority
+capacity/cursors, explicit scans, old-message edits, final metadata,
+transaction rollback, concurrent capture/commit and Coach approval boundaries.
+See `docs/testing/task-inbox-conversations-20261031.md`.
+
+No phone actions, installation, live queue mutation, account change, release
+or merge were performed for this redesign. The local test APK uses the
+repository default Dev Debug version (1183 / `0.14.0-dev.unified`); it is not
+an update artifact for the hosting phone's 1187. A later delivery must bump
+the code above the then-installed version. No physical UI, overnight Scout/
+Coach run, live migration or full release gate was verified.
+
 ### Scout completion receipts and expected suppression — 2026-10-31
 
 Consistent read-only SQLite and per-pass trace queries on hosting build 1186:
