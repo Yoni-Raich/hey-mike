@@ -1,5 +1,31 @@
 # Progress
 
+### Full task inbox crash and recovery — 2026-10-31
+
+The hosting phone's dev 1184 crashed with `Capture inbox full`; its task inbox
+held 400 pending inputs. Calendar change callbacks wrote directly into that
+full inbox from an unguarded coroutine. They now mark a coalesced dirty revision
+and let the guarded board tick enqueue it when space opens. Calendar capture
+runs before importing more chat history; full storage does not acknowledge or
+evict pending input. Legacy backfill failure also leaves the drain path open.
+
+A backlog of at least 60 ready inputs uses a one-minute Scout interval instead
+of twenty minutes. Existing source/permission, quiet-time, not-before, busy,
+quota, daily-cap and batch-size gates remain. Successful Scout output and input
+removal still commit together; no bulk queue clearing or data migration.
+
+From isolated `origin/dev` `1ff9d53b`, Windows/JDK 21:
+`:core:test :workspace:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain` passed.
+JVM XML: 1,139 cases, zero failures/errors, 14 existing workspace skips. Eight
+new regressions cover saturation, deferred/racing calendar changes, source
+cursor recovery, atomic Scout commit and scheduling limits. Runtime preparation
+Python tests: 16 passed. `git diff --check` passed. Build storage used an
+isolated Gradle home with no other worktree bucket removed.
+
+No hosting-phone install, physical background/Scout run or release gate was
+performed. The debug APK is validation only; the installed phone stays on 1184.
+
 ### Dev update version — 2026-10-30
 
 The published dev-nightly code 1166 is lower than the user's installed dev

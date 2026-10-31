@@ -21,6 +21,7 @@
 package dev.androidagent.core
 
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,6 +91,8 @@ object SignalFilter {
     }
 }
 
+class SignalInboxFullException : IllegalStateException("Task capture is waiting for space in the inbox.")
+
 /**
  * New things for discovery to look at, kept until a pass has used them.
  *
@@ -149,6 +152,13 @@ class SignalInbox(
         signal
     }
 
+    /** For repeatable wakeups only. Full storage must not evict pending input. */
+    suspend fun tryAdd(signal: TaskSignal): TaskSignal? = try {
+        add(signal)
+    } catch (_: SignalInboxFullException) {
+        null
+    }
+
     /** The pass used these: their text goes now. */
     suspend fun processed(ids: Collection<String>) = lock.withLock {
         store.deleteSignals(ids)
@@ -198,10 +208,36 @@ class SignalInbox(
     }
 }
 
+/** Calendar callbacks only mark work dirty; the board's tick writes it when space is available. */
+class CalendarSignalBuffer {
+    private val revision = AtomicLong()
+    private var capturedRevision = 0L // Only the serialized board tick calls capture.
+
+    fun changed() { revision.incrementAndGet() }
+
+    suspend fun capture(inbox: SignalInbox, now: Long, lastCheckAt: Long?, enabled: Boolean): TaskSignal? {
+        if (!enabled) return null
+        val observed = revision.get()
+        val changed = observed != capturedRevision
+        if (!changed && now - (lastCheckAt ?: 0) <= POLL_INTERVAL_MS) return null
+        if (inbox.pending.value.any { it.source == "calendar" }) return null
+        val signal = inbox.tryAdd(TaskSignal(
+            id = SignalInbox.idOf("calendar", now / 60_000), source = "calendar",
+            text = "Read the next 48 hours of the calendar before updating related tasks.",
+            at = now, capturedAt = now,
+        )) ?: return null
+        // A callback during the write has a newer revision and remains pending.
+        capturedRevision = observed
+        return signal
+    }
+
+    companion object { const val POLL_INTERVAL_MS = 6 * 3_600_000L }
+}
+
 /**
  * When discovery should think. Collect all the time, think in small batches:
  * a conversation is ready after a quiet spell, so a burst of messages becomes
- * one pass, and passes are at least [minIntervalMs] apart.
+ * one pass. A ready backlog uses a shorter interval, within the same daily cap.
  */
 object DiscoverySchedule {
     data class Plan(val due: Boolean, val batch: List<TaskSignal>, val nextCheckAt: Long?)
@@ -210,6 +246,8 @@ object DiscoverySchedule {
     const val MAX_WAIT_MS = 60 * 60_000L
     const val MAX_BATCH = 30
     const val MAX_BATCH_CHARS = 24_000
+    const val BACKLOG_THRESHOLD = 2 * MAX_BATCH
+    const val BACKLOG_INTERVAL_MS = 60_000L
 
     fun quietFor(signal: TaskSignal): Long = when {
         signal.source in setOf("chat", "calendar", "backfill") -> 0L
@@ -235,8 +273,9 @@ object DiscoverySchedule {
             val capped = signals.minOf { it.capturedAt } + MAX_WAIT_MS
             maxOf(minOf(quiet, capped), signals.maxOf { it.notBefore })
         }
-        val intervalOpen = lastPassAt?.let { it + minIntervalMs } ?: Long.MIN_VALUE
         val ready = groups.filterKeys { readyAt.getValue(it) <= now }.values.flatten().sortedBy { it.capturedAt }
+        val interval = if (ready.size >= BACKLOG_THRESHOLD) minOf(minIntervalMs, BACKLOG_INTERVAL_MS) else minIntervalMs
+        val intervalOpen = lastPassAt?.let { it + interval } ?: Long.MIN_VALUE
         val earliest = maxOf(readyAt.values.min(), intervalOpen)
         if (passesToday >= dailyCap) return Plan(false, emptyList(), null)
         if (busy || ready.isEmpty() || now < intervalOpen) return Plan(false, emptyList(), maxOf(earliest, now + 60_000))

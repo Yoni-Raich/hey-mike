@@ -22,6 +22,7 @@ package dev.androidagent.app
 
 import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.CapturedMessage
+import dev.androidagent.core.CalendarSignalBuffer
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.DiscoverySchedule
 import dev.androidagent.core.EngineKind
@@ -126,6 +127,7 @@ class TaskDesk(
     val board = TaskBoard(store, now, zone)
     val memory = MemoryBook(store, now)
     val signals = SignalInbox(store, now)
+    private val calendarChanges = CalendarSignalBuffer()
     val team = TeamRoster(store, now)
     @Volatile private var activeRules: String? = null
     private fun rootBook() = TaskPlaybook(home, allowedSource = ::sourceAllowed)
@@ -559,6 +561,7 @@ class TaskDesk(
 
     fun clearError() { mutable.value = mutable.value.copy(error = null) }
     fun reportError(message: String) { mutable.value = mutable.value.copy(error = message) }
+    fun calendarChanged() { calendarChanges.changed() }
 
     /** Undo a night: the playbook and memory as they were in [snapshotId]. The user's own rules stay. */
     suspend fun undo(snapshotId: String) {
@@ -577,7 +580,7 @@ class TaskDesk(
         paused = !on
         scope.launch {
             board.editSettings { it.copy(discoveryOn = on) }
-            if (!on) { stopBackgroundTurns(); signals.clear() } else { backfillOnce(); tick() }
+            if (!on) { stopBackgroundTurns(); signals.clear() } else { tick() }
         }
     }
 
@@ -618,6 +621,7 @@ class TaskDesk(
         if (!ready) return
         scope.launch {
             try { signals.capture(message, board.settings.value, context.packageName)?.let { sourceRefs[it.id] = dev.androidagent.core.TaskSourcePolicy.of(it) } }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: IllegalStateException) { captureGap(e.message ?: "Capture inbox full") }
             if (!sourceApps.containsKey(message.app) && sourceApps.size < 100) {
                 sourceApps[message.app] = withIo { runCatching {
@@ -742,8 +746,9 @@ class TaskDesk(
         if (!settings.discoveryOn || paused) return@withLock
         userRulesContext = withIo { playbook.userRules().take(4_000) }
         deliverBriefings()
-        backfillOnce()
-        try { collectQuietChats() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        val calendarGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        calendarChanges.capture(signals, now(), settings.lastCalendarCheckAt, settings.readCalendar && calendarGranted)
+        try { backfillOnce(); collectQuietChats() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { reportError("Chat capture: ${e.message}") } // Let existing input drain under backpressure.
         maybePass()
         maybeNightly()
@@ -761,12 +766,6 @@ class TaskDesk(
         var settings = board.settings.value
         val today = Instant.ofEpochMilli(clock).atZone(zone()).toLocalDate().toString()
         if (settings.passDay != today) settings = board.editSettings { it.copy(passDay = today, passesToday = 0) }
-        val calendarGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        val calendarDue = settings.readCalendar && calendarGranted && clock - (settings.lastCalendarCheckAt ?: 0) > CALENDAR_EVERY_MS
-        if (calendarDue && signals.pending.value.size < SignalInbox.MAX_PENDING && signals.pending.value.none { it.source == "calendar" }) {
-            signals.add(TaskSignal(id = SignalInbox.idOf("calendar", clock / CALENDAR_EVERY_MS), source = "calendar",
-                text = "Time to look at the next 48 hours of the calendar.", at = clock, capturedAt = clock))
-        }
         val plan = DiscoverySchedule.plan(signals.pending.value.filter { sourceAllowed(dev.androidagent.core.TaskSourcePolicy.of(it)) }, clock, settings.lastPassAt, settings.passesToday, settings.dailyPassCap, busy(scout))
         if (!plan.due || quotaLow(settings.passEngine)) return
         val session = scout.sessionId ?: return
@@ -1014,7 +1013,6 @@ class TaskDesk(
         private const val QUIET_CHAT_MS = 15 * 60_000L
         private const val BACKFILL_MS = 14 * 24 * HOUR
         private const val BACKFILL_CHATS = 25
-        private const val CALENDAR_EVERY_MS = 6 * HOUR
         private const val PASS_DEADLINE_MS = 30 * 60_000L
         private const val BACKSTAGE_SUFFIX = " · backstage"
     }
