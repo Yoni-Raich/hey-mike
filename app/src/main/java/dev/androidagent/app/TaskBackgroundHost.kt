@@ -11,8 +11,6 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.CalendarContract
-import dev.androidagent.core.SignalInbox
-import dev.androidagent.core.TaskSignal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,14 +32,7 @@ internal class TaskBackgroundHost(
     private val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
             if (!desk.state.value.settings.discoveryOn || !desk.state.value.settings.readCalendar) return
-            scope.launch {
-                val clock = System.currentTimeMillis()
-                desk.signals.add(TaskSignal(
-                    id = SignalInbox.idOf("calendar-change", clock / 60_000), source = "calendar",
-                    text = "The calendar changed. Read the next 48 hours before updating related tasks.",
-                    at = clock, capturedAt = clock,
-                ))
-            }
+            desk.calendarChanged()
         }
     }
 

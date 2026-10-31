@@ -130,6 +130,33 @@ class TaskCommitTest {
         assertEquals("committed", store.loadRuns().single().state)
     }
 
+    @Test fun fullInboxResumesCaptureAfterAnAtomicScoutCommitWithoutLosingTheFeedCursor() = runBlocking {
+        val store = store()
+        val pending = (1..SignalInbox.MAX_PENDING).map { TaskSignal("s$it", "chat", text = "Keep $it", at = 1, capturedAt = 1) }
+        store.capturePage("messages", 0, 400, pending)
+        val next = TaskSignal("next", "chat", text = "Next message", at = 2, capturedAt = 2)
+        assertTrue(runCatching { store.capturePage("messages", 400, 401, listOf(next)) }.exceptionOrNull() is SignalInboxFullException)
+        assertEquals(400, store.sourceCursor("messages"))
+        val inbox = SignalInbox(store).apply { load() }
+        val calendar = CalendarSignalBuffer().apply { changed() }
+        assertNull(calendar.capture(inbox, 60_000, 60_000, enabled = true))
+        assertEquals(pending, store.loadSignals())
+
+        val batch = pending.take(DiscoverySchedule.MAX_BATCH)
+        val patch = TaskChangeSet("scout", 0, notes = listOf(NoteChange(after = note("learned", "Useful result"))))
+        val run = run("scout").copy(purpose = "scout", inputIds = batch.map { it.id })
+        store.commitChanges(patch, run)
+        store.commitChanges(patch, run)
+        inbox.refresh()
+        assertNotNull(calendar.capture(inbox, 120_000, 60_000, enabled = true))
+        store.capturePage("messages", 400, 401, listOf(next))
+        assertEquals(401, store.sourceCursor("messages"))
+        assertEquals((pending.drop(batch.size).map { it.id } + "next").toSet(),
+            store.loadSignals().filter { it.source != "calendar" }.map { it.id }.toSet())
+        assertEquals("Useful result", store.loadNotes().single().text)
+        assertEquals("committed", store.loadRuns().single().state)
+    }
+
     @Test fun aConcurrentUserPinPreventsAStaleRetirement() = runBlocking {
         val store = store()
         val before = note("a", "Keep this")
