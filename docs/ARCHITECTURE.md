@@ -41,6 +41,10 @@ least 60 ready signals, Scout may start once a minute instead of every twenty
 minutes. Quiet-time, not-before, batch size, daily cap and quota gates still
 apply. Successful staged commits remove only their own input IDs atomically
 with the outputs; failed or interrupted results do not acknowledge that input.
+Expected capacity rejection records notification coverage gaps without setting
+a sticky error banner. Replayable chat input simply keeps its cursor. A full
+idle inbox has its own backpressure status, including the next eligible check;
+historical missed/expired-input counts remain visible separately from live errors.
 
 Background models edit staged board/memory/team/rule generations. SQLite commits
 preimage-checked changes, consumed input, run receipt and rule generation in one

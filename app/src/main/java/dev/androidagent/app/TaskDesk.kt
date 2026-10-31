@@ -35,6 +35,7 @@ import dev.androidagent.core.SessionAgents
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.core.SessionStore
 import dev.androidagent.core.SignalInbox
+import dev.androidagent.core.SignalInboxFullException
 import dev.androidagent.core.TaskAction
 import dev.androidagent.core.TaskBoard
 import dev.androidagent.core.TaskBoardSettings
@@ -432,6 +433,7 @@ class TaskDesk(
             settings.passDay == today && settings.passesToday >= settings.dailyPassCap -> "cap"
             signals.pending.value.isEmpty() -> if(legacySignals > 0) "excluded" else "idle"
             allowed.isEmpty() -> "excluded"
+            signals.pending.value.size >= SignalInbox.MAX_PENDING -> "backpressure"
             else -> "waiting"
         }
         val briefingWait = if(board.tasks.value.any { sourceAllowed(it) && dev.androidagent.core.TaskFollowThrough.needsBrief(it, now()) }) when {
@@ -622,6 +624,7 @@ class TaskDesk(
         scope.launch {
             try { signals.capture(message, board.settings.value, context.packageName)?.let { sourceRefs[it.id] = dev.androidagent.core.TaskSourcePolicy.of(it) } }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: SignalInboxFullException) { recordCaptureGap() }
             catch (e: IllegalStateException) { captureGap(e.message ?: "Capture inbox full") }
             if (!sourceApps.containsKey(message.app) && sourceApps.size < 100) {
                 sourceApps[message.app] = withIo { runCatching {
@@ -749,6 +752,7 @@ class TaskDesk(
         val calendarGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
         calendarChanges.capture(signals, now(), settings.lastCalendarCheckAt, settings.readCalendar && calendarGranted)
         try { backfillOnce(); collectQuietChats() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: SignalInboxFullException) { /* Replayable chat input waits at its current cursor. */ }
         catch (e: Exception) { reportError("Chat capture: ${e.message}") } // Let existing input drain under backpressure.
         maybePass()
         maybeNightly()
@@ -952,8 +956,12 @@ class TaskDesk(
 
     private suspend fun <T> withIo(block: suspend () -> T): T = kotlinx.coroutines.withContext(Dispatchers.IO) { block() }
 
-    private suspend fun captureGap(message: String, count: Int = 1) {
+    private suspend fun recordCaptureGap(count: Int = 1) {
         board.editSettings { it.copy(captureGaps = it.captureGaps + count, lastCaptureGapAt = now()) }
+    }
+
+    private suspend fun captureGap(message: String, count: Int = 1) {
+        recordCaptureGap(count)
         reportError(message)
     }
 

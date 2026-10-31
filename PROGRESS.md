@@ -1,5 +1,26 @@
 # Progress
 
+### Live inbox drainage and pressure status — 2026-10-31
+
+A consistent, read-only Android SQLite query on the hosting 1185 phone verified
+eight recent committed Scout batches: 173 input IDs, none still pending. The
+inbox held 394 items with 393 eligible, while further history was imported.
+The queue was draining, but a notification capacity rejection set a sticky
+red error, and the collapsed status called all historical gaps "need attention".
+
+Expected capacity rejection now records missed-notification coverage without
+setting a fatal error. Replayable chat input keeps its cursor. A full waiting
+inbox shows "Inbox full. Waiting for the next processing pass" and the next
+eligible time. Historical gaps have separate, neutral text; other failures
+still show errors. No input was manually removed to produce recovery.
+
+Windows/JDK 21: `:app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug -PversionCodeOverride=1186
+-PversionNameOverride=0.14.0-dev.inbox-status1186 --no-daemon --console=plain`
+passed. All 172 app JVM cases passed; `git diff --check` passed. No raw personal
+screen capture was committed. This validates the status wiring and packaging;
+the new installed UI and long background behavior still need verification.
+
 ### Hosting phone updated to inbox fix 1185 — 2026-10-31
 
 Built committed `049e1cc7` as Dev Debug with code override 1185 and version
