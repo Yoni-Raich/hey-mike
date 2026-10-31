@@ -21,6 +21,17 @@ passed. All 172 app JVM cases passed; `git diff --check` passed. No raw personal
 screen capture was committed. This validates the status wiring and packaging;
 the new installed UI and long background behavior still need verification.
 
+Dev Debug `0.14.0-dev.inbox-status1186` (1186), code source `f40acd26`, was then
+installed in place on the same phone. APK signature matches 1185; alignment
+passed and installed `base.apk` matches SHA-256
+`7607c7e6f924912b33733d8ad86be73923fb92c14c34245d81243934285e8896`.
+MainActivity resumed and the user's new screenshot confirms no old red banner:
+it shows a successful pass four minutes earlier, 400 pending inputs, 24/48
+daily passes and the separate model-quota wait. That guard is the existing
+90%-used threshold in any active model usage window, not the 48-pass cap.
+Historical gaps remain visible as partial coverage. No quota guard was changed
+and no input was manually deleted. Sleeping-phone endurance is still untested.
+
 ### Hosting phone updated to inbox fix 1185 — 2026-10-31
 
 Built committed `049e1cc7` as Dev Debug with code override 1185 and version
