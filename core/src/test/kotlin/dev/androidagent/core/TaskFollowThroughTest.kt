@@ -157,7 +157,10 @@ class TaskFollowThroughTest {
             val tools = TaskTools(board, MemoryBook(store), TeamRoster(store), { TaskChatRole.SCOUT }, { "none" }, playbook = book)
             fun args(kind: String) = buildJsonObject { put("mode", "propose"); put("title", "Useful request"); put("why", "Now"); put("plan", "Prepare it"); put("kind", kind)
                 put("evidence", buildJsonArray { add(buildJsonObject { put("source", "chat"); put("detail", "User requested preparation") }) }) }
-            assertFalse(tools.invoke("scout", args("delivery"), false).success)
+            val suppressed = tools.invoke("scout", args("delivery"), false)
+            assertTrue(suppressed.text, suppressed.success)
+            assertTrue(Json.parseToJsonElement(suppressed.text).jsonObject["suppressed"]!!.jsonPrimitive.content.toBoolean())
+            assertTrue(board.tasks.value.isEmpty())
             val accepted = tools.invoke("scout", args("reply"), false)
             assertTrue(accepted.text, accepted.success)
             assertEquals(1, board.tasks.value.size)

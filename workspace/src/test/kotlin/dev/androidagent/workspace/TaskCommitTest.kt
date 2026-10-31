@@ -3,6 +3,7 @@ package dev.androidagent.workspace
 import dev.androidagent.core.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -13,6 +14,35 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class TaskCommitTest {
+    @Test fun aSuppressedScoutSuggestionCanCommitItsReceiptWithoutCreatingWork() = runBlocking {
+        val store = store()
+        val input = TaskSignal("suppressed-input", "chat", text = "A parcel update", at = 1, capturedAt = 1)
+        store.insertSignal(input)
+        store.saveSettings(store.loadSettings().copy(suppressed = listOf(TaskSuppression(kind = "delivery", at = 1))))
+        val data = StagedTaskData.create(store)
+        val board = TaskBoard(data.store).apply { load() }
+        var finished = false
+        val tools = TaskTools(board, MemoryBook(data.store).apply { load() }, TeamRoster(data.store).apply { load() },
+            { TaskChatRole.SCOUT }, { "unused" }, finishPass = { _, ids -> require(ids == listOf(input.id)); finished = true })
+        val result = tools.invoke("scout", buildJsonObject {
+            put("mode", "propose"); put("title", "Review parcel status"); put("why", "An update arrived")
+            put("plan", "Review it"); put("kind", "delivery")
+            put("evidence", buildJsonArray { add(buildJsonObject { put("detail", "A parcel update arrived"); put("signalId", input.id) }) })
+        }, false)
+        assertTrue(result.text, result.success)
+        assertTrue(Json.parseToJsonElement(result.text).jsonObject["suppressed"]!!.jsonPrimitive.boolean)
+        assertFalse(finished)
+        assertEquals(listOf(input), store.loadSignals())
+        assertTrue(tools.invoke("scout", buildJsonObject { put("mode", "finish"); put("signalIds", buildJsonArray { add(input.id) }) }, false).success)
+        assertTrue(finished)
+        store.commitChanges(data.changes("suppressed-pass", 0, null, null),
+            run("suppressed-pass").copy(purpose = "scout", inputIds = listOf(input.id)))
+        assertTrue(store.loadSignals().isEmpty())
+        assertTrue(store.loadTasks().isEmpty())
+        assertEquals("delivery", store.loadSettings().suppressed.single().kind)
+        assertEquals("committed", store.loadRuns().single().state)
+    }
+
     @Test fun briefingIsAnAtomicOutboxAndConcurrentOwnerDecisionsWin() = runBlocking {
         val store = store()
         val board = TaskBoard(store, now = { 1_000_000L }).apply { load() }

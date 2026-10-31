@@ -1,5 +1,37 @@
 # Progress
 
+### Scout completion receipts and expected suppression — 2026-10-31
+
+Consistent read-only SQLite and per-pass trace queries on hosting build 1186:
+48 Scout attempts today, 43 committed (1,151 input IDs), five retryable. Four
+retryable turns ended normally without `tasks finish`; all four encountered
+an owner suppression, and one also submitted missing proposal/memory fields.
+The fifth was interrupted by the 1186 update. None of those five batches'
+input IDs remained pending: later successful passes consumed them. The current
+400-item inbox contained 385 chat and 15 notification inputs, all with zero
+recorded failed attempts. The current stop was the 48/day budget, not a stuck
+old batch. The old `Ready` banner persisted after recovery.
+
+Scout now receives a successful `suppressed=true` no-card outcome for owner
+suppression or a tested learned filter. Ordinary-chat refusals and all source,
+permission, argument and storage checks remain. The guidance distinguishes
+suppression/duplicates from failed saves, names required `plan`/`text` fields,
+and still requires exact-batch finish plus atomic commit. Missing receipts get
+a specific error instead of `Ready`; that banner resolves after all its input
+is consumed, while unrelated errors remain. No daily/quota budget increase,
+manual queue clearing or automatic acknowledgement of incomplete work.
+
+Windows/JDK 21 JVM suites: core 912, workspace 59, app 172; zero failures/errors,
+14 existing workspace skips. New tests cover owner/learned suppression, unchanged
+ordinary/source/argument refusal, explicit finish and real SQLite atomic commit.
+`:core:test :workspace:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain` passed with
+1187 / `0.14.0-dev.scout-completion1187` build overrides. App lint: zero errors,
+21 warnings, three information findings. Signature and 16 KiB alignment passed;
+the debug signing certificate matches the existing Dev install. No raw personal
+messages or screen captures were committed. Physical post-install proof follows
+separately; no full release gate was run.
+
 ### Live inbox drainage and pressure status — 2026-10-31
 
 A consistent, read-only Android SQLite query on the hosting 1185 phone verified

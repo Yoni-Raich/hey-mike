@@ -162,6 +162,7 @@ class TaskDesk(
         @Volatile var finished: Boolean = false,
     )
     private val inFlight = java.util.concurrent.ConcurrentHashMap<String, InFlight>()
+    private var scoutFailure: Pair<Set<String>, String>? = null
     private val sourceApps = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val sourceRefs = java.util.concurrent.ConcurrentHashMap<String, dev.androidagent.core.TaskSourceRef>()
     private val ownerSources = java.util.concurrent.ConcurrentHashMap<String, List<dev.androidagent.core.TaskSourceRef>>()
@@ -416,6 +417,13 @@ class TaskDesk(
         else "${member.name}: ${member.role} This team chat is kept between runs; each background pass uses a fresh model context."
 
     private fun publish() {
+        scoutFailure?.let { (ids, message) ->
+            if (signals.pending.value.none { it.id in ids }) {
+                // A retry already consumed these inputs. Preserve any unrelated error.
+                if (mutable.value.error == message) mutable.value = mutable.value.copy(error = null)
+                scoutFailure = null
+            }
+        }
         val manager = team.of(MemberKind.MANAGER)?.sessionId
         val backstage = team.members.value.filter { it.kind != MemberKind.MANAGER }.mapNotNull { it.sessionId }.toSet()
         val chats = sessions.sessions.value
@@ -945,9 +953,16 @@ class TaskDesk(
             if (flight.batch.isNotEmpty()) {
                 if (!ok) signals.failed(flight.batch)
             }
-            if(!ok) flight.run?.let { store.saveRun(it.copy(state = "retryable", error = outcome?.status ?: "No completed receipt")) }
+            val failureReason = if (ran && outcome?.status == "Ready" && flight.batch.isNotEmpty() && !flight.finished)
+                "Scout ended without acknowledging its input batch."
+                else outcome?.status ?: "No completed receipt"
+            if(!ok) flight.run?.let { store.saveRun(it.copy(state = "retryable", error = failureReason)) }
             withIo { flight.ruleBook?.discardStage() }
-            if (!ok && mutable.value.error == null) reportError("Background work did not finish: ${outcome?.status ?: "the queued pass expired"}. Input stays available for another pass.")
+            if (!ok && mutable.value.error == null) {
+                val message = "Background work did not finish: $failureReason Input stays available for another pass."
+                if (flight.batch.isNotEmpty()) scoutFailure = flight.batch.toSet() to message
+                reportError(message)
+            }
             team.appendJournal(flight.member, (if (ok) "Done " else "Did not finish ") + Instant.ofEpochMilli(clock).atZone(zone()).toLocalTime().withNano(0))
             inFlight.remove(session)
             loadRunHistory()

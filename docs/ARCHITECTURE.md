@@ -46,6 +46,16 @@ a sticky error banner. Replayable chat input simply keeps its cursor. A full
 idle inbox has its own backpressure status, including the next eligible check;
 historical missed/expired-input counts remain visible separately from live errors.
 
+For Scout, an owner suppression or tested learned filter returns successful
+`suppressed=true` handling with no new card or action. It does not acknowledge
+input by itself: the model must still finish the exact batch and the staged
+transaction must commit. Invalid arguments, failed storage and excluded sources
+remain failures. Scout guidance distinguishes expected suppression from failed
+saves and names the required proposal/memory fields. A missing completion receipt
+has an explicit error; its banner resolves when later processing consumes all
+of that failed batch, without clearing an unrelated error. Daily attempt and
+model quota limits still apply.
+
 Background models edit staged board/memory/team/rule generations. SQLite commits
 preimage-checked changes, consumed input, run receipt and rule generation in one
 transaction. Source policy revisions are checked at reads, queued preparation,

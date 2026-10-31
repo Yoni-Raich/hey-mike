@@ -217,7 +217,7 @@ class TaskTools(
         val proposal = TaskProposal(
             title = args.text("title") ?: error("Give a title."),
             why = args.text("why") ?: error("Say why now."),
-            plan = args.text("plan") ?: error("Say what Mike would do."),
+            plan = args.text("plan") ?: error("propose requires plan: say what Mike would do if the user approves."),
             topicKey = args.text("topicKey"),
             deliverable = args.text("deliverable"),
             evidence = evidence(args["evidence"]),
@@ -245,7 +245,7 @@ class TaskTools(
                     rule.ignores(proposal.title, proposal.kind, proposal.evidence.firstOrNull()?.source)
                 }
             } == true
-            if(ignored) return ChatTools.refused("learned_filter", "A tested learned preference suppresses this suggestion. No work was started.")
+            if(ignored) return suppressed("learned_filter", "A tested learned preference suppresses this suggestion.")
         }
         val origin = when (role) {
             TaskChatRole.SCOUT -> "signal"
@@ -267,8 +267,17 @@ class TaskTools(
                 put("duplicate", brief(outcome.task))
                 put("note", if (outcome.task.status.undecided) "Already on the board. Use update to add evidence." else "Already handled or decided; do not propose it again.")
             }
-            is ProposeOutcome.Refused -> ChatTools.refused(outcome.reason, outcome.message)
+            is ProposeOutcome.Refused -> if (role == TaskChatRole.SCOUT && outcome.reason == "suppressed") {
+                suppressed(outcome.reason, outcome.message)
+            } else ChatTools.refused(outcome.reason, outcome.message)
         }
+    }
+
+    /** Honoring an ignore preference successfully handles a signal; it is not a failed save. */
+    private fun suppressed(reason: String, message: String) = ok {
+        put("suppressed", true); put("reason", reason); put("message", message)
+        put("note", "No card was created and no work started. Treat this suggestion as handled, do not retry it. " +
+            "Continue the batch; call finish with every batch id after all other required saves succeed.")
     }
 
     private suspend fun update(role: TaskChatRole, sessionId: String, args: JsonObject): ToolResult {
@@ -343,7 +352,7 @@ class TaskTools(
         val note = memory.remember(
             subject = args.text("subject") ?: error("Name who or what it is about."),
             kind = args.text("noteKind") ?: "fact",
-            text = args.text("text") ?: error("Give the note's text."),
+            text = args.text("text") ?: error("remember requires text: give the note's text in the text field."),
             source = args.text("source") ?: "chat",
             sender = args.text("sender"),
             cue = args.text("cue"),
