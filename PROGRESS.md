@@ -32,6 +32,19 @@ the debug signing certificate matches the existing Dev install. No raw personal
 messages or screen captures were committed. Physical post-install proof follows
 separately; no full release gate was run.
 
+Installed Dev Debug 1187 in place on the hosting Nothing A059. `copy_file`
+completed; device-local `pm install -r --user 0` returned Success. MainActivity
+resumed, the phone gateway reconnected and the installed version is 1187.
+Installed `base.apk` matches SHA-256
+`267800a0e1df9f723bbbbbd37ec95da3d83dc8dc83b28d53ea8936e2ff6a2745`.
+The post-start crash buffer for the new process was empty. A consistent query
+at 22:05 confirmed the 400 inputs and 48 attempts were retained, with the same
+43 committed/five retryable historical runs. No new real Scout pass can run
+today under that budget, so live suppression/receipt recovery on 1187 remains
+untested. The local next phone build must exceed 1187; the published nightly
+still contains 1184. Wireless debugging was already enabled by the user and
+was left enabled.
+
 ### Live inbox drainage and pressure status — 2026-10-31
 
 A consistent, read-only Android SQLite query on the hosting 1185 phone verified
