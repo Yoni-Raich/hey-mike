@@ -1,5 +1,22 @@
 # Progress
 
+### Hosting phone updated to inbox fix 1185 — 2026-10-31
+
+Built committed `049e1cc7` as Dev Debug with code override 1185 and version
+`0.14.0-dev.inbox-fix.049e1cc7`. Signature v2 and 16 KiB alignment passed;
+the debug certificate matches the installed 1184 nightly. APK SHA-256:
+`5c362b1a3b3982ee64faa97e08f98aae974f36f81b0ace6dac2a3f605c1c4fcb`.
+`copy_file` delivered the APK, then device-local `pm install -r --user 0`
+returned Success on the hosting Nothing A059. No uninstall or data clear.
+Installed `base.apk` hash matches; `apps_settings` confirms 1185 and MainActivity
+opened successfully. Accessibility, ADB and the computer chat reconnected.
+The 23 task cards, 70 notes and 400 queued inputs remained present. A new Scout
+batch of 22 inputs was prepared after restart; its completion was not yet
+observed. No new-process crash in the short startup check. No long background,
+sleeping-phone or full release-gate proof. The transfer's reconstructed size
+was verified; wire bytes were not measured. The next phone build must exceed
+installed code 1185. This is a local PR build; the nightly still contains 1184.
+
 ### Full task inbox crash and recovery — 2026-10-31
 
 The hosting phone's dev 1184 crashed with `Capture inbox full`; its task inbox
