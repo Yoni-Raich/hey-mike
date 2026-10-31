@@ -1,5 +1,125 @@
 # Progress
 
+### Scout completion receipts and expected suppression — 2026-10-31
+
+Consistent read-only SQLite and per-pass trace queries on hosting build 1186:
+48 Scout attempts today, 43 committed (1,151 input IDs), five retryable. Four
+retryable turns ended normally without `tasks finish`; all four encountered
+an owner suppression, and one also submitted missing proposal/memory fields.
+The fifth was interrupted by the 1186 update. None of those five batches'
+input IDs remained pending: later successful passes consumed them. The current
+400-item inbox contained 385 chat and 15 notification inputs, all with zero
+recorded failed attempts. The current stop was the 48/day budget, not a stuck
+old batch. The old `Ready` banner persisted after recovery.
+
+Scout now receives a successful `suppressed=true` no-card outcome for owner
+suppression or a tested learned filter. Ordinary-chat refusals and all source,
+permission, argument and storage checks remain. The guidance distinguishes
+suppression/duplicates from failed saves, names required `plan`/`text` fields,
+and still requires exact-batch finish plus atomic commit. Missing receipts get
+a specific error instead of `Ready`; that banner resolves after all its input
+is consumed, while unrelated errors remain. No daily/quota budget increase,
+manual queue clearing or automatic acknowledgement of incomplete work.
+
+Windows/JDK 21 JVM suites: core 912, workspace 59, app 172; zero failures/errors,
+14 existing workspace skips. New tests cover owner/learned suppression, unchanged
+ordinary/source/argument refusal, explicit finish and real SQLite atomic commit.
+`:core:test :workspace:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain` passed with
+1187 / `0.14.0-dev.scout-completion1187` build overrides. App lint: zero errors,
+21 warnings, three information findings. Signature and 16 KiB alignment passed;
+the debug signing certificate matches the existing Dev install. No raw personal
+messages or screen captures were committed. Physical post-install proof follows
+separately; no full release gate was run.
+
+Installed Dev Debug 1187 in place on the hosting Nothing A059. `copy_file`
+completed; device-local `pm install -r --user 0` returned Success. MainActivity
+resumed, the phone gateway reconnected and the installed version is 1187.
+Installed `base.apk` matches SHA-256
+`267800a0e1df9f723bbbbbd37ec95da3d83dc8dc83b28d53ea8936e2ff6a2745`.
+The post-start crash buffer for the new process was empty. A consistent query
+at 22:05 confirmed the 400 inputs and 48 attempts were retained, with the same
+43 committed/five retryable historical runs. No new real Scout pass can run
+today under that budget, so live suppression/receipt recovery on 1187 remains
+untested. The local next phone build must exceed 1187; the published nightly
+still contains 1184. Wireless debugging was already enabled by the user and
+was left enabled.
+
+### Live inbox drainage and pressure status — 2026-10-31
+
+A consistent, read-only Android SQLite query on the hosting 1185 phone verified
+eight recent committed Scout batches: 173 input IDs, none still pending. The
+inbox held 394 items with 393 eligible, while further history was imported.
+The queue was draining, but a notification capacity rejection set a sticky
+red error, and the collapsed status called all historical gaps "need attention".
+
+Expected capacity rejection now records missed-notification coverage without
+setting a fatal error. Replayable chat input keeps its cursor. A full waiting
+inbox shows "Inbox full. Waiting for the next processing pass" and the next
+eligible time. Historical gaps have separate, neutral text; other failures
+still show errors. No input was manually removed to produce recovery.
+
+Windows/JDK 21: `:app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug -PversionCodeOverride=1186
+-PversionNameOverride=0.14.0-dev.inbox-status1186 --no-daemon --console=plain`
+passed. All 172 app JVM cases passed; `git diff --check` passed. No raw personal
+screen capture was committed. This validates the status wiring and packaging;
+the new installed UI and long background behavior still need verification.
+
+Dev Debug `0.14.0-dev.inbox-status1186` (1186), code source `f40acd26`, was then
+installed in place on the same phone. APK signature matches 1185; alignment
+passed and installed `base.apk` matches SHA-256
+`7607c7e6f924912b33733d8ad86be73923fb92c14c34245d81243934285e8896`.
+MainActivity resumed and the user's new screenshot confirms no old red banner:
+it shows a successful pass four minutes earlier, 400 pending inputs, 24/48
+daily passes and the separate model-quota wait. That guard is the existing
+90%-used threshold in any active model usage window, not the 48-pass cap.
+Historical gaps remain visible as partial coverage. No quota guard was changed
+and no input was manually deleted. Sleeping-phone endurance is still untested.
+
+### Hosting phone updated to inbox fix 1185 — 2026-10-31
+
+Built committed `049e1cc7` as Dev Debug with code override 1185 and version
+`0.14.0-dev.inbox-fix.049e1cc7`. Signature v2 and 16 KiB alignment passed;
+the debug certificate matches the installed 1184 nightly. APK SHA-256:
+`5c362b1a3b3982ee64faa97e08f98aae974f36f81b0ace6dac2a3f605c1c4fcb`.
+`copy_file` delivered the APK, then device-local `pm install -r --user 0`
+returned Success on the hosting Nothing A059. No uninstall or data clear.
+Installed `base.apk` hash matches; `apps_settings` confirms 1185 and MainActivity
+opened successfully. Accessibility, ADB and the computer chat reconnected.
+The 23 task cards, 70 notes and 400 queued inputs remained present. A new Scout
+batch of 22 inputs was prepared after restart; its completion was not yet
+observed. No new-process crash in the short startup check. No long background,
+sleeping-phone or full release-gate proof. The transfer's reconstructed size
+was verified; wire bytes were not measured. The next phone build must exceed
+installed code 1185. This is a local PR build; the nightly still contains 1184.
+
+### Full task inbox crash and recovery — 2026-10-31
+
+The hosting phone's dev 1184 crashed with `Capture inbox full`; its task inbox
+held 400 pending inputs. Calendar change callbacks wrote directly into that
+full inbox from an unguarded coroutine. They now mark a coalesced dirty revision
+and let the guarded board tick enqueue it when space opens. Calendar capture
+runs before importing more chat history; full storage does not acknowledge or
+evict pending input. Legacy backfill failure also leaves the drain path open.
+
+A backlog of at least 60 ready inputs uses a one-minute Scout interval instead
+of twenty minutes. Existing source/permission, quiet-time, not-before, busy,
+quota, daily-cap and batch-size gates remain. Successful Scout output and input
+removal still commit together; no bulk queue clearing or data migration.
+
+From isolated `origin/dev` `1ff9d53b`, Windows/JDK 21:
+`:core:test :workspace:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain` passed.
+JVM XML: 1,139 cases, zero failures/errors, 14 existing workspace skips. Eight
+new regressions cover saturation, deferred/racing calendar changes, source
+cursor recovery, atomic Scout commit and scheduling limits. Runtime preparation
+Python tests: 16 passed. `git diff --check` passed. Build storage used an
+isolated Gradle home with no other worktree bucket removed.
+
+No hosting-phone install, physical background/Scout run or release gate was
+performed. The debug APK is validation only; the installed phone stays on 1184.
+
 ### Dev update version — 2026-10-30
 
 The published dev-nightly code 1166 is lower than the user's installed dev

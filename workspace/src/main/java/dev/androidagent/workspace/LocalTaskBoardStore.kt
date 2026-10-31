@@ -30,6 +30,7 @@ import dev.androidagent.core.TaskBoardSettings
 import dev.androidagent.core.TaskBoardStore
 import dev.androidagent.core.TaskSignal
 import dev.androidagent.core.SignalInbox
+import dev.androidagent.core.SignalInboxFullException
 import dev.androidagent.core.TeamMember
 import dev.androidagent.core.TaskEvent
 import dev.androidagent.core.TaskSourceRef
@@ -146,7 +147,7 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
                 false
             } else {
                 val count = db.rawQuery("SELECT count(*) FROM records WHERE kind=?", arrayOf(SIGNAL)).use { it.moveToFirst(); it.getInt(0) }
-                check(count < SignalInbox.MAX_PENDING) { "Capture inbox full. New notification input could not be saved." }
+                if (count >= SignalInbox.MAX_PENDING) throw SignalInboxFullException()
                 write(SIGNAL, signal.id, json.encodeToString(TaskSignal.serializer(), signal))
                 write("source_ref", signal.id, json.encodeToString(TaskSourceRef.serializer(), TaskSourcePolicy.of(signal)))
                 write(RECEIPT, signal.id, signal.capturedAt.toString())
@@ -285,7 +286,7 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
                 db.rawQuery("SELECT 1 FROM records WHERE id=? AND kind IN (?,?)", arrayOf(signal.id, SIGNAL, RECEIPT)).use { !it.moveToFirst() }
             }
             val count = db.rawQuery("SELECT count(*) FROM records WHERE kind=?", arrayOf(SIGNAL)).use { it.moveToFirst(); it.getInt(0) }
-            check(count + fresh.size <= SignalInbox.MAX_PENDING) { "Capture is waiting: the inbox is full." }
+            if (count + fresh.size > SignalInbox.MAX_PENDING) throw SignalInboxFullException()
             fresh.forEach {
                 write(SIGNAL, it.id, json.encodeToString(TaskSignal.serializer(), it)); write(RECEIPT, it.id, it.capturedAt.toString())
                 write("source_ref", it.id, json.encodeToString(TaskSourceRef.serializer(), TaskSourcePolicy.of(it)))
