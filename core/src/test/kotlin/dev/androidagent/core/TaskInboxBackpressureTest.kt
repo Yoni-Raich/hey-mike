@@ -77,11 +77,12 @@ class TaskInboxBackpressureTest {
         }
     }
 
-    @Test fun aReadyBacklogDrainsSoonerWithoutRaisingBatchOrDailyLimits() {
+    @Test fun aReadyBacklogKeepsTheNormalIntervalAndDailyLimits() {
         val pending = (1..SignalInbox.MAX_PENDING).map { signal("s$it").copy(text = "x".repeat(SignalInbox.MAX_TEXT)) }
-        val last = clock - DiscoverySchedule.BACKLOG_INTERVAL_MS
+        val last = clock - 60_000
         val plan = DiscoverySchedule.plan(pending, clock, last, 28, 48, busy = false)
-        assertTrue(plan.due)
+        assertFalse(plan.due)
+        assertTrue(DiscoverySchedule.plan(pending, clock, clock - DiscoverySchedule.MIN_INTERVAL_MS, 28, 48, busy = false).due)
         assertTrue(plan.batch.size <= DiscoverySchedule.MAX_BATCH)
         assertTrue(plan.batch.sumOf { it.text.length } <= DiscoverySchedule.MAX_BATCH_CHARS)
         assertFalse(DiscoverySchedule.plan(pending, clock, clock - 1, 28, 48, busy = false).due)

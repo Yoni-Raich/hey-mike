@@ -408,6 +408,7 @@ data class AgentUiActions(
     val onTaskDiscovery: (on: Boolean) -> Unit = {},
     val onTaskSettings: ((dev.androidagent.core.TaskBoardSettings) -> dev.androidagent.core.TaskBoardSettings) -> Unit = {},
     val onTaskForgetCollected: () -> Unit = {},
+    val onTaskScanChat: (String) -> Unit = {},
     val onTaskForgetNote: (id: String) -> Unit = {},
     val onTaskPinNote: (id: String, pinned: Boolean) -> Unit = { _, _ -> },
     val onTaskForgetSubject: (subject: String) -> Unit = {},

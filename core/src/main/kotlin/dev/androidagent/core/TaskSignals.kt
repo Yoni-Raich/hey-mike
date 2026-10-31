@@ -49,6 +49,8 @@ data class CapturedMessage(
     val group: Boolean,
     /** The notification's own key, so its later updates are recognised. */
     val notificationKey: String? = null,
+    /** Set by the platform reader for messaging style or a known mail/message source. */
+    val fromPerson: Boolean = false,
 )
 
 /**
@@ -120,31 +122,89 @@ class SignalInbox(
      * Keep [message] if the user's settings allow it. Returns the stored
      * signal, or null when it was filtered, excluded or already stored.
      */
-    suspend fun capture(message: CapturedMessage, settings: TaskBoardSettings, ownPackage: String): TaskSignal? {
-        if (!settings.discoveryOn) return null
+    suspend fun capture(message: CapturedMessage, settings: TaskBoardSettings, ownPackage: String): TaskSignal? =
+        captureResult(message, settings, ownPackage).signal
+
+    data class CaptureResult(val signal: TaskSignal? = null, val lostPeople: Int = 0)
+
+    suspend fun captureResult(message: CapturedMessage, settings: TaskBoardSettings, ownPackage: String): CaptureResult {
+        if (!settings.discoveryOn) return CaptureResult()
         val text = message.text.trim()
-        if (text.isEmpty() || message.app in settings.excludedApps) return null
-        if (message.group && !settings.includeGroups) return null
-        message.conversation?.let { if ("${message.app}|$it" in settings.excludedConversations) return null }
-        if (SignalFilter.drop(message.app, "${message.conversation.orEmpty()} $text", ownPackage)) return null
-        val id = idOf(message.app, message.conversation, message.sender, text, message.at)
-        val parts = text.chunked(MAX_TEXT)
-        val batch = parts.mapIndexed { index, part -> TaskSignal(
-            id = if(parts.size == 1) id else idOf(id, index), source = SignalFilter.sourceOf(message.app), app = message.app,
-            conversation = message.conversation?.take(120), sender = message.sender?.take(80),
-            text = part, group = message.group, at = message.at, capturedAt = now(), sourceVerified = true,
-        ) }
+        if (text.isEmpty() || message.app in settings.excludedApps) return CaptureResult()
+        if (message.group && !settings.includeGroups) return CaptureResult()
+        message.conversation?.let { if ("${message.app}|$it" in settings.excludedConversations) return CaptureResult() }
+        if (SignalFilter.drop(message.app, "${message.conversation.orEmpty()} $text", ownPackage)) return CaptureResult()
         return lock.withLock {
+            val clock = now()
+            val line = SignalRows.lineId(message, text)
+            val previous = mutable.value.firstOrNull { SignalRows.keyOf(it) == SignalRows.keyOf(message) }
+            val repeated = store.seenSignal(line, clock - DEDUPE_MS)
+            val distinctId = idOf("source-text", message.app, text)
+            val distinct = !store.seenSignal(distinctId, clock - SourceStat.RETENTION_MS)
+            val row = if (repeated) null else SignalRows.merge(previous, message, text, clock)
+            if (row != null && previous == null && !SignalRows.canOpen(mutable.value, row.lane)) throw SignalInboxFullException()
+            val lost = if (message.fromPerson && row != null) row.omitted - (previous?.omitted ?: 0) else 0
             val source = "notification-capture"
             val cursor = store.sourceCursor(source)
-            val fresh = store.capturePage(source, cursor, cursor + 1, batch)
-            mutable.value = (mutable.value + fresh).sortedBy { it.capturedAt }
-            fresh.firstOrNull()
+            val fresh = store.capturePage(source, cursor, cursor + 1, listOfNotNull(row), listOf(line, distinctId),
+                stats = listOf(SourceStat.base(message.app, clock).copy(received = 1, distinct = if (distinct) 1 else 0,
+                    fromPeople = if (message.fromPerson) 1 else 0, lostPeople = lost)))
+            mergePending(fresh)
+            CaptureResult(fresh.firstOrNull(), lost)
         }
+    }
+
+    /** Feed cursor and row updates are committed together; replay cannot create extra work. */
+    suspend fun captureChats(source: String, expected: Long, changes: List<SignalRows.ChatCapture>, startAt: Long,
+        startSequence: Long? = null): Long = lock.withLock {
+        val rows = mutable.value.associateBy { it.id }.toMutableMap()
+        val changed = linkedMapOf<String, TaskSignal>()
+        val events = mutableListOf<TaskEvent>()
+        val receipts = mutableListOf<String>()
+        var through = expected
+        for (capture in changes) {
+            val message = capture.change.message
+            if (startSequence != null && capture.change.sequence <= startSequence) { through = capture.change.sequence; continue }
+            val receipt = idOf("chat-change", capture.change.sequence)
+            if (store.seenSignal(receipt, now() - DEDUPE_MS)) { through = capture.change.sequence; continue }
+            val entry = SignalRows.chatEntry(message, capture.ordinary, capture.ownerChat, capture.taskResult,
+                startAt, now(), MAX_AGE_MS, freshRevision = startSequence != null)
+            val prior = rows.values.firstOrNull { it.sessionId == message.sessionId }
+            val next = SignalRows.chatRow(prior, capture, entry, now())
+            if (next != null && prior == null && !SignalRows.canOpen(rows.values, next.lane)) break
+            if (next != null) { rows[next.id] = next; changed[next.id] = next }
+            if (entry != SignalRows.ChatEntry.NONE) receipts += receipt
+            if (entry == SignalRows.ChatEntry.OWNER) {
+                events += TaskEvent("feedback:message:${message.id}:${capture.change.sequence}", "owner:${message.sessionId}",
+                    0, "feedback", "user", message.createdAt, note = SignalRows.clip(message.text, MAX_TEXT),
+                    sourceRefs = listOf(TaskSourceRef("chat", sessionId = message.sessionId, verified = true)))
+            }
+            through = capture.change.sequence
+        }
+        if (through > expected) {
+            val fresh = store.capturePage(source, expected, through, changed.values.toList(), receipts, events)
+            mergePending(fresh)
+        }
+        through
+    }
+
+    suspend fun migrate(startAt: Long, isTaskChat: (String) -> Boolean) = lock.withLock {
+        val migration = SignalRows.migrate(mutable.value, now(), startAt, isTaskChat)
+        if (migration.remove.isNotEmpty()) {
+            store.replaceSignals(migration.remove, migration.rows, migration.receipts)
+            mutable.value = store.loadSignals().sortedBy { it.capturedAt }
+        }
+    }
+
+    private fun mergePending(rows: List<TaskSignal>) {
+        val ids = rows.map { it.id }.toSet()
+        mutable.value = (mutable.value.filterNot { it.id in ids } + rows).sortedBy { it.capturedAt }
     }
 
     /** A signal the app made itself: a chat that went quiet, a calendar check, the first backfill. */
     suspend fun add(signal: TaskSignal): TaskSignal? = lock.withLock {
+        if (signal.lane == SignalLane.BACKGROUND && !SignalRows.canOpen(mutable.value, signal.lane))
+            throw SignalInboxFullException()
         // Reject duplicates before evicting a real pending message. The store
         // retains only an id/time receipt after raw text deletion.
         if (!store.insertSignal(signal)) return@withLock null
@@ -176,7 +236,7 @@ class SignalInbox(
     /** Drop what is too old to matter, and everything when discovery is turned off. */
     suspend fun prune(discoveryOn: Boolean): Int = lock.withLock {
         val clock = now()
-        val gone = mutable.value.filter { !discoveryOn || clock - it.capturedAt > MAX_AGE_MS || it.attempts >= MAX_ATTEMPTS }.map { it.id }
+        val gone = mutable.value.filter { !discoveryOn || clock - it.touchedAt > MAX_AGE_MS || it.attempts >= MAX_ATTEMPTS }.map { it.id }
         if (gone.isNotEmpty()) {
             store.deleteSignals(gone)
             mutable.value = mutable.value.filterNot { it.id in gone }
@@ -188,14 +248,27 @@ class SignalInbox(
         store.deleteSignals(mutable.value.map { it.id })
         mutable.value = emptyList()
     }
+    suspend fun pruneSources(settings: TaskBoardSettings) = lock.withLock {
+        val gone = mutable.value.filterNot { TaskSourcePolicy.allows(TaskSourcePolicy.of(it), settings) }
+        store.deleteSignals(gone.map { it.id })
+        val allowed = mutable.value - gone.toSet()
+        val changed = allowed.mapNotNull { row ->
+            val kept = row.items.filterNot { "${row.app}|${it.title}" in settings.excludedConversations }
+            if (kept == row.items) null else row.copy(items = kept, revision = row.revision + 1)
+        }
+        store.saveSignals(changed)
+        mutable.value = allowed
+        mergePending(changed)
+    }
     suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>) = lock.withLock {
         val fresh = store.capturePage(source, expected, through, signals)
-        mutable.value = (mutable.value + fresh).sortedBy { it.capturedAt }
+        mergePending(fresh)
     }
 
     companion object {
         const val MAX_TEXT = 2_000
         const val MAX_PENDING = 400
+        const val RESERVED_PEOPLE_ROWS = 100
         const val MAX_ATTEMPTS = 4
         const val MAX_AGE_MS = 72 * 3_600_000L
         const val DEDUPE_MS = 7 * 24 * 3_600_000L
@@ -225,6 +298,7 @@ class CalendarSignalBuffer {
             id = SignalInbox.idOf("calendar", now / 60_000), source = "calendar",
             text = "Read the next 48 hours of the calendar before updating related tasks.",
             at = now, capturedAt = now,
+            lane = SignalLane.PEOPLE, reason = SignalRows.CALENDAR_CHANGE,
         )) ?: return null
         // A callback during the write has a newer revision and remains pending.
         capturedRevision = observed
@@ -237,25 +311,25 @@ class CalendarSignalBuffer {
 /**
  * When discovery should think. Collect all the time, think in small batches:
  * a conversation is ready after a quiet spell, so a burst of messages becomes
- * one pass. A ready backlog uses a shorter interval, within the same daily cap.
+ * one pass. People and owner feedback have their own place ahead of background.
  */
 object DiscoverySchedule {
-    data class Plan(val due: Boolean, val batch: List<TaskSignal>, val nextCheckAt: Long?)
+    data class Plan(val due: Boolean, val batch: List<TaskSignal>, val nextCheckAt: Long?, val backgroundLimited: Boolean = false)
 
     const val MIN_INTERVAL_MS = 20 * 60_000L
     const val MAX_WAIT_MS = 60 * 60_000L
     const val MAX_BATCH = 30
     const val MAX_BATCH_CHARS = 24_000
-    const val BACKLOG_THRESHOLD = 2 * MAX_BATCH
-    const val BACKLOG_INTERVAL_MS = 60_000L
 
     fun quietFor(signal: TaskSignal): Long = when {
+        signal.lane == SignalLane.IMMEDIATE -> 0L
         signal.source in setOf("chat", "calendar", "backfill") -> 0L
         signal.source in setOf("whatsapp", "message") && !signal.group -> 10 * 60_000L
         else -> 30 * 60_000L
     }
 
-    private fun conversation(signal: TaskSignal) = "${signal.app}|${signal.conversation ?: signal.sender ?: signal.id}"
+    private fun conversation(signal: TaskSignal) = if (signal.lane != null) SignalRows.keyOf(signal) else signal.sessionId?.let { "chat|$it" }
+        ?: "${signal.app}|${signal.conversation ?: signal.sender ?: signal.id}"
 
     fun plan(
         pending: List<TaskSignal>,
@@ -265,25 +339,33 @@ object DiscoverySchedule {
         dailyCap: Int,
         busy: Boolean,
         minIntervalMs: Long = MIN_INTERVAL_MS,
+        backgroundPassesToday: Int = 0,
     ): Plan {
         if (pending.isEmpty()) return Plan(false, emptyList(), null)
         val groups = pending.groupBy(::conversation)
         val readyAt = groups.mapValues { (_, signals) ->
-            val quiet = signals.maxOf { it.capturedAt } + signals.maxOf(::quietFor)
+            val quiet = signals.maxOf { it.touchedAt } + signals.maxOf(::quietFor)
             val capped = signals.minOf { it.capturedAt } + MAX_WAIT_MS
             maxOf(minOf(quiet, capped), signals.maxOf { it.notBefore })
         }
-        val ready = groups.filterKeys { readyAt.getValue(it) <= now }.values.flatten().sortedBy { it.capturedAt }
-        val interval = if (ready.size >= BACKLOG_THRESHOLD) minOf(minIntervalMs, BACKLOG_INTERVAL_MS) else minIntervalMs
+        val priority = pending.filter { it.lane != SignalLane.BACKGROUND }
+        val limited = backgroundPassesToday >= dailyCap / 2
+        val eligible = if (limited) priority else pending
+        val ready = groups.filterKeys { readyAt.getValue(it) <= now }.values.flatten().filter { it in eligible }
+            .sortedWith(compareBy<TaskSignal> { it.lane?.ordinal ?: 1 }.thenBy { it.capturedAt })
+        val interval = if (ready.any { it.lane == SignalLane.IMMEDIATE }) minOf(minIntervalMs, 60_000L) else minIntervalMs
         val intervalOpen = lastPassAt?.let { it + interval } ?: Long.MIN_VALUE
         val earliest = maxOf(readyAt.values.min(), intervalOpen)
         if (passesToday >= dailyCap) return Plan(false, emptyList(), null)
+        if (limited && eligible.isEmpty()) return Plan(false, emptyList(), null, backgroundLimited = true)
         if (busy || ready.isEmpty() || now < intervalOpen) return Plan(false, emptyList(), maxOf(earliest, now + 60_000))
         val batch = mutableListOf<TaskSignal>()
         var chars = 0
-        for (signal in ready) {
-            if (batch.size >= MAX_BATCH || (batch.isNotEmpty() && chars + signal.text.length > MAX_BATCH_CHARS)) break
-            batch += signal; chars += signal.text.length
+        val lane = ready.first().lane
+        for (signal in ready.filter { if (lane == SignalLane.BACKGROUND) it.lane == SignalLane.BACKGROUND else it.lane != SignalLane.BACKGROUND }) {
+            val size = if (signal.sessionId != null && signal.text.isEmpty()) SignalRows.MAX_ROW_CHARS else signal.chars
+            if (batch.size >= MAX_BATCH || (batch.isNotEmpty() && chars + size > MAX_BATCH_CHARS)) break
+            batch += signal; chars += size
         }
         return Plan(true, batch, null)
     }

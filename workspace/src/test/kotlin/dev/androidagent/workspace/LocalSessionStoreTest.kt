@@ -108,7 +108,7 @@ class LocalSessionStoreTest {
         assertEquals(task, store.loadAgentTasks().single())
         store.setModelChoice("child", "model-a", "high")
         assertEquals("high", LocalSessionStore(context).getSession("child")!!.reasoningEffort)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(10, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(11, it.version) }
     }
 
     @Test fun persistentMikeSchemaSixWithoutDraftTableOpensWithoutLosingHistory() = runBlocking {
@@ -143,7 +143,7 @@ class LocalSessionStoreTest {
         assertEquals(draft, LocalSessionStore(context).composerDraft(OLD_ID))
         assertEquals("untouched", keptFile.readText())
         SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
-            assertEquals(10, db.version)
+            assertEquals(11, db.version)
             db.rawQuery("SELECT is_mike FROM sessions WHERE id=?", arrayOf(OLD_ID)).use {
                 assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
             }
@@ -163,7 +163,7 @@ class LocalSessionStoreTest {
         assertEquals("  existing draft\nשלום  ", upgraded.composerDraft(chat.id))
         assertEquals(listOf("existing history"), upgraded.messages(chat.id).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, upgraded.getSession(chat.id)!!.engine)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(10, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(11, it.version) }
     }
 
     @Test fun draftsSurviveReopenKeepExactWhitespaceAndStayUnsent() = runBlocking {
@@ -226,7 +226,7 @@ class LocalSessionStoreTest {
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
         assertFalse(old.titlePending)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(10, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(11, it.version) }
     }
 
     @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {
