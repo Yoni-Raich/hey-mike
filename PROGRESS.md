@@ -1,5 +1,46 @@
 # Progress
 
+### Manager fixes plus Mike's robot face — 2026-11-02
+
+Integrated the uncommitted robot face from worktree `session-20261102` on top of
+`fix/manager-situation-20261102` (`ef91320d`). `MikeEye.kt` was identical on both
+sides, so nothing conflicted; only the two doc headers needed merging.
+
+Evidence, on this tree with `--rerun-tasks`: `:core:test`,
+`:workspace:testDebugUnitTest`, `:device-tools:testDebugUnitTest` and
+`:app:testDevDebugUnitTest` ran 1,315 tests, 0 failures, 14 skipped (1,311 before,
+plus 4 in `MikeEyeTest`). `:app:assembleDevDebug`, `:app:assembleDevDebugAndroidTest`
+and `:app:lintDevDebug` (0 errors, 21 warnings) passed. The APK is versionCode 1189,
+`0.14.0-dev.manager-mike1189`, set by build overrides, and its 19 native and runtime
+entries match the earlier full build by name and size.
+
+An isolated build directory without the central storage init script stages the runtime
+outside the APK's source set and gives a 93 MB APK with no `libcodex_app_server.so`,
+and Gradle still reports success. Check the APK contains the runtime.
+
+Not tested: this APK on a phone, the face on a real device, or the combined manager
+behavior live. `MikeEyeUiTest` was compiled here, not run.
+
+### Mike's face is a robot — 2026-11-02
+
+Replaced the dotted sphere in `MikeEye` with a flat ceramic robot head: a dark
+visor, two glowing pill eyes and small ear pads. The API (`EyeMood`, `tint`,
+`satellites`, `animate`, `description`) is unchanged, so every place that shows
+Mike (task strip, board, team page, avatars) gets the new face without edits. The
+other orbs (`AgentOrb`, `VoiceSphere`, the overlay orb) are not part of this change.
+
+Evidence: `:app:compileDevDebugKotlin`, `:app:lintDevDebug` (0 errors, 21 warnings,
+as before) and `:app:testDevDebugUnitTest` (344 cases, 0 failures, including the
+new `MikeEyeTest`) passed; `git diff --check` is clean. On the API 35 x86_64
+emulator `emulator-5566` only, `MikeEyeUiTest` drew all six moods at 96, 64, 40, 30,
+24 and 56 dp and the nine existing `TaskBoardUiTest` cases passed. Captures are in
+[`docs/testing/mike-robot-face-20261102/`](docs/testing/mike-robot-face-20261102/).
+
+Not tested: the physical phone, the live drawer/strip with real tasks, a release
+APK, battery cost over a long session, and reduced-motion on a device. The captures
+are fixture frames, not a recording, so the motion itself was checked only on the
+HTML prototype and by reading the frame loop.
+
 ### Manager follow-through and situation — 2026-11-02
 
 Based on `feat/task-inbox-conversations` at `e8e55758`. Scheduled checks
