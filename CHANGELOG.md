@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Mike can answer with a live, interactive card in the chat: sliders, stat
+  cards, animated bar, line, area, pie and donut charts, gauges, tables, tabs,
+  toggles, an animated dot grid, and buttons that copy the data as JSON or send
+  your settings back to Mike. Move a slider and the numbers and charts change
+  at once. It works offline and is drawn natively, and chats without a card look
+  exactly as before.
 - The updater checks the release package before offering it and checks the APK
   package, version code and signing certificate before installation.
 - Direct `shell uiautomator dump` is refused; use `read_ui` so a screen

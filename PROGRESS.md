@@ -1,5 +1,49 @@
 # Progress
 
+### Visual widgets in the chat — 2026-11-02
+
+A reply can now hold a live, interactive visual: a fenced block with language
+`mike-widget` and lenient JSON. It is parsed in `:core` (`core/widget`) and drawn
+natively in Compose (`app/ui/widget`): sliders, dropdown, tabs, toggle, text input,
+stat cards, bar/line/area/pie/donut/sparkline charts that animate, gauge, progress,
+table, a dot grid that animates, and `copy` / `ask` buttons. Inputs are variables
+in a small safe expression language, so one slider moves every number, chart and
+dot at once. There is no WebView and no new model-facing tool: the model learns the
+format from the `visual-widgets` skill and, for a computer session, from
+`WidgetGuide`. Messages without a widget render exactly as before. Design is in
+`docs/ARCHITECTURE.md` ("Visual widgets in the chat").
+
+Evidence, all on the `feat/chat-visual-widgets-20261102` worktree:
+
+- The CI gradle line (`:web … :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug`) passed. Unit result files total 1,794 cases, 17 existing
+  skips, zero failures and errors. Lint: zero errors, 21 warnings. `git diff
+  --check` is clean.
+- New JVM tests cover the expression language, spec parsing, message splitting
+  (streaming, broken and closed blocks), the guide text, the seeded skill and the
+  computer-session instructions.
+- Five instrumented tests ran on the API 35 emulator (`emulator-5566`) with
+  `am instrument`, one by one, and passed: sliders drive the stat cards and the
+  table, a broken block shows its reason, the `ask` button sends the live values,
+  and screenshots in dark and light were taken and looked at. Looking at them found
+  and fixed four real faults: "ms 850" in Hebrew (the unit sat before the number),
+  pie legend names with no room, an empty gap above charts, and English chart
+  buttons in a Hebrew widget. Charts stay left to right inside an RTL widget on
+  purpose.
+- The dot grid asks for a frame forever, so those tests hold the test clock and
+  scroll the `ScrollState` directly; `performScrollTo` hangs under that clock.
+
+Not tested:
+
+- Nothing was installed on the user's phone, and no real Codex or Claude run drew
+  a widget. The x86_64 emulator cannot run the app-server, so the path from model
+  text to a widget is proven only by the parser tests and the fixture screenshots.
+- The streaming skeleton ("Building widget…") is only unit-tested, not seen live.
+- TalkBack, font scaling and very small screens were not tried.
+- `copy` writing to the clipboard and `ask` through a real steer were not run on
+  a device; the `ask` text is asserted in the instrumented test only.
+- Frame rate of the dot grid on a real phone is not measured.
+
 ### Manager fixes plus Mike's robot face — 2026-11-02
 
 Integrated the uncommitted robot face from worktree `session-20261102` on top of

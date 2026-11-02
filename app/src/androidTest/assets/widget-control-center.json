@@ -1,0 +1,41 @@
+{
+  "title": "Agent Control Center",
+  "subtitle": "דשבורד לדוגמה — הנתונים מדומים",
+  "dir": "rtl",
+  "body": [
+    {"type": "stats", "items": [
+      {"label": "פעולות", "value": "=perDay * 7", "format": "int", "icon": "check", "color": "green"},
+      {"label": "שיעור הצלחה", "value": "=rate", "unit": "%", "icon": "target"},
+      {"label": "זמן תגובה", "value": "=latency", "unit": " ms", "icon": "bolt"}
+    ]},
+    {"type": "card", "title": "פרמטרים חיים", "children": [
+      {"type": "slider", "id": "perDay", "label": "פעולות ביום", "min": 20, "max": 400, "step": 10, "value": 120},
+      {"type": "slider", "id": "rate", "label": "שיעור הצלחה", "min": 50, "max": 100, "value": 92, "unit": "%"},
+      {"type": "slider", "id": "latency", "label": "זמן תגובה", "min": 100, "max": 3000, "step": 50, "value": 850, "unit": " ms"}
+    ]},
+    {"type": "card", "title": "פעילות הסוכן", "children": [
+      {"type": "select", "id": "days", "options": [
+        {"value": 7, "label": "7 ימים"}, {"value": 14, "label": "14 ימים"}, {"value": 30, "label": "30 ימים"}], "value": 14},
+      {"type": "chart", "id": "activity", "kinds": ["bar", "line"], "points": "=days", "xLabel": "{days - i}", "series": [
+        {"name": "הצלחות", "color": "blue", "values": "=perDay * rate / 100 * (0.8 + 0.4 * noise(i * 0.7))"},
+        {"name": "כשלונות", "color": "purple", "values": "=perDay * (100 - rate) / 100 * (0.8 + 0.4 * noise(i * 0.9 + 9))", "when": "=showFailed"}
+      ]},
+      {"type": "toggle", "id": "showFailed", "label": "הצג גם פעולות שנכשלו", "value": true}
+    ]},
+    {"type": "row", "children": [
+      {"type": "gauge", "label": "מד עגול", "value": "=rate", "unit": "%", "caption": "מתעדכן מהסליידר"},
+      {"type": "chart", "kind": "pie", "title": "גרף עוגה", "slices": [
+        {"label": "הצלחה", "value": "=rate", "color": "blue"}, {"label": "כישלון", "value": "=100 - rate", "color": "purple"}]}
+    ]},
+    {"type": "card", "title": "בונוס: תצוגה אינטראקטיבית", "children": [
+      {"type": "tabs", "id": "mode", "options": [
+        {"value": "wave", "label": "גל"}, {"value": "radial", "label": "רדיאלי"}, {"value": "noise", "label": "רעש"}]},
+      {"type": "dots", "cols": 14, "rows": 10,
+       "value": "=power / 100 * (mode == 'wave' ? 0.5 + 0.5 * sin(t * 2 + x * 8) : mode == 'radial' ? 0.5 + 0.5 * sin(t * 2 - dist(x, y, 0.5, 0.5) * 12) : noise(x * 5, y * 5, t))"},
+      {"type": "slider", "id": "power", "label": "עוצמת האפקט", "min": 0, "max": 100, "value": 65, "unit": "%"}
+    ]},
+    {"type": "table", "columns": ["יום", "פעולות"], "rows": [["ראשון", 120], ["שני", "{perDay}"]]},
+    {"type": "button", "label": "העתק נתונים כ-JSON", "action": "copy"},
+    {"type": "button", "label": "שלח את ההגדרות למייק", "action": "ask"}
+  ]
+}
