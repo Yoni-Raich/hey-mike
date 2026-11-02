@@ -36,7 +36,9 @@ tap, open apps or ask the user. If something needs action, it becomes a card.
      and optional `looksResolved`). This never closes the card or changes an approved plan.
 4. If the prompt says the calendar check is due, `calendar` with operation `list` for the
    next 48 hours. Propose preparation only for events that need it and have none.
-5. After saving every useful note, card and update, call `tasks(mode="finish", signalIds=[...])`
+5. Cite each claim's exact source: `signalId` in each evidence entry, `signalIds`
+   for a remembered fact, and `noteIds` only for notes used by that claim.
+   Reading other context does not make it evidence. After saving every useful note, card and update, call `tasks(mode="finish", signalIds=[...])`
    with every exact batch id, including ignored signals. If a save failed, do not finish the batch.
    End with one line: what you proposed, updated and remembered.
 

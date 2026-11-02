@@ -130,6 +130,7 @@ class TaskDesk(
     private val zone: () -> ZoneId = ZoneId::systemDefault,
 ) {
     private val store = LocalTaskBoardStore(context)
+    private val situationStore = dev.androidagent.core.SharedSituationStore(File(context.filesDir, "task-situation-v1.json"))
     val board = TaskBoard(store, now, zone)
     val memory = MemoryBook(store, now)
     val signals = SignalInbox(store, now)
@@ -139,6 +140,7 @@ class TaskDesk(
     private fun rootBook() = TaskPlaybook(home, allowedSource = ::sourceAllowed)
     val playbook: TaskPlaybook get() = activeRules?.let { rootBook().generation(it) } ?: rootBook()
     private val lock = Mutex()
+    private val situationRefreshLock = Mutex()
     private val mutable = MutableStateFlow(TaskDeskState())
     val state: StateFlow<TaskDeskState> = mutable.asStateFlow()
     @Volatile private var ready = false
@@ -163,6 +165,7 @@ class TaskDesk(
         val contextSources: List<dev.androidagent.core.TaskSourceRef> = emptyList(),
         val reviewEvents: List<String> = emptyList(),
         val briefingTaskIds: List<String> = emptyList(),
+        val coachDispositions: MutableMap<String, dev.androidagent.core.CoachDisposition> = java.util.concurrent.ConcurrentHashMap(),
         var seenActive: Boolean = false,
         @Volatile var finished: Boolean = false,
     )
@@ -170,7 +173,6 @@ class TaskDesk(
     private var scoutFailure: Pair<Set<String>, String>? = null
     private val sourceApps = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val sourceRefs = java.util.concurrent.ConcurrentHashMap<String, dev.androidagent.core.TaskSourceRef>()
-    private val ownerSources = java.util.concurrent.ConcurrentHashMap<String, List<dev.androidagent.core.TaskSourceRef>>()
     @Volatile private var forgottenNotes: Set<String> = emptySet()
     @Volatile private var runHistory: List<dev.androidagent.core.TaskRun> = emptyList()
     @Volatile private var maintenanceChanges: Map<String, dev.androidagent.core.TaskChangeSet> = emptyMap()
@@ -201,14 +203,22 @@ class TaskDesk(
     private fun inputSources(session: String, ids: List<String>): List<dev.androidagent.core.TaskSourceRef> {
         val flight = inFlight[session]
         if (isBackgroundSession(session)) {
-            if (flight == null) return listOf(dev.androidagent.core.TaskSourceRef("chat", sessionId = session, verified = true)) +
-                (if(board.settings.value.readCalendar) listOf(dev.androidagent.core.TaskSourceRef("calendar", verified = true)) else emptyList())
+            if (flight == null) return emptyList()
             check(flight.policyRevision == board.settings.value.policyRevision) { "Sources changed; this pass is no longer allowed." }
-            if (ids.isNotEmpty()) require(ids.all { it in flight.batch }) { "Only source IDs from this pass may be used." }
-            if(flight.batch.isEmpty()) return flight.contextSources
-            return (ids.ifEmpty { flight.batch }).flatMap { ancestry(sourceRefs[it] ?: error("The source reference is missing.")) }.distinct()
+            require(ids.all { it in flight.batch || it in flight.run?.eventIds.orEmpty() }) { "Only source IDs from this pass may be used." }
+            return ids.flatMap { id ->
+                if (id in flight.batch) ancestry(sourceRefs[id] ?: error("The source reference is missing."))
+                else {
+                    val event = board.events.value.firstOrNull { it.id == id } ?: error("The review event is missing.")
+                    val taskRefs = board.tasks.value.firstOrNull { it.id == event.taskId }?.sourceRefs.orEmpty()
+                    (event.sourceRefs + taskRefs + dev.androidagent.core.TaskSourceRef(if (event.actor == "user") "user" else "app", verified = true, eventId = id)).also {
+                        require(it.all(::sourceAllowed)) { "A review event uses an excluded source." }
+                    }
+                }
+            }.distinct()
         }
-        return (listOf(dev.androidagent.core.TaskSourceRef("chat", sessionId = session, verified = true)) + ownerSources[session].orEmpty()).distinct()
+        require(ids.isEmpty()) { "Only an active background pass may cite signal IDs." }
+        return listOf(dev.androidagent.core.TaskSourceRef("chat", sessionId = session, verified = true))
     }
 
     private val liveTools = TaskTools(board, memory, team, roleOf = ::roleOf, roleChat = { member -> createChat(member) },
@@ -224,7 +234,10 @@ class TaskDesk(
             }
         }, permit = { session -> if (isBackgroundSession(session)) dev.androidagent.core.TaskWritePermit(
             inFlight[session]?.policyRevision ?: board.settings.value.policyRevision) else null },
-        resolveSources = ::inputSources, allowedSource = ::sourceAllowed, playbookProvider = { playbook })
+        resolveSources = ::inputSources, allowedSource = ::sourceAllowed, playbookProvider = { playbook },
+        situation = ::situationSnapshot, correctSituation = { field, value, until ->
+            situationStore.correct(field, value, now(), until); situationSnapshot()
+        })
     val tools = dev.androidagent.core.TaskToolHandler { session, args, user ->
         val flight = inFlight[session]
         if(isBackgroundSession(session) && (paused || !board.settings.value.discoveryOn || (!user && flight == null)))
@@ -263,8 +276,8 @@ class TaskDesk(
         val stagedTeam = TeamRoster(data.store, now).apply { load() }
         val refs = contextRefs ?: if(batch.isNotEmpty()) batch.flatMap { ancestry(sourceRefs[it] ?: error("A source reference is missing.")) }.distinct()
             else board.tasks.value.filter(::sourceAllowed).flatMap { it.sourceRefs }.distinct()
-        if(member.kind == MemberKind.MANAGER) stagedMemory.used(refs.mapNotNull { it.noteId })
         val book = withIo { playbook.fork(id, refs.ifEmpty { listOf(dev.androidagent.core.TaskSourceRef("user", verified = true)) }) }
+        val dispositions = java.util.concurrent.ConcurrentHashMap<String, dev.androidagent.core.CoachDisposition>()
         val handler = TaskTools(stagedBoard, stagedMemory, stagedTeam, roleOf = ::roleOf,
             roleChat = { role ->
                 check(roleOf(session) == TaskChatRole.COORDINATOR) { "Only the Manager review organizes roles." }
@@ -276,10 +289,11 @@ class TaskDesk(
                 flight.finished = true
             }, permit = { dev.androidagent.core.TaskWritePermit(run.policyRevision) },
             resolveSources = ::inputSources, allowedSource = ::sourceAllowed, now = now, zone = zone, reportRunId = run.id,
-            reviewEvidence = eventIds.toSet())
+            reviewEvidence = eventIds.toSet(), recordCoachDisposition = { decision -> dispositions[decision.eventId] = decision },
+            situation = ::situationSnapshot)
         store.saveRun(run)
         return InFlight(member.id, batch, clock, runs().outcomeOf(session)?.runId, run.policyRevision,
-            run, data, handler, book, activeRules, withIo { book.fingerprint() }, refs)
+            run, data, handler, book, activeRules, withIo { book.fingerprint() }, refs, coachDispositions = dispositions)
     }
 
     fun isBackgroundSession(id: String): Boolean = roleOf(id) in setOf(TaskChatRole.SCOUT, TaskChatRole.COACH, TaskChatRole.LIBRARIAN, TaskChatRole.COORDINATOR) ||
@@ -304,6 +318,41 @@ class TaskDesk(
     }
 
     suspend fun pulse() { tick() }
+    private fun currentCalendarProfile(): String? = try {
+        val users = context.getSystemService(android.content.Context.USER_SERVICE) as? android.os.UserManager
+        val serial = users?.getSerialNumberForUser(android.os.Process.myUserHandle()) ?: -1
+        if (serial < 0) null else "current_android_user:$serial"
+    } catch (_: Exception) { null }
+    suspend fun refreshSituation() = kotlinx.coroutines.withContext(Dispatchers.IO) { situationRefreshLock.withLock {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val enabled = board.settings.value.readCalendar
+        val policyRevision = board.settings.value.policyRevision
+        val clock = now()
+        val calendar = if (enabled && granted) dev.androidagent.devicetools.AndroidCapabilityPlatform(context)
+            .querySituationCalendar(clock, clock + 7 * 86_400_000L, 50, clock) else null
+        val places = dev.androidagent.core.SavedPlaces.read(dev.androidagent.workspace.WorkspaceSeeder.preferencesFile(home))
+        val stillGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        situationStore.refresh(board.tasks.value, now(), zone(), board.settings.value.readCalendar, stillGranted, places,
+            calendar = calendar?.takeIf { enabled && board.settings.value.readCalendar && stillGranted &&
+                policyRevision == board.settings.value.policyRevision && it.profile == currentCalendarProfile() }, allowed = ::sourceAllowed)
+        Unit
+    } }
+    private fun situationSnapshot(): dev.androidagent.core.SharedSituation {
+      val profile = currentCalendarProfile()
+      return situationStore.snapshot(now(), zone(),
+        board.tasks.value.filter { !it.status.closed && sourceAllowed(it) }.map { it.id }.toSet(),
+        profile != null && board.settings.value.readCalendar && androidx.core.content.ContextCompat.checkSelfPermission(context,
+            android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED, profile)
+    }
+    /** Local scheduled checks keep working when model quota or network is unavailable. */
+    suspend fun pulseFollowups() = lock.withLock {
+        if (!ready || paused || !board.settings.value.discoveryOn) return@withLock
+        board.sweep()
+        deliverBriefings()
+        prepareDueChecks()
+        deliverBriefings()
+        publish()
+    }
     fun hasBackgroundWork(): Boolean = inFlight.isNotEmpty()
     fun refreshPermissions() { if (ready) publish() }
 
@@ -395,6 +444,8 @@ class TaskDesk(
                     }
                 }
                 launch { combine(board.tasks, team.members, memory.notes, board.settings, signals.pending) { _, _, _, _, _ -> Unit }.collect { publish() } }
+                launch { combine(board.tasks, board.settings) { _, _ -> Unit }.collect { refreshSituation() } }
+                launch { while (true) { refreshSituation(); delay(TICK_MS) } }
                 launch { sessions.sessions.collect { publish() } }
                 launch { agents().tasks.collect { children ->
                     val manager = team.of(MemberKind.MANAGER)?.sessionId
@@ -460,8 +511,10 @@ class TaskDesk(
             signals.pending.value.size >= SignalInbox.MAX_PENDING -> "backpressure"
             else -> "waiting"
         }
+        val checkDue = dev.androidagent.core.SituationAttention.plan(board.tasks.value.filter(::sourceAllowed), situationSnapshot(), now()).taskIds.isNotEmpty()
         val briefingWait = if(board.tasks.value.any { sourceAllowed(it) && dev.androidagent.core.TaskFollowThrough.needsBrief(it, now()) }) when {
             !settings.discoveryOn || paused -> "off"
+            checkDue -> "pending"
             quotaLow(settings.passEngine) -> "quota"
             settings.managerReviewDay == today && settings.managerReviewsToday >= 4 -> "cap"
             now() - (settings.lastManagerReviewAt ?: 0) < 30 * 60_000 -> "interval"
@@ -589,7 +642,7 @@ class TaskDesk(
 
     fun clearError() { mutable.value = mutable.value.copy(error = null) }
     fun reportError(message: String) { mutable.value = mutable.value.copy(error = message) }
-    fun calendarChanged() { calendarChanges.changed() }
+    fun calendarChanged() { calendarChanges.changed(); scope.launch { refreshSituation() } }
 
     /** Undo a night: the playbook and memory as they were in [snapshotId]. The user's own rules stay. */
     suspend fun undo(snapshotId: String) {
@@ -762,6 +815,8 @@ class TaskDesk(
         if (!settings.discoveryOn || paused) return@withLock
         userRulesContext = withIo { playbook.userRules().take(4_000) }
         deliverBriefings()
+        prepareDueChecks()
+        deliverBriefings()
         val calendarGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
         calendarChanges.capture(signals, now(), settings.lastCalendarCheckAt, settings.readCalendar && calendarGranted)
         try { collectMessageFeed() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -776,6 +831,32 @@ class TaskDesk(
     private fun busy(member: TeamMember?): Boolean = member?.sessionId?.let { id ->
         inFlight.containsKey(id) || runs().stateOf(id)?.active == true
     } ?: true
+
+    private suspend fun prepareDueChecks() {
+        val tasks = board.tasks.value.filter(::sourceAllowed)
+        val plan = dev.androidagent.core.SituationAttention.plan(tasks, situationSnapshot(), now())
+        val due = plan.taskIds.mapNotNull { id -> tasks.firstOrNull { it.id == id } }
+        val nextCheck = plan.nextCheck
+        if (due.isEmpty()) {
+            val deferred = plan.deferredTaskIds
+            situationStore.recordDecision(dev.androidagent.core.AttentionDecision(if (deferred.isEmpty()) "silence" else "defer",
+                plan.reason, deferred, now(), nextCheck))
+        }
+        val hebrew = java.util.Locale.getDefault().language in setOf("he", "iw")
+        for (task in due) {
+            // Never replace an unsent message. The delivery path resolves it first.
+            if (task.briefing?.let { it.deliveredAt == null } == true) {
+                situationStore.recordDecision(dev.androidagent.core.AttentionDecision("defer", "earlier briefing pending", listOf(task.id), now(), nextCheck))
+                continue
+            }
+            val deadline = dev.androidagent.core.TaskFollowThrough.occurrence(task, now())?.startsWith("deadline:") == true
+            val text = if (deadline) {
+                if (hebrew) "המועד של המשימה מתקרב. מה הצעד הבא?" else "This task's deadline is approaching. What is the next step?"
+            } else if (hebrew) "הגיע הזמן לבדוק את המשימה. מה הצעד הבא?" else "It's time to check this task. What is the next step?"
+            board.prepareBriefing(task.id, text, task.sourceRefs)
+            situationStore.recordDecision(dev.androidagent.core.AttentionDecision("defer", if (deadline) "approaching deadline queued for delivery" else "explicit follow-up queued for delivery", listOf(task.id), now(), nextCheck))
+        }
+    }
 
     private suspend fun maybePass() {
         val scout = team.of(MemberKind.SCOUT) ?: return
@@ -813,7 +894,8 @@ class TaskDesk(
         val tasks = board.tasks.value.filter(::sourceAllowed).filter { it.category == dev.androidagent.core.TaskCategory.TASK }.associateBy { it.id }
         val events = board.events.value.filter { it.id !in reviewedManager && it.taskId in tasks &&
             it.kind in setOf("created", "decision", "note", "outcome") }.takeLast(40)
-        val due = tasks.values.filter { dev.androidagent.core.TaskFollowThrough.needsBrief(it, clock) }
+        val due = tasks.values.filter { dev.androidagent.core.TaskFollowThrough.needsBrief(it, clock) &&
+            dev.androidagent.core.TaskFollowThrough.occurrence(it, clock)?.let { key -> !key.startsWith("check:") && !key.startsWith("deadline:") } == true }
             .sortedBy { it.deadlineAt ?: it.commitment?.nextCheckAt ?: Long.MAX_VALUE }
         if(events.isEmpty() && due.isEmpty()) return
         val repeated = tasks.values.mapNotNull { it.kind }.groupingBy { it }.eachCount().any { it.value >= 4 }
@@ -934,6 +1016,16 @@ class TaskDesk(
             if(ok && flight.data != null && flight.run != null) {
                 try {
                     check(flight.policyRevision == board.settings.value.policyRevision) { "Sources changed." }
+                    if (flight.run.purpose == "coach") withIo {
+                        val base = flight.ruleBase?.let { rootBook().generation(it) } ?: rootBook()
+                        val stagedBook = flight.ruleBook!!
+                        val basePaths = base.list().toSet()
+                        val stagedPaths = stagedBook.list().toSet()
+                        dev.androidagent.core.CoachReview.validateFinalFiles(flight.coachDispositions.values.toList(),
+                            before = { path -> if (path in basePaths) base.read(path) else null },
+                            after = { path -> if (path in stagedPaths) stagedBook.read(path) else null },
+                            sources = stagedBook::sourcesOf)
+                    }
                     val generation = if(withIo { flight.ruleBook!!.fingerprint() } != flight.ruleFingerprint)
                         withIo { flight.ruleBook!!.publishGeneration(flight.run.id) } else null
                     var changes = flight.data.changes(flight.run.id, flight.policyRevision, flight.ruleBase, generation)
@@ -954,10 +1046,13 @@ class TaskDesk(
                         check(report is dev.androidagent.core.ProposeOutcome.Created || report is dev.androidagent.core.ProposeOutcome.Duplicate) { "A maintenance report could not be saved." }
                         changes = flight.data.changes(flight.run.id, flight.policyRevision, flight.ruleBase, generation)
                     }
-                    store.commitChanges(changes, flight.run)
+                    val completedCoach = if (flight.run.purpose == "coach") dev.androidagent.core.CoachReview.completed(
+                        flight.run.eventIds, flight.coachDispositions.values.toList(),
+                        changes.generation != null) else emptySet()
+                    store.commitChanges(changes, flight.run.copy(coachDispositions = flight.coachDispositions.values.toList()))
                     committed = true
                     if(flight.run.purpose == "manager") reviewedManager = reviewedManager + flight.run.eventIds
-                    if(flight.run.purpose == "coach") reviewedCoach = reviewedCoach + flight.run.eventIds
+                    if(flight.run.purpose == "coach") reviewedCoach = reviewedCoach + completedCoach
                     appliedChanges = changes
                     activeRules = store.activeGeneration()
                     board.refresh(); memory.refresh(); signals.refresh(); team.refresh()
@@ -1000,49 +1095,70 @@ class TaskDesk(
         reportError(message)
     }
 
-    /** The words before the user's own in the Manager's or a member's chat, or null for any other chat. */
+    private val briefingDelivery = dev.androidagent.core.ManagerBriefingDelivery(
+        board = board,
+        sessions = sessions,
+        now = now,
+        active = { !paused && board.settings.value.discoveryOn },
+        taskAllowed = { sourceAllowed(it) },
+        sourceAllowed = { sourceAllowed(it) },
+        occurrenceAllowed = { task, briefing -> !briefing.occurrence.startsWith("deadline:") ||
+            dev.androidagent.core.SituationAttention.deadlineEligible(task, situationSnapshot(), now()) },
+        quietUntil = { task ->
+            dev.androidagent.core.SituationAttention.quietUntil(situationSnapshot(), now())?.also { until ->
+                situationStore.recordDecision(dev.androidagent.core.AttentionDecision("defer", "quiet window", listOf(task.id), now(), until))
+            }
+        },
+        recorded = { task ->
+            situationStore.recordDecision(dev.androidagent.core.AttentionDecision("send", "briefing saved to Manager chat", listOf(task.id), now()))
+        },
+        notify = { manager, title, text, id ->
+            TaskBriefingNotifier.show(context, manager, title, text, id).let { it.state to it.note }
+        },
+        onFailure = { reportError("A Manager briefing could not be delivered; it will remain pending.") },
+    )
+
     private suspend fun deliverBriefings() {
         val manager = team.of(MemberKind.MANAGER)?.sessionId ?: return
-        board.tasks.value.filter { task -> sourceAllowed(task) && task.briefing?.let {
-            it.deliveredAt == null && it.sourceRefs.all(::sourceAllowed) &&
-                it.occurrence == dev.androidagent.core.TaskFollowThrough.occurrence(task, now())
-        } == true }.take(3).forEach { task ->
-            val briefing = task.briefing!!
-            val messageId = "manager-brief:${briefing.id}"
-            // If the process died after append, the same ID already exists. Do not notify twice.
-            val exists = withIo { sessions.messages(manager).first().any { it.id == messageId } }
-            val current = board.task(task.id) ?: return@forEach
-            if(paused || !board.settings.value.discoveryOn || !sourceAllowed(current) || !briefing.sourceRefs.all(::sourceAllowed) ||
-                briefing.occurrence != dev.androidagent.core.TaskFollowThrough.occurrence(current, now())) return@forEach
-            if(!exists) {
-                sessions.append(dev.androidagent.core.ChatMessage(messageId, manager, "assistant",
-                    "${task.title}\n\n${briefing.text}", now()))
-            }
-            if(paused || !board.settings.value.discoveryOn || !sourceAllowed(task) || !briefing.sourceRefs.all(::sourceAllowed)) return@forEach
-            val notice = if(exists) "Saved in Manager chat; notification was not replayed."
-                else TaskBriefingNotifier.show(context, manager, task.title, briefing.text)
-            board.delivered(task.id, briefing.id, notice)
-        }
+        briefingDelivery.deliver(manager)
     }
 
     fun ownerContext(sessionId: String): String? = ownerContext(sessionId, "")
-    private fun personalContext(query: String): Pair<String, List<dev.androidagent.core.TaskSourceRef>> {
-        val notes = dev.androidagent.core.TaskFollowThrough.context(memory.notes.value, query, ::sourceAllowed)
+    private fun personalContext(query: String, situationTasks: List<MikeTask> = board.tasks.value): Pair<String, List<dev.androidagent.core.TaskSourceRef>> {
+        fun words(text: String) = text.lowercase().split(Regex("[^\\p{L}\\p{N}]+" )).filter { it.length > 1 }.toSet()
+        val queryWords = words(query)
+        val relevant = situationTasks.filter { !it.status.closed && sourceAllowed(it) &&
+            words("${it.title} ${it.topicKey} ${it.why}").intersect(queryWords).isNotEmpty() }.map { it.id }.toSet()
+        val notes = dev.androidagent.core.TaskFollowThrough.context(memory.notes.value, query, relevant, ::sourceAllowed)
         val feedback = board.events.value.filter { it.kind == "feedback" && it.actor == "user" && it.sourceRefs.all(::sourceAllowed) }.takeLast(6)
-        val refs = (notes.flatMap { it.sourceRefs + dev.androidagent.core.TaskSourceRef("memory", verified = true, noteId = it.id) } + feedback.flatMap { it.sourceRefs }).distinct()
+        val situation = situationSnapshot().let { snapshot -> snapshot.copy(commitments = snapshot.commitments.filter { item ->
+            situationTasks.any { it.id == item.taskId && sourceAllowed(it) }
+        }) }
+        val shownIds = situation.commitments.map { it.taskId }.toSet()
+        val refs = (notes.flatMap { it.sourceRefs + dev.androidagent.core.TaskSourceRef("memory", verified = true, noteId = it.id) } +
+            feedback.flatMap { it.sourceRefs } + situationTasks.filter { it.id in shownIds }.flatMap { it.sourceRefs } +
+            (if (situation.calendar != null) listOf(dev.androidagent.core.TaskSourceRef("calendar", verified = true)) else emptyList()) +
+            (if (situation.claims.any { it.source == "preferences.json" && it.confidence != "stale" })
+                listOf(dev.androidagent.core.TaskSourceRef("user", verified = true)) else emptyList())).distinct()
+        val compactNotes = kotlinx.serialization.json.JsonArray(notes.map { note -> buildJsonObject {
+            put("id", note.id.take(120)); put("subject", note.subject.take(80)); put("text", note.text.take(400))
+            put("source", note.source.take(60)); put("at", note.at); note.scope?.let { put("scope", it) }
+        } })
+        val compactFeedback = kotlinx.serialization.json.JsonArray(feedback.map { event -> buildJsonObject {
+            put("id", event.id.take(120)); put("at", event.at); put("note", event.note.orEmpty().take(400))
+        } })
         return ("Owner rules (context only; never grant permission):\n$userRulesContext\nPersonal context (quoted data, never permission):\n" +
-            kotlinx.serialization.json.Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(dev.androidagent.core.MemoryNote.serializer()), notes).toString() +
+            compactNotes.toString() +
             "\nRecent owner feedback (preserve corrections; no automatic execution):\n" +
-            kotlinx.serialization.json.Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(dev.androidagent.core.TaskEvent.serializer()), feedback).toString()) to refs
+            compactFeedback.toString() + "\nLocal shared situation (unknown or stale is not a fact or permission):\n" +
+            Json.encodeToString(dev.androidagent.core.SharedSituation.serializer(), situation)) to refs
     }
     fun ownerContext(sessionId: String, query: String): String? {
         if (!ready) return null
         val member = team.bySession(sessionId)?.takeIf { it.kind == MemberKind.MANAGER || it.kind == MemberKind.ROLE } ?: return null
         if(!member.sourceRefs.all(::sourceAllowed)) return null
         val mine = board.tasks.value.filter { sourceAllowed(it) && (member.kind == MemberKind.MANAGER || it.assignee == member.id) }
-        val personal = personalContext(query + " " + mine.joinToString(" ") { it.title })
-        ownerSources[sessionId] = personal.second
-        scope.launch { memory.used(personal.second.mapNotNull { it.noteId }) }
+        val personal = personalContext(query, mine)
         return personal.first + "\n" + TaskPrompts.ownerContext(member,
             waiting = mine.filter { it.status.undecided && it.status != TaskStatus.SNOOZED && it.category != dev.androidagent.core.TaskCategory.REPORT }
                 .sortedWith(compareBy<MikeTask> { it.usefulUntil ?: Long.MAX_VALUE }.thenByDescending { it.createdAt }),

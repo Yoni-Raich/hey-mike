@@ -1,5 +1,32 @@
 # Progress
 
+### Manager follow-through and situation — 2026-11-02
+
+Based on `feat/task-inbox-conversations` at `e8e55758`. Scheduled checks
+and status briefings now have separate receipts, and rescheduling persists.
+Memory retrieval filters levels and explicit scopes without treating injection
+as proof of usefulness. Coach reviews require a per-event disposition.
+Manager uses a durable local situation snapshot with expiring user claims,
+filtered board commitments and explicit unknowns. Scheduled follow-ups have a
+local path independent of model quota. Delivery records distinguish chat save,
+notification reservation and outcome; a crash can leave the outcome unknown.
+
+Saved places and a personal-profile calendar adapter supply bounded, expiring
+context. Approaching task deadlines have their own deduplicated receipt and need
+a fresh allowed board projection. An explicit quiet interval can defer delivery.
+The local outbox isolates failures and serializes chat append with board changes;
+notification is an external OS call and can race a policy change. A reservation
+without a recorded outcome remains unknown and is not automatically resent.
+
+Offline isolated gate on 2026-11-02: `:core:test
+:device-tools:testDebugUnitTest :workspace:testDebugUnitTest
+:app:testDevDebugUnitTest :app:assembleDevDebug` passed. XML reports core 962,
+device-tools 111, workspace 66 (14 skipped), app 172; no failures. Fixtures
+cover calendar adapter, Manager delivery, deadline ordering,
+revocation and restart. No real calendar provider, OS notification, phone profile
+or background/Doze timing was tested. Location and ETA providers are unavailable;
+recurring quiet windows have no setting. See the external implementation report.
+
 ### Conversation-based discovery intake — 2026-10-31
 
 Continued the interrupted `feat/task-inbox-conversations` work from

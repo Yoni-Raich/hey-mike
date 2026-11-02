@@ -166,6 +166,12 @@ data class MikeTask(
     val briefing: TaskBriefing? = null,
     /** A deadline is separate from proposal expiry. */
     val deadlineAt: Long? = null,
+    /** Status and scheduled checks have independent durable receipts. */
+    val lastStatusBriefingOccurrence: String? = null,
+    /** A status briefing must not erase a scheduled check's receipt. */
+    val lastCheckBriefingOccurrence: String? = null,
+    /** Deadline reminders have their own durable receipt. */
+    val lastDeadlineBriefingOccurrence: String? = null,
 )
 
 /** A topic or kind the user said never to suggest again. */
@@ -207,6 +213,8 @@ data class MemoryNote(
     val retiredReason: String? = null,
     val provenance: List<MemoryProvenance> = emptyList(),
     val sourceRefs: List<TaskSourceRef> = emptyList(),
+    /** Null means legacy/unspecified, never assumed global. */
+    val scope: String? = null,
 )
 
 /** How soon a queue row deserves a model. The declared order is the processing order. */

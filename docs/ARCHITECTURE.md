@@ -1,5 +1,41 @@
 # Architecture
 
+## Manager follow-through and situation — 2026-11-02
+
+An explicit scheduled check has its own persisted revision and receipt,
+separate from status briefings. Memory scopes are explicit; older unscoped
+notes are selected only by relevance. Recall and context injection are not
+evidence of usefulness. Coach dispositions commit with the staged changes;
+deferred and retry events remain unconsumed.
+
+`SharedSituationStore` is a local, versioned atomic snapshot owned by TaskDesk.
+It records bounded allowed board commitments and explicit user corrections with
+source, observation time and expiry. Reads recompute time, freshness and source
+visibility; conflicts and unknowns are not facts or permission. TaskDesk feeds
+the snapshot to Manager context and the situation tool, and refreshes it on
+board changes, clock changes and a periodic tick. The app-managed preferences
+file supplies bounded home/work saved places, never current location. The calendar
+adapter checks for a personal profile before querying the normal current-user
+Instances URI and records profile serial, query window, all-day, timezone,
+completeness and freshness; permission, policy
+and profile are rechecked before exposure. No enterprise calendar URI is used.
+Attention ranks due explicit checks and approaching real card deadlines, with
+separate durable occurrence receipts and bounded public decision reasons;
+it does not infer travel or departure. Location and ETA have no provider.
+Calendar provider behavior, profile isolation and background delivery still need
+physical-device validation. Explicit temporary availability corrections can
+defer delivery through their expiry; no recurring quiet-window setting exists.
+
+Due checks use a local path independent of model quota, with a persisted Android
+job that may be delayed by the OS. Chat append uses an idempotent message ID;
+notification reservation and outcome are recorded separately. A reservation
+interrupted before its outcome is recorded remains unknown and is not replayed.
+The latest outbox record is retained per card, not a full delivery history.
+The card and policy check for chat append is serialized with board updates;
+one failed item does not stop other eligible items. Deadlines require a fresh,
+allowed board projection before preparation and again at delivery.
+Notification is an external OS call and cannot be atomic with a policy change.
+
 ## Unified task board and personal assistant — 2026-10-29
 
 The board, Manager, team UI and follow-through are one feature. This integration

@@ -7,6 +7,9 @@ import android.app.job.JobScheduler
 import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
@@ -37,6 +40,14 @@ internal class TaskBackgroundHost(
     }
 
     fun start() {
+        val timeChanges = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                scope.launch { desk.refreshSituation(); desk.pulseFollowups() }
+            }
+        }
+        androidx.core.content.ContextCompat.registerReceiver(context, timeChanges,
+            IntentFilter().apply { addAction(Intent.ACTION_TIME_CHANGED); addAction(Intent.ACTION_TIMEZONE_CHANGED) },
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         scope.launch {
             desk.state.map { listOf(it.ready, it.settings.discoveryOn, it.settings.readCalendar, it.calendarGranted) }
                 .distinctUntilChanged().collect { (ready, enabled, calendar, granted) ->
@@ -49,7 +60,12 @@ internal class TaskBackgroundHost(
                                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setRequiresBatteryNotLow(true).build())
                             if (result != JobScheduler.RESULT_SUCCESS) desk.reportError("Android could not schedule task discovery. Open the app to retry.")
                         }
-                    } else scheduler.cancel(JOB_ID)
+                        if (scheduler.getPendingJob(FOLLOWUP_JOB_ID) == null) {
+                            val result = scheduler.schedule(JobInfo.Builder(FOLLOWUP_JOB_ID, ComponentName(context, TaskFollowupJob::class.java))
+                                .setPeriodic(15 * 60_000L).setPersisted(true).build())
+                            if (result != JobScheduler.RESULT_SUCCESS) desk.reportError("Android could not schedule follow-up checks. Open the app to retry.")
+                        }
+                    } else { scheduler.cancel(JOB_ID); scheduler.cancel(FOLLOWUP_JOB_ID) }
                     val allowed = enabled && calendar && granted
                     if (allowed && !observing) {
                         runCatching { context.contentResolver.registerContentObserver(CalendarContract.Events.CONTENT_URI, true, observer) }
@@ -62,7 +78,30 @@ internal class TaskBackgroundHost(
         }
     }
 
-    companion object { const val JOB_ID = 0x4D494B }
+    companion object { const val JOB_ID = 0x4D494B; const val FOLLOWUP_JOB_ID = 0x4D494C }
+}
+
+/** A local-only wake, independent of the network needed by background model passes. */
+class TaskFollowupJob : JobService() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var work: Job? = null
+    override fun onStartJob(params: JobParameters): Boolean {
+        val desk = (application as AgentApplication).graph.taskDesk
+        work = scope.launch {
+            try {
+                withTimeoutOrNull(30_000) { while (!desk.state.value.ready) delay(200) }
+                if (desk.state.value.ready) {
+                    desk.refreshSituation()
+                    desk.pulseFollowups()
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { desk.reportError("Follow-up check: ${error.message}") }
+            finally { jobFinished(params, false) }
+        }
+        return true
+    }
+    override fun onStopJob(params: JobParameters): Boolean { work?.cancel(); return true }
+    override fun onDestroy() { scope.cancel(); super.onDestroy() }
 }
 
 /** Keeps a background model pass inside the system job's bounded execution window. */

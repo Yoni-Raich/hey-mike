@@ -8,7 +8,7 @@ import kotlin.coroutines.CoroutineContext
 @Serializable
 data class TaskSourceRef(val source: String, val app: String? = null, val conversation: String? = null,
     val sessionId: String? = null, val group: Boolean = false, val verified: Boolean = false,
-    val noteId: String? = null)
+    val noteId: String? = null, val eventId: String? = null)
 
 object TaskSourcePolicy {
     fun of(signal: TaskSignal) = TaskSourceRef(signal.source, signal.app, signal.conversation, signal.sessionId, signal.group, signal.sourceVerified)

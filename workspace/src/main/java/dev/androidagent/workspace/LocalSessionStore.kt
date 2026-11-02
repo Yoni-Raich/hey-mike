@@ -139,6 +139,22 @@ class LocalSessionStore(context: Context) : SessionStore {
         db.execSQL("UPDATE sessions SET updated=? WHERE id=?", arrayOf(message.createdAt, message.sessionId))
         refresh(message.sessionId)
     }
+    override suspend fun appendOnce(message: ChatMessage) = mutate {
+        val inserted = db.insertWithOnConflict("messages", null, ContentValues().apply {
+            put("id", message.id); put("session", message.sessionId); put("role", message.role); put("text", message.text); put("phase", message.phase)
+            put("created", message.createdAt); put("state", message.state); put("attachments", Json.encodeToString(message.attachmentPaths))
+        }, SQLiteDatabase.CONFLICT_IGNORE)
+        if (inserted == -1L) {
+            val same = db.rawQuery("SELECT session,role,text FROM messages WHERE id=?", arrayOf(message.id)).use { c ->
+                c.moveToFirst() && c.getString(0) == message.sessionId && c.getString(1) == message.role && c.getString(2) == message.text
+            }
+            check(same) { "Message ID already exists with different content, or could not be saved." }
+        } else {
+            db.execSQL("UPDATE sessions SET updated=? WHERE id=?", arrayOf(message.createdAt, message.sessionId))
+        }
+        // Another store instance may have inserted the row after this instance loaded its stream.
+        refresh(message.sessionId)
+    }
     override suspend fun updateMessage(id: String, text: String, state: String) = mutate {
         val session = db.rawQuery("SELECT session FROM messages WHERE id=?", arrayOf(id)).use { if (it.moveToFirst()) it.getString(0) else null }
         db.update("messages", ContentValues().apply { put("text", text); put("state", state) }, "id=?", arrayOf(id))

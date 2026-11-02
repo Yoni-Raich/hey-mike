@@ -14,6 +14,22 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class TaskCommitTest {
+    @Test fun coachDispositionsCommitAtomicallyAndPendingEventsSurviveRestart() = runBlocking {
+        val store = store()
+        val ids = listOf("done", "later", "again")
+        val decisions = listOf(
+            CoachDisposition("done", "no_change", "One-off request", "Owner feedback"),
+            CoachDisposition("later", "defer", "Needs context", "Owner feedback"),
+            CoachDisposition("again", "retry", "Review failed", "Owner feedback"))
+        val review = run("coach-review").copy(purpose = "coach", eventIds = ids, coachDispositions = decisions)
+        assertTrue(runCatching { store.commitChanges(TaskChangeSet("invalid-coach", 0), review.copy(id = "invalid-coach", coachDispositions = emptyList())) }.isFailure)
+        assertTrue(store.consumedEvents("coach").isEmpty())
+        store.commitChanges(TaskChangeSet(review.id, 0), review)
+        store.commitChanges(TaskChangeSet(review.id, 0), review)
+        val reopened = LocalTaskBoardStore(RuntimeEnvironment.getApplication())
+        assertEquals(setOf("done"), reopened.consumedEvents("coach"))
+        assertEquals(decisions.toSet(), reopened.loadRuns().single { it.id == review.id }.coachDispositions.toSet())
+    }
     @Test fun aSuppressedScoutSuggestionCanCommitItsReceiptWithoutCreatingWork() = runBlocking {
         val store = store()
         val input = TaskSignal("suppressed-input", "chat", text = "A parcel update", at = 1, capturedAt = 1)
