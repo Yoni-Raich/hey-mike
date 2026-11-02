@@ -159,6 +159,42 @@ class AndroidCapabilityPlatform(
 
     // ---- calendar ----
 
+    override suspend fun querySituationCalendar(startMs: Long, endMs: Long, limit: Int, observedAt: Long): dev.androidagent.core.SituationCalendar =
+        withContext(Dispatchers.IO) {
+            val source = object : SituationCalendarSource {
+                override fun permitted() = hasPermission(android.Manifest.permission.READ_CALENDAR)
+                override fun personalProfile(): String? {
+                    val users = context.getSystemService(Context.USER_SERVICE) as? android.os.UserManager
+                        ?: return null
+                    // On API 33+ this excludes managed, private and clone profiles.
+                    // On older versions only the system user can be established safely.
+                    val personal = if (Build.VERSION.SDK_INT >= 33) !users.isProfile else users.isSystemUser
+                    if (!personal) return null
+                    val serial = users.getSerialNumberForUser(android.os.Process.myUserHandle())
+                    return SituationCalendarAdapter.personalProfile(personal, serial)
+                }
+                override fun query(startMs: Long, endMs: Long): SituationCalendarCursor? {
+                    val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
+                        ContentUris.appendId(it, startMs); ContentUris.appendId(it, endMs)
+                    }.build()
+                    val columns = arrayOf(CalendarContract.Instances.EVENT_ID, CalendarContract.Instances.TITLE,
+                        CalendarContract.Instances.BEGIN, CalendarContract.Instances.END,
+                        CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_TIMEZONE)
+                    val cursor = context.contentResolver.query(uri, columns, null, null, "${CalendarContract.Instances.BEGIN} ASC")
+                        ?: return null
+                    return object : SituationCalendarCursor {
+                        override fun moveToNext() = cursor.moveToNext()
+                        override fun isNull(column: Int) = cursor.isNull(column)
+                        override fun string(column: Int) = cursor.getString(column)
+                        override fun long(column: Int) = cursor.getLong(column)
+                        override fun int(column: Int) = cursor.getInt(column)
+                        override fun close() = cursor.close()
+                    }
+                }
+            }
+            SituationCalendarAdapter.read(source, startMs, endMs, limit, observedAt)
+        }
+
     override suspend fun queryEvents(startMs: Long, endMs: Long, limit: Int): List<EventRow> =
         withContext(Dispatchers.IO) {
             // Instances expands recurring events into occurrences inside the

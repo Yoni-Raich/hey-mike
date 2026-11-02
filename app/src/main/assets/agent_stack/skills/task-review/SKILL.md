@@ -53,7 +53,15 @@ what changed and why.
 
 Owner `feedback` events also contain actual words from Manager/member chat. Use clear
 lasting corrections and preferences, not one-off commands or quoted requests. Each write
-must cite at least one exact feedback/decision event ID supplied in this review.
+must cite the exact feedback/decision event IDs supplied in this review both in
+the file and in the `eventIds` argument of that playbook write. Cite only events
+that support that file.
+For every event in the review call `tasks mode=coach_review` with its `id`,
+`disposition` (applied, no_change, defer or retry), a short `note` explaining
+why, and `reviewEvidence` identifying the supporting evidence. Use no_change
+when no change is justified. Defer and retry leave the event pending. Applied
+requires a changed playbook file citing that exact event, written before its
+disposition; saving a report alone does not count.
 
 For a narrow automatic skip preference, place this optional tested block in a matching
 `kinds/` or `sources/` Markdown file, alongside its event IDs and explanation:

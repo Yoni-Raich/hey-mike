@@ -326,14 +326,14 @@ class MemoryBookTest {
     private var n = 0
     private val book = MemoryBook(InMemoryTaskBoardStore(), now = { clock }, newId = { "n${++n}" })
 
-    @Test fun rememberDeduplicatesAndRecallCountsUse() = runTest {
+    @Test fun rememberDeduplicatesAndRecallDoesNotClaimUsefulness() = runTest {
         book.load()
         val a = book.remember("Dana", "request", "Asked for the signed form before Tuesday", "whatsapp", sender = "Dana")
         assertEquals(a.id, book.remember("dana", "request", "asked for the signed form before tuesday", "whatsapp").id)
         book.remember("Ben", "fact", "Ben is the plumber", "chat")
         val found = book.recall("signed form")
         assertEquals(listOf(a.id), found.map { it.id })
-        assertEquals(1, found.single().useCount)
+        assertEquals(0, found.single().useCount)
         assertEquals(1, book.recall(null, subject = "Ben").size)
     }
 
