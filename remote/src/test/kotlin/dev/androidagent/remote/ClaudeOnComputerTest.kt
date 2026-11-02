@@ -130,6 +130,15 @@ class ClaudeOnComputerTest {
         assertTrue(RemoteInstructions.forComputer(computer).contains("you run as Codex on their Windows computer \"Studio\""))
     }
 
+    @Test fun everyComputerSessionKnowsTheVisualWidgetFormat() {
+        for (os in HostOs.entries) for (engine in EngineKind.entries) {
+            val computer = RemoteComputer("pc", "Studio", "10.0.0.2", user = "me", os = os)
+            val instructions = RemoteInstructions.forComputer(computer, engine)
+            assertTrue(instructions.contains("Visual widgets: Live visuals in the chat"))
+            assertTrue(instructions.contains("```mike-widget"))
+        }
+    }
+
     @Test fun aConnectedDeviceTestAuthorizesComputerAdbForBothEnginesAndHosts() {
         for (os in HostOs.entries) for (engine in EngineKind.entries) for (access in RemoteAccess.entries) {
             val computer = RemoteComputer("pc", "Studio", "10.0.0.2", user = "me", os = os, access = access)

@@ -750,7 +750,13 @@ private fun AgentChatContent(
                     is MessageRow -> {
                         val child = state.childAgents.firstOrNull { it.id == row.message.id }
                         if (child != null) ChildAgentCard(child, actions)
-                        else MessageBubble(row.message, row.copyText, row.showCopyAction)
+                        else MessageBubble(
+                            row.message,
+                            row.copyText,
+                            row.showCopyAction,
+                            // A widget's "ask" button speaks as the user: it steers a run in progress, else starts one.
+                            onAsk = { text -> if (running) actions.onSteer(text) else actions.onSend(text, emptyList()) },
+                        )
                     }
                     is ActionsRow -> DeviceActionsRow(row)
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
@@ -1055,7 +1061,12 @@ private fun LoadingMessagesCard() {
 
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showCopyAction: Boolean = false) {
+internal fun MessageBubble(
+    message: ChatMessage,
+    copyText: String? = null,
+    showCopyAction: Boolean = false,
+    onAsk: ((String) -> Unit)? = null,
+) {
     val role = message.role.lowercase()
     val user = role == "user"
     val system = role == "system" || role == "tool"
@@ -1131,7 +1142,14 @@ internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showC
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                         } else {
-                            MarkdownMessage(message.text, textColor, onLongPress = onLongPress)
+                            dev.androidagent.app.ui.widget.AssistantMessageBody(
+                                messageId = message.id,
+                                text = message.text,
+                                streaming = message.state.equals("streaming", ignoreCase = true),
+                                textColor = textColor,
+                                onLongPress = onLongPress,
+                                onAsk = onAsk,
+                            )
                         }
                     }
                 } else if (message.state.equals("streaming", ignoreCase = true)) {

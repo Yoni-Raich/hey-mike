@@ -1560,6 +1560,51 @@ new last row appears below the viewport. Scrolling up pauses following, and
 the jump-to-latest button resumes it. Streaming text does not restart a scroll
 animation on each update.
 
+## Visual widgets in the chat
+
+Decided 2026-11-02. A reply can hold a live, interactive card: sliders, stat
+cards, charts, gauges, tables, tabs, toggles, an animated dot grid and buttons.
+The agent writes a fenced block with the language `mike-widget` and one JSON
+object; the chat draws it natively in Compose. It does not use a WebView, runs
+offline and adds no model-facing tool. The format is taught by the on-device
+skill `visual-widgets` and, for computer sessions, by the short
+`WidgetGuide.TEXT` that `RemoteInstructions` carries.
+
+- **Pure parsing in `:core` (`core/widget`).** `WidgetSegments.splitMessage`
+  cuts a reply into `Markdown`, `Widget`, `Pending` and `Broken` parts. An
+  unclosed fence in a streaming reply is `Pending` (a skeleton); a closed block
+  with bad JSON, or an unclosed one in a finished reply, is `Broken` and is
+  shown as code with the reason. A reply with no widget fence is one `Markdown`
+  part and is drawn exactly as before. `WidgetSpec.parse` is lenient (trailing
+  commas, unknown keys, aliases such as `kpi` for `stats`) and never throws for
+  one bad block: it keeps the rest and records a warning. Limits: 64,000 source
+  characters, 150 blocks, 5 nesting levels, 400 chart points, 48 by 48 dots.
+- **State lives in inputs.** Each slider, select, tabs, toggle and text input
+  has an `id`, and its value is a variable in every expression. Number fields
+  take `"=expr"`, text takes `{expr}` holes, and any block takes `"when"`. A
+  change recomputes the visible numbers and charts without a turn. The state is
+  `rememberSaveable` per message and block source, so scrolling away and back
+  keeps the user's settings.
+- **A safe expression language (`WidgetExpr`).** Numbers and text, arithmetic,
+  comparisons, `&&`, `||`, `!`, `?:` and about 30 functions (`noise`, `dist`,
+  `mix`, `clamp`, `fmt`, ...). There are no loops, assignment or calls out, so
+  the model's text cannot run code, hang the UI thread or reach the device. A
+  parse error becomes a warning and the field keeps its fallback.
+- **Buttons.** `copy` puts a JSON snapshot of the inputs and every visible
+  chart's data on the clipboard. `ask` sends the label plus that snapshot, as a
+  fenced `json` block, back into the chat as a user message. It goes through
+  `onSteer` while a run is active and `onSend` otherwise, so a widget is
+  another way to type, not a new side channel.
+- **Drawing (`app/ui/widget`).** Charts are drawn on `Canvas` with nice axis
+  ticks, a touch readout, animated data changes and an animated first draw. The
+  dot grid runs a frame loop at about 30 fps and stands still when the system
+  animator scale is 0. Charts stay left to right inside a right-to-left widget;
+  the widget direction comes from `"dir"` or, if absent, from the text.
+- **Trust.** The block is untrusted model text. It can only draw and read its
+  own inputs; it cannot open links, start intents or call tools. The only way
+  out is the `ask` button, and that sends visible text the user can read in the
+  chat.
+
 ## The chat's own tools: `ask_user` and `show_media`
 
 Decided 2026-10-03. Two tools put something in the conversation instead of

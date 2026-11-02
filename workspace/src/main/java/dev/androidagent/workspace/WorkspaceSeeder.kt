@@ -71,6 +71,7 @@ object WorkspaceSeeder {
         "files-across-devices",
         "browser",
         "connected-apps",
+        "visual-widgets",
         "task-board",
         "task-discovery",
         "task-review",
