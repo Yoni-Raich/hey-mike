@@ -6,7 +6,32 @@ Prepared Dev Debug 1191 / `0.14.0-dev.manager-state-widgets1191` from the
 installed 1190 source lineage `b6e857ea`, with Manager fix `b6b29818` applied.
 The robot face and visual widgets remain included. Only documentation headers
 conflicted; both histories were kept. This is a local integration branch, not
-a merge of PR #153 into dev. Build, package and phone evidence follow separately.
+a merge of PR #153 into dev.
+
+Integrated scoped gate passed: core 1,027, device-tools 114, web 95,
+workspace 66 (14 existing skips), app 179. Total 1,481 cases, zero failures
+or errors, 1,467 passed. Dev Debug assembly and app lint passed (zero errors,
+21 warnings, four information findings). ARM64 app-server and widget skill are
+present; signature v2 and 16 KiB alignment passed. Debug certificate matches
+the installed 1190 artifact. Source commit: `e19c0b52`.
+
+`copy_file` delivered the APK to the phone and its reconstructed SHA-256 was
+verified before installation. A later `install_apk` updated the hosting phone
+in place. The app restarted; app_info confirms 1191 and installed base.apk is
+SHA-256 `b72d97605923aa89c57f7d856875ab57a6d08ae52c7c3f50dc0e51a50898f2bc`,
+matching the built artifact. Fresh tasks status succeeds: discovery remains off,
+zero pending inputs, zero attempts today, daily cap 48 and model usage gate false.
+No settings/policy/permission change, data clear or uninstall was performed.
+The normal APK Manager path was blocked by unknown-source policy; Android
+documents ADB as excluded from that restriction, and the personal user's
+effective restrictions did not prohibit ADB or all app installation.
+
+No wire-byte measurement, full release gate, real GPS permission/fix flow,
+overnight behavior or model-driven evidence-save test. Installation and fresh
+device-tool calls prove package identity and basic runtime, not those flows.
+The temporary install worktree/build bucket and isolated Gradle home are closed
+after delivery. The signed APK remains in the normal host transfer cache and
+phone Downloads. No new PR merge or release tag was made.
 
 ### Visual widgets in the chat — 2026-11-02
 
