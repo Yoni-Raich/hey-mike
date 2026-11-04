@@ -114,6 +114,7 @@ class MemoryBook(
         require(level == null || level in LEVELS) { "Unknown memory level." }
         require(scope == null || scope in SCOPES) { "Unknown memory scope." }
         val words = words(query.orEmpty())
+        if (!query.isNullOrBlank() && words.isEmpty() && subject == null) return@withLock emptyList()
         val scored = live.filter(allowed).filter { (level == null || it.level == level) && (scope == null || it.scope == scope) }.mapNotNull { note ->
             val subjectHit = subject != null && note.subject.equals(subject.trim(), true)
             val subjectWordsHit = words.intersect(words(note.subject)).isNotEmpty()
@@ -251,7 +252,7 @@ class MemoryBook(
     }
 
     private fun words(text: String): Set<String> =
-        text.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 2 }.toSet()
+        TaskFollowThrough.contextWords(text)
 
     private fun origins(note: MemoryNote): List<MemoryProvenance> = note.provenance.ifEmpty {
         listOf(MemoryProvenance(note.source, note.sender, note.at))

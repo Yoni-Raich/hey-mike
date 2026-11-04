@@ -978,7 +978,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(voiceBrowsing = false) }
     }
     fun stopSession(id: String) {
-        if (id == graph.taskDesk.state.value.managerSessionId || graph.taskDesk.isBackgroundSession(id)) graph.taskDesk.pauseBackground()
+        if (id == graph.taskDesk.state.value.managerSessionId || graph.taskDesk.isBackgroundSession(id))
+            graph.taskDesk.pauseBackground(if (id == graph.taskDesk.state.value.managerSessionId) "manager_chat_stop" else "background_chat_stop")
         graph.coordinator.stop(id)
         if (id == graph.voiceConversation.sessionId.value) stopVoice()
     }
@@ -1194,7 +1195,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stop() {
         val id = current.value
-        if (id == graph.taskDesk.state.value.managerSessionId || (id != null && graph.taskDesk.isBackgroundSession(id))) graph.taskDesk.pauseBackground()
+        if (id == graph.taskDesk.state.value.managerSessionId || (id != null && graph.taskDesk.isBackgroundSession(id)))
+            graph.taskDesk.pauseBackground(if (id == graph.taskDesk.state.value.managerSessionId) "manager_chat_stop" else "background_chat_stop")
         graph.queue.pause()
         // End voice while an assistant press is still setting up cancels it.
         if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {

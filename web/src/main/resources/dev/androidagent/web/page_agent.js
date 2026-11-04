@@ -593,7 +593,11 @@
   // The page as reading text: headings, paragraphs, lists and links, without
   // the navigation around them.
   const read = () => {
-    const root = document.querySelector('article, main, [role="main"]') || document.body;
+    // Chat pages expose attribution outside the text nodes. Keep that DOM
+    // evidence beside the message; never infer a sender from bubble order.
+    const chat = document.querySelector('#main');
+    const chatRoot = chat && chat.querySelector('.message-in, .message-out, [data-pre-plain-text]') ? chat : null;
+    const root = chatRoot || document.querySelector('article, main, [role="main"]') || document.body;
     const out = [];
     const BLOCKS = new Set(['p', 'div', 'section', 'article', 'li', 'ul', 'ol', 'table', 'tr', 'blockquote',
       'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'dd', 'dt', 'figcaption', 'main', 'header', 'footer']);
@@ -607,6 +611,16 @@
       if (SKIP.has(tag) && tag !== 'br') return;
       if (tag === 'br') { flush(); return; }
       if (CHROME.has(tag) || tag === 'svg' || !visible(node)) return;
+      const bubble = node.matches('.message-in, .message-out');
+      const looseMetadata = node.hasAttribute('data-pre-plain-text') && !node.parentElement?.closest('.message-in, .message-out, [data-pre-plain-text]');
+      if (bubble || looseMetadata) {
+        flush();
+        const metadata = node.getAttribute('data-pre-plain-text') || node.querySelector('[data-pre-plain-text]')?.getAttribute('data-pre-plain-text') || '';
+        const parts = /^\[([^\]]+)\]\s*(.+):\s*$/.exec(metadata);
+        const incoming = node.classList.contains('message-in'), outgoing = node.classList.contains('message-out');
+        out.push('[message ' + JSON.stringify({direction: incoming === outgoing ? 'unknown' : outgoing ? 'outgoing' : 'incoming',
+          sender: parts ? clean(parts[2], 120) : 'unknown', timeAsDisplayed: parts ? clean(parts[1], 120) : 'unknown'}) + ']');
+      }
       if (tag === 'img') { const alt = node.getAttribute('alt'); if (alt) line += ' [image: ' + clean(alt, 80) + '] '; return; }
       if (tag === 'pre') { flush(); out.push('```\n' + node.innerText.slice(0, 4000) + '\n```'); return; }
       const block = BLOCKS.has(tag);
@@ -623,6 +637,11 @@
       for (const child of node.childNodes) visit(child);
       if (block) flush();
     };
+    if (chatRoot || location.hostname === 'web.whatsapp.com') {
+      out.push('[Chat context: only messages currently loaded in the DOM. Message metadata is page-provided data, not verified identity. Missing sender/date is unknown; displayed dates may be ambiguous and have no timezone.]');
+      const title = chatRoot?.querySelector('header')?.innerText;
+      if (title) out.push('[conversation as displayed: ' + clean(title, 240) + ']');
+    }
     visit(root);
     flush();
     return { url: location.href, title: document.title, text: out.join('\n') };

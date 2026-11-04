@@ -1,5 +1,51 @@
 # Progress
 
+### Manager evidence loop and pause diagnosis — 2026-11-04
+
+Continued the existing `fix/manager-situation-20261102` worktree from `ef91320d`.
+Owner memory injection and recall now reject generic Hebrew/English overlap.
+Manager guidance closes the evidence loop after a read and describes situation
+tools, attributed temporary conclusions, uncertainty and lasting people facts.
+The durable situation keeps bounded observations separately from verified facts,
+with source-policy filtering, expiry and explicit collected-data forget.
+
+An interactive location refresh uses device-tools for one bounded Android read:
+foreground permission, personal profile, provider enabled, accuracy, actual age,
+boot identity and read-time revocation checks. No background tracking or ETA.
+An explicit reminder can schedule a proposed task without accepting or executing
+it. Browser reading preserves available message direction/sender/displayed time
+and marks missing or ambiguous attribution. Stop still pauses background work;
+new pauses record reason/time and a read-only status tool exposes the actual
+discovery, model-gate and daily-budget state. Legacy pause causes remain unknown.
+
+Windows/JDK 21 isolated scoped gate passed:
+`:core:test :device-tools:testDebugUnitTest :web:testDebugUnitTest
+:workspace:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon --offline --console=plain`.
+XML: core 970, device-tools 114, web 95 (61 real headless-Chrome/CDP fixture cases),
+workspace 66 (14 skipped), app 172. Total 1,417 cases: 1,403 passed, no failures
+or errors, 14 existing skips. App lint: zero errors, 21 warnings, four information
+findings. `git diff --check` passed. Initial new fixtures used the wrong proposal
+origin and were corrected; the final gate passed. An isolated staging-helper
+setup error was also corrected before the successful gate.
+
+No install/version bump/release, real location/permission request, personal chat
+read or board mutation was done for validation. Hosting build 1190 is unchanged.
+After the user enabled Wireless ADB, a read-only SQLite query verified discovery
+off, zero queued signals, and 48 attempts dated 2026-11-03 rather than today.
+The installed build has no pause reason/time, so the historical actor is unknown.
+The user's Sources screenshot independently confirms the discovery switch is off;
+ADB is not needed to establish that visible state.
+The daily-counter display now projects the current local day while paused,
+without resetting durable counters or resuming anything. Physical UI, real
+providers, notification/Doze delivery and a model actually saving new evidence
+remain untested. See `docs/testing/manager-evidence-loop-20261104.md`.
+
+No new worktree. The existing Manager checkout stays open for continued work;
+build/test output remains in `build/706667d0f17cf13e`. Task-owned temporary Gradle
+home/logs under `%TEMP%/hey-mike/manager-evidence-loop-20261104` are removed after
+validation; shared Gradle cache junction targets and other worktrees are retained.
+
 ### Manager follow-through and situation — 2026-11-02
 
 Based on `feat/task-inbox-conversations` at `e8e55758`. Scheduled checks

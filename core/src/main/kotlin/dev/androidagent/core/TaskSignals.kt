@@ -314,6 +314,13 @@ class CalendarSignalBuffer {
  * one pass. People and owner feedback have their own place ahead of background.
  */
 object DiscoverySchedule {
+    /** Display a paused board after midnight without resetting its durable receipts. */
+    fun settingsForDay(settings: TaskBoardSettings, day: String): TaskBoardSettings = settings.copy(
+        passesToday = if (settings.passDay == day) settings.passesToday else 0,
+        backgroundPassesToday = if (settings.passDay == day) settings.backgroundPassesToday else 0,
+        managerReviewsToday = if (settings.managerReviewDay == day) settings.managerReviewsToday else 0,
+    )
+
     data class Plan(val due: Boolean, val batch: List<TaskSignal>, val nextCheckAt: Long?, val backgroundLimited: Boolean = false)
 
     const val MIN_INTERVAL_MS = 20 * 60_000L
