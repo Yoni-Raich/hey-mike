@@ -186,6 +186,7 @@ class TaskDesk(
     }
 
     private fun sourceAllowed(ref: dev.androidagent.core.TaskSourceRef): Boolean {
+        if (ref.source == "location" && !locationReadable()) return false
         val direct = dev.androidagent.core.TaskSourcePolicy.allows(ref, board.settings.value) && (ref.noteId == null || ref.noteId !in forgottenNotes)
         if(!direct) return false
         val parent = ref.sessionId?.let { chat -> board.tasks.value.firstOrNull { it.execution?.sessionId == chat } }
@@ -237,7 +238,20 @@ class TaskDesk(
         resolveSources = ::inputSources, allowedSource = ::sourceAllowed, playbookProvider = { playbook },
         situation = ::situationSnapshot, correctSituation = { field, value, until ->
             situationStore.correct(field, value, now(), until); situationSnapshot()
-        })
+        }, observeSituation = { observation -> situationStore.observe(observation, now()); situationSnapshot() },
+        refreshLocation = {
+            dev.androidagent.devicetools.AndroidCapabilityPlatform(context).querySituationLocation().also { situationStore.recordLocation(it) }
+        }, runtimeStatus = { buildJsonObject {
+            val settings = board.settings.value
+            val today = Instant.ofEpochMilli(now()).atZone(zone()).toLocalDate().toString()
+            put("discoveryOn", settings.discoveryOn); put("runtimePaused", paused)
+            put("waitReason", mutable.value.waitReason)
+            settings.pauseReason?.let { put("pauseReason", it) }; settings.pausedAt?.let { put("pausedAt", it) }
+            put("modelUsageGate", quotaLow(settings.passEngine)); put("engine", settings.passEngine.name)
+            put("passesToday", if (settings.passDay == today) settings.passesToday else 0); put("dailyPassCap", settings.dailyPassCap)
+            put("pendingInputs", signals.pending.value.size)
+            mutable.value.error?.let { put("error", it.take(400)) }
+        } })
     val tools = dev.androidagent.core.TaskToolHandler { session, args, user ->
         val flight = inFlight[session]
         if(isBackgroundSession(session) && (paused || !board.settings.value.discoveryOn || (!user && flight == null)))
@@ -299,9 +313,9 @@ class TaskDesk(
     fun isBackgroundSession(id: String): Boolean = roleOf(id) in setOf(TaskChatRole.SCOUT, TaskChatRole.COACH, TaskChatRole.LIBRARIAN, TaskChatRole.COORDINATOR) ||
         (!ready && sessions.sessions.value.any { it.id == id && it.title.endsWith(BACKSTAGE_SUFFIX) })
 
-    fun pauseBackground() {
+    fun pauseBackground(reason: String = "global_stop") {
         paused = true
-        scope.launch { board.editSettings { it.copy(discoveryOn = false) }; stopBackgroundTurns() }
+        scope.launch { board.editSettings { it.copy(discoveryOn = false, pauseReason = reason.take(80), pausedAt = now()) }; stopBackgroundTurns() }
     }
 
     suspend fun stopBackgroundTurns() = lock.withLock {
@@ -320,8 +334,8 @@ class TaskDesk(
     suspend fun pulse() { tick() }
     private fun currentCalendarProfile(): String? = try {
         val users = context.getSystemService(android.content.Context.USER_SERVICE) as? android.os.UserManager
-        val serial = users?.getSerialNumberForUser(android.os.Process.myUserHandle()) ?: -1
-        if (serial < 0) null else "current_android_user:$serial"
+        if (users == null || (if (android.os.Build.VERSION.SDK_INT >= 33) users.isProfile else !users.isSystemUser)) null
+        else users.getSerialNumberForUser(android.os.Process.myUserHandle()).takeIf { it >= 0 }?.let { "current_android_user:$it" }
     } catch (_: Exception) { null }
     suspend fun refreshSituation() = kotlinx.coroutines.withContext(Dispatchers.IO) { situationRefreshLock.withLock {
         val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -342,8 +356,16 @@ class TaskDesk(
       return situationStore.snapshot(now(), zone(),
         board.tasks.value.filter { !it.status.closed && sourceAllowed(it) }.map { it.id }.toSet(),
         profile != null && board.settings.value.readCalendar && androidx.core.content.ContextCompat.checkSelfPermission(context,
-            android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED, profile)
+            android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED, profile,
+        locationAllowed = locationReadable(),
+        locationBootCount = android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1).takeIf { it >= 0 },
+        elapsedNowMs = android.os.SystemClock.elapsedRealtime(),
+        allowedSource = ::sourceAllowed)
     }
+    private fun locationReadable(): Boolean = currentCalendarProfile() != null && (androidx.core.content.ContextCompat.checkSelfPermission(context,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) &&
+        runCatching { (context.getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager)?.isLocationEnabled == true }.getOrDefault(false)
     /** Local scheduled checks keep working when model quota or network is unavailable. */
     suspend fun pulseFollowups() = lock.withLock {
         if (!ready || paused || !board.settings.value.discoveryOn) return@withLock
@@ -525,7 +547,7 @@ class TaskDesk(
             tasks = board.tasks.value,
             members = team.members.value,
             notes = memory.notes.value,
-            settings = board.settings.value,
+            settings = DiscoverySchedule.settingsForDay(settings, today),
             pendingSignals = signals.pending.value.size,
             managerSessionId = manager,
             hiddenChats = backstage + underManager + listOfNotNull(managerReviewSession),
@@ -661,7 +683,8 @@ class TaskDesk(
         paused = !on
         scope.launch {
             val boundary = if (on && !board.settings.value.discoveryOn) sessions.latestMessageSequence() else null
-            board.editSettings { it.copy(discoveryOn = on, feedStartAt = if (on && !it.discoveryOn) now() else it.feedStartAt,
+            board.editSettings { it.copy(discoveryOn = on, pauseReason = if (on) null else "discovery_switch", pausedAt = if (on) null else now(),
+                feedStartAt = if (on && !it.discoveryOn) now() else it.feedStartAt,
                 feedStartSequence = boundary ?: it.feedStartSequence) }
             if (!on) { stopBackgroundTurns(); signals.clear() } else { tick() }
         }
@@ -674,7 +697,7 @@ class TaskDesk(
         if (next.readChats && !before.readChats) next.copy(feedStartAt = now(), feedStartSequence = boundary) else next
     } } }
 
-    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); store.clearSourceStats(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
+    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); store.clearSourceStats(); situationStore.forgetObserved(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
     fun liftSuppression(entry: dev.androidagent.core.TaskSuppression) { scope.launch { board.removeSuppression(entry) } }
 
     fun addUserRule(rule: String) { scope.launch(Dispatchers.IO) { runCatching { playbook.addUserRule(rule) } } }
@@ -1125,7 +1148,7 @@ class TaskDesk(
 
     fun ownerContext(sessionId: String): String? = ownerContext(sessionId, "")
     private fun personalContext(query: String, situationTasks: List<MikeTask> = board.tasks.value): Pair<String, List<dev.androidagent.core.TaskSourceRef>> {
-        fun words(text: String) = text.lowercase().split(Regex("[^\\p{L}\\p{N}]+" )).filter { it.length > 1 }.toSet()
+        fun words(text: String) = dev.androidagent.core.TaskFollowThrough.contextWords(text)
         val queryWords = words(query)
         val relevant = situationTasks.filter { !it.status.closed && sourceAllowed(it) &&
             words("${it.title} ${it.topicKey} ${it.why}").intersect(queryWords).isNotEmpty() }.map { it.id }.toSet()
@@ -1136,6 +1159,8 @@ class TaskDesk(
         }) }
         val shownIds = situation.commitments.map { it.taskId }.toSet()
         val refs = (notes.flatMap { it.sourceRefs + dev.androidagent.core.TaskSourceRef("memory", verified = true, noteId = it.id) } +
+            situation.observations.flatMap { it.sourceRefs } +
+            (if (situation.location != null) listOf(dev.androidagent.core.TaskSourceRef("location", verified = true)) else emptyList()) +
             feedback.flatMap { it.sourceRefs } + situationTasks.filter { it.id in shownIds }.flatMap { it.sourceRefs } +
             (if (situation.calendar != null) listOf(dev.androidagent.core.TaskSourceRef("calendar", verified = true)) else emptyList()) +
             (if (situation.claims.any { it.source == "preferences.json" && it.confidence != "stale" })

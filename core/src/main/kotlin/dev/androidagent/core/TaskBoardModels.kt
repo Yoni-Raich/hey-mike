@@ -317,6 +317,8 @@ data class TeamMember(
 @Serializable
 data class TaskBoardSettings(
     val discoveryOn: Boolean = false,
+    val pauseReason: String? = null,
+    val pausedAt: Long? = null,
     val excludedApps: Set<String> = emptySet(),
     /** `package|conversation` */
     val excludedConversations: Set<String> = emptySet(),
