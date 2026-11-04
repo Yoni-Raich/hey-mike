@@ -33,6 +33,17 @@ data class TaskBriefing(
 )
 
 object TaskFollowThrough {
+    // Common conversation words must not make an unrelated project look relevant.
+    private val stopWords = ("the a an and or of to in on at for from with is are was were be been it its this that these those " +
+        "i me my we our you your he she they them have has had do does did can could should would about all any " +
+        "what why how when where who not now already please tell know access data conversation " +
+        "אני אתה את אתם אנחנו הוא היא הם הן זה זו זאת הזה הזו אלו אלה של שלי שלך שלו שלה שלנו את על עם גם " +
+        "לא כן יש אין היה הייתה יהיה להיות לי לך לו לה לנו לכם מהם מה למה איך מתי איפה מי כל כבר עכשיו " +
+        "עוד רק אז אבל כי אם או עד כמו צריך אפשר אמור באמת בכלל בבקשה לדעת גישה נתונים הנתונים נתוני שיחה השיחה האלו להיות").split(' ').toSet()
+
+    fun contextWords(text: String): Set<String> = text.lowercase().split(Regex("[^\\p{L}\\p{N}]+"))
+        .filter { it.length > 1 && it !in stopWords }.toSet()
+
     const val DAY = 86_400_000L
     const val HOUR = 3_600_000L
     const val DEADLINE_WINDOW = 2 * HOUR
@@ -98,7 +109,7 @@ object TaskFollowThrough {
 
     /** Bounded context selected without mutating usage counts or admitting excluded sources. */
     fun context(notes: List<MemoryNote>, query: String, relevantTaskIds: Set<String> = emptySet(), allowed: (MemoryNote) -> Boolean): List<MemoryNote> {
-        fun words(s: String) = s.lowercase().split(Regex("[^\\p{L}\\p{N}]+" )).filter { it.length > 1 }.toSet()
+        fun words(s: String) = contextWords(s)
         val wanted = words(query)
         return notes.filter { it.retiredAt == null && it.supersededBy == null && allowed(it) }
             .filter { note ->

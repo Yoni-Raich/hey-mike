@@ -270,7 +270,7 @@ class TaskBoard(
             "do" -> return startWork(id, decision)
             "continue" -> return continueWork(id, decision)
             "stop" -> return stopWork(id, decision)
-            "check_later" -> return checkLater(id, until ?: (clock + DAY_MS))
+            "check_later" -> return checkLater(id, until ?: (clock + DAY_MS), explicitReminder = true)
         }
         return lock.withLock {
             val task = required(id)
@@ -468,13 +468,19 @@ class TaskBoard(
         put(next); required(id)
     }
 
-    suspend fun checkLater(id: String, until: Long): MikeTask = lock.withLock {
+    suspend fun checkLater(id: String, until: Long, explicitReminder: Boolean = false): MikeTask = lock.withLock {
         val task = required(id)
-        check(!task.status.closed && task.commitment != null) { "This card has no open commitment." }
+        check(!task.status.closed && task.status != TaskStatus.SNOOZED &&
+            (task.commitment != null || (explicitReminder && task.category == TaskCategory.TASK && task.status.undecided))) {
+            "This card has no open commitment."
+        }
         require(until >= now() + 60_000 && until <= now() + 90 * DAY_MS) { "Choose a future follow-up within 90 days." }
-        if (until == task.commitment.nextCheckAt && task.commitment.completionEvidence == null) return@withLock task
-        put(task.copy(commitment = task.commitment.copy(nextCheckAt = until, completionEvidence = null,
-            checkRevision = task.commitment.checkRevision + 1), updatedAt = now()))
+        val commitment = task.commitment ?: TaskFollowThrough.accepted(task, "user", now(), until)
+        if (task.commitment != null && until == commitment.nextCheckAt && commitment.completionEvidence == null) return@withLock task
+        put(task.copy(commitment = commitment.copy(nextCheckAt = until, completionEvidence = null,
+            checkRevision = commitment.checkRevision + 1),
+            usefulUntil = if (explicitReminder && task.status.undecided) task.usefulUntil?.coerceAtLeast(until + 60_000) else task.usefulUntil,
+            updatedAt = now()))
         required(id)
     }
 

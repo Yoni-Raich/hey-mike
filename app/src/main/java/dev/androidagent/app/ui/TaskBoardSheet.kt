@@ -373,6 +373,18 @@ private fun DiscoveryStatus(desk: TaskDeskState) {
                 }
             }
             if (expanded) Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (desk.waitReason == "off") {
+                    val pause = when (desk.settings.pauseReason) {
+                        "manager_chat_stop" -> taskText("Stop in the Manager chat paused background work.", "לחיצה על Stop בשיחת המנהל השהתה את עבודת הרקע.")
+                        "background_chat_stop" -> taskText("Stop in a team background chat paused discovery.", "לחיצה על Stop בשיחת רקע השהתה את החיפוש.")
+                        "global_stop" -> taskText("Global Stop paused background work.", "עצירה כללית השהתה את עבודת הרקע.")
+                        "discovery_switch" -> taskText("Discovery was switched off in settings.", "החיפוש כובה בהגדרות.")
+                        else -> taskText("Discovery is off. This version has no record of why it was paused.", "החיפוש כבוי. לא נשמרה סיבה להשהיה הזו.")
+                    }
+                    Text(pause, style = MaterialTheme.typography.labelMedium, color = BoardAmber)
+                    desk.settings.pausedAt?.let { Text(taskText("Paused at ${shortTime(it)}", "הושהה ב־${shortTime(it)}"), style = MaterialTheme.typography.labelMedium) }
+                    Text(taskText("Turn discovery on in Tasks settings to resume.", "כדי לחדש, הפעל את החיפוש בהגדרות Tasks."), style = MaterialTheme.typography.labelMedium)
+                }
                 var queueLimit by rememberSaveable { mutableStateOf(12) }
                 Text(taskText("${desk.pendingSignals} conversations or apps waiting · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} passes today",
                     "${desk.pendingSignals} שיחות או אפליקציות ממתינות · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} סבבים היום"), style = MaterialTheme.typography.labelMedium)
