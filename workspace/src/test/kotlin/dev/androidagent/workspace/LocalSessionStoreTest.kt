@@ -25,6 +25,9 @@ import android.database.sqlite.SQLiteDatabase
 import dev.androidagent.core.ChatMessage
 import dev.androidagent.core.EngineKind
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -39,6 +42,29 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class LocalSessionStoreTest {
+
+    @Test fun idempotentBriefingInsertSurvivesReopenAndRejectsIdCollision() = runBlocking {
+        val first = LocalSessionStore(context)
+        val chat = first.createSession()
+        val message = ChatMessage("manager-brief:unique", chat.id, "assistant", "Form\n\nReview it", 10)
+        first.appendOnce(message)
+        val reopened = LocalSessionStore(context)
+        reopened.appendOnce(message.copy(createdAt = 20))
+        assertEquals(listOf(message), LocalSessionStore(context).messages(chat.id).first())
+        assertTrue(runCatching { reopened.appendOnce(message.copy(text = "Different content")) }.isFailure)
+        assertEquals(listOf(message), LocalSessionStore(context).messages(chat.id).first())
+    }
+
+    @Test fun concurrentIdempotentBriefingInsertsHaveOneMessageAndOneFeedEntry() = runBlocking {
+        val first = LocalSessionStore(context)
+        val chat = first.createSession()
+        val second = LocalSessionStore(context)
+        val message = ChatMessage("manager-brief:race", chat.id, "assistant", "Review this", 10)
+        listOf(first, second).map { store -> async(Dispatchers.IO) { store.appendOnce(message) } }.awaitAll()
+        val reopened = LocalSessionStore(context)
+        assertEquals(listOf(message), reopened.messages(chat.id).first())
+        assertEquals(listOf(message.id), reopened.messageChanges(0).map { it.message.id })
+    }
 
     @Test fun childLinksAndTaskReceiptsSurviveReopenWithoutLosingOrdinaryChatState() = runBlocking {
         val store = LocalSessionStore(context)

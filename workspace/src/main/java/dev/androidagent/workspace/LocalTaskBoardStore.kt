@@ -244,18 +244,21 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
                     }
                 }
                 write("change_set", changes.id, json.encodeToString(TaskChangeSet.serializer(), changes))
-                if(run.purpose in setOf("manager", "coach")) run.eventIds.forEach { write("consumed_${run.purpose}", it, "1") }
+                val completedCoach = if (run.purpose == "coach") dev.androidagent.core.CoachReview.completed(run.eventIds,
+                    run.coachDispositions, changes.generation != null) else emptySet()
+                if(run.purpose == "manager") run.eventIds.forEach { write("consumed_manager", it, "1") }
+                completedCoach.forEach { write("consumed_coach", it, "1") }
                 val succeeded = when(run.purpose) {
                     "scout" -> settings.copy(lastSuccessfulPassAt = run.startedAt)
-                    "coach" -> settings.copy(lastReviewAt = run.startedAt, coachReviewedEvents = (settings.coachReviewedEvents + run.eventIds).distinct().takeLast(4_000))
+                    "coach" -> settings.copy(lastReviewAt = run.startedAt, coachReviewedEvents = (settings.coachReviewedEvents + completedCoach).distinct().takeLast(4_000))
                     "librarian" -> settings.copy(lastUpkeepAt = run.startedAt, upkeepCursor = run.nextUpkeepCursor ?: settings.upkeepCursor,
                         lastDeepUpkeepAt = if(run.deepUpkeep) run.startedAt else settings.lastDeepUpkeepAt)
                     "manager" -> settings.copy(managerReviewedEvents = (settings.managerReviewedEvents + run.eventIds).distinct().takeLast(4_000))
                     else -> settings
                 }
                 write(SETTINGS, SETTINGS, json.encodeToString(TaskBoardSettings.serializer(), succeeded))
+                write("board_run", run.id, json.encodeToString(TaskRun.serializer(), run.copy(state = "committed")))
             }
-            write("board_run", run.id, json.encodeToString(TaskRun.serializer(), run.copy(state = "committed")))
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }

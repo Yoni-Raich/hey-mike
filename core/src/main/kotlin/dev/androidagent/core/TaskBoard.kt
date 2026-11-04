@@ -270,7 +270,7 @@ class TaskBoard(
             "do" -> return startWork(id, decision)
             "continue" -> return continueWork(id, decision)
             "stop" -> return stopWork(id, decision)
-            "check_later" -> return checkLater(id, until ?: (clock + DAY_MS))
+            "check_later" -> return checkLater(id, until ?: (clock + DAY_MS), explicitReminder = true)
         }
         return lock.withLock {
             val task = required(id)
@@ -468,30 +468,107 @@ class TaskBoard(
         put(next); required(id)
     }
 
-    suspend fun checkLater(id: String, until: Long): MikeTask = lock.withLock {
+    suspend fun checkLater(id: String, until: Long, explicitReminder: Boolean = false): MikeTask = lock.withLock {
         val task = required(id)
-        check(!task.status.closed && task.commitment != null) { "This card has no open commitment." }
+        check(!task.status.closed && task.status != TaskStatus.SNOOZED &&
+            (task.commitment != null || (explicitReminder && task.category == TaskCategory.TASK && task.status.undecided))) {
+            "This card has no open commitment."
+        }
         require(until >= now() + 60_000 && until <= now() + 90 * DAY_MS) { "Choose a future follow-up within 90 days." }
-        put(task.copy(commitment = task.commitment.copy(nextCheckAt = until, completionEvidence = null), updatedAt = now()))
+        val commitment = task.commitment ?: TaskFollowThrough.accepted(task, "user", now(), until)
+        if (task.commitment != null && until == commitment.nextCheckAt && commitment.completionEvidence == null) return@withLock task
+        put(task.copy(commitment = commitment.copy(nextCheckAt = until, completionEvidence = null,
+            checkRevision = commitment.checkRevision + 1),
+            usefulUntil = if (explicitReminder && task.status.undecided) task.usefulUntil?.coerceAtLeast(until + 60_000) else task.usefulUntil,
+            updatedAt = now()))
         required(id)
     }
 
     suspend fun prepareBriefing(id: String, text: String, refs: List<TaskSourceRef>): MikeTask = lock.withLock {
         val task = required(id)
         val occurrence = TaskFollowThrough.occurrence(task, now()) ?: error("No follow-up is due for this card.")
-        if(task.briefing?.occurrence == occurrence) return@withLock task
+        val prior = task.briefing
+        if (prior?.occurrence == occurrence && prior.notificationState == "cancelled" && prior.chatSavedAt == null) {
+            // Preserve content and ID: appendOnce may already have succeeded before a crash.
+            val restored = task.copy(briefing = prior.copy(deliveredAt = null, deliveryNote = null, notificationState = null),
+                lastCheckBriefingOccurrence = if (occurrence.startsWith("check:")) occurrence else task.lastCheckBriefingOccurrence,
+                lastDeadlineBriefingOccurrence = if (occurrence.startsWith("deadline:")) occurrence else task.lastDeadlineBriefingOccurrence,
+                lastStatusBriefingOccurrence = if (occurrence.startsWith("check:") || occurrence.startsWith("deadline:")) task.lastStatusBriefingOccurrence else occurrence)
+            put(restored)
+            return@withLock required(id)
+        }
+        if(prior?.occurrence == occurrence) return@withLock task
+        if (!TaskFollowThrough.needsBrief(task, now())) return@withLock task
+        check(task.briefing?.deliveredAt != null || task.briefing == null) { "An earlier briefing is still awaiting delivery." }
         require(text.trim().length in 3..800) { "Keep the briefing between 3 and 800 characters." }
         val allRefs = (task.sourceRefs + refs).distinct()
-        put(task.copy(briefing = TaskBriefing(SignalInbox.idOf(task.id, occurrence), occurrence, text.trim(), now(), allRefs),
-            sourceRefs = allRefs, updatedAt = now()))
+        put(task.copy(briefing = TaskBriefing(SignalInbox.idOf(task.id, occurrence), occurrence, text.trim(), now(), allRefs, title = task.title),
+            lastStatusBriefingOccurrence = if (occurrence.startsWith("check:") || occurrence.startsWith("deadline:")) task.lastStatusBriefingOccurrence else occurrence,
+            lastCheckBriefingOccurrence = if (occurrence.startsWith("check:")) occurrence else task.lastCheckBriefingOccurrence,
+            lastDeadlineBriefingOccurrence = if (occurrence.startsWith("deadline:")) occurrence else task.lastDeadlineBriefingOccurrence,
+            sourceRefs = allRefs, updatedAt = if (occurrence.startsWith("deadline:")) task.updatedAt else now()))
         required(id)
     }
 
-    suspend fun delivered(id: String, briefingId: String, note: String) = lock.withLock {
+    suspend fun briefingChatSaved(id: String, briefingId: String) = lock.withLock {
         val task = required(id)
         val briefing = task.briefing?.takeIf { it.id == briefingId } ?: return@withLock
+        if (briefing.chatSavedAt == null) {
+            val next = task.copy(briefing = briefing.copy(chatSavedAt = now()))
+            store.saveTask(next)
+            mutableTasks.value = mutableTasks.value.map { if (it.id == id) next else it }
+        }
+    }
+
+    /** Check card and policy under the same lock as card/source changes, then append once. */
+    suspend fun appendBriefingIfCurrent(id: String, briefingId: String, allowed: (MikeTask, TaskBriefing) -> Boolean,
+        append: suspend () -> Unit): Boolean = lock.withLock {
+        val task = task(id) ?: return@withLock false
+        val briefing = task.briefing?.takeIf { it.id == briefingId && it.deliveredAt == null } ?: return@withLock false
+        if (TaskFollowThrough.occurrence(task, now()) != briefing.occurrence || !allowed(task, briefing)) return@withLock false
+        append()
+        if (briefing.chatSavedAt == null) {
+            val next = task.copy(briefing = briefing.copy(chatSavedAt = now()))
+            store.saveTask(next)
+            mutableTasks.value = mutableTasks.value.map { if (it.id == id) next else it }
+        }
+        true
+    }
+
+    /** Reserve before the OS call. An interrupted reservation has an unknown result. */
+    suspend fun beginBriefingNotification(id: String, briefingId: String): Boolean = lock.withLock {
+        val task = required(id)
+        val briefing = task.briefing?.takeIf { it.id == briefingId } ?: return@withLock false
+        if (briefing.notificationAttemptedAt != null || briefing.deliveredAt != null || briefing.chatSavedAt == null) return@withLock false
+        val next = task.copy(briefing = briefing.copy(notificationAttemptedAt = now()))
+        store.saveTask(next)
+        mutableTasks.value = mutableTasks.value.map { if (it.id == id) next else it }
+        true
+    }
+
+    /** Release a reservation only when this process knows the OS call did not happen. */
+    suspend fun deferBriefingNotification(id: String, briefingId: String) = lock.withLock {
+        val task = required(id)
+        val briefing = task.briefing?.takeIf { it.id == briefingId } ?: return@withLock
+        if (briefing.notificationAttemptedAt == null || briefing.deliveredAt != null) return@withLock
+        val next = task.copy(briefing = briefing.copy(notificationAttemptedAt = null,
+            deliveryNote = "Notification deferred before the system call."))
+        store.saveTask(next)
+        mutableTasks.value = mutableTasks.value.map { if (it.id == id) next else it }
+    }
+
+    suspend fun delivered(id: String, briefingId: String, note: String, notificationState: String? = null) = lock.withLock {
+        val task = required(id)
+        val briefing = task.briefing?.takeIf { it.id == briefingId } ?: return@withLock
+        if (briefing.deliveredAt != null) return@withLock
         // Delivery bookkeeping is not a new learning event or task revision.
-        val next = task.copy(briefing = briefing.copy(deliveredAt = now(), deliveryNote = note))
+        val unsentCancellation = notificationState == "cancelled" && briefing.chatSavedAt == null
+        val next = task.copy(
+            briefing = briefing.copy(deliveredAt = now(), deliveryNote = note, notificationState = notificationState),
+            lastCheckBriefingOccurrence = if (unsentCancellation && task.lastCheckBriefingOccurrence == briefing.occurrence) null else task.lastCheckBriefingOccurrence,
+            lastDeadlineBriefingOccurrence = if (unsentCancellation && task.lastDeadlineBriefingOccurrence == briefing.occurrence) null else task.lastDeadlineBriefingOccurrence,
+            lastStatusBriefingOccurrence = if (unsentCancellation && task.lastStatusBriefingOccurrence == briefing.occurrence) null else task.lastStatusBriefingOccurrence,
+        )
         store.saveTask(next)
         mutableTasks.value = mutableTasks.value.map { if(it.id == id) next else it }
     }
@@ -540,6 +617,11 @@ class TaskBoard(
 
     private suspend fun put(task: MikeTask) {
         val old = task(task.id)
+        // Keep every existing ancestor. Legacy over-limit cards remain editable, but cannot grow.
+        require(task.sourceRefs.distinct().size <= MAX_SOURCE_REFS ||
+            (old != null && task.sourceRefs.toSet() == old.sourceRefs.toSet())) {
+            "Too many sources for this card; keep its existing evidence and do not add more."
+        }
         val next = task.copy(revision = (old?.revision ?: 0) + 1)
         val userDecision = next.decision != old?.decision && next.decision != null
         val kind = when {
@@ -572,6 +654,7 @@ class TaskBoard(
         const val MAX_NOTE = 2_000
         const val MAX_RESULT = 8_000
         const val MAX_EVIDENCE = 8
+        const val MAX_SOURCE_REFS = 64
         const val MAX_NEW_PER_DAY = 20
         const val MAX_SYSTEM_PER_DAY = 4
         const val MAX_OPEN = 15

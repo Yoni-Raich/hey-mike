@@ -77,6 +77,7 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-started local AI agent with an on-device Codex process and visible device control" />
         </service>
         <service android:name=".TaskBackgroundJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
+        <service android:name=".TaskFollowupJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <!-- A few seconds each time a usage window ends: one short message to start the next one. -->
         <service android:name=".UsageWindowService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled start of the user's own AI plan usage window at the time it resets" />

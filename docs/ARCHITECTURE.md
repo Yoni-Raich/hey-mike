@@ -1,5 +1,84 @@
 # Architecture
 
+## Manager evidence loop — 2026-11-04
+
+Owner context and explicit memory search share a bounded Hebrew/English stop-word
+filter. Generic conversation words do not select unrelated project notes; explicit
+subjects, allowed linked cards and global scope still work. Selection is not proof
+of memory usefulness. Manager guidance requires saving new task evidence before
+claiming a changed conclusion: update undecided work, observe decided open work.
+Observation never closes a decided card or changes its frozen execution plan.
+
+The version-1 situation file now also keeps up to forty attributed temporary
+observations, separate from current facts. Each has evidence, source ancestry,
+source time, expiry and reported/inferred confidence. Reads recheck source policy,
+mark expired observations stale and leave unknown fields unknown. Observations
+cannot create quiet intervals or authorize actions. Explicit collected-data forget
+removes observations and the cached device fix; user-supplied corrections remain.
+
+`tasks situation operation=refresh_location` is one interactive, on-demand read
+through device-tools. It checks foreground coarse/fine permission, enabled Android
+location and a personal profile before provider access. A cached fix or a bounded
+ten-second current-fix request records coordinates, accuracy, provider, actual
+monotonic age, profile and boot count. Exposure requires the same boot/profile,
+current permission and enabled location, and age below two minutes by both clocks.
+Missing permission points to the existing Android permission-request tool; no
+permission is granted by this path. No location subscription, background permission,
+reverse geocoding, route, ETA or departure inference is added.
+
+An explicit owner reminder can create a check on a proposed task without accepting
+or executing it. A proposal's existing expiry is extended through that requested
+check when necessary; its plan and decision stay unchanged. Closed/snoozed cards
+and automated requests cannot use this shortcut. Delivery still uses the existing
+local outbox and OS scheduling limits.
+
+Stop semantics stay unchanged. A Manager/chat/global Stop or discovery switch
+records a bounded reason and time with the discovery setting. Restart does not
+resume it. The board explains recorded pauses; older settings have an unknown
+reason. Interactive `tasks status` distinguishes discovery state, runtime pause,
+model usage gate and daily attempts. Browser reading preserves DOM-provided chat
+direction, sender and displayed timestamp, with explicit attribution/date limits;
+it reads loaded messages and does not navigate, send or load history on its own.
+Displayed daily counters use the current local day even while discovery is off;
+the display projection does not reset stored receipts or resume background work.
+
+## Manager follow-through and situation — 2026-11-02
+
+An explicit scheduled check has its own persisted revision and receipt,
+separate from status briefings. Memory scopes are explicit; older unscoped
+notes are selected only by relevance. Recall and context injection are not
+evidence of usefulness. Coach dispositions commit with the staged changes;
+deferred and retry events remain unconsumed.
+
+`SharedSituationStore` is a local, versioned atomic snapshot owned by TaskDesk.
+It records bounded allowed board commitments and explicit user corrections with
+source, observation time and expiry. Reads recompute time, freshness and source
+visibility; conflicts and unknowns are not facts or permission. TaskDesk feeds
+the snapshot to Manager context and the situation tool, and refreshes it on
+board changes, clock changes and a periodic tick. The app-managed preferences
+file supplies bounded home/work saved places, never current location. The calendar
+adapter checks for a personal profile before querying the normal current-user
+Instances URI and records profile serial, query window, all-day, timezone,
+completeness and freshness; permission, policy
+and profile are rechecked before exposure. No enterprise calendar URI is used.
+Attention ranks due explicit checks and approaching real card deadlines, with
+separate durable occurrence receipts and bounded public decision reasons;
+it does not infer travel or departure. ETA has no provider; location is available
+only through the explicit foreground read described above.
+Calendar provider behavior, profile isolation and background delivery still need
+physical-device validation. Explicit temporary availability corrections can
+defer delivery through their expiry; no recurring quiet-window setting exists.
+
+Due checks use a local path independent of model quota, with a persisted Android
+job that may be delayed by the OS. Chat append uses an idempotent message ID;
+notification reservation and outcome are recorded separately. A reservation
+interrupted before its outcome is recorded remains unknown and is not replayed.
+The latest outbox record is retained per card, not a full delivery history.
+The card and policy check for chat append is serialized with board updates;
+one failed item does not stop other eligible items. Deadlines require a fresh,
+allowed board projection before preparation and again at delivery.
+Notification is an external OS call and cannot be atomic with a policy change.
+
 ## Unified task board and personal assistant — 2026-10-29
 
 The board, Manager, team UI and follow-through are one feature. This integration

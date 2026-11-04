@@ -35,9 +35,7 @@ import kotlinx.coroutines.sync.withLock
  * what nothing uses. A size budget sets how hard it compacts. Retiring is
  * soft for [TRASH_MS], so a night's upkeep can be undone.
  *
- * Usage is the evidence for what is needed: every recall and every card that
- * cites a note counts, so upkeep keeps what is used and not what a model
- * guesses is important.
+ * Retrieving or injecting a note is not evidence that it was useful.
  */
 class MemoryBook(
     private val store: TaskBoardStore,
@@ -76,15 +74,20 @@ class MemoryBook(
         recorderRole: String? = null,
         signalIds: List<String> = emptyList(),
         sourceRefs: List<TaskSourceRef> = emptyList(),
+        scope: String? = null,
     ): MemoryNote = lock.withLock {
         val cleanText = text.trim().take(MAX_TEXT)
         require(cleanText.length >= 3) { "A note needs a line of text." }
         val cleanSubject = subject.trim().take(80).ifEmpty { error("Name who or what the note is about.") }
         require(kind in KINDS) { "kind is one of ${KINDS.joinToString()}." }
         require(level in LEVELS) { "level is one of ${LEVELS.joinToString()}." }
+        require(scope == null || scope in SCOPES) { "Unknown memory scope." }
+        require(sourceRefs.distinct().size <= MAX_SOURCE_REFS) { "Too many sources for one memory." }
         val provenance = MemoryProvenance(source.trim().take(60).ifEmpty { "chat" }, sender?.trim()?.take(80),
             at ?: now(), recorderSessionId, recorderRole, signalIds.distinct().take(32).map { it.take(120) })
-        live.firstOrNull { it.subject.equals(cleanSubject, true) && it.text.equals(cleanText, true) }?.let { existing ->
+        live.firstOrNull { it.subject.equals(cleanSubject, true) && it.text.equals(cleanText, true) &&
+            it.scope == scope && it.level == level }?.let { existing ->
+            require((existing.sourceRefs + sourceRefs).distinct().size <= MAX_SOURCE_REFS) { "Too many sources for one memory." }
             val merged = existing.copy(linkedTaskIds = (existing.linkedTaskIds + linkedTaskIds).distinct(),
                 provenance = (origins(existing) + provenance).distinct().takeLast(MAX_PROVENANCE),
                 sourceRefs = (existing.sourceRefs + sourceRefs).distinct())
@@ -99,20 +102,25 @@ class MemoryBook(
             at = at ?: now(), level = level, linkedTaskIds = linkedTaskIds.distinct(),
             provenance = listOf(provenance),
             sourceRefs = sourceRefs.distinct(),
+            scope = scope,
         )
         save(listOf(note))
         note
     }
 
-    /**
-     * Notes about [subject] or matching [query], best first. Each returned
-     * note is marked used: that is what keeps it through upkeep.
-     */
-    suspend fun recall(query: String?, subject: String? = null, limit: Int = 12, markUsed: Boolean = true,
-        allowed: (MemoryNote) -> Boolean = { true }): List<MemoryNote> = lock.withLock {
+    /** Notes about [subject] or matching [query], best first. Retrieval alone is not proof of use. */
+    suspend fun recall(query: String?, subject: String? = null, limit: Int = 12, markUsed: Boolean = false,
+        allowed: (MemoryNote) -> Boolean = { true }, level: String? = null, scope: String? = null): List<MemoryNote> = lock.withLock {
+        require(level == null || level in LEVELS) { "Unknown memory level." }
+        require(scope == null || scope in SCOPES) { "Unknown memory scope." }
         val words = words(query.orEmpty())
-        val scored = live.filter(allowed).mapNotNull { note ->
+        if (!query.isNullOrBlank() && words.isEmpty() && subject == null) return@withLock emptyList()
+        val scored = live.filter(allowed).filter { (level == null || it.level == level) && (scope == null || it.scope == scope) }.mapNotNull { note ->
             val subjectHit = subject != null && note.subject.equals(subject.trim(), true)
+            val subjectWordsHit = words.intersect(words(note.subject)).isNotEmpty()
+            // A project/task preference must not follow generic words into another context.
+            if ((note.scope in setOf("project", "task") || (note.scope == null && note.kind == "preference")) &&
+                (words.isNotEmpty() || subject != null) && !subjectHit && !subjectWordsHit) return@mapNotNull null
             val haystack = words("${note.subject} ${note.text} ${note.cue.orEmpty()} ${note.sender.orEmpty()}")
             val overlap = words.count { it in haystack }
             if (!subjectHit && overlap == 0 && !(words.isEmpty() && subject == null)) null
@@ -126,16 +134,15 @@ class MemoryBook(
         scored.map { found -> mutable.value.first { it.id == found.id } }
     }
 
-    /** Context actually injected into an owner turn counts as retrieval, even without a recall call. */
+    /** Explicitly recorded use; selection or injection alone must not call this. */
     suspend fun used(ids: Collection<String>) = lock.withLock {
         save(live.filter { it.id in ids }.map { it.copy(useCount = it.useCount + 1, lastUsedAt = now()) })
     }
 
     /** Note that cards cite these notes. Linked notes are never compacted away while the card is open. */
     suspend fun link(ids: Collection<String>, taskId: String) = lock.withLock {
-        val clock = now()
         val changed = mutable.value.filter { it.id in ids }.map {
-            it.copy(linkedTaskIds = (it.linkedTaskIds + taskId).distinct(), useCount = it.useCount + 1, lastUsedAt = clock)
+            it.copy(linkedTaskIds = (it.linkedTaskIds + taskId).distinct())
         }
         if (changed.isNotEmpty()) save(changed)
     }
@@ -148,6 +155,9 @@ class MemoryBook(
         require(ids.distinct().size >= 2) { "Merge at least two different notes." }
         require(level in setOf("summary", "profile")) { "Merge into a summary or a profile." }
         val originals = ids.distinct().map { id -> live.firstOrNull { it.id == id } ?: error("No live note has id $id.") }
+        require(originals.flatMap { it.sourceRefs }.distinct().size <= MAX_SOURCE_REFS) { "Too many sources for one merged memory." }
+        require(originals.map { it.subject.lowercase() to it.scope }.distinct().size == 1 &&
+            (subject.isBlank() || originals.first().subject.equals(subject.trim(), true))) { "Only notes with the same subject and scope can be merged." }
         require(originals.none { it.pinned }) { "Pinned notes cannot be compacted." }
         require(originals.none { note -> note.linkedTaskIds.any { it in openTaskIds } }) { "Notes linked to an open task cannot be compacted." }
         val rank = listOf("detail", "summary", "profile")
@@ -162,6 +172,7 @@ class MemoryBook(
             provenance = originals.flatMap(::origins).distinct().takeLast(MAX_PROVENANCE),
             pinned = originals.any { it.pinned },
             sourceRefs = originals.flatMap { it.sourceRefs }.distinct(),
+            scope = originals.first().scope,
             useCount = originals.sumOf { it.useCount }, lastUsedAt = originals.mapNotNull { it.lastUsedAt }.maxOrNull(),
         )
         save(originals.map { it.copy(supersededBy = merged.id, retiredAt = clock, retiredReason = "compacted") } + merged)
@@ -241,7 +252,7 @@ class MemoryBook(
     }
 
     private fun words(text: String): Set<String> =
-        text.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 2 }.toSet()
+        TaskFollowThrough.contextWords(text)
 
     private fun origins(note: MemoryNote): List<MemoryProvenance> = note.provenance.ifEmpty {
         listOf(MemoryProvenance(note.source, note.sender, note.at))
@@ -250,9 +261,11 @@ class MemoryBook(
     companion object {
         val KINDS = setOf("request", "promise", "date", "decision", "preference", "fact", "summary", "profile")
         val LEVELS = setOf("detail", "summary", "profile")
+        val SCOPES = setOf("global", "person", "project", "task")
         const val MAX_TEXT = 400
         const val MAX_CUE = 200
         const val MAX_PROVENANCE = 24
+        const val MAX_SOURCE_REFS = 64
         const val MAX_NOTES = 3_000
         const val BUDGET_CHARS = 120_000
         const val TRASH_MS = 7 * 24 * 3_600_000L

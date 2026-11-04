@@ -121,6 +121,9 @@ interface SessionStore {
     suspend fun getSession(id: String): ChatSession?
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
+    /** Atomically insert an app-owned message, or confirm the same ID already contains it.
+     * Implementations must reject an ID belonging to different content. */
+    suspend fun appendOnce(message: ChatMessage) { error("This store does not support idempotent messages.") }
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
     /** App/engine metadata, never inferred from the assistant's words. */
     suspend fun setMessagePhase(id: String, phase: String) {}

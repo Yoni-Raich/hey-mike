@@ -528,6 +528,20 @@ class BrowserIntegrationTest {
         value("document.querySelector('iframe[src=\"/secret\"]').remove();1")
         assertTrue(page.screenshot()!!.startsWith("iVBOR"))
     }
+    @Test fun chatReadKeepsDirectionSenderAndTimeWithoutGuessingMissingMetadata() = runBlocking {
+        value("""document.body.innerHTML = `<aside>Another chat: private sidebar</aside><div id="main"><header>Fixture conversation</header>
+            <div class="message-in"><div data-pre-plain-text="[10:02, 03/11/2026] Dana: "><span>Where are you?</span></div></div>
+            <div class="message-out"><div data-pre-plain-text="[10:03, 03/11/2026] Owner: "><span>On the way</span></div></div>
+            <div class="message-in"><span>Missing attribution</span></div>
+            <div class="message-in" style="display:none"><span>Hidden message</span></div></div>`;1""")
+        val text = page.read(0, 6000)
+        assertTrue(text, text.contains("\"direction\":\"incoming\",\"sender\":\"Dana\",\"timeAsDisplayed\":\"10:02, 03/11/2026\""))
+        assertTrue(text, text.contains("\"direction\":\"outgoing\",\"sender\":\"Owner\""))
+        assertTrue(text, text.contains("\"sender\":\"unknown\",\"timeAsDisplayed\":\"unknown\""))
+        assertTrue(text.contains("Missing attribution")); assertTrue(text.contains("On the way"))
+        assertFalse(text.contains("private sidebar")); assertFalse(text.contains("Hidden message"))
+        assertTrue(text.contains("no timezone"))
+    }
     @Test fun stoppedGatewayRefusesNewActions() = runBlocking {
         gateway.revoke()
         try { call("""{"operation":"click","text":"Apply"}"""); fail("Should refuse stopped run") }
