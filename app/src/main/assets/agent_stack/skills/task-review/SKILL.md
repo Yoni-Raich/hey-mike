@@ -77,6 +77,24 @@ Keep important exceptions as counterexamples. Failed cases refuse the write. Und
 generation restores the previous filter. Free-form prose guidance still has no automatic
 semantic quality score; do not claim that saving it proves improvement.
 
+## The owner profile
+
+The prompt may include the owner profile and **attention feedback**: how the user
+answered Mike's alerts (*open*, *not important*, *later*, swiped away), with event ids.
+You may learn small adjustments, the user's own entries always win:
+
+```text
+tasks(mode="profile", operation="learn", profileKind="person|conversation|source|topic",
+      key="<as in the feedback>", weight=-1|0|1, why="<one line>", eventIds=["<feedback ids>"])
+```
+
+- Learn only from repeated, consistent feedback: at least two answers the same way,
+  and no opposite answer about the same thing since.
+- `weight` stays within -1..1. Only the user can mute (-2) or star (+2).
+- An entry the user set, or rejected with *Wrong*, cannot be changed; do not retry.
+- Each learned entry is applied when the review commits and undone by the report's undo.
+  Mention what you learned in the report card.
+
 ## Report
 
 If you changed anything, post one report card:

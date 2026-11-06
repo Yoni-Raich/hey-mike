@@ -288,5 +288,15 @@ class ProactiveTest {
         assertFalse(ProactiveTools.allowed(TaskChatRole.COORDINATOR, "profile"))
         assertFalse(ProactiveTools.allowed(TaskChatRole.ORDINARY, "context"))
     }
-}
 
+    @Test fun chatNameWithoutAppMatchesInEveryApp() {
+        val store = OwnerProfileStore(File(dir(), "p.json")) { noon }
+        store.setOwner(ProfileKind.CONVERSATION, "Family", null, 2, alwaysNotify = true)
+        assertTrue(store.match("com.whatsapp", "Family", "Dana", null, group = true).alwaysNotify)
+        assertTrue(store.match("org.telegram.messenger", "Family", null, null, group = true).starred)
+        assertFalse(store.match("com.whatsapp", "Work", "Dana", null, group = true).starred)
+        store.setOwner(ProfileKind.CONVERSATION, "com.whatsapp|Work", null, -2)
+        assertTrue(store.match("com.whatsapp", "Work", null, null, group = true).muted != null)
+        assertFalse(store.match("org.telegram.messenger", "Work", null, null, group = true).muted != null)
+    }
+}

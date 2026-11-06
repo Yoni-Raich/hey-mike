@@ -1,6 +1,7 @@
 # Proactive Mike Manager — design
 
-Status: design accepted for implementation, 2026-11-06. Base: installed Manager
+Status: phases 1–4 implemented on `feat/proactive-manager-20261106`, 2026-11-06;
+phase 5 (phone validation) not done. Base: installed Manager
 1191 (`integrate/manager-state-widgets-20261104`).
 
 ## Goal
@@ -194,9 +195,14 @@ Alert notifications have three actions:
 - **Later** — snoozes it for an hour through the gate again.
 
 Swiping it away without opening counts as a weak negative only after it
-repeats. Each action becomes an `attention_feedback` `TaskEvent` (no message
-text, only refs), so the Coach sees it with the card decisions it already
-reviews.
+repeats. As built, feedback is stored on the alert in `AlertBook`
+(`mike-alerts-v1.json`, refs only, no message text), not as a `TaskEvent`.
+The nightly Coach review receives the fresh feedback with the card decisions
+it already reviews and cites alert IDs in `profile learn`.
+
+Alerts raised during a staged flight are delivered at once, even if the run
+is later rejected: a late urgent alert is worse than an extra one. Undo of the
+run removes its learned profile entries, not alerts already shown.
 
 ## 3. Owner profile
 
@@ -263,3 +269,17 @@ budgets, urgent sound (off by default), and *Send a test alert*. A new
 3. WhatsApp Web connector: connector page host, script, linking card.
 4. Gmail connector: authorization, REST client, card.
 5. Phone validation of each part, then PROGRESS.md evidence.
+
+### Implementation notes (2026-11-06)
+
+- The agent browser refuses `web.whatsapp.com` (`reserved_origin`), so the
+  model cannot read WhatsApp Web around the Sources policy. Only the
+  connector's own page, with a fixed bundled read-only script, reaches it.
+- The connector page uses a separate WebView profile (`hey-mike-whatsapp`)
+  when the device supports multi-profile, a desktop user agent, and is
+  destroyed after 10 minutes idle.
+- Gmail uses `Identity.getAuthorizationClient` with `gmail.readonly` and the
+  REST API. It needs a Google Cloud Android OAuth client (package + SHA-1).
+  While the restricted scope is unverified, only listed test users can sign in.
+- A conversation profile key without an app (`*|name`) matches in every app.
+- Digests go out on the 60 s TaskDesk tick, so only while the process lives.

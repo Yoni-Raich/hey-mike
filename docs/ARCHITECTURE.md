@@ -3547,3 +3547,23 @@ Decided 2026-10-01, on top of the section above.
   skills are not listed in the composer. Mac Desktop handoff and real
   phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
   evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
+## Proactive Manager: connectors, alerts, owner profile
+
+Design: `docs/design/proactive-manager.md`. Decisions:
+
+- `dev.androidagent.core.proactive` holds `AlertGate`, `OwnerProfileStore`,
+  `AlertBook`, `ContextBroker` and `ProactiveDesk`, plain JVM and tested.
+  `TaskDesk` owns the files (`owner-profile-v1.json`, `mike-alerts-v1.json`).
+- The gate only lowers an alert's level, never raises it. Levels: none,
+  digest, notice, urgent. Budgets, quiet hours and the profile decide.
+- Conversation context is pulled at pass time through enabled, linked
+  connectors, after the Sources policy check, and never persisted.
+- Connectors are read-only. WhatsApp Web is a reserved origin for the agent
+  browser; only the connector page in `:web` loads it. Gmail lives in `:app`
+  (Play services auth).
+- Feedback lives in `AlertBook`, not `TaskEvent`. Coach learning is staged
+  with its flight and undone by run id. Learned weights stay within −1..1;
+  only the owner mutes (−2) or stars (+2).
+- Alerts raised in a flight are delivered at once, even if the run is
+  rejected later.
