@@ -180,7 +180,8 @@ class ClaudeCodeEngine(
                 for (attempt in 0 until ACCOUNT_STATUS_TRIES) {
                     val status = ask("$ACCOUNT_STATUS_ID-$attempt", "mcp_status") ?: break
                     found = ClaudeProtocol.parseAccountServers(status)
-                    if (found.none { it.state == "pending" }) break
+                    // The first answer comes before the account's list arrives: empty.
+                    if (found.isNotEmpty() && found.none { it.state == "pending" }) break
                     delay(ACCOUNT_STATUS_WAIT_MS)
                 }
                 found
@@ -1312,8 +1313,8 @@ class ClaudeCodeEngine(
         private const val COMMAND_TIMEOUT_MS = 30_000L
         private const val PROBE_TIMEOUT_MS = 20_000L
         private const val ACCOUNT_STATUS_ID = "account-status"
-        private const val ACCOUNT_STATUS_TRIES = 6
-        private const val ACCOUNT_STATUS_WAIT_MS = 2_500L
+        private const val ACCOUNT_STATUS_TRIES = 15
+        private const val ACCOUNT_STATUS_WAIT_MS = 1_500L
         private const val COMPACT_TIMEOUT_MS = 10 * 60_000L
         private const val LOGIN_URL_TIMEOUT_MS = 60_000L
         private const val LOGIN_EXIT_TIMEOUT_MS = 120_000L

@@ -161,6 +161,9 @@ private fun AccountConnectorsCard(state: AgentUiState, actions: AgentUiActions) 
                 Text("${account.name} · $detail", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        if (desk.accountsChecked) TextButton(onClick = actions.onRefreshConnections) {
+            Text(taskText("Check again", "בדיקה חוזרת"))
+        }
     }
 }
 

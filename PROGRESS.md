@@ -2,6 +2,11 @@
 
 ### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
 
+Update 1196: 1195 still listed none. On the PC the first `mcp_status`
+after `initialize` answers `[]`; the account's servers appear about a second
+later. The probe now retries while the list is empty or pending (up to 15
+times, 1.5 s apart). Sources has "Check again".
+
 Update 1195: on the phone 1194 found no account connectors, because the
 host forced `ENABLE_CLAUDEAI_MCP_SERVERS=false` and the proxy denied
 `mcp-proxy.anthropic.com`. Now the host turns that switch on only when the
