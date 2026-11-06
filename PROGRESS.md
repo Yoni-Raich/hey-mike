@@ -1,5 +1,33 @@
 # Progress
 
+### Codex account read bridge — 2026-11-06
+
+Dev Debug 1198 adds ChatGPT account discovery to Sources and ContextRouter.
+The phone runtime enables apps for catalog discovery; model chats disable
+native apps. `account_read` is a normal per-run gateway with Stop revocation.
+Every read rechecks the owner's switch and the live service annotation;
+missing, destructive or open-world annotations do not qualify. The adapter
+uses a separate ephemeral thread for direct MCP reads, with no model turn.
+List returns only enabled read tools and their argument schemas.
+
+Checks: `:core:test :engine-codex:testDebugUnitTest :runtime:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon -q` passed; scoped XML
+reports contain 1,210 cases with zero failures/errors. App lint: zero errors.
+APK metadata is dev.androidagent.app.dev / 1198; debug v2 signature verified.
+No full release gate. Initial check lacked ANDROID_HOME; rerun with the
+installed Android SDK succeeded without changing local.properties.
+
+PC evidence: official app-server 0.163.0 lists Gmail tools through
+`mcpServerStatus/list`, including explicit readOnlyHint annotations. A direct
+Gmail list_labels read succeeded (contents not printed). Importantly, direct
+MCP calls do not enforce apps._default.enabled=false: Mike's own whitelist
+is the enforcement boundary. No write tool was called. app/list timed out
+in a separate PC probe, so discovery uses the working MCP catalog instead.
+
+Phone discovery, proxy compatibility and a real Manager pass are not yet
+tested. No phone install has been performed for this change. The existing
+proactive-manager-20261106 worktree and its central build bucket remain open.
+
 ### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
 
 Update 1197: the Manager's chat said it had no Gmail: only background passes

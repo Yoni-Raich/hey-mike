@@ -52,6 +52,9 @@ interface AccountConnectorSource {
     suspend fun accountConnectors(): List<AccountConnector>
     /** The only account tools a background (read-only) pass may call. Empty turns them all off. */
     fun allowForBackground(tools: List<String>)
+    fun accountReadDefinitions(): List<dev.androidagent.core.ToolDefinition> = emptyList()
+    suspend fun readAccountTool(tool: String, arguments: kotlinx.serialization.json.JsonObject, permitted: () -> Boolean): dev.androidagent.core.ToolResult =
+        dev.androidagent.core.ToolResult("Account reads are unavailable.", success = false)
 }
 
 /**
@@ -92,8 +95,9 @@ object ContextRouter {
         val account = accountFor(app, usable) ?: return@mapNotNull null
         if (!allowed(app, row.conversation)) return@mapNotNull null
         val tools = account.readTools.joinToString(", ") { it.substringAfterLast("__") }
+        val route = if (account.engine == EngineKind.CODEX) "Use account_read(operation=list) for the schemas, then account_read(operation=read, tool=..., arguments=...). " else ""
         RowContext(row.id, null,
-            "Nothing was prefetched. If the notification is not enough, read it yourself with the read-only ${account.name} tools of your account ($tools). Read only what explains this row.")
+            "Nothing was prefetched. If the notification is not enough, read it yourself with the read-only ${account.name} tools of your account ($tools). ${route}Read only what explains this row.")
     }
 
     /** Which notification apps an account product explains. Products not listed are offered without a hint. */

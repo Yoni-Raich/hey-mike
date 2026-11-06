@@ -60,7 +60,7 @@ object TaskRolePolicy {
         "contacts" to setOf("permission_status", "search", "list", "get"),
         "files_media" to setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text"),
     )
-    private val READ_TOOLS = setOf("device_status", "recall_capability", "list_workflows")
+    private val READ_TOOLS = setOf("device_status", "recall_capability", "list_workflows", "account_read")
     fun exposed(name: String): Boolean = name == TaskTools.NAME || name in READ_TOOLS || name in READ_OPERATIONS
 
     /** Null when [name] may run in a chat of [role]; otherwise why not. */

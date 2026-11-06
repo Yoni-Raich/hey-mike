@@ -47,6 +47,7 @@ data class EngineProfile(
     /** Send attached pictures as data URLs rather than phone paths. */
     val inlineImages: Boolean = false,
     val readOnly: Boolean = false,
+    val disableAccountApps: Boolean = false,
 )
 
 /** Short-lived phone credential sent only over the encrypted SSH app-server stream. */
@@ -60,7 +61,62 @@ class CodexEngine(
     /** Process diagnostics have no turn scope; keep them out of conversation failures. */
     private val diagnosticSink: (String) -> Unit = { android.util.Log.w("CodexEngine", it) },
     private val compactWaitMs: Long = COMPACT_WAIT_MS,
-) : AgentEngine, RealtimeVoiceEngine {
+    private val accountReadBridge: Boolean = false,
+) : AgentEngine, RealtimeVoiceEngine, dev.androidagent.core.proactive.AccountConnectorSource {
+    override val engine = EngineKind.CODEX
+    @Volatile private var allowedAccountTools: Set<String> = emptySet()
+    @Volatile private var accountDefinitions: List<ToolDefinition> = emptyList()
+    override fun accountReadDefinitions() = accountDefinitions.filter { it.name in allowedAccountTools }
+    private val accountThreadLock = Mutex()
+    private var accountThread: String? = null
+    override fun allowForBackground(tools: List<String>) { allowedAccountTools = tools.toSet() }
+
+    override suspend fun accountConnectors(): List<dev.androidagent.core.proactive.AccountConnector> {
+        if (!accountReadBridge) return emptyList()
+        connect()
+        val catalog = mutableListOf<JsonObject>()
+        var cursor: String? = null
+        repeat(20) {
+            val result = request("mcpServerStatus/list", buildJsonObject {
+                put("limit", 100)
+                cursor?.let { put("cursor", it) }
+            })
+            catalog += (result["data"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            cursor = (result["nextCursor"] as? JsonPrimitive)?.contentOrNull
+            if (cursor == null) {
+                val connectors = CodexAccountCatalog.connectors(catalog)
+                val reads = connectors.flatMap { it.readTools }.toSet()
+                accountDefinitions = catalog.filter { it.string("name") == "codex_apps" }.flatMap {
+                    (it["tools"] as? JsonObject).orEmpty().mapNotNull { (name, raw) ->
+                        val tool = raw as? JsonObject ?: return@mapNotNull null
+                        val schema = tool["inputSchema"] as? JsonObject ?: return@mapNotNull null
+                        if (name in reads) ToolDefinition(name, tool.string("description"), schema) else null
+                    }
+                }
+                return connectors
+            }
+        }
+        error("Account catalog pagination limit reached")
+    }
+
+    override suspend fun readAccountTool(tool: String, arguments: JsonObject, permitted: () -> Boolean): ToolResult {
+        if (!accountReadBridge || tool !in allowedAccountTools || !permitted()) return ToolResult("Account tool is off.", success = false)
+        // Recheck the service annotation and the owner's switch for every call.
+        val reads = accountConnectors().flatMap { it.readTools }.toSet()
+        if (tool !in reads || tool !in allowedAccountTools || !permitted()) return ToolResult("Not an enabled read-only account tool.", success = false)
+        val thread = accountThreadLock.withLock {
+            accountThread ?: request("thread/start", buildJsonObject {
+                put("ephemeral", true); put("sandbox", "read-only"); put("approvalPolicy", "never")
+                put("config", buildJsonObject { put("features.apps", true) })
+            })["thread"]!!.jsonObject.string("id").also { accountThread = it }
+        }
+        if (!permitted() || tool !in allowedAccountTools) return ToolResult("Account read stopped.", success = false)
+        val result = request("mcpServer/tool/call", buildJsonObject {
+            put("threadId", thread)
+            put("server", "codex_apps"); put("tool", tool); put("arguments", arguments)
+        })
+        return ToolResult(result.toString().take(40_000), success = result["isError"]?.jsonPrimitive?.booleanOrNull != true)
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectLock = Mutex()
     private val externalAuthLock = Mutex()
@@ -92,6 +148,7 @@ class CodexEngine(
         if (process != null) closeConnectionLocked()
         runtime.prepare()
         val started = runtime.startAppServer()
+        accountThread = null
         externalAuth = null
         process = started
         writer = started.outputStream.bufferedWriter(Charsets.UTF_8)
@@ -262,6 +319,7 @@ class CodexEngine(
 
     override suspend fun openReadOnlySession(workspace: File, model: String?, tools: List<ToolDefinition>): String =
         openSessionAt(workspace.absolutePath, null, model, tools, sessionProfile = profile.copy(
+            disableAccountApps = accountReadBridge,
             sandbox = "read-only", approvalPolicy = "never", readOnly = true,
             developerInstructions = profile.developerInstructions + "\nBackground task: use only Mike's allowed read tools and tasks tool. Never use native file, shell, network, or external tools.",
         ))
@@ -289,7 +347,7 @@ class CodexEngine(
         model: String?,
         tools: List<ToolDefinition>,
         freshIfLost: Boolean = true,
-        sessionProfile: EngineProfile = profile,
+        sessionProfile: EngineProfile = profile.copy(disableAccountApps = accountReadBridge),
     ): String {
         connect()
         var lastError: Exception? = null
@@ -1016,6 +1074,7 @@ class CodexEngine(
 
         internal fun sessionConfig(profile: EngineProfile): JsonObject = buildJsonObject {
             put("features.image_generation", !profile.readOnly)
+            if (profile.disableAccountApps) put("features.apps", false)
             if (profile.readOnly) {
                 // No process execution; apply_patch is also fenced by read-only + never approvals.
                 put("features.shell_tool", false)
