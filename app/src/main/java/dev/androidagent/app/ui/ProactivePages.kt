@@ -140,7 +140,10 @@ private fun AccountConnectorsCard(state: AgentUiState, actions: AgentUiActions) 
             taskText("Used only when background checks run on Claude. They run on Codex now; Codex account connectors are not supported yet.",
                 "פעיל רק כשהבדיקות ברקע רצות על Claude. כרגע הן רצות על Codex, ובחיבורי החשבון של Codex עדיין אין תמיכה."),
             style = MaterialTheme.typography.bodySmall, color = BoardAmber)
-        if (accounts.isEmpty()) Text(
+        if (accounts.isEmpty() && !desk.accountsChecked) Text(
+            taskText("Checking your Claude account…", "בודק את חשבון Claude שלך…"),
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        else if (accounts.isEmpty()) Text(
             taskText("No connectors found yet. Sign in to Claude in Settings and connect services at claude.ai › Settings › Connectors.",
                 "עוד לא נמצאו חיבורים. התחברו ל־Claude בהגדרות וחברו שירותים ב־claude.ai › הגדרות › Connectors."),
             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

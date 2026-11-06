@@ -112,6 +112,8 @@ data class TaskDeskState(
     val connections: Map<String, dev.androidagent.core.proactive.ConnectorStatus> = emptyMap(),
     /** Connectors of the user's AI accounts (claude.ai Gmail, ...), as the engines last reported them. */
     val accounts: List<dev.androidagent.core.proactive.AccountConnector> = emptyList(),
+    /** False until the engines were asked once in this process. */
+    val accountsChecked: Boolean = false,
 )
 
 /**
@@ -596,6 +598,7 @@ class TaskDesk(
             recentAlerts = proactive.book.alerts.takeLast(30).reversed(),
             connections = connectionStates,
             accounts = accountConnectors.orEmpty(),
+            accountsChecked = accountConnectors != null,
             nextCheckAt = plan.nextCheckAt,
             waitReason = reason,
             events = board.events.value,

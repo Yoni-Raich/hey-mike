@@ -149,7 +149,7 @@ class ClaudeCodeEngine(
     override suspend fun accountConnectors(): List<AccountConnector> {
         if (computer != null || !installed()) return emptyList()
         return withContext(Dispatchers.IO) {
-            val process = host.start(ClaudeProtocol.accountProbeArgs(), home(), emptyMap())
+            val process = host.start(ClaudeProtocol.accountProbeArgs(), home(), ClaudeProtocol.ACCOUNT_ENV)
             try {
                 launch { drain(process.errorStream) }
                 val answers = kotlinx.coroutines.channels.Channel<Pair<String, JsonObject?>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
@@ -877,7 +877,8 @@ class ClaudeCodeEngine(
                     threadId, resume, ClaudeProtocol.windowModel(model, long), effort, mcpFile.absolutePath, promptFile.absolutePath, readOnly,
                     accountTools(),
                 )
-                attach(host.start(args, File(cwd).apply { mkdirs() }, ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, long)))
+                val env = ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, long)
+                attach(host.start(args, File(cwd).apply { mkdirs() }, if (accountTools().isEmpty()) env else env + ClaudeProtocol.ACCOUNT_ENV))
                 val reply = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { control("initialize") }
                     ?: error("Claude did not start in time")
                 ClaudeProtocol.parseModels(reply).takeIf { it.isNotEmpty() }?.let { models = it }

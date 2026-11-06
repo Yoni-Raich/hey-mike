@@ -2,6 +2,16 @@
 
 ### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
 
+Update 1195: on the phone 1194 found no account connectors, because the
+host forced `ENABLE_CLAUDEAI_MCP_SERVERS=false` and the proxy denied
+`mcp-proxy.anthropic.com`. Now the host turns that switch on only when the
+engine asks (account probe, read-only pass with account tools), and the
+Claude proxy allows `mcp-proxy.anthropic.com`. On the PC, through a logging
+CONNECT proxy, a process with connectors on reached only `api.anthropic.com`
+and `mcp-proxy.anthropic.com`, and listed Gmail (23 tools), Calendar and
+Drive with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`; with the switch off
+it listed none. The Sources card says "Checking…" until the first probe ends.
+
 Update 1194: account connectors. A background pass on Claude may read
 through connectors the user connected in claude.ai (Gmail, Calendar, Drive)
 and switched on in Sources. `ContextRouter` (core) picks per row: the app's

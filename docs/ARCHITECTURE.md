@@ -3574,5 +3574,7 @@ Design: `docs/design/proactive-manager.md`. Decisions:
   them. Only tools the service annotates `readOnly` are allowed, only in
   read-only background chats on the phone, only when the user switched that
   connector on (`account:claude:<server>` in `connectors`). User chats keep
-  `--strict-mcp-config`. Codex has no account route: its app tools were not
+  `--strict-mcp-config`. The host keeps `ENABLE_CLAUDEAI_MCP_SERVERS=false`
+  unless the engine passes `true` for that one process; the Claude proxy
+  allows `mcp-proxy.anthropic.com`, the connectors' only extra host. Codex has no account route: its app tools were not
   visible on the phone and cannot be limited to read-only.
