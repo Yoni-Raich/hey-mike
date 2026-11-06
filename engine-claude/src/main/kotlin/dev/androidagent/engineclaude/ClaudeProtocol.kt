@@ -142,17 +142,13 @@ internal object ClaudeProtocol {
         add("--model"); add(model)
         if (effort != null) { add("--effort"); add(effort) }
         add("--tools"); add(if (readOnly) "" else BUILTIN_TOOLS.joinToString(","))
-        // A background pass may read through the account's connectors (claude.ai
-        // Gmail, ...): then the account's servers load, and only the listed
-        // read-only tools are allowed; `dontAsk` refuses every other tool.
-        val account = readOnly && accountTools.isNotEmpty()
-        if (!account) add("--strict-mcp-config")
+        // A chat may read through the account's connectors (claude.ai Gmail,
+        // ...) the user switched on: then the account's servers load, and only
+        // the listed read-only tools are allowed; `dontAsk` refuses every other
+        // tool of those servers.
+        if (accountTools.isEmpty()) add("--strict-mcp-config")
         add("--mcp-config"); add(mcpConfig)
-        add("--allowedTools"); add(when {
-            account -> (listOf("$MCP_TOOL_PREFIX*") + accountTools).joinToString(",")
-            readOnly -> "$MCP_TOOL_PREFIX*"
-            else -> ALLOWED_TOOLS.joinToString(",")
-        })
+        add("--allowedTools"); add(((if (readOnly) listOf("$MCP_TOOL_PREFIX*") else ALLOWED_TOOLS) + accountTools).joinToString(","))
         add("--permission-mode"); add("dontAsk")
         // Only the app-owned user settings under the private HOME: that is
         // where the on-device skills are installed. Project and local

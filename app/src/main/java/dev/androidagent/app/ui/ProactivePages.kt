@@ -133,8 +133,8 @@ private fun AccountConnectorsCard(state: AgentUiState, actions: AgentUiActions) 
             Text(taskText("Through your Claude account", "דרך חשבון Claude שלך"), Modifier.weight(1f),
                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         }
-        Text(taskText("Gmail, Calendar or Drive you connected in claude.ai work here with no extra sign-in. Mike uses only the tools the service marks read-only; deleting, labels and drafts stay blocked.",
-            "ג׳ימייל, יומן או דרייב שחיברת ב־claude.ai עובדים כאן בלי התחברות נוספת. מייק משתמש רק בכלים שהשירות מסמן כקריאה בלבד; מחיקה, תוויות וטיוטות חסומות."),
+        Text(taskText("Gmail, Calendar or Drive you connected in claude.ai work here with no extra sign-in. Mike reads them for notifications and when you ask in a chat, with only the tools the service marks read-only; deleting, labels and drafts stay blocked.",
+            "ג׳ימייל, יומן או דרייב שחיברת ב־claude.ai עובדים כאן בלי התחברות נוספת. מייק קורא אותם להתראות וכשמבקשים בצ׳אט, רק בכלים שהשירות מסמן כקריאה בלבד; מחיקה, תוויות וטיוטות חסומות."),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (desk.settings.passEngine != EngineKind.CLAUDE) Text(
             taskText("Used only when background checks run on Claude. They run on Codex now; Codex account connectors are not supported yet.",

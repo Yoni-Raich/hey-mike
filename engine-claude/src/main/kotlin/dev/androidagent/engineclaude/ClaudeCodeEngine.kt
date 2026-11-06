@@ -133,7 +133,7 @@ class ClaudeCodeEngine(
     @Volatile private var loginProcess: Process? = null
     @Volatile private var accountCache: Pair<Long, AccountStatus>? = null
     @Volatile private var longContext = true
-    /** Account tools (claude.ai connectors) a read-only background chat may call. Empty: none load. */
+    /** Read-only account tools (claude.ai connectors) the user switched on; phone chats may call them. Empty: none load. */
     @Volatile private var backgroundAccountTools: List<String> = emptyList()
     override val engine: EngineKind get() = EngineKind.CLAUDE
 
@@ -790,8 +790,8 @@ class ClaudeCodeEngine(
 
         private fun dir(): File = File(host.homeDirectory, "mike-chats/$threadId")
 
-        /** Only a read-only background chat on the phone may read through the account's connectors. */
-        private fun accountTools(): List<String> = if (readOnly && computer == null) backgroundAccountTools else emptyList()
+        /** A chat on the phone may read through the account connectors the user switched on, read-only tools only. */
+        private fun accountTools(): List<String> = if (computer == null) backgroundAccountTools else emptyList()
 
         /** Start or restart the process when it is gone or its model, effort, tools or window changed. Caller holds [lock]. */
         suspend fun ensureRunning() {

@@ -59,10 +59,14 @@ class ClaudeProtocolTest {
         assertEquals("mcp__mike__*,mcp__claude_ai_Gmail__get_thread,mcp__claude_ai_Gmail__search_threads", value("--allowedTools"))
         assertEquals("dontAsk", value("--permission-mode"))
         assertEquals("", value("--tools"))
-        // A user chat never takes account tools, even if some are passed.
+        // A user chat takes the same read-only tools next to its own, and still refuses the rest.
         val user = ClaudeProtocol.chatArgs("11111111-2222-4333-8444-555555555555", false, "sonnet", null, "/mcp", "/prompt", readOnly = false, accountTools = tools)
-        assertTrue("--strict-mcp-config" in user)
-        assertFalse(user[user.indexOf("--allowedTools") + 1].contains("claude_ai"))
+        assertFalse("--strict-mcp-config" in user)
+        assertEquals((ClaudeProtocol.ALLOWED_TOOLS + tools).joinToString(","), user[user.indexOf("--allowedTools") + 1])
+        assertEquals("dontAsk", user[user.indexOf("--permission-mode") + 1])
+        // Without account tools nothing of the account loads.
+        val plain = ClaudeProtocol.chatArgs("11111111-2222-4333-8444-555555555555", false, "sonnet", null, "/mcp", "/prompt")
+        assertTrue("--strict-mcp-config" in plain)
     }
 
     @Test fun accountServersKeepOnlyClaudeAiReadOnlyTools() {

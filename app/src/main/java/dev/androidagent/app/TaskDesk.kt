@@ -289,7 +289,10 @@ class TaskDesk(
             put("passesToday", if (settings.passDay == today) settings.passesToday else 0); put("dailyPassCap", settings.dailyPassCap)
             put("pendingInputs", signals.pending.value.size)
             mutable.value.error?.let { put("error", it.take(400)) }
-        } }, proactive = proactiveTools(null, null))
+        } }, proactive = proactiveTools(null, null), managerMessages = {
+            val manager = team.of(MemberKind.MANAGER)?.sessionId ?: error("The Manager's chat is missing.")
+            withIo { sessions.messages(manager).first() }
+        })
     val tools = dev.androidagent.core.TaskToolHandler { session, args, user ->
         val flight = inFlight[session]
         if(isBackgroundSession(session) && (paused || !board.settings.value.discoveryOn || (!user && flight == null)))

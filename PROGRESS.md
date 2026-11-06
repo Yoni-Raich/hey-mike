@@ -2,6 +2,16 @@
 
 ### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
 
+Update 1197: the Manager's chat said it had no Gmail: only background passes
+got account tools. Every phone Claude chat (all run `dontAsk`) now gets the
+switched-on read-only account tools next to its own tools; the rest of the
+account's tools stay refused. Codex chats still have no account route.
+Also new: `tasks(mode="manager_chat")` lets every ordinary chat (phone or
+computer) and team member read the Manager's conversation, read only. Checked
+by `ManagerChatReadTest` (paging, role refusal). Not yet checked on the phone
+or from a computer chat. Gap: the Manager's chat text is not filtered by
+excluded sources.
+
 Update 1196: 1195 still listed none. On the PC the first `mcp_status`
 after `initialize` answers `[]`; the account's servers appear about a second
 later. The probe now retries while the list is empty or pending (up to 15

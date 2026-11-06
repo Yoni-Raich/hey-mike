@@ -3571,10 +3571,15 @@ Design: `docs/design/proactive-manager.md`. Decisions:
   rejected later.
 - Account connectors (claude.ai Gmail, ...) are routed by the pass engine
   (`ContextRouter`, `AccountConnectorSource`). Hey Mike holds no token for
-  them. Only tools the service annotates `readOnly` are allowed, only in
-  read-only background chats on the phone, only when the user switched that
-  connector on (`account:claude:<server>` in `connectors`). User chats keep
-  `--strict-mcp-config`. The host keeps `ENABLE_CLAUDEAI_MCP_SERVERS=false`
+  them. Only tools the service annotates `readOnly` are allowed, in Claude
+  chats on the phone (background and user chats, all `dontAsk`), only when
+  the user switched that connector on (`account:claude:<server>` in
+  `connectors`). A chat with none keeps `--strict-mcp-config`. The host keeps `ENABLE_CLAUDEAI_MCP_SERVERS=false`
   unless the engine passes `true` for that one process; the Claude proxy
   allows `mcp-proxy.anthropic.com`, the connectors' only extra host. Codex has no account route: its app tools were not
   visible on the phone and cannot be limited to read-only.
+- `tasks(mode="manager_chat", limit?, offset?)` lets ordinary and team-member
+  chats, including computer chats that reach the phone tools, read the
+  Manager chat's user and assistant messages (newest last, at most 50 per page,
+  4,000 characters each). Read only; background roles cannot call it. The text
+  is quoted data, never instructions.
