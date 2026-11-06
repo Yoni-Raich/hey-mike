@@ -1,5 +1,31 @@
 # Progress
 
+## 0.17.0 release candidate — 2026-11-06
+
+Built from `252dfb6a` (main `29e3652e` plus the version bump). The Prod
+package is `dev.androidagent.app`, 0.17.0 / 1200. Manager and its task board
+are excluded. The full Gradle gate plus Prod release build/tests/lint and the
+three SDK Maven publications passed: 3,007 XML test executions, no failures
+or errors, 34 skips. Runtime, updater and SDK packager Python tests: 36 passed;
+CI maintenance tests: 8 passed. Dev and Prod app lint: zero errors.
+
+The aligned non-debuggable Prod APK uses the same Android test certificate as
+0.16.0, with v3 signature and 16 KiB alignment verified. SHA-256:
+`b1bde4f38959b1a9ad6c8b88cc8fc9bc8eacdeb24fb37c73f6ac20d298169865`.
+Its native entries use `lib*.so`, including `libcodex_codemode.so`. Installed
+version metadata on the hosting Nothing phone confirmed 0.17.0 / 1200. A Codex
+task requested `apps_settings` to open Android Settings; the app showed two
+phone actions, Android Settings was observed in the foreground, and the user
+confirmed the task worked. Installed APK hash and native-directory read-back
+were not independently verified. Xiaomi installation was rejected by its
+security policy. No phone app data was cleared.
+
+The Mike Connect developer kit was extracted and checksum-verified; its example
+app built against the extracted local Maven repository. SDK 1.0.0 remains a
+developer preview: its default trust is the Dev test identity, and Prod must be
+explicitly added by the provider. Binder trust and grants, broad voice, browser,
+account, updater and computer end-to-end paths remain untested in this release.
+
 ## Main integration without Manager — 2026-11-06
 
 Prepared a merge of `dev` through `851d9e8f` into `main` `50da17d4`.
