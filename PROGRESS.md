@@ -1,5 +1,24 @@
 # Progress
 
+### Manager cleanup: one connections module, no own Gmail sign-in — 2026-11-06
+
+Dev Debug 1201. Review of the whole Manager branch, history rewritten into
+feature commits (backup: `backup/proactive-manager-1200-pre-cleanup`).
+`ManagerConnections` (core) now owns connector states, the account list, the
+user's switches, the connections note and pass context; `TaskDesk` only
+delegates. `CodexAccountReads` holds the ChatGPT `account_read` bridge out of
+`CodexEngine`. `allowForBackground` became `allowAccountTools` (phone chats use
+it too); `ContextRouter.usable` covers one engine or all. The Google sign-in
+Gmail connector and `play-services-auth` were removed: they could not work
+without a Google Cloud OAuth client and restricted-scope verification; mail
+comes through account connectors. `app/build.gradle.kts` lost the blank lines
+an earlier edit had added. Misplaced KDocs and a stale env comment fixed.
+
+Checks: `./gradlew.bat :core:test :engine-claude:testDebugUnitTest
+:engine-codex:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon -q` passed, lint zero errors. New
+`ManagerConnectionsTest` (2 tests). Not run on a phone after the refactor.
+
 ### Manager knows its connections; mail check every 3 hours — 2026-11-06
 
 Dev Debug 1200. Manager and team chats now get a connections note naming the

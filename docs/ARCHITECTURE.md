@@ -3553,8 +3553,11 @@ Decided 2026-10-01, on top of the section above.
 Design: `docs/design/proactive-manager.md`. Decisions:
 
 - `dev.androidagent.core.proactive` holds `AlertGate`, `OwnerProfileStore`,
-  `AlertBook`, `ContextBroker` and `ProactiveDesk`, plain JVM and tested.
-  `TaskDesk` owns the files (`owner-profile-v1.json`, `mike-alerts-v1.json`).
+  `AlertBook`, `ContextBroker`, `ProactiveDesk`, `ContextRouter` and
+  `ManagerConnections`, plain JVM and tested. `TaskDesk` owns the files
+  (`owner-profile-v1.json`, `mike-alerts-v1.json`) and delegates every
+  connection question (states, account list, switches, notes, pass context)
+  to `ManagerConnections`.
 - The gate only lowers an alert's level, never raises it. Levels: none,
   digest, notice, urgent. Budgets, quiet hours and the profile decide.
 - Conversation context is pulled at pass time through enabled, linked
@@ -3562,8 +3565,9 @@ Design: `docs/design/proactive-manager.md`. Decisions:
 - Connectors are read-only. WhatsApp Web is a reserved origin for the agent
   browser; only the connector page in `:web` loads it, in the same WebView
   profile, so a session linked earlier in Mike's browser is reused. The
-  reader is local only: it never fetches earlier messages. Gmail lives in `:app`
-  (Play services auth).
+  reader is local only: it never fetches earlier messages. There is no own
+  Gmail sign-in: an OAuth client and restricted-scope verification would be
+  needed, so mail comes only through account connectors.
 - Feedback lives in `AlertBook`, not `TaskEvent`. Coach learning is staged
   with its flight and undone by run id. Learned weights stay within −1..1;
   only the owner mutes (−2) or stars (+2).
@@ -3586,6 +3590,7 @@ Design: `docs/design/proactive-manager.md`. Decisions:
   direct MCP calls bypass that policy in the tested 0.163.0 PC binary.
   The gateway owns Stop revocation; normal coordinator tool tracing and
   cancellation still apply. Sources shows separate Claude and ChatGPT cards.
+  `CodexAccountReads` holds this bridge; `CodexEngine` only delegates.
 - Phone-owned Codex user chats record the tool catalog used at thread/start
   in `.mike-codex-tools-v1.json` inside their private session workspace. In the
   tested 0.163.0 binary, resume accepts changed dynamicTools but the model
