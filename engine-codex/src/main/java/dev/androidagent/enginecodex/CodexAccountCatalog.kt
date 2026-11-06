@@ -6,8 +6,11 @@ import dev.androidagent.core.proactive.AccountConnector
 import kotlinx.serialization.json.*
 
 internal object CodexAccountCatalog {
+    /** The app-server's MCP server that carries the ChatGPT account's apps. */
+    const val SERVER = "codex_apps"
+
     fun connectors(servers: List<JsonObject>): List<AccountConnector> {
-        val tools = servers.filter { it["name"]?.jsonPrimitive?.contentOrNull == "codex_apps" }
+        val tools = servers.filter { it["name"]?.jsonPrimitive?.contentOrNull == SERVER }
             .flatMap { (it["tools"] as? JsonObject).orEmpty().entries }
         return tools.filter { (_, v) -> (v as? JsonObject)?.get("_meta") is JsonObject }
             .groupBy { (_, v) -> v.jsonObject["_meta"]!!.jsonObject["connector_name"]?.jsonPrimitive?.contentOrNull.orEmpty() }

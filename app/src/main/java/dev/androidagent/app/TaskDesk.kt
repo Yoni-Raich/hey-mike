@@ -28,6 +28,7 @@ import dev.androidagent.core.DiscoverySchedule
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.MemberKind
 import dev.androidagent.core.MemoryBook
+import dev.androidagent.core.proactive.ManagerConnections
 import dev.androidagent.core.MikeTask
 import dev.androidagent.core.QueuedTurn
 import dev.androidagent.core.RunPhase
@@ -79,6 +80,19 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import dev.androidagent.core.proactive.AccountConnector
+import dev.androidagent.core.proactive.AlertBook
+import dev.androidagent.core.proactive.AlertPrefs
+import dev.androidagent.core.proactive.ConnectorStatus
+import dev.androidagent.core.proactive.ContextBroker
+import dev.androidagent.core.proactive.FeedbackAction
+import dev.androidagent.core.proactive.LearnRequest
+import dev.androidagent.core.proactive.MikeAlert
+import dev.androidagent.core.proactive.OwnerProfile
+import dev.androidagent.core.proactive.OwnerProfileStore
+import dev.androidagent.core.proactive.ProactiveDesk
+import dev.androidagent.core.proactive.ProactiveTools
+import dev.androidagent.core.proactive.ProfileKind
 
 /** Everything the board's screens show, in one value. */
 data class TaskDeskState(
@@ -106,12 +120,12 @@ data class TaskDeskState(
     val queueRows: List<TaskSignal> = emptyList(),
     val scanChats: List<ChatSession> = emptyList(),
     /** What matters to the user, and how Mike may reach them. */
-    val profile: dev.androidagent.core.proactive.OwnerProfile = dev.androidagent.core.proactive.OwnerProfile(),
-    val recentAlerts: List<dev.androidagent.core.proactive.MikeAlert> = emptyList(),
+    val profile: OwnerProfile = OwnerProfile(),
+    val recentAlerts: List<MikeAlert> = emptyList(),
     /** Connector id to its last known state, for the Connections cards. */
-    val connections: Map<String, dev.androidagent.core.proactive.ConnectorStatus> = emptyMap(),
+    val connections: Map<String, ConnectorStatus> = emptyMap(),
     /** Connectors of the user's AI accounts (claude.ai Gmail, ...), as the engines last reported them. */
-    val accounts: List<dev.androidagent.core.proactive.AccountConnector> = emptyList(),
+    val accounts: List<AccountConnector> = emptyList(),
     /** False until the engines were asked once in this process. */
     val accountsChecked: Boolean = false,
 )
@@ -146,27 +160,21 @@ class TaskDesk(
     val signals = SignalInbox(store, now)
     private val calendarChanges = CalendarSignalBuffer()
     val team = TeamRoster(store, now)
-    /** Read-only context connections, registered by the app graph. */
-    @Volatile var connectors: List<dev.androidagent.core.proactive.ContextConnector> = emptyList()
-    @Volatile private var connectionStates: Map<String, dev.androidagent.core.proactive.ConnectorStatus> = emptyMap()
-    /** Engines whose account connectors a background pass may read through, read-only. */
-    @Volatile var accountSources: List<dev.androidagent.core.proactive.AccountConnectorSource> = emptyList()
-    /** Null until the engines were asked once in this process. */
-    @Volatile private var accountConnectors: List<dev.androidagent.core.proactive.AccountConnector>? = null
-    private val accountLock = kotlinx.coroutines.sync.Mutex()
+    /** Read-only context connections: the app's own and the engines' account connectors. */
+    val connections = ManagerConnections({ id -> board.settings.value.connectors[id] == true }, ::contextAllowed)
     private val alertNotifier = MikeAlertNotifier(context, managerChat = { team.of(MemberKind.MANAGER)?.sessionId },
         urgentSound = { proactive.profile.profile.alerts.urgentSound })
-    val proactive: dev.androidagent.core.proactive.ProactiveDesk = dev.androidagent.core.proactive.ProactiveDesk(
-        dev.androidagent.core.proactive.OwnerProfileStore(File(context.filesDir, "owner-profile-v1.json"), now),
-        dev.androidagent.core.proactive.AlertBook(File(context.filesDir, "mike-alerts-v1.json"), now),
+    val proactive: ProactiveDesk = ProactiveDesk(
+        OwnerProfileStore(File(context.filesDir, "owner-profile-v1.json"), now),
+        AlertBook(File(context.filesDir, "mike-alerts-v1.json"), now),
         alertNotifier,
-        dev.androidagent.core.proactive.ContextBroker({ connectors }, { id -> board.settings.value.connectors[id] == true },
+        ContextBroker({ connections.connectors }, { id -> board.settings.value.connectors[id] == true },
             ::contextAllowed, context.packageName),
         zone, now)
     /** The rows of each running Scout pass, so an alert or context call can name only its own input. */
     private val passRows = java.util.concurrent.ConcurrentHashMap<String, Map<String, TaskSignal>>()
-    private fun proactiveTools(runId: String?, learn: ((dev.androidagent.core.proactive.LearnRequest) -> Unit)?) =
-        dev.androidagent.core.proactive.ProactiveTools(proactive,
+    private fun proactiveTools(runId: String?, learn: ((LearnRequest) -> Unit)?) =
+        ProactiveTools(proactive,
             signal = { session, id -> passRows[session]?.get(id)?.takeIf { inFlight[session]?.batch?.contains(id) == true } },
             card = { id -> board.task(id)?.takeIf(::sourceAllowed) }, runId = runId,
             learn = learn ?: { r -> proactive.profile.learn(r.kind, r.key, r.label, r.weight, r.why, r.evidence, r.runId); Unit },
@@ -203,7 +211,7 @@ class TaskDesk(
         val briefingTaskIds: List<String> = emptyList(),
         val coachDispositions: MutableMap<String, dev.androidagent.core.CoachDisposition> = java.util.concurrent.ConcurrentHashMap(),
         /** Profile entries the Coach learned in this run, applied only when the run commits. */
-        val learned: MutableList<dev.androidagent.core.proactive.LearnRequest> = java.util.concurrent.CopyOnWriteArrayList(),
+        val learned: MutableList<LearnRequest> = java.util.concurrent.CopyOnWriteArrayList(),
         var seenActive: Boolean = false,
         @Volatile var finished: Boolean = false,
     )
@@ -333,7 +341,7 @@ class TaskDesk(
             else board.tasks.value.filter(::sourceAllowed).flatMap { it.sourceRefs }.distinct()
         val book = withIo { playbook.fork(id, refs.ifEmpty { listOf(dev.androidagent.core.TaskSourceRef("user", verified = true)) }) }
         val dispositions = java.util.concurrent.ConcurrentHashMap<String, dev.androidagent.core.CoachDisposition>()
-        val learned = java.util.concurrent.CopyOnWriteArrayList<dev.androidagent.core.proactive.LearnRequest>()
+        val learned = java.util.concurrent.CopyOnWriteArrayList<LearnRequest>()
         val handler = TaskTools(stagedBoard, stagedMemory, stagedTeam, roleOf = ::roleOf,
             roleChat = { role ->
                 check(roleOf(session) == TaskChatRole.COORDINATOR) { "Only the Manager review organizes roles." }
@@ -599,9 +607,9 @@ class TaskDesk(
             error = mutable.value.error,
             profile = proactive.profile.profile,
             recentAlerts = proactive.book.alerts.takeLast(30).reversed(),
-            connections = connectionStates,
-            accounts = accountConnectors.orEmpty(),
-            accountsChecked = accountConnectors != null,
+            connections = connections.states,
+            accounts = connections.accounts,
+            accountsChecked = connections.accountsChecked,
             nextCheckAt = plan.nextCheckAt,
             waitReason = reason,
             events = board.events.value,
@@ -751,15 +759,15 @@ class TaskDesk(
     // ----- Alerts, profile and connections -------------------------------------------
 
     /** A button on one of Mike's alerts, or a tap that opened it. */
-    fun alertFeedback(alertId: String, action: dev.androidagent.core.proactive.FeedbackAction) {
+    fun alertFeedback(alertId: String, action: FeedbackAction) {
         scope.launch(Dispatchers.IO) { proactive.onFeedback(alertId, action); publish() }
     }
 
-    fun editAlerts(change: (dev.androidagent.core.proactive.AlertPrefs) -> dev.androidagent.core.proactive.AlertPrefs) {
+    fun editAlerts(change: (AlertPrefs) -> AlertPrefs) {
         scope.launch(Dispatchers.IO) { proactive.profile.setAlerts(change); publish() }
     }
 
-    fun setProfileEntry(kind: dev.androidagent.core.proactive.ProfileKind, key: String, label: String?, weight: Int, alwaysNotify: Boolean) {
+    fun setProfileEntry(kind: ProfileKind, key: String, label: String?, weight: Int, alwaysNotify: Boolean) {
         scope.launch(Dispatchers.IO) {
             runCatching { proactive.profile.setOwner(kind, key, label, weight, alwaysNotify) }.onFailure { reportError(it.message ?: "Could not save.") }
             publish()
@@ -779,7 +787,7 @@ class TaskDesk(
 
     fun setConnector(id: String, on: Boolean) {
         editSettings { it.copy(connectors = it.connectors + (id to on)) }
-        pushAccountTools { key -> if (key == id) on else board.settings.value.connectors[key] == true }
+        connections.switched(id, on)
         publish()
     }
 
@@ -788,51 +796,8 @@ class TaskDesk(
         dev.androidagent.core.TaskSourcePolicy.allows(
             dev.androidagent.core.TaskSourceRef(SignalFilter.sourceOf(app), app, conversation, verified = true), board.settings.value)
 
-    /** Whether the Scout's engine can read mail through an account connector the user switched on, and mail is an allowed source. */
-    private fun mailReadable(settings: dev.androidagent.core.TaskBoardSettings): Boolean =
-        dev.androidagent.core.proactive.ContextRouter.readsMail(dev.androidagent.core.proactive.ContextRouter.usable(
-            accountConnectors.orEmpty(), settings.passEngine) { key -> settings.connectors[key] == true }) &&
-            contextAllowed(dev.androidagent.core.proactive.ContextRouter.GMAIL_APP, null)
-
-    /** The connections note for a Manager or team chat running on [engine]. */
-    private fun connectionsNote(engine: EngineKind?): String? {
-        val settings = board.settings.value
-        val apps = connectors.filter { c -> settings.connectors[c.id] == true &&
-            connectionStates[c.id]?.state == dev.androidagent.core.proactive.ConnectorState.READY }
-            .map { c -> if (c.id == dev.androidagent.core.proactive.ConnectorIds.WHATSAPP_WEB) "WhatsApp Web" else c.id.replaceFirstChar { it.uppercase() } }
-        return dev.androidagent.core.proactive.ContextRouter.connectionsNote(apps,
-            dev.androidagent.core.proactive.ContextRouter.switchedOn(accountConnectors.orEmpty()) { key -> settings.connectors[key] == true }, engine)
-    }
-
-    /** Ask the engines for their account connectors, then tell each which read-only tools background passes may use. */
-    private suspend fun loadAccounts() = accountLock.withLock {
-        accountConnectors = accountSources.flatMap { source ->
-            try { kotlinx.coroutines.withTimeoutOrNull(ACCOUNT_PROBE_MS) { source.accountConnectors() }.orEmpty() }
-            catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
-        }
-        pushAccountTools { key -> board.settings.value.connectors[key] == true }
-    }
-
-    private fun pushAccountTools(enabled: (String) -> Boolean) {
-        val accounts = accountConnectors.orEmpty()
-        accountSources.forEach { it.allowForBackground(dev.androidagent.core.proactive.ContextRouter.backgroundTools(accounts, it.engine, enabled)) }
-    }
-
     /** Ask every connector for its state, for the Connections cards. */
-    fun refreshConnections() {
-        scope.launch(Dispatchers.IO) {
-            connectionStates = connectors.associate { c -> c.id to connectorStatus(c) }
-            publish()
-            if (accountSources.isNotEmpty()) { loadAccounts(); publish() }
-        }
-    }
-
-    private suspend fun connectorStatus(c: dev.androidagent.core.proactive.ContextConnector): dev.androidagent.core.proactive.ConnectorStatus =
-        try {
-            kotlinx.coroutines.withTimeoutOrNull(10_000) { c.status() }
-                ?: dev.androidagent.core.proactive.ConnectorStatus(dev.androidagent.core.proactive.ConnectorState.NEEDS_ATTENTION, "no answer")
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { dev.androidagent.core.proactive.ConnectorStatus(dev.androidagent.core.proactive.ConnectorState.NEEDS_ATTENTION, e.message) }
+    fun refreshConnections() { scope.launch(Dispatchers.IO) { connections.refresh(::publish) } }
 
     fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); proactive.book.clear(); proactive.profile.forgetLearned(); store.clearSourceStats(); situationStore.forgetObserved(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
     fun liftSuppression(entry: dev.androidagent.core.TaskSuppression) { scope.launch { board.removeSuppression(entry) } }
@@ -981,7 +946,7 @@ class TaskDesk(
         deliverBriefings()
         val calendarGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
         calendarChanges.capture(signals, now(), settings.lastCalendarCheckAt, settings.readCalendar && calendarGranted)
-        dev.androidagent.core.MailCheck.capture(signals, now(), settings.lastMailCheckAt, mailReadable(settings), zone())
+        dev.androidagent.core.MailCheck.capture(signals, now(), settings.lastMailCheckAt, connections.mailReadable(settings.passEngine), zone())
         try { collectMessageFeed() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: SignalInboxFullException) { /* Replayable chat input waits at its current cursor. */ }
         catch (e: Exception) { reportError("Chat capture: ${e.message}") } // Let existing input drain under backpressure.
@@ -1036,17 +1001,9 @@ class TaskDesk(
         val batch = plan.batch.map { row ->
             if (row.sessionId == null) row else row.copy(text = withIo { SignalRows.chatText(row, sessions.messages(row.sessionId!!).first()) })
         }
-        val pulled = if (connectors.isEmpty()) emptyList() else try { proactive.broker?.enrich(batch).orEmpty() }
+        val pulled = if (connections.connectors.isEmpty()) emptyList() else try { proactive.broker?.enrich(batch).orEmpty() }
             catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
-        // Rows the app's own connector did not explain may be read through the
-        // account connectors of the engine that runs this pass.
-        if (accountSources.isNotEmpty() && accountConnectors == null) withIo { loadAccounts() }
-        val usable = dev.androidagent.core.proactive.ContextRouter.usable(accountConnectors.orEmpty(), settings.passEngine) { key ->
-            board.settings.value.connectors[key] == true }
-        val viaAccount = dev.androidagent.core.proactive.ContextRouter.accountNotes(batch,
-            pulled.filter { it.context != null }.map { it.signalId }.toSet(), usable, ::contextAllowed)
-        val accountRows = viaAccount.map { it.signalId }.toSet()
-        val contexts = pulled.filter { it.signalId !in accountRows } + viaAccount
+        val contexts = withIo { connections.passContext(batch, pulled, settings.passEngine) }
         val prompt = TaskPrompts.scoutPass(batch, clock, zone(), plan.batch.any { it.source == "calendar" }, playbook.directory.absolutePath,
             contexts, proactive.profile.summary(clock, zone()), proactive.profile.profile.alerts.enabled)
         passRows[session] = batch.associateBy { it.id }
@@ -1348,12 +1305,11 @@ class TaskDesk(
                 .sortedWith(compareBy<MikeTask> { it.usefulUntil ?: Long.MAX_VALUE }.thenByDescending { it.createdAt }),
             running = mine.filter { it.status in setOf(TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.REVIEW) },
             zone = zone(), playbook = playbook.directory.absolutePath,
-            connections = connectionsNote(sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine))
+            connections = connections.note(sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine))
     }
 
     companion object {
         private const val TICK_MS = 60_000L
-        private const val ACCOUNT_PROBE_MS = 45_000L
         private const val HOUR = 3_600_000L
         private const val QUIET_CHAT_MS = 15 * 60_000L
         private const val PASS_DEADLINE_MS = 30 * 60_000L

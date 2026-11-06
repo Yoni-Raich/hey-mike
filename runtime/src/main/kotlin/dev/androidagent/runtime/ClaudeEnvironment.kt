@@ -85,8 +85,9 @@ object ClaudeEnvironment {
         // The default is 10 retries with backoff: a failed request would stall for a minute.
         env["CLAUDE_CODE_MAX_RETRIES"] = "2"
         // The account's claude.ai connectors load only where the engine asks for
-        // them (a read-only background pass that may read through them). Every
-        // other process keeps them off, so it never contacts mcp-proxy.anthropic.com.
+        // them: the connector probe, and a phone chat the user gave read-only
+        // account tools. Every other process keeps them off, so it never
+        // contacts mcp-proxy.anthropic.com.
         env[CLAUDEAI_CONNECTORS] = if (extraEnv[CLAUDEAI_CONNECTORS] == "true") "true" else "false"
         env["NO_COLOR"] = "1"
         // `claude auth login` must not try to open a browser; the app shows the URL.
