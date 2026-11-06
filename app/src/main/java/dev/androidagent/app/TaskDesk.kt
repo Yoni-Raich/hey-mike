@@ -110,6 +110,8 @@ data class TaskDeskState(
     val recentAlerts: List<dev.androidagent.core.proactive.MikeAlert> = emptyList(),
     /** Connector id to its last known state, for the Connections cards. */
     val connections: Map<String, dev.androidagent.core.proactive.ConnectorStatus> = emptyMap(),
+    /** Connectors of the user's AI accounts (claude.ai Gmail, ...), as the engines last reported them. */
+    val accounts: List<dev.androidagent.core.proactive.AccountConnector> = emptyList(),
 )
 
 /**
@@ -145,6 +147,11 @@ class TaskDesk(
     /** Read-only context connections, registered by the app graph. */
     @Volatile var connectors: List<dev.androidagent.core.proactive.ContextConnector> = emptyList()
     @Volatile private var connectionStates: Map<String, dev.androidagent.core.proactive.ConnectorStatus> = emptyMap()
+    /** Engines whose account connectors a background pass may read through, read-only. */
+    @Volatile var accountSources: List<dev.androidagent.core.proactive.AccountConnectorSource> = emptyList()
+    /** Null until the engines were asked once in this process. */
+    @Volatile private var accountConnectors: List<dev.androidagent.core.proactive.AccountConnector>? = null
+    private val accountLock = kotlinx.coroutines.sync.Mutex()
     private val alertNotifier = MikeAlertNotifier(context, managerChat = { team.of(MemberKind.MANAGER)?.sessionId },
         urgentSound = { proactive.profile.profile.alerts.urgentSound })
     val proactive: dev.androidagent.core.proactive.ProactiveDesk = dev.androidagent.core.proactive.ProactiveDesk(
@@ -152,9 +159,7 @@ class TaskDesk(
         dev.androidagent.core.proactive.AlertBook(File(context.filesDir, "mike-alerts-v1.json"), now),
         alertNotifier,
         dev.androidagent.core.proactive.ContextBroker({ connectors }, { id -> board.settings.value.connectors[id] == true },
-            { app, conversation -> board.settings.value.discoveryOn && dev.androidagent.core.TaskSourcePolicy.allows(
-                dev.androidagent.core.TaskSourceRef(SignalFilter.sourceOf(app), app, conversation, verified = true), board.settings.value) },
-            context.packageName),
+            ::contextAllowed, context.packageName),
         zone, now)
     /** The rows of each running Scout pass, so an alert or context call can name only its own input. */
     private val passRows = java.util.concurrent.ConcurrentHashMap<String, Map<String, TaskSignal>>()
@@ -590,6 +595,7 @@ class TaskDesk(
             profile = proactive.profile.profile,
             recentAlerts = proactive.book.alerts.takeLast(30).reversed(),
             connections = connectionStates,
+            accounts = accountConnectors.orEmpty(),
             nextCheckAt = plan.nextCheckAt,
             waitReason = reason,
             events = board.events.value,
@@ -765,13 +771,37 @@ class TaskDesk(
         }
     }
 
-    fun setConnector(id: String, on: Boolean) = editSettings { it.copy(connectors = it.connectors + (id to on)) }
+    fun setConnector(id: String, on: Boolean) {
+        editSettings { it.copy(connectors = it.connectors + (id to on)) }
+        pushAccountTools { key -> if (key == id) on else board.settings.value.connectors[key] == true }
+        publish()
+    }
+
+    /** Whether a pass may pull context for this app and conversation: discovery on and the source allowed. */
+    private fun contextAllowed(app: String, conversation: String?): Boolean = board.settings.value.discoveryOn &&
+        dev.androidagent.core.TaskSourcePolicy.allows(
+            dev.androidagent.core.TaskSourceRef(SignalFilter.sourceOf(app), app, conversation, verified = true), board.settings.value)
+
+    /** Ask the engines for their account connectors, then tell each which read-only tools background passes may use. */
+    private suspend fun loadAccounts() = accountLock.withLock {
+        accountConnectors = accountSources.flatMap { source ->
+            try { kotlinx.coroutines.withTimeoutOrNull(ACCOUNT_PROBE_MS) { source.accountConnectors() }.orEmpty() }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
+        }
+        pushAccountTools { key -> board.settings.value.connectors[key] == true }
+    }
+
+    private fun pushAccountTools(enabled: (String) -> Boolean) {
+        val accounts = accountConnectors.orEmpty()
+        accountSources.forEach { it.allowForBackground(dev.androidagent.core.proactive.ContextRouter.backgroundTools(accounts, it.engine, enabled)) }
+    }
 
     /** Ask every connector for its state, for the Connections cards. */
     fun refreshConnections() {
         scope.launch(Dispatchers.IO) {
             connectionStates = connectors.associate { c -> c.id to connectorStatus(c) }
             publish()
+            if (accountSources.isNotEmpty()) { loadAccounts(); publish() }
         }
     }
 
@@ -983,8 +1013,17 @@ class TaskDesk(
         val batch = plan.batch.map { row ->
             if (row.sessionId == null) row else row.copy(text = withIo { SignalRows.chatText(row, sessions.messages(row.sessionId!!).first()) })
         }
-        val contexts = if (connectors.isEmpty()) emptyList() else try { proactive.broker?.enrich(batch).orEmpty() }
+        val pulled = if (connectors.isEmpty()) emptyList() else try { proactive.broker?.enrich(batch).orEmpty() }
             catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
+        // Rows the app's own connector did not explain may be read through the
+        // account connectors of the engine that runs this pass.
+        if (accountSources.isNotEmpty() && accountConnectors == null) withIo { loadAccounts() }
+        val usable = dev.androidagent.core.proactive.ContextRouter.usable(accountConnectors.orEmpty(), settings.passEngine) { key ->
+            board.settings.value.connectors[key] == true }
+        val viaAccount = dev.androidagent.core.proactive.ContextRouter.accountNotes(batch,
+            pulled.filter { it.context != null }.map { it.signalId }.toSet(), usable, ::contextAllowed)
+        val accountRows = viaAccount.map { it.signalId }.toSet()
+        val contexts = pulled.filter { it.signalId !in accountRows } + viaAccount
         val prompt = TaskPrompts.scoutPass(batch, clock, zone(), plan.batch.any { it.source == "calendar" }, playbook.directory.absolutePath,
             contexts, proactive.profile.summary(clock, zone()), proactive.profile.profile.alerts.enabled)
         passRows[session] = batch.associateBy { it.id }
@@ -1289,6 +1328,7 @@ class TaskDesk(
 
     companion object {
         private const val TICK_MS = 60_000L
+        private const val ACCOUNT_PROBE_MS = 45_000L
         private const val HOUR = 3_600_000L
         private const val QUIET_CHAT_MS = 15 * 60_000L
         private const val PASS_DEADLINE_MS = 30 * 60_000L

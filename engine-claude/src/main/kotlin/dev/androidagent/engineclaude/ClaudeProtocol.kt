@@ -29,6 +29,7 @@ import dev.androidagent.core.EngineKind
 import dev.androidagent.core.ReasoningEffortOption
 import dev.androidagent.core.TokenUsage
 import dev.androidagent.core.UsageLimit
+import dev.androidagent.core.proactive.AccountConnector
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -126,6 +127,7 @@ internal object ClaudeProtocol {
         mcpConfig: String,
         systemPromptFile: String,
         readOnly: Boolean = false,
+        accountTools: List<String> = emptyList(),
     ): List<String> = buildList {
         add("-p")
         add("--input-format"); add("stream-json")
@@ -137,9 +139,17 @@ internal object ClaudeProtocol {
         add("--model"); add(model)
         if (effort != null) { add("--effort"); add(effort) }
         add("--tools"); add(if (readOnly) "" else BUILTIN_TOOLS.joinToString(","))
-        add("--strict-mcp-config")
+        // A background pass may read through the account's connectors (claude.ai
+        // Gmail, ...): then the account's servers load, and only the listed
+        // read-only tools are allowed; `dontAsk` refuses every other tool.
+        val account = readOnly && accountTools.isNotEmpty()
+        if (!account) add("--strict-mcp-config")
         add("--mcp-config"); add(mcpConfig)
-        add("--allowedTools"); add(if (readOnly) "$MCP_TOOL_PREFIX*" else ALLOWED_TOOLS.joinToString(","))
+        add("--allowedTools"); add(when {
+            account -> (listOf("$MCP_TOOL_PREFIX*") + accountTools).joinToString(",")
+            readOnly -> "$MCP_TOOL_PREFIX*"
+            else -> ALLOWED_TOOLS.joinToString(",")
+        })
         add("--permission-mode"); add("dontAsk")
         // Only the app-owned user settings under the private HOME: that is
         // where the on-device skills are installed. Project and local
@@ -192,6 +202,36 @@ internal object ClaudeProtocol {
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
     )
+
+    /**
+     * [probeArgs] that also loads the account's own connectors, for
+     * `mcp_status`. No tools, no settings, no message, no transcript.
+     */
+    fun accountProbeArgs(): List<String> = listOf(
+        "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--tools", "", "--setting-sources", "", "--no-session-persistence",
+    )
+
+    /**
+     * The account's connectors from an `mcp_status` answer: servers whose
+     * scope is the claude.ai account. Only tools the service annotates
+     * `readOnly` are kept as usable.
+     */
+    fun parseAccountServers(answer: JsonObject): List<AccountConnector> =
+        (answer["mcpServers"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val server = item as? JsonObject ?: return@mapNotNull null
+            val scope = server.string("scope").ifEmpty { server.string("source") }
+            if (scope != "claudeai") return@mapNotNull null
+            val name = server.string("name").ifEmpty { return@mapNotNull null }
+            val tools = (server["tools"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            val read = tools.filter { t -> ((t["annotations"] as? JsonObject)?.get("readOnly") as? JsonPrimitive)?.booleanOrNull == true }
+                .map { it.string("name") }.filter { it.isNotEmpty() }
+            AccountConnector(EngineKind.CLAUDE, name, server.string("status").ifEmpty { "unknown" },
+                read.map { "mcp__${toolServerName(name)}__$it" }, writeTools = tools.size - read.size)
+        }
+
+    /** How Claude Code names a server inside tool names: "claude.ai Gmail" -> "claude_ai_Gmail". */
+    fun toolServerName(server: String): String = server.replace(Regex("[^A-Za-z0-9_-]"), "_")
 
     /**
      * [probeArgs] for the slash catalog: the answer lists a user's skills, so

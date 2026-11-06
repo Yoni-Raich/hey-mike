@@ -3569,3 +3569,10 @@ Design: `docs/design/proactive-manager.md`. Decisions:
   only the owner mutes (−2) or stars (+2).
 - Alerts raised in a flight are delivered at once, even if the run is
   rejected later.
+- Account connectors (claude.ai Gmail, ...) are routed by the pass engine
+  (`ContextRouter`, `AccountConnectorSource`). Hey Mike holds no token for
+  them. Only tools the service annotates `readOnly` are allowed, only in
+  read-only background chats on the phone, only when the user switched that
+  connector on (`account:claude:<server>` in `connectors`). User chats keep
+  `--strict-mcp-config`. Codex has no account route: its app tools were not
+  visible on the phone and cannot be limited to read-only.

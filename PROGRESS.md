@@ -2,6 +2,22 @@
 
 ### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
 
+Update 1194: account connectors. A background pass on Claude may read
+through connectors the user connected in claude.ai (Gmail, Calendar, Drive)
+and switched on in Sources. `ContextRouter` (core) picks per row: the app's
+own connector, else a read-only account connector of the pass engine, else
+the notification text. `ClaudeCodeEngine` lists them with `mcp_status` on a
+throwaway process (no message, no usage) and keeps only tools annotated
+`readOnly`; such a chat drops `--strict-mcp-config` and allows only `mcp__mike__*`
+plus those tools under `dontAsk`. Verified on the PC with Claude Code: the
+`mcp_status` shape, tool naming, and that `dontAsk` refuses unlisted tools.
+`:core:test :engine-claude:testDebugUnitTest :web:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug` passed, lint zero errors.
+Not tested: the probe and a real pass on the phone; claude.ai connectors
+reaching the phone's Claude Code through the proxy. Codex: a probe chat on
+the phone saw no ChatGPT connector tools, and read-only cannot be enforced
+for Codex apps, so the Codex route stays off.
+
 Update 1193: the WhatsApp reader is local only (no `loadEarlierMsgs`), the
 connector reuses the session linked in Mike's browser (shared WebView
 profile), softer risk text, clearer Gmail error. `:web:testDebugUnitTest
