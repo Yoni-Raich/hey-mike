@@ -317,7 +317,7 @@ data class TeamMember(
 @Serializable
 data class TaskBoardSettings(
     val discoveryOn: Boolean = false,
-    /** Context connections by id ("whatsapp-web", "gmail"): the user's "use to understand messages" switch. */
+    /** Context connections by id ("whatsapp-web", "account:claude:claude.ai Gmail"): the user's "use to understand messages" switch. */
     val connectors: Map<String, Boolean> = emptyMap(),
     val pauseReason: String? = null,
     val pausedAt: Long? = null,

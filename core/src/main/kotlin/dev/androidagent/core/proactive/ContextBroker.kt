@@ -217,5 +217,4 @@ class ContextBroker(
 /** The ids of the connectors Hey Mike ships. */
 object ConnectorIds {
     const val WHATSAPP_WEB = "whatsapp-web"
-    const val GMAIL = "gmail"
 }

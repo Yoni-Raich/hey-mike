@@ -477,11 +477,10 @@ class AgentGraph(private val app: Application) {
             LastUsageStore.current(reading.orEmpty(), System.currentTimeMillis() / 1000L).any { (it.usedPercent ?: 0.0) >= 90.0 }
         },
     )
-    /** Read-only conversation context for the Manager's Scout: WhatsApp Web linked in Hey Mike, and Gmail. */
+    /** Read-only conversation context for the Manager's Scout: WhatsApp Web linked in Hey Mike. Mail and calendars come through the account connectors. */
     val whatsAppConnector = dev.androidagent.web.WhatsAppWebConnector(app)
-    val gmailConnector = GmailConnector(app)
     init {
-        taskDesk.connectors = listOf(whatsAppConnector, gmailConnector)
+        taskDesk.connectors = listOf(whatsAppConnector)
         taskDesk.accountSources = listOf(claudeEngine, phoneEngine)
     }
     /** The live voice conversation, shared by the chat screen and the assistant panel. */

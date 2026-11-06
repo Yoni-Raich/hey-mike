@@ -41,13 +41,13 @@ import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
 import dev.androidagent.app.assist.AssistLaunch
 import dev.androidagent.app.ui.*
 import dev.androidagent.core.KeepAwakePolicy
 import java.io.File
 import java.util.UUID
+import dev.androidagent.core.proactive.ConnectorIds
+import dev.androidagent.core.proactive.FeedbackAction
 
 private const val MAX_PHOTOS = 10
 private const val STATE_PENDING_SHOT = "pending_shot"
@@ -71,16 +71,6 @@ class MainActivity : ComponentActivity() {
             model.addAttachment(FileProvider.getUriForFile(this, "$packageName.files", shot), deleteAfter = shot, name = "Photo $at.jpg")
         } else {
             shot.delete()
-        }
-    }
-    /** Google's consent screen for the read-only Gmail connection. */
-    private val gmailConsent = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        val graph = model.graph
-        graph.scope.launch {
-            if (result.resultCode == RESULT_OK) runCatching { graph.gmailConnector.complete(result.data) }
-                .onFailure { graph.taskDesk.reportError("Gmail: ${it.message ?: "sign-in failed"}") }
-            else graph.taskDesk.reportError(if (java.util.Locale.getDefault().language in setOf("he", "iw")) "ההתחברות לג׳ימייל לא הושלמה. אם לא ביטלת, גוגל עוד לא מאשרת את האפליקציה: חסר לה לקוח OAuth." else "Gmail sign-in did not finish. If you did not cancel it, Google does not accept this app yet: it needs an OAuth client.")
-            graph.taskDesk.refreshConnections()
         }
     }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPermissions() }
@@ -107,22 +97,6 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Open the camera for one picture, written to a file only this app can hand out. */
-    /** Connect one of the read-only connections: WhatsApp Web on its own screen, Gmail through Google's consent. */
-    private fun linkConnector(id: String) {
-        val graph = model.graph
-        when (id) {
-            dev.androidagent.core.proactive.ConnectorIds.WHATSAPP_WEB -> startActivity(Intent(this, WhatsAppLinkActivity::class.java))
-            dev.androidagent.core.proactive.ConnectorIds.GMAIL -> lifecycleScope.launch {
-                try {
-                    val consent = graph.gmailConnector.begin(this@MainActivity)
-                    if (consent != null) gmailConsent.launch(androidx.activity.result.IntentSenderRequest.Builder(consent.intentSender).build())
-                    else graph.taskDesk.refreshConnections()
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                catch (e: Exception) { graph.taskDesk.reportError("Gmail: ${e.message ?: "sign-in failed"}"); graph.taskDesk.refreshConnections() }
-            }
-        }
-    }
-
     private fun takePhoto() {
         val shot = File(File(cacheDir, "captures").apply { mkdirs() }, "${UUID.randomUUID()}.jpg")
         pendingShot = shot
@@ -198,7 +172,7 @@ class MainActivity : ComponentActivity() {
     private fun openAskedChat(intent: Intent?) {
         intent?.getStringExtra(MikeAlertNotifier.EXTRA_ALERT)?.let { alert ->
             intent.removeExtra(MikeAlertNotifier.EXTRA_ALERT)
-            model.graph.taskDesk.alertFeedback(alert, dev.androidagent.core.proactive.FeedbackAction.OPEN)
+            model.graph.taskDesk.alertFeedback(alert, FeedbackAction.OPEN)
         }
         val chat = intent?.getStringExtra(QuestionNotifier.EXTRA_OPEN_CHAT) ?: return
         val browser = intent.getBooleanExtra(EXTRA_OPEN_BROWSER, false)
@@ -388,12 +362,11 @@ class MainActivity : ComponentActivity() {
         onProfileReject = { id -> model.graph.taskDesk.rejectProfileEntry(id) },
         onProfileRemove = { id -> model.graph.taskDesk.removeProfileEntry(id) },
         onConnectorUse = { id, on -> model.graph.taskDesk.setConnector(id, on) },
-        onConnectorLink = { id -> linkConnector(id) },
+        onConnectorLink = { id ->
+            if (id == ConnectorIds.WHATSAPP_WEB) startActivity(Intent(this, WhatsAppLinkActivity::class.java))
+        },
         onConnectorUnlink = { id ->
-            when (id) {
-                dev.androidagent.core.proactive.ConnectorIds.WHATSAPP_WEB -> model.graph.whatsAppConnector.disconnect()
-                dev.androidagent.core.proactive.ConnectorIds.GMAIL -> model.graph.gmailConnector.disconnect()
-            }
+            if (id == ConnectorIds.WHATSAPP_WEB) model.graph.whatsAppConnector.disconnect()
             model.graph.taskDesk.setConnector(id, false)
             model.graph.taskDesk.refreshConnections()
         },

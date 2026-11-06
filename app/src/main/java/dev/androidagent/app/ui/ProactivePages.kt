@@ -38,7 +38,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Cloud
-import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Visibility
@@ -91,19 +90,6 @@ internal fun ConnectionsSection(state: AgentUiState, actions: AgentUiActions, op
         onUse = { actions.onConnectorUse(ConnectorIds.WHATSAPP_WEB, it) },
         onLink = { actions.onConnectorLink(ConnectorIds.WHATSAPP_WEB) },
         onUnlink = { actions.onConnectorUnlink(ConnectorIds.WHATSAPP_WEB) },
-    )
-    ConnectionCard(
-        icon = Icons.Outlined.Email,
-        title = "Gmail",
-        explain = taskText("Google sign-in with read-only mail access. Mike reads the thread behind a Gmail notification and can look up earlier mail from the same sender.",
-            "התחברות לגוגל עם הרשאת קריאה בלבד למייל. מייק קורא את השרשור שמאחורי התראה מג׳ימייל ויכול לחפש מיילים קודמים מאותו שולח."),
-        risk = taskText("Simpler: if Gmail is connected in your Claude account, switch it on below instead.",
-            "פשוט יותר: אם ג׳ימייל מחובר בחשבון Claude שלך, הפעילו אותו למטה במקום."),
-        status = desk.connections[ConnectorIds.GMAIL],
-        use = desk.settings.connectors[ConnectorIds.GMAIL] == true,
-        onUse = { actions.onConnectorUse(ConnectorIds.GMAIL, it) },
-        onLink = { actions.onConnectorLink(ConnectorIds.GMAIL) },
-        onUnlink = { actions.onConnectorUnlink(ConnectorIds.GMAIL) },
     )
     AccountConnectorsCard(state, actions)
     AccountConnectorsCard(state, actions, EngineKind.CODEX)
