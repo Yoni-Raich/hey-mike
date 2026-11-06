@@ -47,6 +47,9 @@ object ClaudeEnvironment {
 
     const val NO_PROXY_VALUE = "127.0.0.1,localhost"
 
+    /** Claude Code's switch for the account's claude.ai connectors. */
+    const val CLAUDEAI_CONNECTORS = "ENABLE_CLAUDEAI_MCP_SERVERS"
+
     fun isScrubbed(key: String): Boolean {
         val upper = key.uppercase()
         return upper in SCRUBBED_KEYS || SCRUBBED_PREFIXES.any { upper.startsWith(it) }
@@ -81,9 +84,10 @@ object ClaudeEnvironment {
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
         // The default is 10 retries with backoff: a failed request would stall for a minute.
         env["CLAUDE_CODE_MAX_RETRIES"] = "2"
-        // Without this, a process that does not pass --strict-mcp-config retries the
-        // account's claude.ai connectors at mcp-proxy.anthropic.com, which the proxy denies.
-        env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
+        // The account's claude.ai connectors load only where the engine asks for
+        // them (a read-only background pass that may read through them). Every
+        // other process keeps them off, so it never contacts mcp-proxy.anthropic.com.
+        env[CLAUDEAI_CONNECTORS] = if (extraEnv[CLAUDEAI_CONNECTORS] == "true") "true" else "false"
         env["NO_COLOR"] = "1"
         // `claude auth login` must not try to open a browser; the app shows the URL.
         env["BROWSER"] = "true"

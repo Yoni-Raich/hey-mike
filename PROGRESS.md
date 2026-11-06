@@ -2,6 +2,47 @@
 
 ### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
 
+Update 1197: the Manager's chat said it had no Gmail: only background passes
+got account tools. Every phone Claude chat (all run `dontAsk`) now gets the
+switched-on read-only account tools next to its own tools; the rest of the
+account's tools stay refused. Codex chats still have no account route.
+Also new: `tasks(mode="manager_chat")` lets every ordinary chat (phone or
+computer) and team member read the Manager's conversation, read only. Checked
+by `ManagerChatReadTest` (paging, role refusal). Not yet checked on the phone
+or from a computer chat. Gap: the Manager's chat text is not filtered by
+excluded sources.
+
+Update 1196: 1195 still listed none. On the PC the first `mcp_status`
+after `initialize` answers `[]`; the account's servers appear about a second
+later. The probe now retries while the list is empty or pending (up to 15
+times, 1.5 s apart). Sources has "Check again".
+
+Update 1195: on the phone 1194 found no account connectors, because the
+host forced `ENABLE_CLAUDEAI_MCP_SERVERS=false` and the proxy denied
+`mcp-proxy.anthropic.com`. Now the host turns that switch on only when the
+engine asks (account probe, read-only pass with account tools), and the
+Claude proxy allows `mcp-proxy.anthropic.com`. On the PC, through a logging
+CONNECT proxy, a process with connectors on reached only `api.anthropic.com`
+and `mcp-proxy.anthropic.com`, and listed Gmail (23 tools), Calendar and
+Drive with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`; with the switch off
+it listed none. The Sources card says "Checking…" until the first probe ends.
+
+Update 1194: account connectors. A background pass on Claude may read
+through connectors the user connected in claude.ai (Gmail, Calendar, Drive)
+and switched on in Sources. `ContextRouter` (core) picks per row: the app's
+own connector, else a read-only account connector of the pass engine, else
+the notification text. `ClaudeCodeEngine` lists them with `mcp_status` on a
+throwaway process (no message, no usage) and keeps only tools annotated
+`readOnly`; such a chat drops `--strict-mcp-config` and allows only `mcp__mike__*`
+plus those tools under `dontAsk`. Verified on the PC with Claude Code: the
+`mcp_status` shape, tool naming, and that `dontAsk` refuses unlisted tools.
+`:core:test :engine-claude:testDebugUnitTest :web:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug` passed, lint zero errors.
+Not tested: the probe and a real pass on the phone; claude.ai connectors
+reaching the phone's Claude Code through the proxy. Codex: a probe chat on
+the phone saw no ChatGPT connector tools, and read-only cannot be enforced
+for Codex apps, so the Codex route stays off.
+
 Update 1193: the WhatsApp reader is local only (no `loadEarlierMsgs`), the
 connector reuses the session linked in Mike's browser (shared WebView
 profile), softer risk text, clearer Gmail error. `:web:testDebugUnitTest

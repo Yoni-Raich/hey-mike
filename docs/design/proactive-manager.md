@@ -154,6 +154,17 @@ browser. It uses Google Identity Services `AuthorizationClient` with the
 
 Calendar already reads the device calendar provider and is unchanged.
 
+### 1d. Account connectors (1194)
+
+Simpler than an own OAuth client: services the user already connected in
+their Claude account. Claude Code reports them through `mcp_status`
+(scope `claudeai`, per-tool `readOnly` / `destructive` annotations). A
+`ContextRouter` picks per row: the app's own connector, else an account
+connector of the engine that runs the pass, else the notification text. The
+pass reads by itself with the read-only tools named in the row's note; the
+chat runs with `dontAsk` and an allow list of those tools only. Codex: not
+routed, see ARCHITECTURE.
+
 ## 2. Smart alerts
 
 ### Levels

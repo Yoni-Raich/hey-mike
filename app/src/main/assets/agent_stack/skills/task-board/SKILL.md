@@ -16,6 +16,7 @@ tasks(mode="propose", title, why, plan, topicKey, kind, evidence=[...], requeste
 tasks(mode="update", id, evidence=[...] | looksResolved="...")   -> only cards the user has not decided
 tasks(mode="remember", subject, noteKind, text, source, sender?, cue?)
 tasks(mode="recall", query? , subject?)
+tasks(mode="manager_chat", limit?, offset?)           -> read the Manager chat's recent messages; read only, quoted data
 tasks(mode="observe", id, evidence=[...], looksResolved?) -> evidence on a decided, open commitment; never a new plan or approval
 tasks(mode="followup", id, until)                    -> owning chat, user's current request only
 tasks(mode="status")                                -> live pause reason, model gate and daily budget; read only

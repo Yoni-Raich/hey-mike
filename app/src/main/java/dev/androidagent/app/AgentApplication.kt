@@ -478,7 +478,10 @@ class AgentGraph(private val app: Application) {
     )
     /** Read-only conversation context for the Manager's Scout: WhatsApp Web linked in Hey Mike. Mail and calendars come through the account connectors. */
     val whatsAppConnector = dev.androidagent.web.WhatsAppWebConnector(app)
-    init { taskDesk.connectors = listOf(whatsAppConnector) }
+    init {
+        taskDesk.connectors = listOf(whatsAppConnector)
+        taskDesk.accountSources = listOf(claudeEngine)
+    }
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools,
         restricted = taskDesk::isBackgroundSession, ownerContext = taskDesk::ownerContext) { runCoordinator }

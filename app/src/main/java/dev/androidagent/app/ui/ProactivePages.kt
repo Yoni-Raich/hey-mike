@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Visibility
@@ -59,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.proactive.AlertLevel
 import dev.androidagent.core.proactive.AlertState
 import dev.androidagent.core.proactive.ConnectorIds
@@ -89,6 +91,7 @@ internal fun ConnectionsSection(state: AgentUiState, actions: AgentUiActions, op
         onLink = { actions.onConnectorLink(ConnectorIds.WHATSAPP_WEB) },
         onUnlink = { actions.onConnectorUnlink(ConnectorIds.WHATSAPP_WEB) },
     )
+    AccountConnectorsCard(state, actions)
     val alerts = desk.profile.alerts
     NavRow(Icons.Outlined.Notifications, taskText("Alerts", "התראות"),
         if (!alerts.enabled) taskText("Off: Mike writes only in the Manager chat", "כבויות: מייק כותב רק בצ׳אט המנהל")
@@ -98,6 +101,56 @@ internal fun ConnectionsSection(state: AgentUiState, actions: AgentUiActions, op
     val learned = desk.profile.entries.count { it.origin == ProfileOrigin.LEARNED }
     NavRow(Icons.Outlined.Psychology, taskText("What matters to me", "מה חשוב לי"),
         taskText("$owner set by you · $learned learned", "$owner שקבעת · $learned שמייק למד"), openProfile)
+}
+
+/**
+ * Connectors the user already connected in their Claude account (claude.ai ›
+ * Settings › Connectors). A background pass that runs on Claude may read
+ * through the switched-on ones, with the read-only tools only.
+ */
+@Composable
+private fun AccountConnectorsCard(state: AgentUiState, actions: AgentUiActions) {
+    val desk = state.taskDesk
+    val accounts = desk.accounts.filter { it.engine == EngineKind.CLAUDE }
+    Column(Modifier.fillMaxWidth().border(1.dp, ControlLine.copy(alpha = 0.5f), RoundedCornerShape(14.dp)).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Outlined.Cloud, null, Modifier.size(22.dp))
+            Text(taskText("Through your Claude account", "דרך חשבון Claude שלך"), Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        }
+        Text(taskText("Gmail, Calendar or Drive you connected in claude.ai work here with no extra sign-in. Mike reads them for notifications and when you ask in a chat, with only the tools the service marks read-only; deleting, labels and drafts stay blocked.",
+            "ג׳ימייל, יומן או דרייב שחיברת ב־claude.ai עובדים כאן בלי התחברות נוספת. מייק קורא אותם להתראות וכשמבקשים בצ׳אט, רק בכלים שהשירות מסמן כקריאה בלבד; מחיקה, תוויות וטיוטות חסומות."),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (desk.settings.passEngine != EngineKind.CLAUDE) Text(
+            taskText("Used only when background checks run on Claude. They run on Codex now; Codex account connectors are not supported yet.",
+                "פעיל רק כשהבדיקות ברקע רצות על Claude. כרגע הן רצות על Codex, ובחיבורי החשבון של Codex עדיין אין תמיכה."),
+            style = MaterialTheme.typography.bodySmall, color = BoardAmber)
+        if (accounts.isEmpty() && !desk.accountsChecked) Text(
+            taskText("Checking your Claude account…", "בודק את חשבון Claude שלך…"),
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        else if (accounts.isEmpty()) Text(
+            taskText("No connectors found yet. Sign in to Claude in Settings and connect services at claude.ai › Settings › Connectors.",
+                "עוד לא נמצאו חיבורים. התחברו ל־Claude בהגדרות וחברו שירותים ב־claude.ai › הגדרות › Connectors."),
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        accounts.forEach { account ->
+            val key = dev.androidagent.core.proactive.ContextRouter.key(account)
+            val detail = when {
+                !account.connected -> taskText("Not connected in claude.ai", "לא מחובר ב־claude.ai")
+                account.readTools.isEmpty() -> taskText("No read-only tools", "אין כלים לקריאה בלבד")
+                else -> taskText("${account.readTools.size} read-only tools · ${account.writeTools} others blocked",
+                    "${account.readTools.size} כלי קריאה · ${account.writeTools} אחרים חסומים")
+            }
+            if (account.connected && account.readTools.isNotEmpty()) {
+                SwitchRow(Icons.Outlined.Visibility, account.name, detail, desk.settings.connectors[key] == true) { on -> actions.onConnectorUse(key, on) }
+            } else {
+                Text("${account.name} · $detail", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (desk.accountsChecked) TextButton(onClick = actions.onRefreshConnections) {
+            Text(taskText("Check again", "בדיקה חוזרת"))
+        }
+    }
 }
 
 @Composable
