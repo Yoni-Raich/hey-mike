@@ -14,7 +14,7 @@ class AccountReadGatewayTest {
         val source = object : AccountConnectorSource {
             override val engine = EngineKind.CODEX
             override suspend fun accountConnectors() = emptyList<AccountConnector>()
-            override fun allowForBackground(tools: List<String>) {}
+            override fun allowAccountTools(tools: List<String>) {}
             override suspend fun readAccountTool(tool: String, arguments: JsonObject, permitted: () -> Boolean): ToolResult {
                 check(permitted()); calls++; return ToolResult("ok")
             }

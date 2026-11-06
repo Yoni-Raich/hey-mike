@@ -43,7 +43,7 @@ class ContextRouterTest {
         assertEquals(listOf(gmail), ContextRouter.usable(listOf(gmail, drive), EngineKind.CLAUDE) { it in on })
         assertTrue(ContextRouter.usable(listOf(gmail, drive), EngineKind.CODEX) { it in on }.isEmpty())
         assertTrue(ContextRouter.usable(listOf(gmail), EngineKind.CLAUDE) { false }.isEmpty())
-        assertEquals(gmail.readTools.sorted(), ContextRouter.backgroundTools(listOf(gmail, drive), EngineKind.CLAUDE) { it in on })
+        assertEquals(gmail.readTools.sorted(), ContextRouter.allowedTools(listOf(gmail, drive), EngineKind.CLAUDE) { it in on })
     }
 
     @Test

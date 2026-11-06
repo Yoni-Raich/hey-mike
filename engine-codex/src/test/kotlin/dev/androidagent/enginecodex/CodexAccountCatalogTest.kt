@@ -17,7 +17,7 @@ class CodexAccountCatalogTest {
         val engine = CodexEngine(runtime, accountReadBridge = true)
         assertFalse(engine.readAccountTool("gmail.send_email", buildJsonObject {}) { true }.success)
         assertFalse(engine.readAccountTool("gmail.read_email", buildJsonObject {}) { true }.success)
-        engine.allowForBackground(listOf("gmail.read_email"))
+        engine.allowAccountTools(listOf("gmail.read_email"))
         assertFalse(engine.readAccountTool("gmail.read_email", buildJsonObject {}) { false }.success)
     }
     @Test fun onlyExplicitSafeReadsFromTheAccountServerQualify() {

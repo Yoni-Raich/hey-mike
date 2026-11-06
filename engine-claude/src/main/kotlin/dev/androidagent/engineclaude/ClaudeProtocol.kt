@@ -101,10 +101,10 @@ internal object ClaudeProtocol {
         "MCP_TIMEOUT" to "30000",
     )
 
-    /** Keep the computer's own tool-search setting and Claude Code's default deferral. */
     /** Turns the account's claude.ai connectors on for one process; the host keeps them off otherwise. */
     val ACCOUNT_ENV: Map<String, String> = mapOf("ENABLE_CLAUDEAI_MCP_SERVERS" to "true")
 
+    /** Keep the computer's own tool-search setting and Claude Code's default deferral. */
     val COMPUTER_CHAT_ENV: Map<String, String> = CHAT_ENV - "ENABLE_TOOL_SEARCH"
 
     /** Claude Code's switch for the 1M window; while set, the CLI keeps models at their standard window. */
