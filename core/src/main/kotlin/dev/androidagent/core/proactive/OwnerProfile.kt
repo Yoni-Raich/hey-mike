@@ -139,10 +139,12 @@ object ProfileKeys {
     fun conversation(app: String, conversation: String): String = "${app.trim()}|${conversation.trim()}".take(200)
     fun source(app: String): String = app.trim().take(120)
     fun topic(text: String): String = TaskBoard.topicKey(text)
+    const val ANY_APP = "*"
 
     fun of(kind: ProfileKind, raw: String): String = when (kind) {
         ProfileKind.PERSON -> person(raw)
-        ProfileKind.CONVERSATION -> raw.trim().take(200)
+        // A chat name without an app matches that chat in every app.
+        ProfileKind.CONVERSATION -> raw.trim().let { if ('|' in it) it else "$ANY_APP|$it" }.take(200)
         ProfileKind.SOURCE -> source(raw)
         ProfileKind.TOPIC -> topic(raw)
     }
@@ -179,6 +181,7 @@ class OwnerProfileStore(private val file: File, private val now: () -> Long = Sy
             sender?.takeIf { it.isNotBlank() }?.let { add(ProfileKind.PERSON to ProfileKeys.person(it)) }
             if (!group) conversation?.takeIf { it.isNotBlank() }?.let { add(ProfileKind.PERSON to ProfileKeys.person(it)) }
             if (app != null && !conversation.isNullOrBlank()) add(ProfileKind.CONVERSATION to ProfileKeys.conversation(app, conversation))
+            if (!conversation.isNullOrBlank()) add(ProfileKind.CONVERSATION to ProfileKeys.conversation(ProfileKeys.ANY_APP, conversation))
             app?.takeIf { it.isNotBlank() }?.let { add(ProfileKind.SOURCE to ProfileKeys.source(it)) }
             topic?.takeIf { it.isNotBlank() }?.let { add(ProfileKind.TOPIC to ProfileKeys.topic(it)) }
         }

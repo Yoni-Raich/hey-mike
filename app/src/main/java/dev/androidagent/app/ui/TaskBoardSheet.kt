@@ -131,12 +131,12 @@ import java.util.Locale
 
 // The board's own two colours, borrowed from the standing-rules strip so the
 // two features read as one family: teal is live and fine, amber waits for you.
-private val BoardTeal = Color(0xFF7DE4D4)
-private val BoardAmber = Color(0xFFF6B86A)
+internal val BoardTeal = Color(0xFF7DE4D4)
+internal val BoardAmber = Color(0xFFF6B86A)
 private val AmberContainer = Color(0xFF25221B)
 private val AmberOutline = Color(0xFF5B4A32)
 private val SheetFill = Color(0xFF101918)
-private val ControlLine = Color(0xFF536A67)
+internal val ControlLine = Color(0xFF536A67)
 private val ResultTint = Color(0xFF18332F)
 
 /** Preserve mixed Hebrew/English direction and render simple emphasis in model text. */
@@ -183,7 +183,7 @@ internal fun TaskBoardSheet(state: AgentUiState, actions: AgentUiActions) {
         page = when {
             page == null -> { actions.onCloseTaskBoard(); null }
             page!!.startsWith("member:") -> "team"
-            page == "memory" -> "sources"
+            page == "memory" || page == "alerts" || page == "profile" -> "sources"
             else -> null
         }
     }
@@ -212,6 +212,8 @@ internal fun TaskBoardSheet(state: AgentUiState, actions: AgentUiActions) {
                     current == "team" -> taskText("Mike's team", "הצוות של מייק")
                     current == "sources" -> taskText("Sources", "מקורות והגדרות")
                     current == "memory" -> taskText("Memory", "זיכרון")
+                    current == "alerts" -> taskText("Alerts", "התראות")
+                    current == "profile" -> taskText("What matters to me", "מה חשוב לי")
                     else -> taskText("Tasks", "משימות")
                 },
                 subtitle = when {
@@ -230,8 +232,10 @@ internal fun TaskBoardSheet(state: AgentUiState, actions: AgentUiActions) {
                 card != null -> TaskDetail(card, desk, actions)
                 member != null -> MemberPage(member, state, actions) { id -> page = "card:$id" }
                 current == "team" -> TeamPage(state, actions) { id -> page = "member:$id" }
-                current == "sources" -> SourcesPage(state, actions) { page = "memory" }
+                current == "sources" -> SourcesPage(state, actions) { next -> page = next }
                 current == "memory" -> MemoryPage(desk, actions)
+                current == "alerts" -> AlertsPage(state, actions)
+                current == "profile" -> ProfilePage(state, actions)
                 else -> BoardPage(state, actions, open = { id -> page = "card:$id" }, openSources = { page = "sources" })
             }
             Spacer(Modifier.height(16.dp))
@@ -489,7 +493,7 @@ private fun ManagerRow(desk: TaskDeskState, state: AgentUiState, actions: AgentU
 }
 
 @Composable
-private fun SectionLabel(text: String, count: Int, color: Color) {
+internal fun SectionLabel(text: String, count: Int, color: Color) {
     Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         Text("$count", Modifier.clip(CircleShape).background(color.copy(alpha = 0.14f)).padding(horizontal = 8.dp, vertical = 3.dp),
@@ -1057,8 +1061,10 @@ private fun MemberPage(member: TeamMember, state: AgentUiState, actions: AgentUi
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory: () -> Unit) {
+private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, open: (String) -> Unit) {
     val settings = state.taskDesk.settings
+    ConnectionsSection(state, actions, openAlerts = { open("alerts") }, openProfile = { open("profile") })
+    SectionLabel(taskText("Sources", "מקורות"), 0, MaterialTheme.colorScheme.onSurfaceVariant)
     Text(taskText("Mike reads these sources to find tasks. Processed input is removed after a successful pass; useful memory stays.", "מייק מחפש משימות במקורות האלה. אחרי עיבוד מוצלח הטקסט שנאסף נמחק, והמידע החשוב נשמר בזיכרון קצר."),
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     SwitchRow(Icons.Outlined.AutoAwesome, taskText("Find tasks in the background", "חיפוש משימות ברקע"), taskText("Collects continuously; thinks in small batches", "איסוף רציף וחשיבה בסבבים קצרים"), settings.discoveryOn) {
@@ -1172,7 +1178,7 @@ private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory
                 }) { Text(chat.title) } }
             }
         }, confirmButton = { TextButton(onClick = { scanPicker = false }) { Text(taskText("Close", "סגירה")) } })
-    TextButton(onClick = openMemory) { Text(taskText("Memory notes", "זיכרון") + " (${state.taskDesk.notes.count { it.retiredAt == null && it.supersededBy == null }})") }
+    TextButton(onClick = { open("memory") }) { Text(taskText("Memory notes", "זיכרון") + " (${state.taskDesk.notes.count { it.retiredAt == null && it.supersededBy == null }})") }
     OutlinedButton(onClick = actions.onTaskForgetCollected, border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
         modifier = Modifier.fillMaxWidth()) {
         Text(taskText("Delete collected input", "מחיקת מה שנאסף"), color = MaterialTheme.colorScheme.error)
@@ -1182,7 +1188,7 @@ private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory
 }
 
 @Composable
-private fun SwitchRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onChange).heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
@@ -1227,7 +1233,7 @@ internal fun ModelChoiceRow(label: String, engine: EngineKind, current: String?,
 }
 
 @Composable
-private fun RemovableRow(label: String, remove: () -> Unit) {
+internal fun RemovableRow(label: String, remove: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         IconButton(onClick = remove) { Icon(Icons.Outlined.Close, "Remove $label") }

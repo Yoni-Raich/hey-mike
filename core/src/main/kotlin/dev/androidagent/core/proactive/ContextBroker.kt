@@ -109,15 +109,18 @@ class ContextBroker(
     }
 
     /** Context for up to [ROWS_PER_PASS] rows that have a connector. Rows without one are left out. */
-    suspend fun enrich(rows: List<TaskSignal>): List<RowContext> {
+    suspend fun enrich(rows: List<TaskSignal>, totalMs: Long = PASS_BUDGET_MS): List<RowContext> {
         val out = mutableListOf<RowContext>()
+        val started = System.nanoTime()
         for (row in rows) {
             if (out.size >= ROWS_PER_PASS) break
+            val left = totalMs - (System.nanoTime() - started) / 1_000_000
+            if (left <= 0) break
             val app = row.app ?: continue
             val connector = connectorFor(app) ?: continue
             if (!allowed(app, row.conversation)) continue
             val hint = row.items.lastOrNull()?.text ?: row.text.lineSequence().lastOrNull { it.isNotBlank() }
-            out += fetch(connector, app, ConversationQuery(row.conversation, row.sender, hint, row.group)).let {
+            out += fetch(connector, app, ConversationQuery(row.conversation, row.sender, hint, row.group), minOf(timeoutMs, left)).let {
                 RowContext(row.id, it.first, it.second)
             }
         }
@@ -131,11 +134,11 @@ class ContextBroker(
         return fetch(connector, app, ConversationQuery(conversation, sender, null, group, before, limit.coerceIn(1, MAX_MESSAGES)))
     }
 
-    private suspend fun fetch(connector: ContextConnector, app: String, query: ConversationQuery): Pair<ConversationContext?, String?> = try {
-        val status = withTimeout(timeoutMs) { connector.status() }
+    private suspend fun fetch(connector: ContextConnector, app: String, query: ConversationQuery, limitMs: Long = timeoutMs): Pair<ConversationContext?, String?> = try {
+        val status = withTimeout(limitMs) { connector.status() }
         if (status.state != ConnectorState.READY) null to notReady(connector.id, status)
         else {
-            val raw = withTimeout(timeoutMs) { connector.conversation(query) }
+            val raw = withTimeout(limitMs) { connector.conversation(query) }
             clean(raw, app, query.limit) to null
         }
     } catch (e: TimeoutCancellationException) {
@@ -180,6 +183,8 @@ class ContextBroker(
         const val MESSAGE_CHARS = 1_200
         const val ROWS_PER_PASS = 4
         const val FETCH_TIMEOUT_MS = 25_000L
+        /** All fetches of one pass together. The pass waits for this, so it stays short. */
+        const val PASS_BUDGET_MS = 40_000L
 
         fun toJson(row: RowContext): JsonObject = buildJsonObject {
             put("signalId", row.signalId)
@@ -207,4 +212,9 @@ class ContextBroker(
             })
         }
     }
+}
+
+/** The ids of the connectors Hey Mike ships. */
+object ConnectorIds {
+    const val WHATSAPP_WEB = "whatsapp-web"
 }

@@ -35,6 +35,7 @@ import dev.androidagent.core.SessionAgents
 import dev.androidagent.core.SessionRunQueue
 import dev.androidagent.core.SessionStore
 import dev.androidagent.core.SignalInbox
+import dev.androidagent.core.SignalFilter
 import dev.androidagent.core.SignalInboxFullException
 import dev.androidagent.core.SignalRows
 import dev.androidagent.core.SignalLane
@@ -104,6 +105,11 @@ data class TaskDeskState(
     val briefingWait: String? = null,
     val queueRows: List<TaskSignal> = emptyList(),
     val scanChats: List<ChatSession> = emptyList(),
+    /** What matters to the user, and how Mike may reach them. */
+    val profile: dev.androidagent.core.proactive.OwnerProfile = dev.androidagent.core.proactive.OwnerProfile(),
+    val recentAlerts: List<dev.androidagent.core.proactive.MikeAlert> = emptyList(),
+    /** Connector id to its last known state, for the Connections cards. */
+    val connections: Map<String, dev.androidagent.core.proactive.ConnectorStatus> = emptyMap(),
 )
 
 /**
@@ -136,6 +142,29 @@ class TaskDesk(
     val signals = SignalInbox(store, now)
     private val calendarChanges = CalendarSignalBuffer()
     val team = TeamRoster(store, now)
+    /** Read-only context connections, registered by the app graph. */
+    @Volatile var connectors: List<dev.androidagent.core.proactive.ContextConnector> = emptyList()
+    @Volatile private var connectionStates: Map<String, dev.androidagent.core.proactive.ConnectorStatus> = emptyMap()
+    private val alertNotifier = MikeAlertNotifier(context, managerChat = { team.of(MemberKind.MANAGER)?.sessionId },
+        urgentSound = { proactive.profile.profile.alerts.urgentSound })
+    val proactive: dev.androidagent.core.proactive.ProactiveDesk = dev.androidagent.core.proactive.ProactiveDesk(
+        dev.androidagent.core.proactive.OwnerProfileStore(File(context.filesDir, "owner-profile-v1.json"), now),
+        dev.androidagent.core.proactive.AlertBook(File(context.filesDir, "mike-alerts-v1.json"), now),
+        alertNotifier,
+        dev.androidagent.core.proactive.ContextBroker({ connectors }, { id -> board.settings.value.connectors[id] == true },
+            { app, conversation -> board.settings.value.discoveryOn && dev.androidagent.core.TaskSourcePolicy.allows(
+                dev.androidagent.core.TaskSourceRef(SignalFilter.sourceOf(app), app, conversation, verified = true), board.settings.value) },
+            context.packageName),
+        zone, now)
+    /** The rows of each running Scout pass, so an alert or context call can name only its own input. */
+    private val passRows = java.util.concurrent.ConcurrentHashMap<String, Map<String, TaskSignal>>()
+    private fun proactiveTools(runId: String?, learn: ((dev.androidagent.core.proactive.LearnRequest) -> Unit)?) =
+        dev.androidagent.core.proactive.ProactiveTools(proactive,
+            signal = { session, id -> passRows[session]?.get(id)?.takeIf { inFlight[session]?.batch?.contains(id) == true } },
+            card = { id -> board.task(id)?.takeIf(::sourceAllowed) }, runId = runId,
+            learn = learn ?: { r -> proactive.profile.learn(r.kind, r.key, r.label, r.weight, r.why, r.evidence, r.runId); Unit },
+            zone = zone, now = now)
+    init { alertNotifier.ensureChannels() }
     @Volatile private var activeRules: String? = null
     private fun rootBook() = TaskPlaybook(home, allowedSource = ::sourceAllowed)
     val playbook: TaskPlaybook get() = activeRules?.let { rootBook().generation(it) } ?: rootBook()
@@ -166,6 +195,8 @@ class TaskDesk(
         val reviewEvents: List<String> = emptyList(),
         val briefingTaskIds: List<String> = emptyList(),
         val coachDispositions: MutableMap<String, dev.androidagent.core.CoachDisposition> = java.util.concurrent.ConcurrentHashMap(),
+        /** Profile entries the Coach learned in this run, applied only when the run commits. */
+        val learned: MutableList<dev.androidagent.core.proactive.LearnRequest> = java.util.concurrent.CopyOnWriteArrayList(),
         var seenActive: Boolean = false,
         @Volatile var finished: Boolean = false,
     )
@@ -251,7 +282,7 @@ class TaskDesk(
             put("passesToday", if (settings.passDay == today) settings.passesToday else 0); put("dailyPassCap", settings.dailyPassCap)
             put("pendingInputs", signals.pending.value.size)
             mutable.value.error?.let { put("error", it.take(400)) }
-        } })
+        } }, proactive = proactiveTools(null, null))
     val tools = dev.androidagent.core.TaskToolHandler { session, args, user ->
         val flight = inFlight[session]
         if(isBackgroundSession(session) && (paused || !board.settings.value.discoveryOn || (!user && flight == null)))
@@ -292,6 +323,7 @@ class TaskDesk(
             else board.tasks.value.filter(::sourceAllowed).flatMap { it.sourceRefs }.distinct()
         val book = withIo { playbook.fork(id, refs.ifEmpty { listOf(dev.androidagent.core.TaskSourceRef("user", verified = true)) }) }
         val dispositions = java.util.concurrent.ConcurrentHashMap<String, dev.androidagent.core.CoachDisposition>()
+        val learned = java.util.concurrent.CopyOnWriteArrayList<dev.androidagent.core.proactive.LearnRequest>()
         val handler = TaskTools(stagedBoard, stagedMemory, stagedTeam, roleOf = ::roleOf,
             roleChat = { role ->
                 check(roleOf(session) == TaskChatRole.COORDINATOR) { "Only the Manager review organizes roles." }
@@ -304,10 +336,10 @@ class TaskDesk(
             }, permit = { dev.androidagent.core.TaskWritePermit(run.policyRevision) },
             resolveSources = ::inputSources, allowedSource = ::sourceAllowed, now = now, zone = zone, reportRunId = run.id,
             reviewEvidence = eventIds.toSet(), recordCoachDisposition = { decision -> dispositions[decision.eventId] = decision },
-            situation = ::situationSnapshot)
+            situation = ::situationSnapshot, proactive = proactiveTools(run.id) { learned += it })
         store.saveRun(run)
         return InFlight(member.id, batch, clock, runs().outcomeOf(session)?.runId, run.policyRevision,
-            run, data, handler, book, activeRules, withIo { book.fingerprint() }, refs, coachDispositions = dispositions)
+            run, data, handler, book, activeRules, withIo { book.fingerprint() }, refs, coachDispositions = dispositions, learned = learned)
     }
 
     fun isBackgroundSession(id: String): Boolean = roleOf(id) in setOf(TaskChatRole.SCOUT, TaskChatRole.COACH, TaskChatRole.LIBRARIAN, TaskChatRole.COORDINATOR) ||
@@ -555,6 +587,9 @@ class TaskDesk(
             sourceApps = sourceApps.toMap(),
             calendarGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED,
             error = mutable.value.error,
+            profile = proactive.profile.profile,
+            recentAlerts = proactive.book.alerts.takeLast(30).reversed(),
+            connections = connectionStates,
             nextCheckAt = plan.nextCheckAt,
             waitReason = reason,
             events = board.events.value,
@@ -671,6 +706,7 @@ class TaskDesk(
         check(store.changes(snapshotId) != null) { "This report predates safe undo. No memory was changed." }
         invalidateMemoryWork()
         val result = store.undoChanges(snapshotId)
+        proactive.profile.undoRun(snapshotId)
         activeRules = store.activeGeneration()
         memory.refresh(); board.refresh()
         loadRunHistory(); publish()
@@ -695,9 +731,58 @@ class TaskDesk(
         board.editSettings { before ->
         val next = change(before)
         if (next.readChats && !before.readChats) next.copy(feedStartAt = now(), feedStartSequence = boundary) else next
-    } } }
+    }
+        proactive.profile.pruneExcluded(board.settings.value)
+        publish()
+    } }
 
-    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); store.clearSourceStats(); situationStore.forgetObserved(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
+    // ----- Alerts, profile and connections -------------------------------------------
+
+    /** A button on one of Mike's alerts, or a tap that opened it. */
+    fun alertFeedback(alertId: String, action: dev.androidagent.core.proactive.FeedbackAction) {
+        scope.launch(Dispatchers.IO) { proactive.onFeedback(alertId, action); publish() }
+    }
+
+    fun editAlerts(change: (dev.androidagent.core.proactive.AlertPrefs) -> dev.androidagent.core.proactive.AlertPrefs) {
+        scope.launch(Dispatchers.IO) { proactive.profile.setAlerts(change); publish() }
+    }
+
+    fun setProfileEntry(kind: dev.androidagent.core.proactive.ProfileKind, key: String, label: String?, weight: Int, alwaysNotify: Boolean) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { proactive.profile.setOwner(kind, key, label, weight, alwaysNotify) }.onFailure { reportError(it.message ?: "Could not save.") }
+            publish()
+        }
+    }
+
+    fun rejectProfileEntry(id: String) { scope.launch(Dispatchers.IO) { proactive.profile.reject(id); publish() } }
+    fun removeProfileEntry(id: String) { scope.launch(Dispatchers.IO) { proactive.profile.remove(id); publish() } }
+
+    fun testAlert() {
+        val hebrew = java.util.Locale.getDefault().language in setOf("he", "iw")
+        scope.launch(Dispatchers.IO) {
+            proactive.test(if (hebrew) "בדיקת התראה" else "Test alert",
+                if (hebrew) "כך ייראו ההתראות של מייק." else "This is how Mike's alerts look.")
+        }
+    }
+
+    fun setConnector(id: String, on: Boolean) = editSettings { it.copy(connectors = it.connectors + (id to on)) }
+
+    /** Ask every connector for its state, for the Connections cards. */
+    fun refreshConnections() {
+        scope.launch(Dispatchers.IO) {
+            connectionStates = connectors.associate { c -> c.id to connectorStatus(c) }
+            publish()
+        }
+    }
+
+    private suspend fun connectorStatus(c: dev.androidagent.core.proactive.ContextConnector): dev.androidagent.core.proactive.ConnectorStatus =
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(10_000) { c.status() }
+                ?: dev.androidagent.core.proactive.ConnectorStatus(dev.androidagent.core.proactive.ConnectorState.NEEDS_ATTENTION, "no answer")
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { dev.androidagent.core.proactive.ConnectorStatus(dev.androidagent.core.proactive.ConnectorState.NEEDS_ATTENTION, e.message) }
+
+    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); proactive.book.clear(); proactive.profile.forgetLearned(); store.clearSourceStats(); situationStore.forgetObserved(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
     fun liftSuppression(entry: dev.androidagent.core.TaskSuppression) { scope.launch { board.removeSuppression(entry) } }
 
     fun addUserRule(rule: String) { scope.launch(Dispatchers.IO) { runCatching { playbook.addUserRule(rule) } } }
@@ -835,6 +920,8 @@ class TaskDesk(
                 expiredBackgroundRows = it.expiredBackgroundRows + gone.count { row -> row.lane == SignalLane.BACKGROUND })
         }
         settleInFlight()
+        // Digests and snoozes are the user's own deliveries: they go out even when discovery is off.
+        runCatching { proactive.tick() }
         if (!settings.discoveryOn || paused) return@withLock
         userRulesContext = withIo { playbook.userRules().take(4_000) }
         deliverBriefings()
@@ -896,7 +983,11 @@ class TaskDesk(
         val batch = plan.batch.map { row ->
             if (row.sessionId == null) row else row.copy(text = withIo { SignalRows.chatText(row, sessions.messages(row.sessionId!!).first()) })
         }
-        val prompt = TaskPrompts.scoutPass(batch, clock, zone(), plan.batch.any { it.source == "calendar" }, playbook.directory.absolutePath)
+        val contexts = if (connectors.isEmpty()) emptyList() else try { proactive.broker?.enrich(batch).orEmpty() }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
+        val prompt = TaskPrompts.scoutPass(batch, clock, zone(), plan.batch.any { it.source == "calendar" }, playbook.directory.absolutePath,
+            contexts, proactive.profile.summary(clock, zone()), proactive.profile.profile.alerts.enabled)
+        passRows[session] = batch.associateBy { it.id }
         plan.batch.forEach { sourceRefs[it.id] = dev.androidagent.core.TaskSourcePolicy.of(it) }
         inFlight[session] = beginFlight(scout, plan.batch.map { it.id }, clock,
             inputVersions = plan.batch.associate { it.id to it.revision })
@@ -965,7 +1056,8 @@ class TaskDesk(
                 it.id !in reviewedCoach && it.kind in setOf("decision", "note", "outcome", "feedback") }
                 .sortedBy { it.at }.take(160)
             val recent = board.tasks.value.filter { task -> freshEvents.any { it.taskId == task.id } && sourceAllowed(task) }
-            if ((freshEvents.isNotEmpty() || stats.isNotEmpty()) && !quotaLow(settings.reviewEngine)) {
+            val attentionFresh = proactive.book.recentFeedback(lastReview).isNotEmpty()
+            if ((freshEvents.isNotEmpty() || stats.isNotEmpty() || attentionFresh) && !quotaLow(settings.reviewEngine)) {
                 val snapshot = UUID.randomUUID().toString()
                 val session = coach.sessionId ?: return
                 val ids = recent.take(80).map { it.id }.toSet()
@@ -973,7 +1065,8 @@ class TaskDesk(
                 inFlight[session] = beginFlight(coach, emptyList(), clock, snapshot, eventIds = feedback.map { it.id },
                     contextRefs = (recent.flatMap { it.sourceRefs } + feedback.flatMap { it.sourceRefs } +
                         stats.map { dev.androidagent.core.TaskSourceRef("notification", app = it.app, verified = true) }).distinct())
-                submit(session, TaskPrompts.coachReview(recent.take(80), clock, zone(), snapshot, playbook.directory.absolutePath, feedback, stats),
+                submit(session, TaskPrompts.coachReview(recent.take(80), clock, zone(), snapshot, playbook.directory.absolutePath, feedback, stats,
+                    proactiveTools(null, null).attention(), proactive.profile.summary(clock, zone())),
                     "Nightly review", settings.reviewEngine, settings.reviewModel, settings.reviewEffort)
                 board.editSettings { it.copy(lastReviewAttemptAt = clock) }
                 return
@@ -1074,6 +1167,9 @@ class TaskDesk(
                         changes.generation != null) else emptySet()
                     store.commitChanges(changes, flight.run.copy(coachDispositions = flight.coachDispositions.values.toList()))
                     committed = true
+                    flight.learned.forEach { r ->
+                        runCatching { proactive.profile.learn(r.kind, r.key, r.label, r.weight, r.why, r.evidence, r.runId) }
+                    }
                     if(flight.run.purpose == "manager") reviewedManager = reviewedManager + flight.run.eventIds
                     if(flight.run.purpose == "coach") reviewedCoach = reviewedCoach + completedCoach
                     appliedChanges = changes
