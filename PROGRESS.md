@@ -2,6 +2,13 @@
 
 ### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
 
+Update 1193: the WhatsApp reader is local only (no `loadEarlierMsgs`), the
+connector reuses the session linked in Mike's browser (shared WebView
+profile), softer risk text, clearer Gmail error. `:web:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug` passed, lint zero errors. 1192 was
+installed on the chat phone (Sources page seen by the owner; Gmail sign-in
+failed as expected without an OAuth client).
+
 Branch `feat/proactive-manager-20261106`. Implemented the design in
 `docs/design/proactive-manager.md`, phases 1–4: smart alerts (levels, quiet
 hours, digest, budgets, Open / Not important / Later), the owner profile

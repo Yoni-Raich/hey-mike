@@ -275,9 +275,13 @@ budgets, urgent sound (off by default), and *Send a test alert*. A new
 - The agent browser refuses `web.whatsapp.com` (`reserved_origin`), so the
   model cannot read WhatsApp Web around the Sources policy. Only the
   connector's own page, with a fixed bundled read-only script, reaches it.
-- The connector page uses a separate WebView profile (`hey-mike-whatsapp`)
-  when the device supports multi-profile, a desktop user agent, and is
-  destroyed after 10 minutes idle.
+- The connector page shares the WebView profile of Mike's browser, so a
+  session the user already linked there is reused. It uses a desktop user
+  agent and is destroyed after 10 minutes idle.
+- Reading is local only (owner decision, 2026-11-06): the reader returns
+  messages the page already holds and never asks for earlier ones
+  (`loadEarlierMsgs` removed), to keep the account's risk as low as possible.
+  `hasEarlier` means more local messages exist before the returned ones.
 - Gmail uses `Identity.getAuthorizationClient` with `gmail.readonly` and the
   REST API. It needs a Google Cloud Android OAuth client (package + SHA-1).
   While the restricted scope is unverified, only listed test users can sign in.

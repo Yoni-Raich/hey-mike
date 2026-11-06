@@ -68,8 +68,8 @@ class WhatsAppLinkActivity : ComponentActivity() {
                             Text(t("1. Below, tap \"Log in with phone number\" and enter your number.\n2. WhatsApp shows an 8-character code.\n3. In WhatsApp: Settings › Linked devices › Link a device › Link with phone number instead, and type the code.\n4. When your chats appear below, tap Done.",
                                 "1. למטה, לחצו \"התחברות עם מספר טלפון\" והזינו את המספר.\n2. יופיע קוד של 8 תווים.\n3. בווטסאפ: הגדרות › מכשירים מקושרים › קישור מכשיר › קישור עם מספר טלפון, והקלידו את הקוד.\n4. כשהשיחות מופיעות למטה, לחצו סיום."),
                                 style = MaterialTheme.typography.bodySmall)
-                            Text(t("Mike only reads, and only chats allowed in Sources. This is not an official WhatsApp client; WhatsApp may log it out.",
-                                "מייק רק קורא, ורק שיחות שמותרות במקורות. זה אינו לקוח רשמי של ווטסאפ, ווטסאפ עלולה לנתק אותו."),
+                            Text(t("If you already linked WhatsApp Web in Mike's browser, your chats appear below; just tap Done. Mike only reads chats already saved here, and only those allowed in Sources.",
+                                "אם כבר קישרתם ווטסאפ ווב בדפדפן של מייק, השיחות יופיעו למטה, ופשוט לוחצים סיום. מייק קורא רק שיחות ששמורות כבר כאן, ורק כאלה שמותרות במקורות."),
                                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
                         }
                         AndroidView(factory = { context -> FrameLayout(context).also { connector.attach(it, this@WhatsAppLinkActivity) } },

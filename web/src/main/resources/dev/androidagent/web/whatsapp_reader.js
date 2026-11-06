@@ -1,7 +1,8 @@
 // Hey Mike - read-only WhatsApp Web reader.
 // Runs inside the user's own linked WhatsApp Web page. It reads chats that are
 // already loaded in the page and never sends, deletes, marks read or changes
-// anything. Fixed code bundled with the app; the model never supplies script.
+// anything, and never asks the network for more. Fixed code bundled with the
+// app; the model never supplies script.
 (() => {
   if (window.__heyMikeWA) return;
   const results = {};
@@ -51,16 +52,10 @@
     }
     if (!pick) return { found: false, candidates: named.length };
     const limit = Math.max(1, Math.min(50, q.limit || 20));
-    let msgs = models(pick.msgs);
+    // Local only: what the page already holds. Nothing is fetched from the
+    // phone or WhatsApp's servers, not even older messages.
+    const msgs = models(pick.msgs);
     const older = (list) => q.before ? list.filter((m) => (m.t || 0) * 1000 < q.before) : list;
-    for (let round = 0; round < 3 && older(msgs).length < limit; round++) {
-      const loader = req('WAWebChatLoadMessages');
-      if (!loader || typeof loader.loadEarlierMsgs !== 'function') break;
-      const before = msgs.length;
-      try { await loader.loadEarlierMsgs(pick); } catch (e) { break; }
-      msgs = models(pick.msgs);
-      if (msgs.length === before) break;
-    }
     const kept = older(msgs).filter((m) => !SKIP.has(m.type) && !m.isNotification);
     const group = isGroup(pick);
     const out = kept.slice(-limit).map((m) => {
@@ -73,8 +68,7 @@
         kind: kind(m),
       };
     });
-    const state = pick.msgs && pick.msgs.msgLoadState;
-    const hasEarlier = kept.length > limit || !(state && state.noEarlierMsgs);
+    const hasEarlier = kept.length > limit;
     return { found: true, title: title(pick), by, group, hasEarlier, messages: out };
   }
 

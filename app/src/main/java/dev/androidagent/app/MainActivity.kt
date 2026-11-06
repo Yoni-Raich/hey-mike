@@ -79,7 +79,7 @@ class MainActivity : ComponentActivity() {
         graph.scope.launch {
             if (result.resultCode == RESULT_OK) runCatching { graph.gmailConnector.complete(result.data) }
                 .onFailure { graph.taskDesk.reportError("Gmail: ${it.message ?: "sign-in failed"}") }
-            else graph.taskDesk.reportError(if (java.util.Locale.getDefault().language in setOf("he", "iw")) "ההתחברות לג׳ימייל בוטלה." else "Gmail sign-in was cancelled.")
+            else graph.taskDesk.reportError(if (java.util.Locale.getDefault().language in setOf("he", "iw")) "ההתחברות לג׳ימייל לא הושלמה. אם לא ביטלת, גוגל עוד לא מאשרת את האפליקציה: חסר לה לקוח OAuth." else "Gmail sign-in did not finish. If you did not cancel it, Google does not accept this app yet: it needs an OAuth client.")
             graph.taskDesk.refreshConnections()
         }
     }

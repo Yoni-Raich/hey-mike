@@ -3560,7 +3560,9 @@ Design: `docs/design/proactive-manager.md`. Decisions:
 - Conversation context is pulled at pass time through enabled, linked
   connectors, after the Sources policy check, and never persisted.
 - Connectors are read-only. WhatsApp Web is a reserved origin for the agent
-  browser; only the connector page in `:web` loads it. Gmail lives in `:app`
+  browser; only the connector page in `:web` loads it, in the same WebView
+  profile, so a session linked earlier in Mike's browser is reused. The
+  reader is local only: it never fetches earlier messages. Gmail lives in `:app`
   (Play services auth).
 - Feedback lives in `AlertBook`, not `TaskEvent`. Coach learning is staged
   with its flight and undone by run id. Learned weights stay within −1..1;

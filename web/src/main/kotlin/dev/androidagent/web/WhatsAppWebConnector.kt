@@ -33,9 +33,6 @@ import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.webkit.ProfileStore
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import dev.androidagent.core.proactive.ConnectorIds
 import dev.androidagent.core.proactive.ConnectorState
 import dev.androidagent.core.proactive.ConnectorStatus
@@ -68,9 +65,10 @@ import kotlinx.serialization.json.put
  * connector reads from it. Read-only by construction: the only script that
  * runs in it is the bundled [SCRIPT], which reads loaded chats.
  *
- * The page lives in its own WebView profile when the device supports it, so
- * the agent's browser never shares its cookies. The agent's browser also
- * refuses the site outright ([WebUrlPolicy.RESERVED_HOSTS]).
+ * The page shares the WebView profile of Mike's browser, so a session the user
+ * already linked there is used as is. The agent's browser itself refuses the
+ * site ([WebUrlPolicy.RESERVED_HOSTS]): the model never drives the page.
+ * Reading is local only: the script reads what the page already holds.
  *
  * Unofficial: WhatsApp may log the session out or change the page. Every
  * change is caught and reported as [ConnectorState.NEEDS_ATTENTION], never
@@ -96,7 +94,8 @@ class WhatsAppWebConnector(private val context: Context) : ContextConnector {
         set(value) { prefs.edit().putBoolean(KEY_LINKED, value).apply() }
 
     override suspend fun status(): ConnectorStatus {
-        if (!started) return ConnectorStatus(ConnectorState.NOT_LINKED)
+        if (!started && !hasStoredSession()) return ConnectorStatus(ConnectorState.NOT_LINKED)
+        if (!started) prefs.edit().putBoolean(KEY_STARTED, true).apply()
         return lock.withLock { pageStatus(wait = !shownOnScreen) }
     }
 
@@ -200,12 +199,18 @@ class WhatsAppWebConnector(private val context: Context) : ContextConnector {
     fun disconnect() {
         main.post {
             destroy()
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
-                runCatching { ProfileStore.getInstance().deleteProfile(PROFILE) }
-                    .onFailure { clearDefaultProfile() }
-            } else clearDefaultProfile()
+            clearDefaultProfile()
         }
         prefs.edit().clear().apply()
+    }
+
+    /** WhatsApp Web already keeps data in this app's browser, as after linking in Mike's browser. */
+    private suspend fun hasStoredSession(): Boolean = onMainSuspend { done ->
+        runCatching {
+            WebStorage.getInstance().getOrigins { origins ->
+                done(origins.orEmpty().values.any { (it as? WebStorage.Origin)?.origin?.trimEnd('/') == ORIGIN })
+            }
+        }.onFailure { done(false) }
     }
 
     private fun clearDefaultProfile() {
@@ -224,12 +229,6 @@ class WhatsAppWebConnector(private val context: Context) : ContextConnector {
         view?.let { return it }
         val wrapper = MutableContextWrapper(context.applicationContext)
         val page = WebView(wrapper)
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
-            runCatching {
-                ProfileStore.getInstance().getOrCreateProfile(PROFILE)
-                WebViewCompat.setProfile(page, PROFILE)
-            }
-        }
         page.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -302,7 +301,6 @@ class WhatsAppWebConnector(private val context: Context) : ContextConnector {
     companion object {
         const val HOST = "web.whatsapp.com"
         const val ORIGIN = "https://web.whatsapp.com"
-        private const val PROFILE = "hey-mike-whatsapp"
         private const val KEY_STARTED = "started"
         private const val KEY_LINKED = "linked"
         private const val STATUS_CALL = "window.__heyMikeWA && window.__heyMikeWA.status()"
