@@ -20,6 +20,7 @@ class AccountReadGatewayTest {
             }
         }
         val gateway = AccountReadGateway(source)
+        assertTrue(ToolSchemaAudit.complaints(gateway.definitions).isEmpty())
         val read = Json.parseToJsonElement("""{"operation":"read","tool":"gmail.read"}""").jsonObject
         assertFalse(gateway.invoke("account_read", read).success)
         gateway.beginRun("run", File("."))

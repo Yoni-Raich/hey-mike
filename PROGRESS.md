@@ -1,5 +1,32 @@
 # Progress
 
+### Existing Codex chats keep old tools — 2026-11-06
+
+1199 fixes the Manager's missing account_read after installing 1198. A real
+0.163.0 PC probe started a thread with old_probe, completed a dummy turn,
+then resumed it with account_read. Resume reported success but the model
+reported MISSING. A fresh ephemeral thread with account_read called it
+successfully (dummy response only; no Gmail data was read in these probes).
+The two persistent probe threads were archived.
+
+Phone-owned user chats now record their started tool catalog in the private
+workspace (.mike-codex-tools-v1.json). A legacy thread or changed catalog
+starts a new native thread once. AgentCoordinator detects the new id and
+carries recent chat context through the existing ChatHandoff path (24,000
+characters; local message history is retained). Known matching catalogs
+resume normally. Imported computer sessions and ephemeral background passes
+keep their current behavior. No old native thread or message is deleted.
+The account_read argument map now explicitly allows arbitrary keys, checked
+by ToolSchemaAudit. Phone migration and a real phone Gmail read are untested.
+
+Checks passed: `:core:test :engine-codex:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon -q`, followed by a
+`:core:test :engine-codex:testDebugUnitTest` rerun after the conversation
+handoff regression test was added. Core: 1,053 cases; engine-codex: 73;
+zero failures/errors. App lint: zero errors. APK package/version 1199 and
+debug v2 signature verified. No full release gate. Existing worktree
+proactive-manager-20261106 and central build bucket 09428510d052e605 retained.
+
 ### Codex account read bridge — 2026-11-06
 
 Dev Debug 1198 adds ChatGPT account discovery to Sources and ContextRouter.

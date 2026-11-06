@@ -351,7 +351,12 @@ class CodexEngine(
     ): String {
         connect()
         var lastError: Exception? = null
-        if (!threadId.isNullOrBlank()) {
+        // 0.163 accepts dynamicTools on resume but keeps the original catalog.
+        // Only phone-owned chats may roll forward; the coordinator carries the
+        // local conversation into the new thread when its id changes.
+        val catalog = if (accountReadBridge && freshIfLost && !sessionProfile.readOnly) CodexToolCatalog(File(cwd)) else null
+        val resumeId = threadId?.takeIf { catalog == null || catalog.matches(it, tools) }
+        if (!resumeId.isNullOrBlank()) {
             // Tools first. A thread binds the tool list it was started with, so
             // a chat opened before an app update could never call a tool that
             // update added - while the per-turn runtime snapshot, built from the
@@ -361,7 +366,7 @@ class CodexEngine(
             // extra round trip instead of the user's conversation.
             for (attempt in listOf(tools, null)) {
                 try {
-                    val result = request("thread/resume", resumeSessionParams(cwd, threadId, model, attempt, sessionProfile))
+                    val result = request("thread/resume", resumeSessionParams(cwd, resumeId, model, attempt, sessionProfile))
                     val resumedId = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() }
                     if (resumedId != null) {
                         if (!model.isNullOrBlank()) selectedModels[resumedId] = model else selectedModels.remove(resumedId)
@@ -386,6 +391,7 @@ class CodexEngine(
         val startParams = startSessionParams(cwd, model, tools, sessionProfile)
         val result = request("thread/start", startParams)
         val opened = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread ID")
+        catalog?.record(opened, tools)
         if (!model.isNullOrBlank()) selectedModels[opened] = model else selectedModels.remove(opened)
         return opened
     }
