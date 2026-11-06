@@ -55,6 +55,51 @@ class AndroidCapabilityPlatform(
 ) : CapabilityPlatform {
     private val context: Context = context.applicationContext ?: context
 
+    /** One bounded foreground read. No background subscription, reverse geocoding or route inference. */
+    suspend fun querySituationLocation(): dev.androidagent.core.SituationLocation = withContext(Dispatchers.IO) {
+        fun unavailable(status: String) = System.currentTimeMillis().let { dev.androidagent.core.SituationLocation(status, it, it) }
+        try {
+            if (!hasPermission(CapabilityPolicy.PERM_COARSE_LOCATION) && !hasPermission(CapabilityPolicy.PERM_FINE_LOCATION))
+                return@withContext unavailable("permission denied")
+            val users = context.getSystemService(Context.USER_SERVICE) as? android.os.UserManager
+                ?: return@withContext unavailable("profile unavailable")
+            val personal = if (Build.VERSION.SDK_INT >= 33) !users.isProfile else users.isSystemUser
+            val serial = users.getSerialNumberForUser(android.os.Process.myUserHandle())
+            val profile = SituationCalendarAdapter.personalProfile(personal, serial)
+                ?: return@withContext unavailable("profile unavailable")
+            val bootCount = android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)
+                .takeIf { it >= 0 } ?: return@withContext unavailable("device clock unavailable")
+            val manager = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                ?: return@withContext unavailable("provider unavailable")
+            if (!manager.isLocationEnabled) return@withContext unavailable("location disabled")
+            fun fix(location: android.location.Location) = SituationLocationAdapter.Fix(location.latitude, location.longitude,
+                location.accuracy.takeIf { location.hasAccuracy() }, location.elapsedRealtimeNanos / 1_000_000, location.provider)
+            val fine = hasPermission(CapabilityPolicy.PERM_FINE_LOCATION)
+            val providers = manager.getProviders(true).filter { it == android.location.LocationManager.NETWORK_PROVIDER ||
+                (fine && it == android.location.LocationManager.GPS_PROVIDER) }
+            val cached = providers.mapNotNull { provider -> manager.getLastKnownLocation(provider)?.let(::fix) }
+            val cachedResult = SituationLocationAdapter.read(cached, System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime(), profile)
+            if (cachedResult.status == "fresh") return@withContext cachedResult.copy(bootCount = bootCount)
+            val provider = providers.firstOrNull() ?: return@withContext unavailable("provider unavailable")
+            val fresh = kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                kotlinx.coroutines.suspendCancellableCoroutine<android.location.Location?> { continuation ->
+                    val signal = android.os.CancellationSignal()
+                    continuation.invokeOnCancellation { signal.cancel() }
+                    manager.getCurrentLocation(provider, signal, context.mainExecutor) { location ->
+                        continuation.resumeWith(Result.success(location))
+                    }
+                }
+            }
+            if (!hasPermission(CapabilityPolicy.PERM_COARSE_LOCATION) && !hasPermission(CapabilityPolicy.PERM_FINE_LOCATION))
+                return@withContext unavailable("permission denied")
+            if (!manager.isLocationEnabled) return@withContext unavailable("location disabled")
+            SituationLocationAdapter.read(listOfNotNull(fresh?.let(::fix)), System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime(), profile)
+                .copy(bootCount = bootCount)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+          catch (_: SecurityException) { unavailable("permission denied") }
+          catch (_: Exception) { unavailable("provider error") }
+    }
+
     override fun hasPermission(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) ==
             PackageManager.PERMISSION_GRANTED
@@ -158,6 +203,42 @@ class AndroidCapabilityPlatform(
     }
 
     // ---- calendar ----
+
+    override suspend fun querySituationCalendar(startMs: Long, endMs: Long, limit: Int, observedAt: Long): dev.androidagent.core.SituationCalendar =
+        withContext(Dispatchers.IO) {
+            val source = object : SituationCalendarSource {
+                override fun permitted() = hasPermission(android.Manifest.permission.READ_CALENDAR)
+                override fun personalProfile(): String? {
+                    val users = context.getSystemService(Context.USER_SERVICE) as? android.os.UserManager
+                        ?: return null
+                    // On API 33+ this excludes managed, private and clone profiles.
+                    // On older versions only the system user can be established safely.
+                    val personal = if (Build.VERSION.SDK_INT >= 33) !users.isProfile else users.isSystemUser
+                    if (!personal) return null
+                    val serial = users.getSerialNumberForUser(android.os.Process.myUserHandle())
+                    return SituationCalendarAdapter.personalProfile(personal, serial)
+                }
+                override fun query(startMs: Long, endMs: Long): SituationCalendarCursor? {
+                    val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
+                        ContentUris.appendId(it, startMs); ContentUris.appendId(it, endMs)
+                    }.build()
+                    val columns = arrayOf(CalendarContract.Instances.EVENT_ID, CalendarContract.Instances.TITLE,
+                        CalendarContract.Instances.BEGIN, CalendarContract.Instances.END,
+                        CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_TIMEZONE)
+                    val cursor = context.contentResolver.query(uri, columns, null, null, "${CalendarContract.Instances.BEGIN} ASC")
+                        ?: return null
+                    return object : SituationCalendarCursor {
+                        override fun moveToNext() = cursor.moveToNext()
+                        override fun isNull(column: Int) = cursor.isNull(column)
+                        override fun string(column: Int) = cursor.getString(column)
+                        override fun long(column: Int) = cursor.getLong(column)
+                        override fun int(column: Int) = cursor.getInt(column)
+                        override fun close() = cursor.close()
+                    }
+                }
+            }
+            SituationCalendarAdapter.read(source, startMs, endMs, limit, observedAt)
+        }
 
     override suspend fun queryEvents(startMs: Long, endMs: Long, limit: Int): List<EventRow> =
         withContext(Dispatchers.IO) {

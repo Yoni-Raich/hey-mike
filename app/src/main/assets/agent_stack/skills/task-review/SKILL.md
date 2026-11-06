@@ -19,6 +19,17 @@ never a reason for a rule by themselves.
 
 ## What to change
 
+The app also supplies text-free source counters. They count deliveries, distinct bodies,
+successful reviews and reviews that saved useful work or memory. Reposted status can
+raise deliveries without adding new work. Use a large repeated sample and the owner's
+rules to consider a settings card to stop Mike reading an app. Missing/partial context
+and messages from people argue against exclusion. Never infer a user preference or
+write an ignore rule from counters alone. Never change a source yourself.
+
+An exclude_app card must say that only Mike would stop reading: Android notifications
+from the app, including emergency alerts, continue normally. Cite the period/counts and
+explain the choice. Check existing cards first. Only the user's approval applies it.
+
 Read and write rules only through `tasks mode=playbook operation=list/read/write`.
 Do not use native file or shell tools. The app stages your writes, checks source
 permissions again, then commits the whole result with a run-specific report.
@@ -42,7 +53,15 @@ what changed and why.
 
 Owner `feedback` events also contain actual words from Manager/member chat. Use clear
 lasting corrections and preferences, not one-off commands or quoted requests. Each write
-must cite at least one exact feedback/decision event ID supplied in this review.
+must cite the exact feedback/decision event IDs supplied in this review both in
+the file and in the `eventIds` argument of that playbook write. Cite only events
+that support that file.
+For every event in the review call `tasks mode=coach_review` with its `id`,
+`disposition` (applied, no_change, defer or retry), a short `note` explaining
+why, and `reviewEvidence` identifying the supporting evidence. Use no_change
+when no change is justified. Defer and retry leave the event pending. Applied
+requires a changed playbook file citing that exact event, written before its
+disposition; saving a report alone does not count.
 
 For a narrow automatic skip preference, place this optional tested block in a matching
 `kinds/` or `sources/` Markdown file, alongside its event IDs and explanation:
@@ -57,6 +76,24 @@ The Scout's proposal tool enforces it. It can suppress suggestions, never author
 Keep important exceptions as counterexamples. Failed cases refuse the write. Undo of the
 generation restores the previous filter. Free-form prose guidance still has no automatic
 semantic quality score; do not claim that saving it proves improvement.
+
+## The owner profile
+
+The prompt may include the owner profile and **attention feedback**: how the user
+answered Mike's alerts (*open*, *not important*, *later*, swiped away), with event ids.
+You may learn small adjustments, the user's own entries always win:
+
+```text
+tasks(mode="profile", operation="learn", profileKind="person|conversation|source|topic",
+      key="<as in the feedback>", weight=-1|0|1, why="<one line>", eventIds=["<feedback ids>"])
+```
+
+- Learn only from repeated, consistent feedback: at least two answers the same way,
+  and no opposite answer about the same thing since.
+- `weight` stays within -1..1. Only the user can mute (-2) or star (+2).
+- An entry the user set, or rejected with *Wrong*, cannot be changed; do not retry.
+- Each learned entry is applied when the review commits and undone by the report's undo.
+  Mention what you learned in the report card.
 
 ## Report
 

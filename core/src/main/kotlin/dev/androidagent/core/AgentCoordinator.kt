@@ -1746,6 +1746,7 @@ class AgentCoordinator(
         if (itemId != null && assistantItemId != null && itemId != assistantItemId) flushAssistantSegment()
         ensureCurrent(token)
         if (assistantId == null) {
+            lastMessageWasFinal = false
             val session = state.value.sessionId ?: return
             val id = UUID.randomUUID().toString()
             synchronized(lifecycleLock) { assistantId = id; assistantItemId = itemId }
@@ -1782,6 +1783,7 @@ class AgentCoordinator(
         val id = assistantId
         if (id != null) {
             val text = assistantText.toString()
+            sessions.setMessagePhase(id, if (lastMessageWasFinal) "final_answer" else "commentary")
             assistantFlushLock.withLock { sessions.updateMessage(id, text, "complete") }
             if ((id != tracedAssistantId || text != tracedAssistantText) && text.isNotBlank()) {
                 state.value.sessionId?.let { sessionId ->

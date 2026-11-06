@@ -98,7 +98,7 @@ class AgentGraph(private val app: Application) {
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
     /** The phone's own Codex. */
-    val phoneEngine = CodexEngine(runtime)
+    val phoneEngine = CodexEngine(runtime, accountReadBridge = true)
     /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
     val computers = dev.androidagent.remote.RemoteStore(
         java.io.File(app.filesDir, "remote/computers.bin"),
@@ -413,7 +413,8 @@ class AgentGraph(private val app: Application) {
     }
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
         listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
-            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), connectedTools(), capabilityTools, a11yTools, adbTools),
+            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(),
+            dev.androidagent.core.proactive.AccountReadGateway(phoneEngine), connectedTools(), capabilityTools, a11yTools, adbTools),
         runtimeVersions = {
             val claude = claudeHost.updates.activePin.version.takeIf {
                 claudeHost.installState.value.phase == dev.androidagent.runtime.ClaudeInstallPhase.INSTALLED
@@ -476,6 +477,12 @@ class AgentGraph(private val app: Application) {
             LastUsageStore.current(reading.orEmpty(), System.currentTimeMillis() / 1000L).any { (it.usedPercent ?: 0.0) >= 90.0 }
         },
     )
+    /** Read-only conversation context for the Manager's Scout: WhatsApp Web linked in Hey Mike. Mail and calendars come through the account connectors. */
+    val whatsAppConnector = dev.androidagent.web.WhatsAppWebConnector(app)
+    init {
+        taskDesk.connections.connectors = listOf(whatsAppConnector)
+        taskDesk.connections.accountSources = listOf(claudeEngine, phoneEngine)
+    }
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools,
         restricted = taskDesk::isBackgroundSession, ownerContext = taskDesk::ownerContext) { runCoordinator }

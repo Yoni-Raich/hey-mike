@@ -74,6 +74,13 @@ class ClaudeEnvironmentTest {
     }
 
     @Test
+    fun `account connectors stay off unless the engine asks, and the inherited env cannot turn them on`() {
+        assertEquals("false", build(inherited = mapOf("ENABLE_CLAUDEAI_MCP_SERVERS" to "true"))["ENABLE_CLAUDEAI_MCP_SERVERS"])
+        assertEquals("true", build(extra = mapOf("ENABLE_CLAUDEAI_MCP_SERVERS" to "true"))["ENABLE_CLAUDEAI_MCP_SERVERS"])
+        assertEquals("false", build(extra = mapOf("ENABLE_CLAUDEAI_MCP_SERVERS" to "1"))["ENABLE_CLAUDEAI_MCP_SERVERS"])
+    }
+
+    @Test
     fun `no ca file leaves SSL_CERT_FILE unset`() {
         assertNull(build(caFile = null)["SSL_CERT_FILE"])
     }

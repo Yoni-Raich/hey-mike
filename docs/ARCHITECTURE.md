@@ -1,5 +1,102 @@
 # Architecture
 
+## Mike's face — 2026-11-02
+
+`MikeEye` draws a flat robot head instead of a dot sphere. It is plain Compose
+`Canvas` on a 200-unit design square scaled to the box, so one drawing serves every
+size from a 24 dp avatar to the team page. Mood parameters ease toward per-mood
+targets, and motion phases accumulate, so changing mood never makes the head jump.
+
+Moods keep their meaning: teal is alive, amber is "waiting for you", grey-teal is
+paused. Thinking is lavender and done is green; a team member's `tint` still colours
+the eyes. Each running task adds one chin light (at most four) where the sphere drew
+one moon. The visor highlight path and the eye constants are built once, so a frame
+allocates nothing of its own.
+Reduced motion draws one still frame. The face never reads Codex or Claude events;
+it only takes `EyeMood`, so UI still observes app state, not raw engine JSON.
+
+Other orbs (`AgentOrb`, `VoiceSphere`, overlay) keep their own look. Changing them is
+a separate decision.
+
+## Manager evidence loop — 2026-11-04
+
+Owner context and explicit memory search share a bounded Hebrew/English stop-word
+filter. Generic conversation words do not select unrelated project notes; explicit
+subjects, allowed linked cards and global scope still work. Selection is not proof
+of memory usefulness. Manager guidance requires saving new task evidence before
+claiming a changed conclusion: update undecided work, observe decided open work.
+Observation never closes a decided card or changes its frozen execution plan.
+
+The version-1 situation file now also keeps up to forty attributed temporary
+observations, separate from current facts. Each has evidence, source ancestry,
+source time, expiry and reported/inferred confidence. Reads recheck source policy,
+mark expired observations stale and leave unknown fields unknown. Observations
+cannot create quiet intervals or authorize actions. Explicit collected-data forget
+removes observations and the cached device fix; user-supplied corrections remain.
+
+`tasks situation operation=refresh_location` is one interactive, on-demand read
+through device-tools. It checks foreground coarse/fine permission, enabled Android
+location and a personal profile before provider access. A cached fix or a bounded
+ten-second current-fix request records coordinates, accuracy, provider, actual
+monotonic age, profile and boot count. Exposure requires the same boot/profile,
+current permission and enabled location, and age below two minutes by both clocks.
+Missing permission points to the existing Android permission-request tool; no
+permission is granted by this path. No location subscription, background permission,
+reverse geocoding, route, ETA or departure inference is added.
+
+An explicit owner reminder can create a check on a proposed task without accepting
+or executing it. A proposal's existing expiry is extended through that requested
+check when necessary; its plan and decision stay unchanged. Closed/snoozed cards
+and automated requests cannot use this shortcut. Delivery still uses the existing
+local outbox and OS scheduling limits.
+
+Stop semantics stay unchanged. A Manager/chat/global Stop or discovery switch
+records a bounded reason and time with the discovery setting. Restart does not
+resume it. The board explains recorded pauses; older settings have an unknown
+reason. Interactive `tasks status` distinguishes discovery state, runtime pause,
+model usage gate and daily attempts. Browser reading preserves DOM-provided chat
+direction, sender and displayed timestamp, with explicit attribution/date limits;
+it reads loaded messages and does not navigate, send or load history on its own.
+Displayed daily counters use the current local day even while discovery is off;
+the display projection does not reset stored receipts or resume background work.
+
+## Manager follow-through and situation — 2026-11-02
+
+An explicit scheduled check has its own persisted revision and receipt,
+separate from status briefings. Memory scopes are explicit; older unscoped
+notes are selected only by relevance. Recall and context injection are not
+evidence of usefulness. Coach dispositions commit with the staged changes;
+deferred and retry events remain unconsumed.
+
+`SharedSituationStore` is a local, versioned atomic snapshot owned by TaskDesk.
+It records bounded allowed board commitments and explicit user corrections with
+source, observation time and expiry. Reads recompute time, freshness and source
+visibility; conflicts and unknowns are not facts or permission. TaskDesk feeds
+the snapshot to Manager context and the situation tool, and refreshes it on
+board changes, clock changes and a periodic tick. The app-managed preferences
+file supplies bounded home/work saved places, never current location. The calendar
+adapter checks for a personal profile before querying the normal current-user
+Instances URI and records profile serial, query window, all-day, timezone,
+completeness and freshness; permission, policy
+and profile are rechecked before exposure. No enterprise calendar URI is used.
+Attention ranks due explicit checks and approaching real card deadlines, with
+separate durable occurrence receipts and bounded public decision reasons;
+it does not infer travel or departure. ETA has no provider; location is available
+only through the explicit foreground read described above.
+Calendar provider behavior, profile isolation and background delivery still need
+physical-device validation. Explicit temporary availability corrections can
+defer delivery through their expiry; no recurring quiet-window setting exists.
+
+Due checks use a local path independent of model quota, with a persisted Android
+job that may be delayed by the OS. Chat append uses an idempotent message ID;
+notification reservation and outcome are recorded separately. A reservation
+interrupted before its outcome is recorded remains unknown and is not replayed.
+The latest outbox record is retained per card, not a full delivery history.
+The card and policy check for chat append is serialized with board updates;
+one failed item does not stop other eligible items. Deadlines require a fresh,
+allowed board projection before preparation and again at delivery.
+Notification is an external OS call and cannot be atomic with a policy change.
+
 ## Unified task board and personal assistant — 2026-10-29
 
 The board, Manager, team UI and follow-through are one feature. This integration
@@ -23,13 +120,70 @@ user settings or persisted session. App tool allowlists and write provenance
 checks apply again at dispatch. Backstage voice is refused before engine open.
 These controls share the app UID and still need physical native-runtime proof.
 
-Collection is opt-in. Final chat revisions use a durable SQLite feed cursor;
-bounded signals, dedupe receipts and visible coverage gaps prevent silent loss.
+Collection is opt-in. The discovery queue holds one open row per conversation
+or app, not message fragments. Mike chat rows contain a session pointer and
+read boundary, not transcript copies. Notification rows retain at most twenty
+human messages or eight app messages, within a 12,000-character row budget.
+Overflow removes the oldest lines only inside that row and marks partial context.
+Content/time receipts dedupe human messages; app status dedupes across repost times.
+Daily source counters retain no message bodies, titles or conversation names.
 Both live notifications and reconnect replay reject non-personal or unknown
 Android users before payload access. Replay feeds only the task reader, never
 automation actions. Enabled packages/conversations are checked before extraction.
 Calendar reads need their explicit permission. Collection never opens another
 app or reads its database. Historical WhatsApp/mail sync is outside this feature.
+
+Only human input opens ordinary Mike-chat work, after fifteen quiet minutes.
+Assistant progress can delay an existing row but cannot open one. The coordinator
+stores engine final-answer metadata separately from text; Scout receives requests
+and marked final replies. Real owner messages in Manager/role chats and marked
+task results enter the immediate lane. Messaging notifications enter the people
+lane; other apps and ordinary Mike chats enter background. Calendar observers
+coalesce dirty revisions into one row, with a six-hour polling fallback.
+
+The initial feed sequence/time boundary excludes automatic historical import,
+including a v10 seeded message feed. A new edit of an older message still qualifies
+by its new sequence. The upgrade converts retained notifications and existing
+owner/task inputs to rows; automatic historical chat fragments are released while
+the original session history stays intact. An explicit source-screen history scan
+adds one background row. Old unmarked replies in that scan are labelled as having
+unknown final status; only their last reply per request is used.
+
+The 400-row limit reserves 100 places for non-background work. Separate priority
+and regular feed cursors, with atomic per-change receipts, let owner feedback
+pass a blocked background page without consuming that page or duplicating feedback.
+Failed writes leave the source cursor unchanged. Each prepared run records
+text-free row revisions. Its successful staged transaction removes only the
+versions it read: newer input merged during the run remains queued. Failed or
+interrupted runs do not acknowledge the batch.
+
+The normal twenty-minute interval remains; immediate work can start after one
+minute. A large backlog no longer accelerates background processing. Background-only
+attempts get at most half of the daily cap (24 of 48 by default); people/owner work
+keeps the remaining budget. Quiet time, active-chat, batch-character, quota, Stop
+and daily-attempt gates still apply. The UI shows row admission reasons, separate
+lost-human-message and expired-background counts, and labels historical mixed
+capture gaps without claiming they are unique lost messages.
+
+Seven-day UTC source counters track deliveries, distinct body hashes, successful
+reviews, useful reviews, human-message deliveries and bounded-buffer losses.
+Capture counters, receipts, row updates and feed cursors commit together; successful
+review/usefulness counters commit with the staged result. Coach may consider these
+numbers even if the source never produced a card. It can propose excluding a source,
+but cannot apply that proposal or learn an ignore rule from counters alone. Its
+card must explain that only Mike stops reading: Android notifications keep working.
+Settings-card identity follows the action/source so changed wording cannot repeat
+the same proposal. Source exclusions, retention and explicit forget apply to counters.
+
+For Scout, an owner suppression or tested learned filter returns successful
+`suppressed=true` handling with no new card or action. It does not acknowledge
+input by itself: the model must still finish the exact batch and the staged
+transaction must commit. Invalid arguments, failed storage and excluded sources
+remain failures. Scout guidance distinguishes expected suppression from failed
+saves and names the required proposal/memory fields. A missing completion receipt
+has an explicit error; its banner resolves when later processing consumes all
+of that failed batch, without clearing an unrelated error. Daily attempt and
+model quota limits still apply.
 
 Background models edit staged board/memory/team/rule generations. SQLite commits
 preimage-checked changes, consumed input, run receipt and rule generation in one
@@ -1447,6 +1601,51 @@ it moves by the pixels added to a visible row and jumps to the end only when a
 new last row appears below the viewport. Scrolling up pauses following, and
 the jump-to-latest button resumes it. Streaming text does not restart a scroll
 animation on each update.
+
+## Visual widgets in the chat
+
+Decided 2026-11-02. A reply can hold a live, interactive card: sliders, stat
+cards, charts, gauges, tables, tabs, toggles, an animated dot grid and buttons.
+The agent writes a fenced block with the language `mike-widget` and one JSON
+object; the chat draws it natively in Compose. It does not use a WebView, runs
+offline and adds no model-facing tool. The format is taught by the on-device
+skill `visual-widgets` and, for computer sessions, by the short
+`WidgetGuide.TEXT` that `RemoteInstructions` carries.
+
+- **Pure parsing in `:core` (`core/widget`).** `WidgetSegments.splitMessage`
+  cuts a reply into `Markdown`, `Widget`, `Pending` and `Broken` parts. An
+  unclosed fence in a streaming reply is `Pending` (a skeleton); a closed block
+  with bad JSON, or an unclosed one in a finished reply, is `Broken` and is
+  shown as code with the reason. A reply with no widget fence is one `Markdown`
+  part and is drawn exactly as before. `WidgetSpec.parse` is lenient (trailing
+  commas, unknown keys, aliases such as `kpi` for `stats`) and never throws for
+  one bad block: it keeps the rest and records a warning. Limits: 64,000 source
+  characters, 150 blocks, 5 nesting levels, 400 chart points, 48 by 48 dots.
+- **State lives in inputs.** Each slider, select, tabs, toggle and text input
+  has an `id`, and its value is a variable in every expression. Number fields
+  take `"=expr"`, text takes `{expr}` holes, and any block takes `"when"`. A
+  change recomputes the visible numbers and charts without a turn. The state is
+  `rememberSaveable` per message and block source, so scrolling away and back
+  keeps the user's settings.
+- **A safe expression language (`WidgetExpr`).** Numbers and text, arithmetic,
+  comparisons, `&&`, `||`, `!`, `?:` and about 30 functions (`noise`, `dist`,
+  `mix`, `clamp`, `fmt`, ...). There are no loops, assignment or calls out, so
+  the model's text cannot run code, hang the UI thread or reach the device. A
+  parse error becomes a warning and the field keeps its fallback.
+- **Buttons.** `copy` puts a JSON snapshot of the inputs and every visible
+  chart's data on the clipboard. `ask` sends the label plus that snapshot, as a
+  fenced `json` block, back into the chat as a user message. It goes through
+  `onSteer` while a run is active and `onSend` otherwise, so a widget is
+  another way to type, not a new side channel.
+- **Drawing (`app/ui/widget`).** Charts are drawn on `Canvas` with nice axis
+  ticks, a touch readout, animated data changes and an animated first draw. The
+  dot grid runs a frame loop at about 30 fps and stands still when the system
+  animator scale is 0. Charts stay left to right inside a right-to-left widget;
+  the widget direction comes from `"dir"` or, if absent, from the text.
+- **Trust.** The block is untrusted model text. It can only draw and read its
+  own inputs; it cannot open links, start intents or call tools. The only way
+  out is the `ask` button, and that sends visible text the user can read in the
+  chat.
 
 ## The chat's own tools: `ask_user` and `show_media`
 
@@ -3348,3 +3547,70 @@ Decided 2026-10-01, on top of the section above.
   skills are not listed in the composer. Mac Desktop handoff and real
   phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
   evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
+## Proactive Manager: connectors, alerts, owner profile
+
+Design: `docs/design/proactive-manager.md`. Decisions:
+
+- `dev.androidagent.core.proactive` holds `AlertGate`, `OwnerProfileStore`,
+  `AlertBook`, `ContextBroker`, `ProactiveDesk`, `ContextRouter` and
+  `ManagerConnections`, plain JVM and tested. `TaskDesk` owns the files
+  (`owner-profile-v1.json`, `mike-alerts-v1.json`) and delegates every
+  connection question (states, account list, switches, notes, pass context)
+  to `ManagerConnections`.
+- The gate only lowers an alert's level, never raises it. Levels: none,
+  digest, notice, urgent. Budgets, quiet hours and the profile decide.
+- Conversation context is pulled at pass time through enabled, linked
+  connectors, after the Sources policy check, and never persisted.
+- Connectors are read-only. WhatsApp Web is a reserved origin for the agent
+  browser; only the connector page in `:web` loads it, in the same WebView
+  profile, so a session linked earlier in Mike's browser is reused. The
+  reader is local only: it never fetches earlier messages. There is no own
+  Gmail sign-in: an OAuth client and restricted-scope verification would be
+  needed, so mail comes only through account connectors.
+- Feedback lives in `AlertBook`, not `TaskEvent`. Coach learning is staged
+  with its flight and undone by run id. Learned weights stay within −1..1;
+  only the owner mutes (−2) or stars (+2).
+- Alerts raised in a flight are delivered at once, even if the run is
+  rejected later.
+- Account connectors (claude.ai Gmail, ...) are routed by the pass engine
+  (`ContextRouter`, `AccountConnectorSource`). Hey Mike holds no token for
+  them. Only tools the service annotates `readOnly` are allowed, in Claude
+  chats on the phone (background and user chats, all `dontAsk`), only when
+  the user switched that connector on (`account:claude:<server>` in
+  `connectors`). A chat with none keeps `--strict-mcp-config`. The host keeps `ENABLE_CLAUDEAI_MCP_SERVERS=false`
+  unless the engine passes `true` for that one process; the Claude proxy
+  allows `mcp-proxy.anthropic.com`, the connectors' only extra host.
+- Codex account discovery uses the reserved `codex_apps` MCP catalog and its
+  connector metadata. The phone host enables apps for discovery, while every
+  model chat disables native apps. `account_read` is a per-run gateway: only
+  user-enabled tools with explicit safe read annotations pass, rechecked
+  before dispatch. Reads use `mcpServer/tool/call` on a separate ephemeral
+  thread without a model turn. Native app config alone is insufficient:
+  direct MCP calls bypass that policy in the tested 0.163.0 PC binary.
+  The gateway owns Stop revocation; normal coordinator tool tracing and
+  cancellation still apply. Sources shows separate Claude and ChatGPT cards.
+  `CodexAccountReads` holds this bridge; `CodexEngine` only delegates.
+- Phone-owned Codex user chats record the tool catalog used at thread/start
+  in `.mike-codex-tools-v1.json` inside their private session workspace. In the
+  tested 0.163.0 binary, resume accepts changed dynamicTools but the model
+  retains the old catalog. Missing or changed catalog evidence therefore
+  starts a fresh native thread; AgentCoordinator's existing changed-id path
+  carries recent conversation context (24,000 characters). Visible local
+  history and the old native thread remain. Matching catalogs resume, and
+  imported computer sessions are not migrated.
+- The Manager and team chats get a connections note each turn
+  (`ContextRouter.connectionsNote`): app connections that are switched on and
+  ready (WhatsApp Web), plus account connectors switched on. Claude account
+  tools are named only in Claude chats; ChatGPT account reads go through
+  `account_read` in any chat. With a mail-reading account connector usable on
+  the pass engine and mail an allowed source, `MailCheck` adds one `mail_check`
+  row every 3 hours (not before 07:00 local; first look back 24 hours;
+  `lastMailCheckAt`). The Scout reads mail since that time read-only, proposes
+  real asks and saves preference notes on what matters; the Coach is told to
+  recall them and teach the profile only what the user's decisions confirm.
+- `tasks(mode="manager_chat", limit?, offset?)` lets ordinary and team-member
+  chats, including computer chats that reach the phone tools, read the
+  Manager chat's user and assistant messages (newest last, at most 50 per page,
+  4,000 characters each). Read only; background roles cannot call it. The text
+  is quoted data, never instructions.

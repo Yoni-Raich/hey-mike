@@ -131,12 +131,12 @@ import java.util.Locale
 
 // The board's own two colours, borrowed from the standing-rules strip so the
 // two features read as one family: teal is live and fine, amber waits for you.
-private val BoardTeal = Color(0xFF7DE4D4)
-private val BoardAmber = Color(0xFFF6B86A)
+internal val BoardTeal = Color(0xFF7DE4D4)
+internal val BoardAmber = Color(0xFFF6B86A)
 private val AmberContainer = Color(0xFF25221B)
 private val AmberOutline = Color(0xFF5B4A32)
 private val SheetFill = Color(0xFF101918)
-private val ControlLine = Color(0xFF536A67)
+internal val ControlLine = Color(0xFF536A67)
 private val ResultTint = Color(0xFF18332F)
 
 /** Preserve mixed Hebrew/English direction and render simple emphasis in model text. */
@@ -183,7 +183,7 @@ internal fun TaskBoardSheet(state: AgentUiState, actions: AgentUiActions) {
         page = when {
             page == null -> { actions.onCloseTaskBoard(); null }
             page!!.startsWith("member:") -> "team"
-            page == "memory" -> "sources"
+            page == "memory" || page == "alerts" || page == "profile" -> "sources"
             else -> null
         }
     }
@@ -212,6 +212,8 @@ internal fun TaskBoardSheet(state: AgentUiState, actions: AgentUiActions) {
                     current == "team" -> taskText("Mike's team", "הצוות של מייק")
                     current == "sources" -> taskText("Sources", "מקורות והגדרות")
                     current == "memory" -> taskText("Memory", "זיכרון")
+                    current == "alerts" -> taskText("Alerts", "התראות")
+                    current == "profile" -> taskText("What matters to me", "מה חשוב לי")
                     else -> taskText("Tasks", "משימות")
                 },
                 subtitle = when {
@@ -230,8 +232,10 @@ internal fun TaskBoardSheet(state: AgentUiState, actions: AgentUiActions) {
                 card != null -> TaskDetail(card, desk, actions)
                 member != null -> MemberPage(member, state, actions) { id -> page = "card:$id" }
                 current == "team" -> TeamPage(state, actions) { id -> page = "member:$id" }
-                current == "sources" -> SourcesPage(state, actions) { page = "memory" }
+                current == "sources" -> SourcesPage(state, actions) { next -> page = next }
                 current == "memory" -> MemoryPage(desk, actions)
+                current == "alerts" -> AlertsPage(state, actions)
+                current == "profile" -> ProfilePage(state, actions)
                 else -> BoardPage(state, actions, open = { id -> page = "card:$id" }, openSources = { page = "sources" })
             }
             Spacer(Modifier.height(16.dp))
@@ -357,33 +361,72 @@ private fun DiscoveryStatus(desk: TaskDeskState) {
         "running" -> taskText("The team is processing new input", "הצוות מעבד מידע חדש")
         "quota" -> taskText("Waiting for model usage to recover", "ממתין לחידוש מכסת השימוש במודל")
         "cap" -> taskText("Daily pass limit reached", "החיפוש הגיע למכסה היומית")
+        "background_cap" -> taskText("Background limit reached; room remains for people", "מכסת הרקע נוצלה; נשארו סבבים להודעות מאנשים")
         "off" -> taskText("Background discovery is paused", "החיפוש ברקע מושהה")
         "idle" -> taskText("Listening for new input", "ממתין למידע חדש")
         "excluded" -> taskText("Waiting input is excluded or has unverified old sources", "המידע שממתין מוחרג או נאסף ממקור ישן שלא אומת")
+        "backpressure" -> taskText("Inbox full. Waiting for the next processing pass", "התור מלא. ממתין לסבב העיבוד הבא")
         else -> taskText("Collecting a batch before the next pass", "אוסף מידע לסבב הבא")
     }
     Surface(color = Color(0xFF1A2523), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { LiveLine(status, if(desk.waitReason in setOf("cap", "quota", "off")) BoardAmber else BoardTeal) }
+                Box(Modifier.weight(1f)) { LiveLine(status, if(desk.waitReason in setOf("cap", "quota", "off", "backpressure")) BoardAmber else BoardTeal) }
                 TextButton(onClick = { expanded = !expanded }) {
                     Text(if (expanded) taskText("Less", "פחות") else taskText("Details", "פרטים"), style = MaterialTheme.typography.labelMedium)
                 }
             }
             if (expanded) Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(taskText("${desk.pendingSignals} inputs waiting · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} passes today",
-                    "${desk.pendingSignals} פריטי מידע ממתינים · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} סבבים היום"), style = MaterialTheme.typography.labelMedium)
-                desk.nextCheckAt?.takeIf { desk.waitReason == "waiting" }?.let {
+                if (desk.waitReason == "off") {
+                    val pause = when (desk.settings.pauseReason) {
+                        "manager_chat_stop" -> taskText("Stop in the Manager chat paused background work.", "לחיצה על Stop בשיחת המנהל השהתה את עבודת הרקע.")
+                        "background_chat_stop" -> taskText("Stop in a team background chat paused discovery.", "לחיצה על Stop בשיחת רקע השהתה את החיפוש.")
+                        "global_stop" -> taskText("Global Stop paused background work.", "עצירה כללית השהתה את עבודת הרקע.")
+                        "discovery_switch" -> taskText("Discovery was switched off in settings.", "החיפוש כובה בהגדרות.")
+                        else -> taskText("Discovery is off. This version has no record of why it was paused.", "החיפוש כבוי. לא נשמרה סיבה להשהיה הזו.")
+                    }
+                    Text(pause, style = MaterialTheme.typography.labelMedium, color = BoardAmber)
+                    desk.settings.pausedAt?.let { Text(taskText("Paused at ${shortTime(it)}", "הושהה ב־${shortTime(it)}"), style = MaterialTheme.typography.labelMedium) }
+                    Text(taskText("Turn discovery on in Tasks settings to resume.", "כדי לחדש, הפעל את החיפוש בהגדרות Tasks."), style = MaterialTheme.typography.labelMedium)
+                }
+                var queueLimit by rememberSaveable { mutableStateOf(12) }
+                Text(taskText("${desk.pendingSignals} conversations or apps waiting · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} passes today",
+                    "${desk.pendingSignals} שיחות או אפליקציות ממתינות · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} סבבים היום"), style = MaterialTheme.typography.labelMedium)
+                Text(taskText("Background: ${desk.settings.backgroundPassesToday}/${desk.settings.dailyPassCap / 2} passes",
+                    "רקע: ${desk.settings.backgroundPassesToday}/${desk.settings.dailyPassCap / 2} סבבים"), style = MaterialTheme.typography.labelMedium)
+                desk.nextCheckAt?.takeIf { desk.waitReason in setOf("waiting", "backpressure") }?.let {
                     Text(taskText("Next eligible check: ${shortTime(it)}", "הסבב הבא יוכל להתחיל ב־${shortTime(it)}"), style = MaterialTheme.typography.labelMedium)
                 }
-                if(desk.settings.captureGaps > 0) Text(taskText("${desk.settings.captureGaps} inputs were missed or expired. Coverage is partial.",
-                    "${desk.settings.captureGaps} פריטים לא נאספו או פגו. הכיסוי חלקי."), color = BoardAmber, style = MaterialTheme.typography.labelMedium)
+                if(desk.settings.lostPeopleMessages > 0) Text(taskText("${desk.settings.lostPeopleMessages} messages from people were not processed.",
+                    "${desk.settings.lostPeopleMessages} הודעות מאנשים לא עובדו."), color = BoardAmber, style = MaterialTheme.typography.labelMedium)
+                if(desk.settings.expiredBackgroundRows > 0) Text(taskText("${desk.settings.expiredBackgroundRows} background rows expired.",
+                    "${desk.settings.expiredBackgroundRows} רשומות רקע פגו."), style = MaterialTheme.typography.labelMedium)
+                if(desk.settings.captureGaps > 0) Text(taskText("Earlier capture gaps / app input rejected: ${desk.settings.captureGaps}. This is not a count of lost human messages.",
+                    "פערי איסוף קודמים או קלט אפליקציות שנדחה: ${desk.settings.captureGaps}. זה אינו מספר הודעות מאנשים שאבדו."), style = MaterialTheme.typography.labelMedium)
+                desk.queueRows.take(queueLimit).forEach { row ->
+                    val reason = when (row.reason) {
+                        "person_message" -> taskText("New message from a person", "הודעה חדשה מאדם")
+                        "owner_message" -> taskText("Your message to the team", "הודעה שלך לצוות")
+                        "task_result" -> taskText("A task returned a result", "התקבלה תוצאת משימה")
+                        "calendar_change" -> taskText("Calendar change or scheduled check", "שינוי ביומן או בדיקה תקופתית")
+                        "chat_quiet" -> taskText("New request in a quiet Mike chat", "בקשה חדשה בשיחת מייק שנרגעה")
+                        "history_scan" -> taskText("History scan you requested", "סריקת היסטוריה שביקשת")
+                        else -> taskText("App notification", "התראה מאפליקציה")
+                    }
+                    Text("${row.conversation ?: row.app?.let { desk.sourceApps[it] ?: it } ?: taskText("Calendar", "יומן")} · $reason",
+                        style = MaterialTheme.typography.labelMedium)
+                }
+                if (desk.queueRows.size > queueLimit) TextButton(onClick = { queueLimit += 12 }) {
+                    Text(taskText("Show more (${desk.queueRows.size - queueLimit})", "הצגת עוד (${desk.queueRows.size - queueLimit})"), style = MaterialTheme.typography.labelMedium)
+                }
                 if(desk.blockedSignals > 0) Text(taskText("${desk.blockedSignals} inputs stay outside model context because of source policy.",
                     "${desk.blockedSignals} פריטים לא מועברים למודל בגלל הגדרות המקורות."), color = BoardAmber, style = MaterialTheme.typography.labelMedium)
             }
-            if (!expanded && (desk.settings.captureGaps > 0 || desk.blockedSignals > 0)) {
-                Text(taskText("Some inputs need attention", "חלק מהמידע דורש בדיקה"), Modifier.padding(bottom = 8.dp),
-                    color = BoardAmber, style = MaterialTheme.typography.labelMedium)
+            if (!expanded && (desk.settings.captureGaps > 0 || desk.settings.lostPeopleMessages > 0 || desk.blockedSignals > 0)) {
+                Text(if (desk.blockedSignals > 0) taskText("Some input is excluded by your source settings", "חלק מהמידע מוחרג בהגדרות המקורות")
+                    else taskText("Earlier input was missed or expired", "חלק מהמידע הקודם לא נאסף או פג תוקפו"), Modifier.padding(bottom = 8.dp),
+                    color = if (desk.blockedSignals > 0) BoardAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -450,7 +493,7 @@ private fun ManagerRow(desk: TaskDeskState, state: AgentUiState, actions: AgentU
 }
 
 @Composable
-private fun SectionLabel(text: String, count: Int, color: Color) {
+internal fun SectionLabel(text: String, count: Int, color: Color) {
     Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         Text("$count", Modifier.clip(CircleShape).background(color.copy(alpha = 0.14f)).padding(horizontal = 8.dp, vertical = 3.dp),
@@ -1018,8 +1061,10 @@ private fun MemberPage(member: TeamMember, state: AgentUiState, actions: AgentUi
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory: () -> Unit) {
+private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, open: (String) -> Unit) {
     val settings = state.taskDesk.settings
+    ConnectionsSection(state, actions, openAlerts = { open("alerts") }, openProfile = { open("profile") })
+    SectionLabel(taskText("Sources", "מקורות"), 0, MaterialTheme.colorScheme.onSurfaceVariant)
     Text(taskText("Mike reads these sources to find tasks. Processed input is removed after a successful pass; useful memory stays.", "מייק מחפש משימות במקורות האלה. אחרי עיבוד מוצלח הטקסט שנאסף נמחק, והמידע החשוב נשמר בזיכרון קצר."),
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     SwitchRow(Icons.Outlined.AutoAwesome, taskText("Find tasks in the background", "חיפוש משימות ברקע"), taskText("Collects continuously; thinks in small batches", "איסוף רציף וחשיבה בסבבים קצרים"), settings.discoveryOn) {
@@ -1033,7 +1078,7 @@ private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory
     SwitchRow(Icons.Outlined.Groups, taskText("Group conversations", "שיחות קבוצתיות"), taskText("Include messages from groups", "לכלול גם הודעות מקבוצות"), settings.includeGroups) { on ->
         actions.onTaskSettings { it.copy(includeGroups = on) }
     }
-    SwitchRow(Icons.Outlined.ChatBubbleOutline, taskText("Your chats with Mike", "השיחות שלך עם מייק"), taskText("After a chat is quiet for 15 minutes", "אחרי שהשיחה שקטה במשך רבע שעה"), settings.readChats) { on ->
+    SwitchRow(Icons.Outlined.ChatBubbleOutline, taskText("Your chats with Mike", "השיחות שלך עם מייק"), taskText("New requests and final replies after 15 quiet minutes. No automatic history scan.", "בקשות חדשות ותשובות סופיות אחרי רבע שעה שקטה. היסטוריה אינה נסרקת אוטומטית."), settings.readChats) { on ->
         actions.onTaskSettings { it.copy(readChats = on) }
     }
     SwitchRow(Icons.Outlined.CalendarToday, taskText("Calendar", "יומן"), taskText("Changes and a check of the next 48 hours", "שינויים ובדיקה של היומיים הקרובים"), settings.readCalendar) { on ->
@@ -1119,7 +1164,21 @@ private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory
         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
     SectionLabel(taskText("Collected now", "ממתין לעיבוד"), state.taskDesk.pendingSignals, MaterialTheme.colorScheme.onSurfaceVariant)
-    TextButton(onClick = openMemory) { Text(taskText("Memory notes", "זיכרון") + " (${state.taskDesk.notes.count { it.retiredAt == null && it.supersededBy == null }})") }
+    var scanPicker by rememberSaveable { mutableStateOf(false) }
+    if (settings.discoveryOn && settings.readChats) TextButton(onClick = { scanPicker = true }) {
+        Text(taskText("Scan an older chat…", "סריקת שיחה ישנה…"))
+    }
+    if (scanPicker) AlertDialog(onDismissRequest = { scanPicker = false },
+        title = { Text(taskText("Choose a chat to scan", "בחירת שיחה לסריקה")) },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                Text(taskText("This adds one background review. It does not authorize work.", "השיחה תתווסף לסקירה ברקע. הסריקה אינה אישור לבצע משימות."))
+                state.taskDesk.scanChats.forEach { chat -> TextButton(onClick = {
+                    actions.onTaskScanChat(chat.id); scanPicker = false
+                }) { Text(chat.title) } }
+            }
+        }, confirmButton = { TextButton(onClick = { scanPicker = false }) { Text(taskText("Close", "סגירה")) } })
+    TextButton(onClick = { open("memory") }) { Text(taskText("Memory notes", "זיכרון") + " (${state.taskDesk.notes.count { it.retiredAt == null && it.supersededBy == null }})") }
     OutlinedButton(onClick = actions.onTaskForgetCollected, border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
         modifier = Modifier.fillMaxWidth()) {
         Text(taskText("Delete collected input", "מחיקת מה שנאסף"), color = MaterialTheme.colorScheme.error)
@@ -1129,7 +1188,7 @@ private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory
 }
 
 @Composable
-private fun SwitchRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onChange).heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
@@ -1174,7 +1233,7 @@ internal fun ModelChoiceRow(label: String, engine: EngineKind, current: String?,
 }
 
 @Composable
-private fun RemovableRow(label: String, remove: () -> Unit) {
+internal fun RemovableRow(label: String, remove: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         IconButton(onClick = remove) { Icon(Icons.Outlined.Close, "Remove $label") }

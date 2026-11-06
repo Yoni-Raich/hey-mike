@@ -37,11 +37,11 @@ class NetDiagnosticsTest {
     fun `each engine gets only its own hosts`() {
         assertEquals(NetDiagnostics.defaultAllowedHosts, NetDiagnostics.allowedHostsFor(EngineKind.CODEX))
         assertEquals(
-            setOf("api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com"),
+            setOf("api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com", "mcp-proxy.anthropic.com"),
             NetDiagnostics.allowedHostsFor(EngineKind.CLAUDE)
         )
         val claude = NetDiagnostics.allowedHostsFor(EngineKind.CLAUDE)
-        listOf("api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com").forEach { host ->
+        listOf("api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com", "mcp-proxy.anthropic.com").forEach { host ->
             assertTrue(host, NetDiagnostics.checkConnectRequest("CONNECT $host:443 HTTP/1.1\r\n\r\n", claude) is NetDiagnostics.ConnectCheck.Allow)
             assertTrue(host, NetDiagnostics.checkConnectRequest("CONNECT $host:443 HTTP/1.1\r\n\r\n") is NetDiagnostics.ConnectCheck.Deny)
         }

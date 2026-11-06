@@ -187,6 +187,30 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun refreshedCodexThreadKeepsConversationWithoutReplayingTheOldRequest() = runTest {
+        val rig = Rig(this)
+        rig.engine.threads = mapOf(EngineKind.CODEX to "old-thread")
+        rig.coordinator.send("one", "The account connection is enabled")
+        runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("I will use read-only tools.", "old-thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "old-thread", turnId = "turn"))
+        advanceUntilIdle()
+
+        rig.engine.threads = mapOf(EngineKind.CODEX to "new-thread")
+        rig.coordinator.send("one", "Check the available tools")
+        runCurrent()
+        assertEquals("new-thread", rig.store.getSession("one")!!.engineThreadId)
+        val prompt = rig.engine.prompts.last()
+        assertTrue(prompt.contains("[Earlier in this chat]"))
+        assertTrue(prompt.contains("The account connection is enabled"))
+        assertTrue(prompt.contains("I will use read-only tools."))
+        assertTrue(prompt.endsWith("Check the available tools"))
+        assertTrue(prompt.contains("do not repeat"))
+        assertEquals(2, rig.engine.turns)
+        assertTrue(rig.store.messages.any { it.text == "The account connection is enabled" })
+        rig.close()
+    }
+
     @Test fun aTurnForTheOtherEngineMovesTheChatAndCarriesWhatWasSaid() = runTest {
         val rig = Rig(this)
         rig.engine.threads = mapOf(EngineKind.CODEX to "codex-thread", EngineKind.CLAUDE to "claude-thread")
@@ -532,6 +556,7 @@ class AgentCoordinatorTest {
         assertEquals(listOf("user", "assistant", "tool", "assistant"), rig.store.messages.map { it.role })
         assertEquals("The screen is ready.", rig.store.messages.last().text)
         assertEquals("complete", rig.store.messages.last().state)
+        assertEquals(listOf("commentary", "final_answer"), rig.store.messages.filter { it.role == "assistant" }.map { it.phase })
         assertTrue(rig.coordinator.available.value)
         rig.close()
     }
@@ -1203,6 +1228,7 @@ class AgentCoordinatorTest {
         override suspend fun append(message: ChatMessage) { messages.add(message) }
         override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
+        override suspend fun setMessagePhase(id: String, phase: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(phase = phase) }
         private fun change(sessionId: String, change: (ChatSession) -> ChatSession) {
             sessions.value = sessions.value.map { if (it.id == sessionId) change(it) else it }
         }

@@ -134,6 +134,8 @@ class AndroidBrowserHost(
     private val pages = linkedMapOf<String, Page>()
     private val lock = Mutex()
     private val policy = WebUrlPolicy()
+    /** Service workers run per site; a connector's own site keeps its worker. */
+    private val workerPolicy = WebUrlPolicy(reserved = emptySet())
     private val windows = context.getSystemService(WindowManager::class.java)
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -450,8 +452,8 @@ class AndroidBrowserHost(
     }
 
     /** A 403 for an address the policy refuses, or null to let the request through. */
-    private fun refuse(url: String, report: (String) -> Unit): WebResourceResponse? {
-        val blocked = policy.check(url) as? WebUrlPolicy.Decision.Blocked ?: return null
+    private fun refuse(url: String, rules: WebUrlPolicy = policy, report: (String) -> Unit): WebResourceResponse? {
+        val blocked = rules.check(url) as? WebUrlPolicy.Decision.Blocked ?: return null
         report(blocked.message)
         return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
     }
@@ -467,7 +469,7 @@ class AndroidBrowserHost(
         runCatching {
             ServiceWorkerController.getInstance().setServiceWorkerClient(object : ServiceWorkerClient() {
                 override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
-                    refuse(request.url.toString()) {}
+                    refuse(request.url.toString(), workerPolicy) {}
             })
         }
     }

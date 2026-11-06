@@ -12,6 +12,152 @@ class TaskFollowThroughTest {
     private suspend fun card(board: TaskBoard) = (board.propose(TaskProposal("Dana form", "Due tomorrow", "Prepare form",
         sourceRefs = listOf(ref)), "conversation", "owner") as ProposeOutcome.Created).task
 
+    @Test fun dueCheckIsDistinctFromUnchangedWaitingStatus() {
+        val task = MikeTask("a", "form", "why", "plan", originKind = "chat", topicKey = "a", createdAt = clock, updatedAt = clock,
+            status = TaskStatus.WAITING, commitment = TaskCommitment("user", clock + 60_000))
+        val first = TaskFollowThrough.occurrence(task, clock)!!
+        val alreadyBriefed = task.copy(briefing = TaskBriefing("id", first, "waiting", clock, listOf(ref)))
+        assertFalse(TaskFollowThrough.needsBrief(alreadyBriefed, clock))
+        assertTrue(TaskFollowThrough.needsBrief(alreadyBriefed, clock + 60_000))
+    }
+
+    @Test fun unrelatedProjectPreferenceDoesNotEnterOwnerContext() {
+        val notes = listOf(MemoryNote("opus", "children story", "preference", "Use Opus for this story", source = "chat", at = 1),
+            MemoryNote("dana", "Dana", "fact", "Signed form", source = "chat", at = 2))
+        assertEquals(listOf("dana"), TaskFollowThrough.context(notes, "Dana form") { true }.map { it.id })
+    }
+
+    @Test fun explicitCheckRearmsAcrossRestartAndClose() = runTest {
+        val store = InMemoryTaskBoardStore()
+        val original = MikeTask("a", "form", "why", "plan", originKind = "chat", topicKey = "a",
+            createdAt = clock, updatedAt = clock, status = TaskStatus.WAITING,
+            commitment = TaskCommitment("user", clock + 60_000))
+        store.saveTask(original)
+        var current = board(store)
+        val first = current.prepareBriefing("a", "Waiting for an answer", listOf(ref))
+        current.delivered("a", first.briefing!!.id, "saved")
+        val due = clock + 120_000
+        current.checkLater("a", due)
+        val revision = current.task("a")!!.commitment!!.checkRevision
+        current.checkLater("a", due)
+        assertEquals(revision, current.task("a")!!.commitment!!.checkRevision)
+        current = board(store)
+        clock = due
+        assertTrue(TaskFollowThrough.needsBrief(current.task("a")!!, clock))
+        val second = current.prepareBriefing("a", "Check the answer", listOf(ref))
+        assertNotEquals(first.briefing!!.id, second.briefing!!.id)
+        current.delivered("a", second.briefing!!.id, "saved")
+        assertFalse(TaskFollowThrough.needsBrief(board(store).task("a")!!, clock))
+        current.checkLater("a", clock + 120_000)
+        assertFalse(TaskFollowThrough.needsBrief(current.task("a")!!, clock))
+        clock += 120_000
+        assertTrue(TaskFollowThrough.needsBrief(board(store).task("a")!!, clock))
+        store.saveTask(current.task("a")!!.copy(status = TaskStatus.DONE))
+        assertNull(TaskFollowThrough.occurrence(board(store).task("a")!!, clock))
+    }
+
+    @Test fun localDueChecksBypassReviewLimitsAndKeepReceiptsWhenClockMovesBack() = runTest {
+        val store = InMemoryTaskBoardStore()
+        val statuses = listOf(TaskStatus.WAITING, TaskStatus.REVIEW, TaskStatus.FAILED, TaskStatus.UNKNOWN)
+        statuses.forEachIndexed { i, status ->
+            store.saveTask(MikeTask("task$i", "form", "why", "plan", originKind = "chat", topicKey = "task$i",
+                createdAt = clock, updatedAt = clock, status = status,
+                commitment = TaskCommitment("user", clock + 60_000)))
+        }
+        var current = board(store)
+        val beforeDue = clock
+        clock += 60_000
+        // Local selection has no AI quota, daily cap, review interval or network input.
+        val due = TaskFollowThrough.dueChecks(current.tasks.value, clock)
+        assertEquals(statuses.size, due.size)
+        due.forEach { task ->
+            val prepared = current.prepareBriefing(task.id, "Time to check", listOf(ref))
+            current.delivered(task.id, prepared.briefing!!.id, "saved")
+        }
+        current = board(store)
+        assertTrue(TaskFollowThrough.dueChecks(current.tasks.value, clock).isEmpty())
+        // A backward wall-clock change can make a status current again. Its receipt
+        // must never overwrite the already handled check occurrence.
+        clock = beforeDue
+        due.forEach { task ->
+            val statusBrief = current.prepareBriefing(task.id, "Still waiting", listOf(ref))
+            current.delivered(task.id, statusBrief.briefing!!.id, "saved")
+        }
+        clock += 60_000
+        current = board(store)
+        assertTrue(TaskFollowThrough.dueChecks(current.tasks.value, clock).isEmpty())
+        val closed = current.task("task0")!!.copy(status = TaskStatus.DONE)
+        store.saveTask(closed.copy(commitment = closed.commitment!!.copy(nextCheckAt = clock - 1, checkRevision = 2)))
+        assertFalse(TaskFollowThrough.dueChecks(board(store).tasks.value, clock).any { it.id == closed.id })
+    }
+
+    @Test fun recallHonoursLevelWithoutTreatingSelectionAsUse() = runTest {
+        val store = InMemoryTaskBoardStore()
+        val book = MemoryBook(store, now = { clock }).apply { load() }
+        book.remember("Dana", "fact", "Form detail", "chat", level = "detail")
+        val profile = book.remember("Dana", "profile", "Form profile", "chat", level = "profile")
+        assertEquals(listOf(profile.id), book.recall("form", level = "profile").map { it.id })
+        assertEquals(0, book.live.first { it.id == profile.id }.useCount)
+        val tools = TaskTools(TaskBoard(store).apply { load() }, book, TeamRoster(store).apply { load() },
+            roleOf = { TaskChatRole.MANAGER }, roleChat = { "unused" })
+        val result = tools.invoke("manager", buildJsonObject { put("mode", "recall"); put("query", "form"); put("level", "profile") }, false)
+        assertTrue(result.text, result.success)
+        val returned = Json.parseToJsonElement(result.text).jsonObject["notes"]!!.jsonArray
+        assertEquals(listOf(profile.id), returned.map { it.jsonObject["id"]!!.jsonPrimitive.content })
+        assertEquals(0, book.live.first { it.id == profile.id }.useCount)
+    }
+
+    @Test fun rememberToolPreservesRequestedLevelAndScope() = runTest {
+        val store = InMemoryTaskBoardStore()
+        val book = MemoryBook(store, now = { clock }).apply { load() }
+        val tools = TaskTools(TaskBoard(store).apply { load() }, book, TeamRoster(store).apply { load() },
+            roleOf = { TaskChatRole.MANAGER }, roleChat = { "unused" })
+        val result = tools.invoke("manager", buildJsonObject {
+            put("mode", "remember"); put("subject", "Dana"); put("text", "Needs a form")
+            put("level", "profile"); put("scope", "person")
+        }, false)
+        assertTrue(result.text, result.success)
+        assertEquals("profile", book.live.single().level)
+        assertEquals("person", book.live.single().scope)
+        assertEquals(1, book.recall("form", level = "profile").size)
+        assertTrue(book.recall("form", level = "detail").isEmpty())
+    }
+
+    @Test fun projectNoteDoesNotMatchOnlyGenericContentWords() {
+        val note = MemoryNote("story", "children story", "preference", "Use Opus for this project",
+            source = "chat", at = 1, scope = "project")
+        assertTrue(TaskFollowThrough.context(listOf(note), "use this for doctor appointment") { true }.isEmpty())
+        assertEquals(listOf("story"), TaskFollowThrough.context(listOf(note), "continue children story") { true }.map { it.id })
+    }
+
+    @Test fun coachMustAccountForEveryEventAndLeavesRetriesPending() {
+        val events = listOf("a", "b", "c", "d")
+        fun choice(id: String, value: String) = CoachDisposition(id, value, "Clear reason", "Owner event", if (value == "applied") listOf("kinds/example.md") else emptyList())
+        val decisions = listOf(choice("a", "applied"), choice("b", "no_change"),
+            choice("c", "defer"), choice("d", "retry"))
+        assertEquals(setOf("a", "b"), CoachReview.completed(events, decisions, hasChange = true))
+        assertTrue(runCatching { CoachReview.completed(events, emptyList(), true) }.isFailure)
+        assertTrue(runCatching { CoachReview.completed(events, decisions, false) }.isFailure)
+        assertTrue(runCatching { CoachReview.completed(events, decisions.dropLast(1), true) }.isFailure)
+        assertEquals(setOf("b"), CoachReview.completed(listOf("b"), listOf(choice("b", "no_change")), false))
+    }
+
+    @Test fun situationProjectsOnlyAllowedOpenCardsAndKeepsMissingSensorsUnknown() {
+        val zone = java.time.ZoneId.of("Asia/Jerusalem")
+        val task = MikeTask("a", "Appointment", "why", "plan", originKind = "chat", topicKey = "a",
+            createdAt = clock, updatedAt = clock, status = TaskStatus.MINE,
+            commitment = TaskCommitment("user", clock + 60_000))
+        val hidden = task.copy(id = "hidden")
+        val closed = task.copy(id = "closed", status = TaskStatus.DONE)
+        val snapshot = TaskSituation.snapshot(listOf(task, hidden, closed), clock, zone, false) { it.id != "hidden" }
+        assertEquals(listOf("a"), snapshot.commitments.map { it.taskId })
+        assertEquals("Asia/Jerusalem", snapshot.timezone)
+        assertTrue(snapshot.localTime.contains("+02:00"))
+        assertTrue("current_location" in snapshot.unknown)
+        assertTrue(snapshot.sourceGaps.any { it.contains("calendar source is disabled") })
+        assertEquals(clock + 60_000, snapshot.commitments.single().nextCheckAt)
+    }
+
     @Test fun takingOwnershipSurvivesRestartAndDoesNotExecute() = runTest {
         val store = InMemoryTaskBoardStore(); val board = board(store); val task = card(board)
         board.decide(task.id, "mine", "tap", until = clock + 7_200_000)
@@ -47,6 +193,40 @@ class TaskFollowThroughTest {
         assertNull(TaskFollowThrough.occurrence(reopened.task(task.id)!!, clock))
     }
 
+    @Test fun chatAndNotificationReservationsSurviveRestartWithoutRepeatingAttempt() = runTest {
+        val store = InMemoryTaskBoardStore()
+        var current = board(store)
+        val task = card(current)
+        val brief = current.prepareBriefing(task.id, "Please review this", listOf(ref)).briefing!!
+        assertFalse(current.beginBriefingNotification(task.id, brief.id))
+        current.briefingChatSaved(task.id, brief.id)
+        current = board(store)
+        assertNotNull(current.task(task.id)!!.briefing!!.chatSavedAt)
+        assertTrue(current.beginBriefingNotification(task.id, brief.id))
+        current = board(store)
+        assertFalse(current.beginBriefingNotification(task.id, brief.id))
+        current.delivered(task.id, brief.id, "Outcome unknown after interruption", "unknown")
+        val after = board(store).task(task.id)!!.briefing!!
+        assertEquals("unknown", after.notificationState)
+        assertNotNull(after.notificationAttemptedAt)
+        assertNotNull(after.deliveredAt)
+    }
+
+    @Test fun appendChecksSourceAndCardBeforeWriting() = runTest {
+        val board = board(); val task = card(board)
+        val brief = board.prepareBriefing(task.id, "Please review this", listOf(ref)).briefing!!
+        var writes = 0
+        board.editSettings { it.copy(readChats = false) }
+        val denied = board.appendBriefingIfCurrent(task.id, brief.id,
+            { _, b -> b.sourceRefs.all { TaskSourcePolicy.allows(it, board.settings.value) } }) { writes++ }
+        assertFalse(denied)
+        assertEquals(0, writes)
+        board.editSettings { it.copy(readChats = true) }
+        board.decide(task.id, "done", "tap")
+        assertFalse(board.appendBriefingIfCurrent(task.id, brief.id, { _, _ -> true }) { writes++ })
+        assertEquals(0, writes)
+    }
+
     @Test fun completionEvidenceStopsPeriodicChecksAndNextTimeIsUserControlled() = runTest {
         val board = board(); val task = card(board); board.decide(task.id, "mine", "tap")
         val after = board.observe(task.id, listOf(TaskEvidence("chat", "Done")), "Possibly done", listOf(ref))
@@ -78,7 +258,7 @@ class TaskFollowThroughTest {
     @Test fun personalContextRespectsExclusionsAndFindsRelevantMemories() {
         val notes = listOf(
             MemoryNote("a", "Dana", "fact", "Needs signed form", source = "chat", at = 1),
-            MemoryNote("b", "User", "preference", "Short replies", source = "chat", at = 2),
+            MemoryNote("b", "User", "preference", "Short replies", source = "chat", at = 2, scope = "global"),
             MemoryNote("c", "Dana", "fact", "Excluded secret", source = "whatsapp", at = 3),
             MemoryNote("d", "Dana", "fact", "Old form", source = "chat", at = 4, retiredAt = 5))
         val found = TaskFollowThrough.context(notes, "Dana form") { it.source != "whatsapp" }
@@ -157,7 +337,10 @@ class TaskFollowThroughTest {
             val tools = TaskTools(board, MemoryBook(store), TeamRoster(store), { TaskChatRole.SCOUT }, { "none" }, playbook = book)
             fun args(kind: String) = buildJsonObject { put("mode", "propose"); put("title", "Useful request"); put("why", "Now"); put("plan", "Prepare it"); put("kind", kind)
                 put("evidence", buildJsonArray { add(buildJsonObject { put("source", "chat"); put("detail", "User requested preparation") }) }) }
-            assertFalse(tools.invoke("scout", args("delivery"), false).success)
+            val suppressed = tools.invoke("scout", args("delivery"), false)
+            assertTrue(suppressed.text, suppressed.success)
+            assertTrue(Json.parseToJsonElement(suppressed.text).jsonObject["suppressed"]!!.jsonPrimitive.content.toBoolean())
+            assertTrue(board.tasks.value.isEmpty())
             val accepted = tools.invoke("scout", args("reply"), false)
             assertTrue(accepted.text, accepted.success)
             assertEquals(1, board.tasks.value.size)

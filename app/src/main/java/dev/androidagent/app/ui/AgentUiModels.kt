@@ -408,6 +408,7 @@ data class AgentUiActions(
     val onTaskDiscovery: (on: Boolean) -> Unit = {},
     val onTaskSettings: ((dev.androidagent.core.TaskBoardSettings) -> dev.androidagent.core.TaskBoardSettings) -> Unit = {},
     val onTaskForgetCollected: () -> Unit = {},
+    val onTaskScanChat: (String) -> Unit = {},
     val onTaskForgetNote: (id: String) -> Unit = {},
     val onTaskPinNote: (id: String, pinned: Boolean) -> Unit = { _, _ -> },
     val onTaskForgetSubject: (subject: String) -> Unit = {},
@@ -415,6 +416,16 @@ data class AgentUiActions(
     val onTaskLiftSuppression: (entry: dev.androidagent.core.TaskSuppression) -> Unit = {},
     val onTaskClearError: () -> Unit = {},
     val onTaskCalendarPermission: () -> Unit = {},
+    /** Alerts, the owner profile and the read-only connections. */
+    val onAlertPrefs: ((dev.androidagent.core.proactive.AlertPrefs) -> dev.androidagent.core.proactive.AlertPrefs) -> Unit = {},
+    val onTestAlert: () -> Unit = {},
+    val onProfileSet: (kind: dev.androidagent.core.proactive.ProfileKind, key: String, label: String?, weight: Int, alwaysNotify: Boolean) -> Unit = { _, _, _, _, _ -> },
+    val onProfileReject: (id: String) -> Unit = {},
+    val onProfileRemove: (id: String) -> Unit = {},
+    val onConnectorUse: (id: String, on: Boolean) -> Unit = { _, _ -> },
+    val onConnectorLink: (id: String) -> Unit = {},
+    val onConnectorUnlink: (id: String) -> Unit = {},
+    val onRefreshConnections: () -> Unit = {},
     /** Turn one rule on or off. */
     val onToggleRule: (id: String, enabled: Boolean) -> Unit = { _, _ -> },
     /** Fire one rule now: naming it supplies its trigger, nothing else is waived. */

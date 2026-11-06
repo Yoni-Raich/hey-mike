@@ -266,7 +266,7 @@ class TaskSignalsTest {
     private val on = TaskBoardSettings(discoveryOn = true)
 
     private fun message(text: String, app: String = "com.whatsapp", conversation: String = "Dana", group: Boolean = false, at: Long = clock) =
-        CapturedMessage(app, conversation, conversation, text, at, group)
+        CapturedMessage(app, conversation, conversation, text, at, group, fromPerson = true)
 
     @Test fun codesPaymentsExcludedAppsAndTheOffSwitchKeepTextOut() = runTest {
         val inbox = SignalInbox(InMemoryTaskBoardStore(), now = { clock }); inbox.load()
@@ -288,7 +288,7 @@ class TaskSignalsTest {
         val store = InMemoryTaskBoardStore()
         val inbox = SignalInbox(store, now = { clock }); inbox.load()
         val a = inbox.capture(message("one"), on, "x")!!
-        val b = inbox.capture(message("two", at = clock + 1), on, "x")!!
+        val b = inbox.capture(message("two", conversation = "Another person", at = clock + 1), on, "x")!!
         inbox.processed(listOf(a.id))
         assertEquals(listOf(b.id), store.loadSignals().map { it.id })
         repeat(SignalInbox.MAX_ATTEMPTS) { inbox.failed(listOf(b.id)) }
@@ -326,14 +326,14 @@ class MemoryBookTest {
     private var n = 0
     private val book = MemoryBook(InMemoryTaskBoardStore(), now = { clock }, newId = { "n${++n}" })
 
-    @Test fun rememberDeduplicatesAndRecallCountsUse() = runTest {
+    @Test fun rememberDeduplicatesAndRecallDoesNotClaimUsefulness() = runTest {
         book.load()
         val a = book.remember("Dana", "request", "Asked for the signed form before Tuesday", "whatsapp", sender = "Dana")
         assertEquals(a.id, book.remember("dana", "request", "asked for the signed form before tuesday", "whatsapp").id)
         book.remember("Ben", "fact", "Ben is the plumber", "chat")
         val found = book.recall("signed form")
         assertEquals(listOf(a.id), found.map { it.id })
-        assertEquals(1, found.single().useCount)
+        assertEquals(0, found.single().useCount)
         assertEquals(1, book.recall(null, subject = "Ben").size)
     }
 
