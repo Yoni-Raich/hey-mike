@@ -1,5 +1,22 @@
 # Progress
 
+### Manager knows its connections; mail check every 3 hours — 2026-11-06
+
+Dev Debug 1200. Manager and team chats now get a connections note naming the
+switched-on WhatsApp Web link and account connectors with the exact way to read
+them (Claude tools in Claude chats, `account_read` for ChatGPT in any chat).
+When an account connector that reads Gmail is usable on the pass engine, a
+`mail_check` row enters the inbox every 3 hours (07:00 onwards): the Scout
+reads mail since the last check (read only, at most 25 threads), proposes real
+asks and saves preference notes on important senders and noise; the Coach
+recalls them for profile learning. Account tools were already open to every
+phone chat (Claude 1197, ChatGPT `account_read` 1198/1199) and to computer
+chats through the Hey Mike tools.
+
+Checks: `MailCheckTest` (timing, night skip, one pending row, look-back,
+note routes, Scout prompt). Not yet run on the phone: a real mail check pass,
+the note inside a live Manager chat, and Coach use of the notes.
+
 ### Existing Codex chats keep old tools — 2026-11-06
 
 1199 fixes the Manager's missing account_read after installing 1198. A real

@@ -17,6 +17,15 @@ tasks(mode="update", id, evidence=[...] | looksResolved="...")   -> only cards t
 tasks(mode="remember", subject, noteKind, text, source, sender?, cue?)
 tasks(mode="recall", query? , subject?)
 tasks(mode="manager_chat", limit?, offset?)           -> read the Manager chat's recent messages; read only, quoted data
+```
+
+Connections: the Manager and team chats see a line naming the connections the
+user turned on (WhatsApp Web, Gmail and others through the Claude or ChatGPT
+account). Use them on your own when they help: check for updates when the user
+asks what is new, verify a need before proposing or deciding, and save who and
+what matters with `remember`. Read only; never send, reply, label or delete.
+
+```text
 tasks(mode="observe", id, evidence=[...], looksResolved?) -> evidence on a decided, open commitment; never a new plan or approval
 tasks(mode="followup", id, until)                    -> owning chat, user's current request only
 tasks(mode="status")                                -> live pause reason, model gate and daily budget; read only

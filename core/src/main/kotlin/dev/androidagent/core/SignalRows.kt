@@ -31,6 +31,7 @@ object SignalRows {
     const val OWNER_MESSAGE = "owner_message"
     const val TASK_RESULT = "task_result"
     const val CALENDAR_CHANGE = "calendar_change"
+    const val MAIL_CHECK = "mail_check"
     const val CHAT_QUIET = "chat_quiet"
     const val APP_NOTIFICATION = "app_notification"
     const val HISTORY_SCAN = "history_scan"
