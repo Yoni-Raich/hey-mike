@@ -1,17 +1,17 @@
 # Proactive Mike Manager — design
 
-Status: phases 1–4 implemented on `feat/proactive-manager-20261106`, 2026-11-06;
-phase 5 (phone validation) not done. Base: installed Manager
-1191 (`integrate/manager-state-widgets-20261104`).
+Status: implemented on `feat/proactive-manager-20261106` (Dev Debug 1201,
+2026-11-06). Phone validation is partial; see PROGRESS.md.
 
 ## Goal
 
 Mike should notice what matters without the user opening apps, and tell the
 user about it in a way that respects their attention. Four parts:
 
-1. **Context connectors.** WhatsApp Web inside Mike's own browser, and Gmail
-   through Google's API. When a notification arrives, the app pulls the
-   conversation around it in the background. Mike can pull more on demand.
+1. **Context connectors.** WhatsApp Web inside Mike's own browser, and the
+   connectors of the user's AI accounts (Gmail, Calendar, Drive in claude.ai
+   or ChatGPT). When a notification arrives, the app pulls the conversation
+   around it in the background. Mike can pull more on demand.
 2. **Smart alerts.** A notification system Mike uses to reach the user, with
    levels, budgets, quiet hours, a digest, and feedback buttons.
 3. **Owner profile.** What is important to this user (people, topics, sources,
@@ -63,7 +63,7 @@ Rules that hold across the protocol:
 
 ```kotlin
 interface ContextConnector {
-    val id: String                 // "whatsapp-web", "gmail"
+    val id: String                 // "whatsapp-web"
     val packages: Set<String>      // notification packages it can explain
     suspend fun status(): ConnectorStatus
     suspend fun conversation(query: ConversationQuery): ConversationContext
@@ -134,36 +134,30 @@ does not work. WhatsApp Web offers *Log in with phone number*: it shows an
 Disconnect closes the page, clears the connector profile, and reminds the user
 to remove "Hey Mike" under Linked devices in WhatsApp.
 
-### Gmail connector
+### Gmail and other account services
 
-Google blocks sign-in inside embedded WebViews, so Gmail does not use the
-browser. It uses Google Identity Services `AuthorizationClient` with the
-`gmail.readonly` scope and the Gmail REST API:
+Hey Mike has no Gmail sign-in of its own. A first version used Google
+Identity `AuthorizationClient` with `gmail.readonly`; it needs a Google Cloud
+Android OAuth client and Google verification of a restricted scope, so it was
+removed (2026-11-06). Mail, calendars and files come through the account
+connectors below. Calendar also reads the device calendar provider, unchanged.
 
-- On a Gmail notification, the connector searches recent mail from that
-  sender (`from:` + `newer_than:3d`, subject match) and returns the thread as
-  plain text (quoted replies and signatures trimmed, 6,000 characters max).
-- Tokens come from Play services on demand; nothing long-lived is stored by
-  the app. A revoked grant shows "Reconnect" on the card.
-- **Prerequisite:** an OAuth client of type *Android* in a Google Cloud project
-  for the package name and the signing certificate SHA-1, with the Gmail API
-  enabled. `gmail.readonly` is a restricted scope: without Google verification
-  the consent screen shows a warning and is limited to test users. For a
-  personal build this is acceptable. The card explains a missing client
-  (`DEVELOPER_ERROR`) instead of failing silently.
+### Account connectors
 
-Calendar already reads the device calendar provider and is unchanged.
+Services the user already connected in their AI account. Hey Mike holds no
+token for them.
 
-### 1d. Account connectors (1194)
-
-Simpler than an own OAuth client: services the user already connected in
-their Claude account. Claude Code reports them through `mcp_status`
-(scope `claudeai`, per-tool `readOnly` / `destructive` annotations). A
-`ContextRouter` picks per row: the app's own connector, else an account
-connector of the engine that runs the pass, else the notification text. The
-pass reads by itself with the read-only tools named in the row's note; the
-chat runs with `dontAsk` and an allow list of those tools only. Codex: not
-routed, see ARCHITECTURE.
+- **Claude:** Claude Code reports them through `mcp_status` (scope
+  `claudeai`, per-tool `readOnly` annotations). Phone Claude chats load the
+  switched-on read-only tools by name, with `dontAsk`.
+- **ChatGPT:** the phone app-server lists them in `mcpServerStatus/list`
+  (server `codex_apps`). User chats run with `features.apps` off; Mike's
+  `account_read` tool calls one switched-on safe read at a time
+  (`CodexAccountReads`, an ephemeral read-only thread).
+- `ManagerConnections` (core) holds the connector states, the account list,
+  the user's switches, and tells each engine its allowed tools.
+  `ContextRouter` picks per row: the app's own connector, else an account
+  connector of the engine that runs the pass, else the notification text.
 
 ## 2. Smart alerts
 
@@ -252,7 +246,8 @@ Manager → Sources gets a **Connections** section at the top:
 
 - **WhatsApp Web** — status (Not connected / Connecting / Connected / Needs
   attention), Connect / Disconnect, and *Use to understand messages* switch.
-- **Gmail** — status, Connect / Reconnect / Disconnect, the same switch.
+- **Account connectors** — one card for Claude and one for ChatGPT, a switch
+  per connected service, with how many tools are read-only.
 
 A new **Alerts** page: master switch, quiet hours, digest times, daily
 budgets, urgent sound (off by default), and *Send a test alert*. A new
@@ -278,7 +273,7 @@ budgets, urgent sound (off by default), and *Send a test alert*. A new
 2. Android: alert channels, notifier and action receiver, digest; Alerts and
    profile pages.
 3. WhatsApp Web connector: connector page host, script, linking card.
-4. Gmail connector: authorization, REST client, card.
+4. Account connectors: Claude and ChatGPT routes, cards, 3-hourly mail check.
 5. Phone validation of each part, then PROGRESS.md evidence.
 
 ### Implementation notes (2026-11-06)
@@ -293,8 +288,5 @@ budgets, urgent sound (off by default), and *Send a test alert*. A new
   messages the page already holds and never asks for earlier ones
   (`loadEarlierMsgs` removed), to keep the account's risk as low as possible.
   `hasEarlier` means more local messages exist before the returned ones.
-- Gmail uses `Identity.getAuthorizationClient` with `gmail.readonly` and the
-  REST API. It needs a Google Cloud Android OAuth client (package + SHA-1).
-  While the restricted scope is unverified, only listed test users can sign in.
 - A conversation profile key without an app (`*|name`) matches in every app.
 - Digests go out on the 60 s TaskDesk tick, so only while the process lives.
