@@ -346,6 +346,7 @@ data class TaskBoardSettings(
     val backfillDone: Boolean = true,
     val chatCursors: Map<String, Long> = emptyMap(),
     val lastCalendarCheckAt: Long? = null,
+    val lastMailCheckAt: Long? = null,
     val lastReviewAt: Long? = null,
     val lastUpkeepAt: Long? = null,
     val lastDeepUpkeepAt: Long? = null,

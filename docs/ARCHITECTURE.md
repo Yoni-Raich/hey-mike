@@ -3594,6 +3594,16 @@ Design: `docs/design/proactive-manager.md`. Decisions:
   carries recent conversation context (24,000 characters). Visible local
   history and the old native thread remain. Matching catalogs resume, and
   imported computer sessions are not migrated.
+- The Manager and team chats get a connections note each turn
+  (`ContextRouter.connectionsNote`): app connections that are switched on and
+  ready (WhatsApp Web), plus account connectors switched on. Claude account
+  tools are named only in Claude chats; ChatGPT account reads go through
+  `account_read` in any chat. With a mail-reading account connector usable on
+  the pass engine and mail an allowed source, `MailCheck` adds one `mail_check`
+  row every 3 hours (not before 07:00 local; first look back 24 hours;
+  `lastMailCheckAt`). The Scout reads mail since that time read-only, proposes
+  real asks and saves preference notes on what matters; the Coach is told to
+  recall them and teach the profile only what the user's decisions confirm.
 - `tasks(mode="manager_chat", limit?, offset?)` lets ordinary and team-member
   chats, including computer chats that reach the phone tools, read the
   Manager chat's user and assistant messages (newest last, at most 50 per page,

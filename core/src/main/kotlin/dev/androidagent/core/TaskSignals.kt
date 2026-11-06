@@ -309,6 +309,33 @@ class CalendarSignalBuffer {
 }
 
 /**
+ * A look at new mail every few hours, through an account connector the user
+ * switched on. The row names the time to read from; the pass reads with the
+ * connector's read-only tools. Nothing is read here.
+ */
+object MailCheck {
+    const val INTERVAL_MS = 3 * 3_600_000L
+    const val FIRST_LOOKBACK_MS = 24 * 3_600_000L
+    /** No mail checks before this local hour. */
+    const val WAKE_HOUR = 7
+
+    suspend fun capture(inbox: SignalInbox, now: Long, lastCheckAt: Long?, enabled: Boolean, zone: java.time.ZoneId): TaskSignal? {
+        if (!enabled) return null
+        if (lastCheckAt != null && now - lastCheckAt < INTERVAL_MS) return null
+        if (java.time.Instant.ofEpochMilli(now).atZone(zone).hour < WAKE_HOUR) return null
+        if (inbox.pending.value.any { it.reason == SignalRows.MAIL_CHECK }) return null
+        val since = maxOf(lastCheckAt ?: 0, now - FIRST_LOOKBACK_MS)
+        val local = java.time.Instant.ofEpochMilli(since).atZone(zone).toOffsetDateTime().withNano(0)
+        return inbox.tryAdd(TaskSignal(
+            id = SignalInbox.idOf("mail-check", now / 60_000), source = "email", app = dev.androidagent.core.proactive.ContextRouter.GMAIL_APP,
+            text = "Mail check: read the inbox for mail received since $local (epoch seconds ${since / 1000}).",
+            at = now, capturedAt = now, sourceVerified = true,
+            lane = SignalLane.PEOPLE, reason = SignalRows.MAIL_CHECK,
+        ))
+    }
+}
+
+/**
  * When discovery should think. Collect all the time, think in small batches:
  * a conversation is ready after a quiet spell, so a burst of messages becomes
  * one pass. People and owner feedback have their own place ahead of background.

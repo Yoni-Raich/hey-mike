@@ -788,6 +788,22 @@ class TaskDesk(
         dev.androidagent.core.TaskSourcePolicy.allows(
             dev.androidagent.core.TaskSourceRef(SignalFilter.sourceOf(app), app, conversation, verified = true), board.settings.value)
 
+    /** Whether the Scout's engine can read mail through an account connector the user switched on, and mail is an allowed source. */
+    private fun mailReadable(settings: dev.androidagent.core.TaskBoardSettings): Boolean =
+        dev.androidagent.core.proactive.ContextRouter.readsMail(dev.androidagent.core.proactive.ContextRouter.usable(
+            accountConnectors.orEmpty(), settings.passEngine) { key -> settings.connectors[key] == true }) &&
+            contextAllowed(dev.androidagent.core.proactive.ContextRouter.GMAIL_APP, null)
+
+    /** The connections note for a Manager or team chat running on [engine]. */
+    private fun connectionsNote(engine: EngineKind?): String? {
+        val settings = board.settings.value
+        val apps = connectors.filter { c -> settings.connectors[c.id] == true &&
+            connectionStates[c.id]?.state == dev.androidagent.core.proactive.ConnectorState.READY }
+            .map { c -> if (c.id == dev.androidagent.core.proactive.ConnectorIds.WHATSAPP_WEB) "WhatsApp Web" else c.id.replaceFirstChar { it.uppercase() } }
+        return dev.androidagent.core.proactive.ContextRouter.connectionsNote(apps,
+            dev.androidagent.core.proactive.ContextRouter.switchedOn(accountConnectors.orEmpty()) { key -> settings.connectors[key] == true }, engine)
+    }
+
     /** Ask the engines for their account connectors, then tell each which read-only tools background passes may use. */
     private suspend fun loadAccounts() = accountLock.withLock {
         accountConnectors = accountSources.flatMap { source ->
@@ -965,6 +981,7 @@ class TaskDesk(
         deliverBriefings()
         val calendarGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
         calendarChanges.capture(signals, now(), settings.lastCalendarCheckAt, settings.readCalendar && calendarGranted)
+        dev.androidagent.core.MailCheck.capture(signals, now(), settings.lastMailCheckAt, mailReadable(settings), zone())
         try { collectMessageFeed() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: SignalInboxFullException) { /* Replayable chat input waits at its current cursor. */ }
         catch (e: Exception) { reportError("Chat capture: ${e.message}") } // Let existing input drain under backpressure.
@@ -1038,7 +1055,8 @@ class TaskDesk(
             inputVersions = plan.batch.associate { it.id to it.revision })
         board.editSettings { it.copy(lastPassAt = clock, passesToday = it.passesToday + 1,
             backgroundPassesToday = it.backgroundPassesToday + if (plan.batch.all { s -> s.lane == SignalLane.BACKGROUND }) 1 else 0,
-            lastCalendarCheckAt = if (plan.batch.any { s -> s.source == "calendar" }) clock else it.lastCalendarCheckAt) }
+            lastCalendarCheckAt = if (plan.batch.any { s -> s.source == "calendar" }) clock else it.lastCalendarCheckAt,
+            lastMailCheckAt = if (plan.batch.any { s -> s.reason == dev.androidagent.core.SignalRows.MAIL_CHECK }) clock else it.lastMailCheckAt) }
         submit(session, prompt, "Discovery pass · ${plan.batch.size} new", settings.passEngine, settings.passModel, settings.passEffort)
     }
 
@@ -1111,7 +1129,7 @@ class TaskDesk(
                     contextRefs = (recent.flatMap { it.sourceRefs } + feedback.flatMap { it.sourceRefs } +
                         stats.map { dev.androidagent.core.TaskSourceRef("notification", app = it.app, verified = true) }).distinct())
                 submit(session, TaskPrompts.coachReview(recent.take(80), clock, zone(), snapshot, playbook.directory.absolutePath, feedback, stats,
-                    proactiveTools(null, null).attention(), proactive.profile.summary(clock, zone())),
+                    proactiveTools(null, null).attention(), proactive.profile.summary(clock, zone()), mailChecked = settings.lastMailCheckAt != null),
                     "Nightly review", settings.reviewEngine, settings.reviewModel, settings.reviewEffort)
                 board.editSettings { it.copy(lastReviewAttemptAt = clock) }
                 return
@@ -1329,7 +1347,8 @@ class TaskDesk(
             waiting = mine.filter { it.status.undecided && it.status != TaskStatus.SNOOZED && it.category != dev.androidagent.core.TaskCategory.REPORT }
                 .sortedWith(compareBy<MikeTask> { it.usefulUntil ?: Long.MAX_VALUE }.thenByDescending { it.createdAt }),
             running = mine.filter { it.status in setOf(TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.REVIEW) },
-            zone = zone(), playbook = playbook.directory.absolutePath)
+            zone = zone(), playbook = playbook.directory.absolutePath,
+            connections = connectionsNote(sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine))
     }
 
     companion object {
