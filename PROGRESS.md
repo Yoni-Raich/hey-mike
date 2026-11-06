@@ -1,5 +1,24 @@
 # Progress
 
+## Main integration without Manager — 2026-11-06
+
+Prepared a merge of `dev` through `851d9e8f` into `main` `50da17d4`.
+This excludes the later Manager and task-board integration. The main pin-refresh
+fix is retained in the new pinned tabs, with the corresponding UI regression
+tests. Release version properties remain unchanged from main.
+
+Windows, JDK 21: `gradlew.bat test assembleDevRelease
+assembleDevDebugAndroidTest :voice:lintDebug :app:lintDevDebug
+:app:assembleProdRelease --no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process` passed in 13m 33s. XML
+reports contain 3,007 test executions, zero failures or errors, and 34 skips.
+`python -m unittest tools.test_prepare_runtime tools.test_codex_runtime` passed
+24 tests; the maintenance helper passed 8; `git diff --cached --check` passed.
+The task-private Gradle home raised the storage quota to prevent automatic
+deletion of other build buckets; the manager reported no removals. Android test
+APK assembly does not mean those tests ran. No emulator, phone, signed release
+artifact validation, installation or runtime test was performed in this merge.
+
 ## 0.16.0 final candidate: pin refresh — 2026-10-18
 
 Automated review found the remembered chat filter omitted state.pins. Changing
@@ -147,6 +166,349 @@ Remaining gaps: production-key signing, the updater flow, first launch and
 account switching, broad phone UI and device-tool tasks (including the
 incomplete Android-version answer), voice, and the computer and Claude paths
 on real hardware. These are not established by the build or smoke checks.
+
+### Selected account, privacy and control features — 2026-10-29
+
+Integrated the user's selected seven changes from fetched `dev` `b9ea1510`:
+usage-limit recovery, idle usage-window starts, personal-profile notification
+filtering, MCP confirmation cards, isolated SSH/SFTP preparation, risky-command
+approvals with full PC access, and desktop browser mode. Original worktrees
+were preserved. Task-board, Manager and assistant-flow work is not included.
+
+Integration review added synchronous Stop fences for waits, account switches
+and queued recovery, plus the shared vault/window account-file lock. Old
+recovery queue entries cannot replay after restart. The privacy tests are now
+part of Android CI. Repaired two existing build blockers: removed Alpine musl
+r12 (now pinned r13) and nightly's missing pinned NDK installation.
+
+The local combined build, app/test-APK assembly and app lint passed; lint has
+zero errors, 21 warnings and three information findings. Runtime/update Python
+tests passed (24), as did maintenance helper tests (8). The final CI-sized
+validation and device gaps are recorded in
+[`selected-features-20261029.md`](docs/testing/selected-features-20261029.md).
+No phone installation, real quota/window start or production release is claimed.
+
+### Long context switch in the model menu — 2026-10-27
+
+Claude Code gives every model a 1M window on the user's plan, and every reply
+reads the whole context again, so a long chat drains the 5-hour quota. The
+model menu of a Claude chat now has a "Long context" switch. Off starts each
+chat process with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` (found in the Claude Code
+2.1.302 binary) and drops an explicit `[1m]` alias, which the CLI refuses
+then; the window is 200k and Claude compacts before it. The choice is one
+setting for all chats, kept in the "ui" preferences (default on, as before),
+and reaches the phone's Claude and every computer's Claude through
+`AgentEngine.setLongContext`. A chat picks it up at its next turn: the window
+is part of the chat process's running config, so a change restarts the
+process with `--resume`, like a model or effort change.
+
+Codex is not switched. Its models list a 272k or 500k window and a larger
+`max_context_window` (872k in the PC's `models_cache.json`), and the bundled
+app-server knows `model_context_window`, but `model/list` does not report
+either size and an override above a model's maximum was not tried.
+
+### Chat context size beside the composer — 2026-10-27
+
+The user saw Opus 5.5 use up the 5-hour quota much faster than before. Their
+Claude Code transcripts on the PC show the same weighted token budget per
+window as earlier (about 6.5-9M), but contexts of 300-900k tokens on every
+call, so each call costs far more. A chat's context size is now on screen:
+a ring and `412.0k · 41%` at the end of the composer's chip row, and in the
+settings usage line.
+
+`TokenUsage.context` is what the model read on its latest call. Claude: input
+plus cache writes and reads of each top-level assistant message, kept by the
+chat's stream mapper, carried into the turn's result totals, and set to
+`post_tokens` at a compaction. Codex: `tokenUsage.last.totalTokens`. The view
+model now reads per-chat usage from the routed event stream, the only one
+that carries a computer's Claude chats.
+
+From `origin/dev` `053cc14`, Windows: `:engine-claude:test :engine-codex:test
+:core:test`, `:app:testDevDebugUnitTest --tests 'dev.androidagent.app.*'`,
+`:app:assembleDevDebug` and `:app:lintDevDebug` PASS; `git diff --check` clean.
+The pinned Alpine musl URL still answers 404; the build used a cached copy
+whose pinned hash the script verified.
+
+Tapping the chip opens a small menu: size out of the window, percent and bar,
+why it matters for the quota, the chat's running totals, and a Compact button
+(enabled between replies, same action as `/compact`).
+
+Installed as `0.14.0-dev.context-meter1176` (1176) on the user's phone, built
+from this change plus another agent's unsaved task-board work, and the user
+confirmed on the phone that the chip and menu work. That build had unit tests
+and assembly only; no `:app:lintDevDebug`, no screenshot kept, no emulator UI
+test. This branch itself was not installed.
+
+Untested: lint on the menu change, a compaction started from the menu, a Codex
+chat's size, a chat that runs on a computer.
+The size is in memory only, so after an app restart a chat shows no size
+until its next model call. Before a chat's first result the window is not
+known and the chip shows tokens without a percent.
+
+### Shared chat copy actions and full-screen selection — 2026-10-24
+
+Inspected ChatGPT Android 1.2026.286 on the current phone: a user message's
+long-press menu has Copy and Select text; selection opens a full screen, and
+agent answers have a Copy shortcut below them. Hey Mike now shares the same
+menu for both roles, adds one shortcut under each finished agent reply, and
+opens a full-screen selection view with Back and Copy all. Original prompt
+text and the existing whole-reply copy scope are retained; tool output is
+excluded. Text is frozen while selecting, and copied prompts have no injected
+RTL display markers.
+
+From isolated `origin/dev` baseline `07883212`, Windows/JDK 21:
+`:app:testDevDebugUnitTest :app:assembleDevDebug
+:app:assembleDevDebugAndroidTest :app:lintDevDebug --no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process` PASS. App unit XML: 170
+tests, zero failures/errors/skips. Lint: zero errors, 21 warnings. Final
+AndroidTest assembly and lint rerun also PASS after fixture changes.
+
+Installed app/test APKs with `adb -s <selected-emulator> install -r`, then ran
+`am instrument -w -e class dev.androidagent.app.ui.MessageActionsUiTest
+dev.androidagent.app.dev.test/androidx.test.runner.AndroidJUnitRunner` directly
+on an Android 15/API 35 x86_64 emulator: four tests PASS. They cover original
+Hebrew prompt copying, the reply shortcut and copied feedback, actual partial
+selection/copy through Android's toolbar, both long-press menus, and returning
+from selection. A synthetic selection-screen screenshot was inspected. Initial
+fixture failures were fixed by scoping to the dialog and using Android's real
+long-press gesture for the native TextView.
+
+The clean runtime preparation hit HTTP 404 at the unchanged pinned Alpine
+musl URL. The local build used existing cached inputs; the preparation script
+verified their pinned hashes, including musl archive `ac281d1e...703782`.
+No runtime pins or build gates changed. Task-specific central-build config
+reported `removed:[]`, preserving other worktrees and build buckets. No
+physical Hey Mike install, real chat/runtime test, or full release gate.
+The emulator APK is Dev Debug `dev.androidagent.app.dev`, unchanged source
+version `0.14.0-dev.connect-sdk` / 1164, Android Debug certificate, v2 signed
+(not v3 or a release artifact). Installed emulator metadata matches. The final
+combined build, 170 unit tests and four UI tests passed after the RTL styling
+change; the mixed Hebrew/English selection screenshot was checked again.
+
+Phone follow-up: built the same source head `8685f2a9` with version overrides
+`1166` / `0.14.0-dev.chat-copy1166`. Dev Debug assembly and app lint passed;
+APK v2 signature and 16 KiB ZIP alignment passed. SHA-256:
+`7fa6cbcb55de3b76632f0ba12a5a3312827eccd6f70b882cff8c61ece8397e5e`.
+`copy_file` completed to the current phone; the installer updated the app.
+Fresh `apps_settings(app_info)` confirms installed code 1166 and the matching
+version name. The user reported that the UI looks good and requested merge to
+`dev`. No app data was cleared. The installed base-APK hash was not read;
+live model, accessibility and full release validation remain outside this check.
+Hosted Android CI passed for source head `8685f2a9` in PR #145.
+
+### Maintenance: remove a timeout-test timing race — 2026-10-23
+
+Baseline `origin/dev` is `ff5729f7`; unrelated checkout changes were preserved.
+The unchanged `readUiTimeoutIsTypedAndNeverFallsBack` passed once in Gradle,
+but failed 1/100 repetitions under `java -Xint`: its 10ms real deadline could
+expire before the first dump, yielding `expected:<1> but was:<0>`.
+
+The regression now uses virtual coroutine time and the default 6s budget.
+It verifies one dispatch, no early completion, completion at the deadline,
+typed timeout, one cancellation and no fallback. Its own workspace is cleaned.
+Only the test and a test-only dependency changed; runtime timing is unchanged.
+
+After: focused test PASS; same interpreted-JVM comparison 100/100 PASS;
+`:device-tools:testDebugUnitTest :core:test --no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process` PASS on Windows/JDK 21.
+XML: device-tools 106 + core 809 = 915 tests, zero failures/errors/skips.
+Task-specific storage init/config kept other build buckets (`removed:[]`).
+Hosted CI is tracked in the focused PR. No local app assembly, install,
+physical-device test or full release gate was run for this test-only change.
+
+The six failures in the latest 100 CI runs were triaged: four already have
+merged fixes, two browser class-setup failures need deeper diagnostics. A
+narrow scan of 241 production Kotlin files yielded no removal candidate;
+no dead-code safety or instruction A/B claim is made. Evidence and limits:
+`docs/history/maintenance-tests-2026-10-23.md`.
+
+Merge review: PR #143 is merged into `dev` at `31a897a6`. PR #144 was updated
+with that base, preserving both maintenance entries in the two documentation
+conflicts. The reviewed timeout test and dependency are unchanged. Checks for
+the combined head are tracked in PR #144 before its merge.
+
+### Evidence-based maintenance: CI duplicate runs — 2026-10-23
+
+Added the development-only `repo-maintenance` skill and a read-only Actions
+history helper. Baseline `origin/dev` is `ff5729f7`. The latest 50 Android runs
+contained 19 completed push/PR pairs at the same branch/head. Their push jobs
+used 7,099 seconds (118.32 runner minutes), excluding queue time. This is a
+historical opportunity estimate, not measured savings or billing.
+
+Android CI now checks every PR, integration pushes (`dev`/`main`) and all tags;
+feature branches use draft/regular PRs for automatic checks. Only superseded
+runs of the same PR are cancelled. Existing checks remain, with audit-helper
+tests added. Manual dispatch needs the workflow on default `main` first.
+See `docs/history/maintenance-ci-2026-10-23.md` for source links and limits.
+
+Local checks passed: eight helper tests; 24 existing runtime tests; 13 trigger
+scenarios and an exact comparison preserving the baseline check job; skill
+validation; `actionlint` 1.7.12; and `git diff --check`. No local Gradle build,
+device run or release gate was performed. Hosted CI and live trigger evidence
+are tracked in [PR #143](https://github.com/Yoni-Raich/hey-mike/pull/143).
+Its first head (`4cc4b7c2`) started one PR run and no duplicate push run; the
+evidence-only follow-up checks cancellation of the superseded PR run.
+Other checkout changes and worktrees were preserved.
+
+### Worktree and temporary-build lifecycle — 2026-10-20
+
+Added a repository development skill and a PowerShell status/removal helper.
+Removal checks dirty/unpushed work, Git failures, locks and bucket ownership.
+Git must remove the worktree before its build bucket is deleted; a refusal
+never triggers a recursive folder-delete fallback. Existing checkout changes
+are kept separate from this PR.
+
+`python .agents/skills/worktree-lifecycle/scripts/test_worktree.py`: 11 tests
+passed on Windows PowerShell 5.1. Disposable Git repositories covered normal
+removal, merged local branches, untracked work, unpushed commits, failed Git
+checks, Git locks, an active build lease, a wrong bucket owner, the main/current
+checkout and a subfolder, and Git removal failing on a Windows file lock.
+Skill frontmatter validation and `git diff --check` passed. Fixtures were
+removed. No Gradle build, APK change or device test was needed or run.
+
+### Separate Pinned project/chat tabs — 2026-10-19
+
+Follow-up: New chat now sits above both Pinned tabs and outside the scrolling
+lists, as requested. The scoped Dev Debug build, app unit tests (168, no
+failures/errors/skips), app lint (zero errors, 21 warnings, three information
+items), signature/alignment and diff checks passed again for code 1163.
+It was installed in place on the same Xiaomi. Live UI bounds confirm one New
+chat button above the tabs; both tab/empty-state checks passed. Pins were
+retained and accessibility remains bound. Visually reviewed screenshots:
+ignored `artifacts/pin-subtabs-20261019/xiaomi-1163-*.png`. Installed base.apk
+matches the built APK SHA-256:
+`fdc6c036b5a5ca18050c0fc8da9ce793b900e5694c57a7badc433aca017ccd7e`.
+The detailed search/Pin/Unpin checks below were on 1162; 1163 changes layout
+only. No instrumentation or full release gate was run for this follow-up.
+
+Isolated branch `feat/pinned-project-chat-tabs` starts at `origin/dev`
+`c33b1681`. Pinned now has Projects (first) and Chats tabs, separate scroll
+positions, matching counts, search hints and empty states. Projects retain
+their expandable chats; Chats contains only individually pinned chats.
+Pin changes now invalidate the remembered chat list immediately.
+
+`:app:assembleDevDebug :app:testDevDebugUnitTest :app:lintDevDebug
+:app:assembleDevDebugAndroidTest --no-daemon` passed with two workers and
+in-process Kotlin. App unit tests: 168, zero failures/errors/skips. App lint:
+zero errors, 21 warnings, three information items. The three new Compose
+regressions compile; they were not run under instrumentation. Build storage
+used the existing isolated Gradle home and no-prune init script; no other
+worktree output was removed. `git diff --check` passed.
+
+At the user's request the emulator was closed and validation moved to the
+USB-connected Xiaomi Redmi 12 / 23053RN02Y, Android 15. Dev Debug code 1162 /
+`0.14.0-dev.pin-tabs` installed with `adb -s <selected-device> install -r`.
+This was a direct USB install to the selected test phone, not a network copy
+to the phone hosting this chat. APK metadata, test-key v2 signature and 16 KiB
+zip alignment passed. Installed base.apk SHA-256 matches the local APK:
+`b42e8844652bd81365c48ec302530746d0509dfe63b56236337ccee0c9bdd6a5`.
+
+Direct UI checks on 1162 passed: project/chat separation, native tab selection,
+retaining the tab when leaving Pinned, search across tabs, and immediate Unpin
+updates with both empty states. Two temporary pins survived the updates and
+were then restored to the original empty pin set. Accessibility stayed bound
+with no crashed service. No test APK was installed, no data was cleared, and
+no session was created or deleted. Raw UI evidence and command helpers remain
+under ignored `artifacts/pin-subtabs-20261019/`; APK/reports are in the ignored
+central bucket `build/e02b9362a42a9b9a/` in the main checkout. Not checked:
+the full release gate, another phone, or real model/device-tool execution.
+
+### Connected apps screen: one switch per app — merged to dev, 2026-10-19
+
+Settings > Connected apps used to need "Review capabilities" before the
+"Enable connection" switch appeared. Each app is now a card with its icon and a
+single switch (the whole top row toggles). Turning on reads the app's abilities
+and opens one dialog (look things up / make changes / ask you first) with
+"Turn on"; turning off is immediate and needs no reply from the app. Per-ability
+switches, ask-first, publisher, installer and recent activity moved under
+"Details". The screen refreshes on resume; the Settings hub row says "1 app on"
+or "Off · choose which apps Mike can use". Abilities the user never saw stay off
+and show as "N new abilities" with a Review button.
+
+Evidence, on the tree rebased onto origin/dev cc02886: `:core:test`,
+`:connect-protocol:test`, `:connect-sdk:testDebugUnitTest`,
+`:connect-host:testDebugUnitTest`, `:workspace:testDebugUnitTest` and
+`:app:testDevDebugUnitTest` pass with no failures or errors in any result XML,
+including 9 new ConnectedAppStatusTest cases; `:app:lintDevDebug` 0 errors;
+`:app:assembleDevDebug` builds. APK checked with aapt2: dev.androidagent.app.dev,
+versionCode 1164, 0.14.0-dev.connect-sdk, 338,653,662 bytes, SHA-256 prefix
+98aa1c883cbda190. An earlier build of the same screen (1161) was installed on the
+Nothing A059 by the user; the merged 1164 build was not installed.
+
+Untested: the layout on a real screen (dark/light, Hebrew phone), the dialog
+with a long ability list, the TalkBack reading of the toggle row, the ON_RESUME
+refresh, and turning on LumaStand through the new dialog. No Compose UI test
+covers this screen yet.
+
+### Mike Connect developer kit — local preview, 2026-10-18
+
+Prepared connect-sdk/developer-kit with two portable external-developer skills:
+mike-connect-app-audit (read-only source evidence and capability planning) and
+mike-connect-integrate (SDK provider implementation, domain checks, trust and
+validation). Each includes its own references; the audit includes a handoff
+template and distinguishes preset selection from missing creative app features.
+These skills are not shipped inside Mike's runtime asset catalog.
+
+tools/package_mike_connect.py packages only the three public Apache-2.0 Maven
+modules, developer docs/skills and a standalone preferences-provider example.
+It checks Maven hashes/dependencies, portable references, exact payload hashes
+and existing-version refusal. Output is ignored artifacts/connect-distribution/
+mike-connect-developer-kit-1.0.0-preview.1.zip (209272 bytes), SHA-256
+d9cce4828b5a693fc2f0666437e01206ae1d84d533a4d6fdc2fae2933dd7ffeb.
+SDK AAR/protocol hashes remain identical to the prior validated SDK. The old
+local ZIP is unchanged. The kit records its dirty source state, preview status
+and production/Central gaps rather than claiming a published stable SDK.
+
+Both SKILL.md frontmatter checks passed with Python UTF-8 mode. Local links
+also pass when each skill is checked as a standalone folder. The ZIP was
+extracted under a fresh system-temp directory; its independent app assembled
+and passed lintDebug with Gradle 8.9, AGP 8.7.3, Kotlin 2.1.0 and JDK 21 in 28s
+(44 tasks), resolving the extracted Maven repository without Mike app modules.
+This is consumer build evidence, not a live agent skill benchmark or physical
+Binder/device test. Packaging unit checks and detailed commands are recorded in
+docs/history/2026-10-18-mike-connect-developer-kit.md.
+
+Recommendation: keep source in this repository with independent SDK tags and
+GitHub prerelease assets, then add Maven Central for stable distribution after
+production trust, namespace, POM/Javadoc/PGP and release CI are ready. Nothing
+was committed, tagged, uploaded or published by this packaging work.
+
+### Mike Connect v1 — installed on Nothing; user test pending, 2026-10-18
+
+At the user's request, the hosting Nothing A059 was updated without clearing
+data: Mike Dev 1159 -> 1160 and LumaStand 1.6.0 (8) -> 1.7.1 (10). copy_file
+delivered both APKs; APK Manager installed them. Installed package versions
+and both base.apk SHA-256 values were independently checked through the
+deliberately selected A059 ADB connection and match the exact build artifacts.
+Mike was reopened. The runtime now reports 1160 and Connected apps: none enabled.
+The user still needs to review and enable LumaStand in Connected apps before
+testing its capabilities. No connection grant was enabled by the agent.
+
+Isolated feat/mike-connect-sdk starts at origin/dev c33b168. Three public
+Apache-2.0 modules, the Android host, Keystore grants, Connected apps settings,
+one connected_apps gateway and a sample clock are implemented. The separate
+LumaStand project uses the real published local SDK for get_theme, set_theme
+and open_clock. No per-app integration code is required in Mike.
+
+Final full gate passed in 9m38s: test, Dev Release, Dev Debug, app/test APKs,
+voice/app/SDK/host lint. XML totals across variants: 2,958 cases, zero failures
+or errors, 34 skips. Lint has zero errors. Runtime Python tests: 16 passed.
+New protocol (6), SDK (6 per variant) and gateway (12) cases include cancellation,
+duplicate writes, unknown callers with a stubbed certificate lookup, Parcel
+bounds, elicitation, live grant revocation and preserved per-function consent.
+
+Mike test artifacts: versionCode 1160, 0.14.0-dev.connect-sdk1. Dev Release is
+non-debuggable, aligned and v3-signed with the test certificate pinned by the
+SDK. LumaStand 1.7.1 (10) is signed with its existing key; 39 tests and lint pass.
+The Maven SDK bundle and quickstart were copied to the hosting phone's Downloads.
+
+The USB Xiaomi rejected the LumaStand install with INSTALL_FAILED_USER_RESTRICTED
+(Install canceled by user). Its Mike remains at 1156; no new app was installed,
+and no app data was cleared. Human confirmation in Xiaomi's security UI is
+pending. Physical discovery, background calls, real approvals, UI handoff and
+cross-UID rejection remain untested. These build checks do not prove those flows.
+Commands, hashes and limits: docs/history/2026-10-18-mike-connect-sdk.md.
+
 ### Engine updates and visible versions — 2026-10-18
 
 Isolated branch `feat/runtime-updates-20261018` starts at `origin/dev` 7f0a1d54.

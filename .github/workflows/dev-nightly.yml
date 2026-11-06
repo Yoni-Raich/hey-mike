@@ -88,6 +88,7 @@ jobs:
       - name: Build signed dev APK
         if: steps.state.outputs.should_build == 'true'
         run: |
+          sdkmanager 'ndk;28.2.13676358'
           chmod +x gradlew
           ./gradlew :core:test :app:lintDevDebug :app:assembleDevDebug \
             -PversionCodeOverride=${{ steps.state.outputs.version_code }} \

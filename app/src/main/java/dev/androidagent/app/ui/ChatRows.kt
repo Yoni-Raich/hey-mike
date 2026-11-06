@@ -32,7 +32,11 @@ internal sealed interface ChatRow {
  * its turn, from after the user's prompt to the end, however many blocks the
  * activity between them split it into.
  */
-internal data class MessageRow(val message: ChatMessage, val copyText: String? = null) : ChatRow {
+internal data class MessageRow(
+    val message: ChatMessage,
+    val copyText: String? = null,
+    val showCopyAction: Boolean = false,
+) : ChatRow {
     override val key: String get() = message.id
 }
 
@@ -63,6 +67,7 @@ internal data class RemoteActivityRow(val steps: List<ChatMessage>, val live: Bo
  */
 internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatRow> {
     val copyTexts = turnCopyTexts(messages)
+    val copyActions = replyCopyActions(messages, running)
     val rows = mutableListOf<ChatRow>()
     var pending = mutableListOf<ChatMessage>()
     var pendingRemote = false
@@ -79,11 +84,29 @@ internal fun chatRows(messages: List<ChatMessage>, running: Boolean): List<ChatR
             pending += message
         } else {
             flush(live = false)
-            rows += MessageRow(message, copyTexts[message.id])
+            rows += MessageRow(message, copyTexts[message.id], message.id in copyActions)
         }
     }
     flush(live = running)
     return rows
+}
+
+/** One shortcut under the last text block of each finished reply. */
+private fun replyCopyActions(messages: List<ChatMessage>, running: Boolean): Set<String> {
+    val result = mutableSetOf<String>()
+    var last: ChatMessage? = null
+    fun close(live: Boolean) {
+        last?.takeIf { !live && !it.state.equals("streaming", true) }?.let { result += it.id }
+        last = null
+    }
+    for (message in messages) {
+        when {
+            message.role.equals("user", true) -> close(live = false)
+            message.role.equals("assistant", true) && message.text.isNotBlank() -> last = message
+        }
+    }
+    close(live = running)
+    return result
 }
 
 /**

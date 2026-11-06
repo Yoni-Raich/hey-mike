@@ -26,6 +26,9 @@ Before changing anything:
 5. Run `git worktree list --porcelain`.
 6. Check the current branch and the target branch before editing.
 
+To open, build in, close or delete a worktree, follow
+`.agents/skills/worktree-lifecycle/SKILL.md`.
+
 If another worktree has changes, leave it alone. Do not clean, reset, delete,
 or reformat another agent's worktree. Keep unrelated changes out of your
 commit, even when they are convenient to fix.

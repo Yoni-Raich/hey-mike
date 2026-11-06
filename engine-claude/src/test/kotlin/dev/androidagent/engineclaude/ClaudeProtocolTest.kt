@@ -88,6 +88,14 @@ class ClaudeProtocolTest {
         assertTrue(ClaudeProtocol.CHAT_ENV.keys.none { it.startsWith("ANTHROPIC_") || it.startsWith("CLAUDE_CODE_") })
     }
 
+    @Test fun theStandardWindowTurnsOffTheLongOne() {
+        assertEquals(ClaudeProtocol.CHAT_ENV, ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, longContext = true))
+        assertEquals("1", ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, longContext = false)["CLAUDE_CODE_DISABLE_1M_CONTEXT"])
+        assertEquals("opus[1m]", ClaudeProtocol.windowModel("opus[1m]", longContext = true))
+        assertEquals("opus", ClaudeProtocol.windowModel("opus[1m]", longContext = false))
+        assertEquals("claude-opus-5-5", ClaudeProtocol.windowModel("claude-opus-5-5", longContext = false))
+    }
+
     @Test fun modelsAndEffortsAreNormalised() {
         assertEquals("sonnet", ClaudeProtocol.normalizeModel(null))
         assertEquals("sonnet", ClaudeProtocol.normalizeModel("gpt-5.5-codex"))

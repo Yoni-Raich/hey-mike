@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries><package android:name="com.lumastand.app" /></queries>
+    <application android:label="Connect test clock" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false">
+        <activity android:name=".ClockActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+        <service android:name=".ClockConnectService" android:exported="true" android:enabled="@bool/mike_connect_enabled" android:label="Connect test clock">
+            <intent-filter><action android:name="dev.heymike.connect.action.CONNECT"/></intent-filter>
+            <meta-data android:name="dev.heymike.connect.binding" android:value="1"/>
+            <meta-data android:name="dev.heymike.connect.summary" android:value="Test clock for SDK conformance. Stores only test settings."/>
+        </service>
+    </application>
+</manifest>

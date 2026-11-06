@@ -1,5 +1,143 @@
 # Architecture
 
+## Selected feature integration — 2026-10-29
+
+This integration carries the seven changes selected after the conversation
+audit onto `dev`. Task-board, Manager and personal-assistant work remain in
+their original worktrees. The changes below do not enable account starts,
+collection or automatic continuation without the user's setting.
+
+- **Usage-limit recovery:** `UsageLimitRecovery` stores each chat's plan,
+  stopped target and reset time. It can wait for a reset or choose the next
+  available account/provider. Every continuation is a new queued turn with
+  app-owned context, never a replay of the original tool calls. The chat's
+  `/limits` sheet and limit card expose the plan and one-time actions.
+- **Stop:** the run manager synchronously revokes recovery permission for
+  the selected family, or all chats for global Stop. Pending switches check
+  this permission before changing an account; queued recovery turns check it
+  again at dispatch under the same run-manager monitor as Stop. A recovery
+  queue entry cannot run after restart without its live guard. Interrupted
+  continuations are left stopped for review, not replayed. Explicit recovery
+  actions resume only that chat. Saved waits are cleared asynchronously.
+- **Usage windows:** `UsageWindowKeeper` is off by default. When enabled it
+  starts due accounts with one short, tool-free message using a separate
+  runtime. Its single alarm is exact only when Android permits exact alarms.
+  Vault lending, manual account changes and limit-recovery account changes
+  share `accountFiles`; an automatic switch also waits for active runs and
+  Voice to finish. It never switches a sign-in while a window starter borrows it.
+- **Personal notifications:** `PersonalNotificationPolicy` rejects unknown,
+  other-user and profile notifications before payload access or consumer
+  lookup. It compares Android user identity, never a package blocklist. The
+  current `dev` listener has no active-notification replay or task-board reader;
+  adding either requires applying the same boundary before reading content.
+  Already stored data is not removed by this change.
+- **MCP confirmations:** supported empty form confirmations use the existing
+  per-chat Allow/Deny card. Responses carry MCP `action`/`content`, are consumed
+  once and are revoked when the request resolves. Thread/turn/computer scope
+  is preserved. Value forms, URL verification and unknown constraints are
+  declined; there is no standing desktop-app grant.
+- **SSH preparation:** probes, uploads and retained-relay attachments own
+  isolated connections pinned to the known host key. Preparation may retry
+  one transport failure. After a possible launch, only that relay instance
+  may be attached; the task is not launched again. Uploads use unique parts
+  and bounded shared destination locks. Diagnostics contain fixed phase labels.
+- **Full PC access:** native Codex keeps full filesystem access with
+  `on-request` command approvals. Required risky-command approval is shown
+  through the existing card instead of being pre-declined by `never`.
+- **Desktop browser:** `browser.layout` and the panel's desktop/phone button
+  reload the current chat's page with desktop or mobile settings. The choice
+  stays with that browser session. Website push notifications are not added.
+
+Build repair: Alpine's removed musl r12 package is replaced with the official
+v3.22 r13 package. Both archive and loader remain SHA-256 pinned; Codex stays
+at 0.163.0. Dev nightly now installs the exact NDK already required by Android
+CI and `prepareFileDelta`. This is not physical Claude-runtime validation.
+
+Current checks and remaining device proof:
+[`selected-features-20261029.md`](testing/selected-features-20261029.md).
+
+## Deterministic UI timeout regression — 2026-10-23
+
+The ADB UI observation timeout regression uses a virtual coroutine scheduler
+with the production default budget, rather than a 10ms wall-clock race. It
+checks dispatch, suspension before the deadline, typed timeout, cancellation
+and no fallback. `kotlinx-coroutines-test` is a test-only `:device-tools`
+dependency; production observation timing and dispatch are unchanged. See
+[the maintenance evidence](history/maintenance-tests-2026-10-23.md).
+
+## Repository maintenance and CI triggers — 2026-10-23
+
+The development-only `.agents/skills/repo-maintenance/SKILL.md` guides small
+maintenance changes with source/runtime evidence and bounded validation. Its
+read-only CI helper measures paired push/PR job time using GitHub CLI. It is
+not bundled in the APK and creates no background job or live-service access.
+
+Android CI checks every PR, including drafts, and pushes to `dev`, `main` and
+all tags. Feature work gets its check through a PR, avoiding a second full
+build for the same head. New revisions cancel only older runs of that PR;
+integration, tag and manual runs keep separate groups. All existing Python,
+unit, build and lint checks remain, with tests for the audit helper added.
+Manual dispatch needs this workflow to exist on the default branch first.
+See [the baseline audit](history/maintenance-ci-2026-10-23.md).
+
+## Repository worktree lifecycle — 2026-10-20
+
+The development-only skill at `.agents/skills/worktree-lifecycle/SKILL.md`
+owns worktree locations, temporary-build handling and cleanup. Its helper
+validates Git state and build-bucket ownership, holds the bucket lease, and
+lets Git remove the worktree before deleting build output. Failed checks or
+Git refusals stop removal; there is no raw folder-delete fallback. This does
+not change on-device skills, runtime packaging or the global Gradle policy.
+
+## Mike Connect local app SDK — 2026-10-18
+
+Developer distribution source lives under connect-sdk/developer-kit: portable
+app-audit and integration skills, references and an independent consumer example.
+tools/package_mike_connect.py builds an allowlisted local Maven/skills ZIP under
+ignored artifacts/connect-distribution, records exact binary hashes, validates
+links/checksums and refuses existing bundle versions. Public skills are separate
+from repository maintenance and on-device runtime skills. SDK releases use their
+own version/tag line in the same repository; see docs/MIKE_CONNECT_PUBLISHING.md.
+The current bundle is a preview, not production caller trust or a Central upload.
+
+The public Apache-2.0 modules are connect-protocol (JVM message and schema
+profile), connect-sdk (Android provider service and DSL), and
+connect-sdk-testing (in-process conformance helpers). connect-host owns Android
+discovery and Binder clients and depends on core's ConnectTransport contract.
+None of the public SDK modules depends on core or app.
+
+ConnectedAppsGateway joins the existing tool composite with one connected_apps
+tool. Each run has a separate revoke boundary. Background calls use no screen
+lease; approval and UI handoff explicitly claim the existing lease. Codex,
+Claude and the computer relay receive the same tool definition.
+
+Providers verify caller package and certificate on every Binder transaction.
+Mike pins provider signers and uses Keystore-sealed per-capability grants;
+schema, access and UI-mode changes require review. Writes use durable provider
+reservations and stable request ids. An uncertain write is never automatically
+replayed. Descriptions and results are external data, not instructions.
+
+Settings > Connected apps owns enabling, disabling, capability switches,
+ask-first choices and bounded activity history. The model cannot write grants.
+Each app is one card whose whole top row is a single switch (off by default).
+Turning it on reads the app's abilities and shows them in one dialog, grouped
+as look things up / make changes / ask you first, with a single "Turn on";
+that tap is the review, so there is no separate review step. Turning it off
+needs no reply from the app and works even when the app cannot be reached.
+Abilities the user never saw (new or changed since the last review) stay off
+and show as "N new abilities", which Details lets the user allow one by one.
+The status line, ability counts and hub summary come from the pure
+`connectedAppStatus` in core, so the screen cannot disagree with the grants the
+gateway checks. Only apps already turned on have their ability list read when
+the screen opens (to spot additions after an update); discovery alone never
+starts an app.
+Developer JSON Try is available only in a debug build and keeps the same gates.
+samples/connect-clock is a small provider and caller-security test fixture.
+The real clock integration lives in the separate LumaStand project.
+
+See docs/design/MIKE_CONNECT_IMPLEMENTATION.md for the implemented v1 profile,
+SDK usage, limits and differences from the original proposal.
+
 ## Engine versions and Codex updates — 2026-10-18
 
 Phone Codex and computer packages are pinned to 0.163.0. The phone's Claude
@@ -37,7 +175,12 @@ the computer settings cards show observed computer versions and update notes.
 `AgentViewModel` stores pinned library chat and project keys in the `pins`
 string set in the phone's `ui` preferences. Pin state is local to that phone.
 Long-press menus toggle a key. `ChatLibraryDrawer` exposes a Pinned place
-beside the device tabs, with the same search filter; without a device rail,
+beside the device tabs, with New chat above the Projects and Chats tabs.
+The common New chat action stays visible while either list scrolls. Projects opens
+first and retains the expandable project/chat rows; Chats shows only chats
+that were pinned individually. Each tab has its own scroll position, count
+and empty state. Search applies to the selected tab and stays when switching.
+Changing pins immediately refreshes both lists. Without a device rail,
 pinned chats appear first. Pins reference existing library entries and do
 not copy chat content or project files.
 
@@ -730,9 +873,13 @@ uses the existing send, steer, stop, model, and attachment action contracts.
 Stop remains reachable while a steering draft exists; STOPPING blocks dispatch
 and preserves that draft. Terminal formatting is removed before display.
 A Hebrew or Arabic word stays on the line of the number after it (a no-break
-space, `bindNumbersToLabels`), there is no copy button: a long press on a
-block opens Copy and Select text. A block is a user's prompt, or the agent's
-reply, which is everything after that prompt up to the next one. While this
+space, `bindNumbersToLabels`). A long press on either role opens the same
+Copy and Select text menu. Each finished agent reply also has one Copy
+response button under its last text block, with brief copied feedback.
+Select text opens a full-screen, scrollable selection view with Back and
+Copy all. It freezes the original text while open, without display-only RTL
+markers. A block is a user's prompt, or the agent's reply, which is everything
+after that prompt up to the next one; tool details are excluded. While this
 chat's own run works, its status line sits under the last line of the chat
 instead of above the composer. "Jump to latest" appears
 only 96dp or more from the end, in the corner on that same side. The composer's

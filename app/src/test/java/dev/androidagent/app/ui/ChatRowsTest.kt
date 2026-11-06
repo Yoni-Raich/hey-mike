@@ -213,4 +213,31 @@ class ChatRowsTest {
         val streaming = ChatMessage("a1", "s", "assistant", "partial", 0L, "streaming")
         assertEquals("partial", turnCopyTexts(listOf(message("u", "user"), streaming))["a1"])
     }
+
+    @Test fun onlyTheLastTextBlockOfEachReplyGetsACopyShortcut() {
+        val rows = chatRows(listOf(
+            message("u1", "user", "ask"),
+            message("a1", "assistant", "progress"),
+            message("tool", "tool", "private tool output"),
+            message("a2", "assistant", "answer"),
+            message("u2", "user", "again"),
+            message("a3", "assistant", "answer"),
+            message("media", "assistant", ""),
+        ), running = false).filterIsInstance<MessageRow>()
+        assertEquals(listOf("a2", "a3"), rows.filter { it.showCopyAction }.map { it.message.id })
+        assertEquals("progress\n\nanswer", rows.first { it.message.id == "a2" }.copyText)
+    }
+
+    @Test fun anActiveReplyDoesNotGetAFinishedCopyShortcut() {
+        val messages = listOf(
+            message("u1", "user", "first"),
+            message("a1", "assistant", "done"),
+            message("u2", "user", "second"),
+            message("a2", "assistant", "working"),
+        )
+        assertEquals(listOf("a1"), chatRows(messages, running = true).filterIsInstance<MessageRow>()
+            .filter { it.showCopyAction }.map { it.message.id })
+        val streaming = ChatMessage("a3", "s", "assistant", "partial", 0L, "streaming")
+        assertFalse(chatRows(listOf(streaming), running = false).filterIsInstance<MessageRow>().single().showCopyAction)
+    }
 }

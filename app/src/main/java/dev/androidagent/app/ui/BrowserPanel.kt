@@ -40,9 +40,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -164,6 +166,7 @@ internal fun BrowserPanel(
     onTakeControl: (String) -> Unit,
     onGiveBack: (String) -> Unit,
     onClosePage: (String) -> Unit,
+    onToggleLayout: (String) -> Unit,
     onStop: () -> Unit,
     attach: (String, BrowserFrame) -> Boolean,
     detach: (String, BrowserFrame) -> Unit,
@@ -201,6 +204,13 @@ internal fun BrowserPanel(
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+            // The icon shows the site the tap asks for.
+            IconButton(onClick = { onToggleLayout(pageKey) }) {
+                Icon(
+                    if (page.desktop) Icons.Outlined.PhoneAndroid else Icons.Outlined.DesktopWindows,
+                    contentDescription = if (page.desktop) "Show the mobile site" else "Show the desktop site",
+                )
             }
             IconButton(onClick = { confirmClose = true }) { Icon(Icons.Outlined.Close, contentDescription = "Close the page") }
         }

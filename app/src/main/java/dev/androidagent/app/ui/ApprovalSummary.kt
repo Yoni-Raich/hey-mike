@@ -92,6 +92,14 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
     // Codex on a computer asks through its own protocol; say what it wants
     // to do there in words, with the command itself when there is one.
     when (method) {
+        "mcpServer/elicitation/request" -> return ApprovalSummary(
+            headline = "Allow this plugin request?",
+            lines = buildList {
+                detail("serverName")?.let { add("Plugin" to it) }
+                detail("message")?.let { add("Request" to it) }
+                add("For" to "This request only")
+            },
+        )
         "item/commandExecution/requestApproval", "execCommandApproval" -> return ApprovalSummary(
             headline = "Run this on the computer?",
             lines = buildList {

@@ -75,8 +75,15 @@ import java.nio.file.StandardCopyOption
  * Credentials stay app-private: this host only ensures CODEX_HOME exists and
  * writes a minimal feature config.toml when needed. It never reads
  * auth.json or any credential file, and it supervises only its own process.
+ *
+ * A second host with its own [codexHome] runs a separate app-server beside
+ * the main one (its own process and proxy), for short side runs that must
+ * not see or disturb the live sign-in.
  */
-class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
+class AndroidRuntimeHost(
+    private val appContext: Context,
+    private val codexHome: File? = null,
+) : RuntimeHost {
 
     private val _status = MutableStateFlow(RuntimeStatus())
     override val status: StateFlow<RuntimeStatus> = _status
@@ -99,7 +106,7 @@ class AndroidRuntimeHost(private val appContext: Context) : RuntimeHost {
     override val homeDirectory: File get() = File(runtimeRoot, "home")
 
     /** App-private CODEX_HOME. */
-    val codexHomeDirectory: File get() = File(homeDirectory, ".codex")
+    val codexHomeDirectory: File get() = codexHome ?: File(homeDirectory, ".codex")
 
     /** App-private TMPDIR (sibling of home, never its parent). */
     val tmpDirectory: File get() = File(runtimeRoot, "tmp")

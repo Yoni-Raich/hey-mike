@@ -25,11 +25,16 @@ import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.AdbTransport
 import dev.androidagent.core.CommandResult
 import dev.androidagent.core.ConnectionPhase
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -614,18 +619,36 @@ class AndroidDeviceToolsTest {
         assertTrue(result.text.endsWith("</hierarchy>"))
     }
 
-    @Test fun readUiTimeoutIsTypedAndNeverFallsBack() = runBlocking {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun readUiTimeoutIsTypedAndNeverFallsBack() = runTest {
         val adb = HangingUiAdb()
         val tools = AndroidDeviceTools(adb)
-        tools.beginRun("ui", Files.createTempDirectory("ws").toFile())
+        val workspace = Files.createTempDirectory("ws").toFile()
+        try {
+            tools.beginRun("ui", workspace)
+            // Use the real default budget; virtual time avoids racing JVM startup
+            // against a 10ms deadline before the first dump can even dispatch.
+            val pending = async { tools.invoke("read_ui", buildJsonObject {}) }
+            runCurrent()
+            assertEquals(1, adb.calls)
+            assertFalse(pending.isCompleted)
 
-        val result = tools.invoke("read_ui", buildJsonObject { put("timeoutMs", 10) })
+            advanceTimeBy(AndroidDeviceTools.READ_UI_DEFAULT_TIMEOUT_MS - 1)
+            runCurrent()
+            assertFalse("The dump must wait until its deadline", pending.isCompleted)
+            assertEquals(0, adb.cancellations)
+            advanceTimeBy(1)
+            runCurrent()
+            assertTrue("The timeout must complete at its deadline", pending.isCompleted)
 
-        assertFalse(result.success)
-        val json = Json.parseToJsonElement(result.text).jsonObject
-        assertEquals("ui_timeout", json["errorType"]!!.jsonPrimitive.content)
-        assertEquals("false", json["stable"]!!.jsonPrimitive.content)
-        assertEquals(1, adb.calls)
+            val result = pending.await()
+            assertFalse(result.success)
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertEquals("ui_timeout", json["errorType"]!!.jsonPrimitive.content)
+            assertEquals("false", json["stable"]!!.jsonPrimitive.content)
+            assertEquals(1, adb.calls)
+            assertEquals(1, adb.cancellations)
+        } finally { workspace.deleteRecursively() }
     }
 
     private class FakeAdb(phase: ConnectionPhase = ConnectionPhase.CONNECTED) : AdbTransport {
@@ -715,13 +738,16 @@ class AndroidDeviceToolsTest {
         private val state = MutableStateFlow(AdbStatus(ConnectionPhase.CONNECTED, "ok", 1))
         override val status: StateFlow<AdbStatus> = state.asStateFlow()
         var calls = 0
+        var cancellations = 0
 
         override suspend fun discover(): List<AdbEndpoint> = emptyList()
         override suspend fun pair(port: Int, code: String) = Unit
         override suspend fun connect(port: Int) = Unit
         override suspend fun execute(command: String, timeoutMs: Long): CommandResult {
             calls++
-            return suspendCancellableCoroutine { }
+            return suspendCancellableCoroutine { continuation ->
+                continuation.invokeOnCancellation { cancellations++ }
+            }
         }
         override suspend fun executeBytes(command: String, timeoutMs: Long): ByteArray = ByteArray(0)
         override suspend fun cancelActive() = Unit

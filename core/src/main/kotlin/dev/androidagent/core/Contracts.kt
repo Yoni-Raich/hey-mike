@@ -238,7 +238,18 @@ data class AgentCommand(
 )
 /** What a compaction did, in tokens, when the engine says; null where it does not. */
 data class CompactResult(val tokensBefore: Long? = null, val tokensAfter: Long? = null, val durationMs: Long? = null)
-data class TokenUsage(val total: Long, val input: Long, val output: Long, val cachedInput: Long = 0, val contextWindow: Long? = null)
+/**
+ * A chat's token counts. [context] is how many tokens the model read on its
+ * latest call: what the chat's context holds now, out of [contextWindow].
+ */
+data class TokenUsage(
+    val total: Long,
+    val input: Long,
+    val output: Long,
+    val cachedInput: Long = 0,
+    val contextWindow: Long? = null,
+    val context: Long? = null,
+)
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
 /**
  * Where one run's wall clock went.
@@ -269,6 +280,8 @@ sealed interface EngineEvent {
     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    /** The server cancelled or otherwise settled this exact pending request. */
+    data class ApprovalResolved(val requestId: String, val threadId: String?, val turnId: String?) : EngineEvent
     data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null,
         /** Transport progress may span turns, but must be scoped to its own threads. */
         val connectionStatus: Boolean = false) : EngineEvent
@@ -277,12 +290,16 @@ sealed interface EngineEvent {
         val itemId: String, val title: String, val detail: String, val state: String,
         val threadId: String, val turnId: String, val remote: Boolean = false,
     ) : EngineEvent
-    data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null,
+        /** The turn stopped because the account is out of usage, as the engine itself said. */
+        val limitReached: LimitReached? = null) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent
     data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null,
         /** The transport failed after work may have reached the computer. */
-        val uncertain: Boolean = false) : EngineEvent
+        val uncertain: Boolean = false,
+        /** The turn stopped because the account is out of usage, as the engine itself said. */
+        val limitReached: LimitReached? = null) : EngineEvent
 }
 interface AgentEngine {
     val events: Flow<EngineEvent>
@@ -304,6 +321,13 @@ interface AgentEngine {
     /** [account] for the chat whose folder is [workspace]: the sign-in its turn will run on. */
     suspend fun account(kind: EngineKind, workspace: File): AccountStatus = account(kind)
     suspend fun refreshUsage() {}
+    /**
+     * Whether chats may use a model's long context window, such as Claude's
+     * 1M. Off keeps the standard window: every reply reads the whole context
+     * again, so a long window spends the usage quota faster. Takes effect at
+     * a chat's next turn. Engines without a choice ignore it.
+     */
+    fun setLongContext(enabled: Boolean) {}
     suspend fun login(): AccountStatus
     suspend fun logout()
     /**
@@ -475,6 +499,8 @@ data class RunState(
     val outcomeUnknown: Boolean = false,
     /** Identifies this execution, so a previous turn's outcome cannot finish a new task. */
     val runId: String? = null,
+    /** The run ended at a usage limit of [engine][LimitReached], not on an ordinary error. */
+    val limit: LimitReached? = null,
 ) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
 

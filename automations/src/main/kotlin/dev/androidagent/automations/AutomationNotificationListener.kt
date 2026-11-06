@@ -59,6 +59,8 @@ class AutomationNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val posted = sbn ?: return
+        // Profile identity is checked before package, payload, logging or consumers.
+        if (!PersonalNotificationPolicy.allows(this, posted)) return
         if (posted.packageName == packageName) return
         val notification = posted.notification ?: return
         if (notification.flags and Notification.FLAG_ONGOING_EVENT != 0) return

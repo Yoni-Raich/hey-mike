@@ -43,17 +43,21 @@ import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -75,6 +79,8 @@ data class BrowserPageState(
     val userControlled: Boolean = false,
     /** Changes when phone screen work asks the UI to leave this page's panel. */
     val panelDismissals: Long = 0,
+    /** The page is asked for as a desktop site. */
+    val desktop: Boolean = false,
 )
 
 /**
@@ -135,6 +141,10 @@ class AndroidBrowserHost(
     private val pendingNotes = ConcurrentHashMap<String, MutableList<String>>()
     @Volatile private var count = 0
     private var workersGuarded = false
+    /** Chats whose pages are desktop sites, kept for their next page too. Main thread. */
+    private val desktopChats = mutableSetOf<String>()
+    /** Where the user's own layout switch runs. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val shown = MutableStateFlow<Map<String, BrowserPageState>>(emptyMap())
     /** Every open page, by chat key. */
@@ -207,6 +217,7 @@ class AndroidBrowserHost(
             val session = BrowserSession(client, policy, nativeTap = { x, y -> WebViewInput.tap(page.view, x, y) },
                 confirm = { summary -> confirm(key, summary) })
             session.start()
+            if (onMain { page.state.desktop }) session.desktopLayout(true, reload = false)
             if (fresh) session.open("about:blank")
             onMain {
                 page.session = session
@@ -301,11 +312,13 @@ class AndroidBrowserHost(
             setSupportMultipleWindows(true)
             mediaPlaybackRequiresUserGesture = true
         }
+        applyLayout(view, key in desktopChats)
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, false)
         view.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         view.setBackgroundColor(Color.WHITE)
         val window = FrameLayout(context.applicationContext)
         val page = Page(key, marker, view, base, window)
+        page.state = page.state.copy(desktop = key in desktopChats)
         window.addView(view, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -348,6 +361,44 @@ class AndroidBrowserHost(
         windows.addView(window, hidden())
         view.loadDataWithBaseURL(marker, String(MARKER_PAGE), "text/html", "UTF-8", marker)
         return page
+    }
+
+    /**
+     * The WebView's half of [DesktopView]: the user agent, and a layout wider
+     * than the phone, shrunk to fit and pinch-zoomable. Main thread.
+     */
+    private fun applyLayout(view: WebView, desktop: Boolean) = view.settings.run {
+        // Null puts back the WebView's own user agent.
+        userAgentString = if (desktop) DesktopView.userAgent(WebSettings.getDefaultUserAgent(context)) else null
+        useWideViewPort = desktop
+        loadWithOverviewMode = desktop
+        builtInZoomControls = desktop
+        displayZoomControls = false
+    }
+
+    override suspend fun layout(key: String, desktop: Boolean): WebAction {
+        val session = onMain {
+            val page = pages[key] ?: throw WebFailure("no_page", "This chat has no page open.", "Open an address first.")
+            if (desktop) desktopChats += key else desktopChats -= key
+            applyLayout(page.view, desktop)
+            publish(page, page.state.copy(desktop = desktop))
+            page.session
+        }
+        // A page not connected yet gets the viewport rewrite when it connects.
+        return session?.desktopLayout(desktop) ?: onMain {
+            pages[key]?.view?.reload()
+            WebAction(if (desktop) "desktop site; the page was reloaded" else "mobile site; the page was reloaded")
+        }
+    }
+
+    /** The user switched the page between the desktop and the mobile site. Main thread. */
+    fun toggleLayout(key: String) {
+        val page = pages[key] ?: return
+        val desktop = !page.state.desktop
+        scope.launch {
+            runCatching { layout(key, desktop) }
+            page.session?.note("The user switched this page to the ${if (desktop) "desktop" else "mobile"} site and it reloaded. Take a snapshot before acting.")
+        }
     }
 
     /**

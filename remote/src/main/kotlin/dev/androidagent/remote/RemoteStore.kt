@@ -26,12 +26,14 @@ import dev.androidagent.core.EngineKind
  * How much Codex on a computer may do without asking.
  *
  * The user picks this per computer. [ASK] is Codex's own default preset:
- * writes inside the project folder run, anything else waits for an answer on
- * the phone. [FULL] is what the phone's own Codex does.
+ * writes inside the project folder run, extra access asks on the phone.
+ * [FULL] gives Codex access to all files, while keeping its approval path for
+ * risky commands. Never disables that path and makes Codex reject those
+ * commands instead. Keep the persisted FULL name for existing computers.
  */
 enum class RemoteAccess(val sandbox: String, val approvalPolicy: String) {
     ASK("workspace-write", "on-request"),
-    FULL("danger-full-access", "never"),
+    FULL("danger-full-access", "on-request"),
 }
 
 /** A computer the user added. The password is kept apart, in [RemoteStore]. */

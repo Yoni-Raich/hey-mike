@@ -1,0 +1,5 @@
+-keep class dev.heymike.connect.ConnectMessage { *; }
+-keep class dev.heymike.connect.UiTrampolineActivity { *; }
+-keep class * extends dev.heymike.connect.MikeConnectService { *; }
+-keep class dev.heymike.connect.IMikeConnect$Stub { *; }
+-keep class dev.heymike.connect.IConnectCallback$Stub { *; }

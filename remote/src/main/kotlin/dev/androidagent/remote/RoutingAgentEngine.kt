@@ -150,6 +150,11 @@ class RoutingAgentEngine(
         return status
     }
     override suspend fun refreshUsage() = local.refreshUsage()
+    override fun setLongContext(enabled: Boolean) {
+        local.setLongContext(enabled)
+        claude?.setLongContext(enabled)
+        hub.setLongContext(enabled)
+    }
     override suspend fun login(): AccountStatus = local.login()
     override suspend fun logout() = local.logout()
     override suspend fun models(): List<String> = local.models()
@@ -330,6 +335,7 @@ class RoutingAgentEngine(
     private fun fromClaude(event: EngineEvent): EngineEvent = when (event) {
         is EngineEvent.ToolCall -> event.copy(requestId = CLAUDE_TAG + event.requestId)
         is EngineEvent.Approval -> event.copy(requestId = CLAUDE_TAG + event.requestId)
+        is EngineEvent.ApprovalResolved -> event.copy(requestId = CLAUDE_TAG + event.requestId)
         else -> event
     }
 
@@ -374,6 +380,7 @@ class RoutingAgentEngine(
         val translated = when (event) {
             is EngineEvent.ToolCall -> event.copy(requestId = tag(computer, event.requestId, prefix))
             is EngineEvent.Approval -> event.copy(requestId = tag(computer, event.requestId, prefix))
+            is EngineEvent.ApprovalResolved -> event.copy(requestId = tag(computer, event.requestId, prefix))
             // The computer's own sign-in and quota are not the phone's.
             is EngineEvent.AccountChanged -> null
             is EngineEvent.UsageChanged -> event.takeIf { it.threadId != null }

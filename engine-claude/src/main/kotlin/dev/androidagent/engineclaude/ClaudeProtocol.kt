@@ -103,6 +103,20 @@ internal object ClaudeProtocol {
     /** Keep the computer's own tool-search setting and Claude Code's default deferral. */
     val COMPUTER_CHAT_ENV: Map<String, String> = CHAT_ENV - "ENABLE_TOOL_SEARCH"
 
+    /** Claude Code's switch for the 1M window; while set, the CLI keeps models at their standard window. */
+    const val DISABLE_LONG_CONTEXT = "CLAUDE_CODE_DISABLE_1M_CONTEXT"
+
+    /** [env] for a chat process, with the 1M window turned off unless [longContext]. */
+    fun windowEnv(env: Map<String, String>, longContext: Boolean): Map<String, String> =
+        if (longContext) env else env + (DISABLE_LONG_CONTEXT to "1")
+
+    /**
+     * [model] for a chat process. With the long window off, an explicit
+     * `[1m]` alias is dropped, since the CLI refuses it then.
+     */
+    fun windowModel(model: String, longContext: Boolean): String =
+        if (longContext) model else model.removeSuffix("[1m]")
+
     /** Arguments for one chat process. Never `--bare`: it ignores subscriptions. */
     fun chatArgs(
         sessionId: String,
@@ -189,6 +203,20 @@ internal object ClaudeProtocol {
         if (userSettingsOnly) { add("--setting-sources"); add("user") }
         add("--no-session-persistence")
     }
+
+    /** The model that starts a usage window: the smallest, since the answer is never read. */
+    const val WINDOW_MODEL = "haiku"
+
+    /**
+     * A process that sends one short message to start the plan's 5-hour
+     * window: no tools, no settings, no transcript, a one-line system prompt.
+     */
+    fun windowStartArgs(): List<String> = listOf(
+        "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+        "--model", WINDOW_MODEL,
+        "--system-prompt", "This is an automatic message from Hey Mike that starts the usage window. Reply with one word.",
+    )
 
     val AUTH_STATUS_ARGS = listOf("auth", "status", "--json")
     val AUTH_LOGIN_ARGS = listOf("auth", "login", "--claudeai")
@@ -553,13 +581,20 @@ internal object ClaudeProtocol {
         val type = info.string("rateLimitType")
         if (type == "overage") return null
         val name = windowName(type.ifBlank { "five_hour" }).first
-        val resetsAt = (info["resetsAt"] as? JsonPrimitive)?.longOrNull
-            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull }
+        val resetsAt = rejectionReset(info)
         val base = "You have reached your Claude $name usage limit."
         if (resetsAt == null || resetsAt <= 0) return base
         val reset = Instant.ofEpochSecond(resetsAt).atZone(zone)
         val pattern = if (resetsAt - now.epochSecond < 24 * 3600) "HH:mm" else "EEE d MMM, HH:mm"
         return "$base It resets at ${reset.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))}."
+    }
+
+    /** Epoch seconds at which a `rejected` limit resets, when the CLI said. */
+    fun rejectionReset(info: JsonObject): Long? {
+        val type = info.string("rateLimitType")
+        return ((info["resetsAt"] as? JsonPrimitive)?.longOrNull
+            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull })
+            ?.takeIf { it > 0 }
     }
 
     /** Token usage from a `result` frame. Input counts cache reads and writes, as the context does. */
@@ -573,6 +608,17 @@ internal object ClaudeProtocol {
             ?.mapNotNull { ((it as? JsonObject)?.get("contextWindow") as? JsonPrimitive)?.longOrNull }
             ?.maxOrNull()
         return TokenUsage(input + output, input, output, cached, window)
+    }
+
+    /**
+     * What one model call read: fresh input plus cache writes and reads, the
+     * whole context as it stood. Null without usage, or for an empty count.
+     */
+    fun contextTokens(message: JsonObject): Long? {
+        val usage = message["usage"] as? JsonObject ?: return null
+        fun count(key: String) = (usage[key] as? JsonPrimitive)?.longOrNull?.coerceAtLeast(0) ?: 0L
+        return (count("input_tokens") + count("cache_creation_input_tokens") + count("cache_read_input_tokens"))
+            .takeIf { it > 0 }
     }
 
     /**

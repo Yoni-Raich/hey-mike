@@ -87,7 +87,13 @@ class ClaudeStreamMapperTest {
 
         val limits = events.filterIsInstance<EngineEvent.UsageChanged>().first { it.limits != null }.limits!!
         assertEquals(listOf("5-hour", "weekly"), limits.map { it.name })
-        assertNotNull(events.filterIsInstance<EngineEvent.UsageChanged>().single { it.usage != null }.usage)
+        // One event when the call reports its context (twice, same size), one with the turn's totals.
+        val usage = events.filterIsInstance<EngineEvent.UsageChanged>().mapNotNull { it.usage }
+        assertEquals(2, usage.size)
+        assertEquals(10L + 6925L, usage.first().context)
+        assertEquals(10L + 6925L, usage.last().context)
+        assertEquals(200_000L, usage.last().contextWindow)
+        assertEquals(10L + 6925L + 43L, usage.last().total)
 
         val finished = events.last() as EngineEvent.TurnFinished
         assertEquals("completed", finished.status)
@@ -180,6 +186,8 @@ class ClaudeStreamMapperTest {
         assertTrue(signals.events().none { it is EngineEvent.TurnFinished || it is EngineEvent.MessageCompleted || it is EngineEvent.TextDelta })
         assertTrue(compact.done.isCompleted)
         assertTrue(signals.any { it is Signal.Ended && it.turn === compact && it.status == "completed" })
+        // The chat's context is the compacted size, not the summarizing call's.
+        assertEquals(911L, signals.events().filterIsInstance<EngineEvent.UsageChanged>().mapNotNull { it.usage }.last().context)
     }
 
     @Test fun aSyntheticAuthErrorIsTheTurnErrorNotMikesWords() {
@@ -207,6 +215,18 @@ class ClaudeStreamMapperTest {
             "You have reached your Claude 5-hour usage limit. It resets at 16:30.",
             events.filterIsInstance<EngineEvent.TurnFinished>().single().error,
         )
+        val limit = events.filterIsInstance<EngineEvent.TurnFinished>().single().limitReached
+        assertEquals(1790785800L, limit?.resetsAt)
+    }
+
+    @Test fun anOrdinaryFailureIsNotAUsageLimit() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        val events = mapper.feed(listOf(
+            line("""{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1790785800,"rateLimitType":"five_hour"}}"""),
+            line("""{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Overloaded"}"""),
+        )).events()
+        assertEquals(null, events.filterIsInstance<EngineEvent.TurnFinished>().single().limitReached)
     }
 
     @Test fun mcpToolUseIsLeftToTheToolBridge() {

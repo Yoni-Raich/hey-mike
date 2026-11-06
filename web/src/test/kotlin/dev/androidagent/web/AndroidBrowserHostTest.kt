@@ -185,4 +185,24 @@ class AndroidBrowserHostTest {
         host.detach(key, frameB)
         assertEquals(1, frameB.childCount)
     }
+
+    @Test fun aDesktopSiteStaysWithTheChatForItsNextPage() = runBlocking {
+        val host = host()
+        assertFalse(host.pageStates.value.getValue(key).desktop)
+        host.layout(key, desktop = true)
+        assertTrue(host.pageStates.value.getValue(key).desktop)
+        host.closeByUser(key)
+        host.open(key)
+        assertTrue("the chat asked for desktop sites", host.pageStates.value.getValue(key).desktop)
+        host.layout(key, desktop = false)
+        assertFalse(host.pageStates.value.getValue(key).desktop)
+        host.open("other-chat")
+        assertFalse("another chat keeps its own layout", host.pageStates.value.getValue("other-chat").desktop)
+    }
+
+    @Test fun layoutNeedsAPage() = runBlocking {
+        val host = host()
+        val failure = runCatching { host.layout("no-such-chat", desktop = true) }.exceptionOrNull()
+        assertEquals("no_page", (failure as WebFailure).errorType)
+    }
 }

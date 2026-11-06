@@ -91,6 +91,7 @@ import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -132,7 +133,7 @@ private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
     MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
-    PRIVACY,
+    PRIVACY, CONNECTED_APPS,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -163,6 +164,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.ASSISTANT -> "Power button assistant"
     SettingsRoute.AUTOMATIONS -> "Standing rules"
     SettingsRoute.PRIVACY -> "Privacy and consent"
+    SettingsRoute.CONNECTED_APPS -> "Connected apps"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -182,6 +184,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.ASSISTANT -> Icons.Outlined.Assistant
     SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
     SettingsRoute.PRIVACY -> Icons.Outlined.Shield
+    SettingsRoute.CONNECTED_APPS -> Icons.Outlined.Key
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -321,6 +324,11 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     // No dots here on purpose: these are choices, not steps, and marking them
     // green would teach the eye to skip the markers that do mean something.
     HubGroup("How Mike works") {
+        SettingsHubRow(
+            icon = SettingsRoute.CONNECTED_APPS.icon(), title = "Connected apps",
+            summary = connectedAppsHubSummary(),
+            onClick = { onOpen(SettingsRoute.CONNECTED_APPS) },
+        )
         SettingsHubRow(
             icon = SettingsRoute.AUTOMATIONS.icon(),
             title = "Standing rules",
@@ -512,6 +520,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
             SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
             SettingsRoute.PRIVACY -> PrivacySettings(state, actions)
+            SettingsRoute.CONNECTED_APPS -> ConnectedAppsSettings()
         }
     }
 }
@@ -605,6 +614,56 @@ private fun ColumnScope.AccountSettings(state: AgentUiState, actions: AgentUiAct
     Spacer(Modifier.height(8.dp))
     Text(providerName(EngineKind.CLAUDE), style = MaterialTheme.typography.titleMedium)
     ClaudeCard(state.claude, actions)
+    Spacer(Modifier.height(8.dp))
+    UsageWindowSettings(state.usageWindows, actions)
+}
+
+/**
+ * A plan's 5-hour window starts at the first message after it resets, so an
+ * account nobody writes to has no window running. This starts it for them.
+ */
+@Composable
+private fun ColumnScope.UsageWindowSettings(windows: UsageWindowsUi, actions: AgentUiActions) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text("Start 5-hour windows by themselves", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Switch(checked = windows.enabled, onCheckedChange = actions.onUsageWindows)
+    }
+    Explanation(
+        "The 5-hour limit only starts counting at your first message after it resets. With this on, Mike sends " +
+            "each account one short message (\"hi\") the minute its window ends, so the next five hours start " +
+            "right away. Every saved Codex account and the Claude account, without switching account or touching " +
+            "your chats. Each start uses a very small part of the quota.",
+    )
+    if (!windows.enabled) return
+    windows.rows.forEach { row ->
+        StatusLine(
+            title = "${row.name} · ${providerName(row.engine)}",
+            detail = row.line,
+            color = if (row.failing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+        )
+    }
+    if (windows.rows.isEmpty()) Explanation("No account is signed in yet.")
+    if (!windows.exactAlarms) {
+        Explanation(
+            "Alarms are approximate: Android may start a window up to an hour late while the phone sleeps. " +
+                "Turn on \"Alarms & reminders\" for Hey Mike to start it on the minute.",
+        )
+        OutlinedButton(onClick = actions.onOpenExactAlarmSettings, modifier = Modifier.fillMaxWidth()) {
+            LoadingButtonContent(loading = false, icon = Icons.Outlined.Schedule, label = "Allow exact alarms")
+        }
+    }
+    OutlinedButton(
+        onClick = actions.onStartUsageWindows,
+        enabled = !windows.busy,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        LoadingButtonContent(
+            loading = windows.busy,
+            icon = Icons.Outlined.PlayArrow,
+            label = "Start idle windows now",
+            loadingLabel = "Starting…",
+        )
+    }
 }
 
 @Composable
@@ -1177,7 +1236,8 @@ private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActio
     windows.forEach { window -> UsageWindowRow(window) }
     Text(
         if (usage == null) "Token usage is not available yet." else
-            "${usage.total} tokens · ${usage.input} input · ${usage.output} output · ${usage.cachedInput} cached",
+            "${usage.total} tokens · ${usage.input} input · ${usage.output} output · ${usage.cachedInput} cached" +
+                (contextFill(usage)?.let { " · context ${it.label}" } ?: ""),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
