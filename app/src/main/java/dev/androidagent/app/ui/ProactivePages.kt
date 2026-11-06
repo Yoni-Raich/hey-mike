@@ -92,6 +92,7 @@ internal fun ConnectionsSection(state: AgentUiState, actions: AgentUiActions, op
         onUnlink = { actions.onConnectorUnlink(ConnectorIds.WHATSAPP_WEB) },
     )
     AccountConnectorsCard(state, actions)
+    AccountConnectorsCard(state, actions, EngineKind.CODEX)
     val alerts = desk.profile.alerts
     NavRow(Icons.Outlined.Notifications, taskText("Alerts", "התראות"),
         if (!alerts.enabled) taskText("Off: Mike writes only in the Manager chat", "כבויות: מייק כותב רק בצ׳אט המנהל")
@@ -109,29 +110,30 @@ internal fun ConnectionsSection(state: AgentUiState, actions: AgentUiActions, op
  * through the switched-on ones, with the read-only tools only.
  */
 @Composable
-private fun AccountConnectorsCard(state: AgentUiState, actions: AgentUiActions) {
+private fun AccountConnectorsCard(state: AgentUiState, actions: AgentUiActions, kind: EngineKind = EngineKind.CLAUDE) {
     val desk = state.taskDesk
-    val accounts = desk.accounts.filter { it.engine == EngineKind.CLAUDE }
+    val accounts = desk.accounts.filter { it.engine == kind }
     Column(Modifier.fillMaxWidth().border(1.dp, ControlLine.copy(alpha = 0.5f), RoundedCornerShape(14.dp)).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Icons.Outlined.Cloud, null, Modifier.size(22.dp))
-            Text(taskText("Through your Claude account", "דרך חשבון Claude שלך"), Modifier.weight(1f),
+            Text(if (kind == EngineKind.CLAUDE) taskText("Through your Claude account", "דרך חשבון Claude שלך") else taskText("Through your ChatGPT account", "דרך חשבון ChatGPT שלך"), Modifier.weight(1f),
                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         }
-        Text(taskText("Gmail, Calendar or Drive you connected in claude.ai work here with no extra sign-in. Mike reads them for notifications and when you ask in a chat, with only the tools the service marks read-only; deleting, labels and drafts stay blocked.",
+        if (kind == EngineKind.CODEX) Text(taskText("Switched-on ChatGPT connections are read through Mike's account_read tool. Only read-only tools are allowed.", "חיבורי ChatGPT שהפעלת נקראים דרך הכלי account_read של מייק. רק כלי קריאה מורשים."), style = MaterialTheme.typography.bodySmall)
+        else Text(taskText("Gmail, Calendar or Drive you connected in claude.ai work here with no extra sign-in. Mike reads them for notifications and when you ask in a chat, with only the tools the service marks read-only; deleting, labels and drafts stay blocked.",
             "ג׳ימייל, יומן או דרייב שחיברת ב־claude.ai עובדים כאן בלי התחברות נוספת. מייק קורא אותם להתראות וכשמבקשים בצ׳אט, רק בכלים שהשירות מסמן כקריאה בלבד; מחיקה, תוויות וטיוטות חסומות."),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (desk.settings.passEngine != EngineKind.CLAUDE) Text(
-            taskText("Used only when background checks run on Claude. They run on Codex now; Codex account connectors are not supported yet.",
-                "פעיל רק כשהבדיקות ברקע רצות על Claude. כרגע הן רצות על Codex, ובחיבורי החשבון של Codex עדיין אין תמיכה."),
+        if (desk.settings.passEngine != kind) Text(
+            taskText("For background checks, select ${kind.name} as the check engine.",
+                "כדי להשתמש בבדיקות ברקע, בחרו במנוע ${kind.name}."),
             style = MaterialTheme.typography.bodySmall, color = BoardAmber)
         if (accounts.isEmpty() && !desk.accountsChecked) Text(
-            taskText("Checking your Claude account…", "בודק את חשבון Claude שלך…"),
+            taskText("Checking your account…", "בודק את החשבון שלך…"),
             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         else if (accounts.isEmpty()) Text(
-            taskText("No connectors found yet. Sign in to Claude in Settings and connect services at claude.ai › Settings › Connectors.",
-                "עוד לא נמצאו חיבורים. התחברו ל־Claude בהגדרות וחברו שירותים ב־claude.ai › הגדרות › Connectors."),
+            taskText("No connections found. Check your ${kind.name} account connections.",
+                "עוד לא נמצאו חיבורים. בדקו את החיבורים בחשבון ${kind.name}."),
             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         accounts.forEach { account ->
             val key = dev.androidagent.core.proactive.ContextRouter.key(account)

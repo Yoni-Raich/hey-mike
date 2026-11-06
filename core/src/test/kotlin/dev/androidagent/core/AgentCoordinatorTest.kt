@@ -187,6 +187,30 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun refreshedCodexThreadKeepsConversationWithoutReplayingTheOldRequest() = runTest {
+        val rig = Rig(this)
+        rig.engine.threads = mapOf(EngineKind.CODEX to "old-thread")
+        rig.coordinator.send("one", "The account connection is enabled")
+        runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("I will use read-only tools.", "old-thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "old-thread", turnId = "turn"))
+        advanceUntilIdle()
+
+        rig.engine.threads = mapOf(EngineKind.CODEX to "new-thread")
+        rig.coordinator.send("one", "Check the available tools")
+        runCurrent()
+        assertEquals("new-thread", rig.store.getSession("one")!!.engineThreadId)
+        val prompt = rig.engine.prompts.last()
+        assertTrue(prompt.contains("[Earlier in this chat]"))
+        assertTrue(prompt.contains("The account connection is enabled"))
+        assertTrue(prompt.contains("I will use read-only tools."))
+        assertTrue(prompt.endsWith("Check the available tools"))
+        assertTrue(prompt.contains("do not repeat"))
+        assertEquals(2, rig.engine.turns)
+        assertTrue(rig.store.messages.any { it.text == "The account connection is enabled" })
+        rig.close()
+    }
+
     @Test fun aTurnForTheOtherEngineMovesTheChatAndCarriesWhatWasSaid() = runTest {
         val rig = Rig(this)
         rig.engine.threads = mapOf(EngineKind.CODEX to "codex-thread", EngineKind.CLAUDE to "claude-thread")

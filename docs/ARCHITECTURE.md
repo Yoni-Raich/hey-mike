@@ -3576,8 +3576,24 @@ Design: `docs/design/proactive-manager.md`. Decisions:
   the user switched that connector on (`account:claude:<server>` in
   `connectors`). A chat with none keeps `--strict-mcp-config`. The host keeps `ENABLE_CLAUDEAI_MCP_SERVERS=false`
   unless the engine passes `true` for that one process; the Claude proxy
-  allows `mcp-proxy.anthropic.com`, the connectors' only extra host. Codex has no account route: its app tools were not
-  visible on the phone and cannot be limited to read-only.
+  allows `mcp-proxy.anthropic.com`, the connectors' only extra host.
+- Codex account discovery uses the reserved `codex_apps` MCP catalog and its
+  connector metadata. The phone host enables apps for discovery, while every
+  model chat disables native apps. `account_read` is a per-run gateway: only
+  user-enabled tools with explicit safe read annotations pass, rechecked
+  before dispatch. Reads use `mcpServer/tool/call` on a separate ephemeral
+  thread without a model turn. Native app config alone is insufficient:
+  direct MCP calls bypass that policy in the tested 0.163.0 PC binary.
+  The gateway owns Stop revocation; normal coordinator tool tracing and
+  cancellation still apply. Sources shows separate Claude and ChatGPT cards.
+- Phone-owned Codex user chats record the tool catalog used at thread/start
+  in `.mike-codex-tools-v1.json` inside their private session workspace. In the
+  tested 0.163.0 binary, resume accepts changed dynamicTools but the model
+  retains the old catalog. Missing or changed catalog evidence therefore
+  starts a fresh native thread; AgentCoordinator's existing changed-id path
+  carries recent conversation context (24,000 characters). Visible local
+  history and the old native thread remain. Matching catalogs resume, and
+  imported computer sessions are not migrated.
 - `tasks(mode="manager_chat", limit?, offset?)` lets ordinary and team-member
   chats, including computer chats that reach the phone tools, read the
   Manager chat's user and assistant messages (newest last, at most 50 per page,
