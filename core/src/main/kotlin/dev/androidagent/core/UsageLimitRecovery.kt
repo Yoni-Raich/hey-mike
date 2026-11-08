@@ -33,9 +33,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -510,18 +507,6 @@ class LimitBook(private val file: File) {
 
     @Synchronized
     fun write(saved: Saved) {
-        val parent = file.parentFile ?: return
-        if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) return
-        val temp = File.createTempFile(".${file.name}.", ".tmp", parent)
-        try {
-            temp.writeText(json.encodeToString(Saved.serializer(), saved))
-            try {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
-        } finally {
-            temp.delete()
-        }
+        AtomicFiles.writeText(file, json.encodeToString(Saved.serializer(), saved))
     }
 }

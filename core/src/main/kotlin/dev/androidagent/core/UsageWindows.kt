@@ -23,9 +23,6 @@ package dev.androidagent.core
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -215,19 +212,7 @@ class UsageWindowJournal(
     }.getOrDefault(Book())
 
     private fun write(book: Book) {
-        val parent = file.parentFile ?: return
-        if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) return
-        val temp = File.createTempFile(".${file.name}.", ".tmp", parent)
-        try {
-            temp.writeText(json.encodeToString(Book.serializer(), book))
-            try {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
-        } finally {
-            temp.delete()
-        }
+        AtomicFiles.writeText(file, json.encodeToString(Book.serializer(), book))
     }
 
     @Serializable

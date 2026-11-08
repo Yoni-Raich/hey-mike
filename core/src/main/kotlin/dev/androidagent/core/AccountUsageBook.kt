@@ -23,9 +23,6 @@ package dev.androidagent.core
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 /** The last quota Codex reported for one saved account, and when it did. */
 data class AccountUsage(val accountId: String, val limits: List<UsageLimit>, val readAtMillis: Long)
@@ -68,19 +65,7 @@ class AccountUsageBook(
     }.getOrDefault(emptyList())
 
     private fun write(entries: List<Entry>) {
-        val parent = file.parentFile ?: return
-        if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) return
-        val temp = File.createTempFile(".${file.name}.", ".tmp", parent)
-        try {
-            temp.writeText(json.encodeToString(Book.serializer(), Book(entries)))
-            try {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
-        } finally {
-            temp.delete()
-        }
+        AtomicFiles.writeText(file, json.encodeToString(Book.serializer(), Book(entries)))
     }
 
     @Serializable
