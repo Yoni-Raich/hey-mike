@@ -35,10 +35,8 @@ import kotlinx.serialization.json.put
  * free-form map, such as open_intent's extras or workflow_runner's params, so
  * it allows any keys.
  *
- * A bare `{"type":"array"}` is not a description of anything: a client with no
- * `items` renders it as an array of strings, and a model then sends each
- * element as quoted JSON and is refused for it. So spell every array out in
- * [structured] with its `items`.
+ * Spell every array out in [structured] with its `items`; [ToolSchemaAudit]
+ * explains why a bare `{"type":"array"}` is a defect.
  */
 fun toolDefinition(
     name: String,

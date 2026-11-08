@@ -23,13 +23,12 @@ package dev.androidagent.core
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** The `{"ok":false,"errorType":…,"message":…}` text a tool answers with when it refuses or fails. */
-fun toolErrorJson(errorType: String, message: String): String = buildJsonObject {
-    put("ok", false)
-    put("errorType", errorType)
-    put("message", message)
-}.toString()
-
-/** [toolErrorJson] as an unsuccessful [ToolResult]. */
-fun toolRefusal(errorType: String, message: String): ToolResult =
-    ToolResult(toolErrorJson(errorType, message), success = false)
+/** The unsuccessful `{"ok":false,"errorType":…,"message":…}` result a tool answers with when it refuses or fails. */
+fun toolRefusal(errorType: String, message: String): ToolResult = ToolResult(
+    buildJsonObject {
+        put("ok", false)
+        put("errorType", errorType)
+        put("message", message)
+    }.toString(),
+    success = false,
+)

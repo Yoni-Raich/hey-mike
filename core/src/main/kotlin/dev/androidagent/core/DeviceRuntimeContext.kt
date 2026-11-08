@@ -39,12 +39,15 @@ import java.util.Locale
  * for tasks it could do.
  */
 object DeviceRuntimeContext {
+    /** The first line of every snapshot. */
+    const val HEADER = "[Trusted Android Agent runtime context]"
+
     fun render(
         capabilities: DeviceCapabilities,
         now: ZonedDateTime = ZonedDateTime.now(),
     ): String = buildString {
         val status = capabilities.adbStatus
-        appendLine("[Trusted Android Agent runtime context]")
+        appendLine(HEADER)
         appendLine(
             "This snapshot replaces every older snapshot, and any earlier statement in this chat " +
                 "that device tools were unavailable.",
@@ -53,7 +56,7 @@ object DeviceRuntimeContext {
         // date a calendar happened to show, and got it wrong.
         appendLine(
             "Phone local time: " +
-                now.format(DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", Locale.ENGLISH)) +
+                now.format(TIME_FORMAT) +
                 " (${now.zone.id}). A task that names a date means that date, not today.",
         )
         appendLine(
@@ -61,11 +64,8 @@ object DeviceRuntimeContext {
                 ?: "Wireless ADB (optional): ${status.phase.name.lowercase()}",
         )
         appendLine(
-            if (capabilities.anyReady) {
-                "Device tools you can call now: ${capabilities.ready.sorted().joinToString(", ")}"
-            } else {
-                "Device tools you can call now: none"
-            },
+            "Device tools you can call now: " +
+                if (capabilities.anyReady) capabilities.ready.sorted().joinToString(", ") else "none",
         )
         if (capabilities.blocked.isNotEmpty()) {
             appendLine("Tools that need a backend that is off: " + capabilities.blocked.sorted().joinToString(", "))
@@ -95,6 +95,8 @@ object DeviceRuntimeContext {
             },
         )
     }
+
+    private val TIME_FORMAT = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", Locale.ENGLISH)
 
     /** ADB phases that mean "wait", not "ask the user to start over". */
     private val SETUP_PHASES = setOf(

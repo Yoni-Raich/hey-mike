@@ -514,8 +514,7 @@ class WorkflowToolGateway(
         if (report.str("errorType") == "stopped") return result
         val observation = try {
             val reply = router().invoke("read_ui", buildJsonObject { put("force", true) })
-            runCatching { Json.parseToJsonElement(reply.text) }.getOrNull()
-                ?: JsonPrimitive(reply.text)
+            jsonOrText(reply.text)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

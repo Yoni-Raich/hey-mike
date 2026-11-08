@@ -5,18 +5,21 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ToolRefusalTest {
-    @Test fun theTextKeepsItsKeyOrderAndEscaping() {
-        assertEquals(
-            """{"ok":false,"errorType":"denied","message":"No \"x\" here"}""",
-            toolErrorJson("denied", "No \"x\" here"),
-        )
+    @Test fun aRefusalKeepsItsKeyOrderAndEscaping() {
+        val result = toolRefusal("denied", "No \"x\" here")
+        assertFalse(result.success)
+        assertEquals("""{"ok":false,"errorType":"denied","message":"No \"x\" here"}""", result.text)
     }
 
-    @Test fun aRefusalIsAnUnsuccessfulResultWithThatText() {
-        val result = toolRefusal("bad_mode", "Choose a mode.")
-        assertFalse(result.success)
-        assertEquals(toolErrorJson("bad_mode", "Choose a mode."), result.text)
-        assertEquals(null, result.imageBase64)
-        assertEquals(emptyList<String>(), result.attachmentPaths)
+    @Test fun theDefaultApprovalRefusalsKeepTheirFormerLiterals() {
+        // A11yDeviceTools used to spell these out by hand.
+        assertEquals(
+            "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"This intent needs approval in the app.\"}",
+            toolRefusal("approval_unavailable", "This intent needs approval in the app.").text,
+        )
+        assertEquals(
+            "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"Sending needs approval in the app. Nothing was sent.\"}",
+            toolRefusal("approval_unavailable", "Sending needs approval in the app. Nothing was sent.").text,
+        )
     }
 }

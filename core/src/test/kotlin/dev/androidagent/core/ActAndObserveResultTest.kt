@@ -25,7 +25,7 @@ class ActAndObserveResultTest {
     }
 
     @Test fun aThrownObservationTellsTheModelNotToRepeat() {
-        val result = actAndObserveObservationFailed(IllegalStateException("gone"))
+        val result = actAndObserveObservationFailure(IllegalStateException("gone"))
         assertFalse(result.success)
         assertEquals("Observation failed: gone. Do not repeat the completed action.", result.text)
     }

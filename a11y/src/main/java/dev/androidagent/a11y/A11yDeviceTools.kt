@@ -28,7 +28,7 @@ import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
 import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
-import dev.androidagent.core.actAndObserveObservationFailed
+import dev.androidagent.core.actAndObserveObservationFailure
 import dev.androidagent.core.actAndObserveResult
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.READ_UI_DESCRIPTION
@@ -81,20 +81,14 @@ class A11yDeviceTools(
     /** Steps the floating card aside (true) and back (false) around a whole-display capture. */
     private val observationVisibility: suspend (Boolean) -> Unit = {},
     private val authorizeIntent: suspend (LocalIntentRequest, () -> ToolResult) -> ToolResult = { _, _ ->
-        ToolResult(
-            "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"This intent needs approval in the app.\"}",
-            success = false,
-        )
+        toolRefusal("approval_unavailable", "This intent needs approval in the app.")
     },
     /**
      * Gates a press of Send in another app. The default refuses, so a host
      * that wires no approval can never send a message on its own.
      */
     private val authorizeSend: suspend (SendRequest, suspend () -> ToolResult) -> ToolResult = { _, _ ->
-        ToolResult(
-            "{\"ok\":false,\"errorType\":\"approval_unavailable\",\"message\":\"Sending needs approval in the app. Nothing was sent.\"}",
-            success = false,
-        )
+        toolRefusal("approval_unavailable", "Sending needs approval in the app. Nothing was sent.")
     },
     /** Move the approval screen out of the way so the app underneath is back in front. */
     private val leaveApprovalScreen: () -> Unit = {},
@@ -249,7 +243,7 @@ class A11yDeviceTools(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            actAndObserveObservationFailed(failure)
+            actAndObserveObservationFailure(failure)
         }
         return actAndObserveResult(result, observation)
     }
@@ -944,9 +938,7 @@ class A11yDeviceTools(
                 mapOf("timeoutMs" to "integer"),
                 emptyList(),
             ),
-        ) + IntentTools.DEFINITIONS_SPEC.map { spec ->
-            toolDefinition(spec.name, spec.description, spec.properties, spec.required)
-        }
+        ) + IntentTools.DEFINITIONS
 
     }
 }

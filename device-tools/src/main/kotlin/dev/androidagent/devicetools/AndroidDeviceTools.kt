@@ -27,7 +27,7 @@ import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
 import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
-import dev.androidagent.core.actAndObserveObservationFailed
+import dev.androidagent.core.actAndObserveObservationFailure
 import dev.androidagent.core.actAndObserveResult
 import dev.androidagent.core.READ_UI_DESCRIPTION
 import dev.androidagent.core.ToolNotServiceable
@@ -193,7 +193,7 @@ class AndroidDeviceTools(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            actAndObserveObservationFailed(failure)
+            actAndObserveObservationFailure(failure)
         } finally { withContext(NonCancellable) { observationVisibility(false) } }
         return actAndObserveResult(result, observation)
     }

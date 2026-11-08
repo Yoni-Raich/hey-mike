@@ -12,9 +12,8 @@ import kotlinx.serialization.json.put
 object ChatTitles {
     const val MAX_LENGTH = 80
     private val whitespace = Regex("\\s+")
-    private const val RUNTIME_PREFIX = "[Trusted Android Agent runtime context]"
 
-    fun isRuntimeTitle(title: String): Boolean = title.trimStart().startsWith(RUNTIME_PREFIX)
+    fun isRuntimeTitle(title: String): Boolean = title.trimStart().startsWith(DeviceRuntimeContext.HEADER)
 
     fun normalize(title: String): String = title.trim().replace(whitespace, " ")
 
@@ -63,9 +62,9 @@ class ChatTitleManager(private val sessions: SessionStore, private val engine: A
     suspend fun refine(sessionId: String, threadId: String, title: String): ToolResult = lock.withLock {
         val name = ChatTitles.normalize(title)
         if (name.isBlank() || name.length > ChatTitles.MAX_LENGTH || ChatTitles.isRuntimeTitle(name)) {
-            return@withLock ChatTools.refused("bad_title", "Use a short topic name, up to 80 characters, in the user's language.")
+            return@withLock toolRefusal("bad_title", "Use a short topic name, up to 80 characters, in the user's language.")
         }
-        val session = sessions.getSession(sessionId) ?: return@withLock ChatTools.refused("no_chat", "This chat was removed.")
+        val session = sessions.getSession(sessionId) ?: return@withLock toolRefusal("no_chat", "This chat was removed.")
         if (!session.titlePending) return@withLock ToolResult(buildJsonObject {
             put("ok", true); put("changed", false); put("title", session.title)
             put("message", "This chat already has a chosen name. Keep it.")

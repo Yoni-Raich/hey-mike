@@ -20,6 +20,7 @@
 
 package dev.androidagent.core
 
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.Json
@@ -192,7 +193,7 @@ val ACT_AND_OBSERVE_DEFINITION: ToolDefinition = ToolDefinition(
  * What every backend returns when the `act_and_observe` observation throws
  * after the action already landed.
  */
-fun actAndObserveObservationFailed(failure: Exception): ToolResult =
+fun actAndObserveObservationFailure(failure: Exception): ToolResult =
     ToolResult("Observation failed: ${failure.message}. Do not repeat the completed action.", success = false)
 
 /**
@@ -203,8 +204,12 @@ fun actAndObserveResult(action: ToolResult, observation: ToolResult): ToolResult
     put("actionCompleted", true)
     put("actionResult", action.text)
     put("observationSucceeded", observation.success)
-    put("observation", runCatching { Json.parseToJsonElement(observation.text) }.getOrElse { JsonPrimitive(observation.text) })
+    put("observation", jsonOrText(observation.text))
 }.toString(), success = observation.success)
+
+/** [text] as JSON when it parses, and as a JSON string otherwise. */
+internal fun jsonOrText(text: String): JsonElement =
+    runCatching { Json.parseToJsonElement(text) }.getOrElse { JsonPrimitive(text) }
 
 /**
  * A focused request for part of one observation.

@@ -189,10 +189,10 @@ class SessionAgents(
                     put("tasks", buildJsonArray { mutable.value.filter { it.parentSessionId == origin || it.sessionId in descendants(origin) }.forEach { add(it.toJson()) } })
                 } }
                 "status", "message", "cancel", "open" -> operate(origin, mode, arguments, allowed)
-                else -> ChatTools.refused("bad_mode", "Use options, start, list, status, message, cancel or open.")
+                else -> toolRefusal("bad_mode", "Use options, start, list, status, message, cancel or open.")
             }
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { ChatTools.refused("session_agent_refused", error.message ?: "Session agent request failed.") }
+        catch (error: Exception) { toolRefusal("session_agent_refused", error.message ?: "Session agent request failed.") }
     }
 
     private suspend fun start(origin: String, args: JsonObject, allowed: () -> Boolean): ToolResult = lock.withLock {

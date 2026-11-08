@@ -1228,7 +1228,7 @@ class AgentCoordinator(
                     toolLock.withLock {
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         toolPolicy?.invoke(sessionId, event.name, event.arguments)?.let { reason ->
-                            val refused = ChatTools.refused("not_allowed_here", reason)
+                            val refused = toolRefusal("not_allowed_here", reason)
                             withContext(NonCancellable) { trace(sessionId, "tool_result", buildJsonObject {
                                 put("requestId", event.requestId); put("name", event.name); put("success", false); put("text", refused.text)
                             }) }
@@ -1505,16 +1505,16 @@ class AgentCoordinator(
                 }
                 SessionAgentTools.NAME -> sessionAgents?.invoke()?.invoke(sessionId, event.arguments) {
                     isCurrentTurn(token, threadId, turnId)
-                } ?: ChatTools.refused("not_available", "Session agents are not configured.")
+                } ?: toolRefusal("not_available", "Session agents are not configured.")
                 TaskTools.NAME -> taskTools?.invoke()?.invoke(sessionId, event.arguments, lastInputFromUser)
-                    ?: ChatTools.refused("not_available", "The task board is not set up on this phone.")
+                    ?: toolRefusal("not_available", "The task board is not set up on this phone.")
                 else -> showMedia(token, sessionId, threadId, turnId, event.arguments)
             }
         } catch (cancelled: CancellationException) {
             traceToolCancelled(sessionId, event, started, cancelled)
             throw cancelled
         } catch (error: Exception) {
-            ChatTools.refused("failed", error.message ?: "${event.name} failed")
+            toolRefusal("failed", error.message ?: "${event.name} failed")
         } finally {
             // Waiting for a person is not tool time.
             toolMs += ((nowNanos() - started) - (approvalNanos.get() - waitedBefore)).coerceAtLeast(0) / 1_000_000
@@ -1580,7 +1580,7 @@ class AgentCoordinator(
 
     private suspend fun askUser(token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject): ToolResult {
         val question = ChatTools.question("ask-${UUID.randomUUID()}", arguments).getOrElse {
-            return ChatTools.refused("bad_question", it.message ?: "The question could not be read.")
+            return toolRefusal("bad_question", it.message ?: "The question could not be read.")
         }
         val pending = synchronized(lifecycleLock) {
             if (!isCurrentTurnLocked(token, threadId, turnId)) throw CancellationException("Run stopped")
@@ -1608,12 +1608,12 @@ class AgentCoordinator(
         ensureCurrentTurn(token, threadId, turnId)
         val answer = reply?.answer
         return when {
-            reply == null -> ChatTools.refused(
+            reply == null -> toolRefusal(
                 "no_answer",
                 "Nobody answered within ${ChatTools.ASK_TIMEOUT_MS / 60_000} minutes. The question is in the chat. Do not ask " +
                     "it again now: say what you are waiting for and end your turn. The user will answer in the chat.",
             )
-            answer == null -> ChatTools.refused(
+            answer == null -> toolRefusal(
                 "skipped",
                 "The user chose not to answer. Go on without it if you can; otherwise say what you need and end your turn.",
             )
@@ -1628,9 +1628,9 @@ class AgentCoordinator(
     /** Bring each file into the chat's folder and show them as one message from Mike. */
     private suspend fun showMedia(token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject): ToolResult {
         val show = ChatTools.show(arguments).getOrElse {
-            return ChatTools.refused("bad_request", it.message ?: "The files could not be read.")
+            return toolRefusal("bad_request", it.message ?: "The files could not be read.")
         }
-        val fetch = chatMedia ?: return ChatTools.refused("unsupported", "This build cannot show media in the chat.")
+        val fetch = chatMedia ?: return toolRefusal("unsupported", "This build cannot show media in the chat.")
         val work = synchronized(lifecycleLock) {
             if (!isCurrentTurnLocked(token, threadId, turnId)) throw CancellationException("Run stopped")
             mutableState.value = state.value.copy(phase = RunPhase.TOOL, controlling = false, status = "Getting media", toolName = ChatTools.SHOW)
@@ -1655,7 +1655,7 @@ class AgentCoordinator(
             }
         }
         ensureCurrentTurn(token, threadId, turnId)
-        if (shown.isEmpty()) return ChatTools.refused("nothing_shown", "Nothing was shown. " + failed.joinToString("; "))
+        if (shown.isEmpty()) return toolRefusal("nothing_shown", "Nothing was shown. " + failed.joinToString("; "))
         val paths = shown
         sessions.append(message(sessionId, "assistant", show.caption, paths))
         trace(sessionId, "assistant", buildJsonObject {
@@ -1688,7 +1688,7 @@ class AgentCoordinator(
             put("outcomeUnknown", true)
             (cancelled as? WorkflowCancelledException)?.let {
                 val report = it.report
-                put("progress", runCatching { Json.parseToJsonElement(report) }.getOrElse { JsonPrimitive(report) })
+                put("progress", jsonOrText(report))
             }
         })
     }

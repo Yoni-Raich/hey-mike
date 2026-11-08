@@ -5,7 +5,7 @@ import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class ToolDefinitionBuilderTest {
+class ToolDefinitionsTest {
     @Test fun scalarsObjectsAndSpelledOutSchemasKeepTheirExactShape() {
         val items = buildJsonObject { put("type", "array"); put("items", buildJsonObject { put("type", "string") }) }
         val tool = toolDefinition(
