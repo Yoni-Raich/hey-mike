@@ -28,7 +28,7 @@ object ClaudeSessionFiles {
 
     // The version is part of the name: two phones on different app versions
     // share this folder and must not run each other's reader.
-    fun scriptName(os: HostOs): String = "session-reader-v5." + if (os == HostOs.WINDOWS) "ps1" else "py"
+    fun scriptName(os: HostOs): String = "session-reader-v6." + if (os == HostOs.WINDOWS) "ps1" else "py"
 
     /** Stable across engine/app restarts, distinct for each phone's saved computer. */
     fun clientId(computerId: String): String = UUID.nameUUIDFromBytes("claude-client:$computerId".toByteArray(Charsets.UTF_8)).toString()

@@ -54,6 +54,13 @@ def content_text(content):
     return ""
 
 
+def automatic(row):
+    """A user record Claude Code wrote itself, such as a background task's
+    notification. Records of older versions carry no origin and are the user's."""
+    origin = row.get("origin")
+    return isinstance(origin, dict) and origin.get("kind") not in (None, "human")
+
+
 def slices(file):
     with file.open("rb") as stream:
         size = file.stat().st_size
@@ -89,7 +96,7 @@ def metadata(file, holders):
             title = row.get("aiTitle") or title
         elif typ == "summary":
             summary = row.get("summary") or summary
-        elif typ == "user" and not first and not row.get("isMeta") and not row.get("isCompactSummary"):
+        elif typ == "user" and not first and not row.get("isMeta") and not row.get("isCompactSummary") and not automatic(row):
             first = content_text(row.get("message", {}).get("content"))[:140]
         elif typ == "assistant":
             model = row.get("message", {}).get("model") or model
@@ -221,8 +228,10 @@ def messages(file):
             if typ not in ("user", "assistant", "progress", "system", "attachment"):
                 continue
             text = ""
-            # The compaction summary is Claude's note to itself, not something the user said.
-            main = not (row.get("isMeta") or row.get("teamName") or row.get("isCompactSummary") or row.get("isVisibleInTranscriptOnly"))
+            # The compaction summary is Claude's note to itself, and a background
+            # task's notification is Claude Code's: neither is something the user said.
+            main = not (row.get("isMeta") or row.get("teamName") or row.get("isCompactSummary")
+                        or row.get("isVisibleInTranscriptOnly") or automatic(row))
             if typ in ("user", "assistant") and main:
                 text = content_text(row.get("message", {}).get("content"))
                 leaf = uid
