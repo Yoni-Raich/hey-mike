@@ -605,12 +605,19 @@ class ClaudeCodeEngine(
      */
     override suspend fun interrupt(threadId: String, turnId: String) {
         val chat = chats[threadId] ?: return
+        var background = emptyList<String>()
         val turn = synchronized(chat.state) {
-            chat.mapper.active?.takeIf { it.turnId == turnId && !it.ended }?.also { it.interruptRequested = true }
+            chat.mapper.active?.takeIf { it.turnId == turnId && !it.ended }?.also {
+                it.interruptRequested = true
+                background = chat.mapper.backgroundTaskIds()
+            }
         } ?: return
         chat.cancelAuthReplay()
         failPendingTools(threadId, turnId)
         val sent = runCatching { chat.write(ClaudeProtocol.interruptRequest("interrupt-${UUID.randomUUID()}")) }.isSuccess
+        // A stop ends all the chat's work: also what the model left running
+        // in the background, which would wake the chat again later.
+        background.forEach { id -> runCatching { chat.write(ClaudeProtocol.stopTaskRequest("stop-task-${UUID.randomUUID()}", id)) } }
         scope.launch {
             val ended = sent && withTimeoutOrNull(interruptGraceMs) { turn.done.await() } != null
             if (!ended) {

@@ -270,6 +270,10 @@ internal object ClaudeProtocol {
     fun interruptRequest(requestId: String): JsonObject =
         controlRequest(requestId, "interrupt", buildJsonObject { put("cancel_queued", true) })
 
+    /** End one background task the model left running (`stop_task` in `sdk.d.ts`). */
+    fun stopTaskRequest(requestId: String, taskId: String): JsonObject =
+        controlRequest(requestId, "stop_task", buildJsonObject { put("task_id", taskId) })
+
     /**
      * Ask for the plan limits behind `/usage`. No model call is made.
      *

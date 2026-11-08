@@ -294,6 +294,67 @@ class AgentCoordinator(
     }
 
     /**
+     * Give a turn the engine started by itself ([EngineEvent.TurnStarted.wake])
+     * a run of its own in the chat whose thread it is, as if it had been sent:
+     * its reply and tool calls are shown, and Stop ends it. Without this, such
+     * a turn worked on unseen and its tools were refused.
+     *
+     * @param running whether a chat already has a run elsewhere.
+     */
+    internal suspend fun adoptTurn(threadId: String, turnId: String, wake: String, running: (String) -> Boolean): Adoption {
+        val session = sessions.sessions.value.firstOrNull { it.engineThreadId == threadId } ?: return Adoption.NO_CHAT
+        if (running(session.id)) return Adoption.CHAT_RUNNING
+        val (token, runCompletion) = synchronized(lifecycleLock) {
+            if (!availableState.value || state.value.active) return Adoption.BUSY
+            availableState.value = false
+            mutableOutcomes.value = mutableOutcomes.value - session.id
+            val token = epoch.incrementAndGet()
+            val runCompletion = CompletableDeferred<Unit>()
+            runEngine = session.engine
+            completion = runCompletion
+            thread = threadId
+            turn = turnId
+            assistantId = null
+            assistantItemId = null
+            lastMessageWasFinal = false
+            runStartedNanos = nowNanos()
+            firstResponseMs = null
+            toolCalls = 0
+            toolMs = 0L
+            approvalNanos.set(0)
+            assistantText.clear()
+            assistantOutcome = "complete"
+            awaitingTurn = false
+            startupEvents.clear()
+            remoteItems.clear()
+            textRevision = 0L
+            overlaySpeech = null
+            runWorkspace = sessions.workspace(session.id)
+            screenSticky = false
+            // Nobody typed this turn, so it never counts as the user's go-ahead.
+            lastInputFromUser = false
+            mutableState.value = RunState(RunPhase.THINKING, session.id, "Working", runId = UUID.randomUUID().toString())
+            token to runCompletion
+        }
+        // Before the turn's first words, so the chat shows why it woke.
+        runCatching {
+            sessions.append(message(session.id, "note", wake))
+            trace(session.id, "engine_wake", buildJsonObject { put("text", wake); put("threadId", threadId); put("turnId", turnId) })
+        }
+        synchronized(lifecycleLock) {
+            runJob = scope.launch {
+                try {
+                    overlay.updateState(OverlayState(OverlayPhase.THINKING))
+                    runCompletion.await()
+                } finally {
+                    finalizeRun(token, session.id)
+                }
+            }
+        }
+        return Adoption.ADOPTED
+    }
+
+    /**
      * Take the phone for a standing rule's own actions, run [block], release it.
      *
      * A rule that drives the screen needs the same exclusive ownership a turn
@@ -1444,6 +1505,12 @@ class AgentCoordinator(
                         assistantOutcome = "interrupted"
                         mutableState.value = state.value.copy(status = "Interrupted")
                     }
+                    "completed" -> if (event.backgroundTasks.isNotEmpty()) state.value.sessionId?.let { sessionId ->
+                        // Said in the chat, so later output is not a surprise.
+                        sessions.append(message(sessionId, "system",
+                            "${runEngine.label} is still running in the background: ${event.backgroundTasks.joinToString("; ")}. " +
+                                "When it finishes, the follow-up shows here as a new run you can stop."))
+                    }
                 }
                 if (!isVoiceMode()) completion?.complete(Unit)
             }
@@ -2086,4 +2153,15 @@ class AgentCoordinator(
          */
         const val DEFAULT_AUTOMATION_WAIT_MS = 90_000L
     }
+}
+
+/** What became of a turn the engine started by itself; see [AgentCoordinator.adoptTurn]. */
+internal enum class Adoption {
+    ADOPTED,
+    /** No chat has the thread: nobody would see the turn. */
+    NO_CHAT,
+    /** The chat is running already; its own run is about to take the engine. */
+    CHAT_RUNNING,
+    /** This coordinator started another run first. */
+    BUSY,
 }

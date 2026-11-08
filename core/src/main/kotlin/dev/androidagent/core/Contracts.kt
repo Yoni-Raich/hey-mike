@@ -290,7 +290,13 @@ data class RunMetrics(
 }
 
 sealed interface EngineEvent {
-    data class TurnStarted(val threadId: String, val turnId: String) : EngineEvent
+    data class TurnStarted(val threadId: String, val turnId: String,
+        /**
+         * Set when the engine started this turn by itself, with no message from
+         * the app: what woke it, such as a background task that finished. The
+         * app gives such a turn a run of its own, so it is shown and can be stopped.
+         */
+        val wake: String? = null) : EngineEvent
     data class TextDelta(val text: String, val threadId: String? = null, val turnId: String? = null, val itemId: String? = null) : EngineEvent
     data class MessageCompleted(val text: String, val threadId: String, val turnId: String, val itemId: String, val phase: String? = null) : EngineEvent
     data class UsageChanged(val threadId: String?, val usage: TokenUsage? = null, val limits: List<UsageLimit>? = null) : EngineEvent
@@ -309,7 +315,9 @@ sealed interface EngineEvent {
     ) : EngineEvent
     data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null,
         /** The turn stopped because the account is out of usage, as the engine itself said. */
-        val limitReached: LimitReached? = null) : EngineEvent
+        val limitReached: LimitReached? = null,
+        /** Work the turn left running in the background, one description each; it may wake the chat again. */
+        val backgroundTasks: List<String> = emptyList()) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent
     data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null,

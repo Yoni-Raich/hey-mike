@@ -3368,3 +3368,35 @@ Decided 2026-10-01, on top of the section above.
   skills are not listed in the composer. Mac Desktop handoff and real
   phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
   evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
+## Claude background tasks: every cycle is a run — 2026-11-08
+
+Claude Code lets the model leave work running (`Bash` with
+`run_in_background`, monitors). When such a task ends while the CLI is idle,
+the CLI reports `system/task_notification` and starts a model cycle of its
+own, with no frame from the app. Before this change that cycle had no owner:
+its text was hidden, its phone tools were refused ("No task is running in this
+chat"), and its words reached the chat later only through history sync, with
+the notification itself shown as if the user had typed it.
+
+- **The mapper makes the cycle a turn.** A `task_notification` while idle
+  arms a wake; the next `system/init` starts a `wake-<uuid>` turn that owns the
+  cycle and emits `TurnStarted(wake = <summary>)`. A notification during a
+  running turn stays in that turn.
+- **The app gives it a run.** `AgentRuns.route` hands a `TurnStarted` with a
+  wake that no run owns to a free coordinator, whose `adoptTurn` reserves a run
+  for the chat with that thread, posts the summary as a note and then handles
+  the turn like a sent one: text, tools, approvals, Stop. A chat already
+  running is left alone. A thread no chat has (deleted, or parked after an
+  engine switch) is interrupted, so nothing works unseen.
+- **Stop ends the background work too.** `ClaudeCodeEngine.interrupt` also
+  sends `stop_task` for every task in the last `background_tasks_changed`.
+- **The chat is told.** A completed turn that leaves tasks running carries them
+  in `TurnFinished.backgroundTasks`, and the chat shows one system line naming
+  them.
+- **History sync skips the CLI's own records.** Transcript user records whose
+  `origin.kind` is not `human` (task notifications) are neither the user's
+  words nor a title. Reader script renamed to `session-reader-v6`.
+
+Rejected: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. It would hide the problem
+by removing a capability (waiting for CI, long builds) that the user wants.

@@ -1,5 +1,26 @@
 # Progress
 
+### Claude background cycles are runs — 2026-11-08
+
+Branch `fix/claude-background-cycles`. A cycle Claude Code starts by itself
+after a background task ends is now a visible, stoppable run in its chat, Stop
+also ends running background tasks, and task notifications no longer show as
+user messages (ARCHITECTURE "Claude background tasks: every cycle is a run").
+The event shapes come from a live probe of Claude Code with a `sleep 15`
+background command (`background_tasks_changed`, `task_notification`, `init`
+without `command_lifecycle`, `result`).
+
+Evidence (Windows, worktree build):
+- `:engine-claude:test :core:test :remote:test`: pass, with new mapper tests
+  (wake turn owns the cycle; notification during a turn stays in it) and
+  `AgentRunsTest` cases (adopted run serves tools and shows text, Stop
+  interrupts it, no-chat wake is interrupted, leftover tasks are named).
+- `python -m unittest tools.test_claude_sessions`: 18 OK (Python and PowerShell
+  readers skip `origin.kind` task-notification records).
+
+Untested: no phone run of a real background cycle through the app, and
+`stop_task` was not sent to a live CLI.
+
 ### Behavior-preserving refactor — 2026-11-08
 
 Branch `refactor/behavior-preserving-20261108`. Duplicated model-facing text and

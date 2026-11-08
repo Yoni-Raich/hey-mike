@@ -167,6 +167,51 @@ class ClaudeStreamMapperTest {
         assertEquals("turn-2", (done.last() as EngineEvent.TurnFinished).turnId)
     }
 
+    // Shapes recorded from Claude Code 2.x: a Bash call with run_in_background
+    // that finished after the turn had ended.
+    @Test fun aCycleTheCliStartsAfterABackgroundTaskBecomesAShownTurn() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        mapper.map(line("""{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","description":"Wait for CI"}]}"""))
+        val first = mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"started"}""")).events()
+        assertEquals(listOf("Wait for CI"), first.filterIsInstance<EngineEvent.TurnFinished>().single().backgroundTasks)
+        assertEquals(listOf("b1"), mapper.backgroundTaskIds())
+
+        mapper.map(line("""{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed","summary":"Background command \"Wait for CI\" completed (exit code 0)"}"""))
+        mapper.map(line("""{"type":"system","subtype":"background_tasks_changed","tasks":[]}"""))
+        val woke = mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        val started = woke.events().filterIsInstance<EngineEvent.TurnStarted>().single()
+        assertEquals("Background command \"Wait for CI\" completed (exit code 0)", started.wake)
+        assertTrue(woke.any { it is Signal.Init })
+        val turn = mapper.toolTurn()
+        assertNotNull("the woken cycle may use the phone's tools", turn)
+        assertEquals(started.turnId, turn!!.turnId)
+        assertSame(turn, mapper.shownTurn())
+
+        val events = mapper.feed(listOf(
+            line("""{"type":"stream_event","event":{"type":"message_start","message":{"id":"m2"}}}"""),
+            line("""{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"""),
+            line("""{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"CI passed"}}}"""),
+            line("""{"type":"result","subtype":"success","is_error":false,"result":"CI passed"}"""),
+        )).events()
+        assertEquals("CI passed", events.filterIsInstance<EngineEvent.TextDelta>().single().text)
+        val finished = events.filterIsInstance<EngineEvent.TurnFinished>().single()
+        assertEquals(started.turnId, finished.turnId)
+        assertTrue(finished.backgroundTasks.isEmpty())
+        assertNull(mapper.active)
+    }
+
+    @Test fun aNotificationDuringATurnStaysInThatTurn() {
+        val mapper = ClaudeStreamMapper(thread)
+        val turn = mapper.begin("turn-1", "a")
+        mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        mapper.map(line("""{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed","summary":"done"}"""))
+        val again = mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        assertTrue(again.events().none { it is EngineEvent.TurnStarted })
+        assertSame(turn, mapper.toolTurn())
+    }
+
     @Test fun echoesOfTheClisOwnMessagesChangeNothing() {
         val mapper = ClaudeStreamMapper(thread)
         val turn = mapper.begin("turn-1", "a")
