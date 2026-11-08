@@ -21,6 +21,26 @@ Untested: not installed or run on a phone. The changes only move code, but no
 device run confirms the a11y/ADB `act_and_observe` path or the Claude/Codex
 turn text on hardware.
 
+### Mike's face is a robot — 2026-11-02
+
+Replaced the dotted sphere in `MikeEye` with a flat ceramic robot head: a dark
+visor, two glowing pill eyes and small ear pads. The API (`EyeMood`, `tint`,
+`satellites`, `animate`, `description`) is unchanged, so every place that shows
+Mike (task strip, board, team page, avatars) gets the new face without edits. The
+other orbs (`AgentOrb`, `VoiceSphere`, the overlay orb) are not part of this change.
+
+Evidence: `:app:compileDevDebugKotlin`, `:app:lintDevDebug` (0 errors, 21 warnings,
+as before) and `:app:testDevDebugUnitTest` (344 cases, 0 failures, including the
+new `MikeEyeTest`) passed; `git diff --check` is clean. On the API 35 x86_64
+emulator `emulator-5566` only, `MikeEyeUiTest` drew all six moods at 96, 64, 40, 30,
+24 and 56 dp and the nine existing `TaskBoardUiTest` cases passed. Captures are in
+[`docs/testing/mike-robot-face-20261102/`](docs/testing/mike-robot-face-20261102/).
+
+Not tested: the physical phone, the live drawer/strip with real tasks, a release
+APK, battery cost over a long session, and reduced-motion on a device. The captures
+are fixture frames, not a recording, so the motion itself was checked only on the
+HTML prototype and by reading the frame loop.
+
 ### Dev update version — 2026-10-30
 
 The published dev-nightly code 1166 is lower than the user's installed dev
