@@ -147,9 +147,9 @@ class ClaudeStreamMapperTest {
         mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"done"}"""))
         assertNull(mapper.active)
 
-        // The steer "b" starts its own cycle after the turn ended.
-        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}"""))
+        // The app begins turn 2 before the steer "b" starts its own cycle.
         val next = mapper.begin("turn-2", "c")
+        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}"""))
         assertNull("an orphan cycle must not drive the phone", mapper.toolTurn())
         val orphan = mapper.feed(listOf(
             line("""{"type":"stream_event","event":{"type":"message_start","message":{"id":"m9"}}}"""),
@@ -210,6 +210,23 @@ class ClaudeStreamMapperTest {
         val again = mapper.map(line("""{"type":"system","subtype":"init"}"""))
         assertTrue(again.events().none { it is EngineEvent.TurnStarted })
         assertSame(turn, mapper.toolTurn())
+    }
+
+    @Test fun aLateSteerWithNoTurnWaitingGetsATurnOfItsOwn() {
+        val mapper = ClaudeStreamMapper(thread)
+        val turn = mapper.begin("turn-1", "a")
+        mapper.addFrame(turn, "b")
+        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"a","state":"started"}"""))
+        mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"done"}"""))
+
+        // A child chat's update steered as the reply ended runs next, by itself.
+        val woke = mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}""")).events()
+        val started = woke.filterIsInstance<EngineEvent.TurnStarted>().single()
+        assertEquals(ClaudeStreamMapper.LATE_MESSAGE, started.wake)
+        assertEquals(started.turnId, mapper.toolTurn()?.turnId)
+        mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        val done = mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"ok"}""")).events()
+        assertEquals(started.turnId, done.filterIsInstance<EngineEvent.TurnFinished>().single().turnId)
     }
 
     @Test fun echoesOfTheClisOwnMessagesChangeNothing() {

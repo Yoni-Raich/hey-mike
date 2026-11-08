@@ -3391,6 +3391,13 @@ the notification itself shown as if the user had typed it.
   the turn like a sent one: text, tools, approvals, Stop. A chat already
   running is left alone. A thread no chat has (deleted, or parked after an
   engine switch) is interrupted, so nothing works unseen.
+- **A late steer is a cycle too.** A message steered as the turn's reply
+  was ending (a child chat's update, typically) is queued by the CLI and run
+  after the `result`, as its own cycle. With no new app turn waiting, it gets
+  a wake turn (`ClaudeStreamMapper.LATE_MESSAGE`) and a run, like a woken
+  cycle. Seen on 2026-11-08: the parent chat's tool calls were refused ("No
+  task is running in this chat") and history sync later showed the raw update
+  as the user's words.
 - **Stop ends the background work too.** `ClaudeCodeEngine.interrupt` also
   sends `stop_task` for every task in the last `background_tasks_changed`.
 - **The chat is told.** A completed turn that leaves tasks running carries them

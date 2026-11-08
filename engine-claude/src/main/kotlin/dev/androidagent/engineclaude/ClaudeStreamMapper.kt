@@ -49,9 +49,12 @@ import java.util.UUID
  * it dequeues. Every frame the app writes carries a `uuid`, and the CLI
  * echoes it (`command_lifecycle` "started", and the `user` replay) before the
  * cycle's output. A cycle started by a frame of the running turn belongs to
- * it; one started by a frame of a turn that already ended (a steer that lost
- * the race with the turn's `result`) belongs to nobody, so its text is not
- * shown and its tool calls are refused. Echoes of uuids the app never wrote
+ * it. One started by a frame of a turn that already ended (a steer that lost
+ * the race with the turn's `result`, such as a child chat's update) gets a
+ * turn of its own, as a woken cycle does ([TurnStarted.wake]), so it is
+ * shown and can use the tools; only when the app has already begun its next
+ * turn does it belong to nobody, its text hidden and its tools refused.
+ * Echoes of uuids the app never wrote
  * (the CLI's own messages) change nothing. When the CLI is idle a new turn
  * owns the next cycle at once, so a CLI that stops echoing still works.
  *
@@ -208,10 +211,7 @@ internal class ClaudeStreamMapper(
         "control_request" -> message.string("request_id").takeIf { it.isNotBlank() }?.let { id ->
             listOf(Signal.ControlRequest(id, message["request"] as? JsonObject ?: JsonObject(emptyMap())))
         }.orEmpty()
-        "command_lifecycle" -> {
-            if (message.string("state") == "started") claim(message.string("command_uuid"))
-            emptyList()
-        }
+        "command_lifecycle" -> if (message.string("state") == "started") claim(message.string("command_uuid")) else emptyList()
         "system" -> system(message)
         "user" -> user(message)
         "stream_event" -> streamEvent(message)
@@ -231,12 +231,19 @@ internal class ClaudeStreamMapper(
         }
     }
 
-    private fun claim(uuid: String) {
-        if (uuid.isBlank()) return
+    private fun claim(uuid: String): List<Signal> {
+        if (uuid.isBlank()) return emptyList()
         val turn = active
-        when {
-            turn != null && !turn.ended && uuid in turn.frames -> { owner = turn; busy = true }
-            uuid in retired -> { owner = null; busy = true }
+        return when {
+            turn != null && !turn.ended && uuid in turn.frames -> { owner = turn; busy = true; emptyList() }
+            uuid in retired && turn == null -> {
+                val woken = wakeTurn(LATE_MESSAGE)
+                active?.frames?.add(uuid)
+                busy = true
+                listOf(woken)
+            }
+            uuid in retired -> { owner = null; busy = true; emptyList() }
+            else -> emptyList()
         }
     }
 
@@ -523,8 +530,10 @@ internal class ClaudeStreamMapper(
         builtinTools.clear()
     }
 
-    private companion object {
+    internal companion object {
         const val MAX_RETIRED = 256
         const val MAX_COMMAND_SHOWN = 400
+        /** Why a cycle runs after its turn ended: a message that came as the reply was finishing. */
+        const val LATE_MESSAGE = "Continuing with a message that arrived as the last reply ended"
     }
 }

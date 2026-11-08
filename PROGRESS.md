@@ -18,8 +18,15 @@ Evidence (Windows, worktree build):
 - `python -m unittest tools.test_claude_sessions`: 18 OK (Python and PowerShell
   readers skip `origin.kind` task-notification records).
 
-Untested: no phone run of a real background cycle through the app, and
-`stop_task` was not sent to a live CLI.
+Phone run on Dev Debug 1202 (Manager branch + these fixes): a computer
+Claude child chat ran `sleep 30` in the background, ended its turn with
+STARTED, and the woken cycle came back as a new run (new runId) answering
+FINISHED. The same session showed a gap: child updates steered into the
+parent as its reply ended ran as unowned cycles (tools refused, raw update
+synced as a user message). Late steers now get their own turn too; mapper
+test `aLateSteerWithNoTurnWaitingGetsATurnOfItsOwn`.
+
+Untested: `stop_task` was not sent to a live CLI.
 
 Engine switch to Codex now seeds native history (`thread/inject_items`)
 instead of a text block (ARCHITECTURE "Engine switch: native history").
