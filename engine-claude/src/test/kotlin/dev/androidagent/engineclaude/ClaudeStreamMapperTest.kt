@@ -229,6 +229,22 @@ class ClaudeStreamMapperTest {
         assertEquals(started.turnId, done.filterIsInstance<EngineEvent.TurnFinished>().single().turnId)
     }
 
+    // Seen on a phone, 2026-11-08: two child updates steered as the reply
+    // ended were dequeued together into one cycle.
+    @Test fun lateSteersMergedIntoOneCycleKeepTheirTurn() {
+        val mapper = ClaudeStreamMapper(thread)
+        val turn = mapper.begin("turn-1", "a")
+        mapper.addFrame(turn, "b")
+        mapper.addFrame(turn, "c")
+        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"a","state":"started"}"""))
+        mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"done"}"""))
+
+        val woke = mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}""")).events()
+        val started = woke.filterIsInstance<EngineEvent.TurnStarted>().single()
+        assertTrue(mapper.map(line("""{"type":"command_lifecycle","command_uuid":"c","state":"started"}""")).isEmpty())
+        assertEquals("the merged frame must not drop the cycle's turn", started.turnId, mapper.toolTurn()?.turnId)
+    }
+
     @Test fun echoesOfTheClisOwnMessagesChangeNothing() {
         val mapper = ClaudeStreamMapper(thread)
         val turn = mapper.begin("turn-1", "a")

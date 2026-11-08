@@ -236,6 +236,11 @@ internal class ClaudeStreamMapper(
         val turn = active
         return when {
             turn != null && !turn.ended && uuid in turn.frames -> { owner = turn; busy = true; emptyList() }
+            // Busy means a cycle has started and its result has not come: this
+            // frame was queued into that same cycle (the CLI merges messages
+            // waiting together), so it stays that cycle's turn's. An idle CLI
+            // is not busy even when a new turn already owns the next cycle.
+            uuid in retired && busy && turn != null && owner === turn && !turn.ended -> { turn.frames += uuid; emptyList() }
             uuid in retired && turn == null -> {
                 val woken = wakeTurn(LATE_MESSAGE)
                 active?.frames?.add(uuid)

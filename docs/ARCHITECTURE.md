@@ -3395,7 +3395,8 @@ the notification itself shown as if the user had typed it.
   was ending (a child chat's update, typically) is queued by the CLI and run
   after the `result`, as its own cycle. With no new app turn waiting, it gets
   a wake turn (`ClaudeStreamMapper.LATE_MESSAGE`) and a run, like a woken
-  cycle. Seen on 2026-11-08: the parent chat's tool calls were refused ("No
+  cycle. Messages the CLI dequeues together run as one cycle, so a
+  late frame claimed while that cycle is busy stays with its turn. Seen on 2026-11-08: the parent chat's tool calls were refused ("No
   task is running in this chat") and history sync later showed the raw update
   as the user's words.
 - **Stop ends the background work too.** `ClaudeCodeEngine.interrupt` also
