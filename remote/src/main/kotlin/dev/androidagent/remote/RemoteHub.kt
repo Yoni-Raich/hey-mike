@@ -890,6 +890,23 @@ class RemoteHub(
             return remotePath
         }
 
+        /** The computer's writer script adds the records to the computer's own transcript; see [ClaudeSessionFiles.writer]. */
+        override suspend fun extendTranscript(workingDirectory: String, sessionId: String, records: List<String>): Boolean {
+            ClaudeSessionFiles.requireId(sessionId)
+            return readerLocks.getOrPut(computerId) { Mutex() }.withLock {
+                withContext(Dispatchers.IO) {
+                    val connection = connection(computerId)
+                    val folder = ClaudeLaunch.folder(connection.probe(refresh = false).home, connection.os)
+                    val script = put(connection, ClaudeLaunch.file(folder, ClaudeSessionFiles.writerName(connection.os), connection.os),
+                        ClaudeSessionFiles.writer(connection.os))
+                    val payload = put(connection, ClaudeLaunch.file(folder, "transcript-${java.util.UUID.randomUUID()}.json", connection.os),
+                        ClaudeSessionFiles.writerPayload(workingDirectory, sessionId, records))
+                    val row = ClaudeSessionFiles.payload(connection.link.run(ClaudeSessionFiles.writerCommand(connection.os, script, payload), 45_000))
+                    (row["ok"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull == true
+                }
+            }
+        }
+
         override suspend fun stopAll() {
             withContext(Dispatchers.IO) { started.forEach { runCatching { it.destroy() } } }
             started.clear()

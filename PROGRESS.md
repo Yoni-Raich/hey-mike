@@ -26,9 +26,20 @@ instead of a text block (ARCHITECTURE "Engine switch: native history").
 Probe on the Windows Codex app-server 0.163: inject answered `{}`, and the
 next turn answered "Pilpel" from the injected turns only. New tests:
 `ChatHandoff.turns` shape, coordinator seeding (prompt sent as typed, chat
-marked caught up), Codex item JSON. Claude stays on the text block (see the
-compliance note). Untested: a real switch on the phone and on a computer
+marked caught up), Codex item JSON. Untested: a real switch on the phone and on a computer
 Codex older than 0.163 (should fall back to text).
+
+Claude now gets native history too: the turns are appended to its own
+transcript and the session resumes. The owner lifted the "never touch
+`CLAUDE_CONFIG_DIR`" rule for transcripts (sign-in files stay untouched).
+Evidence: `tools.test_claude_transcript` (Python and PowerShell writers: new
+file in the cwd folder, existing file continued from its last main message,
+bad id refused), `ClaudeTranscriptTest`, record shape and engine tests
+(seeded chat starts with `--resume`; a host that cannot write leaves the text
+block). Live on this PC: PowerShell writer + engine record shape, then
+`claude -p --resume` with haiku answered "Pilpel". Untested: the phone host
+writing under the app's private config dir on a real phone, and a Linux
+computer.
 
 ### Behavior-preserving refactor — 2026-11-08
 

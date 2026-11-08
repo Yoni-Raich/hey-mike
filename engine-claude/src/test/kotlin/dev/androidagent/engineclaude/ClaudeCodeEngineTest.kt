@@ -23,6 +23,7 @@ package dev.androidagent.engineclaude
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.HandoffTurn
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.RuntimeStatus
 import dev.androidagent.core.ToolDefinition
@@ -403,6 +404,24 @@ class ClaudeCodeEngineTest {
         assertEquals("1", second.env[ClaudeProtocol.DISABLE_LONG_CONTEXT])
         assertEquals("the CLI refuses a 1M alias while the window is off", "sonnet", second.after("--model"))
         assertFalse(first.isAlive)
+    }
+
+    @Test fun earlierTurnsGoToTheTranscriptAndANewSessionResumesIt() = runBlocking {
+        val engine = engine()
+        val id = engine.openSession(workspace, null, "sonnet", emptyList())
+        assertTrue(engine.seedHistory(id, listOf(HandoffTurn(HandoffTurn.USER, "My dog is Pilpel"), HandoffTurn(HandoffTurn.ASSISTANT, "Got it"))))
+        assertEquals(2, host.transcripts!!.getValue(id).size)
+        engine.startTurn(id, "What is my dog called?", emptyList(), null, null, DeviceCapabilities(), null)
+        assertEquals(id, host.chats().single().after("--resume"))
+    }
+
+    @Test fun aHostThatCannotWriteTheTranscriptLeavesTheTextHandoff() = runBlocking {
+        host.transcripts = null
+        val engine = engine()
+        val id = engine.openSession(workspace, null, "sonnet", emptyList())
+        assertFalse(engine.seedHistory(id, listOf(HandoffTurn(HandoffTurn.USER, "hi"))))
+        engine.startTurn(id, "hello", emptyList(), null, null, DeviceCapabilities(), null)
+        assertEquals(id, host.chats().single().after("--session-id"))
     }
 
     @Test fun anEffortChangeRestartsTheChatWithResume() = runBlocking {

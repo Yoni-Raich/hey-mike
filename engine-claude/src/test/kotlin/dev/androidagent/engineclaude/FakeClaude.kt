@@ -232,6 +232,14 @@ internal class FakeHost(override val homeDirectory: File) : ClaudeProcessHost {
 
     override suspend fun stopAll() { stopAllCalls++ }
 
+    /** Transcript additions, by session; null refuses them. */
+    @Volatile var transcripts: MutableMap<String, List<String>>? = mutableMapOf()
+    override suspend fun extendTranscript(workingDirectory: String, sessionId: String, records: List<String>): Boolean {
+        val store = transcripts ?: return false
+        store[sessionId] = store[sessionId].orEmpty() + records
+        return true
+    }
+
     fun chats(): List<FakeClaude> = started.filter { "--system-prompt-file" in it.args }
 }
 

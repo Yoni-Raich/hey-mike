@@ -3148,8 +3148,10 @@ voice works in a Claude chat.
 - **Compliance rules** (from the spec): official unmodified binary checked
   against the bundled pin or an authenticated official manifest pin; never
   bundled; sign-in only inside `claude`; the
-  app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
-  excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
+  app never reads, copies, backs up or uploads the sign-in in
+  `CLAUDE_CONFIG_DIR` (it is excluded from backups), and writes there only
+  session transcripts under `projects` (see "Engine switch: native history",
+  changed 2026-11-08 by the owner's decision); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
   headers or `--bare`; API keys and base-URL variables are scrubbed from the
   child environment; the UI says "Use your own Claude subscription (runs
   Anthropic's Claude Code). Not affiliated with Anthropic." and never uses
@@ -3417,8 +3419,16 @@ block stays as the fallback for an engine that cannot.
   An older server refuses it and the chat gets the text block. Once seeded,
   the chat is marked caught up, so a turn that fails to start does not add it
   again.
-- **Claude** keeps the text block. Claude Code resumes a transcript JSONL
-  written ahead of time (probed: `--resume` of a two-record file answered from
-  it), but writing under `CLAUDE_CONFIG_DIR` breaks the engine's stated
-  compliance rule (the app only passes `claude` arguments). Not done without
-  the owner's decision.
+- **Claude** reads its own transcript. The turns become Claude Code records
+  (`ClaudeProtocol.transcriptRecords`: user string content, assistant text
+  block, `parentUuid` chain) and the host appends them to
+  `<CLAUDE_CONFIG_DIR>/projects/<folder>/<session>.jsonl`, continuing from the
+  last main message or starting the file in the folder Claude Code names for
+  the cwd; the next start uses `--resume`. An idle process is stopped first;
+  a busy one is not touched. The phone host writes the file itself
+  (`ClaudeTranscript`, canonical cwd); a computer runs the uploaded
+  `transcript-writer-v1` script (PowerShell or Python). Probed live: the
+  PowerShell writer with the engine's record shape, then `claude -p --resume`,
+  answered from the written turns. The owner lifted the old rule that the app
+  never touches `CLAUDE_CONFIG_DIR` for this (2026-11-08); the sign-in files
+  stay untouched.

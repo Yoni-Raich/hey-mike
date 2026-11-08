@@ -184,14 +184,15 @@ val EngineKind.label: String
  *
  * The binary is downloaded at first run and never bundled or patched. The
  * host owns the loader, the private config dir, the network proxy and the
- * environment; engines only pass `claude` arguments.
+ * environment. Engines pass `claude` arguments, and the host adds a chat's
+ * earlier turns to a transcript when asked ([extendTranscript]).
  */
 interface ClaudeProcessHost {
     /** Changes when new chat processes will use a different runtime. Existing turns keep their process. */
     val runtimeIdentity: String get() = ""
     /** Install state of the active binary; READY once it is present and verified. */
     val status: StateFlow<RuntimeStatus>
-    /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its files. */
+    /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its sign-in files. */
     val homeDirectory: File
     /** Explicit first installation, or use an already verified active build. */
     suspend fun prepare()
@@ -199,6 +200,12 @@ interface ClaudeProcessHost {
     suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String> = emptyMap()): Process
     /** Stop every process this host started. */
     suspend fun stopAll()
+    /**
+     * Append [records] to Claude Code's transcript of [sessionId], where
+     * `claude` runs; see [ClaudeTranscript.extend]. False when this host
+     * cannot, and the chat gets its earlier turns as text instead.
+     */
+    suspend fun extendTranscript(workingDirectory: String, sessionId: String, records: List<String>): Boolean = false
 }
 
 data class ToolDefinition(val name: String, val description: String, val inputSchema: JsonObject)

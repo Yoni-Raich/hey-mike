@@ -23,6 +23,7 @@ package dev.androidagent.engineclaude
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.DeviceCapabilities
+import dev.androidagent.core.HandoffTurn
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -151,6 +152,28 @@ class ClaudeProtocolTest {
     @Test fun aMissingOrHugePictureBecomesANote() {
         val block = ClaudeProtocol.imageBlock(File("/does/not/exist.png"))
         assertEquals("text", block["type"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun earlierTurnsBecomeTranscriptRecordsThatResumeReads() {
+        var next = 0
+        val records = ClaudeProtocol.transcriptRecords(
+            "c6a97ade-8859-4601-b99d-12699742efd8", "/work",
+            listOf(HandoffTurn(HandoffTurn.USER, "My dog is Pilpel"), HandoffTurn(HandoffTurn.ASSISTANT, "Got it")),
+            Instant.parse("2026-11-08T10:00:00Z"),
+        ) { "00000000-0000-0000-0000-00000000000${++next}" }
+        assertEquals(
+            """{"parentUuid":"@HEYMIKE_LEAF@","isSidechain":false,"userType":"external","cwd":"/work",""" +
+                """"sessionId":"c6a97ade-8859-4601-b99d-12699742efd8","type":"user","uuid":"00000000-0000-0000-0000-000000000001",""" +
+                """"timestamp":"2026-11-08T10:00:00Z","message":{"role":"user","content":"My dog is Pilpel"}}""",
+            records[0],
+        )
+        val mike = Json.parseToJsonElement(records[1]).jsonObject
+        assertEquals("00000000-0000-0000-0000-000000000001", mike["parentUuid"]!!.jsonPrimitive.content)
+        assertEquals("assistant", mike["type"]!!.jsonPrimitive.content)
+        assertEquals("2026-11-08T10:00:00.001Z", mike["timestamp"]!!.jsonPrimitive.content)
+        val message = mike["message"]!!.jsonObject
+        assertEquals("Got it", message["content"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals("end_turn", message["stop_reason"]!!.jsonPrimitive.content)
     }
 
     @Test fun framesMatchTheStreamJsonShapes() {

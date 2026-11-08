@@ -24,6 +24,8 @@ import dev.androidagent.core.AccountStatus
 import dev.androidagent.core.AgentModel
 import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
+import dev.androidagent.core.ClaudeTranscript
+import dev.androidagent.core.HandoffTurn
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.DeviceRuntimeContext
 import dev.androidagent.core.EngineKind
@@ -269,6 +271,43 @@ internal object ClaudeProtocol {
 
     fun interruptRequest(requestId: String): JsonObject =
         controlRequest(requestId, "interrupt", buildJsonObject { put("cancel_queued", true) })
+
+    /**
+     * A chat's earlier turns as Claude Code transcript records, in the shape
+     * `claude --resume` reads back: a user record with string content, an
+     * assistant record with one text block, each naming the one before. The
+     * first names [ClaudeTranscript.LEAF], the transcript's last message.
+     * Checked against Claude Code 2.1: a resumed two-record file answered from it.
+     */
+    fun transcriptRecords(sessionId: String, cwd: String, turns: List<HandoffTurn>, now: Instant, uuid: () -> String): List<String> {
+        var parent = ClaudeTranscript.LEAF
+        return turns.mapIndexed { index, turn ->
+            val id = uuid()
+            buildJsonObject {
+                put("parentUuid", parent)
+                put("isSidechain", false)
+                put("userType", "external")
+                put("cwd", cwd)
+                put("sessionId", sessionId)
+                put("type", if (turn.role == HandoffTurn.USER) "user" else "assistant")
+                put("uuid", id)
+                put("timestamp", now.plusMillis(index.toLong()).toString())
+                put("message", if (turn.role == HandoffTurn.USER) buildJsonObject {
+                    put("role", "user")
+                    put("content", turn.text)
+                } else buildJsonObject {
+                    put("id", "msg_heymike_" + id.replace("-", ""))
+                    put("type", "message")
+                    put("role", "assistant")
+                    put("model", "heymike-handoff")
+                    put("content", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", turn.text) }) })
+                    put("stop_reason", "end_turn")
+                    put("stop_sequence", JsonNull)
+                    put("usage", buildJsonObject { put("input_tokens", 0); put("output_tokens", 0) })
+                })
+            }.toString().also { parent = id }
+        }
+    }
 
     /** End one background task the model left running (`stop_task` in `sdk.d.ts`). */
     fun stopTaskRequest(requestId: String, taskId: String): JsonObject =
