@@ -25,6 +25,7 @@ import dev.androidagent.core.AgentModel
 import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.DeviceCapabilities
+import dev.androidagent.core.DeviceRuntimeContext
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.ReasoningEffortOption
 import dev.androidagent.core.TokenUsage
@@ -335,7 +336,7 @@ internal object ClaudeProtocol {
         planMode: Boolean,
         now: ZonedDateTime = ZonedDateTime.now(),
     ): JsonArray = buildJsonArray {
-        capabilities?.let { add(textBlock(ClaudeInstructions.deviceRuntimeContext(it, now))) }
+        capabilities?.let { add(textBlock(DeviceRuntimeContext.render(it, now))) }
         images.forEach { file -> add(imageBlock(file)) }
         if (planMode) add(textBlock(PLAN_INSTRUCTION))
         val skill = skillName?.trim()?.takeIf { SKILL_NAME.matches(it) }

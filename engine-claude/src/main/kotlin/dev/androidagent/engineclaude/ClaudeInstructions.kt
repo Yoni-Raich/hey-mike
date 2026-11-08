@@ -20,14 +20,9 @@
 
 package dev.androidagent.engineclaude
 
-import dev.androidagent.core.ConnectionPhase
-import dev.androidagent.core.DeviceCapabilities
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
-import java.util.Locale
-
 /**
- * Mike's system prompt for a Claude chat, and the per-turn runtime snapshot.
+ * Mike's system prompt for a Claude chat. The per-turn runtime snapshot is
+ * [dev.androidagent.core.DeviceRuntimeContext], shared with the Codex engine.
  *
  * The persona and rules are the Codex engine's, with nothing that names
  * another engine. How to operate the phone stays in the workspace AGENTS.md,
@@ -63,66 +58,4 @@ Rules that always hold:
 - Finish every turn with a separate user-facing final answer in the user's language: what completed, what failed, what remains. A tool result or progress update is never the final answer. Do not claim success without evidence.
 - You cannot generate images. Never invent a generated image or present a screenshot as generated artwork.
 - Keep replies concise."""
-
-    /**
-     * The per-turn device snapshot, the same text the Codex engine sends.
-     * Availability is per operation and worded accessibility-first; see the
-     * Codex engine for why (issue #44).
-     */
-    fun deviceRuntimeContext(
-        capabilities: DeviceCapabilities,
-        now: ZonedDateTime = ZonedDateTime.now(),
-    ): String = buildString {
-        val status = capabilities.adbStatus
-        appendLine("[Trusted Android Agent runtime context]")
-        appendLine(
-            "This snapshot replaces every older snapshot, and any earlier statement in this chat " +
-                "that device tools were unavailable.",
-        )
-        appendLine(
-            "Phone local time: " +
-                now.format(DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", Locale.ENGLISH)) +
-                " (${now.zone.id}). A task that names a date means that date, not today.",
-        )
-        appendLine(
-            capabilities.backendStatus?.let { "Backends: $it" }
-                ?: "Wireless ADB (optional): ${status.phase.name.lowercase()}",
-        )
-        appendLine(
-            if (capabilities.anyReady) {
-                "Device tools you can call now: ${capabilities.ready.sorted().joinToString(", ")}"
-            } else {
-                "Device tools you can call now: none"
-            },
-        )
-        if (capabilities.blocked.isNotEmpty()) {
-            appendLine("Tools that need a backend that is off: " + capabilities.blocked.sorted().joinToString(", "))
-        }
-        append(
-            when {
-                !capabilities.deviceBackendLive && status.phase in SETUP_PHASES ->
-                    "No device backend is live yet. Screen control needs only the Hey Mike " +
-                        "accessibility service: ask the user to enable it in Settings > Accessibility. " +
-                        "Wireless ADB is still connecting, but it is optional."
-                !capabilities.deviceBackendLive ->
-                    "No device backend is live, so you cannot read or operate the screen right now. " +
-                        "Anything in the first list still works — opening an app or a deep link needs no " +
-                        "backend. For screen control, ask the user to enable the Hey Mike accessibility " +
-                        "service in Settings > Accessibility. Wireless ADB is an optional advanced extra."
-                capabilities.blocked.isEmpty() ->
-                    "Use the supplied device tools when the task needs device access."
-                status.phase != ConnectionPhase.CONNECTED ->
-                    "Call anything in the first list normally. Wireless ADB is an optional advanced " +
-                        "extra and being off is normal. Only if the task truly needs a tool from the " +
-                        "second list, name that exact tool and what it needs. Never tell the user a " +
-                        "task needs ADB when the first list covers it."
-                else ->
-                    "Call anything in the first list normally. The tools in the second list need the " +
-                        "Hey Mike accessibility service; if the task needs one, ask the user to enable " +
-                        "it in Settings > Accessibility. Do not treat the whole device as unavailable."
-            },
-        )
-    }
-
-    private val SETUP_PHASES = setOf(ConnectionPhase.DISCOVERING, ConnectionPhase.PAIRING, ConnectionPhase.CONNECTING)
 }

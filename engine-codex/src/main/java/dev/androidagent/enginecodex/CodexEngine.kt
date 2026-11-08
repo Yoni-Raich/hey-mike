@@ -1058,7 +1058,7 @@ class CodexEngine(
                 capabilities?.let { snapshot ->
                     add(buildJsonObject {
                         put("type", "text")
-                        put("text", deviceRuntimeContext(snapshot))
+                        put("text", DeviceRuntimeContext.render(snapshot))
                     })
                 }
                 add(buildJsonObject { put("type", "text"); put("text", prompt) })
@@ -1094,88 +1094,6 @@ class CodexEngine(
                 })
             })
         }
-
-        /**
-         * The per-turn device snapshot.
-         *
-         * Availability is reported **per operation**. The previous version
-         * derived one `Device tools available: yes/no` from the ADB phase
-         * alone and told the model "Do not call device tools" whenever the
-         * transport was down, which blocked the whole accessibility surface —
-         * `open_intent` on an ordinary deep link included — for a reason that
-         * had nothing to do with it (issue #44).
-         *
-         * It is also worded accessibility-first. The accessibility service is
-         * the main backend and Wireless ADB an optional extra, and a snapshot
-         * that led with the ADB phase kept the model saying "ADB is not
-         * connected, so I can't" for tasks it could do.
-         */
-        internal fun deviceRuntimeContext(
-            capabilities: DeviceCapabilities,
-            now: java.time.ZonedDateTime = java.time.ZonedDateTime.now(),
-        ): String = buildString {
-            val status = capabilities.adbStatus
-            appendLine("[Trusted Android Agent runtime context]")
-            appendLine(
-                "This snapshot replaces every older snapshot, and any earlier statement in this chat " +
-                    "that device tools were unavailable.",
-            )
-            // The model has no clock. Without this it read "today" off whatever
-            // date a calendar happened to show, and got it wrong.
-            appendLine(
-                "Phone local time: " +
-                    now.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", java.util.Locale.ENGLISH)) +
-                    " (${now.zone.id}). A task that names a date means that date, not today.",
-            )
-            appendLine(
-                capabilities.backendStatus?.let { "Backends: $it" }
-                    ?: "Wireless ADB (optional): ${status.phase.name.lowercase()}",
-            )
-            appendLine(
-                if (capabilities.anyReady) {
-                    "Device tools you can call now: ${capabilities.ready.sorted().joinToString(", ")}"
-                } else {
-                    "Device tools you can call now: none"
-                }
-            )
-            if (capabilities.blocked.isNotEmpty()) {
-                appendLine(
-                    "Tools that need a backend that is off: " +
-                        capabilities.blocked.sorted().joinToString(", "),
-                )
-            }
-            append(
-                when {
-                    !capabilities.deviceBackendLive && status.phase in SETUP_PHASES ->
-                        "No device backend is live yet. Screen control needs only the Hey Mike " +
-                            "accessibility service: ask the user to enable it in Settings > Accessibility. " +
-                            "Wireless ADB is still connecting, but it is optional."
-                    !capabilities.deviceBackendLive ->
-                        "No device backend is live, so you cannot read or operate the screen right now. " +
-                            "Anything in the first list still works — opening an app or a deep link needs no " +
-                            "backend. For screen control, ask the user to enable the Hey Mike accessibility " +
-                            "service in Settings > Accessibility. Wireless ADB is an optional advanced extra."
-                    capabilities.blocked.isEmpty() ->
-                        "Use the supplied device tools when the task needs device access."
-                    status.phase != ConnectionPhase.CONNECTED ->
-                        "Call anything in the first list normally. Wireless ADB is an optional advanced " +
-                            "extra and being off is normal. Only if the task truly needs a tool from the " +
-                            "second list, name that exact tool and what it needs. Never tell the user a " +
-                            "task needs ADB when the first list covers it."
-                    else ->
-                        "Call anything in the first list normally. The tools in the second list need the " +
-                            "Hey Mike accessibility service; if the task needs one, ask the user to enable " +
-                            "it in Settings > Accessibility. Do not treat the whole device as unavailable."
-                }
-            )
-        }
-
-        /** ADB phases that mean "wait", not "ask the user to start over". */
-        private val SETUP_PHASES = setOf(
-            ConnectionPhase.DISCOVERING,
-            ConnectionPhase.PAIRING,
-            ConnectionPhase.CONNECTING,
-        )
 
         /** Build the v0.153.4 thread/realtime/start request. */
         internal fun realtimeStartParams(threadId: String, model: String?): JsonObject =
@@ -1220,11 +1138,6 @@ class CodexEngine(
             return "data:$mime;base64," + Base64.getEncoder().encodeToString(file.readBytes())
         }
 
-        /**
-         * [parseSkillCatalog] for a path on another machine. Paths are compared
-         * as text with either slash and any case, which is how Windows reads
-         * them; one entry is the answer to the one cwd asked for.
-         */
         /** Interactive conversations only: sub-agent threads belong to their parent. */
         internal fun threadListParams(cursor: String?, limit: Int): JsonObject = buildJsonObject {
             cursor?.let { put("cursor", it) }
@@ -1272,6 +1185,11 @@ class CodexEngine(
             }
         }
 
+        /**
+         * [parseSkillCatalog] for a path on another machine. Paths are compared
+         * as text with either slash and any case, which is how Windows reads
+         * them; one entry is the answer to the one cwd asked for.
+         */
         internal fun parseSkillCatalogAt(result: JsonObject, cwd: String): List<AgentSkill> {
             val entries = (result["data"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
             fun norm(path: String) = path.replace('\\', '/').trimEnd('/').lowercase()
