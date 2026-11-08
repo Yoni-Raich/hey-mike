@@ -27,6 +27,8 @@ import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.DeviceToolGateway
 import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
 import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
+import dev.androidagent.core.actAndObserveObservationFailed
+import dev.androidagent.core.actAndObserveResult
 import dev.androidagent.core.READ_UI_DESCRIPTION
 import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ObservationState
@@ -45,9 +47,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -193,14 +193,9 @@ class AndroidDeviceTools(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            ToolResult("Observation failed: ${failure.message}. Do not repeat the completed action.", success = false)
+            actAndObserveObservationFailed(failure)
         } finally { withContext(NonCancellable) { observationVisibility(false) } }
-        return ToolResult(buildJsonObject {
-            put("actionCompleted", true)
-            put("actionResult", result.text)
-            put("observationSucceeded", observation.success)
-            put("observation", runCatching { Json.parseToJsonElement(observation.text) }.getOrElse { JsonPrimitive(observation.text) })
-        }.toString(), success = observation.success)
+        return actAndObserveResult(result, observation)
     }
 
     private fun deviceStatus(): ToolResult {

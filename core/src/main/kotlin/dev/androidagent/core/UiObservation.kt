@@ -189,6 +189,24 @@ val ACT_AND_OBSERVE_DEFINITION: ToolDefinition = ToolDefinition(
 )
 
 /**
+ * What every backend returns when the `act_and_observe` observation throws
+ * after the action already landed.
+ */
+fun actAndObserveObservationFailed(failure: Exception): ToolResult =
+    ToolResult("Observation failed: ${failure.message}. Do not repeat the completed action.", success = false)
+
+/**
+ * The one `act_and_observe` result envelope for a completed [action]. The
+ * observation is embedded as JSON when it parses, and as text otherwise.
+ */
+fun actAndObserveResult(action: ToolResult, observation: ToolResult): ToolResult = ToolResult(buildJsonObject {
+    put("actionCompleted", true)
+    put("actionResult", action.text)
+    put("observationSucceeded", observation.success)
+    put("observation", runCatching { Json.parseToJsonElement(observation.text) }.getOrElse { JsonPrimitive(observation.text) })
+}.toString(), success = observation.success)
+
+/**
  * A focused request for part of one observation.
  *
  * A busy screen does not fit in one reply, and a reply that silently dropped
