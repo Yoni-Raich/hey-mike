@@ -25,6 +25,7 @@ import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.DeviceCapabilities
+import dev.androidagent.core.HandoffTurn
 import dev.androidagent.core.RealtimeAudioChunk
 import dev.androidagent.core.ReasoningEffortOption
 import kotlinx.coroutines.*
@@ -872,5 +873,14 @@ class CodexEngineTest {
             listOf(CodexThreadMessage("user", "Hi"), CodexThreadMessage("assistant", "Hello"), CodexThreadMessage("user", "Again")),
             CodexEngine.parseThreadMessages(result),
         )
+    }
+
+    // Shape checked against app-server 0.163: thread/inject_items answered {}
+    // and the next turn answered from the injected messages.
+    @org.junit.Test fun earlierTurnsBecomeResponsesMessages() {
+        val user = CodexEngine.historyItem(HandoffTurn(HandoffTurn.USER, "My dog is Pilpel"))
+        assertEquals("""{"type":"message","role":"user","content":[{"type":"input_text","text":"My dog is Pilpel"}]}""", user.toString())
+        val mike = CodexEngine.historyItem(HandoffTurn(HandoffTurn.ASSISTANT, "Got it"))
+        assertEquals("""{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Got it"}]}""", mike.toString())
     }
 }

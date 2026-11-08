@@ -144,6 +144,36 @@ class ChatHandoffTest {
     }
 
     @Test
+    fun turnsAlternateStartWithTheUserAndKeepTheNewest() {
+        val turns = ChatHandoff.turns(
+            listOf(
+                message("assistant", "Hello, I am Mike.", 1),
+                message("user", "Open my alarms", 2),
+                message("tool", "open_intent: opened the clock\nsecond line", 3),
+                message("assistant", "Your alarms are open.", 4),
+                message("note", "Chat compacted", 5),
+                message("user", "Look at this", 6, attachments = listOf("/chat/attachments/a.png")),
+                message("user", "And this", 7),
+            ),
+        )
+        assertEquals(
+            listOf(
+                HandoffTurn("user", "(Earlier messages are left out.)"),
+                HandoffTurn("assistant", "Hello, I am Mike."),
+                HandoffTurn("user", "Open my alarms"),
+                HandoffTurn("assistant", "(I ran open_intent: opened the clock second line)\n\nYour alarms are open."),
+                HandoffTurn("user", "Look at this [attached: /chat/attachments/a.png]\n\nAnd this"),
+            ),
+            turns,
+        )
+        val long = (1..50L).map { message(if (it % 2 == 1L) "user" else "assistant", "message $it " + "x".repeat(200), it) }
+        val kept = ChatHandoff.turns(long, maxChars = 2_000)
+        assertTrue(kept.last().text.startsWith("message 50 "))
+        assertTrue(kept.none { it.text.startsWith("message 1 ") })
+        assertEquals("user", kept.first().role)
+    }
+
+    @Test
     fun aLongChatKeepsItsNewestMessages() {
         val messages = (1..50L).map { message(if (it % 2 == 1L) "user" else "assistant", "message $it " + "x".repeat(200), it) }
 

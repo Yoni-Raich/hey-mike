@@ -10,6 +10,7 @@ import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.EngineSwitch
+import dev.androidagent.core.HandoffTurn
 import dev.androidagent.core.RealtimeAudioChunk
 import dev.androidagent.core.RealtimeTransport
 import dev.androidagent.core.RealtimeVoiceEngine
@@ -282,6 +283,7 @@ class RoutingAgentEngine(
         if (name != null && !isClaude(threadId)) computerOf(threadId)?.let { hub.threadRenamed(it, threadId, name) }
         return name
     }
+    override suspend fun seedHistory(threadId: String, turns: List<HandoffTurn>): Boolean = engineFor(threadId).seedHistory(threadId, turns)
     override suspend fun steer(threadId: String, turnId: String, prompt: String) = engineFor(threadId).steer(threadId, turnId, prompt)
     override suspend fun interrupt(threadId: String, turnId: String) = engineFor(threadId).interrupt(threadId, turnId)
 

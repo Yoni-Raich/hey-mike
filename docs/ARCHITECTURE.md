@@ -3400,3 +3400,25 @@ the notification itself shown as if the user had typed it.
 
 Rejected: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. It would hide the problem
 by removing a capability (waiting for CI, long builds) that the user wants.
+
+## Engine switch: native history where the engine takes it — 2026-11-08
+
+A chat that changed engine gave the other engine a text block before the
+prompt ("[Earlier in this chat] ... another AI model ..."), so the switch did
+not feel like a model switch within one engine. Now `AgentEngine.seedHistory`
+first offers what the thread missed as real turns (`ChatHandoff.turns`: user
+and assistant turns, alternating, user first, newest kept within the same
+24,000-character budget, actions as "(I ran ...)" in Mike's turn). The text
+block stays as the fallback for an engine that cannot.
+
+- **Codex** uses `thread/inject_items` (app-server 0.163, Responses API
+  `message` items). Probed on the Windows 0.163 app-server: the call answered
+  `{}` and the next turn answered a question only the injected turns held.
+  An older server refuses it and the chat gets the text block. Once seeded,
+  the chat is marked caught up, so a turn that fails to start does not add it
+  again.
+- **Claude** keeps the text block. Claude Code resumes a transcript JSONL
+  written ahead of time (probed: `--resume` of a two-record file answered from
+  it), but writing under `CLAUDE_CONFIG_DIR` breaks the engine's stated
+  compliance rule (the app only passes `claude` arguments). Not done without
+  the owner's decision.

@@ -567,7 +567,15 @@ class AgentCoordinator(
             val lostThread = session.engineThreadId != null && session.engineThreadId != openedThread
             val missedSince = if (restricted) null else if (lostThread) 0L else session.catchUpFrom
             val handoff = missedSince?.let { since ->
-                ChatHandoff.build(sessions.messages(sessionId).first().filter { it.createdAt > since && it.id != sent.id })
+                val missed = sessions.messages(sessionId).first().filter { it.createdAt > since && it.id != sent.id }
+                // Into the engine's own history where it can take it, as a
+                // model switch within one engine; text before the prompt where not.
+                if (!engine.seedHistory(openedThread, ChatHandoff.turns(missed))) ChatHandoff.build(missed)
+                else {
+                    // Given once: a turn that then fails to start must not add it again.
+                    if (session.catchUpFrom != null) sessions.markCaughtUp(sessionId)
+                    null
+                }
             }
             ensureCurrent(token)
             synchronized(lifecycleLock) {

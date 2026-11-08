@@ -438,6 +438,13 @@ interface AgentEngine {
      * summary is in place, with the sizes the engine reported, if it did.
      */
     suspend fun compact(threadId: String): CompactResult? = throw UnsupportedOperationException("This engine cannot compact a chat.")
+    /**
+     * Add what [threadId] missed in this chat to its history as its own turns,
+     * before its next turn: the way a model switch within one engine keeps the
+     * conversation. False when this engine or thread cannot; the caller then
+     * puts the [ChatHandoff] text before the prompt instead.
+     */
+    suspend fun seedHistory(threadId: String, turns: List<HandoffTurn>): Boolean = false
     suspend fun steer(threadId: String, turnId: String, prompt: String)
     suspend fun interrupt(threadId: String, turnId: String)
     suspend fun answerTool(requestId: String, result: ToolResult)

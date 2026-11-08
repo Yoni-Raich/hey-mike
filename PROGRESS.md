@@ -21,6 +21,15 @@ Evidence (Windows, worktree build):
 Untested: no phone run of a real background cycle through the app, and
 `stop_task` was not sent to a live CLI.
 
+Engine switch to Codex now seeds native history (`thread/inject_items`)
+instead of a text block (ARCHITECTURE "Engine switch: native history").
+Probe on the Windows Codex app-server 0.163: inject answered `{}`, and the
+next turn answered "Pilpel" from the injected turns only. New tests:
+`ChatHandoff.turns` shape, coordinator seeding (prompt sent as typed, chat
+marked caught up), Codex item JSON. Claude stays on the text block (see the
+compliance note). Untested: a real switch on the phone and on a computer
+Codex older than 0.163 (should fall back to text).
+
 ### Behavior-preserving refactor — 2026-11-08
 
 Branch `refactor/behavior-preserving-20261108`. Duplicated model-facing text and
