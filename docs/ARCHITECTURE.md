@@ -1,5 +1,24 @@
 # Architecture
 
+## Mike's face — 2026-11-02
+
+`MikeEye` draws a flat robot head instead of a dot sphere. It is plain Compose
+`Canvas` on a 200-unit design square scaled to the box, so one drawing serves every
+size from a 24 dp avatar to the team page. Mood parameters ease toward per-mood
+targets, and motion phases accumulate, so changing mood never makes the head jump.
+
+Moods keep their meaning: teal is alive, amber is "waiting for you", grey-teal is
+paused. Thinking is lavender and done is green; a team member's `tint` still colours
+the eyes. Each running task adds one chin light (at most four) where the sphere drew
+one moon. The visor highlight path and the eye constants are built once, so a frame
+allocates nothing of its own.
+Reduced motion draws one still frame. The face never reads Codex or Claude events;
+it only takes `EyeMood`, so UI still observes app state, not raw engine JSON.
+
+Other orbs (`AgentOrb`, `VoiceSphere`, overlay) keep their own look. Changing them is
+a separate decision.
+
+
 ## Unified task board and personal assistant — 2026-10-29
 
 The board, Manager, team UI and follow-through are one feature. This integration
