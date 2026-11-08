@@ -1,5 +1,26 @@
 # Progress
 
+### Behavior-preserving refactor — 2026-11-08
+
+Branch `refactor/behavior-preserving-20261108`. Duplicated model-facing text and
+file writes now have one owner in `:core` (see ARCHITECTURE "Shared tool
+helpers in core"): device snapshot, tool refusal JSON, tool schema builder,
+`act_and_observe` envelope, atomic file replacement. Golden tests pin the old
+exact output. A `/code-review` (high) pass found no correctness bugs; its
+wrapper finding and the `/simplify` reuse, simplification and altitude findings
+were applied. Efficiency found no regressions.
+
+Evidence (Windows, worktree build):
+- `testDevDebugUnitTest testDebugUnitTest :core:test :connect-protocol:test`:
+  1,833 tests, 0 failures, 17 skipped (baseline before the refactor: 1,829, 0, 17;
+  four snapshot tests that repeated golden cases were removed).
+- `assembleDevDebug assembleDevRelease assembleDevDebugAndroidTest :app:lintDevDebug :voice:lintDebug`: BUILD SUCCESSFUL.
+- `python -m unittest tools.test_prepare_runtime`: 16 OK. `git diff --check`: clean.
+
+Untested: not installed or run on a phone. The changes only move code, but no
+device run confirms the a11y/ADB `act_and_observe` path or the Claude/Codex
+turn text on hardware.
+
 ### Dev update version — 2026-10-30
 
 The published dev-nightly code 1166 is lower than the user's installed dev

@@ -6,6 +6,7 @@ import dev.androidagent.core.SessionStore
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.toolRefusal
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -91,10 +92,10 @@ class ComputerToolGateway(
                 "start_task" -> startTask(arguments)
                 "task_status", "cancel_task" -> taskOperation(mode, arguments)
                 "add" -> add(arguments)
-                else -> refusal("unknown_mode", "\"$mode\" is not a mode. Use ${MODES.joinToString(", ")}.")
+                else -> toolRefusal("unknown_mode", "\"$mode\" is not a mode. Use ${MODES.joinToString(", ")}.")
             }
         } catch (refused: Refused) {
-            refusal(refused.type, refused.message)
+            toolRefusal(refused.type, refused.message)
         }
     }
 
@@ -241,7 +242,7 @@ class ComputerToolGateway(
             val receipt = manager.start(origin, requestId, computer, path, message, arguments.text("model")) { !revoked }
             ok { put("task", receipt.toJson()); put("note", "Computer subagent receipt; task.status is its current state, including on retries. Its child session is linked to this source chat. Use task_status with taskId; progress, approval requests and the result also appear here. Reuse requestId on retries.") }
         } catch (error: IllegalArgumentException) {
-            refusal("request_conflict", error.message ?: "Invalid request")
+            toolRefusal("request_conflict", error.message ?: "Invalid request")
         }
     }
 
@@ -285,11 +286,6 @@ class ComputerToolGateway(
 
     private fun ok(body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) =
         ToolResult(buildJsonObject { put("ok", true); body() }.toString())
-
-    private fun refusal(type: String, message: String) = ToolResult(
-        buildJsonObject { put("ok", false); put("errorType", type); put("message", message) }.toString(),
-        success = false,
-    )
 
     companion object {
         const val NAME = "computers"

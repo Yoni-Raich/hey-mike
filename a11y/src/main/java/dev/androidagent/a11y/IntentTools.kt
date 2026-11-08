@@ -20,6 +20,8 @@
 
 package dev.androidagent.a11y
 
+import dev.androidagent.core.toolDefinition
+import dev.androidagent.core.ToolDefinition
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -32,6 +34,7 @@ import dev.androidagent.core.IntentPolicy
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.toolRefusal
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -66,7 +69,7 @@ internal class IntentTools(
         val action = arguments.string("action")
         val uri = arguments.string("uri")
         return when (val decision = IntentPolicy.evaluate(action, uri)) {
-            is IntentPolicy.Decision.Deny -> denied(decision)
+            is IntentPolicy.Decision.Deny -> toolRefusal(decision.reason, decision.message)
             is IntentPolicy.Decision.NeedsConfirmation -> resolveAllowed(decision.action, decision.uri)
             is IntentPolicy.Decision.Allow -> resolveAllowed(decision.action, decision.uri)
         }
@@ -81,19 +84,19 @@ internal class IntentTools(
         val pkg = arguments.string("package")
         if (pkg != null) require(PACKAGE_RE.matches(pkg)) { "package is not a valid Android package name" }
         val extras = when (val parsed = IntentExtras.parse(arguments["extras"])) {
-            is IntentExtras.Parsed.Invalid -> return denied(IntentPolicy.Decision.Deny(parsed.reason, parsed.message))
+            is IntentExtras.Parsed.Invalid -> return toolRefusal(parsed.reason, parsed.message)
             is IntentExtras.Parsed.Ok -> parsed.extras
         }
         // A prefilled body is composed into the uri before the policy runs, so
         // it is checked as the payload it is rather than slipping past as an
         // argument the policy never sees.
         val uri = when (val composed = IntentPolicy.withText(arguments.string("uri"), arguments.string("text"))) {
-            is IntentPolicy.Decision.Deny -> return denied(composed)
+            is IntentPolicy.Decision.Deny -> return toolRefusal(composed.reason, composed.message)
             is IntentPolicy.Decision.Allow -> composed.uri
             is IntentPolicy.Decision.NeedsConfirmation -> composed.uri
         }
         return when (val decision = IntentPolicy.evaluate(action, uri, extras)) {
-            is IntentPolicy.Decision.Deny -> denied(decision)
+            is IntentPolicy.Decision.Deny -> toolRefusal(decision.reason, decision.message)
             is IntentPolicy.Decision.NeedsConfirmation -> authorizeIntent(
                 LocalIntentRequest(
                     decision.action,
@@ -229,23 +232,14 @@ internal class IntentTools(
         put("default", isDefault)
     }
 
-    private fun denied(decision: IntentPolicy.Decision.Deny): ToolResult = ToolResult(
-        buildJsonObject {
-            put("ok", false)
-            put("errorType", decision.reason)
-            put("message", decision.message)
-        }.toString(),
-        success = false,
-    )
-
     private fun JsonObject.string(key: String): String? =
         this[key]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
 
     companion object {
         private val PACKAGE_RE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
 
-        val DEFINITIONS_SPEC: List<IntentToolSpec> = listOf(
-            IntentToolSpec(
+        val DEFINITIONS: List<ToolDefinition> = listOf(
+            toolDefinition(
                 name = "resolve_intent",
                 description = "Check which installed apps would handle an action and/or uri, without " +
                     "launching anything. Read-only. Use it before open_intent when you are not sure " +
@@ -253,7 +247,7 @@ internal class IntentTools(
                 properties = mapOf("action" to "string", "uri" to "string"),
                 required = emptyList(),
             ),
-            IntentToolSpec(
+            toolDefinition(
                 name = "open_intent",
                 description = "Open a destination or run an Android action directly by intent instead of " +
                     "navigating there through the UI — a maps route, a specific chat, a settings screen " +
@@ -281,11 +275,3 @@ internal class IntentTools(
         )
     }
 }
-
-/** Schema for one intent tool, rendered by the gateway's own `tool` helper. */
-internal data class IntentToolSpec(
-    val name: String,
-    val description: String,
-    val properties: Map<String, String>,
-    val required: List<String>,
-)

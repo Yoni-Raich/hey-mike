@@ -33,9 +33,6 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.Locale
 
 /**
@@ -275,16 +272,7 @@ class KnowledgeStore(
                 output.write(text.toByteArray(Charsets.UTF_8))
                 output.fd.sync()
             }
-            try {
-                Files.move(
-                    temp.toPath(),
-                    file.toPath(),
-                    StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
+            AtomicFiles.replace(temp, file)
         } finally {
             if (temp.exists()) temp.delete()
         }

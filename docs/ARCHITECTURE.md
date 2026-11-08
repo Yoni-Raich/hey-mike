@@ -1,5 +1,25 @@
 # Architecture
 
+## Shared tool helpers in core — 2026-11-08
+
+Text the model sees from more than one backend or engine has one owner in
+`:core`, so the copies cannot drift:
+
+- `DeviceRuntimeContext.render` is the per-turn device snapshot for Codex and Claude;
+  its `HEADER` is also what `ChatTitles` uses to reject a snapshot as a title.
+- `toolRefusal` builds the `{"ok":false,"errorType","message"}` refusal.
+  `WorkflowToolGateway` keeps its own, because it adds `"nothingRan": true`.
+- `toolDefinition(...)` (`ToolDefinitions.kt`) builds the plain property schemas
+  used by the accessibility, intent, ADB, knowledge and workflow gateways.
+- `actAndObserveResult` / `actAndObserveObservationFailure` sit next to
+  `ACT_AND_OBSERVE_DEFINITION`, so both backends return the same envelope.
+  `jsonOrText` is the one "embed as JSON, else as a string" rule.
+- `AtomicFiles` replaces a whole file through a temp file and a move. Stores
+  with their own failure rules (remote store, runtime installers, transfer
+  blobs, capability tools) keep their local code on purpose.
+
+Golden tests in `core/src/test` pin the exact output of each helper.
+
 ## Unified task board and personal assistant — 2026-10-29
 
 The board, Manager, team UI and follow-through are one feature. This integration

@@ -22,11 +22,8 @@ package dev.androidagent.core
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
 import java.io.File
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.Locale
 
 /**
@@ -106,11 +103,7 @@ class WorkflowLibrary(private val root: File) {
         val temp = File(root, "." + definition.id + SUFFIX + ".tmp")
         try {
             temp.writeBytes(payload)
-            try {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
+            AtomicFiles.replace(temp, file)
         } finally {
             temp.delete()
         }

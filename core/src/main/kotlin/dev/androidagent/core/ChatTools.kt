@@ -186,11 +186,6 @@ object ChatTools {
             if (failed.isNotEmpty()) put("notShown", buildJsonArray { failed.forEach { add(JsonPrimitive(it)) } })
         }.toString(),
     )
-
-    fun refused(type: String, message: String): ToolResult = ToolResult(
-        buildJsonObject { put("ok", false); put("errorType", type); put("message", message) }.toString(),
-        success = false,
-    )
 }
 
 /**
@@ -210,5 +205,5 @@ class ChatToolGateway : DeviceToolGateway {
     override fun deviceBackendLive(): Boolean = false
     override suspend fun cancel() = Unit
     override suspend fun invoke(name: String, arguments: JsonObject): ToolResult =
-        ChatTools.refused("no_chat", "$name works only as a direct call in a chat turn.")
+        toolRefusal("no_chat", "$name works only as a direct call in a chat turn.")
 }

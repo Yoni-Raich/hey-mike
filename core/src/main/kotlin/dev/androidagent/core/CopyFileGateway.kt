@@ -117,8 +117,8 @@ class CopyFileGateway(
         if (revoked) throw IllegalStateException("Run stopped. Nothing was copied.")
         if (name != NAME) throw ToolNotServiceable("copy_unsupported", "copy_file does not implement \"$name\".")
         val ws = workspace ?: throw IllegalStateException("Run stopped. Nothing was copied.")
-        val from = arguments.text("from") ?: return refusal("missing_from", "Say which file to copy in from.")
-        val to = arguments.text("to") ?: return refusal("missing_to", "Say where to copy it in to.")
+        val from = arguments.text("from") ?: return toolRefusal("missing_from", "Say which file to copy in from.")
+        val to = arguments.text("to") ?: return toolRefusal("missing_to", "Say where to copy it in to.")
         val replace = (arguments["replace"] as? JsonPrimitive)?.booleanOrNull == true
         return try {
             val source = resolve(from, ws)
@@ -137,9 +137,9 @@ class CopyFileGateway(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (refused: Refused) {
-            refusal(refused.type, refused.message)
+            toolRefusal(refused.type, refused.message)
         } catch (error: Exception) {
-            refusal("copy_failed", "Could not copy $from to $to: ${error.message}. Nothing was left half-copied.")
+            toolRefusal("copy_failed", "Could not copy $from to $to: ${error.message}. Nothing was left half-copied.")
         }
     }
 
@@ -390,11 +390,6 @@ class CopyFileGateway(
     }
 
     private class Refused(val type: String, override val message: String) : Exception(message)
-
-    private fun refusal(type: String, message: String) = ToolResult(
-        buildJsonObject { put("ok", false); put("errorType", type); put("message", message) }.toString(),
-        success = false,
-    )
 
     companion object {
         const val NAME = "copy_file"

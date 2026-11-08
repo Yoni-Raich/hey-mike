@@ -122,7 +122,7 @@ class TaskTools(
         val role = roleOf(sessionId)
         val mode = arguments.text("mode") ?: "list"
         val allowed = MODES[role].orEmpty()
-        if (mode !in allowed) ChatTools.refused("not_here", "Mode $mode is not available in this chat. Available: ${allowed.joinToString()}.")
+        if (mode !in allowed) toolRefusal("not_here", "Mode $mode is not available in this chat. Available: ${allowed.joinToString()}.")
         else when (mode) {
             "list" -> list(role, sessionId)
             "get" -> get(role, sessionId, arguments)
@@ -154,12 +154,12 @@ class TaskTools(
             "rule" -> rule(arguments, fromUser)
             "playbook" -> playbook(arguments, role, sessionId)
             "finish" -> finish(arguments, sessionId)
-            else -> ChatTools.refused("bad_mode", "Unknown mode $mode.")
+            else -> toolRefusal("bad_mode", "Unknown mode $mode.")
         }
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
     } catch (error: Exception) {
-        ChatTools.refused("tasks_refused", error.message ?: "The board refused this.")
+        toolRefusal("tasks_refused", error.message ?: "The board refused this.")
     }
 
     private fun list(role: TaskChatRole, sessionId: String): ToolResult {
@@ -204,7 +204,7 @@ class TaskTools(
     private suspend fun propose(role: TaskChatRole, sessionId: String, args: JsonObject): ToolResult {
         val category = TaskCategory.from(args.text("category"))
         if (category != TaskCategory.TASK && role !in setOf(TaskChatRole.COACH, TaskChatRole.LIBRARIAN, TaskChatRole.MANAGER, TaskChatRole.COORDINATOR)) {
-            return ChatTools.refused("not_here", "Only the Manager, Coach and Librarian post settings or report cards.")
+            return toolRefusal("not_here", "Only the Manager, Coach and Librarian post settings or report cards.")
         }
         val action = (args["action"] as? JsonObject)?.let { a ->
             val type = a.text("type") ?: error("action needs a type.")
@@ -245,7 +245,7 @@ class TaskTools(
                     rule.ignores(proposal.title, proposal.kind, proposal.evidence.firstOrNull()?.source)
                 }
             } == true
-            if(ignored) return ChatTools.refused("learned_filter", "A tested learned preference suppresses this suggestion. No work was started.")
+            if(ignored) return toolRefusal("learned_filter", "A tested learned preference suppresses this suggestion. No work was started.")
         }
         val origin = when (role) {
             TaskChatRole.SCOUT -> "signal"
@@ -267,7 +267,7 @@ class TaskTools(
                 put("duplicate", brief(outcome.task))
                 put("note", if (outcome.task.status.undecided) "Already on the board. Use update to add evidence." else "Already handled or decided; do not propose it again.")
             }
-            is ProposeOutcome.Refused -> ChatTools.refused(outcome.reason, outcome.message)
+            is ProposeOutcome.Refused -> toolRefusal(outcome.reason, outcome.message)
         }
     }
 
@@ -304,7 +304,7 @@ class TaskTools(
 
     private suspend fun decide(role: TaskChatRole, sessionId: String, args: JsonObject, fromUser: Boolean): ToolResult {
         if (!fromUser) {
-            return ChatTools.refused("not_the_user", "Only the user's own words decide a card, and the newest input in this turn is not " +
+            return toolRefusal("not_the_user", "Only the user's own words decide a card, and the newest input in this turn is not " +
                 "the user's. Ask the user, or let them tap the card.")
         }
         val ids = (strings(args["ids"]) + listOfNotNull(args.text("id"))).distinct()
@@ -332,7 +332,7 @@ class TaskTools(
     }
 
     private suspend fun rule(args: JsonObject, fromUser: Boolean): ToolResult {
-        if (!fromUser) return ChatTools.refused("not_the_user", "Only a rule the user just said in their own words can be saved.")
+        if (!fromUser) return toolRefusal("not_the_user", "Only a rule the user just said in their own words can be saved.")
         val text = args.text("text") ?: error("Give the rule in the user's words.")
         require(text.length <= 400) { "Keep the rule to one or two lines." }
         addUserRule(text)
