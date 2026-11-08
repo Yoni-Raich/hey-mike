@@ -25,7 +25,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
@@ -127,7 +126,7 @@ class AutomationToolGateway(
         }
         val mode = arguments.str("mode")?.lowercase() ?: "list"
         if (mode !in MODES) {
-            return refusal("unknown_mode", "\"$mode\" is not a mode. Use " + MODES.joinToString(", ") + ".")
+            return toolRefusal("unknown_mode", "\"$mode\" is not a mode. Use " + MODES.joinToString(", ") + ".")
         }
         return try {
             when (mode) {
@@ -141,10 +140,10 @@ class AutomationToolGateway(
                 "test" -> test(arguments)
                 "run" -> run(arguments)
                 "signals" -> signals()
-                else -> refusal("unknown_mode", "\"$mode\" is not a mode.")
+                else -> toolRefusal("unknown_mode", "\"$mode\" is not a mode.")
             }
         } catch (invalid: AutomationFormatException) {
-            refusal(invalid.errorType, invalid.message)
+            toolRefusal(invalid.errorType, invalid.message)
         }
     }
 
@@ -175,14 +174,14 @@ class AutomationToolGateway(
      */
     private fun create(arguments: JsonObject): ToolResult {
         val json = arguments["rule"] as? JsonObject
-            ?: return refusal("rule_required", "\"rule\" must be the rule object itself.")
+            ?: return toolRefusal("rule_required", "\"rule\" must be the rule object itself.")
         val rule = AutomationRule.parse(json)
         val existing = library.get(rule.id)
         // Silently replacing a standing rule because a new one happened to get
         // the same id is how a working rule disappears. Replacing is allowed,
         // but it has to be asked for.
         if (existing != null && arguments.bool("replace") != true) {
-            return refusal(
+            return toolRefusal(
                 "rule_exists",
                 "A rule called \"${rule.id}\" already exists (${existing.description.ifEmpty { "no description" }}). " +
                     "Use mode:\"update\" to change it, pass replace:true to overwrite it whole, " +
@@ -192,7 +191,7 @@ class AutomationToolGateway(
         try {
             library.save(rule)
         } catch (full: IllegalArgumentException) {
-            return refusal("rule_limit", full.message ?: "No room for another rule.")
+            return toolRefusal("rule_limit", full.message ?: "No room for another rule.")
         }
         runCatching { onChanged() }
         val supported = isSupported(rule)
@@ -321,13 +320,13 @@ class AutomationToolGateway(
     private fun update(arguments: JsonObject): ToolResult {
         val rule = exact(arguments) ?: return notFound(arguments)
         val changes = arguments["changes"] as? JsonObject
-            ?: return refusal(
+            ?: return toolRefusal(
                 "changes_required",
                 "\"changes\" is the part of the rule to change, e.g. " +
                     "{\"when\":{\"type\":\"schedule\",\"at\":\"20:00\"}}. Each key replaces the old value; " +
                     "null removes it.",
             )
-        if (changes.isEmpty()) return refusal("changes_required", "\"changes\" is empty: there is nothing to change.")
+        if (changes.isEmpty()) return toolRefusal("changes_required", "\"changes\" is empty: there is nothing to change.")
         val updated = library.update(rule.id, changes)
         runCatching { onChanged() }
         val supported = isSupported(updated)
@@ -358,7 +357,7 @@ class AutomationToolGateway(
      */
     private fun test(arguments: JsonObject): ToolResult {
         val eventJson = arguments["event"] as? JsonObject
-            ?: return refusal(
+            ?: return toolRefusal(
                 "event_required",
                 "\"event\" describes what to pretend happened, e.g. " +
                     "{\"type\":\"notification\",\"package\":\"com.whatsapp\",\"title\":\"Dad\"}.",
@@ -366,7 +365,7 @@ class AutomationToolGateway(
         val at = arguments.str("now")?.let { text ->
             runCatching { ZonedDateTime.parse(text) }.getOrNull()
                 ?: runCatching { java.time.LocalDateTime.parse(text).atZone(zone()) }.getOrNull()
-                ?: return refusal(
+                ?: return toolRefusal(
                     "now_invalid",
                     "\"now\" is \"$text\"; write an ISO time such as \"2026-09-15T21:40\".",
                 )
@@ -428,13 +427,13 @@ class AutomationToolGateway(
      * and may stop to ask the user, so its outcome arrives later.
      */
     private fun run(arguments: JsonObject): ToolResult {
-        val fire = fireNow ?: return refusal(
+        val fire = fireNow ?: return toolRefusal(
             "run_unavailable",
             "This host cannot fire a rule on demand. Rules still run from their own triggers.",
         )
         val rule = exact(arguments) ?: return notFound(arguments)
         if (!rule.enabled) {
-            return refusal(
+            return toolRefusal(
                 "rule_disabled",
                 "\"${rule.id}\" is turned off. Enable it first with mode:\"enable\".",
             )
@@ -475,19 +474,19 @@ class AutomationToolGateway(
     private fun notFound(arguments: JsonObject): ToolResult {
         val name = arguments.str("rule") ?: arguments.str("id") ?: arguments.str("name")
         if (name == null) {
-            return refusal("rule_required", "\"rule\" is required: name the rule by its id. " + known())
+            return toolRefusal("rule_required", "\"rule\" is required: name the rule by its id. " + known())
         }
         return when (val lookup = library.find(name)) {
-            is AutomationLibrary.Lookup.Ambiguous -> refusal(
+            is AutomationLibrary.Lookup.Ambiguous -> toolRefusal(
                 "rule_ambiguous",
                 "\"$name\" matches ${lookup.candidates.joinToString(", ")}. Name one of them exactly.",
             )
-            is AutomationLibrary.Lookup.Found -> refusal(
+            is AutomationLibrary.Lookup.Found -> toolRefusal(
                 "rule_id_inexact",
                 "\"$name\" is not an exact rule id. Did you mean \"${lookup.definition.id}\"? " +
                     "Changing a rule needs its exact id.",
             )
-            else -> refusal("rule_not_found", "There is no rule called \"$name\". " + known())
+            else -> toolRefusal("rule_not_found", "There is no rule called \"$name\". " + known())
         }
     }
 
@@ -495,15 +494,6 @@ class AutomationToolGateway(
         val ids = library.all().map { it.id }
         return if (ids.isEmpty()) "No rules are saved." else "Saved rules: " + ids.joinToString(", ") + "."
     }
-
-    private fun refusal(errorType: String, message: String): ToolResult = ToolResult(
-        buildJsonObject {
-            put("ok", false)
-            put("errorType", errorType)
-            put("message", message)
-        }.toString(),
-        success = false,
-    )
 
     private companion object {
         val MODES = listOf("create", "update", "list", "describe", "enable", "disable", "delete", "test", "run", "signals")

@@ -29,9 +29,9 @@ import dev.androidagent.core.ACT_AND_OBSERVE_ACTIONS
 import dev.androidagent.core.ACT_AND_OBSERVE_DEFINITION
 import dev.androidagent.core.READ_UI_DESCRIPTION
 import dev.androidagent.core.ToolNotServiceable
-import dev.androidagent.core.ObservationFingerprint
 import dev.androidagent.core.ObservationState
 import dev.androidagent.core.ToolDefinition
+import dev.androidagent.core.toolDefinition
 import dev.androidagent.core.ToolResult
 import dev.androidagent.core.UiNode
 import dev.androidagent.core.UiObservation
@@ -45,12 +45,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -1014,8 +1012,8 @@ class AndroidDeviceTools(
 
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ACT_AND_OBSERVE_DEFINITION,
-            tool("device_status", "Report which device backends are live: the accessibility service, and the optional Wireless ADB. Read-only.", emptyMap(), emptyList()),
-            tool(
+            toolDefinition("device_status", "Report which device backends are live: the accessibility service, and the optional Wireless ADB. Read-only.", emptyMap(), emptyList()),
+            toolDefinition(
                 "read_ui",
                 READ_UI_DESCRIPTION,
                 mapOf(
@@ -1027,14 +1025,14 @@ class AndroidDeviceTools(
                 ),
                 emptyList(),
             ),
-            tool("screenshot", "Capture a PNG screenshot. Returns imageBase64. Read-only.", emptyMap(), emptyList()),
-            tool("tap", "Tap the screen at pixel coordinates.", mapOf("x" to "integer", "y" to "integer"), listOf("x", "y")),
-            tool("swipe", "Swipe from one point to another.", mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"), listOf("x1", "y1", "x2", "y2")),
-            tool("type_text", "Type text. Uses the configured IME for full Unicode; ASCII falls back to adb input when no IME is configured.", mapOf("text" to "string", "submit" to "boolean"), listOf("text")),
-            tool("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),
-            tool("open_app", "Launch an app by package, optionally with activity.", mapOf("package" to "string", "activity" to "string"), listOf("package")),
-            tool("shell", "Run an arbitrary shell command. Visible device control.", mapOf("command" to "string", "timeoutMs" to "integer"), listOf("command")),
-            tool(
+            toolDefinition("screenshot", "Capture a PNG screenshot. Returns imageBase64. Read-only.", emptyMap(), emptyList()),
+            toolDefinition("tap", "Tap the screen at pixel coordinates.", mapOf("x" to "integer", "y" to "integer"), listOf("x", "y")),
+            toolDefinition("swipe", "Swipe from one point to another.", mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"), listOf("x1", "y1", "x2", "y2")),
+            toolDefinition("type_text", "Type text. Uses the configured IME for full Unicode; ASCII falls back to adb input when no IME is configured.", mapOf("text" to "string", "submit" to "boolean"), listOf("text")),
+            toolDefinition("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),
+            toolDefinition("open_app", "Launch an app by package, optionally with activity.", mapOf("package" to "string", "activity" to "string"), listOf("package")),
+            toolDefinition("shell", "Run an arbitrary shell command. Visible device control.", mapOf("command" to "string", "timeoutMs" to "integer"), listOf("command")),
+            toolDefinition(
                 "install_apk",
                 "Install an APK that is on the phone: file is a chat: or phone: address (see copy_file). It never " +
                     "copies from elsewhere; copy_file brings a file here first, and a failed install is tried again " +
@@ -1043,27 +1041,5 @@ class AndroidDeviceTools(
                 listOf("file"),
             ),
         )
-
-        private fun tool(
-            name: String,
-            description: String,
-            properties: Map<String, String>,
-            required: List<String>,
-        ): ToolDefinition {
-            val props = buildJsonObject {
-                for ((k, t) in properties) putJsonType(k, t)
-            }
-            val schema = buildJsonObject {
-                put("type", "object")
-                put("properties", props)
-                put("description", description)
-                put("required", JsonArray(required.map { JsonPrimitive(it) }))
-            }
-            return ToolDefinition(name, description, schema)
-        }
-
-        private fun kotlinx.serialization.json.JsonObjectBuilder.putJsonType(key: String, type: String) {
-            put(key, buildJsonObject { put("type", type) })
-        }
     }
 }

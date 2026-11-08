@@ -187,10 +187,7 @@ object ChatTools {
         }.toString(),
     )
 
-    fun refused(type: String, message: String): ToolResult = ToolResult(
-        buildJsonObject { put("ok", false); put("errorType", type); put("message", message) }.toString(),
-        success = false,
-    )
+    fun refused(type: String, message: String): ToolResult = toolRefusal(type, message)
 }
 
 /**

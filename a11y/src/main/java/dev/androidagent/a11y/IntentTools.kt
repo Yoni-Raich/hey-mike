@@ -32,6 +32,7 @@ import dev.androidagent.core.IntentPolicy
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.toolRefusal
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -229,14 +230,8 @@ internal class IntentTools(
         put("default", isDefault)
     }
 
-    private fun denied(decision: IntentPolicy.Decision.Deny): ToolResult = ToolResult(
-        buildJsonObject {
-            put("ok", false)
-            put("errorType", decision.reason)
-            put("message", decision.message)
-        }.toString(),
-        success = false,
-    )
+    private fun denied(decision: IntentPolicy.Decision.Deny): ToolResult =
+        toolRefusal(decision.reason, decision.message)
 
     private fun JsonObject.string(key: String): String? =
         this[key]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }

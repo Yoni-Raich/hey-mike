@@ -867,14 +867,14 @@ class AgentCoordinator(
             send = null,
         )
         return when (awaitLocalApproval(pending)) {
-            LocalOutcome.STOPPED -> localIntentRejected("intent_not_approved", "Run stopped before the intent was approved.")
-            LocalOutcome.TIMED_OUT -> localIntentRejected(
+            LocalOutcome.STOPPED -> toolRefusal("intent_not_approved", "Run stopped before the intent was approved.")
+            LocalOutcome.TIMED_OUT -> toolRefusal(
                 "approval_timeout",
                 "Nobody answered the approval within ${LOCAL_APPROVAL_TIMEOUT_MS / 1_000} seconds. " +
                     "It was shown in the Hey Mike app above the message box. Ask the user again: " +
                     "they can tap Allow or just say \"yes\". Call open_intent again once they agree.",
             )
-            LocalOutcome.DENIED -> localIntentRejected(
+            LocalOutcome.DENIED -> toolRefusal(
                 "intent_denied",
                 "The user denied this intent. Do not retry it; ask what they want instead.",
             )
@@ -908,13 +908,13 @@ class AgentCoordinator(
             send = request,
         )
         return when (awaitLocalApproval(pending)) {
-            LocalOutcome.STOPPED -> localIntentRejected("send_not_approved", "Run stopped before the send was approved. Nothing was sent.")
-            LocalOutcome.TIMED_OUT -> localIntentRejected(
+            LocalOutcome.STOPPED -> toolRefusal("send_not_approved", "Run stopped before the send was approved. Nothing was sent.")
+            LocalOutcome.TIMED_OUT -> toolRefusal(
                 "approval_timeout",
                 "Nobody answered the send approval within ${LOCAL_APPROVAL_TIMEOUT_MS / 1_000} seconds, so " +
                     "nothing was sent. Ask the user again: they can tap Allow or just say \"yes\".",
             )
-            LocalOutcome.DENIED -> localIntentRejected(
+            LocalOutcome.DENIED -> toolRefusal(
                 "send_denied",
                 "The user did not approve sending this. Nothing was sent. Do not retry; ask what they want instead.",
             )
@@ -1157,15 +1157,6 @@ class AgentCoordinator(
             mutableState.value = state.value.copy(approval = null)
         }
     }
-
-    private fun localIntentRejected(errorType: String, message: String): ToolResult = ToolResult(
-        buildJsonObject {
-            put("ok", false)
-            put("errorType", errorType)
-            put("message", message)
-        }.toString(),
-        success = false,
-    )
 
     private suspend fun handleEvent(event: EngineEvent) {
         if (bufferStartupEvent(event)) return

@@ -806,7 +806,7 @@ class WorkflowToolGateway(
          * failure means - the prefix ran, so the model resumes instead of
          * starting again.
          */
-        val PLAN_DEFINITION: ToolDefinition = tool(
+        val PLAN_DEFINITION: ToolDefinition = toolDefinition(
             "act_plan",
             "Run a short sequence of actions you can already see in ONE call, with no model turn per " +
                 "action. Use it as soon as read_ui shows you the whole sequence - focus a field, type, " +
@@ -852,7 +852,7 @@ class WorkflowToolGateway(
          * stop and ask — is in the definition file, where it can be read,
          * reviewed and fixed without the model re-deriving it every time.
          */
-        val RUNNER_DEFINITION: ToolDefinition = tool(
+        val RUNNER_DEFINITION: ToolDefinition = toolDefinition(
             "workflow_runner",
             "Save, list, describe, or run a declarative workflow. mode=\"save\" takes a " +
                 "definition object with id, package, and steps; it validates and stores it without " +
@@ -885,7 +885,7 @@ class WorkflowToolGateway(
         )
 
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
-            tool(
+            toolDefinition(
                 "run_workflow",
                 "Run a known sequence of steps locally, without a model turn per step. Each step is " +
                     "{tool, arguments, timeoutMs}. Use it only for a sequence you already know works — " +
@@ -898,7 +898,7 @@ class WorkflowToolGateway(
                     "steps" to array(LITERAL_STEP_SCHEMA, "The tool calls to replay, in order."),
                 ),
             ),
-            tool(
+            toolDefinition(
                 "save_workflow",
                 "Legacy format: store literal tool calls for run_workflow. These calls are not " +
                     "loaded by workflow_runner. For a new reusable sequence, prefer " +
@@ -914,7 +914,7 @@ class WorkflowToolGateway(
                     "steps" to array(LITERAL_STEP_SCHEMA, "The tool calls that worked, in order."),
                 ),
             ),
-            tool(
+            toolDefinition(
                 "list_workflows",
                 "List older saved literal step sequences, optionally for one package. " +
                     "workflow_runner(mode=\"list\") shows these separately from declarative definitions. Read-only.",
@@ -922,45 +922,6 @@ class WorkflowToolGateway(
                 emptyList(),
             ),
         )
-
-        /**
-         * A tool whose arguments are plain scalars, plus any spelled-out
-         * schemas in [structured].
-         *
-         * A bare `{"type":"array"}` is not a description of anything: a client
-         * with no `items` renders it as an array of strings, and a model then
-         * sends each element as quoted JSON and is refused for it. So every
-         * array here carries its `items`.
-         */
-        fun tool(
-            name: String,
-            description: String,
-            properties: Map<String, String>,
-            required: List<String>,
-            structured: Map<String, JsonObject> = emptyMap(),
-        ): ToolDefinition {
-            val props = buildJsonObject {
-                for ((key, type) in properties) {
-                    val spelled = structured[key]
-                    if (spelled != null) {
-                        put(key, spelled)
-                    } else {
-                        put(key, buildJsonObject {
-                            put("type", type)
-                            // A free-form map, such as workflow_runner's params.
-                            if (type == "object") put("additionalProperties", true)
-                        })
-                    }
-                }
-            }
-            val schema = buildJsonObject {
-                put("type", "object")
-                put("properties", props)
-                put("description", description)
-                put("required", JsonArray(required.map { JsonPrimitive(it) }))
-            }
-            return ToolDefinition(name, description, schema)
-        }
 
         private fun array(items: JsonObject, description: String): JsonObject = buildJsonObject {
             put("type", "array")

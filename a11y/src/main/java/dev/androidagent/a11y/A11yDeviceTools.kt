@@ -35,6 +35,8 @@ import dev.androidagent.core.ObservationState
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.toolDefinition
+import dev.androidagent.core.toolRefusal
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.UiObservationSerializer
 import dev.androidagent.core.UiQuery
@@ -43,7 +45,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -726,7 +727,7 @@ class A11yDeviceTools(
         press: suspend (AgentAccessibilityService) -> ToolResult,
     ): ToolResult {
         val pkg = root.packageName ?: service.rootInActiveWindow?.packageName?.toString()
-            ?: return ToolResult(sendFailure("send_app_unknown", "Could not tell which app this send is in. Nothing was sent."), success = false)
+            ?: return toolRefusal("send_app_unknown", "Could not tell which app this send is in. Nothing was sent.")
         val request = SendRequest(
             packageName = pkg,
             appLabel = appLabel(pkg),
@@ -737,7 +738,7 @@ class A11yDeviceTools(
             checkActive()
             val live = requireService()
             if (!returnTo(live, pkg)) {
-                ToolResult(sendFailure("send_app_gone", "${request.appLabel} could not be brought back. Nothing was sent."), success = false)
+                toolRefusal("send_app_gone", "${request.appLabel} could not be brought back. Nothing was sent.")
             } else {
                 press(live)
             }
@@ -769,10 +770,7 @@ class A11yDeviceTools(
     private suspend fun pressSend(service: AgentAccessibilityService): ToolResult {
         val root = service.rootInActiveWindow?.let(::RealNodeView)
         val send = root?.let { SendGuard.findSend(it) } as? RealNodeView
-            ?: return ToolResult(
-                sendFailure("send_control_gone", "The Send button is not on screen any more. Nothing was sent; call read_ui."),
-                success = false,
-            )
+            ?: return toolRefusal("send_control_gone", "The Send button is not on screen any more. Nothing was sent; call read_ui.")
         var target: android.view.accessibility.AccessibilityNodeInfo? = send.node
         repeat(3) {
             if (target?.isClickable == true && target!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -806,13 +804,6 @@ class A11yDeviceTools(
             val pm = context.packageManager
             pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
         }.getOrDefault(pkg)
-
-    private fun sendFailure(errorType: String, message: String): String =
-        buildJsonObject {
-            put("ok", false)
-            put("errorType", errorType)
-            put("message", message)
-        }.toString()
 
     /**
      * A coordinate gesture hits whatever is topmost, so filtering our windows
@@ -902,7 +893,7 @@ class A11yDeviceTools(
         /** Internal rather than private so this module's tests can audit it. */
         internal val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
             ACT_AND_OBSERVE_DEFINITION,
-            tool(
+            toolDefinition(
                 "read_ui",
                 READ_UI_DESCRIPTION,
                 mapOf(
@@ -914,44 +905,44 @@ class A11yDeviceTools(
                 ),
                 emptyList(),
             ),
-            tool("screenshot", "Capture a PNG screenshot. Returns imageBase64. Read-only.", emptyMap(), emptyList()),
-            tool("tap", "Tap the screen at pixel coordinates.", mapOf("x" to "integer", "y" to "integer"), listOf("x", "y")),
-            tool(
+            toolDefinition("screenshot", "Capture a PNG screenshot. Returns imageBase64. Read-only.", emptyMap(), emptyList()),
+            toolDefinition("tap", "Tap the screen at pixel coordinates.", mapOf("x" to "integer", "y" to "integer"), listOf("x", "y")),
+            toolDefinition(
                 "swipe",
                 "Swipe from one point to another.",
                 mapOf("x1" to "integer", "y1" to "integer", "x2" to "integer", "y2" to "integer", "durationMs" to "integer"),
                 listOf("x1", "y1", "x2", "y2"),
             ),
-            tool(
+            toolDefinition(
                 "type_text",
                 "Type text into the focused field. Tap the field first so it holds input focus.",
                 mapOf("text" to "string", "submit" to "boolean"),
                 listOf("text"),
             ),
-            tool("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),
-            tool("open_app", "Launch an app by package, optionally with activity.", mapOf("package" to "string", "activity" to "string"), listOf("package")),
-            tool(
+            toolDefinition("key", "Send a keyevent by name or numeric code.", mapOf("keycode" to "string"), listOf("keycode")),
+            toolDefinition("open_app", "Launch an app by package, optionally with activity.", mapOf("package" to "string", "activity" to "string"), listOf("package")),
+            toolDefinition(
                 "tap_node",
                 "Tap a node from the most recent read_ui by its id instead of computing a coordinate. " +
                     "Pass the observationId the node came from; a node from an older observation is refused.",
                 mapOf("nodeId" to "string", "observationId" to "string"),
                 listOf("nodeId", "observationId"),
             ),
-            tool(
+            toolDefinition(
                 "set_text",
                 "Replace the text of an editable node from the most recent read_ui. Reports verified=false " +
                     "when the field did not take the value, which some chat and Compose inputs do not.",
                 mapOf("nodeId" to "string", "observationId" to "string", "text" to "string", "submit" to "boolean"),
                 listOf("nodeId", "observationId", "text"),
             ),
-            tool(
+            toolDefinition(
                 "scroll_node",
                 "Scroll a scrollable node from the most recent read_ui. More reliable than a swipe gesture " +
                     "inside a list. direction: forward, backward, up, down, left or right.",
                 mapOf("nodeId" to "string", "observationId" to "string", "direction" to "string"),
                 listOf("nodeId", "observationId", "direction"),
             ),
-            tool(
+            toolDefinition(
                 "wait_for_change",
                 "Block until the screen changes and settles, or the timeout expires. Use it after an action " +
                     "that starts a transition instead of polling read_ui. changed=false means nothing moved.",
@@ -959,32 +950,9 @@ class A11yDeviceTools(
                 emptyList(),
             ),
         ) + IntentTools.DEFINITIONS_SPEC.map { spec ->
-            tool(spec.name, spec.description, spec.properties, spec.required)
+            toolDefinition(spec.name, spec.description, spec.properties, spec.required)
         }
 
-        private fun tool(
-            name: String,
-            description: String,
-            properties: Map<String, String>,
-            required: List<String>,
-        ): ToolDefinition {
-            val props = buildJsonObject {
-                for ((key, type) in properties) {
-                    put(key, buildJsonObject {
-                        put("type", type)
-                        // A free-form map, such as open_intent's extras.
-                        if (type == "object") put("additionalProperties", true)
-                    })
-                }
-            }
-            val schema = buildJsonObject {
-                put("type", "object")
-                put("properties", props)
-                put("description", description)
-                put("required", JsonArray(required.map { JsonPrimitive(it) }))
-            }
-            return ToolDefinition(name, description, schema)
-        }
     }
 }
 

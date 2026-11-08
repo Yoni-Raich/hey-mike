@@ -20,9 +20,7 @@
 
 package dev.androidagent.core
 
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -133,7 +131,7 @@ class KnowledgeToolGateway(
 
     private companion object {
         val TOOL_DEFINITIONS: List<ToolDefinition> = listOf(
-            tool(
+            toolDefinition(
                 "recall_capability",
                 "Look up what previous chats worked out about an app before exploring its UI. " +
                     "Returns durable selectors and deep links keyed by package. A record marked " +
@@ -141,7 +139,7 @@ class KnowledgeToolGateway(
                 mapOf("package" to "string", "limit" to "integer"),
                 listOf("package"),
             ),
-            tool(
+            toolDefinition(
                 "remember_capability",
                 "Record one thing you worked out about an app, so the next chat does not " +
                     "rediscover it. The selector must be a resourceId or a contentDescription " +
@@ -173,33 +171,5 @@ class KnowledgeToolGateway(
                 ),
             ),
         )
-
-        /**
-         * A tool definition, with any spelled-out schemas in [structured].
-         *
-         * A bare `{"type":"array"}` says nothing: a client with no `items`
-         * renders it as an array of strings, and a caller that guesses wrong is
-         * refused for the schema's mistake rather than its own.
-         */
-        fun tool(
-            name: String,
-            description: String,
-            properties: Map<String, String>,
-            required: List<String>,
-            structured: Map<String, JsonObject> = emptyMap(),
-        ): ToolDefinition {
-            val props = buildJsonObject {
-                for ((key, type) in properties) {
-                    put(key, structured[key] ?: buildJsonObject { put("type", type) })
-                }
-            }
-            val schema = buildJsonObject {
-                put("type", "object")
-                put("properties", props)
-                put("description", description)
-                put("required", JsonArray(required.map { JsonPrimitive(it) }))
-            }
-            return ToolDefinition(name, description, schema)
-        }
     }
 }
