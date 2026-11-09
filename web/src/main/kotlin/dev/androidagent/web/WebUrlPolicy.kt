@@ -48,6 +48,12 @@ open class WebUrlPolicy(
     private val resolve: (String) -> List<InetAddress> = { host ->
         runCatching { InetAddress.getAllByName(host).toList() }.getOrDefault(emptyList())
     },
+    /**
+     * Sites a read-only connector owns, like the linked WhatsApp Web session.
+     * The agent's browser does not open them: the connector's page is the
+     * only door, and it reads only chats the Sources page allows.
+     */
+    private val reserved: Set<String> = RESERVED_HOSTS,
 ) {
     sealed interface Decision {
         data class Allowed(val url: String) : Decision
@@ -82,6 +88,11 @@ open class WebUrlPolicy(
                 "Open the page without them; the user signs in on the page.",
             )
         }
+        if (host in reserved) return Decision.Blocked(
+            "reserved_origin",
+            "\"$host\" belongs to one of Mike's read-only connections and is not opened in the browser.",
+            "For conversation context use the tasks tool with mode=context. Nothing was opened.",
+        )
         if (allowPrivateNetwork) return Decision.Allowed(candidate)
         if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
             return privateHost(host)
@@ -104,18 +115,19 @@ open class WebUrlPolicy(
         "Nothing was opened. Tell the user if the task really needs a device on their network.",
     )
 
-    private companion object {
-        const val BLANK = "about:blank"
-        val WEB_SCHEMES = setOf("http", "https")
-        val SCHEME = Regex("^([A-Za-z][A-Za-z0-9+.-]*):")
-        val HOST_AND_PORT = Regex("^[^/:?#]+:\\d+([/?#]|$)")
-        val IPV4 = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$")
+    companion object {
+        val RESERVED_HOSTS = setOf("web.whatsapp.com")
+        private const val BLANK = "about:blank"
+        private val WEB_SCHEMES = setOf("http", "https")
+        private val SCHEME = Regex("^([A-Za-z][A-Za-z0-9+.-]*):")
+        private val HOST_AND_PORT = Regex("^[^/:?#]+:\\d+([/?#]|$)")
+        private val IPV4 = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$")
 
         /** An address written out, parsed without asking the network. */
-        fun literalAddress(host: String): InetAddress? =
+        private fun literalAddress(host: String): InetAddress? =
             if (IPV4.matches(host) || host.contains(':')) runCatching { InetAddress.getByName(host) }.getOrNull() else null
 
-        fun isPrivate(address: InetAddress): Boolean {
+        private fun isPrivate(address: InetAddress): Boolean {
             if (address.isLoopbackAddress || address.isAnyLocalAddress || address.isLinkLocalAddress ||
                 address.isSiteLocalAddress || address.isMulticastAddress
             ) {

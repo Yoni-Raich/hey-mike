@@ -56,14 +56,17 @@ object NetDiagnostics {
 
     /**
      * CONNECT allowlist for the on-phone Claude Code process: the API, and
-     * the sign-in and account hosts. Updates, telemetry and error reporting
-     * are switched off in its environment, so their hosts are not listed.
+     * the sign-in and account hosts, and Anthropic's connector proxy, which
+     * serves the account's claude.ai connectors (observed: the only host a
+     * process with them on adds). Updates, telemetry and error reporting are
+     * switched off in its environment, so their hosts are not listed.
      */
     val claudeAllowedHosts: Set<String> = setOf(
         "api.anthropic.com",
         "claude.ai",
         "claude.com",
-        "platform.claude.com"
+        "platform.claude.com",
+        "mcp-proxy.anthropic.com"
     )
 
     /** Only TLS is tunnelled. Plain HTTP through the proxy is never allowed. */

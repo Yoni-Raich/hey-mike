@@ -10,6 +10,14 @@ class WebUrlPolicyTest {
         assertEquals(WebUrlPolicy.Decision.Allowed("https://example.com/path?q=a&b=c"), policy.check("example.com/path?q=a&b=c"))
         assertTrue(policy.check("about:blank") is WebUrlPolicy.Decision.Allowed)
     }
+    @Test fun refusesConnectorOwnedSitesButNotForTheirOwnWorker() {
+        val blocked = policy.check("https://web.whatsapp.com/") as? WebUrlPolicy.Decision.Blocked
+        assertEquals("reserved_origin", blocked?.errorType)
+        assertTrue(policy.check("https://www.whatsapp.com/") is WebUrlPolicy.Decision.Allowed)
+        val worker = WebUrlPolicy(resolve = { listOf(InetAddress.getByName("93.184.216.34")) }, reserved = emptySet())
+        assertTrue(worker.check("https://web.whatsapp.com/sw.js") is WebUrlPolicy.Decision.Allowed)
+    }
+
     @Test fun refusesNonWebSchemes() {
         listOf("file:///sdcard/a", "content://contacts/1", "javascript:alert(1)", "intent://x", "data:text/html,x").forEach {
             assertTrue(it, policy.check(it) is WebUrlPolicy.Decision.Blocked)

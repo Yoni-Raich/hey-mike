@@ -51,6 +51,46 @@ class ClaudeProtocolTest {
         assertEquals("dontAsk", value("--permission-mode"))
         assertTrue("--strict-mcp-config" in args)
     }
+
+    @Test fun backgroundChatWithAccountToolsLoadsTheAccountButAllowsOnlyThoseTools() {
+        val tools = listOf("mcp__claude_ai_Gmail__get_thread", "mcp__claude_ai_Gmail__search_threads")
+        val args = ClaudeProtocol.chatArgs("11111111-2222-4333-8444-555555555555", false, "sonnet", null, "/mcp", "/prompt", readOnly = true, accountTools = tools)
+        fun value(flag: String) = args[args.indexOf(flag) + 1]
+        assertFalse("--strict-mcp-config" in args)
+        assertEquals("mcp__mike__*,mcp__claude_ai_Gmail__get_thread,mcp__claude_ai_Gmail__search_threads", value("--allowedTools"))
+        assertEquals("dontAsk", value("--permission-mode"))
+        assertEquals("", value("--tools"))
+        // A user chat takes the same read-only tools next to its own, and still refuses the rest.
+        val user = ClaudeProtocol.chatArgs("11111111-2222-4333-8444-555555555555", false, "sonnet", null, "/mcp", "/prompt", readOnly = false, accountTools = tools)
+        assertFalse("--strict-mcp-config" in user)
+        assertEquals((ClaudeProtocol.ALLOWED_TOOLS + tools).joinToString(","), user[user.indexOf("--allowedTools") + 1])
+        assertEquals("dontAsk", user[user.indexOf("--permission-mode") + 1])
+        // Without account tools nothing of the account loads.
+        val plain = ClaudeProtocol.chatArgs("11111111-2222-4333-8444-555555555555", false, "sonnet", null, "/mcp", "/prompt")
+        assertTrue("--strict-mcp-config" in plain)
+    }
+
+    @Test fun accountServersKeepOnlyClaudeAiReadOnlyTools() {
+        val answer = Json.parseToJsonElement(
+            """{"mcpServers":[
+              {"name":"claude.ai Gmail","status":"connected","scope":"claudeai","tools":[
+                {"name":"search_threads","annotations":{"readOnly":true,"openWorld":true}},
+                {"name":"get_thread","annotations":{"readOnly":true}},
+                {"name":"trash_thread","annotations":{"destructive":true}},
+                {"name":"create_draft"}]},
+              {"name":"claude.ai Microsoft 365","status":"needs-auth","scope":"claudeai","tools":[]},
+              {"name":"mike","status":"connected","scope":"dynamic","tools":[{"name":"tap","annotations":{"readOnly":true}}]}
+            ]}""").jsonObject
+        val servers = ClaudeProtocol.parseAccountServers(answer)
+        assertEquals(listOf("claude.ai Gmail", "claude.ai Microsoft 365"), servers.map { it.server })
+        val gmail = servers.first()
+        assertTrue(gmail.connected)
+        assertEquals(listOf("mcp__claude_ai_Gmail__search_threads", "mcp__claude_ai_Gmail__get_thread"), gmail.readTools)
+        assertEquals(2, gmail.writeTools)
+        assertEquals("needs-auth", servers[1].state)
+        assertEquals("claude_ai_Google_Drive", ClaudeProtocol.toolServerName("claude.ai Google Drive"))
+        assertFalse("--strict-mcp-config" in ClaudeProtocol.accountProbeArgs())
+    }
     private fun fixture(name: String): List<JsonObject> =
         javaClass.getResource("/claude/$name")!!.readText().lines().filter { it.isNotBlank() }
             .map { Json.parseToJsonElement(it).jsonObject }

@@ -89,6 +89,9 @@ interface CapabilityPlatform {
     suspend fun queryContacts(query: String?, limit: Int): List<ContactRow>
     suspend fun getContact(id: String): ContactRow?
     suspend fun queryEvents(startMs: Long, endMs: Long, limit: Int): List<EventRow>
+    /** Detailed, current-profile-only result for shared situation; legacy list stays unchanged. */
+    suspend fun querySituationCalendar(startMs: Long, endMs: Long, limit: Int, observedAt: Long): dev.androidagent.core.SituationCalendar =
+        dev.androidagent.core.SituationCalendar("unsupported", observedAt, observedAt, startMs, endMs, limit)
     suspend fun getEvent(id: String): EventRow?
     suspend fun queryMedia(kind: String, nameQuery: String?, limit: Int): List<MediaRow>
     suspend fun mediaInfo(uri: String): MediaRow?

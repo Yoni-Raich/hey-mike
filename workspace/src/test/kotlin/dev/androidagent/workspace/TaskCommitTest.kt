@@ -3,6 +3,7 @@ package dev.androidagent.workspace
 import dev.androidagent.core.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -13,6 +14,51 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class TaskCommitTest {
+    @Test fun coachDispositionsCommitAtomicallyAndPendingEventsSurviveRestart() = runBlocking {
+        val store = store()
+        val ids = listOf("done", "later", "again")
+        val decisions = listOf(
+            CoachDisposition("done", "no_change", "One-off request", "Owner feedback"),
+            CoachDisposition("later", "defer", "Needs context", "Owner feedback"),
+            CoachDisposition("again", "retry", "Review failed", "Owner feedback"))
+        val review = run("coach-review").copy(purpose = "coach", eventIds = ids, coachDispositions = decisions)
+        assertTrue(runCatching { store.commitChanges(TaskChangeSet("invalid-coach", 0), review.copy(id = "invalid-coach", coachDispositions = emptyList())) }.isFailure)
+        assertTrue(store.consumedEvents("coach").isEmpty())
+        store.commitChanges(TaskChangeSet(review.id, 0), review)
+        store.commitChanges(TaskChangeSet(review.id, 0), review)
+        val reopened = LocalTaskBoardStore(RuntimeEnvironment.getApplication())
+        assertEquals(setOf("done"), reopened.consumedEvents("coach"))
+        assertEquals(decisions.toSet(), reopened.loadRuns().single { it.id == review.id }.coachDispositions.toSet())
+    }
+    @Test fun aSuppressedScoutSuggestionCanCommitItsReceiptWithoutCreatingWork() = runBlocking {
+        val store = store()
+        val input = TaskSignal("suppressed-input", "chat", text = "A parcel update", at = 1, capturedAt = 1)
+        store.insertSignal(input)
+        store.saveSettings(store.loadSettings().copy(suppressed = listOf(TaskSuppression(kind = "delivery", at = 1))))
+        val data = StagedTaskData.create(store)
+        val board = TaskBoard(data.store).apply { load() }
+        var finished = false
+        val tools = TaskTools(board, MemoryBook(data.store).apply { load() }, TeamRoster(data.store).apply { load() },
+            { TaskChatRole.SCOUT }, { "unused" }, finishPass = { _, ids -> require(ids == listOf(input.id)); finished = true })
+        val result = tools.invoke("scout", buildJsonObject {
+            put("mode", "propose"); put("title", "Review parcel status"); put("why", "An update arrived")
+            put("plan", "Review it"); put("kind", "delivery")
+            put("evidence", buildJsonArray { add(buildJsonObject { put("detail", "A parcel update arrived"); put("signalId", input.id) }) })
+        }, false)
+        assertTrue(result.text, result.success)
+        assertTrue(Json.parseToJsonElement(result.text).jsonObject["suppressed"]!!.jsonPrimitive.boolean)
+        assertFalse(finished)
+        assertEquals(listOf(input), store.loadSignals())
+        assertTrue(tools.invoke("scout", buildJsonObject { put("mode", "finish"); put("signalIds", buildJsonArray { add(input.id) }) }, false).success)
+        assertTrue(finished)
+        store.commitChanges(data.changes("suppressed-pass", 0, null, null),
+            run("suppressed-pass").copy(purpose = "scout", inputIds = listOf(input.id)))
+        assertTrue(store.loadSignals().isEmpty())
+        assertTrue(store.loadTasks().isEmpty())
+        assertEquals("delivery", store.loadSettings().suppressed.single().kind)
+        assertEquals("committed", store.loadRuns().single().state)
+    }
+
     @Test fun briefingIsAnAtomicOutboxAndConcurrentOwnerDecisionsWin() = runBlocking {
         val store = store()
         val board = TaskBoard(store, now = { 1_000_000L }).apply { load() }
@@ -127,6 +173,33 @@ class TaskCommitTest {
         store.commitChanges(patch, run)
         assertTrue(store.loadSignals().isEmpty())
         assertEquals(1, store.loadNotes().size)
+        assertEquals("committed", store.loadRuns().single().state)
+    }
+
+    @Test fun fullInboxResumesCaptureAfterAnAtomicScoutCommitWithoutLosingTheFeedCursor() = runBlocking {
+        val store = store()
+        val pending = (1..SignalInbox.MAX_PENDING).map { TaskSignal("s$it", "chat", text = "Keep $it", at = 1, capturedAt = 1) }
+        store.capturePage("messages", 0, 400, pending)
+        val next = TaskSignal("next", "chat", text = "Next message", at = 2, capturedAt = 2)
+        assertTrue(runCatching { store.capturePage("messages", 400, 401, listOf(next)) }.exceptionOrNull() is SignalInboxFullException)
+        assertEquals(400, store.sourceCursor("messages"))
+        val inbox = SignalInbox(store).apply { load() }
+        val calendar = CalendarSignalBuffer().apply { changed() }
+        assertNull(calendar.capture(inbox, 60_000, 60_000, enabled = true))
+        assertEquals(pending, store.loadSignals())
+
+        val batch = pending.take(DiscoverySchedule.MAX_BATCH)
+        val patch = TaskChangeSet("scout", 0, notes = listOf(NoteChange(after = note("learned", "Useful result"))))
+        val run = run("scout").copy(purpose = "scout", inputIds = batch.map { it.id })
+        store.commitChanges(patch, run)
+        store.commitChanges(patch, run)
+        inbox.refresh()
+        assertNotNull(calendar.capture(inbox, 120_000, 60_000, enabled = true))
+        store.capturePage("messages", 400, 401, listOf(next))
+        assertEquals(401, store.sourceCursor("messages"))
+        assertEquals((pending.drop(batch.size).map { it.id } + "next").toSet(),
+            store.loadSignals().filter { it.source != "calendar" }.map { it.id }.toSet())
+        assertEquals("Useful result", store.loadNotes().single().text)
         assertEquals("committed", store.loadRuns().single().state)
     }
 

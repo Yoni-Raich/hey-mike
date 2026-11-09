@@ -46,6 +46,8 @@ import dev.androidagent.app.ui.*
 import dev.androidagent.core.KeepAwakePolicy
 import java.io.File
 import java.util.UUID
+import dev.androidagent.core.proactive.ConnectorIds
+import dev.androidagent.core.proactive.FeedbackAction
 
 private const val MAX_PHOTOS = 10
 private const val STATE_PENDING_SHOT = "pending_shot"
@@ -168,6 +170,10 @@ class MainActivity : ComponentActivity() {
      * handing the user a page opens that chat with its page in front.
      */
     private fun openAskedChat(intent: Intent?) {
+        intent?.getStringExtra(MikeAlertNotifier.EXTRA_ALERT)?.let { alert ->
+            intent.removeExtra(MikeAlertNotifier.EXTRA_ALERT)
+            model.graph.taskDesk.alertFeedback(alert, FeedbackAction.OPEN)
+        }
         val chat = intent?.getStringExtra(QuestionNotifier.EXTRA_OPEN_CHAT) ?: return
         val browser = intent.getBooleanExtra(EXTRA_OPEN_BROWSER, false)
         intent.removeExtra(QuestionNotifier.EXTRA_OPEN_CHAT)
@@ -339,12 +345,32 @@ class MainActivity : ComponentActivity() {
         onTaskDiscovery = { on -> if (on) ensureService(); model.graph.taskDesk.setDiscovery(on) },
         onTaskSettings = { change -> model.graph.taskDesk.editSettings(change) },
         onTaskForgetCollected = { model.graph.taskDesk.forgetCollected() },
+        onTaskScanChat = { id -> model.graph.taskDesk.scanChat(id) },
         onTaskForgetNote = { id -> model.graph.taskDesk.forgetNote(id) },
         onTaskPinNote = { id, pinned -> model.graph.taskDesk.pinNote(id, pinned) },
         onTaskForgetSubject = { subject -> model.graph.taskDesk.forgetSubject(subject) },
         onTaskAddRule = { rule -> model.graph.taskDesk.addUserRule(rule) },
         onTaskLiftSuppression = { entry -> model.graph.taskDesk.liftSuppression(entry) },
         onTaskClearError = { model.graph.taskDesk.clearError() },
+        onAlertPrefs = { change -> model.graph.taskDesk.editAlerts(change) },
+        onTestAlert = {
+            if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            model.graph.taskDesk.testAlert()
+        },
+        onProfileSet = { kind, key, label, weight, always -> model.graph.taskDesk.setProfileEntry(kind, key, label, weight, always) },
+        onProfileReject = { id -> model.graph.taskDesk.rejectProfileEntry(id) },
+        onProfileRemove = { id -> model.graph.taskDesk.removeProfileEntry(id) },
+        onConnectorUse = { id, on -> model.graph.taskDesk.setConnector(id, on) },
+        onConnectorLink = { id ->
+            if (id == ConnectorIds.WHATSAPP_WEB) startActivity(Intent(this, WhatsAppLinkActivity::class.java))
+        },
+        onConnectorUnlink = { id ->
+            if (id == ConnectorIds.WHATSAPP_WEB) model.graph.whatsAppConnector.disconnect()
+            model.graph.taskDesk.setConnector(id, false)
+            model.graph.taskDesk.refreshConnections()
+        },
+        onRefreshConnections = { model.graph.taskDesk.refreshConnections() },
         onTaskCalendarPermission = { capabilityPermissions.launch(arrayOf(Manifest.permission.READ_CALENDAR)) },
         onToggleRule = { id, enabled -> model.setRuleEnabled(id, enabled) },
         onRunRule = { id -> ensureService(); model.runRule(id) },

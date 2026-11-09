@@ -94,6 +94,264 @@ Evidence (Windows, worktree build):
 Untested: not installed or run on a phone. The changes only move code, but no
 device run confirms the a11y/ADB `act_and_observe` path or the Claude/Codex
 turn text on hardware.
+### Manager cleanup: one connections module, no own Gmail sign-in — 2026-11-06
+
+Dev Debug 1201. Review of the whole Manager branch, history rewritten into
+feature commits (backup: `backup/proactive-manager-1200-pre-cleanup`).
+`ManagerConnections` (core) now owns connector states, the account list, the
+user's switches, the connections note and pass context; `TaskDesk` only
+delegates. `CodexAccountReads` holds the ChatGPT `account_read` bridge out of
+`CodexEngine`. `allowForBackground` became `allowAccountTools` (phone chats use
+it too); `ContextRouter.usable` covers one engine or all. The Google sign-in
+Gmail connector and `play-services-auth` were removed: they could not work
+without a Google Cloud OAuth client and restricted-scope verification; mail
+comes through account connectors. `app/build.gradle.kts` lost the blank lines
+an earlier edit had added. Misplaced KDocs and a stale env comment fixed.
+
+Checks: `./gradlew.bat :core:test :engine-claude:testDebugUnitTest
+:engine-codex:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon -q` passed, lint zero errors. New
+`ManagerConnectionsTest` (2 tests). Not run on a phone after the refactor.
+
+### Manager knows its connections; mail check every 3 hours — 2026-11-06
+
+Dev Debug 1200. Manager and team chats now get a connections note naming the
+switched-on WhatsApp Web link and account connectors with the exact way to read
+them (Claude tools in Claude chats, `account_read` for ChatGPT in any chat).
+When an account connector that reads Gmail is usable on the pass engine, a
+`mail_check` row enters the inbox every 3 hours (07:00 onwards): the Scout
+reads mail since the last check (read only, at most 25 threads), proposes real
+asks and saves preference notes on important senders and noise; the Coach
+recalls them for profile learning. Account tools were already open to every
+phone chat (Claude 1197, ChatGPT `account_read` 1198/1199) and to computer
+chats through the Hey Mike tools.
+
+Checks: `MailCheckTest` (timing, night skip, one pending row, look-back,
+note routes, Scout prompt). Not yet run on the phone: a real mail check pass,
+the note inside a live Manager chat, and Coach use of the notes.
+
+### Existing Codex chats keep old tools — 2026-11-06
+
+1199 fixes the Manager's missing account_read after installing 1198. A real
+0.163.0 PC probe started a thread with old_probe, completed a dummy turn,
+then resumed it with account_read. Resume reported success but the model
+reported MISSING. A fresh ephemeral thread with account_read called it
+successfully (dummy response only; no Gmail data was read in these probes).
+The two persistent probe threads were archived.
+
+Phone-owned user chats now record their started tool catalog in the private
+workspace (.mike-codex-tools-v1.json). A legacy thread or changed catalog
+starts a new native thread once. AgentCoordinator detects the new id and
+carries recent chat context through the existing ChatHandoff path (24,000
+characters; local message history is retained). Known matching catalogs
+resume normally. Imported computer sessions and ephemeral background passes
+keep their current behavior. No old native thread or message is deleted.
+The account_read argument map now explicitly allows arbitrary keys, checked
+by ToolSchemaAudit. Phone migration and a real phone Gmail read are untested.
+
+Checks passed: `:core:test :engine-codex:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon -q`, followed by a
+`:core:test :engine-codex:testDebugUnitTest` rerun after the conversation
+handoff regression test was added. Core: 1,053 cases; engine-codex: 73;
+zero failures/errors. App lint: zero errors. APK package/version 1199 and
+debug v2 signature verified. No full release gate. Existing worktree
+proactive-manager-20261106 and central build bucket 09428510d052e605 retained.
+
+### Codex account read bridge — 2026-11-06
+
+Dev Debug 1198 adds ChatGPT account discovery to Sources and ContextRouter.
+The phone runtime enables apps for catalog discovery; model chats disable
+native apps. `account_read` is a normal per-run gateway with Stop revocation.
+Every read rechecks the owner's switch and the live service annotation;
+missing, destructive or open-world annotations do not qualify. The adapter
+uses a separate ephemeral thread for direct MCP reads, with no model turn.
+List returns only enabled read tools and their argument schemas.
+
+Checks: `:core:test :engine-codex:testDebugUnitTest :runtime:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon -q` passed; scoped XML
+reports contain 1,210 cases with zero failures/errors. App lint: zero errors.
+APK metadata is dev.androidagent.app.dev / 1198; debug v2 signature verified.
+No full release gate. Initial check lacked ANDROID_HOME; rerun with the
+installed Android SDK succeeded without changing local.properties.
+
+PC evidence: official app-server 0.163.0 lists Gmail tools through
+`mcpServerStatus/list`, including explicit readOnlyHint annotations. A direct
+Gmail list_labels read succeeded (contents not printed). Importantly, direct
+MCP calls do not enforce apps._default.enabled=false: Mike's own whitelist
+is the enforcement boundary. No write tool was called. app/list timed out
+in a separate PC probe, so discovery uses the working MCP catalog instead.
+
+Phone discovery, proxy compatibility and a real Manager pass are not yet
+tested. No phone install has been performed for this change. The existing
+proactive-manager-20261106 worktree and its central build bucket remain open.
+
+### Proactive Manager: WhatsApp Web, Gmail, alerts, owner profile — 2026-11-06
+
+Update 1197: the Manager's chat said it had no Gmail: only background passes
+got account tools. Every phone Claude chat (all run `dontAsk`) now gets the
+switched-on read-only account tools next to its own tools; the rest of the
+account's tools stay refused. Codex chats still have no account route.
+Also new: `tasks(mode="manager_chat")` lets every ordinary chat (phone or
+computer) and team member read the Manager's conversation, read only. Checked
+by `ManagerChatReadTest` (paging, role refusal). Not yet checked on the phone
+or from a computer chat. Gap: the Manager's chat text is not filtered by
+excluded sources.
+
+Update 1196: 1195 still listed none. On the PC the first `mcp_status`
+after `initialize` answers `[]`; the account's servers appear about a second
+later. The probe now retries while the list is empty or pending (up to 15
+times, 1.5 s apart). Sources has "Check again".
+
+Update 1195: on the phone 1194 found no account connectors, because the
+host forced `ENABLE_CLAUDEAI_MCP_SERVERS=false` and the proxy denied
+`mcp-proxy.anthropic.com`. Now the host turns that switch on only when the
+engine asks (account probe, read-only pass with account tools), and the
+Claude proxy allows `mcp-proxy.anthropic.com`. On the PC, through a logging
+CONNECT proxy, a process with connectors on reached only `api.anthropic.com`
+and `mcp-proxy.anthropic.com`, and listed Gmail (23 tools), Calendar and
+Drive with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`; with the switch off
+it listed none. The Sources card says "Checking…" until the first probe ends.
+
+Update 1194: account connectors. A background pass on Claude may read
+through connectors the user connected in claude.ai (Gmail, Calendar, Drive)
+and switched on in Sources. `ContextRouter` (core) picks per row: the app's
+own connector, else a read-only account connector of the pass engine, else
+the notification text. `ClaudeCodeEngine` lists them with `mcp_status` on a
+throwaway process (no message, no usage) and keeps only tools annotated
+`readOnly`; such a chat drops `--strict-mcp-config` and allows only `mcp__mike__*`
+plus those tools under `dontAsk`. Verified on the PC with Claude Code: the
+`mcp_status` shape, tool naming, and that `dontAsk` refuses unlisted tools.
+`:core:test :engine-claude:testDebugUnitTest :web:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug` passed, lint zero errors.
+Not tested: the probe and a real pass on the phone; claude.ai connectors
+reaching the phone's Claude Code through the proxy. Codex: a probe chat on
+the phone saw no ChatGPT connector tools, and read-only cannot be enforced
+for Codex apps, so the Codex route stays off.
+
+Update 1193: the WhatsApp reader is local only (no `loadEarlierMsgs`), the
+connector reuses the session linked in Mike's browser (shared WebView
+profile), softer risk text, clearer Gmail error. `:web:testDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug` passed, lint zero errors. 1192 was
+installed on the chat phone (Sources page seen by the owner; Gmail sign-in
+failed as expected without an OAuth client).
+
+Branch `feat/proactive-manager-20261106`. Implemented the design in
+`docs/design/proactive-manager.md`, phases 1–4: smart alerts (levels, quiet
+hours, digest, budgets, Open / Not important / Later), the owner profile
+("What matters to me"), conversation context through connectors, a WhatsApp
+Web connector (linking screen, read-only bundled reader) and a Gmail
+connector (`gmail.readonly`), with Connections, Alerts and profile pages in
+Manager → Sources.
+
+Evidence: `./gradlew.bat :core:test :web:testDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon -q` passed (lint zero errors, warnings only);
+`git diff --check` clean. New tests: profile app-less conversation match,
+reserved WhatsApp origin, Gmail quote/HTML/name parsing
+(`:app:testDevDebugUnitTest --tests GmailConnectorTest`: 3 passed).
+
+Not tested: nothing ran on a phone. The WhatsApp Web reader was not run
+against a live account; it depends on WhatsApp's internal page modules and
+may break when they change. Gmail needs a Google Cloud Android OAuth client
+(package + SHA-1) and test users before sign-in can work. Digests depend on
+the process staying alive. No full release gate.
+
+### Manager state fixes with installed widgets — 2026-11-04
+
+Prepared Dev Debug 1191 / `0.14.0-dev.manager-state-widgets1191` from the
+installed 1190 source lineage `b6e857ea`, with Manager fix `b6b29818` applied.
+The robot face and visual widgets remain included. Only documentation headers
+conflicted; both histories were kept. This is a local integration branch, not
+a merge of PR #153 into dev.
+
+Integrated scoped gate passed: core 1,027, device-tools 114, web 95,
+workspace 66 (14 existing skips), app 179. Total 1,481 cases, zero failures
+or errors, 1,467 passed. Dev Debug assembly and app lint passed (zero errors,
+21 warnings, four information findings). ARM64 app-server and widget skill are
+present; signature v2 and 16 KiB alignment passed. Debug certificate matches
+the installed 1190 artifact. Source commit: `e19c0b52`.
+
+`copy_file` delivered the APK to the phone and its reconstructed SHA-256 was
+verified before installation. A later `install_apk` updated the hosting phone
+in place. The app restarted; app_info confirms 1191 and installed base.apk is
+SHA-256 `b72d97605923aa89c57f7d856875ab57a6d08ae52c7c3f50dc0e51a50898f2bc`,
+matching the built artifact. Fresh tasks status succeeds: discovery remains off,
+zero pending inputs, zero attempts today, daily cap 48 and model usage gate false.
+No settings/policy/permission change, data clear or uninstall was performed.
+The normal APK Manager path was blocked by unknown-source policy; Android
+documents ADB as excluded from that restriction, and the personal user's
+effective restrictions did not prohibit ADB or all app installation.
+
+No wire-byte measurement, full release gate, real GPS permission/fix flow,
+overnight behavior or model-driven evidence-save test. Installation and fresh
+device-tool calls prove package identity and basic runtime, not those flows.
+The temporary install worktree/build bucket and isolated Gradle home are closed
+after delivery. The signed APK remains in the normal host transfer cache and
+phone Downloads. No new PR merge or release tag was made.
+
+### Visual widgets in the chat — 2026-11-02
+
+A reply can now hold a live, interactive visual: a fenced block with language
+`mike-widget` and lenient JSON. It is parsed in `:core` (`core/widget`) and drawn
+natively in Compose (`app/ui/widget`): sliders, dropdown, tabs, toggle, text input,
+stat cards, bar/line/area/pie/donut/sparkline charts that animate, gauge, progress,
+table, a dot grid that animates, and `copy` / `ask` buttons. Inputs are variables
+in a small safe expression language, so one slider moves every number, chart and
+dot at once. There is no WebView and no new model-facing tool: the model learns the
+format from the `visual-widgets` skill and, for a computer session, from
+`WidgetGuide`. Messages without a widget render exactly as before. Design is in
+`docs/ARCHITECTURE.md` ("Visual widgets in the chat").
+
+Evidence, all on the `feat/chat-visual-widgets-20261102` worktree:
+
+- The CI gradle line (`:web … :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug`) passed. Unit result files total 1,794 cases, 17 existing
+  skips, zero failures and errors. Lint: zero errors, 21 warnings. `git diff
+  --check` is clean.
+- New JVM tests cover the expression language, spec parsing, message splitting
+  (streaming, broken and closed blocks), the guide text, the seeded skill and the
+  computer-session instructions.
+- Five instrumented tests ran on the API 35 emulator (`emulator-5566`) with
+  `am instrument`, one by one, and passed: sliders drive the stat cards and the
+  table, a broken block shows its reason, the `ask` button sends the live values,
+  and screenshots in dark and light were taken and looked at. Looking at them found
+  and fixed four real faults: "ms 850" in Hebrew (the unit sat before the number),
+  pie legend names with no room, an empty gap above charts, and English chart
+  buttons in a Hebrew widget. Charts stay left to right inside an RTL widget on
+  purpose.
+- The dot grid asks for a frame forever, so those tests hold the test clock and
+  scroll the `ScrollState` directly; `performScrollTo` hangs under that clock.
+
+Not tested:
+
+- Nothing was installed on the user's phone, and no real Codex or Claude run drew
+  a widget. The x86_64 emulator cannot run the app-server, so the path from model
+  text to a widget is proven only by the parser tests and the fixture screenshots.
+- The streaming skeleton ("Building widget…") is only unit-tested, not seen live.
+- TalkBack, font scaling and very small screens were not tried.
+- `copy` writing to the clipboard and `ask` through a real steer were not run on
+  a device; the `ask` text is asserted in the instrumented test only.
+- Frame rate of the dot grid on a real phone is not measured.
+
+### Manager fixes plus Mike's robot face — 2026-11-02
+
+Integrated the uncommitted robot face from worktree `session-20261102` on top of
+`fix/manager-situation-20261102` (`ef91320d`). `MikeEye.kt` was identical on both
+sides, so nothing conflicted; only the two doc headers needed merging.
+
+Evidence, on this tree with `--rerun-tasks`: `:core:test`,
+`:workspace:testDebugUnitTest`, `:device-tools:testDebugUnitTest` and
+`:app:testDevDebugUnitTest` ran 1,315 tests, 0 failures, 14 skipped (1,311 before,
+plus 4 in `MikeEyeTest`). `:app:assembleDevDebug`, `:app:assembleDevDebugAndroidTest`
+and `:app:lintDevDebug` (0 errors, 21 warnings) passed. The APK is versionCode 1189,
+`0.14.0-dev.manager-mike1189`, set by build overrides, and its 19 native and runtime
+entries match the earlier full build by name and size.
+
+An isolated build directory without the central storage init script stages the runtime
+outside the APK's source set and gives a 93 MB APK with no `libcodex_app_server.so`,
+and Gradle still reports success. Check the APK contains the runtime.
+
+Not tested: this APK on a phone, the face on a real device, or the combined manager
+behavior live. `MikeEyeUiTest` was compiled here, not run.
 
 ### Mike's face is a robot — 2026-11-02
 
@@ -114,6 +372,243 @@ Not tested: the physical phone, the live drawer/strip with real tasks, a release
 APK, battery cost over a long session, and reduced-motion on a device. The captures
 are fixture frames, not a recording, so the motion itself was checked only on the
 HTML prototype and by reading the frame loop.
+### Manager evidence loop and pause diagnosis — 2026-11-04
+
+Continued the existing `fix/manager-situation-20261102` worktree from `ef91320d`.
+Owner memory injection and recall now reject generic Hebrew/English overlap.
+Manager guidance closes the evidence loop after a read and describes situation
+tools, attributed temporary conclusions, uncertainty and lasting people facts.
+The durable situation keeps bounded observations separately from verified facts,
+with source-policy filtering, expiry and explicit collected-data forget.
+
+An interactive location refresh uses device-tools for one bounded Android read:
+foreground permission, personal profile, provider enabled, accuracy, actual age,
+boot identity and read-time revocation checks. No background tracking or ETA.
+An explicit reminder can schedule a proposed task without accepting or executing
+it. Browser reading preserves available message direction/sender/displayed time
+and marks missing or ambiguous attribution. Stop still pauses background work;
+new pauses record reason/time and a read-only status tool exposes the actual
+discovery, model-gate and daily-budget state. Legacy pause causes remain unknown.
+
+Windows/JDK 21 isolated scoped gate passed:
+`:core:test :device-tools:testDebugUnitTest :web:testDebugUnitTest
+:workspace:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon --offline --console=plain`.
+XML: core 970, device-tools 114, web 95 (61 real headless-Chrome/CDP fixture cases),
+workspace 66 (14 skipped), app 172. Total 1,417 cases: 1,403 passed, no failures
+or errors, 14 existing skips. App lint: zero errors, 21 warnings, four information
+findings. `git diff --check` passed. Initial new fixtures used the wrong proposal
+origin and were corrected; the final gate passed. An isolated staging-helper
+setup error was also corrected before the successful gate.
+
+No install/version bump/release, real location/permission request, personal chat
+read or board mutation was done for validation. Hosting build 1190 is unchanged.
+After the user enabled Wireless ADB, a read-only SQLite query verified discovery
+off, zero queued signals, and 48 attempts dated 2026-11-03 rather than today.
+The installed build has no pause reason/time, so the historical actor is unknown.
+The user's Sources screenshot independently confirms the discovery switch is off;
+ADB is not needed to establish that visible state.
+The daily-counter display now projects the current local day while paused,
+without resetting durable counters or resuming anything. Physical UI, real
+providers, notification/Doze delivery and a model actually saving new evidence
+remain untested. See `docs/testing/manager-evidence-loop-20261104.md`.
+
+No new worktree. The existing Manager checkout stays open for continued work;
+build/test output remains in `build/706667d0f17cf13e`. Task-owned temporary Gradle
+home/logs under `%TEMP%/hey-mike/manager-evidence-loop-20261104` are removed after
+validation; shared Gradle cache junction targets and other worktrees are retained.
+
+### Manager follow-through and situation — 2026-11-02
+
+Based on `feat/task-inbox-conversations` at `e8e55758`. Scheduled checks
+and status briefings now have separate receipts, and rescheduling persists.
+Memory retrieval filters levels and explicit scopes without treating injection
+as proof of usefulness. Coach reviews require a per-event disposition.
+Manager uses a durable local situation snapshot with expiring user claims,
+filtered board commitments and explicit unknowns. Scheduled follow-ups have a
+local path independent of model quota. Delivery records distinguish chat save,
+notification reservation and outcome; a crash can leave the outcome unknown.
+
+Saved places and a personal-profile calendar adapter supply bounded, expiring
+context. Approaching task deadlines have their own deduplicated receipt and need
+a fresh allowed board projection. An explicit quiet interval can defer delivery.
+The local outbox isolates failures and serializes chat append with board changes;
+notification is an external OS call and can race a policy change. A reservation
+without a recorded outcome remains unknown and is not automatically resent.
+
+Offline isolated gate on 2026-11-02: `:core:test
+:device-tools:testDebugUnitTest :workspace:testDebugUnitTest
+:app:testDevDebugUnitTest :app:assembleDevDebug` passed. XML reports core 962,
+device-tools 111, workspace 66 (14 skipped), app 172; no failures. Fixtures
+cover calendar adapter, Manager delivery, deadline ordering,
+revocation and restart. No real calendar provider, OS notification, phone profile
+or background/Doze timing was tested. Location and ETA providers are unavailable;
+recurring quiet windows have no setting. See the external implementation report.
+
+### Conversation-based discovery intake — 2026-10-31
+
+Continued the interrupted `feat/task-inbox-conversations` work from
+`f1ee0a30` (the separate inbox-backpressure branch / PR #151).
+Discovery now keeps one row per conversation/app. Chat rows are pointers;
+the coordinator stores final-answer phase metadata and Scout reads human
+requests with final replies. Progress alone opens nothing. Sequence/time
+cutoffs prevent automatic historical import; source settings offer an explicit
+old-chat scan. Existing session history is unchanged by the queue migration.
+
+Notification lists are bounded within their own conversation/app, app status
+dedupes across repost times, and partial context is marked. Background has a
+300-row ceiling and at most half of the 48 daily attempts. The priority feed
+cursor can cross a blocked background page without consuming it; receipts
+prevent duplicate feedback. Successful commit removes only the row revision
+actually read, so input arriving during a pass survives. Owner approvals,
+source-policy revision checks, atomic staged output and Stop remain enforced.
+
+Seven-day source counters contain no notification text/titles. Coach can
+review a source that never made a card and propose that Mike stop reading it.
+The proposal does not affect Android notifications and needs the user's
+decision. Counters alone cannot authorize a learned rule. Settings-card
+identity follows the action/source to prevent repeats under a new title.
+The UI explains row admission and separates human-message losses from expired
+background rows and the older mixed capture-gap count.
+
+Windows/JDK 21 scoped gate:
+`:core:test :workspace:testDebugUnitTest :automations:testDebugUnitTest
+:app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+--no-daemon --console=plain`.
+Selected XML: core 924, workspace 63, automations 19, app 172; zero
+failures/errors, 14 existing workspace skips. App lint: zero errors,
+21 warnings and four information findings. `git diff --check` passed.
+New cases cover 1,000 progress/status events, source permissions, priority
+capacity/cursors, explicit scans, old-message edits, final metadata,
+transaction rollback, concurrent capture/commit and Coach approval boundaries.
+See `docs/testing/task-inbox-conversations-20261031.md`.
+
+No phone actions, installation, live queue mutation, account change, release
+or merge were performed for this redesign. The local test APK uses the
+repository default Dev Debug version (1183 / `0.14.0-dev.unified`); it is not
+an update artifact for the hosting phone's 1187. A later delivery must bump
+the code above the then-installed version. No physical UI, overnight Scout/
+Coach run, live migration or full release gate was verified.
+
+### Scout completion receipts and expected suppression — 2026-10-31
+
+Consistent read-only SQLite and per-pass trace queries on hosting build 1186:
+48 Scout attempts today, 43 committed (1,151 input IDs), five retryable. Four
+retryable turns ended normally without `tasks finish`; all four encountered
+an owner suppression, and one also submitted missing proposal/memory fields.
+The fifth was interrupted by the 1186 update. None of those five batches'
+input IDs remained pending: later successful passes consumed them. The current
+400-item inbox contained 385 chat and 15 notification inputs, all with zero
+recorded failed attempts. The current stop was the 48/day budget, not a stuck
+old batch. The old `Ready` banner persisted after recovery.
+
+Scout now receives a successful `suppressed=true` no-card outcome for owner
+suppression or a tested learned filter. Ordinary-chat refusals and all source,
+permission, argument and storage checks remain. The guidance distinguishes
+suppression/duplicates from failed saves, names required `plan`/`text` fields,
+and still requires exact-batch finish plus atomic commit. Missing receipts get
+a specific error instead of `Ready`; that banner resolves after all its input
+is consumed, while unrelated errors remain. No daily/quota budget increase,
+manual queue clearing or automatic acknowledgement of incomplete work.
+
+Windows/JDK 21 JVM suites: core 912, workspace 59, app 172; zero failures/errors,
+14 existing workspace skips. New tests cover owner/learned suppression, unchanged
+ordinary/source/argument refusal, explicit finish and real SQLite atomic commit.
+`:core:test :workspace:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain` passed with
+1187 / `0.14.0-dev.scout-completion1187` build overrides. App lint: zero errors,
+21 warnings, three information findings. Signature and 16 KiB alignment passed;
+the debug signing certificate matches the existing Dev install. No raw personal
+messages or screen captures were committed. Physical post-install proof follows
+separately; no full release gate was run.
+
+Installed Dev Debug 1187 in place on the hosting Nothing A059. `copy_file`
+completed; device-local `pm install -r --user 0` returned Success. MainActivity
+resumed, the phone gateway reconnected and the installed version is 1187.
+Installed `base.apk` matches SHA-256
+`267800a0e1df9f723bbbbbd37ec95da3d83dc8dc83b28d53ea8936e2ff6a2745`.
+The post-start crash buffer for the new process was empty. A consistent query
+at 22:05 confirmed the 400 inputs and 48 attempts were retained, with the same
+43 committed/five retryable historical runs. No new real Scout pass can run
+today under that budget, so live suppression/receipt recovery on 1187 remains
+untested. The local next phone build must exceed 1187; the published nightly
+still contains 1184. Wireless debugging was already enabled by the user and
+was left enabled.
+
+### Live inbox drainage and pressure status — 2026-10-31
+
+A consistent, read-only Android SQLite query on the hosting 1185 phone verified
+eight recent committed Scout batches: 173 input IDs, none still pending. The
+inbox held 394 items with 393 eligible, while further history was imported.
+The queue was draining, but a notification capacity rejection set a sticky
+red error, and the collapsed status called all historical gaps "need attention".
+
+Expected capacity rejection now records missed-notification coverage without
+setting a fatal error. Replayable chat input keeps its cursor. A full waiting
+inbox shows "Inbox full. Waiting for the next processing pass" and the next
+eligible time. Historical gaps have separate, neutral text; other failures
+still show errors. No input was manually removed to produce recovery.
+
+Windows/JDK 21: `:app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug -PversionCodeOverride=1186
+-PversionNameOverride=0.14.0-dev.inbox-status1186 --no-daemon --console=plain`
+passed. All 172 app JVM cases passed; `git diff --check` passed. No raw personal
+screen capture was committed. This validates the status wiring and packaging;
+the new installed UI and long background behavior still need verification.
+
+Dev Debug `0.14.0-dev.inbox-status1186` (1186), code source `f40acd26`, was then
+installed in place on the same phone. APK signature matches 1185; alignment
+passed and installed `base.apk` matches SHA-256
+`7607c7e6f924912b33733d8ad86be73923fb92c14c34245d81243934285e8896`.
+MainActivity resumed and the user's new screenshot confirms no old red banner:
+it shows a successful pass four minutes earlier, 400 pending inputs, 24/48
+daily passes and the separate model-quota wait. That guard is the existing
+90%-used threshold in any active model usage window, not the 48-pass cap.
+Historical gaps remain visible as partial coverage. No quota guard was changed
+and no input was manually deleted. Sleeping-phone endurance is still untested.
+
+### Hosting phone updated to inbox fix 1185 — 2026-10-31
+
+Built committed `049e1cc7` as Dev Debug with code override 1185 and version
+`0.14.0-dev.inbox-fix.049e1cc7`. Signature v2 and 16 KiB alignment passed;
+the debug certificate matches the installed 1184 nightly. APK SHA-256:
+`5c362b1a3b3982ee64faa97e08f98aae974f36f81b0ace6dac2a3f605c1c4fcb`.
+`copy_file` delivered the APK, then device-local `pm install -r --user 0`
+returned Success on the hosting Nothing A059. No uninstall or data clear.
+Installed `base.apk` hash matches; `apps_settings` confirms 1185 and MainActivity
+opened successfully. Accessibility, ADB and the computer chat reconnected.
+The 23 task cards, 70 notes and 400 queued inputs remained present. A new Scout
+batch of 22 inputs was prepared after restart; its completion was not yet
+observed. No new-process crash in the short startup check. No long background,
+sleeping-phone or full release-gate proof. The transfer's reconstructed size
+was verified; wire bytes were not measured. The next phone build must exceed
+installed code 1185. This is a local PR build; the nightly still contains 1184.
+
+### Full task inbox crash and recovery — 2026-10-31
+
+The hosting phone's dev 1184 crashed with `Capture inbox full`; its task inbox
+held 400 pending inputs. Calendar change callbacks wrote directly into that
+full inbox from an unguarded coroutine. They now mark a coalesced dirty revision
+and let the guarded board tick enqueue it when space opens. Calendar capture
+runs before importing more chat history; full storage does not acknowledge or
+evict pending input. Legacy backfill failure also leaves the drain path open.
+
+A backlog of at least 60 ready inputs uses a one-minute Scout interval instead
+of twenty minutes. Existing source/permission, quiet-time, not-before, busy,
+quota, daily-cap and batch-size gates remain. Successful Scout output and input
+removal still commit together; no bulk queue clearing or data migration.
+
+From isolated `origin/dev` `1ff9d53b`, Windows/JDK 21:
+`:core:test :workspace:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain` passed.
+JVM XML: 1,139 cases, zero failures/errors, 14 existing workspace skips. Eight
+new regressions cover saturation, deferred/racing calendar changes, source
+cursor recovery, atomic Scout commit and scheduling limits. Runtime preparation
+Python tests: 16 passed. `git diff --check` passed. Build storage used an
+isolated Gradle home with no other worktree bucket removed.
+
+No hosting-phone install, physical background/Scout run or release gate was
+performed. The debug APK is validation only; the installed phone stays on 1184.
 
 ### Dev update version — 2026-10-30
 

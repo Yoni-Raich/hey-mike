@@ -166,6 +166,12 @@ data class MikeTask(
     val briefing: TaskBriefing? = null,
     /** A deadline is separate from proposal expiry. */
     val deadlineAt: Long? = null,
+    /** Status and scheduled checks have independent durable receipts. */
+    val lastStatusBriefingOccurrence: String? = null,
+    /** A status briefing must not erase a scheduled check's receipt. */
+    val lastCheckBriefingOccurrence: String? = null,
+    /** Deadline reminders have their own durable receipt. */
+    val lastDeadlineBriefingOccurrence: String? = null,
 )
 
 /** A topic or kind the user said never to suggest again. */
@@ -207,15 +213,38 @@ data class MemoryNote(
     val retiredReason: String? = null,
     val provenance: List<MemoryProvenance> = emptyList(),
     val sourceRefs: List<TaskSourceRef> = emptyList(),
+    /** Null means legacy/unspecified, never assumed global. */
+    val scope: String? = null,
+)
+
+/** How soon a queue row deserves a model. The declared order is the processing order. */
+@Serializable
+enum class SignalLane {
+    @SerialName("immediate") IMMEDIATE,
+    @SerialName("people") PEOPLE,
+    @SerialName("background") BACKGROUND,
+}
+
+/** One remembered line of a notification row. */
+@Serializable
+data class SignalItem(
+    val text: String,
+    val sender: String? = null,
+    /** The notification's title, in a row that holds a whole app. */
+    val title: String? = null,
+    val at: Long,
+    /** How many times this same line arrived while the row waited. */
+    val count: Int = 1,
 )
 
 /**
- * Something new that discovery should look at. The text lives only until a
- * pass has used it: the store deletes it after a successful pass.
+ * One conversation or app with something new for discovery. The text lives
+ * only until a pass has used it: the store deletes it after a successful pass.
+ * A chat row holds no text at all, only the place to read from.
  */
 @Serializable
 data class TaskSignal(
-    /** Stable for the same message or event, so a repeated notification is stored once. */
+    /** Stable for this row, so a replayed capture updates it rather than adding another. */
     val id: String,
     /** whatsapp | email | message | notification | calendar | chat | backfill */
     val source: String,
@@ -234,7 +263,25 @@ data class TaskSignal(
     val sourceVerified: Boolean = false,
     /** App-owned: this is the user's message in a Manager/member chat, not model output. */
     val ownerFeedback: Boolean = false,
-)
+    /** Null only on input stored before rows existed. */
+    val lane: SignalLane? = null,
+    /** Why this row entered the queue: one of the [SignalRows] reasons. */
+    val reason: String? = null,
+    /** A notification row's lines, oldest first. */
+    val items: List<SignalItem> = emptyList(),
+    /** Lines this row had to push out, so a pass knows its context is partial. */
+    val omitted: Int = 0,
+    /** A chat row reads messages from this time on. */
+    val sinceAt: Long = 0,
+    /** The last change to this row. Quiet time and expiry start here. */
+    val updatedAt: Long = 0,
+    /** A pass may consume only the version it read. */
+    val revision: Long = 0,
+    val rowKey: String? = null,
+) {
+    val touchedAt: Long get() = maxOf(updatedAt, capturedAt)
+    val chars: Int get() = text.length + items.sumOf { it.text.length }
+}
 
 @Serializable
 enum class MemberKind(val wire: String) {
@@ -270,6 +317,10 @@ data class TeamMember(
 @Serializable
 data class TaskBoardSettings(
     val discoveryOn: Boolean = false,
+    /** Context connections by id ("whatsapp-web", "account:claude:claude.ai Gmail"): the user's "use to understand messages" switch. */
+    val connectors: Map<String, Boolean> = emptyMap(),
+    val pauseReason: String? = null,
+    val pausedAt: Long? = null,
     val excludedApps: Set<String> = emptySet(),
     /** `package|conversation` */
     val excludedConversations: Set<String> = emptySet(),
@@ -283,16 +334,22 @@ data class TaskBoardSettings(
     val reviewModel: String? = null,
     val reviewEffort: String? = null,
     val dailyPassCap: Int = 48,
-    val backfillDone: Boolean = false,
     val lastPassAt: Long? = null,
     val passDay: String? = null,
     val passesToday: Int = 0,
+    /** Passes today that held nothing but background rows. */
+    val backgroundPassesToday: Int = 0,
+    /** Ordinary chat history before this time is left out unless the user asks for a scan. */
+    val feedStartAt: Long? = null,
+    val feedStartSequence: Long? = null,
+    /** Read only by older hosts. New collection never imports history automatically. */
+    val backfillDone: Boolean = true,
+    val chatCursors: Map<String, Long> = emptyMap(),
     val lastCalendarCheckAt: Long? = null,
+    val lastMailCheckAt: Long? = null,
     val lastReviewAt: Long? = null,
     val lastUpkeepAt: Long? = null,
     val lastDeepUpkeepAt: Long? = null,
-    /** Chat id to the newest message time a pass has seen. */
-    val chatCursors: Map<String, Long> = emptyMap(),
     val suppressed: List<TaskSuppression> = emptyList(),
     val policyRevision: Long = 0,
     val memoryForgetRevision: Long = 0,
@@ -302,6 +359,9 @@ data class TaskBoardSettings(
     val upkeepCursor: Int = 0,
     val captureGaps: Int = 0,
     val lastCaptureGapAt: Long? = null,
+    /** Messages from people that no pass ever saw. Counted apart from expired background input. */
+    val lostPeopleMessages: Int = 0,
+    val expiredBackgroundRows: Int = 0,
     val managerReviewedEvents: List<String> = emptyList(),
     val coachReviewedEvents: List<String> = emptyList(),
     val lastManagerReviewAt: Long? = null,
@@ -328,7 +388,7 @@ interface TaskBoardStore {
     suspend fun forgetNotes(ids: Collection<String>) { deleteNotes(ids) }
     suspend fun forgottenNoteIds(): Set<String> = emptySet()
     suspend fun loadSignals(): List<TaskSignal>
-    /** False when a signal with this id is already stored. */
+    /** False for a duplicate; throws [SignalInboxFullException] without changing input when full. */
     suspend fun insertSignal(signal: TaskSignal): Boolean
     suspend fun saveSignals(signals: List<TaskSignal>)
     suspend fun deleteSignals(ids: Collection<String>)
@@ -346,9 +406,26 @@ interface TaskBoardStore {
     suspend fun undoChanges(id: String): TaskUndoResult { error("Undo is not supported.") }
     suspend fun changes(id: String): TaskChangeSet? = null
     suspend fun sourceCursor(source: String): Long = 0
-    suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>): List<TaskSignal> {
+    /**
+     * One atomic capture: rows, line [receipts], [events] and the cursor. A row
+     * already waiting is updated in place. A newer revision can reopen it if
+     * the previous batch committed concurrently. Callers dedupe input changes
+     * using durable cursors and line receipts. Returns the written rows.
+     */
+    suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>,
+        receipts: List<String> = emptyList(), events: List<TaskEvent> = emptyList(),
+        stats: List<SourceStat> = emptyList()): List<TaskSignal> {
         error("Atomic source capture is not supported by this store.")
     }
+    /** True when this line was already stored within the dedupe window. */
+    suspend fun seenSignal(id: String, since: Long = 0): Boolean = false
+    /** The one-time move of waiting input to rows: all of it, or none. */
+    suspend fun replaceSignals(remove: Collection<String>, add: List<TaskSignal>, receipts: List<String>) {
+        error("Atomic signal replacement is not supported by this store.")
+    }
+    suspend fun loadSourceStats(): List<SourceStat> = emptyList()
+    suspend fun saveSourceStats(stats: List<SourceStat>, remove: Collection<String> = emptyList()) {}
+    suspend fun clearSourceStats() {}
 }
 
 /** For tests and hosts without storage. */
@@ -361,17 +438,36 @@ class InMemoryTaskBoardStore : TaskBoardStore {
     private val members = linkedMapOf<String, TeamMember>()
     private var settings = TaskBoardSettings()
     private val cursors = mutableMapOf<String, Long>()
+    private val stats = linkedMapOf<String, SourceStat>()
     override suspend fun sourceCursor(source: String) = synchronized(this) { cursors[source] ?: 0 }
-    override suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>) = synchronized(this) {
+    override suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>,
+        receipts: List<String>, events: List<TaskEvent>, stats: List<SourceStat>) = synchronized(this) {
         check((cursors[source] ?: 0) == expected) { "The source cursor changed." }
-        val fresh = signals.filter { it.id !in this.signals && it.id !in seenSignals }
-        check(this.signals.size + fresh.size <= SignalInbox.MAX_PENDING) { "Capture is waiting: the inbox is full." }
-        fresh.forEach { this.signals[it.id] = it; seenSignals[it.id] = it.capturedAt }
-        fresh.mapNotNull(TaskFollowThrough::feedback).forEach { events[it.id] = it }
-        events.values.filter { it.kind == "feedback" }.dropLast(500).forEach { events.remove(it.id) }
+        val fresh = signals.distinctBy { it.id }.filter { it.revision > 0 || it.id in this.signals || it.id !in seenSignals }
+        if (this.signals.size + fresh.count { it.id !in this.signals } > SignalInbox.MAX_PENDING) throw SignalInboxFullException()
+        fresh.forEach { this.signals[it.id] = it; seenSignals[it.id] = it.touchedAt }
+        val stamp = maxOf(signals.maxOfOrNull { it.touchedAt } ?: 0, stats.maxOfOrNull { it.updatedAt } ?: 0)
+        receipts.forEach { seenSignals[it] = stamp }
+        (events + fresh.mapNotNull(TaskFollowThrough::feedback)).forEach { this.events[it.id] = it }
+        stats.forEach { delta -> this.stats[delta.key] = (this.stats[delta.key] ?: SourceStat.base(delta.app, delta.updatedAt)).plus(delta) }
+        seenSignals.entries.removeAll { stamp - it.value > SignalInbox.DEDUPE_MS }
+        while (seenSignals.size > SignalInbox.MAX_RECEIPTS) seenSignals.remove(seenSignals.keys.first())
+        this.events.values.filter { it.kind == "feedback" }.dropLast(500).forEach { this.events.remove(it.id) }
         cursors[source] = through
         fresh
     }
+    override suspend fun seenSignal(id: String, since: Long) = synchronized(this) { (seenSignals[id] ?: Long.MIN_VALUE) >= since }
+    override suspend fun replaceSignals(remove: Collection<String>, add: List<TaskSignal>, receipts: List<String>) = synchronized(this) {
+        remove.forEach { signals.remove(it) }
+        add.forEach { signals[it.id] = it; seenSignals[it.id] = it.touchedAt }
+        val stamp = add.maxOfOrNull { it.touchedAt } ?: 0
+        receipts.forEach { seenSignals[it] = stamp }
+    }
+    override suspend fun loadSourceStats() = synchronized(this) { stats.values.toList() }
+    override suspend fun saveSourceStats(stats: List<SourceStat>, remove: Collection<String>) = synchronized(this) {
+        stats.forEach { this.stats[it.key] = it }; remove.forEach { this.stats.remove(it) }
+    }
+    override suspend fun clearSourceStats() = synchronized(this) { stats.clear() }
     override suspend fun loadTasks() = synchronized(this) { tasks.values.toList() }
     override suspend fun saveTask(task: MikeTask) = synchronized(this) { tasks[task.id] = task }
     override suspend fun loadEvents() = synchronized(this) { events.values.toList() }
@@ -389,7 +485,7 @@ class InMemoryTaskBoardStore : TaskBoardStore {
     override suspend fun insertSignal(signal: TaskSignal) = synchronized(this) {
         seenSignals.entries.removeAll { signal.capturedAt - it.value > SignalInbox.DEDUPE_MS }
         if (signal.id in signals || signal.id in seenSignals) false else {
-            check(signals.size < SignalInbox.MAX_PENDING) { "Capture inbox full. New input could not be saved." }
+            if (signals.size >= SignalInbox.MAX_PENDING) throw SignalInboxFullException()
             signals[signal.id] = signal; seenSignals[signal.id] = signal.capturedAt
             while (seenSignals.size > SignalInbox.MAX_RECEIPTS) seenSignals.remove(seenSignals.keys.first())
             true
