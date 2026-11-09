@@ -1,5 +1,30 @@
 # Progress
 
+### Combined Manager and current dev phone build — 2026-11-09
+
+Built `integrate/all-phone-20261109`: dev `e2c44025` plus proactive Manager
+`4b2481a2`. Kept the shared tool-refusal helper while retaining Manager Scout
+suppression handling, and kept both native history and account connector imports.
+PR #154 remains separate from dev; this is an integration build for the owner.
+
+Windows checks: `testDevDebugUnitTest testDebugUnitTest :core:test
+:connect-protocol:test :app:assembleDevDebug :app:lintDevDebug --no-daemon
+--console=plain`, with `-PversionCodeOverride=1207` and
+`-PversionNameOverride=0.14.0-dev.all.1207`: BUILD SUCCESSFUL, 2,039 JVM cases,
+zero failures/errors, 17 skips. Python runtime/session/transcript tests: 37 OK.
+APK metadata: `dev.androidagent.app.dev`, Dev Debug 1207;
+SHA-256 `3196f1a8c878049633abed2f88c14e5b21fa13e9a94bcf8811776d5e5fcd6798`.
+APK signature and 16 KiB alignment checks passed; both runtime ABIs, code-mode
+helper and visual-widget skill are present. Android Debug signing certificate
+SHA-256: `f65c3469483d5b059543c7a67d369578bf3627a02795d77fc76a244444dda1ee`.
+
+`copy_file` completed to this phone's chat and Download folder. Opening the APK
+launched the phone's APK Manager, which displayed installation in progress.
+The following read did not return after the installer started; installed version
+and installed base.apk hash were not yet verified when this note was written.
+No claim of live Manager/engine-switch/Stop behavior or a release gate.
+Transfer byte totals describe artifact size, not measured wire traffic.
+
 ### Chat improvements integrated into dev — 2026-11-09
 
 Integrated PR #156 (Claude background/wake cycles, late child updates and native
