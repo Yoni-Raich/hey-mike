@@ -34,12 +34,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -150,6 +152,29 @@ internal fun TasksStrip(state: AgentUiState, onOpen: () -> Unit) {
                 Text(sentence, style = MaterialTheme.typography.bodySmall, color = if (tone == StripLight) StripMuted else tone, maxLines = 2,
                     overflow = TextOverflow.Ellipsis)
             }
+        }
+    }
+}
+
+/**
+ * Mike in the chat's top bar, on every screen: his face is the status, an amber
+ * count says how many things wait for you, and one tap opens the board.
+ */
+@Composable
+internal fun MikeTopButton(state: AgentUiState, onOpen: () -> Unit) {
+    val desk = state.taskDesk
+    if (!desk.ready) return
+    val mood = managerMood(desk, scoutBusy(state))
+    val waiting = desk.tasks.count { it.status == TaskStatus.PROPOSED || it.status == TaskStatus.WAITING }
+    val label = if (waiting > 0) taskText("Mike, $waiting waiting for you", "מייק, $waiting מחכות לך") else taskText("Mike, open the board", "מייק, פתיחת הלוח")
+    IconButton(onClick = onOpen, modifier = Modifier.semantics { contentDescription = label }) {
+        Box(contentAlignment = Alignment.Center) {
+            MikeEye(mood, Modifier.size(36.dp), description = null)
+            if (waiting > 0) Box(
+                Modifier.align(Alignment.TopEnd).offset(6.dp, (-6).dp).heightIn(min = 16.dp).widthIn(min = 16.dp)
+                    .clip(CircleShape).background(StripAmber).padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(if (waiting > 9) "9+" else "$waiting", style = MaterialTheme.typography.labelSmall, color = StripBlocked, fontWeight = FontWeight.Bold) }
         }
     }
 }
