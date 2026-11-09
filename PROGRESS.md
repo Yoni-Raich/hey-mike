@@ -1,5 +1,31 @@
 # Progress
 
+### Chat improvements integrated into dev — 2026-11-09
+
+Integrated PR #156 (Claude background/wake cycles, late child updates and native
+history on engine switches) and PR #157 (Mike's robot face in the chat top bar)
+on `dev` base `10da486f`. The behavior-preserving refactor (#155) was already
+on that base. The separate proactive Manager branch (#154) is not included.
+
+Evidence (Windows, isolated integration worktree):
+- `:core:test :engine-claude:testDebugUnitTest :engine-codex:testDebugUnitTest
+  :remote:testDebugUnitTest :runtime:testDebugUnitTest :app:testDevDebugUnitTest
+  :app:assembleDevDebug :app:lintDevDebug --no-daemon --console=plain`:
+  BUILD SUCCESSFUL; 1,527 JVM cases, zero failures/errors, three skips.
+- `python -m unittest tools.test_prepare_runtime tools.test_claude_sessions
+  tools.test_claude_transcript`: 37 OK.
+- `git diff --check origin/dev HEAD`: clean before this evidence-only update.
+- The earlier PR #156 CI failure in
+  `ComputerSubagentIntegrationTest.computerUseConfirmationReturnsTheUserAnswerToItsOwnRemotePeer`
+  did not reproduce in the combined Windows run; Linux CI remains a separate check.
+
+Untested here: phone installation, robot top-bar interaction, real engine
+switches, live background Stop, and the full release gate. Existing UI evidence
+under `docs/testing/mike-robot-face-20261102/` covers the earlier emulator robot
+moods, not this integration or top-bar placement. No phone data was accessed.
+Build storage used an isolated Gradle home with automatic pruning disabled by
+a task-local capacity limit; no other worktree's build output was removed.
+
 ### Claude background cycles are runs — 2026-11-08
 
 Branch `fix/claude-background-cycles`. A cycle Claude Code starts by itself
