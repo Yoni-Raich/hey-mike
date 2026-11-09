@@ -21,6 +21,8 @@
 package dev.androidagent.app.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -153,6 +156,42 @@ internal fun TasksStrip(state: AgentUiState, onOpen: () -> Unit) {
         }
     }
 }
+
+/**
+ * Mike in the chat's top bar, on every screen: his face is the status, an amber
+ * count says how many things wait for you, and one tap opens the board.
+ */
+@Composable
+internal fun MikeTopButton(state: AgentUiState, onOpen: () -> Unit) {
+    val desk = state.taskDesk
+    if (!desk.ready) return
+    val mood = managerMood(desk, scoutBusy(state))
+    val waiting = desk.tasks.count { it.status == TaskStatus.PROPOSED || it.status == TaskStatus.WAITING }
+    val label = if (waiting > 0) taskText("Mike, $waiting waiting for you", "מייק, $waiting מחכות לך") else taskText("Mike, open the board", "מייק, פתיחת הלוח")
+    // Built like the agent sphere beside it: a 48dp target, a 40dp ring, the
+    // face in the middle, so the two read as a pair. The ring turns amber when
+    // something waits, the way the sphere's ring shows the quota.
+    Box(
+        Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onOpen)
+            .semantics { contentDescription = label; role = Role.Button },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(40.dp)) {
+            val stroke = 2.dp.toPx()
+            drawCircle(if (waiting > 0) StripAmber else TopRingTrack, radius = (size.minDimension - stroke) / 2f, style = Stroke(stroke))
+        }
+        // The face is drawn around a point below the head, to leave room for
+        // its shadow; lower it so the head sits in the ring's centre.
+        MikeEye(mood, Modifier.size(36.dp).offset(y = 4.dp), description = null)
+        if (waiting > 0) Box(
+            Modifier.align(Alignment.TopEnd).heightIn(min = 16.dp).widthIn(min = 16.dp)
+                .clip(CircleShape).background(StripAmber).padding(horizontal = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) { Text(if (waiting > 9) "9+" else "$waiting", style = MaterialTheme.typography.labelSmall, color = StripBlocked, fontWeight = FontWeight.Bold) }
+    }
+}
+
+private val TopRingTrack = Color(0xFF262626)
 
 /** The Manager as one pinned chat in the library: its eye, its name, what waits. */
 @Composable
