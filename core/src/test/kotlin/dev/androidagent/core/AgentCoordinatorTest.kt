@@ -217,6 +217,27 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun anEngineThatTakesHistoryGetsItAsItsOwnTurnsAndThePromptAsTyped() = runTest {
+        val rig = Rig(this)
+        rig.engine.threads = mapOf(EngineKind.CLAUDE to "claude-thread", EngineKind.CODEX to "codex-thread")
+        rig.engine.seedable = setOf("codex-thread")
+        rig.coordinator.send("one", "Open my alarms", engineKind = EngineKind.CLAUDE)
+        runCurrent()
+        rig.engine.emit(EngineEvent.MessageCompleted("Your alarms are open.", "claude-thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "claude-thread", turnId = "turn"))
+        advanceUntilIdle()
+
+        rig.coordinator.send("one", "Now set one for 7", engineKind = EngineKind.CODEX)
+        runCurrent()
+        assertEquals(
+            listOf(HandoffTurn("user", "Open my alarms"), HandoffTurn("assistant", "Your alarms are open.")),
+            rig.engine.seeded["codex-thread"],
+        )
+        assertEquals("Now set one for 7", rig.engine.prompts.last())
+        assertNull(rig.store.getSession("one")!!.catchUpFrom)
+        rig.close()
+    }
+
     @Test fun anEngineThatIsUpToDateGetsThePromptAsTyped() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "First")
@@ -1128,6 +1149,9 @@ class AgentCoordinatorTest {
         /** The thread each engine opens; "thread" when not set. */
         var threads = emptyMap<EngineKind, String>()
         val prompts = mutableListOf<String>()
+        /** Threads that take earlier turns as their own history, and what each was given. */
+        var seedable = emptySet<String>()
+        val seeded = mutableMapOf<String, List<HandoffTurn>>()
         private var kind = EngineKind.CODEX
         suspend fun emit(value: EngineEvent) = stream.emit(value)
         override suspend fun connect() = Unit
@@ -1180,6 +1204,11 @@ class AgentCoordinatorTest {
             return startTurn(threadId, prompt, images, reasoningEffort, skill, capabilities)
         }
         val steers = mutableListOf<String>()
+        override suspend fun seedHistory(threadId: String, turns: List<HandoffTurn>): Boolean {
+            if (threadId !in seedable) return false
+            seeded[threadId] = turns
+            return true
+        }
         override suspend fun steer(threadId: String, turnId: String, prompt: String) { steers += prompt }
         override suspend fun interrupt(threadId: String, turnId: String) { waitForInterrupt?.await() }
         override suspend fun answerTool(requestId: String, result: ToolResult) { delay(answerDelayMs); answers.add(result) }

@@ -23,6 +23,7 @@ package dev.androidagent.runtime
 import android.content.Context
 import android.util.Log
 import dev.androidagent.core.ClaudeProcessHost
+import dev.androidagent.core.ClaudeTranscript
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.RuntimeStatus
@@ -52,8 +53,10 @@ import kotlinx.coroutines.withContext
  * and all traffic goes through this host's own [LocalhostConnectProxy], which
  * only reaches the Claude hosts (`NetDiagnostics.claudeAllowedHosts`) on 443.
  *
- * The app never reads anything under CLAUDE_CONFIG_DIR. This host only
- * creates the directory; sign-in state comes from `claude auth status`.
+ * The app never reads the sign-in under CLAUDE_CONFIG_DIR; sign-in state
+ * comes from `claude auth status`. The one thing it touches there is a
+ * session transcript under `projects`, to add a chat's earlier turns after an
+ * engine switch ([extendTranscript]).
  * Both claude-home and the binary are excluded from backup and transfer.
  *
  * Only arm64-v8a APKs carry the loader. Elsewhere the state is UNSUPPORTED
@@ -97,7 +100,7 @@ class AndroidClaudeHost(
     /** Private HOME for `claude`. */
     override val homeDirectory: File get() = File(runtimeRoot, "claude-home")
 
-    /** CLAUDE_CONFIG_DIR. Holds the user's Claude sign-in; the app never reads it. */
+    /** CLAUDE_CONFIG_DIR. Holds the user's Claude sign-in, which the app never reads, and the session transcripts. */
     val configDirectory: File get() = ClaudeEnvironment.configDirectory(homeDirectory)
 
     /** Private TMPDIR, a sibling of HOME. */
@@ -164,6 +167,12 @@ class AndroidClaudeHost(
         }
         return process
     }
+
+    // claude's cwd is the canonical path (getcwd resolves /data/user/0), so its folder name is made from that.
+    override suspend fun extendTranscript(workingDirectory: String, sessionId: String, records: List<String>): Boolean =
+        withContext(Dispatchers.IO) {
+            ClaudeTranscript.extend(File(configDirectory, "projects"), File(workingDirectory).canonicalPath, sessionId, records)
+        }
 
     override suspend fun stopAll() {
         lock.withLock {

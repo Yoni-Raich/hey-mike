@@ -80,7 +80,7 @@ class ClaudeHistorySyncTest {
         assertTrue(ClaudeSessionFiles.heldByMike(mine))
         val other = ClaudeSessionFiles.payload(ExecResult("""HEYMIKE {"busy":true,"mike":false}""", "", 0))
         assertTrue(ClaudeSessionFiles.heldByOther(other))
-        assertTrue(ClaudeSessionFiles.scriptName(HostOs.WINDOWS).endsWith("-v5.ps1"))
+        assertTrue(ClaudeSessionFiles.scriptName(HostOs.WINDOWS).endsWith("-v6.ps1"))
     }
 
     @Test fun thisPhonesRetainedOwnerSurvivesAnEngineRestartWhileOtherClientsRemainBlocked() {

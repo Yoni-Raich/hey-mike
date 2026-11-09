@@ -76,7 +76,7 @@ interface TurnRunner {
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentRuns(
     scope: CoroutineScope,
-    engine: AgentEngine,
+    private val engine: AgentEngine,
     private val onStopSession: (String?) -> Unit = {},
     private val create: (PhoneShare) -> AgentCoordinator,
 ) : TurnRunner {
@@ -356,9 +356,28 @@ class AgentRuns(
             slots.forEach { it.deliver(event) }
             return
         }
+        val owner = slots.firstOrNull { it.ownsThread(thread) }
+        if (owner == null && event is EngineEvent.TurnStarted && event.wake != null) {
+            adopt(event, event.wake)?.let { it.deliver(event); return }
+        }
         // A thread no run owns goes to one coordinator, which refuses its tool
         // calls and approvals: nothing is waiting for them.
-        (slots.firstOrNull { it.ownsThread(thread) } ?: slots.first()).deliver(event)
+        (owner ?: slots.first()).deliver(event)
+    }
+
+    /**
+     * A turn the engine started by itself gets a run in its chat, so it is
+     * seen and can be stopped. One nobody can see is stopped instead: a chat
+     * that is gone, or one that moved to its other engine. A chat already
+     * running is left alone; its own run is about to take the engine.
+     */
+    private suspend fun adopt(event: EngineEvent.TurnStarted, wake: String): AgentCoordinator? {
+        val slot = freeSlot()
+        return when (slot.adoptTurn(event.threadId, event.turnId, wake) { slotFor(it) != null }) {
+            Adoption.ADOPTED -> slot
+            Adoption.NO_CHAT -> { runCatching { engine.interrupt(event.threadId, event.turnId) }; null }
+            Adoption.CHAT_RUNNING, Adoption.BUSY -> null
+        }
     }
 }
 

@@ -111,6 +111,50 @@ class AgentRunsTest {
         assertFalse("thread-one" in rig.engine.started)
         rig.close()
     }
+    @Test fun aTurnTheEngineStartsByItselfRunsVisiblyInItsChat() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.store.sessions.value = rig.store.sessions.value.map { if (it.id == "one") it.copy(engineThreadId = "claude-one") else it }
+        rig.engine.emit(EngineEvent.TurnStarted("claude-one", "wake-1", wake = "Background command \"Wait for CI\" completed")); runCurrent()
+        assertTrue(rig.runs.stateOf("one")!!.active)
+        assertEquals("Background command \"Wait for CI\" completed", rig.store.messages.single { it.sessionId == "one" && it.role == "note" }.text)
+        rig.engine.emit(EngineEvent.ToolCall("read", "read_ui", buildJsonObject {}, "claude-one", "wake-1")); runCurrent()
+        assertEquals(listOf("read"), rig.engine.answered)
+        assertNotEquals(false, rig.engine.results["read"]?.success)
+        rig.engine.emit(EngineEvent.TextDelta("CI passed", "claude-one", "wake-1", "a")); runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "claude-one", turnId = "wake-1")); runCurrent()
+        advanceUntilIdle()
+        assertNull(rig.runs.stateOf("one"))
+        assertEquals(listOf("CI passed"), rig.store.assistant("one"))
+        rig.close()
+    }
+
+    @Test fun stoppingATurnTheEngineStartedInterruptsIt() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.store.sessions.value = rig.store.sessions.value.map { if (it.id == "two") it.copy(engineThreadId = "claude-two") else it }
+        rig.engine.emit(EngineEvent.TurnStarted("claude-two", "wake-2", wake = "A background task finished")); runCurrent()
+        rig.runs.stop("two"); runCurrent()
+        assertEquals(listOf("claude-two"), rig.engine.interrupted)
+        rig.close()
+    }
+
+    @Test fun aTurnTheEngineStartsForNoChatIsStopped() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.engine.emit(EngineEvent.TurnStarted("gone", "wake-3", wake = "A background task finished")); runCurrent()
+        assertEquals(listOf("gone"), rig.engine.interrupted)
+        assertTrue(rig.runs.sessionStates.value.values.none { it.active })
+        rig.close()
+    }
+
+    @Test fun aChatsBackgroundWorkIsNamedWhenItsTurnEnds() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.runs.send("three", "Watch CI"); runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-three", turnId = "turn-thread-three",
+            backgroundTasks = listOf("Wait for CI"))); runCurrent()
+        advanceUntilIdle()
+        assertTrue(rig.store.messages.any { it.sessionId == "three" && it.role == "system" && it.text.contains("Wait for CI") })
+        rig.close()
+    }
+
     @Test fun voiceReturnsTheScreenAtTheEndOfItsDelegatedTurn() = runTest {
         val rig = Rig(this)
         rig.runs.beginVoice("one", "voice-thread", rig.store.workspace("one"))

@@ -1,5 +1,53 @@
 # Progress
 
+### Claude background cycles are runs — 2026-11-08
+
+Branch `fix/claude-background-cycles`. A cycle Claude Code starts by itself
+after a background task ends is now a visible, stoppable run in its chat, Stop
+also ends running background tasks, and task notifications no longer show as
+user messages (ARCHITECTURE "Claude background tasks: every cycle is a run").
+The event shapes come from a live probe of Claude Code with a `sleep 15`
+background command (`background_tasks_changed`, `task_notification`, `init`
+without `command_lifecycle`, `result`).
+
+Evidence (Windows, worktree build):
+- `:engine-claude:test :core:test :remote:test`: pass, with new mapper tests
+  (wake turn owns the cycle; notification during a turn stays in it) and
+  `AgentRunsTest` cases (adopted run serves tools and shows text, Stop
+  interrupts it, no-chat wake is interrupted, leftover tasks are named).
+- `python -m unittest tools.test_claude_sessions`: 18 OK (Python and PowerShell
+  readers skip `origin.kind` task-notification records).
+
+Phone run on Dev Debug 1202 (Manager branch + these fixes): a computer
+Claude child chat ran `sleep 30` in the background, ended its turn with
+STARTED, and the woken cycle came back as a new run (new runId) answering
+FINISHED. The same session showed a gap: child updates steered into the
+parent as its reply ended ran as unowned cycles (tools refused, raw update
+synced as a user message). Late steers now get their own turn too; mapper
+test `aLateSteerWithNoTurnWaitingGetsATurnOfItsOwn`.
+
+Untested: `stop_task` was not sent to a live CLI.
+
+Engine switch to Codex now seeds native history (`thread/inject_items`)
+instead of a text block (ARCHITECTURE "Engine switch: native history").
+Probe on the Windows Codex app-server 0.163: inject answered `{}`, and the
+next turn answered "Pilpel" from the injected turns only. New tests:
+`ChatHandoff.turns` shape, coordinator seeding (prompt sent as typed, chat
+marked caught up), Codex item JSON. Untested: a real switch on the phone and on a computer
+Codex older than 0.163 (should fall back to text).
+
+Claude now gets native history too: the turns are appended to its own
+transcript and the session resumes. The owner lifted the "never touch
+`CLAUDE_CONFIG_DIR`" rule for transcripts (sign-in files stay untouched).
+Evidence: `tools.test_claude_transcript` (Python and PowerShell writers: new
+file in the cwd folder, existing file continued from its last main message,
+bad id refused), `ClaudeTranscriptTest`, record shape and engine tests
+(seeded chat starts with `--resume`; a host that cannot write leaves the text
+block). Live on this PC: PowerShell writer + engine record shape, then
+`claude -p --resume` with haiku answered "Pilpel". Untested: the phone host
+writing under the app's private config dir on a real phone, and a Linux
+computer.
+
 ### Behavior-preserving refactor — 2026-11-08
 
 Branch `refactor/behavior-preserving-20261108`. Duplicated model-facing text and

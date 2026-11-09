@@ -30,6 +30,7 @@ import dev.androidagent.core.ClaudeProcessHost
 import dev.androidagent.core.CompactResult
 import dev.androidagent.core.DeviceCapabilities
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.HandoffTurn
 import dev.androidagent.core.RuntimePhase
 import dev.androidagent.core.RecoverableConnection
 import dev.androidagent.core.SecretRedactor
@@ -68,6 +69,7 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.time.Instant
 import java.time.ZonedDateTime
 import java.util.ArrayDeque
 import java.util.UUID
@@ -579,6 +581,31 @@ class ClaudeCodeEngine(
     }
 
     /** A new user message inside the running turn. Fails when the turn has already ended. */
+    /**
+     * Claude reads a chat's earlier turns from its own transcript: they are
+     * added there ([ClaudeProcessHost.extendTranscript]) and the next start
+     * resumes the session. An idle process is stopped first, since a running
+     * `claude` would not read them; a busy one is left alone.
+     */
+    override suspend fun seedHistory(threadId: String, turns: List<HandoffTurn>): Boolean {
+        if (turns.isEmpty()) return true
+        val chat = chats[threadId] ?: return false
+        return chat.lock.withLock {
+            if (chat.readOnly || !chat.idle()) return@withLock false
+            if (chat.alive) chat.stopProcess()
+            val records = ClaudeProtocol.transcriptRecords(threadId, chat.cwd, turns, Instant.now()) { UUID.randomUUID().toString() }
+            val added = try {
+                host.extendTranscript(chat.cwd, threadId, records)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                System.err.println("ClaudeCodeEngine: could not add history: ${SecretRedactor.redact(error.message ?: error.toString())}")
+                false
+            }
+            if (added) chat.resumable = true
+            added
+        }
+    }
+
     override suspend fun steer(threadId: String, turnId: String, prompt: String) {
         val chat = chats[threadId] ?: error(TURN_OVER)
         // Serialize the intent change and write with retry, so an older frame
@@ -605,12 +632,19 @@ class ClaudeCodeEngine(
      */
     override suspend fun interrupt(threadId: String, turnId: String) {
         val chat = chats[threadId] ?: return
+        var background = emptyList<String>()
         val turn = synchronized(chat.state) {
-            chat.mapper.active?.takeIf { it.turnId == turnId && !it.ended }?.also { it.interruptRequested = true }
+            chat.mapper.active?.takeIf { it.turnId == turnId && !it.ended }?.also {
+                it.interruptRequested = true
+                background = chat.mapper.backgroundTaskIds()
+            }
         } ?: return
         chat.cancelAuthReplay()
         failPendingTools(threadId, turnId)
         val sent = runCatching { chat.write(ClaudeProtocol.interruptRequest("interrupt-${UUID.randomUUID()}")) }.isSuccess
+        // A stop ends all the chat's work: also what the model left running
+        // in the background, which would wake the chat again later.
+        background.forEach { id -> runCatching { chat.write(ClaudeProtocol.stopTaskRequest("stop-task-${UUID.randomUUID()}", id)) } }
         scope.launch {
             val ended = sent && withTimeoutOrNull(interruptGraceMs) { turn.done.await() } != null
             if (!ended) {

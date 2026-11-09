@@ -504,6 +504,26 @@ class CodexEngine(
         }
     }
 
+    /**
+     * `thread/inject_items` (app-server 0.163): Responses API messages added to
+     * the thread's model-visible history without a turn. An older server
+     * refuses it, and the caller falls back to text.
+     */
+    override suspend fun seedHistory(threadId: String, turns: List<HandoffTurn>): Boolean {
+        if (turns.isEmpty()) return true
+        return try {
+            request("thread/inject_items", buildJsonObject {
+                put("threadId", threadId)
+                put("items", buildJsonArray { turns.forEach { add(historyItem(it)) } })
+            })
+            true
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            System.err.println("CodexEngine: could not add history to $threadId: ${SecretRedactor.redact(error.message ?: error.toString())}")
+            false
+        }
+    }
+
     override suspend fun steer(threadId: String, turnId: String, prompt: String) {
         request("turn/steer", buildJsonObject { put("threadId", threadId); put("expectedTurnId", turnId); put("input", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", prompt) }) }) })
     }
@@ -1041,6 +1061,16 @@ class CodexEngine(
                     }
                 },
             )
+
+        /** One earlier turn as a Responses API message, for `thread/inject_items`. */
+        internal fun historyItem(turn: HandoffTurn): JsonObject = buildJsonObject {
+            val user = turn.role == HandoffTurn.USER
+            put("type", "message")
+            put("role", if (user) "user" else "assistant")
+            put("content", buildJsonArray {
+                add(buildJsonObject { put("type", if (user) "input_text" else "output_text"); put("text", turn.text) })
+            })
+        }
 
         internal fun turnStartParams(
             threadId: String,

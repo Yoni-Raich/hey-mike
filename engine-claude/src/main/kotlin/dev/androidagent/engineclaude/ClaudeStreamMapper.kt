@@ -37,6 +37,7 @@ import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
+import java.util.UUID
 
 /**
  * Turns the output of one `claude` chat process into [EngineEvent]s.
@@ -48,11 +49,21 @@ import java.time.ZoneId
  * it dequeues. Every frame the app writes carries a `uuid`, and the CLI
  * echoes it (`command_lifecycle` "started", and the `user` replay) before the
  * cycle's output. A cycle started by a frame of the running turn belongs to
- * it; one started by a frame of a turn that already ended (a steer that lost
- * the race with the turn's `result`) belongs to nobody, so its text is not
- * shown and its tool calls are refused. Echoes of uuids the app never wrote
+ * it. One started by a frame of a turn that already ended (a steer that lost
+ * the race with the turn's `result`, such as a child chat's update) gets a
+ * turn of its own, as a woken cycle does ([TurnStarted.wake]), so it is
+ * shown and can use the tools; only when the app has already begun its next
+ * turn does it belong to nobody, its text hidden and its tools refused.
+ * Echoes of uuids the app never wrote
  * (the CLI's own messages) change nothing. When the CLI is idle a new turn
  * owns the next cycle at once, so a CLI that stops echoing still works.
+ *
+ * **A cycle the CLI starts by itself.** When a background task (a shell
+ * command or monitor the model left running) finishes while the CLI is idle,
+ * the CLI reports `task_notification` and then runs a cycle of its own, with
+ * no frame from the app. That cycle becomes a turn here ([TurnStarted.wake]),
+ * so the app shows it, serves its tools and can stop it, instead of it working
+ * unseen on the computer.
  *
  * **Final answer.** The last text of a completed turn is sent again with
  * phase `final_answer` just before `TurnFinished`: the same item id and text,
@@ -108,6 +119,10 @@ internal class ClaudeStreamMapper(
     private val builtinTools = mutableMapOf<String, Pair<String, String>>()
     /** The chat's last counts. A turn's result has its totals; each model call, the context size. */
     private var usage: TokenUsage? = null
+    /** Background tasks the CLI runs now, by task id: what each one does. */
+    private val backgroundTasks = linkedMapOf<String, String>()
+    /** A background task finished while the CLI was idle, so its next cycle is the CLI's own: why. */
+    private var wake: String? = null
 
     fun begin(turnId: String, frameUuid: String, internal: Boolean = false): Turn {
         check(active == null) { "A turn is already running in this chat." }
@@ -145,6 +160,9 @@ internal class ClaudeStreamMapper(
      */
     fun shownTurn(): Turn? = cycleTurn()?.takeIf { !it.internal }
 
+    /** The CLI's background tasks that are still running, for a stop to end them too. */
+    fun backgroundTaskIds(): List<String> = backgroundTasks.keys.toList()
+
     /** Forget [turn] without any event, for a turn whose frame never reached the CLI. */
     fun abandon(turn: Turn) {
         if (turn.ended) return
@@ -165,7 +183,8 @@ internal class ClaudeStreamMapper(
         if (!turn.internal) {
             if (status == "completed") lastText?.let { signals += Signal.Emit(it.copy(phase = "final_answer")) }
             val limit = turn.limit?.takeIf { status == "failed" && error == turn.rejection }
-            signals += Signal.Emit(EngineEvent.TurnFinished(status, error, threadId, turn.turnId, limitReached = limit))
+            val left = if (status == "completed") backgroundTasks.values.toList() else emptyList()
+            signals += Signal.Emit(EngineEvent.TurnFinished(status, error, threadId, turn.turnId, limitReached = limit, backgroundTasks = left))
         }
         signals += Signal.Ended(turn, status)
         retire(turn)
@@ -177,6 +196,8 @@ internal class ClaudeStreamMapper(
     fun processEnded(detail: String): List<Signal> {
         busy = false
         owner = null
+        wake = null
+        backgroundTasks.clear()
         val turn = active?.takeIf { !it.ended } ?: return emptyList()
         if (turn.interruptRequested) return end(turn, "interrupted", null)
         val message = SecretRedactor.redact("Claude stopped unexpectedly${if (detail.isBlank()) "" else ": $detail"}")
@@ -190,10 +211,7 @@ internal class ClaudeStreamMapper(
         "control_request" -> message.string("request_id").takeIf { it.isNotBlank() }?.let { id ->
             listOf(Signal.ControlRequest(id, message["request"] as? JsonObject ?: JsonObject(emptyMap())))
         }.orEmpty()
-        "command_lifecycle" -> {
-            if (message.string("state") == "started") claim(message.string("command_uuid"))
-            emptyList()
-        }
+        "command_lifecycle" -> if (message.string("state") == "started") claim(message.string("command_uuid")) else emptyList()
         "system" -> system(message)
         "user" -> user(message)
         "stream_event" -> streamEvent(message)
@@ -213,12 +231,24 @@ internal class ClaudeStreamMapper(
         }
     }
 
-    private fun claim(uuid: String) {
-        if (uuid.isBlank()) return
+    private fun claim(uuid: String): List<Signal> {
+        if (uuid.isBlank()) return emptyList()
         val turn = active
-        when {
-            turn != null && !turn.ended && uuid in turn.frames -> { owner = turn; busy = true }
-            uuid in retired -> { owner = null; busy = true }
+        return when {
+            turn != null && !turn.ended && uuid in turn.frames -> { owner = turn; busy = true; emptyList() }
+            // Busy means a cycle has started and its result has not come: this
+            // frame was queued into that same cycle (the CLI merges messages
+            // waiting together), so it stays that cycle's turn's. An idle CLI
+            // is not busy even when a new turn already owns the next cycle.
+            uuid in retired && busy && turn != null && owner === turn && !turn.ended -> { turn.frames += uuid; emptyList() }
+            uuid in retired && turn == null -> {
+                val woken = wakeTurn(LATE_MESSAGE)
+                active?.frames?.add(uuid)
+                busy = true
+                listOf(woken)
+            }
+            uuid in retired -> { owner = null; busy = true; emptyList() }
+            else -> emptyList()
         }
     }
 
@@ -246,8 +276,25 @@ internal class ClaudeStreamMapper(
     private fun systemEvents(message: JsonObject, turn: Turn?): List<Signal> {
         return when (message.string("subtype")) {
             "init" -> {
+                val woken = wake?.takeIf { !busy && active == null }?.let(::wakeTurn)
+                wake = null
                 busy = true
-                listOf(Signal.Init(message))
+                listOfNotNull(woken, Signal.Init(message))
+            }
+            "background_tasks_changed" -> {
+                backgroundTasks.clear()
+                (message["tasks"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.forEach { task ->
+                    val id = task.string("task_id").ifBlank { return@forEach }
+                    backgroundTasks[id] = task.string("description").ifBlank { "Background task" }.take(MAX_COMMAND_SHOWN)
+                }
+                emptyList()
+            }
+            // While a cycle runs, the CLI folds the notification into it. Only
+            // an idle CLI starts a cycle of its own for it.
+            "task_notification" -> {
+                if (!busy && active == null) wake = SecretRedactor.redactUiText(
+                    message.string("summary").ifBlank { "A background task finished" }).take(MAX_COMMAND_SHOWN)
+                emptyList()
             }
             "api_retry" -> turn?.let {
                 val attempt = (message["attempt"] as? JsonPrimitive)?.longOrNull
@@ -260,6 +307,16 @@ internal class ClaudeStreamMapper(
             }.orEmpty()
             else -> emptyList()
         }
+    }
+
+    /** A turn for the cycle the CLI starts by itself, owned at once so its output and tools are its own. */
+    private fun wakeTurn(reason: String): Signal {
+        val turn = Turn("wake-${UUID.randomUUID()}", internal = false)
+        active = turn
+        owner = turn
+        lastText = null
+        builtinTools.clear()
+        return Signal.Emit(EngineEvent.TurnStarted(threadId, turn.turnId, wake = reason))
     }
 
     /** A usage event for a new context size; null when the size has not changed. */
@@ -478,8 +535,10 @@ internal class ClaudeStreamMapper(
         builtinTools.clear()
     }
 
-    private companion object {
+    internal companion object {
         const val MAX_RETIRED = 256
         const val MAX_COMMAND_SHOWN = 400
+        /** Why a cycle runs after its turn ended: a message that came as the reply was finishing. */
+        const val LATE_MESSAGE = "Continuing with a message that arrived as the last reply ended"
     }
 }

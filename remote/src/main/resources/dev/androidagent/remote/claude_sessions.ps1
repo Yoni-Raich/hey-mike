@@ -12,6 +12,12 @@ function Field($row, [string]$name) {
     if ($null -ne $property) { return $property.Value }
     return $null
 }
+# A user record Claude Code wrote itself, such as a background task's
+# notification. Records of older versions carry no origin and are the user's.
+function IsAutomatic($row) {
+    $kind = Field (Field $row 'origin') 'kind'
+    return $null -ne $kind -and $kind -ne 'human'
+}
 function IsLink($file) { return ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 }
 function ContentText($content) {
     if ($content -is [string]) { return $content }
@@ -120,7 +126,7 @@ function Metadata($file, $holders) {
             'custom-title' { if (Field $row 'customTitle') { $custom = [string](Field $row 'customTitle') } }
             'ai-title' { if (Field $row 'aiTitle') { $title = [string](Field $row 'aiTitle') } }
             'summary' { if (Field $row 'summary') { $summary = [string](Field $row 'summary') } }
-            'user' { if (-not $first -and -not (Field $row 'isMeta') -and -not (Field $row 'isCompactSummary')) { $first = ContentText (Field (Field $row 'message') 'content'); if ($first.Length -gt 140) { $first = $first.Substring(0,140) } } }
+            'user' { if (-not $first -and -not (Field $row 'isMeta') -and -not (Field $row 'isCompactSummary') -and -not (IsAutomatic $row)) { $first = ContentText (Field (Field $row 'message') 'content'); if ($first.Length -gt 140) { $first = $first.Substring(0,140) } } }
             'assistant' { if (Field (Field $row 'message') 'model') { $model = [string](Field (Field $row 'message') 'model') } }
         }
     }
@@ -158,8 +164,9 @@ function Messages($file) {
             $logical = if (-not $parent) { Field $row 'logicalParentUuid' } else { $null }
             $role = Field $row 'type'; $text = ''
             if ($role -notin @('user','assistant','progress','system','attachment')) { continue }
-            # The compaction summary is Claude's note to itself, not something the user said.
-            $main = -not (Field $row 'isMeta') -and -not (Field $row 'teamName') -and -not (Field $row 'isCompactSummary') -and -not (Field $row 'isVisibleInTranscriptOnly')
+            # The compaction summary is Claude's note to itself, and a background
+            # task's notification is Claude Code's: neither is something the user said.
+            $main = -not (Field $row 'isMeta') -and -not (Field $row 'teamName') -and -not (Field $row 'isCompactSummary') -and -not (Field $row 'isVisibleInTranscriptOnly') -and -not (IsAutomatic $row)
             if ($role -in @('user','assistant') -and $main) { $text = ContentText (Field (Field $row 'message') 'content'); $leaf = $uid }
             $order++
             $nodes[$uid] = @{id=$uid;parent=$parent;logical=$logical;role=$role;text=$text;main=$main;order=$order;createdAt=(Stamp (Field $row 'timestamp'))}

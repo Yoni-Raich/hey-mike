@@ -147,9 +147,9 @@ class ClaudeStreamMapperTest {
         mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"done"}"""))
         assertNull(mapper.active)
 
-        // The steer "b" starts its own cycle after the turn ended.
-        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}"""))
+        // The app begins turn 2 before the steer "b" starts its own cycle.
         val next = mapper.begin("turn-2", "c")
+        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}"""))
         assertNull("an orphan cycle must not drive the phone", mapper.toolTurn())
         val orphan = mapper.feed(listOf(
             line("""{"type":"stream_event","event":{"type":"message_start","message":{"id":"m9"}}}"""),
@@ -165,6 +165,84 @@ class ClaudeStreamMapperTest {
         assertSame(next, mapper.toolTurn())
         val done = mapper.map(line("""{"type":"result","subtype":"success","is_error":false}""")).events()
         assertEquals("turn-2", (done.last() as EngineEvent.TurnFinished).turnId)
+    }
+
+    // Shapes recorded from Claude Code 2.x: a Bash call with run_in_background
+    // that finished after the turn had ended.
+    @Test fun aCycleTheCliStartsAfterABackgroundTaskBecomesAShownTurn() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        mapper.map(line("""{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","description":"Wait for CI"}]}"""))
+        val first = mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"started"}""")).events()
+        assertEquals(listOf("Wait for CI"), first.filterIsInstance<EngineEvent.TurnFinished>().single().backgroundTasks)
+        assertEquals(listOf("b1"), mapper.backgroundTaskIds())
+
+        mapper.map(line("""{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed","summary":"Background command \"Wait for CI\" completed (exit code 0)"}"""))
+        mapper.map(line("""{"type":"system","subtype":"background_tasks_changed","tasks":[]}"""))
+        val woke = mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        val started = woke.events().filterIsInstance<EngineEvent.TurnStarted>().single()
+        assertEquals("Background command \"Wait for CI\" completed (exit code 0)", started.wake)
+        assertTrue(woke.any { it is Signal.Init })
+        val turn = mapper.toolTurn()
+        assertNotNull("the woken cycle may use the phone's tools", turn)
+        assertEquals(started.turnId, turn!!.turnId)
+        assertSame(turn, mapper.shownTurn())
+
+        val events = mapper.feed(listOf(
+            line("""{"type":"stream_event","event":{"type":"message_start","message":{"id":"m2"}}}"""),
+            line("""{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"""),
+            line("""{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"CI passed"}}}"""),
+            line("""{"type":"result","subtype":"success","is_error":false,"result":"CI passed"}"""),
+        )).events()
+        assertEquals("CI passed", events.filterIsInstance<EngineEvent.TextDelta>().single().text)
+        val finished = events.filterIsInstance<EngineEvent.TurnFinished>().single()
+        assertEquals(started.turnId, finished.turnId)
+        assertTrue(finished.backgroundTasks.isEmpty())
+        assertNull(mapper.active)
+    }
+
+    @Test fun aNotificationDuringATurnStaysInThatTurn() {
+        val mapper = ClaudeStreamMapper(thread)
+        val turn = mapper.begin("turn-1", "a")
+        mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        mapper.map(line("""{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed","summary":"done"}"""))
+        val again = mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        assertTrue(again.events().none { it is EngineEvent.TurnStarted })
+        assertSame(turn, mapper.toolTurn())
+    }
+
+    @Test fun aLateSteerWithNoTurnWaitingGetsATurnOfItsOwn() {
+        val mapper = ClaudeStreamMapper(thread)
+        val turn = mapper.begin("turn-1", "a")
+        mapper.addFrame(turn, "b")
+        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"a","state":"started"}"""))
+        mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"done"}"""))
+
+        // A child chat's update steered as the reply ended runs next, by itself.
+        val woke = mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}""")).events()
+        val started = woke.filterIsInstance<EngineEvent.TurnStarted>().single()
+        assertEquals(ClaudeStreamMapper.LATE_MESSAGE, started.wake)
+        assertEquals(started.turnId, mapper.toolTurn()?.turnId)
+        mapper.map(line("""{"type":"system","subtype":"init"}"""))
+        val done = mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"ok"}""")).events()
+        assertEquals(started.turnId, done.filterIsInstance<EngineEvent.TurnFinished>().single().turnId)
+    }
+
+    // Seen on a phone, 2026-11-08: two child updates steered as the reply
+    // ended were dequeued together into one cycle.
+    @Test fun lateSteersMergedIntoOneCycleKeepTheirTurn() {
+        val mapper = ClaudeStreamMapper(thread)
+        val turn = mapper.begin("turn-1", "a")
+        mapper.addFrame(turn, "b")
+        mapper.addFrame(turn, "c")
+        mapper.map(line("""{"type":"command_lifecycle","command_uuid":"a","state":"started"}"""))
+        mapper.map(line("""{"type":"result","subtype":"success","is_error":false,"result":"done"}"""))
+
+        val woke = mapper.map(line("""{"type":"command_lifecycle","command_uuid":"b","state":"started"}""")).events()
+        val started = woke.filterIsInstance<EngineEvent.TurnStarted>().single()
+        assertTrue(mapper.map(line("""{"type":"command_lifecycle","command_uuid":"c","state":"started"}""")).isEmpty())
+        assertEquals("the merged frame must not drop the cycle's turn", started.turnId, mapper.toolTurn()?.turnId)
     }
 
     @Test fun echoesOfTheClisOwnMessagesChangeNothing() {

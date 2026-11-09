@@ -69,6 +69,14 @@ object EngineSwitch {
  * app's own and are left out. The newest messages are kept when the text
  * would be too long; the oldest go first.
  */
+/** One side's words in a chat's earlier conversation; see [ChatHandoff.turns]. */
+data class HandoffTurn(val role: String, val text: String) {
+    companion object {
+        const val USER = "user"
+        const val ASSISTANT = "assistant"
+    }
+}
+
 object ChatHandoff {
     const val MAX_CHARS = 24_000
     private const val MAX_MESSAGE_CHARS = 4_000
@@ -95,6 +103,41 @@ object ChatHandoff {
             kept.forEach { append(it).append('\n') }
             append("[End of earlier messages]\n\n")
         }
+    }
+
+    /**
+     * The same messages as turns of a conversation, for an engine that takes
+     * them as its own history ([AgentEngine.seedHistory]). The newest are kept
+     * within [maxChars]. Turns of one side in a row are joined, and the first
+     * is the user's, as the model APIs expect.
+     */
+    fun turns(missed: List<ChatMessage>, maxChars: Int = MAX_CHARS): List<HandoffTurn> {
+        val parts = missed.mapNotNull { message ->
+            val text = message.text.trim()
+            when (message.role.lowercase()) {
+                "user" -> HandoffTurn(HandoffTurn.USER, clip(text, MAX_MESSAGE_CHARS) + attachments(message))
+                "assistant" -> if (text.isEmpty() && message.attachmentPaths.isEmpty()) null
+                    else HandoffTurn(HandoffTurn.ASSISTANT, clip(text, MAX_MESSAGE_CHARS) + attachments(message))
+                // Said by Mike, so in Mike's words: done already, not to repeat.
+                "tool" -> text.takeIf { it.isNotEmpty() }?.let { HandoffTurn(HandoffTurn.ASSISTANT, "(I ran " + clip(it.replace('\n', ' '), MAX_ACTION_CHARS) + ")") }
+                else -> null
+            }
+        }
+        val kept = ArrayDeque<HandoffTurn>()
+        var size = 0
+        for (part in parts.asReversed()) {
+            if (kept.isNotEmpty() && size + part.text.length > maxChars) break
+            kept.addFirst(part)
+            size += part.text.length + 1
+        }
+        val joined = mutableListOf<HandoffTurn>()
+        for (part in kept) {
+            val last = joined.lastOrNull()
+            if (last != null && last.role == part.role) joined[joined.size - 1] = last.copy(text = last.text + "\n\n" + part.text)
+            else joined += part
+        }
+        if (joined.firstOrNull()?.role == HandoffTurn.ASSISTANT) joined.add(0, HandoffTurn(HandoffTurn.USER, "(Earlier messages are left out.)"))
+        return joined
     }
 
     private fun line(message: ChatMessage): String? {

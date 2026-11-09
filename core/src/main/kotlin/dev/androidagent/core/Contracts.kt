@@ -184,14 +184,15 @@ val EngineKind.label: String
  *
  * The binary is downloaded at first run and never bundled or patched. The
  * host owns the loader, the private config dir, the network proxy and the
- * environment; engines only pass `claude` arguments.
+ * environment. Engines pass `claude` arguments, and the host adds a chat's
+ * earlier turns to a transcript when asked ([extendTranscript]).
  */
 interface ClaudeProcessHost {
     /** Changes when new chat processes will use a different runtime. Existing turns keep their process. */
     val runtimeIdentity: String get() = ""
     /** Install state of the active binary; READY once it is present and verified. */
     val status: StateFlow<RuntimeStatus>
-    /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its files. */
+    /** Private `HOME` for `claude`. `CLAUDE_CONFIG_DIR` lives below it; the app never reads its sign-in files. */
     val homeDirectory: File
     /** Explicit first installation, or use an already verified active build. */
     suspend fun prepare()
@@ -199,6 +200,12 @@ interface ClaudeProcessHost {
     suspend fun start(args: List<String>, workingDirectory: File, extraEnv: Map<String, String> = emptyMap()): Process
     /** Stop every process this host started. */
     suspend fun stopAll()
+    /**
+     * Append [records] to Claude Code's transcript of [sessionId], where
+     * `claude` runs; see [ClaudeTranscript.extend]. False when this host
+     * cannot, and the chat gets its earlier turns as text instead.
+     */
+    suspend fun extendTranscript(workingDirectory: String, sessionId: String, records: List<String>): Boolean = false
 }
 
 data class ToolDefinition(val name: String, val description: String, val inputSchema: JsonObject)
@@ -290,7 +297,13 @@ data class RunMetrics(
 }
 
 sealed interface EngineEvent {
-    data class TurnStarted(val threadId: String, val turnId: String) : EngineEvent
+    data class TurnStarted(val threadId: String, val turnId: String,
+        /**
+         * Set when the engine started this turn by itself, with no message from
+         * the app: what woke it, such as a background task that finished. The
+         * app gives such a turn a run of its own, so it is shown and can be stopped.
+         */
+        val wake: String? = null) : EngineEvent
     data class TextDelta(val text: String, val threadId: String? = null, val turnId: String? = null, val itemId: String? = null) : EngineEvent
     data class MessageCompleted(val text: String, val threadId: String, val turnId: String, val itemId: String, val phase: String? = null) : EngineEvent
     data class UsageChanged(val threadId: String?, val usage: TokenUsage? = null, val limits: List<UsageLimit>? = null) : EngineEvent
@@ -309,7 +322,9 @@ sealed interface EngineEvent {
     ) : EngineEvent
     data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null,
         /** The turn stopped because the account is out of usage, as the engine itself said. */
-        val limitReached: LimitReached? = null) : EngineEvent
+        val limitReached: LimitReached? = null,
+        /** Work the turn left running in the background, one description each; it may wake the chat again. */
+        val backgroundTasks: List<String> = emptyList()) : EngineEvent
     data class AccountChanged(val status: AccountStatus) : EngineEvent
     data object SkillsChanged : EngineEvent
     data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null,
@@ -430,6 +445,13 @@ interface AgentEngine {
      * summary is in place, with the sizes the engine reported, if it did.
      */
     suspend fun compact(threadId: String): CompactResult? = throw UnsupportedOperationException("This engine cannot compact a chat.")
+    /**
+     * Add what [threadId] missed in this chat to its history as its own turns,
+     * before its next turn: the way a model switch within one engine keeps the
+     * conversation. False when this engine or thread cannot; the caller then
+     * puts the [ChatHandoff] text before the prompt instead.
+     */
+    suspend fun seedHistory(threadId: String, turns: List<HandoffTurn>): Boolean = false
     suspend fun steer(threadId: String, turnId: String, prompt: String)
     suspend fun interrupt(threadId: String, turnId: String)
     suspend fun answerTool(requestId: String, result: ToolResult)

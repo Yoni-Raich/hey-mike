@@ -3148,8 +3148,10 @@ voice works in a Claude chat.
 - **Compliance rules** (from the spec): official unmodified binary checked
   against the bundled pin or an authenticated official manifest pin; never
   bundled; sign-in only inside `claude`; the
-  app never reads, copies, backs up or uploads `CLAUDE_CONFIG_DIR` (it is
-  excluded from backups); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
+  app never reads, copies, backs up or uploads the sign-in in
+  `CLAUDE_CONFIG_DIR` (it is excluded from backups), and writes there only
+  session transcripts under `projects` (see "Engine switch: native history",
+  changed 2026-11-08 by the owner's decision); no `setup-token`, `CLAUDE_CODE_OAUTH_TOKEN`, spoofed
   headers or `--bare`; API keys and base-URL variables are scrubbed from the
   child environment; the UI says "Use your own Claude subscription (runs
   Anthropic's Claude Code). Not affiliated with Anthropic." and never uses
@@ -3368,3 +3370,73 @@ Decided 2026-10-01, on top of the section above.
   skills are not listed in the composer. Mac Desktop handoff and real
   phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
   evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
+## Claude background tasks: every cycle is a run — 2026-11-08
+
+Claude Code lets the model leave work running (`Bash` with
+`run_in_background`, monitors). When such a task ends while the CLI is idle,
+the CLI reports `system/task_notification` and starts a model cycle of its
+own, with no frame from the app. Before this change that cycle had no owner:
+its text was hidden, its phone tools were refused ("No task is running in this
+chat"), and its words reached the chat later only through history sync, with
+the notification itself shown as if the user had typed it.
+
+- **The mapper makes the cycle a turn.** A `task_notification` while idle
+  arms a wake; the next `system/init` starts a `wake-<uuid>` turn that owns the
+  cycle and emits `TurnStarted(wake = <summary>)`. A notification during a
+  running turn stays in that turn.
+- **The app gives it a run.** `AgentRuns.route` hands a `TurnStarted` with a
+  wake that no run owns to a free coordinator, whose `adoptTurn` reserves a run
+  for the chat with that thread, posts the summary as a note and then handles
+  the turn like a sent one: text, tools, approvals, Stop. A chat already
+  running is left alone. A thread no chat has (deleted, or parked after an
+  engine switch) is interrupted, so nothing works unseen.
+- **A late steer is a cycle too.** A message steered as the turn's reply
+  was ending (a child chat's update, typically) is queued by the CLI and run
+  after the `result`, as its own cycle. With no new app turn waiting, it gets
+  a wake turn (`ClaudeStreamMapper.LATE_MESSAGE`) and a run, like a woken
+  cycle. Messages the CLI dequeues together run as one cycle, so a
+  late frame claimed while that cycle is busy stays with its turn. Seen on 2026-11-08: the parent chat's tool calls were refused ("No
+  task is running in this chat") and history sync later showed the raw update
+  as the user's words.
+- **Stop ends the background work too.** `ClaudeCodeEngine.interrupt` also
+  sends `stop_task` for every task in the last `background_tasks_changed`.
+- **The chat is told.** A completed turn that leaves tasks running carries them
+  in `TurnFinished.backgroundTasks`, and the chat shows one system line naming
+  them.
+- **History sync skips the CLI's own records.** Transcript user records whose
+  `origin.kind` is not `human` (task notifications) are neither the user's
+  words nor a title. Reader script renamed to `session-reader-v6`.
+
+Rejected: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. It would hide the problem
+by removing a capability (waiting for CI, long builds) that the user wants.
+
+## Engine switch: native history where the engine takes it — 2026-11-08
+
+A chat that changed engine gave the other engine a text block before the
+prompt ("[Earlier in this chat] ... another AI model ..."), so the switch did
+not feel like a model switch within one engine. Now `AgentEngine.seedHistory`
+first offers what the thread missed as real turns (`ChatHandoff.turns`: user
+and assistant turns, alternating, user first, newest kept within the same
+24,000-character budget, actions as "(I ran ...)" in Mike's turn). The text
+block stays as the fallback for an engine that cannot.
+
+- **Codex** uses `thread/inject_items` (app-server 0.163, Responses API
+  `message` items). Probed on the Windows 0.163 app-server: the call answered
+  `{}` and the next turn answered a question only the injected turns held.
+  An older server refuses it and the chat gets the text block. Once seeded,
+  the chat is marked caught up, so a turn that fails to start does not add it
+  again.
+- **Claude** reads its own transcript. The turns become Claude Code records
+  (`ClaudeProtocol.transcriptRecords`: user string content, assistant text
+  block, `parentUuid` chain) and the host appends them to
+  `<CLAUDE_CONFIG_DIR>/projects/<folder>/<session>.jsonl`, continuing from the
+  last main message or starting the file in the folder Claude Code names for
+  the cwd; the next start uses `--resume`. An idle process is stopped first;
+  a busy one is not touched. The phone host writes the file itself
+  (`ClaudeTranscript`, canonical cwd); a computer runs the uploaded
+  `transcript-writer-v1` script (PowerShell or Python). Probed live: the
+  PowerShell writer with the engine's record shape, then `claude -p --resume`,
+  answered from the written turns. The owner lifted the old rule that the app
+  never touches `CLAUDE_CONFIG_DIR` for this (2026-11-08); the sign-in files
+  stay untouched.

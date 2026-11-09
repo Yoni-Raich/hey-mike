@@ -56,6 +56,17 @@ class ReadersTest(unittest.TestCase):
         self.write([user, obsolete, reply, hidden, final, side], b'{"type":"user",')
         self.check("read", lambda row: self.assertEqual(["סכם את הקוד", "תשובה", "final"], [m["text"] for m in row["messages"]]))
 
+    def test_background_task_notifications_are_not_the_users_words(self):
+        notice = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"
+        first = self.row(text=notice, origin=dict(kind="task-notification"))
+        user = self.row(text="build it", parent=first["uuid"], origin=dict(kind="human"))
+        started = self.row("assistant", "started", user["uuid"])
+        wake = self.row(text=notice, parent=started["uuid"], origin=dict(kind="task-notification", producer="session-task"))
+        done = self.row("assistant", "finished", wake["uuid"])
+        self.write([first, user, started, wake, done])
+        self.check("read", lambda row: self.assertEqual(["build it", "started", "finished"], [m["text"] for m in row["messages"]]))
+        self.check("list", lambda row: self.assertEqual("build it", row["threads"][0]["title"]))
+
     def test_title_and_native_identity(self):
         user = self.row()
         self.write([user, dict(type="ai-title", aiTitle="auto", sessionId=SID), dict(type="custom-title", customTitle="Chosen title", sessionId=SID)])

@@ -5,6 +5,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 import java.util.UUID
@@ -28,7 +31,7 @@ object ClaudeSessionFiles {
 
     // The version is part of the name: two phones on different app versions
     // share this folder and must not run each other's reader.
-    fun scriptName(os: HostOs): String = "session-reader-v5." + if (os == HostOs.WINDOWS) "ps1" else "py"
+    fun scriptName(os: HostOs): String = "session-reader-v6." + if (os == HostOs.WINDOWS) "ps1" else "py"
 
     /** Stable across engine/app restarts, distinct for each phone's saved computer. */
     fun clientId(computerId: String): String = UUID.nameUUIDFromBytes("claude-client:$computerId".toByteArray(Charsets.UTF_8)).toString()
@@ -39,19 +42,45 @@ object ClaudeSessionFiles {
             .bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 
+    /** The script that appends a chat's earlier turns to a transcript (`claude_transcript.*`), by the same versioned naming. */
+    fun writerName(os: HostOs): String = "transcript-writer-v1." + if (os == HostOs.WINDOWS) "ps1" else "py"
+
+    fun writer(os: HostOs): String {
+        val suffix = if (os == HostOs.WINDOWS) "ps1" else "py"
+        return checkNotNull(javaClass.getResourceAsStream("/dev/androidagent/remote/claude_transcript.$suffix")) { "Claude transcript writer is missing" }
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+    }
+
+    /** What the writer reads: the folder `claude` runs in, the session and the JSON lines to add. */
+    fun writerPayload(cwd: String, sessionId: String, records: List<String>): String {
+        requireId(sessionId)
+        return buildJsonObject {
+            put("cwd", cwd)
+            put("sessionId", sessionId)
+            put("records", buildJsonArray { records.forEach { add(JsonPrimitive(it)) } })
+        }.toString()
+    }
+
+    fun writerCommand(os: HostOs, script: String, payload: String): String =
+        if (os == HostOs.WINDOWS) WindowsHost.powershell("& ${quote(os, script)} -Payload ${quote(os, payload)}")
+        else LinuxHost.wrap("python3 ${quote(os, script)} ${quote(os, payload)}")
+
     fun command(os: HostOs, path: String, mode: String, id: String? = null, clientId: String? = null): String {
         require(mode in setOf("list", "read", "busy"))
         id?.let(::requireId)
         clientId?.let(::requireId)
-        fun quote(value: String): String {
-            require(value.none { it == '\u0000' || it == '\n' || it == '\r' }) { "Invalid session reader path" }
-            return "'" + value.replace("'", if (os == HostOs.WINDOWS) "''" else "'\\''") + "'"
-        }
+        fun quote(value: String): String = quote(os, value)
         return if (os == HostOs.WINDOWS) {
             WindowsHost.powershell("& ${quote(path)} -Mode ${quote(mode)}" + (id?.let { " -SessionId ${quote(it)}" } ?: "") +
                 (clientId?.let { " -ClientId ${quote(it)}" } ?: ""))
         } else LinuxHost.wrap("python3 ${quote(path)} ${quote(mode)}" + (id?.let { " ${quote(it)}" } ?: "") +
             (clientId?.let { " --client ${quote(it)}" } ?: ""))
+    }
+
+    /** One argument quoted for the computer's shell. */
+    private fun quote(os: HostOs, value: String): String {
+        require(value.none { it == '\u0000' || it == '\n' || it == '\r' }) { "Invalid session reader path" }
+        return "'" + value.replace("'", if (os == HostOs.WINDOWS) "''" else "'\\''") + "'"
     }
 
     fun payload(result: ExecResult): JsonObject = WindowsHost.payload(result).also { row ->
