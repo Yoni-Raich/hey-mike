@@ -127,7 +127,24 @@ class AutomationNotificationListener : NotificationListenerService() {
     /** Dismissals are not events any rule can name, so they are not delivered. */
     override fun onNotificationRemoved(sbn: StatusBarNotification?) = Unit
 
+    /**
+     * The task board learns only that a conversation's notification was opened or
+     * cleared, by its key: the sign that the owner already saw the message. No
+     * title or text is read here.
+     */
+    override fun onNotificationRemoved(sbn: StatusBarNotification?, rankingMap: NotificationListenerService.RankingMap?, reason: Int) {
+        val gone = sbn ?: return
+        if (reason !in SEEN_REASONS || gone.packageName == packageName) return
+        if (!PersonalNotificationPolicy.allows(this, gone)) return
+        val board = (applicationContext as? AutomationHostOwner)?.taskSignals ?: return
+        if (runCatching { board.wants(gone.packageName) }.getOrDefault(false)) runCatching { board.onRemoved(gone.packageName, gone.key) }
+    }
+
     companion object {
+        /** Opened, swiped, cleared, or cancelled by its own app after the conversation was read elsewhere. */
+        private val SEEN_REASONS = setOf(REASON_CLICK, REASON_CANCEL, REASON_CANCEL_ALL, REASON_APP_CANCEL, REASON_APP_CANCEL_ALL,
+            REASON_GROUP_SUMMARY_CANCELED)
+
         /**
          * Whether the user has granted this listener in Settings.
          *

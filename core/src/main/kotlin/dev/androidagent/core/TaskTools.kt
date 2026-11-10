@@ -311,6 +311,7 @@ class TaskTools(
             usefulUntil = args.text("usefulUntil")?.let { TaskBoard.parseTime(it, zone()) ?: error("usefulUntil is not a date or time I can read.") },
             deadlineAt = args.text("deadlineAt")?.let { TaskBoard.parseTime(it, zone()) ?: error("Give a valid deadline.") },
             partialContext = (args["partialContext"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            awaitsReply = (args["awaitsReply"] as? JsonPrimitive)?.booleanOrNull ?: false,
             category = category,
             action = action,
             sourceRefs = claimSources(sessionId, evidence(args["evidence"]).mapNotNull { it.signalId }, args),
@@ -567,6 +568,7 @@ class TaskTools(
         task.requestedBy?.let { put("requestedBy", it) }; task.computer?.let { put("computer", it) }
         task.usefulUntil?.let { put("usefulUntil", Instant.ofEpochMilli(it).toString()) }
         if (task.partialContext) put("partialContext", true)
+        if (task.awaitsReply) put("awaitsReply", true)
         task.note?.let { put("userNote", it.take(400)) }
         task.progress?.let { put("progress", it.take(200)) }
         task.result?.let { put("result", it.take(600)) }
@@ -721,6 +723,7 @@ class TaskTools(
                     put("usefulUntil", str("propose/update: ISO-8601 time after which the card is no longer useful."))
                     put("deadlineAt", str("propose: real deadline, ISO-8601; separate from proposal expiry."))
                     put("partialContext", buildJsonObject { put("type", "boolean"); put("description", "The notification did not show enough of the conversation.") })
+                    put("awaitsReply", buildJsonObject { put("type", "boolean"); put("description", "propose: the whole card is answering one conversation. The app closes it when the user opens that conversation, or after 6 hours.") })
                     put("looksResolved", str("update/observe: evidence the need may already be handled. State uncertainty. observe never closes a decided card."))
                     put("action", buildJsonObject {
                         put("type", "object")

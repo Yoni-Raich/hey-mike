@@ -172,6 +172,8 @@ data class MikeTask(
     val lastCheckBriefingOccurrence: String? = null,
     /** Deadline reminders have their own durable receipt. */
     val lastDeadlineBriefingOccurrence: String? = null,
+    /** The whole card is "answer this conversation". [CardLifecycle] closes it when the owner opens that conversation. */
+    val awaitsReply: Boolean = false,
 )
 
 /** A topic or kind the user said never to suggest again. */
@@ -371,6 +373,11 @@ data class TaskBoardSettings(
     val executionEngine: EngineKind? = null,
     val executionModel: String? = null,
     val executionEffort: String? = null,
+    /** Light chat conversations [SignalTriage] dropped before any model read them, and the day counted. */
+    val triageDay: String? = null,
+    val triageDroppedToday: Int = 0,
+    /** Cards [CardLifecycle] closed on its own, same day. */
+    val autoClosedToday: Int = 0,
 )
 
 /** What the board, memory, signals and team read and write. One store, one transaction each. */

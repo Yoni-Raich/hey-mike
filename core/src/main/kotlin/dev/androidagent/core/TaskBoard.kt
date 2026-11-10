@@ -53,6 +53,7 @@ data class TaskProposal(
     val action: TaskAction? = null,
     val sourceRefs: List<TaskSourceRef> = emptyList(),
     val deadlineAt: Long? = null,
+    val awaitsReply: Boolean = false,
 )
 
 sealed class ProposeOutcome {
@@ -202,6 +203,7 @@ class TaskBoard(
             partialContext = proposal.partialContext,
             sourceRefs = proposal.sourceRefs,
             deadlineAt = proposal.deadlineAt,
+            awaitsReply = proposal.awaitsReply && proposal.category == TaskCategory.TASK,
         )
         put(task)
         ProposeOutcome.Created(task)
@@ -573,8 +575,11 @@ class TaskBoard(
         mutableTasks.value = mutableTasks.value.map { if(it.id == id) next else it }
     }
 
-    /** Wake snoozed cards, expire stale ones, and forget very old history. */
-    suspend fun sweep(): List<MikeTask> = lock.withLock {
+    /**
+     * Wake snoozed cards, close what [CardLifecycle] says has ended, and forget
+     * very old history. [handledAfter] answers from the [ConversationLedger].
+     */
+    suspend fun sweep(handledAfter: (conversation: String, since: Long) -> Boolean = { _, _ -> false }): List<MikeTask> = lock.withLock {
         val clock = now()
         val changed = mutableListOf<MikeTask>()
         mutableTasks.value.forEach { task ->
@@ -583,7 +588,7 @@ class TaskBoard(
                     task.copy(status = TaskStatus.EXPIRED, closedAt = clock, updatedAt = clock)
                 task.status == TaskStatus.SNOOZED && (task.snoozedUntil ?: 0) <= clock ->
                     task.copy(status = TaskStatus.PROPOSED, snoozedUntil = null, updatedAt = clock)
-                else -> null
+                else -> CardLifecycle.close(task, clock, handledAfter)
             }
             if (next != null) { put(next); changed += next }
         }

@@ -158,6 +158,8 @@ class TaskDesk(
     val board = TaskBoard(store, now, zone)
     val memory = MemoryBook(store, now)
     val signals = SignalInbox(store, now)
+    /** Times only: when each conversation's notification came, went, and was answered. */
+    private val ledger = dev.androidagent.core.ConversationLedger(File(context.filesDir, "conversation-ledger-v1.json"), now)
     private val calendarChanges = CalendarSignalBuffer()
     val team = TeamRoster(store, now)
     /** Read-only context connections: the app's own and the engines' account connectors. */
@@ -296,6 +298,7 @@ class TaskDesk(
             put("modelUsageGate", quotaLow(settings.passEngine)); put("engine", settings.passEngine.name)
             put("passesToday", if (settings.passDay == today) settings.passesToday else 0); put("dailyPassCap", settings.dailyPassCap)
             put("pendingInputs", signals.pending.value.size)
+            if (settings.triageDay == today) { put("smallTalkDroppedToday", settings.triageDroppedToday); put("cardsAutoClosedToday", settings.autoClosedToday) }
             mutable.value.error?.let { put("error", it.take(400)) }
         } }, proactive = proactiveTools(null, null), managerMessages = {
             val manager = team.of(MemberKind.MANAGER)?.sessionId ?: error("The Manager's chat is missing.")
@@ -419,7 +422,7 @@ class TaskDesk(
     /** Local scheduled checks keep working when model quota or network is unavailable. */
     suspend fun pulseFollowups() = lock.withLock {
         if (!ready || paused || !board.settings.value.discoveryOn) return@withLock
-        board.sweep()
+        sweepBoard()
         deliverBriefings()
         prepareDueChecks()
         deliverBriefings()
@@ -799,7 +802,7 @@ class TaskDesk(
     /** Ask every connector for its state, for the Connections cards. */
     fun refreshConnections() { scope.launch(Dispatchers.IO) { connections.refresh(::publish) } }
 
-    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); proactive.book.clear(); proactive.profile.forgetLearned(); store.clearSourceStats(); situationStore.forgetObserved(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
+    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); withIo { ledger.clear() }; proactive.book.clear(); proactive.profile.forgetLearned(); store.clearSourceStats(); situationStore.forgetObserved(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
     fun liftSuppression(entry: dev.androidagent.core.TaskSuppression) { scope.launch { board.removeSuppression(entry) } }
 
     fun addUserRule(rule: String) { scope.launch(Dispatchers.IO) { runCatching { playbook.addUserRule(rule) } } }
@@ -827,6 +830,9 @@ class TaskDesk(
             return ready && !paused && settings.discoveryOn && app != context.packageName && app !in settings.excludedApps
         }
         override fun onMessage(message: CapturedMessage) = this@TaskDesk.onMessage(message)
+        override fun onRemoved(app: String, notificationKey: String) {
+            if (ready && !paused) scope.launch { withIo { ledger.removed(app, notificationKey) } }
+        }
     }
 
     /** From the notification listener: a message as its notification shows it. No model is involved. */
@@ -834,6 +840,8 @@ class TaskDesk(
         if (!ready || paused) return
         scope.launch {
             if (paused) return@launch
+            // Recorded for every post, also a repeated one: a notification that returns is unseen again.
+            if (board.settings.value.discoveryOn) withIo { ledger.posted(message) }
             try {
                 val capture = signals.captureResult(message, board.settings.value, context.packageName)
                 capture.signal?.let {
@@ -924,7 +932,7 @@ class TaskDesk(
 
     private suspend fun tick() = lock.withLock {
         if (!ready) return@withLock
-        board.sweep()
+        sweepBoard()
         memory.emptyTrash()
         val settings = board.settings.value
         legacySignals = store.quarantineLegacySignals(now(), clear = !settings.discoveryOn)
@@ -954,6 +962,41 @@ class TaskDesk(
         maybeNightly()
         maybeManagerReview()
         publish()
+    }
+
+    /** The board's own housekeeping, with what the ledger knows about opened conversations. */
+    private suspend fun sweepBoard() {
+        val closed = board.sweep { conversation, since -> ledger.mark(conversation)?.handledAfter(since) == true }
+            .count { it.status.closed && it.category == dev.androidagent.core.TaskCategory.TASK }
+        if (closed > 0) countHousekeeping(closed = closed)
+    }
+
+    private suspend fun countHousekeeping(dropped: Int = 0, closed: Int = 0) {
+        val today = Instant.ofEpochMilli(now()).atZone(zone()).toLocalDate().toString()
+        board.editSettings { s ->
+            val same = s.triageDay == today
+            s.copy(triageDay = today, triageDroppedToday = (if (same) s.triageDroppedToday else 0) + dropped,
+                autoClosedToday = (if (same) s.autoClosedToday else 0) + closed)
+        }
+    }
+
+    /**
+     * The gate in front of the model. Drops light chat the owner already saw and
+     * returns the rows that must keep waiting. Rows a running pass holds are left alone.
+     */
+    private suspend fun triage(clock: Long): Set<String> {
+        val flying = inFlight.values.flatMap { it.batch }.toSet()
+        val quiet = proactive.profile.profile.alerts.quietAt(clock, zone())
+        val verdicts = signals.pending.value.filter { it.id !in flying && dev.androidagent.core.SignalTriage.judged(it) }.associate { row ->
+            row.id to dev.androidagent.core.SignalTriage.verdict(row, ledger.mark(dev.androidagent.core.ConversationLedger.key(row)), clock, quiet)
+        }
+        val dropped = verdicts.filterValues { it == dev.androidagent.core.SignalTriage.Verdict.DROP }.keys
+        if (dropped.isNotEmpty()) {
+            signals.processed(dropped)
+            dropped.forEach(sourceRefs::remove)
+            countHousekeeping(dropped = dropped.size)
+        }
+        return verdicts.filterValues { it == dev.androidagent.core.SignalTriage.Verdict.HOLD }.keys
     }
 
     private fun busy(member: TeamMember?): Boolean = member?.sessionId?.let { id ->
@@ -992,7 +1035,8 @@ class TaskDesk(
         var settings = board.settings.value
         val today = Instant.ofEpochMilli(clock).atZone(zone()).toLocalDate().toString()
         if (settings.passDay != today) settings = board.editSettings { it.copy(passDay = today, passesToday = 0, backgroundPassesToday = 0) }
-        val eligible = signals.pending.value.filter { sourceAllowed(dev.androidagent.core.TaskSourcePolicy.of(it)) &&
+        val held = triage(clock)
+        val eligible = signals.pending.value.filter { it.id !in held && sourceAllowed(dev.androidagent.core.TaskSourcePolicy.of(it)) &&
             (it.sessionId == null || runs().stateOf(it.sessionId!!)?.active != true) }
         val plan = DiscoverySchedule.plan(eligible, clock, settings.lastPassAt, settings.passesToday, settings.dailyPassCap, busy(scout),
             backgroundPassesToday = settings.backgroundPassesToday)
@@ -1005,7 +1049,9 @@ class TaskDesk(
             catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
         val contexts = withIo { connections.passContext(batch, pulled, settings.passEngine) }
         val prompt = TaskPrompts.scoutPass(batch, clock, zone(), plan.batch.any { it.source == "calendar" }, playbook.directory.absolutePath,
-            contexts, proactive.profile.summary(clock, zone()), proactive.profile.profile.alerts.enabled)
+            contexts, proactive.profile.summary(clock, zone()), proactive.profile.profile.alerts.enabled,
+            rowNotes = batch.mapNotNull { row -> dev.androidagent.core.SignalTriage.note(row,
+                ledger.mark(dev.androidagent.core.ConversationLedger.key(row)), clock)?.let { row.id to it } }.toMap())
         passRows[session] = batch.associateBy { it.id }
         plan.batch.forEach { sourceRefs[it.id] = dev.androidagent.core.TaskSourcePolicy.of(it) }
         inFlight[session] = beginFlight(scout, plan.batch.map { it.id }, clock,

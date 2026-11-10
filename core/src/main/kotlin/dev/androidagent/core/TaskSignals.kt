@@ -37,6 +37,8 @@ interface TaskSignalSink {
     val ready: Boolean get() = true
     fun wants(app: String): Boolean
     fun onMessage(message: CapturedMessage)
+    /** The notification left the shade because the owner or its own app took it away. Nothing is read. */
+    fun onRemoved(app: String, notificationKey: String) {}
 }
 
 /** One message as a notification shows it, before the inbox decides to keep it. */

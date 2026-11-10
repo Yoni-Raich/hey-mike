@@ -77,7 +77,7 @@ object TaskPrompts {
     /** A Scout pass over a batch of new signals. */
     fun scoutPass(batch: List<TaskSignal>, now: Long, zone: ZoneId, calendarDue: Boolean, playbook: String,
         contexts: List<dev.androidagent.core.proactive.RowContext> = emptyList(), profileSummary: String? = null,
-        alertsOn: Boolean = false): String = buildString {
+        alertsOn: Boolean = false, rowNotes: Map<String, String> = emptyMap()): String = buildString {
         appendLine("Discovery pass, ${time(now, zone)}. You are Mike's Scout. Follow the task-discovery skill.")
         appendLine("Read the playbook through tasks mode=playbook: operation=read path=SKILL.md, then user.md. Use operation=list and read only matching sources/, people/ and kinds/ files. Never edit files or use a native shell.")
         appendLine()
@@ -88,6 +88,7 @@ object TaskPrompts {
             if (s.group) put("group", true)
             if (s.ownerFeedback) put("ownerFeedback", true)
             s.reason?.let { put("reason", it) }; s.lane?.let { put("lane", it.name.lowercase()) }
+            rowNotes[s.id]?.let { put("appNote", it) }
             put("at", time(s.at, zone)); put("text", s.text)
             if (s.omitted > 0) put("omittedLines", s.omitted)
             if (s.items.isNotEmpty()) put("messages", JsonArray(s.items.map { item -> buildJsonObject {
@@ -109,6 +110,11 @@ object TaskPrompts {
                 "Use the owner profile: people and topics marked important lean up, those marked less important lean down. The app decides the final level; respect a lower answer and never retry for a louder one. A card can exist without an alert, and an alert may point to the card it is about with id.")
             appendLine()
         }
+        appendLine("The app already dropped small talk the user saw, so a chat row is here because it holds a time, an amount, a link or an ask, or because nobody opened it for hours. " +
+            "appNote=owner_saw means the user already opened or answered that conversation: never propose a card to reply to it or to read it; propose only work that remains after reading, such as an errand, a payment, a date or a promise. " +
+            "appNote=unopened_<n>h means the message sat unopened that long; judge whether it still matters now. " +
+            "When a card is only \"answer this person\", set awaitsReply=true: the app closes it when the user opens the conversation, or after 6 hours. " +
+            "Every card ends on its own: an undecided card expires after 48 hours unless you set usefulUntil or deadlineAt, so set them when the real moment is later or sooner.")
         appendLine("Each signal is one conversation or app with new input. Its reason/lane were set by the app. Chat text includes human requests and marked final replies, not progress. Empty text means there is no final reply to read; never invent one. Omitted lines mean partial context. Repeated app status is usually nothing. Do not create source settings or mute an app; the Coach reviews text-free source counters separately.")
         if (batch.any { it.reason == SignalRows.MAIL_CHECK }) appendLine("A mail_check row asks you to read new mail yourself with the read-only tools named in its note. " +
             "Search only mail received since the row's time (for Gmail: after:<epoch seconds>), at most 25 threads; open a thread only when its subject and sender may matter. " +
