@@ -529,6 +529,13 @@ interface RealtimeVoiceEngine {
 }
 
 enum class RunPhase { IDLE, STARTING, THINKING, TOOL, CONTROLLING, STOPPING, ERROR }
+/** A live user gate, independent of the engine/tool phase. Stop and terminal phases close it. */
+enum class RunInteraction { NONE, APPROVAL, QUESTION }
+/**
+ * How a run ended. Code reads this; [RunState.status] is text for the user and
+ * may be reworded. [UNKNOWN] means the work may have happened: inspect, never replay.
+ */
+enum class RunOutcome { COMPLETED, FAILED, STOPPED, UNKNOWN }
 data class RunState(
     val phase: RunPhase = RunPhase.IDLE, val sessionId: String? = null, val status: String = "Ready", val controlling: Boolean = false, val approval: EngineEvent.Approval? = null, val toolName: String? = null,
     /** What the agent asked with `ask_user` and is waiting on. */
@@ -543,8 +550,31 @@ data class RunState(
     val runId: String? = null,
     /** The run ended at a usage limit of [engine][LimitReached], not on an ordinary error. */
     val limit: LimitReached? = null,
+    /** The user's Stop or an engine interruption ended this run, not its own last step. */
+    val stopped: Boolean = false,
 ) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
+
+    /** Null while the run is live, and for a chat that has not run. An unconfirmed result outranks the rest. */
+    val outcome: RunOutcome? get() = when {
+        active -> null
+        outcomeUnknown || stopConfirmed == false -> RunOutcome.UNKNOWN
+        phase == RunPhase.ERROR -> RunOutcome.FAILED
+        stopped -> RunOutcome.STOPPED
+        runId == null -> null
+        else -> RunOutcome.COMPLETED
+    }
+
+    /** Shared precedence for UI and agent status; retained payloads are not live requests. */
+    val interaction: RunInteraction get() = when {
+        !active || phase == RunPhase.STOPPING -> RunInteraction.NONE
+        approval != null -> RunInteraction.APPROVAL
+        question != null -> RunInteraction.QUESTION
+        else -> RunInteraction.NONE
+    }
+    val waitingForUser: Boolean get() = interaction != RunInteraction.NONE
+    val pendingApproval: EngineEvent.Approval? get() = approval.takeIf { interaction == RunInteraction.APPROVAL }
+    val pendingQuestion: UserQuestion? get() = question.takeIf { interaction == RunInteraction.QUESTION }
 
     /**
      * The tool the run is executing right now, or null when it is doing

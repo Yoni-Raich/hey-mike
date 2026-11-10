@@ -374,7 +374,7 @@ fun AndroidAgentScreen(
                         state.activeBrowserPage()?.let { page ->
                             BrowserPageCard(page, onOpen = actions.onOpenBrowser, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                         }
-                        state.runState.approval?.let { approval ->
+                        state.runState.pendingApproval?.let { approval ->
                             ApprovalCard(
                                 approval = approval,
                                 onApproval = actions.onApproval,
@@ -382,7 +382,7 @@ fun AndroidAgentScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
-                        state.runState.question?.let { question ->
+                        state.runState.pendingQuestion?.let { question ->
                             QuestionCard(
                                 question = question,
                                 onAnswer = actions.onAnswerQuestion,

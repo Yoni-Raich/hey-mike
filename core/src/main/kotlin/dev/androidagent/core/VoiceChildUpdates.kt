@@ -52,7 +52,7 @@ class VoiceChildUpdates(private val now: () -> Long = { System.nanoTime() / 1_00
             }
             val complete = history.values.lastOrNull { it.state == "complete" }?.text?.takeIf(::useful)
             val text = if (task.terminal) task.result?.takeIf(::useful) ?: complete else complete
-            val actionable = task.status == "waiting_for_user" || task.status in setOf("failed", "unknown", "cancelled")
+            val actionable = task.state.needsAttention
             if (text != null || actionable) {
                 val candidate = VoiceChildAnnouncement(task, text.orEmpty(), update.allowed)
                 if (announced[task.id] != candidate.revision) pending[task.id] = candidate

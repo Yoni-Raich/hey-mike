@@ -23,6 +23,9 @@ package dev.androidagent.app
 import dev.androidagent.app.ui.videoLength
 import dev.androidagent.core.UserQuestion
 import dev.androidagent.core.RunState
+import dev.androidagent.core.RunPhase
+import dev.androidagent.core.EngineEvent
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -32,7 +35,7 @@ class QuestionNoticesTest {
     private val waiting = mapOf("chat-a" to evening, "chat-b" to name)
 
     @Test fun aSubagentQuestionUsesTheSourceChatAndIsNotNotifiedWhileItIsVisible() {
-        val projected = QuestionNotices.waiting(mapOf("child" to RunState(question = evening)),
+        val projected = QuestionNotices.waiting(mapOf("child" to RunState(phase = RunPhase.TOOL, question = evening)),
             owner = { "source" }, order = { 0 })
         assertEquals(mapOf("source" to evening), projected)
         assertEquals(emptyMap<String, UserQuestion>(), QuestionNotices.due(projected, true, "source"))
@@ -40,11 +43,25 @@ class QuestionNoticesTest {
     }
 
     @Test fun sourceQuestionWinsThenTheFirstDispatchedChildWins() {
-        val children = linkedMapOf("later" to RunState(question = name), "first" to RunState(question = evening))
+        val children = linkedMapOf("later" to RunState(phase = RunPhase.TOOL, question = name), "first" to RunState(phase = RunPhase.TOOL, question = evening))
         val owner: (String) -> String = { "source" }
         val order: (String) -> Int = { if (it == "first") 0 else 1 }
         assertEquals(evening, QuestionNotices.waiting(children, owner, order)["source"])
-        assertEquals(name, QuestionNotices.waiting(children + ("source" to RunState(question = name)), owner, order)["source"])
+        assertEquals(name, QuestionNotices.waiting(children + ("source" to RunState(phase = RunPhase.TOOL, question = name)), owner, order)["source"])
+    }
+
+    @Test fun retainedQuestionsAfterFailureStopOrCompletionNeverNotify() {
+        for (phase in listOf(RunPhase.IDLE, RunPhase.ERROR, RunPhase.STOPPING)) {
+            val states = mapOf("child" to RunState(phase = phase, question = evening))
+            assertEquals(phase.name, emptyMap<String, UserQuestion>(),
+                QuestionNotices.waiting(states, owner = { "source" }, order = { 0 }))
+        }
+    }
+
+    @Test fun anApprovalTakesPrecedenceOverARetainedQuestionInTheSameRun() {
+        val approval = EngineEvent.Approval("a", "approval", buildJsonObject {})
+        val states = mapOf("source" to RunState(phase = RunPhase.TOOL, question = evening, approval = approval))
+        assertEquals(emptyMap<String, UserQuestion>(), QuestionNotices.waiting(states, { it }, { 0 }))
     }
 
     @Test fun aQuestionWhoseCardIsOnScreenIsNotAlsoANotification() {

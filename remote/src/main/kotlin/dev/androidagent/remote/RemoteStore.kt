@@ -227,7 +227,7 @@ class RemoteStore(private val file: File, private val box: SecretBox) {
                     bindings = stored.state.bindings.filterValues { it.computerId != id },
                     projects = stored.state.projects.filterNot { it.computerId == id },
                     tasks = stored.state.tasks.mapValues { (_, task) ->
-                        if (task.computerId == id && !task.terminal) task.copy(status = "unknown", progress = "Computer removed; remote outcome is unknown.") else task
+                        if (task.computerId == id && !task.terminal) task.at(dev.androidagent.core.AgentTaskStatus.UNKNOWN, "Computer removed; remote outcome is unknown.") else task
                     },
                 ),
                 stored.passwords - id,

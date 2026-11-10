@@ -304,7 +304,7 @@ class VoiceConversation(
         if (!current()) return@withLock
         mutableChildUpdates.value = voice.childUpdates.state(source)
         val state = coordinator().stateOf(source)
-        if (state?.approval != null || state?.question != null || state?.phase == dev.androidagent.core.RunPhase.STOPPING) return@withLock
+        if (state?.waitingForUser == true || state?.phase == dev.androidagent.core.RunPhase.STOPPING) return@withLock
         val batch = voice.childUpdates.take(source, voice.state.value.phase)
         if (batch.isEmpty()) return@withLock
         // A microphone event, local quiet control, or Stop may have won during scheduling.

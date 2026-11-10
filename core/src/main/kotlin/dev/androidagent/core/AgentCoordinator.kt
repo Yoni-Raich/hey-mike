@@ -161,6 +161,8 @@ class AgentCoordinator(
     /** The agent's words already mirrored onto the overlay, so the same line is not resent. */
     private var overlaySpeech: String? = null
     private var pendingLocalApproval: PendingLocalApproval? = null
+    /** One accepted engine answer, claimed before asynchronous transport work starts. */
+    private var answeringApproval: ApprovalRequest? = null
     /** The `ask_user` call waiting for the user. Changed only under [lifecycleLock]. */
     private var pendingQuestion: PendingQuestion? = null
     /** Where this run's tool calls work; the gateway is armed with it when the phone is taken. */
@@ -644,10 +646,11 @@ class AgentCoordinator(
     fun answerApprovalByReply(reply: String, record: Boolean = true): Boolean {
         val allow = ApprovalReply.parse(reply) ?: return false
         val (approval, sessionId) = synchronized(lifecycleLock) {
-            val approval = state.value.approval?.takeIf { state.value.phase != RunPhase.STOPPING }
+            val approval = state.value.pendingApproval
             approval to state.value.sessionId
         }
         if (approval == null) return false
+        if (!answerApproval(approval.requestId, allow, ApprovalScope.ONCE)) return false
         if (record && sessionId != null) {
             scope.launch {
                 runCatching {
@@ -656,7 +659,6 @@ class AgentCoordinator(
                 }
             }
         }
-        approve(approval.requestId, allow)
         return true
     }
 
@@ -671,7 +673,7 @@ class AgentCoordinator(
     fun answerQuestion(questionId: String, reply: String?): Boolean {
         synchronized(lifecycleLock) {
             val pending = pendingQuestion ?: return false
-            if (pending.question.id != questionId || state.value.phase == RunPhase.STOPPING) return false
+            if (pending.question.id != questionId || state.value.pendingQuestion?.id != questionId) return false
             val answer = if (reply == null) null else pending.question.resolve(reply) ?: return false
             return pending.reply.complete(QuestionReply(answer))
         }
@@ -848,6 +850,7 @@ class AgentCoordinator(
                             status = if (stopConfirmed) "Stopped" else "Stopped locally; computer interruption could not be confirmed",
                             stopConfirmed = stopConfirmed,
                             runId = context.snapshot.runId,
+                            stopped = true,
                         )
                         context.snapshot.sessionId?.let { id -> mutableOutcomes.value = mutableOutcomes.value + (id to mutableState.value) }
                     }
@@ -865,11 +868,15 @@ class AgentCoordinator(
      *   never grants a standing permission.
      */
     fun approve(requestId: String, allow: Boolean, scope: ApprovalScope = ApprovalScope.ONCE) {
+        answerApproval(requestId, allow, scope)
+    }
+
+    private fun answerApproval(requestId: String, allow: Boolean, scope: ApprovalScope): Boolean {
         val handledLocally = synchronized(lifecycleLock) {
             val pending = pendingLocalApproval
             if (
                 pending != null && pending.id == requestId &&
-                state.value.approval?.requestId == requestId &&
+                state.value.pendingApproval?.requestId == requestId && !pending.decision.isCompleted &&
                 isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)
             ) {
                 val send = pending.send
@@ -889,18 +896,19 @@ class AgentCoordinator(
                 false
             }
         }
-        if (handledLocally) return
+        if (handledLocally) return true
         val request = synchronized(lifecycleLock) {
-            val approval = state.value.approval
+            val approval = state.value.pendingApproval
             if (
                 approval == null || approval.requestId != requestId || pendingLocalApproval != null ||
                 state.value.phase == RunPhase.STOPPING || !approvalMatchesLocked(approval)
             ) {
                 null
             } else {
-                ApprovalRequest(epoch.get(), approval)
+                ApprovalRequest(epoch.get(), approval).takeUnless { it == answeringApproval }
+                    ?.also { answeringApproval = it }
             }
-        } ?: return
+        } ?: return false
         launchControl {
             try {
                 if (!isCurrentApproval(request)) return@launchControl
@@ -912,8 +920,13 @@ class AgentCoordinator(
                 if (error !is CancellationException && isCurrent(request.token)) {
                     state.value.sessionId?.let { sessions.append(message(it, "system", error.message ?: "Approval failed")) }
                 }
+            } finally {
+                synchronized(lifecycleLock) {
+                    if (answeringApproval == request) answeringApproval = null
+                }
             }
         }
+        return true
     }
 
     /**
@@ -1953,6 +1966,7 @@ class AgentCoordinator(
                         sessionId = sessionId,
                         status = if (final.outcome == "interrupted") "Interrupted" else "Ready",
                         runId = state.value.runId,
+                        stopped = final.outcome == "interrupted",
                     )
                 }
                 mutableOutcomes.value = mutableOutcomes.value + (sessionId to mutableState.value)

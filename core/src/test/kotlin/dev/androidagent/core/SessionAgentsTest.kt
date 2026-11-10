@@ -10,6 +10,30 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionAgentsTest {
+    @Test fun stoppingAndTerminalUpdatesClearOldUserGates() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.agents.invoke("root", start()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        val waiting = rig.runner.live.getValue(child).copy(
+            question = UserQuestion("q", "Which file?", listOf("A", "B")),
+            approval = EngineEvent.Approval("a", "approval", buildJsonObject {}))
+        rig.runner.live[child] = waiting; rig.runner.tick(); runCurrent()
+        assertEquals("waiting_for_user", rig.agents.tasks.value.single().status)
+        assertTrue(rig.agents.tasks.value.single().approvalPending)
+        assertNull(rig.agents.tasks.value.single().question)
+        rig.runner.live[child] = waiting.copy(phase = RunPhase.STOPPING)
+        rig.runner.tick(); runCurrent()
+        val stopping = rig.agents.tasks.value.single()
+        assertEquals("stopping", stopping.status)
+        assertNull(stopping.question); assertTrue(stopping.questionOptions.isEmpty())
+        assertFalse(stopping.approvalPending)
+        rig.runner.finish(child, waiting.copy(phase = RunPhase.IDLE, status = "Stopped", stopped = true))
+        runCurrent()
+        assertEquals("cancelled", rig.agents.tasks.value.single().status)
+        assertNull(rig.agents.tasks.value.single().question)
+        rig.close()
+    }
+
     @Test fun preparationFailureAlsoNotifiesTheParentWithoutAnyEngineDispatch() = runTest {
         val rig = Rig(this, place = { error("Model unavailable") }); val events = mutableListOf<SessionAgentUpdate>()
         rig.scope.launch { rig.agents.events.collect { events += it } }; runCurrent()
@@ -378,7 +402,7 @@ class SessionAgentsTest {
             live[child] = live[child] ?: RunState(RunPhase.THINKING, child, "Working", runId = run)
             tick(); return run
         }
-        override fun stop(sessionId: String) { stopped += sessionId; live[sessionId]?.let { finish(sessionId, it.copy(phase = RunPhase.IDLE, status = "Stopped", stopConfirmed = true)) } }
+        override fun stop(sessionId: String) { stopped += sessionId; live[sessionId]?.let { finish(sessionId, it.copy(phase = RunPhase.IDLE, status = "Stopped", stopped = true, stopConfirmed = true)) } }
         fun finish(child: String, state: RunState) { live.remove(child); ended[child] = state; tick() }
         suspend fun complete(child: String, store: Store, result: String) {
             store.append(ChatMessage("reply-${sent.size}", child, "assistant", result, sent.size.toLong()))

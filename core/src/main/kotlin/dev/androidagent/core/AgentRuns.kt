@@ -118,18 +118,20 @@ class AgentRuns(
     fun outcomeOf(sessionId: String): RunState? = slots.firstNotNullOfOrNull { it.outcomes.value[sessionId] }
 
     fun sourceState(sessionId: String): RunState {
-        val own = stateOf(sessionId) ?: RunState(sessionId = sessionId)
+        val raw = stateOf(sessionId) ?: RunState(sessionId = sessionId)
+        val own = raw.copy(approval = raw.pendingApproval, question = raw.pendingQuestion)
+        if (own.phase == RunPhase.STOPPING) return own
         val children = family(sessionId).drop(1).mapNotNull(::stateOf)
-        val waiting = children.firstOrNull { it.approval != null || it.question != null }
-        if (waiting != null && own.approval == null && own.question == null) return own.copy(
+        val waiting = children.firstOrNull { it.waitingForUser }
+        if (waiting != null && !own.waitingForUser) return own.copy(
             phase = if (own.active) own.phase else RunPhase.THINKING, status = waiting.status,
-            approval = waiting.approval, question = waiting.question, delegated = !own.active)
+            approval = waiting.pendingApproval, question = waiting.pendingQuestion, delegated = !own.active)
         return if (!own.active && children.isNotEmpty()) own.copy(phase = RunPhase.THINKING, status = children.first().status, delegated = true) else own
     }
 
     /** The gate shown in the source chat: its own first, then its oldest waiting child. */
     private fun waitingSlot(sessionId: String): AgentCoordinator? = family(sessionId).firstNotNullOfOrNull { id ->
-        slotFor(id)?.takeIf { it.state.value.approval != null || it.state.value.question != null }
+        slotFor(id)?.takeIf { it.state.value.waitingForUser }
     }
 
     init { slotList.value = listOf(newSlot()) }
@@ -165,8 +167,8 @@ class AgentRuns(
      */
     val state: StateFlow<RunState> = eachSlot({ it.state }) { states ->
         val active = states.filter { it.active }
-        active.firstOrNull { it.controlling } ?: active.firstOrNull { it.approval != null }
-            ?: active.firstOrNull { it.question != null } ?: active.firstOrNull() ?: RunState()
+        active.firstOrNull { it.controlling } ?: active.firstOrNull { it.pendingApproval != null }
+            ?: active.firstOrNull { it.pendingQuestion != null } ?: active.firstOrNull() ?: RunState()
     }.stateIn(scope, SharingStarted.Eagerly, RunState())
 
     /** No chat is running. */
@@ -300,24 +302,24 @@ class AgentRuns(
     }
 
     fun approve(requestId: String, allow: Boolean, scope: ApprovalScope = ApprovalScope.ONCE) {
-        slots.firstOrNull { it.state.value.approval?.requestId == requestId }?.approve(requestId, allow, scope)
+        slots.firstOrNull { it.state.value.pendingApproval?.requestId == requestId }?.approve(requestId, allow, scope)
     }
 
     /** A spoken or typed yes or no, for the approval waiting in [sessionId], or in any chat. */
     fun answerApprovalByReply(reply: String, record: Boolean = true, sessionId: String? = null): Boolean {
-        val slot = if (sessionId == null) slots.firstOrNull { it.state.value.approval != null }
-            else waitingSlot(sessionId)?.takeIf { it.state.value.approval != null }
+        val slot = if (sessionId == null) slots.firstOrNull { it.state.value.pendingApproval != null }
+            else waitingSlot(sessionId)?.takeIf { it.state.value.pendingApproval != null }
         if (slot == null) return false
         return slot.answerApprovalByReply(reply, record)
     }
 
     /** The user's answer to an `ask_user` question, or null for "not answering". */
     fun answerQuestion(questionId: String, reply: String?): Boolean =
-        slots.firstOrNull { it.state.value.question?.id == questionId }?.answerQuestion(questionId, reply) ?: false
+        slots.firstOrNull { it.state.value.pendingQuestion?.id == questionId }?.answerQuestion(questionId, reply) ?: false
 
     /** What the user typed in [sessionId] while a question waits there is its answer. */
     fun answerQuestionByReply(reply: String, sessionId: String): Boolean =
-        waitingSlot(sessionId)?.takeIf { it.state.value.question != null }
+        waitingSlot(sessionId)?.takeIf { it.state.value.pendingQuestion != null }
             ?.answerQuestionByReply(reply) ?: false
 
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {

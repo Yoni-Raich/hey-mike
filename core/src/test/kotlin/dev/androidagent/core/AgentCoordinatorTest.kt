@@ -750,6 +750,25 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun anEngineApprovalAcceptsOnlyOneAnswerWhileItsReplyIsInFlight() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Check the project")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Approval("approval", "command", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        rig.engine.waitForApproval = CompletableDeferred()
+        assertTrue(rig.coordinator.answerApprovalByReply("yes", record = false))
+        // A second tap/reply can arrive before the engine acknowledges the first.
+        assertFalse(rig.coordinator.answerApprovalByReply("no", record = false))
+        rig.coordinator.approve("approval", false)
+        runCurrent()
+        rig.engine.waitForApproval!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("approval" to true), rig.engine.approvalAnswers)
+        assertNull(rig.coordinator.state.value.pendingApproval)
+        rig.close()
+    }
+
     @Test fun sayingYesOrNoAnswersTheWaitingApprovalInsteadOfSteering() = runTest {
         // The card can be out of sight (voice mode, another app in front), so
         // the user's own "כן" / "no" has to answer it.
@@ -1138,6 +1157,7 @@ class AgentCoordinatorTest {
         var planModel: String? = null
         var closed = false
         var waitForInterrupt: CompletableDeferred<Unit>? = null
+        var waitForApproval: CompletableDeferred<Unit>? = null
         var answerDelayMs = 0L
         val answers = mutableListOf<ToolResult>()
         val names = mutableListOf<Pair<String, String>>()
@@ -1213,6 +1233,7 @@ class AgentCoordinatorTest {
         override suspend fun interrupt(threadId: String, turnId: String) { waitForInterrupt?.await() }
         override suspend fun answerTool(requestId: String, result: ToolResult) { delay(answerDelayMs); answers.add(result) }
         override suspend fun answerApproval(requestId: String, allow: Boolean) {
+            waitForApproval?.await()
             approvalAnswers += requestId to allow
         }
         override suspend fun close() { closed = true }

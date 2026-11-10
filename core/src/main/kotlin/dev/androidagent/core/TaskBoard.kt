@@ -430,13 +430,13 @@ class TaskBoard(
             val execution = task.execution ?: return@forEach
             if (!task.status.executing) return@forEach
             val child = (execution.childTaskId?.let { cid -> children.firstOrNull { it.id == cid } }) ?: byRequest[execution.requestId] ?: return@forEach
-            val status = when (child.status) {
-                "waiting_for_user" -> TaskStatus.WAITING
-                "completed" -> TaskStatus.REVIEW
-                "failed" -> TaskStatus.FAILED
-                "cancelled" -> TaskStatus.STOPPED
-                "unknown" -> TaskStatus.UNKNOWN
-                else -> TaskStatus.RUNNING
+            val status = when (child.state) {
+                AgentTaskStatus.WAITING_FOR_USER -> TaskStatus.WAITING
+                AgentTaskStatus.COMPLETED -> TaskStatus.REVIEW
+                AgentTaskStatus.FAILED -> TaskStatus.FAILED
+                AgentTaskStatus.CANCELLED -> TaskStatus.STOPPED
+                AgentTaskStatus.UNKNOWN -> TaskStatus.UNKNOWN
+                AgentTaskStatus.QUEUED, AgentTaskStatus.STARTING, AgentTaskStatus.RUNNING, AgentTaskStatus.STOPPING -> TaskStatus.RUNNING
             }
             // Stop was pressed: the card stays stopped until the child agrees or ends.
             if (task.decision?.choice == "stop" && status in setOf(TaskStatus.RUNNING, TaskStatus.WAITING)) return@forEach

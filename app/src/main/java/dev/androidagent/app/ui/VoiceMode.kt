@@ -256,7 +256,7 @@ internal fun VoiceModeLayer(
             // The chat's approval card is under this screen, so a request made
             // during a voice conversation is answered here: by tapping, or by
             // saying "yes" or "no".
-            state.runState.approval?.let { approval ->
+            state.runState.pendingApproval?.let { approval ->
                 ApprovalCard(
                     approval = approval,
                     onApproval = actions.onApproval,
@@ -264,7 +264,7 @@ internal fun VoiceModeLayer(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
-            state.runState.question?.let { question ->
+            state.runState.pendingQuestion?.let { question ->
                 QuestionCard(
                     question = question,
                     onAnswer = actions.onAnswerQuestion,

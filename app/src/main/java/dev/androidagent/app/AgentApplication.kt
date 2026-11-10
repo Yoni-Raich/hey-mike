@@ -526,7 +526,7 @@ class AgentGraph(private val app: Application) {
                 val state = runCoordinator.stateOf(source)
                 when {
                     chat == null || !allowed() -> true
-                    state?.approval != null || state?.question != null || state?.phase == dev.androidagent.core.RunPhase.STOPPING -> false
+                    state?.waitingForUser == true || state?.phase == dev.androidagent.core.RunPhase.STOPPING -> false
                     voiceConversation.sessionId.value == source -> voiceConversation.deliverChildUpdates(source, updates, allowed)
                     else -> runCoordinator.deliverAgentContext(chat, dev.androidagent.core.SessionAgentUpdate.prompt(updates), allowed)
                 }

@@ -46,7 +46,7 @@ internal object QuestionNotices {
     fun waiting(states: Map<String, RunState>, owner: (String) -> String, order: (String) -> Int): Map<String, UserQuestion> {
         val waiting = linkedMapOf<String, UserQuestion>()
         states.entries.sortedWith(compareBy({ owner(it.key) != it.key }, { order(it.key) })).forEach { (chat, run) ->
-            run.question?.let { waiting.putIfAbsent(owner(chat), it) }
+            run.pendingQuestion?.let { waiting.putIfAbsent(owner(chat), it) }
         }
         return waiting
     }
