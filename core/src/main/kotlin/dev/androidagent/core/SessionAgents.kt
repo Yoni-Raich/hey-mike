@@ -26,7 +26,8 @@ data class SessionAgentTask(
     val model: String? = null,
     val sessionId: String? = null,
     val createdAt: Long,
-    val status: String = "queued",
+    /** [AgentTaskStatus.wire]. Read it through [state]. */
+    val status: String = AgentTaskStatus.QUEUED.wire,
     val progress: String = "Preparing chat",
     val runId: String? = null,
     val activity: String? = null,
@@ -39,7 +40,9 @@ data class SessionAgentTask(
     val questionOptions: List<String> = emptyList(),
     val approvalPending: Boolean = false,
 ) {
-    val terminal: Boolean get() = status in setOf("completed", "failed", "cancelled", "unknown")
+    val state: AgentTaskStatus get() = AgentTaskStatus.of(status)
+    val terminal: Boolean get() = state.terminal
+    fun at(state: AgentTaskStatus, progress: String = this.progress): SessionAgentTask = copy(status = state.wire, progress = progress)
     fun toJson(): JsonObject = buildJsonObject {
         put("taskId", id); put("requestId", requestId); put("parentSessionId", parentSessionId)
         put("title", title); put("task", task); put("engine", engine.name.lowercase())
@@ -119,8 +122,8 @@ class SessionAgents(
                     mutable.value = sessions.loadAgentTasks()
                     sessions.sessions.value.forEach { chat -> chat.parentSessionId?.let { runner().link(chat.id, it) } }
                     mutable.value.toList().forEach { task ->
-                        val restored = if (task.terminal) task else task.copy(status = "unknown",
-                            progress = "App restarted. Inspect this chat before sending more work; the previous outcome is unknown.")
+                        val restored = if (task.terminal) task else task.at(AgentTaskStatus.UNKNOWN,
+                            "App restarted. Inspect this chat before sending more work; the previous outcome is unknown.")
                         save(restored, publish = true)
                         task.sessionId?.let { child ->
                             // Restored history is not a new event and cannot restart a parent's work.
@@ -230,28 +233,27 @@ class SessionAgents(
             val child = sessions.createChildSession(origin, engine, title)
             // Install the child's fence before exposing its clickable starting card.
             childFence = child.id to stops.getOrPut(child.id) { AtomicLong() }.get()
-            task = task.copy(sessionId = child.id, status = "starting", progress = "Starting ${engine.label}")
+            task = task.copy(sessionId = child.id).at(AgentTaskStatus.STARTING, "Starting ${engine.label}")
             save(task)
             runner().link(child.id, origin)
             fences[task.id] = deliveryFence(child.id)
             prepareChild(task)
             sessions.setModelChoice(child.id, model, effort)
             sessions.append(ChatMessage(UUID.randomUUID().toString(), child.id, "note", "Delegated from ${parent.title}", now()))
-            if (!canDispatch()) task = task.copy(status = "cancelled", progress = "Stopped before dispatch")
+            if (!canDispatch()) task = task.at(AgentTaskStatus.CANCELLED, "Stopped before dispatch")
             else {
                 dispatchAttempted = true
                 val run = runner().dispatch(child.id, origin, prompt, model, engine, true, effort, ::canDispatch)
-                task = if (run == null) task.copy(status = "cancelled", progress = "Stopped before dispatch")
-                else task.copy(runId = run, status = "running", progress = "Starting ${engine.label}")
+                task = if (run == null) task.at(AgentTaskStatus.CANCELLED, "Stopped before dispatch")
+                else task.copy(runId = run).at(AgentTaskStatus.RUNNING, "Starting ${engine.label}")
             }
             save(task)
         } catch (error: Throwable) {
-            withContext(NonCancellable) { save(task.copy(status = when {
-                dispatchAttempted -> "unknown"
-                error is CancellationException || !canDispatch() -> "cancelled"
-                else -> "failed"
-            },
-                progress = error.message ?: "Could not start this child chat")) }
+            withContext(NonCancellable) { save(task.at(when {
+                dispatchAttempted -> AgentTaskStatus.UNKNOWN
+                error is CancellationException || !canDispatch() -> AgentTaskStatus.CANCELLED
+                else -> AgentTaskStatus.FAILED
+            }, error.message ?: "Could not start this child chat")) }
             throw error
         }
         receipt(task)
@@ -280,7 +282,7 @@ class SessionAgents(
                     // A completed child can still have running descendants.
                     // Stop the subtree while keeping that child's completed result.
                     if (!task.terminal) {
-                        task = task.copy(status = "stopping", progress = "Stopping; completed actions are not undone.")
+                        task = task.at(AgentTaskStatus.STOPPING, "Stopping; completed actions are not undone.")
                         save(task)
                     }
                     runner().stop(child)
@@ -293,7 +295,7 @@ class SessionAgents(
                 val old = task.messages.firstOrNull { it.requestId == key }
                 if (old != null) { require(old.message == message) { "This messageId belongs to another message." }; return@withLock receipt(task) }
                 check(runner().canMessage(child)) { "Wait for the child's current turn to start or stop, then retry with the same messageId. Nothing was dispatched." }
-                check(task.status != "unknown") { "Previous outcome is unknown. Inspect the child chat and continue it there first." }
+                check(task.state != AgentTaskStatus.UNKNOWN) { "Previous outcome is unknown. Inspect the child chat and continue it there first." }
                 require(task.messages.size < 100) { "Continue this chat directly; it already has 100 delegated updates." }
                 val epoch = stops.getOrPut(origin) { AtomicLong() }.get()
                 val childEpoch = stops.getOrPut(child) { AtomicLong() }.get()
@@ -309,17 +311,17 @@ class SessionAgents(
                         current.model ?: task.model.takeIf { currentEngine == task.engine }, currentEngine, false,
                         if (current.model != null) current.reasoningEffort else task.reasoningEffort.takeIf { currentEngine == task.engine }, ::canDispatch)
                 } catch (failure: Throwable) {
-                    withContext(NonCancellable) { save(task.copy(status = "unknown", progress = "Update outcome is unknown. Inspect the child chat before continuing.")) }
+                    withContext(NonCancellable) { save(task.at(AgentTaskStatus.UNKNOWN, "Update outcome is unknown. Inspect the child chat before continuing.")) }
                     throw failure
                 }
-                task = if (run == null) task.copy(status = "unknown", progress = "Update was not dispatched. Inspect the child before retrying.")
+                task = if (run == null) task.at(AgentTaskStatus.UNKNOWN, "Update was not dispatched. Inspect the child before retrying.")
                 else {
                     val live = runner().state(child)
                     if (task.runId != run) fences[task.id] = deliveryFence(child)
-                    task.copy(runId = run, status = if (live?.question != null || live?.approval != null) "waiting_for_user" else "running",
+                    task.copy(runId = run, status = (live?.let(AgentTaskStatus::of)?.takeUnless { it.terminal } ?: AgentTaskStatus.RUNNING).wire,
                         progress = live?.status ?: "Update accepted", result = null,
-                        question = live?.question?.question, questionOptions = live?.question?.options.orEmpty(),
-                        approvalPending = live?.approval != null,
+                        question = live?.pendingQuestion?.question, questionOptions = live?.pendingQuestion?.options.orEmpty(),
+                        approvalPending = live?.pendingApproval != null,
                         messages = task.messages.dropLast(1) + AgentMessageReceipt(key, message, run))
                 }
                 save(task)
@@ -337,16 +339,8 @@ class SessionAgents(
             // Also track a user continuing this ordinary child directly in its own chat.
             if (run.runId == null || (!run.active && run.runId != task.runId && !task.terminal)) return@forEach
             // A stale outcome cannot settle a lost update reply on the same run.
-            if (task.status == "unknown" && task.runId == run.runId) return@forEach
-            val status = when {
-                run.active && (run.approval != null || run.question != null) -> "waiting_for_user"
-                run.active && run.phase == RunPhase.STOPPING -> "stopping"
-                run.active -> "running"
-                run.outcomeUnknown || run.stopConfirmed == false -> "unknown"
-                run.phase == RunPhase.ERROR -> "failed"
-                run.status in setOf("Stopped", "Interrupted") -> "cancelled"
-                else -> "completed"
-            }
+            if (task.state == AgentTaskStatus.UNKNOWN && task.runId == run.runId) return@forEach
+            val status = AgentTaskStatus.of(run)
             val history = sessions.messages(child).first()
             if (run.runId != task.runId || fences[task.id] == null) fences[task.id] = deliveryFence(child)
             val previous = reported.getOrPut(task.id) { mutableMapOf() }
@@ -362,11 +356,11 @@ class SessionAgents(
                 }
             }
             val latest = history.lastOrNull { it.role in setOf("assistant", "remote_activity", "system") }?.text
-            val next = task.copy(runId = run.runId, status = status, progress = run.status,
-                question = run.question?.question, questionOptions = run.question?.options.orEmpty(),
-                approvalPending = run.approval != null,
+            val next = task.copy(runId = run.runId, status = status.wire, progress = run.status,
+                question = run.pendingQuestion?.question, questionOptions = run.pendingQuestion?.options.orEmpty(),
+                approvalPending = run.pendingApproval != null,
                 activity = latest?.take(2_000) ?: task.activity,
-                result = if (status != "completed") null else history.drop(history.indexOfLast { it.role == "user" } + 1)
+                result = if (status != AgentTaskStatus.COMPLETED) null else history.drop(history.indexOfLast { it.role == "user" } + 1)
                     .lastOrNull { it.role == "assistant" }?.text ?: run.status)
             if (next != task) save(next)
             val changed = next.status != task.status || next.runId != task.runId || next.question != task.question ||

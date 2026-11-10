@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.androidagent.core.ChatSession
+import dev.androidagent.core.AgentTaskStatus
 import dev.androidagent.core.SessionAgentTask
 import dev.androidagent.remote.ComputerTask
 import dev.androidagent.remote.RemoteState
@@ -42,16 +43,17 @@ data class ChildAgentItem(
     val model: String? = null,
     val reasoningEffort: String? = null,
 ) {
-    val terminal: Boolean get() = status in setOf("completed", "failed", "cancelled", "unknown")
-    val label: String get() = when (status) {
-        "completed" -> "Done"
-        "failed" -> "Failed"
-        "cancelled" -> "Stopped"
-        "unknown" -> "Check chat"
-        "waiting_for_user" -> "Needs you"
-        "stopping", "cancelling" -> "Stopping"
-        "queued", "starting" -> "Starting"
-        else -> "Working"
+    val state: AgentTaskStatus get() = AgentTaskStatus.of(status)
+    val terminal: Boolean get() = state.terminal
+    val label: String get() = when (state) {
+        AgentTaskStatus.COMPLETED -> "Done"
+        AgentTaskStatus.FAILED -> "Failed"
+        AgentTaskStatus.CANCELLED -> "Stopped"
+        AgentTaskStatus.UNKNOWN -> "Check chat"
+        AgentTaskStatus.WAITING_FOR_USER -> "Needs you"
+        AgentTaskStatus.STOPPING -> "Stopping"
+        AgentTaskStatus.QUEUED, AgentTaskStatus.STARTING -> "Starting"
+        AgentTaskStatus.RUNNING -> "Working"
     }
     companion object {
         fun from(task: SessionAgentTask, remote: RemoteState, chats: List<ChatSession>): ChildAgentItem {
@@ -77,11 +79,11 @@ data class ChildAgentItem(
 
 @Composable
 internal fun ChildAgentCard(child: ChildAgentItem, actions: AgentUiActions, modifier: Modifier = Modifier, compact: Boolean = false) {
-    val accent = when (child.status) {
-        "failed", "unknown", "waiting_for_user" -> Color(0xFFF6B86A)
-        "completed" -> Color(0xFF83D9CA)
-        "cancelled" -> MaterialTheme.colorScheme.onSurfaceVariant
-        else -> Color(0xFF69A7FF)
+    val accent = when (child.state) {
+        AgentTaskStatus.FAILED, AgentTaskStatus.UNKNOWN, AgentTaskStatus.WAITING_FOR_USER -> Color(0xFFF6B86A)
+        AgentTaskStatus.COMPLETED -> Color(0xFF83D9CA)
+        AgentTaskStatus.CANCELLED -> MaterialTheme.colorScheme.onSurfaceVariant
+        AgentTaskStatus.QUEUED, AgentTaskStatus.STARTING, AgentTaskStatus.RUNNING, AgentTaskStatus.STOPPING -> Color(0xFF69A7FF)
     }
     Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
         color = Color(0xFF171C20), contentColor = MaterialTheme.colorScheme.onSurface,

@@ -27,7 +27,7 @@ data class SessionAgentUpdate(
     val parents: List<String>,
     val allowed: (String) -> Boolean = { true },
 ) {
-    val wake: Boolean get() = task.terminal || task.status == "waiting_for_user" ||
+    val wake: Boolean get() = task.terminal || task.state == AgentTaskStatus.WAITING_FOR_USER ||
         outputs.any { it.text.isNotBlank() || it.offset > 0 || it.attachments.isNotEmpty() }
 
     /** JSON keeps child text separate from the app's instructions. Never clip a child's words. */

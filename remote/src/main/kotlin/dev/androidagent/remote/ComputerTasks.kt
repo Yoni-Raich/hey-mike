@@ -21,13 +21,18 @@ data class ComputerTask(
     val model: String? = null,
     val sessionId: String? = null,
     val threadId: String? = null,
-    val status: String = "queued",
+    /** [AgentTaskStatus.wire]. Read it through [state]. */
+    val status: String = AgentTaskStatus.QUEUED.wire,
     val progress: String = "Preparing the computer task",
     val result: String? = null,
     /** Last child activity is sealed too, so source progress survives restart. */
     val activity: String? = null,
 ) {
-    val terminal: Boolean get() = status in setOf("completed", "failed", "cancelled", "unknown")
+    val state: AgentTaskStatus get() = AgentTaskStatus.of(status)
+    val terminal: Boolean get() = state.terminal
+    // Keep the computer receipt's existing wire name; shared code reads it as STOPPING.
+    fun at(state: AgentTaskStatus, progress: String = this.progress): ComputerTask =
+        copy(status = if (state == AgentTaskStatus.STOPPING) "cancelling" else state.wire, progress = progress)
     fun toJson(): JsonObject = buildJsonObject {
         put("taskId", id); put("requestId", requestId); put("originSessionId", originSessionId)
         put("kind", "computer_subagent"); put("parentSessionId", originSessionId)
@@ -86,7 +91,7 @@ class ComputerTasks(
         // A process loss may occur after turn/start reached the PC. Keep the
         // retry receipt, but never claim it finished or start another turn.
         store.state.value.tasks.values.filter { !it.terminal }.forEach {
-            val recovered = it.copy(status = "unknown", progress = "App restarted. Remote outcome is unknown; do not retry with a new key.",
+            val recovered = it.at(AgentTaskStatus.UNKNOWN, "App restarted. Remote outcome is unknown; do not retry with a new key.").copy(
                 threadId = it.threadId ?: it.sessionId?.let(store::binding)?.threadId)
             store.saveTask(recovered)
         }
@@ -111,8 +116,8 @@ class ComputerTasks(
                         task.sessionId?.let { runner().stop(it) }
                         job.cancel()
                         val current = store.state.value.tasks[task.id] ?: return@forEach
-                        if (!current.terminal) update(current.copy(status = if (current.sessionId == null) "cancelled" else "unknown",
-                            progress = "Source chat or computer removed; no further local dispatch. Remote outcome is unknown."))
+                        if (!current.terminal) update(current.at(if (current.sessionId == null) AgentTaskStatus.CANCELLED else AgentTaskStatus.UNKNOWN,
+                            "Source chat or computer removed; no further local dispatch. Remote outcome is unknown."))
                         else publish(current)
                     }
                 }
@@ -137,13 +142,13 @@ class ComputerTasks(
         try {
             sessions.append(ChatMessage(task.id, origin, "note", display(task), System.currentTimeMillis(), "streaming"))
         } catch (error: Exception) {
-            store.saveTask(task.copy(status = if (error is CancellationException) "cancelled" else "failed",
-                progress = "Could not prepare the source chat. Nothing was dispatched."))
+            store.saveTask(task.at(if (error is CancellationException) AgentTaskStatus.CANCELLED else AgentTaskStatus.FAILED,
+                "Could not prepare the source chat. Nothing was dispatched."))
             throw error
         }
         if (!allowed() || originStops[origin]?.get() != stopEpoch || globalStops.get() != globalStopEpoch) {
             stopRequested.add(task.id)
-            val cancelled = task.copy(status = "cancelled", progress = "Stopped before dispatch")
+            val cancelled = task.at(AgentTaskStatus.CANCELLED, "Stopped before dispatch")
             update(cancelled)
             return@withLock cancelled
         }
@@ -160,18 +165,18 @@ class ComputerTasks(
 
     suspend fun cancel(origin: String, taskId: String?, requestId: String?): ComputerTask = lock.withLock {
         val task = find(origin, taskId, requestId) ?: error("No task with that id in this source chat.")
-        if (task.status == "unknown") {
+        if (task.state == AgentTaskStatus.UNKNOWN) {
             return@withLock task.copy(progress = "Remote outcome is unknown. No live run can be interrupted here; inspect the computer session. No replacement was started.").also { update(it) }
         }
         if (task.terminal) return@withLock task
         stopRequested.add(task.id)
         // Persist the intent before cancelling setup or invoking interruption.
-        val next = task.copy(status = "cancelling", progress = "Stopping; completed actions are not undone.")
+        val next = task.at(AgentTaskStatus.STOPPING, "Stopping; completed actions are not undone.")
         store.saveTask(next)
         task.sessionId?.let { runner().stop(it) }
-        if (task.sessionId == null || task.status == "queued") {
+        if (task.sessionId == null || task.state == AgentTaskStatus.QUEUED) {
             jobs[task.id]?.cancel()
-            update(next.copy(status = "cancelled"))
+            update(next.at(AgentTaskStatus.CANCELLED))
         } else update(next)
         store.state.value.tasks.getValue(task.id)
     }
@@ -195,7 +200,7 @@ class ComputerTasks(
         try {
             var task = store.state.value.tasks.getValue(id)
             if (!canDispatch(task) || originStops[task.originSessionId]?.get() != stopEpoch || globalStops.get() != globalStopEpoch) {
-                lock.withLock { if (!task.terminal) update(task.copy(status = "cancelled", progress = "Stopped before dispatch")) }
+                lock.withLock { if (!task.terminal) update(task.at(AgentTaskStatus.CANCELLED, "Stopped before dispatch")) }
                 return
             }
             prepare(task.computerId, task.project)
@@ -203,7 +208,7 @@ class ComputerTasks(
                 task = store.state.value.tasks.getValue(id)
                 if (!canDispatch(task) || originStops[task.originSessionId]?.get() != stopEpoch ||
                     globalStops.get() != globalStopEpoch || sessions.getSession(task.originSessionId) == null) {
-                    if (!task.terminal) update(task.copy(status = "cancelled", progress = "Stopped before dispatch"))
+                    if (!task.terminal) update(task.at(AgentTaskStatus.CANCELLED, "Stopped before dispatch"))
                     return
                 }
                 val session = sessions.createSession()
@@ -211,14 +216,14 @@ class ComputerTasks(
                 store.bind(session.id, RemoteBinding(task.computerId, task.project))
                 store.addProject(task.computerId, task.project)
                 sessions.rename(session.id, ComputerToolGateway.folderName(task.project))
-                task = task.copy(sessionId = session.id, status = "starting", progress = "Starting Codex")
+                task = task.copy(sessionId = session.id).at(AgentTaskStatus.STARTING, "Starting Codex")
                 update(task) // A crash after this point must not dispatch again.
                 val dispatched = runner().send(session.id, task.originSessionId, task.message, task.model) {
                     originStops[task.originSessionId]?.get() == stopEpoch && globalStops.get() == globalStopEpoch &&
                         store.state.value.tasks[id]?.let(::canDispatch) == true
                 }
                 if (!dispatched) {
-                    update(task.copy(status = "cancelled", progress = "Stopped before dispatch"))
+                    update(task.at(AgentTaskStatus.CANCELLED, "Stopped before dispatch"))
                     return
                 }
             }
@@ -236,16 +241,13 @@ class ComputerTasks(
                     val history = if (ended) sessions.messages(sessionId).first() else messages
                     val latest = history.lastOrNull { it.role in setOf("assistant", "remote_activity", "system") }
                     val status = when {
-                        ended && (run?.stopConfirmed == false || run?.outcomeUnknown == true) -> "unknown"
-                        ended && run?.status in setOf("Stopped", "Interrupted") -> "cancelled"
-                        ended && run?.phase == RunPhase.ERROR -> "failed"
-                        ended -> "completed"
-                        current.status == "cancelling" || id in stopRequested -> "cancelling"
-                        run?.approval != null || run?.question != null -> "waiting_for_user"
-                        else -> "running"
+                        ended -> AgentTaskStatus.ended(run?.outcome)
+                        current.state == AgentTaskStatus.STOPPING || id in stopRequested -> AgentTaskStatus.STOPPING
+                        run?.waitingForUser == true -> AgentTaskStatus.WAITING_FOR_USER
+                        else -> AgentTaskStatus.RUNNING
                     }
-                    val next = current.copy(threadId = store.binding(sessionId)?.threadId,
-                        status = status, progress = when {
+                    val next = current.at(status).copy(threadId = store.binding(sessionId)?.threadId,
+                        progress = when {
                             ended && run?.stopConfirmed == false -> "Stopped locally; computer interruption could not be confirmed."
                             ended && run?.outcomeUnknown == true -> "Computer connection lost; remote outcome is unknown. No replacement was started."
                             else -> run?.status ?: current.progress
@@ -263,8 +265,8 @@ class ComputerTasks(
                 val task = store.state.value.tasks[id] ?: return
                 if (task.terminal) return
                 // A dispatch exception may be a lost reply, never replay it.
-                update(task.copy(status = if (task.sessionId == null) "failed" else "unknown",
-                    progress = error.message ?: "Computer task failed"))
+                update(task.at(if (task.sessionId == null) AgentTaskStatus.FAILED else AgentTaskStatus.UNKNOWN,
+                    error.message ?: "Computer task failed"))
             }
         } finally {
             withContext(NonCancellable) { lock.withLock { jobs.remove(id) } }
@@ -272,7 +274,7 @@ class ComputerTasks(
     }
 
     private fun canDispatch(task: ComputerTask): Boolean =
-        !task.terminal && task.status != "cancelling" && task.id !in stopRequested && store.computer(task.computerId) != null
+        !task.terminal && task.state != AgentTaskStatus.STOPPING && task.id !in stopRequested && store.computer(task.computerId) != null
 
     private suspend fun update(task: ComputerTask) {
         val saved = if (store.state.value.tasks[task.id] != task) store.saveTask(task) else task
@@ -295,15 +297,16 @@ class ComputerTasks(
 
     /** Surface the child's existing approval/question on the source screen. */
     fun sourceState(origin: String, states: Map<String, RunState>): RunState {
-        val own = states[origin] ?: RunState(sessionId = origin)
+        val raw = states[origin] ?: RunState(sessionId = origin)
+        val own = raw.copy(approval = raw.pendingApproval, question = raw.pendingQuestion)
         val children = store.state.value.tasks.values.filter { it.originSessionId == origin && !it.terminal }
         val linked = runner().childrenOf(origin)
         val runs = children.sortedBy { task -> linked.indexOf(task.sessionId).takeIf { it >= 0 } ?: Int.MAX_VALUE }
             .mapNotNull { it.sessionId?.let(states::get) }.filter { it.active }
-        val waiting = runs.firstOrNull { it.approval != null || it.question != null }
-        if (waiting != null && own.approval == null && own.question == null) return own.copy(
+        val waiting = runs.firstOrNull { it.waitingForUser }
+        if (waiting != null && !own.waitingForUser && own.phase != RunPhase.STOPPING) return own.copy(
             phase = if (own.active) own.phase else RunPhase.THINKING,
-            status = waiting.status, approval = waiting.approval, question = waiting.question, delegated = !own.active)
+            status = waiting.status, approval = waiting.pendingApproval, question = waiting.pendingQuestion, delegated = !own.active)
         if (own.active || children.isEmpty()) return own
         return own.copy(phase = RunPhase.THINKING, status = children.first().progress, delegated = true)
     }

@@ -1,5 +1,57 @@
 # Progress
 
+### Explicit run gates and child task outcomes — 2026-11-10
+
+Continued the unfinished `refactor/state-machines-20261110` worktree on `dev`
+base `e2c44025`. `RunInteraction` now owns live approval/question projections;
+`RunOutcome` removes terminal decisions based on English display text, and
+`AgentTaskStatus` gives phone/computer children and their consumers one typed
+status. Existing receipt strings remain readable and unchanged, including
+computer `cancelling`. Source-chat projection cannot revive an old failed gate
+when showing a working child. Cards, question notifications and voice use the
+same live-gate rules. The refreshed inventory covers this branch's owners and
+explicitly excludes feature files that exist only in the earlier Manager base.
+
+A deterministic new coordinator test reproduced the intermittent remote
+approval failure before the fix: a second reply was accepted while the first
+engine answer was still in flight. The coordinator now claims one answer under
+its lifecycle lock before asynchronous dispatch. Local approvals also reject a
+second decision before changing remembered grants. Existing Stop/epoch checks
+still fence dispatch. The two failing notification fixtures were corrected to
+represent active runs; new cases cover retained terminal/Stop questions and
+approval precedence.
+
+Evidence (Windows, same worktree; task-local Gradle home with a capacity ceiling
+that prevents automatic pruning of other worktrees):
+- Before fix: `:core:test --tests
+  '*AgentCoordinatorTest.anEngineApprovalAcceptsOnlyOneAnswerWhileItsReplyIsInFlight'`
+  failed at the second reply. After fix the complete core suite passed 934 cases.
+- Focused `:core:test :app:testDevDebugUnitTest :remote:testDebugUnitTest
+  :remote:testReleaseUnitTest --no-daemon`: BUILD SUCCESSFUL.
+- `test assembleDevRelease assembleDevDebugAndroidTest :voice:lintDebug
+  :app:assembleDevDebug :app:lintDevDebug --no-daemon --continue`: BUILD SUCCESSFUL.
+  XML reports contain 3,154 JVM executions across build variants: 3,120 passed,
+  34 skipped, zero failures/errors. Skips cover existing POSIX-only, interactive
+  desktop and native-fixture conditions; they are not passing coverage.
+- `python -m unittest tools.test_prepare_runtime tools.test_claude_sessions
+  tools.test_claude_transcript`: 37 OK.
+- `python tools/state_machine_inventory.py --summary`: 281 production source
+  files, 144 candidate files; heuristic candidates, not a count or completeness
+  proof of machines. Every named Kotlin inventory owner exists in this branch.
+- `git diff --check` and the staged diff check passed.
+
+Build metadata: `dev.androidagent.app.dev`, `0.14.0-dev.unified` (1183), unchanged
+source version. Dev Debug was built; Dev Release output is unsigned. These are
+local validation artifacts, not a published or installed release. Android test
+APK assembly is compilation/packaging evidence only; instrumentation was not run.
+
+Untested: live phone cards/notifications/voice, physical Stop/approval races,
+live remote engines and restart/reconnect behavior. No phone installation or
+personal-data access. Existing main-checkout and other-worktree edits were kept.
+Worktree retained for review: `.claude/worktrees/state-machines-20261110`;
+build bucket: `build/67ed9d1458123e9b`; logs and copied XML results:
+`%TEMP%/hey-mike/state-machines-codex-20261110/`.
+
 ### Chat improvements integrated into dev — 2026-11-09
 
 Integrated PR #156 (Claude background/wake cycles, late child updates and native

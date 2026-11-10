@@ -127,9 +127,11 @@ class ComputerTasksTest {
         val task = manager.start("source", "key", computer, "/src", "go", null) { true }
         runCurrent()
         assertNull(manager.find("other-source", task.id, null))
-        assertEquals("cancelling", manager.cancel("source", task.id, null).status)
+        val cancelling = manager.cancel("source", task.id, null)
+        assertEquals("cancelling", cancelling.status)
+        assertEquals(AgentTaskStatus.STOPPING, cancelling.state)
         assertEquals(listOf("child-1"), runner.stops)
-        runner.outcomes.value = mapOf("child-1" to RunState(sessionId = "child-1", status = "Stopped"))
+        runner.outcomes.value = mapOf("child-1" to RunState(sessionId = "child-1", status = "Stopped", stopped = true))
         runCurrent()
         assertEquals("cancelled", manager.find("source", task.id, null)!!.status)
         manager.cancel("source", task.id, null)
@@ -323,6 +325,21 @@ class ComputerTasksTest {
         assertFalse(ownGate.delegated)
     }
 
+    @Test fun showingAWorkingChildCannotReviveItsFailedSourcesOldGate() = runTest {
+        val store = store(); val sessions = Sessions(temp.root); val runner = Runner()
+        val manager = ComputerTasks(store, sessions, backgroundScope, { runner }) { _, _ -> }
+        manager.start("source", "key", computer, "/src", "go", null) { true }
+        runCurrent()
+        val approval = EngineEvent.Approval("old", "command", buildJsonObject {})
+        val question = UserQuestion("old-question", "Old question")
+        val failed = RunState(RunPhase.ERROR, "source", approval = approval, question = question)
+        val projected = manager.sourceState("source", runner.states.value + ("source" to failed))
+        assertTrue(projected.delegated)
+        assertFalse(projected.waitingForUser)
+        assertNull(projected.approval)
+        assertNull(projected.question)
+    }
+
     @Test fun completedOutcomeCannotBeReportedAsCancelledBecauseWatcherWasLate() = runTest {
         val store = store(); val sessions = Sessions(temp.root); val runner = Runner()
         val manager = ComputerTasks(store, sessions, backgroundScope, { runner }) { _, _ -> }
@@ -370,7 +387,7 @@ class ComputerTasksTest {
         val task = manager.start("source", "key", computer, "/src", "go", null) { true }
         runCurrent()
         manager.cancel("source", task.id, null)
-        runner.outcomes.value = mapOf("child-1" to RunState(sessionId = "child-1", status = "Stopped", stopConfirmed = false))
+        runner.outcomes.value = mapOf("child-1" to RunState(sessionId = "child-1", status = "Stopped", stopConfirmed = false, stopped = true))
         runCurrent()
         val unknown = manager.find("source", task.id, null)!!
         assertEquals("unknown", unknown.status)
