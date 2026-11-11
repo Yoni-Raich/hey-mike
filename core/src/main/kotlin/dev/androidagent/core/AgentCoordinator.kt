@@ -92,6 +92,13 @@ class AgentCoordinator(
      */
     private val toolPolicy: ((sessionId: String, name: String, arguments: JsonObject) -> String?)? = null,
     private val readOnlySession: (String) -> Boolean = { false },
+    /**
+     * Whether the user gave this chat full access: every approval it would
+     * have asked for is answered Allow without a card. The host decides, and
+     * must keep the answer where the agent cannot write it. A read-only chat
+     * never has it.
+     */
+    private val fullAccess: (String) -> Boolean = { false },
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -924,6 +931,7 @@ class AgentCoordinator(
         request: LocalIntentRequest,
         dispatch: () -> ToolResult,
     ): ToolResult {
+        if (autoApproved("open_intent", request.action)) return dispatch()
         val pending = openLocalApproval(
             prefix = "local-intent",
             method = "open_intent",
@@ -964,6 +972,7 @@ class AgentCoordinator(
         dispatch: suspend () -> ToolResult,
     ): ToolResult {
         if (runCatching { sendGrants.covers(request) }.getOrDefault(false)) return dispatch()
+        if (autoApproved("send_message", request.appLabel)) return dispatch()
         val pending = openLocalApproval(
             prefix = "send",
             method = "send_message",
@@ -1004,6 +1013,7 @@ class AgentCoordinator(
      * the run in front of the user, never for every later run of that workflow.
      */
     suspend fun authorizeWorkflowStep(request: WorkflowConfirmation): WorkflowConfirmationOutcome {
+        if (autoApproved("workflow_step", request.summary)) return WorkflowConfirmationOutcome.ALLOWED
         val pending = try {
             openLocalApproval(
                 prefix = "workflow",
@@ -1035,6 +1045,28 @@ class AgentCoordinator(
     }
 
     private enum class LocalOutcome { ALLOWED, DENIED, TIMED_OUT, STOPPED }
+
+    /** The chat this coordinator runs has full access, and it may use it. */
+    private fun hasFullAccess(): Boolean {
+        val sessionId = state.value.sessionId ?: return false
+        if (readOnlySession(sessionId)) return false
+        return runCatching { fullAccess(sessionId) }.getOrDefault(false)
+    }
+
+    /**
+     * True when full access answers this approval, so no card is shown. The
+     * answer is written to the chat's trace: nobody saw it, so it has to be
+     * findable afterwards.
+     */
+    private suspend fun autoApproved(method: String, what: String): Boolean {
+        if (!hasFullAccess()) return false
+        state.value.sessionId?.let { sessionId ->
+            trace(sessionId, "approval_auto_allowed", buildJsonObject {
+                put("method", method); put("what", what.take(200))
+            })
+        }
+        return true
+    }
 
     private fun openLocalApproval(
         prefix: String,
@@ -1459,6 +1491,13 @@ class AgentCoordinator(
             is EngineEvent.Approval -> {
                 if (state.value.sessionId?.let(readOnlySession) == true) {
                     engine.answerApproval(event.requestId, false)
+                    return
+                }
+                if (synchronized(lifecycleLock) { approvalMatchesLocked(event) } && autoApproved(event.method, event.requestId)) {
+                    // Trace writing can suspend while Stop revokes the run.
+                    if (synchronized(lifecycleLock) { approvalMatchesLocked(event) }) {
+                        engine.answerApproval(event.requestId, true)
+                    }
                     return
                 }
                 val accepted = synchronized(lifecycleLock) {

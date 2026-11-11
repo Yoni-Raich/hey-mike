@@ -815,6 +815,39 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun fullAccessAnswersEveryApprovalWithoutACard() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        var sends = 0
+
+        val sent = rig.coordinator.authorizeSend(SendRequest("com.whatsapp", "WhatsApp", "My Wife", "hi")) { sends++; ToolResult("sent") }
+        assertTrue(sent.success)
+        assertEquals(1, sends)
+        val opened = rig.coordinator.authorizeLocalIntent(
+            LocalIntentRequest(action = "android.intent.action.VIEW", uri = null, packageName = null, reason = "Open the map"),
+        ) { ToolResult("opened") }
+        assertTrue(opened.success)
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        assertEquals(listOf("engine-1" to true), rig.engine.approvalAnswers)
+        assertNull(rig.coordinator.state.value.approval)
+        // Nothing was shown, so the app was never raised over the one in use.
+        assertEquals(0, rig.foregroundRequests)
+        rig.close()
+    }
+
+    @Test fun fullAccessNeverReachesAReadOnlyChat() = runTest {
+        val rig = Rig(this, readOnly = true, fullAccess = true)
+        rig.coordinator.send("one", "Look around")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertEquals(listOf("engine-1" to false), rig.engine.approvalAnswers)
+        rig.close()
+    }
+
     @Test fun aSpokenYesNeverGrantsAStandingPermission() = runTest {
         val grants = InMemorySendGrantStore()
         val rig = Rig(this, grants)
@@ -1097,6 +1130,7 @@ class AgentCoordinatorTest {
         policy: ((String, String, JsonObject) -> String?)? = null,
         tasks: TaskToolHandler? = null,
         readOnly: Boolean = false,
+        fullAccess: Boolean = false,
     ) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
@@ -1124,6 +1158,7 @@ class AgentCoordinatorTest {
             taskTools = tasks?.let { handler -> { handler } },
             toolPolicy = policy,
             readOnlySession = { readOnly },
+            fullAccess = { fullAccess },
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }
