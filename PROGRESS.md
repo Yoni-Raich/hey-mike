@@ -1,5 +1,23 @@
 # Progress
 
+### Session notifications and chat permission level — 2026-11-11
+
+Branch `feat/session-notifications-permissions`: per-chat running
+rows under the service notification, approval and finished notifications, new
+`ic_agent*` icons, and a per-chat Full access level (ARCHITECTURE "Session
+notifications and chat permission level").
+
+Evidence (Windows, worktree build, `ANDROID_HOME` set, no local.properties):
+- `.\gradlew.bat :core:test :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug --no-daemon`: BUILD SUCCESSFUL, no compile fixes needed;
+  all JVM cases in the run passed (0 failures, 0 skips; `SessionNoticesTest` 6).
+  Lint raised no new errors.
+- `git diff --check`: clean (only a CRLF warning for `ic_agent.xml`).
+
+The same Gradle command passed again after the notification changes on 2026-11-11. The Stop race has no regression test and the second check is not atomic with the engine response. Untested gaps: no device test. The notification look, status-bar
+icon animation, grouping in the shade, heads-up behaviour and the permission
+chip were not seen on a phone. The Keystore-backed store was not exercised on
+real hardware.
 ### Chat improvements integrated into dev — 2026-11-09
 
 Integrated PR #156 (Claude background/wake cycles, late child updates and native
