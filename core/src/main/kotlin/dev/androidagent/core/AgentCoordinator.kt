@@ -1060,11 +1060,16 @@ class AgentCoordinator(
      */
     private suspend fun autoApproved(method: String, what: String): Boolean {
         if (!hasFullAccess()) return false
+        val token = synchronized(lifecycleLock) {
+            if (!state.value.active || state.value.phase == RunPhase.STOPPING) throw CancellationException("Run stopped")
+            epoch.get()
+        }
         state.value.sessionId?.let { sessionId ->
             trace(sessionId, "approval_auto_allowed", buildJsonObject {
                 put("method", method); put("what", what.take(200))
             })
         }
+        ensureCurrent(token)
         return true
     }
 

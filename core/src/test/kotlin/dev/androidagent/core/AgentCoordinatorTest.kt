@@ -848,6 +848,42 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun stopDuringAutoApprovalTracePreventsLocalDispatch() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Open a page")
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        rig.store.approvalTraceGate = gate
+        var dispatched = false
+        val result = async {
+            rig.coordinator.authorizeLocalIntent(
+                LocalIntentRequest("android.intent.action.VIEW", null, null, "Open page"),
+            ) { dispatched = true; ToolResult("opened") }
+        }
+        runCurrent()
+        rig.coordinator.stop()
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(result.isCancelled)
+        assertFalse(dispatched)
+        rig.close()
+    }
+
+    @Test fun stopDuringAutoApprovalTraceDoesNotAnswerEngine() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Run a command")
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        rig.store.approvalTraceGate = gate
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+        rig.coordinator.stop()
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(rig.engine.approvalAnswers.none { it == ("engine-1" to true) })
+        rig.close()
+    }
+
     @Test fun aSpokenYesNeverGrantsAStandingPermission() = runTest {
         val grants = InMemorySendGrantStore()
         val rig = Rig(this, grants)
@@ -1253,6 +1289,7 @@ class AgentCoordinatorTest {
         override suspend fun close() { closed = true }
     }
     private class FakeStore : SessionStore {
+        var approvalTraceGate: CompletableDeferred<Unit>? = null
         var queued = emptyList<QueuedTurn>()
         override suspend fun loadQueuedTurns() = queued
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
@@ -1265,7 +1302,10 @@ class AgentCoordinatorTest {
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }
-        override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
+        override suspend fun appendTrace(sessionId: String, entry: JsonObject) {
+            if (entry["type"]?.jsonPrimitive?.content == "approval_auto_allowed") approvalTraceGate?.await()
+            traces.add(entry)
+        }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
         private fun change(sessionId: String, change: (ChatSession) -> ChatSession) {
             sessions.value = sessions.value.map { if (it.id == sessionId) change(it) else it }
