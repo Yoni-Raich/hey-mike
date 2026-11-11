@@ -1,5 +1,37 @@
 # Progress
 
+### Notifications APK 1209 installation attempt — 2026-11-11
+
+At the owner's explicit request, built commit `8c2521d9` with
+`:app:assembleDevDebug --no-daemon`, version overrides `1209` and
+`0.14.0-dev.notifications.1209`. Build passed. APK metadata confirmed
+`dev.androidagent.app.dev`; apksigner verification passed (Android Debug key).
+SHA-256: `adc798e02e090a15229890762d54b4b05d488cc56c13179e53796230a969f7f1`.
+This is the dev-based feature APK; the separate Manager branch is not included.
+
+Transferred 340,893,213 bytes to `chat:hey-mike-notifications-1209.apk`.
+`install_apk(replace=true)` was requested once. The install result and subsequent
+app-info read have not returned; installed version and runtime remain unverified.
+Do not repeat the installation without checking the current installed version.
+
+### Session notifications and chat permission level — 2026-11-11
+
+Branch `feat/session-notifications-permissions`: per-chat running
+rows under the service notification, approval and finished notifications, new
+`ic_agent*` icons, and a per-chat Full access level (ARCHITECTURE "Session
+notifications and chat permission level").
+
+Evidence (Windows, worktree build, `ANDROID_HOME` set, no local.properties):
+- `.\gradlew.bat :core:test :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug --no-daemon`: BUILD SUCCESSFUL, no compile fixes needed;
+  all JVM cases in the run passed (0 failures, 0 skips; `SessionNoticesTest` 6).
+  Lint raised no new errors.
+- `git diff --check`: clean (only a CRLF warning for `ic_agent.xml`).
+
+The same Gradle command passed again after the notification changes on 2026-11-11. Two core regression tests cover Stop while the approval trace is suspended; :core:test passed after that change. The check is still not atomic with the engine response. Untested gaps: no device test. The notification look, status-bar
+icon animation, grouping in the shade, heads-up behaviour and the permission
+chip were not seen on a phone. The Keystore-backed store was not exercised on
+real hardware.
 ### Chat improvements integrated into dev — 2026-11-09
 
 Integrated PR #156 (Claude background/wake cycles, late child updates and native

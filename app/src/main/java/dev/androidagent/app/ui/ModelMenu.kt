@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -205,6 +206,30 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
     }
 }
 
+/** The chat's permission level, as a menu over its chip. */
+@Composable
+internal fun PermissionMenu(fullAccess: Boolean, expanded: Boolean, onDismiss: () -> Unit, onChoose: (Boolean) -> Unit) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.width(280.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        containerColor = MenuFill,
+    ) {
+        Column {
+            MenuHeader("Permissions")
+            ChoiceRow("Ask first", selected = !fullAccess, note = "Mike asks before he sends, opens a link or runs a sensitive step.") {
+                onChoose(false); onDismiss()
+            }
+            ChoiceRow(
+                "Full access", selected = fullAccess,
+                note = "Mike does all of it without asking, in this chat and the ones it starts.",
+                labelColor = FullAccessInk,
+            ) { onChoose(true); onDismiss() }
+        }
+    }
+}
+
 @Composable
 private fun SwitchRow(label: String, note: String, checked: Boolean, onToggle: () -> Unit) {
     DropdownMenuItem(
@@ -229,12 +254,12 @@ private fun MenuHeader(text: String) {
 }
 
 @Composable
-private fun ChoiceRow(label: String, selected: Boolean, note: String? = null, onClick: () -> Unit) {
+private fun ChoiceRow(label: String, selected: Boolean, note: String? = null, labelColor: Color = Color.Unspecified, onClick: () -> Unit) {
     DropdownMenuItem(
         text = {
             Column {
-                Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-                if (!note.isNullOrBlank()) Text(note, fontSize = 12.sp, lineHeight = 16.sp, color = MenuMuted, maxLines = 2)
+                Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = labelColor.takeOrElse { MaterialTheme.colorScheme.onSurface })
+                if (!note.isNullOrBlank()) Text(note, fontSize = 12.sp, lineHeight = 16.sp, color = MenuMuted, maxLines = 3)
             }
         },
         trailingIcon = if (selected) {
