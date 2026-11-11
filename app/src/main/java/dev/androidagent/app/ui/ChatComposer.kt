@@ -70,6 +70,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -142,6 +144,7 @@ private val FieldBorder = Color(0xFF5C5C5C)
 private val FieldBorderFocused = Color(0xFF9A9A9A)
 private val ChipBorder = Color(0xFF5C5C5C)
 private val ChipInk = Color(0xFFCFCFCF)
+internal val FullAccessInk = Color(0xFFF2B34C)
 private val SheetFill = Color(0xFF1B1B1B)
 private val OptionFill = Color(0xFF252525)
 private val AttachmentFill = Color(0xFF2A2A2A)
@@ -192,6 +195,7 @@ internal fun AgentComposer(
         state.activeSessionId?.let { actions.onComposerDraftChanged(it, text) }
     }
     var choosingModel by remember { mutableStateOf(false) }
+    var choosingPermission by remember { mutableStateOf(false) }
     var showingContext by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     // A skill picked from the menu rides as a chip until the message is sent.
@@ -382,6 +386,15 @@ internal fun AgentComposer(
                     if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
                 }
                 ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
+            }
+            Box {
+                PermissionChip(state.fullAccess, enabled = state.activeSessionId != null) { choosingPermission = true }
+                PermissionMenu(
+                    fullAccess = state.fullAccess,
+                    expanded = choosingPermission,
+                    onDismiss = { choosingPermission = false },
+                    onChoose = actions.onFullAccessChanged,
+                )
             }
             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
             if (state.limits.plan.active || state.limits.stop?.phase == LimitPhase.WAITING) {
@@ -1089,6 +1102,38 @@ private fun AttachmentChip(name: String, onRemove: () -> Unit) {
             IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Outlined.Close, "Remove $name", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+    }
+}
+
+/** What Mike may do without asking, in this chat. Amber while it is everything. */
+@Composable
+private fun PermissionChip(fullAccess: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val ink = if (!enabled) DisabledInk else if (fullAccess) FullAccessInk else ChipInk
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(16.dp),
+        color = if (fullAccess && enabled) FullAccessInk.copy(alpha = 0.12f) else Color.Transparent,
+        border = BorderStroke(1.dp, if (fullAccess && enabled) FullAccessInk.copy(alpha = 0.7f) else ChipBorder),
+        modifier = Modifier.semantics {
+            contentDescription = "Permissions: " + if (fullAccess) "full access" else "ask first"
+        },
+    ) {
+        Row(
+            Modifier.heightIn(min = 32.dp).padding(start = 10.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                if (fullAccess) Icons.Outlined.LockOpen else Icons.Outlined.Lock,
+                contentDescription = null, modifier = Modifier.size(14.dp), tint = ink,
+            )
+            Text(
+                if (fullAccess) "Full access" else "Ask",
+                fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1,
+            )
+            Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp), tint = ink)
         }
     }
 }

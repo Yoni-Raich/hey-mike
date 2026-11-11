@@ -245,10 +245,21 @@ class AgentGraph(private val app: Application) {
     private fun leaveApprovalScreen() {
         foregroundActivity?.get()?.let { activity -> activity.runOnUiThread { activity.moveTaskToBack(true) } }
     }
+    /** Stop one chat's run, as its Stop button does. */
+    fun stopChat(id: String) {
+        if (id == taskDesk.state.value.managerSessionId || taskDesk.isBackgroundSession(id)) taskDesk.pauseBackground()
+        runCoordinator.stop(id)
+        if (id == voiceConversation.sessionId.value) {
+            runCoordinator.endVoice()
+            scope.launch { runCatching { voice.stop() } }
+        }
+    }
     /** The resumed activity, if any, so an approval can step out of the way. */
     @Volatile var foregroundActivity: java.lang.ref.WeakReference<android.app.Activity>? = null
     /** "Always allow" answers to send approvals, signed so the agent cannot add its own. */
     val sendGrants = KeystoreSendGrantStore(app)
+    /** Each chat's permission level, signed so the agent cannot give itself full access. */
+    val permissions = KeystorePermissionStore(app)
     val connectionGrants = KeystoreConnectionGrantStore(app)
     val connectTransport = dev.androidagent.connect.AndroidConnectTransport(app)
     val connectedApps = ConnectedAppsController(app, connectTransport, connectionGrants, scope)
@@ -450,6 +461,8 @@ class AgentGraph(private val app: Application) {
     val openChat = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     /** A question a chat asked while its card is not on screen goes to the notification shade. */
     val questions: QuestionNotifier
+    /** Running chats, approvals and finished chats in the notification shade. */
+    val sessionNotices: SessionNotifier
     /** Every chat's run: several at once, with the phone to one of them at a time. */
     val coordinator: AgentRuns
         get() = runCoordinator
@@ -510,6 +523,8 @@ class AgentGraph(private val app: Application) {
                 taskTools = { taskDesk.tools },
                 toolPolicy = { session, name, arguments -> taskDesk.toolRefusal(session, name, arguments) },
                 readOnlySession = { taskDesk.isBackgroundSession(it) },
+                // A delegated chat works for the chat that started it, with that chat's level.
+                fullAccess = { chat -> permissions.isFull(chat) || runCoordinator.ancestorsOf(chat).any(permissions::isFull) },
             )
         })
         val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
@@ -542,6 +557,10 @@ class AgentGraph(private val app: Application) {
                 val source = runCoordinator.ancestorsOf(child).lastOrNull()
                 if (source == null) -1 else runCoordinator.family(source).indexOf(child).takeIf { it >= 0 } ?: Int.MAX_VALUE
             },
+        )
+        sessionNotices = SessionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat,
+            owner = { child -> runCoordinator.ancestorsOf(child).lastOrNull() ?: child },
+            hidden = { taskDesk.isBackgroundSession(it) },
         )
         queue = SessionRunQueue(
             scope,
