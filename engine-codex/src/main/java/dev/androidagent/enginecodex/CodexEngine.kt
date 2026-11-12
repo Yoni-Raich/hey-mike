@@ -46,6 +46,8 @@ data class EngineProfile(
     val approvalPolicy: String = "never",
     /** Send attached pictures as data URLs rather than phone paths. */
     val inlineImages: Boolean = false,
+    /** The phone exposes account reads through Mike's settings-gated bridge instead of native apps. */
+    val disableAccountApps: Boolean = false,
 )
 
 /** Short-lived phone credential sent only over the encrypted SSH app-server stream. */
@@ -59,7 +61,15 @@ class CodexEngine(
     /** Process diagnostics have no turn scope; keep them out of conversation failures. */
     private val diagnosticSink: (String) -> Unit = { android.util.Log.w("CodexEngine", it) },
     private val compactWaitMs: Long = COMPACT_WAIT_MS,
-) : AgentEngine, RealtimeVoiceEngine {
+    private val accountReadBridge: Boolean = false,
+) : AgentEngine, RealtimeVoiceEngine, dev.androidagent.core.connections.AccountConnectorSource {
+    override val engine = EngineKind.CODEX
+    private val accountReads: CodexAccountReads = CodexAccountReads(accountReadBridge, connect = { connect() }, request = ::request)
+    override fun allowAccountTools(tools: List<String>) = accountReads.allow(tools)
+    override fun accountReadDefinitions() = accountReads.definitions()
+    override suspend fun accountConnectors() = accountReads.connectors()
+    override suspend fun readAccountTool(tool: String, arguments: JsonObject, permitted: () -> Boolean): ToolResult =
+        accountReads.read(tool, arguments, permitted)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectLock = Mutex()
     private val externalAuthLock = Mutex()
@@ -91,6 +101,7 @@ class CodexEngine(
         if (process != null) closeConnectionLocked()
         runtime.prepare()
         val started = runtime.startAppServer()
+        accountReads.forgetThread()
         externalAuth = null
         process = started
         writer = started.outputStream.bufferedWriter(Charsets.UTF_8)
@@ -285,7 +296,12 @@ class CodexEngine(
     ): String {
         connect()
         var lastError: Exception? = null
-        if (!threadId.isNullOrBlank()) {
+        val sessionProfile = profile.copy(disableAccountApps = profile.disableAccountApps || accountReadBridge)
+        // The pinned runtime keeps the original dynamic tools on resume. Keep local chat history,
+        // but start a new phone-owned native thread when its original catalog is missing or changed.
+        val catalog = if (accountReadBridge && freshIfLost) CodexToolCatalog(File(cwd)) else null
+        val resumeId = threadId?.takeIf { catalog == null || catalog.matches(it, tools) }
+        if (!resumeId.isNullOrBlank()) {
             // Tools first. A thread binds the tool list it was started with, so
             // a chat opened before an app update could never call a tool that
             // update added - while the per-turn runtime snapshot, built from the
@@ -295,7 +311,7 @@ class CodexEngine(
             // extra round trip instead of the user's conversation.
             for (attempt in listOf(tools, null)) {
                 try {
-                    val result = request("thread/resume", resumeSessionParams(cwd, threadId, model, attempt, profile))
+                    val result = request("thread/resume", resumeSessionParams(cwd, resumeId, model, attempt, sessionProfile))
                     val resumedId = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() }
                     if (resumedId != null) {
                         if (!model.isNullOrBlank()) selectedModels[resumedId] = model else selectedModels.remove(resumedId)
@@ -317,9 +333,10 @@ class CodexEngine(
                 error("This conversation could not be continued: ${lastError?.message ?: "Codex did not reopen it"}")
             }
         }
-        val startParams = startSessionParams(cwd, model, tools, profile)
+        val startParams = startSessionParams(cwd, model, tools, sessionProfile)
         val result = request("thread/start", startParams)
         val opened = result["thread"]?.jsonObject?.string("id")?.takeIf { it.isNotBlank() } ?: error("Codex returned no thread ID")
+        catalog?.record(opened, tools)
         if (!model.isNullOrBlank()) selectedModels[opened] = model else selectedModels.remove(opened)
         return opened
     }
@@ -997,7 +1014,7 @@ class CodexEngine(
             put("approvalPolicy", profile.approvalPolicy)
             put("sandbox", profile.sandbox)
             put("developerInstructions", profile.developerInstructions)
-            put("config", buildJsonObject { put("features.image_generation", true) })
+            put("config", sessionConfig(profile))
             if (!model.isNullOrBlank()) put("model", model)
             put("threadId", threadId)
             put("excludeTurns", true)
@@ -1020,9 +1037,14 @@ class CodexEngine(
             put("approvalPolicy", profile.approvalPolicy)
             put("sandbox", profile.sandbox)
             put("developerInstructions", profile.developerInstructions)
-            put("config", buildJsonObject { put("features.image_generation", true) })
+            put("config", sessionConfig(profile))
             if (!model.isNullOrBlank()) put("model", model)
             put("dynamicTools", dynamicTools(tools))
+        }
+
+        internal fun sessionConfig(profile: EngineProfile): JsonObject = buildJsonObject {
+            put("features.image_generation", true)
+            if (profile.disableAccountApps) put("features.apps", false)
         }
 
         /** One wire shape for the tool list, so a resume advertises what a start does. */

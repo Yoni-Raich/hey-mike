@@ -133,7 +133,7 @@ private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
     MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
-    PRIVACY, CONNECTED_APPS,
+    PRIVACY, CONNECTED_APPS, ACCOUNT_CONNECTIONS,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -165,6 +165,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.AUTOMATIONS -> "Standing rules"
     SettingsRoute.PRIVACY -> "Privacy and consent"
     SettingsRoute.CONNECTED_APPS -> "Connected apps"
+    SettingsRoute.ACCOUNT_CONNECTIONS -> "Account connections"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -185,6 +186,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
     SettingsRoute.PRIVACY -> Icons.Outlined.Shield
     SettingsRoute.CONNECTED_APPS -> Icons.Outlined.Key
+    SettingsRoute.ACCOUNT_CONNECTIONS -> Icons.Outlined.Key
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -250,7 +252,7 @@ internal fun AgentSettingsSheet(state: AgentUiState, actions: AgentUiActions) {
                     if (target == null) {
                         SettingsHub(state) { routeName = it.name }
                     } else {
-                        SettingsDetail(target, state, actions)
+                        SettingsDetail(target, state, actions, onOpenAccounts = { routeName = SettingsRoute.ACCOUNT.name })
                     }
                 }
             }
@@ -324,6 +326,11 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     // No dots here on purpose: these are choices, not steps, and marking them
     // green would teach the eye to skip the markers that do mean something.
     HubGroup("How Mike works") {
+        SettingsHubRow(
+            icon = SettingsRoute.ACCOUNT_CONNECTIONS.icon(), title = "Account connections",
+            summary = accountConnectionsHubSummary(),
+            onClick = { onOpen(SettingsRoute.ACCOUNT_CONNECTIONS) },
+        )
         SettingsHubRow(
             icon = SettingsRoute.CONNECTED_APPS.icon(), title = "Connected apps",
             summary = connectedAppsHubSummary(),
@@ -501,7 +508,7 @@ private fun ColumnScope.PrivacySettings(state: AgentUiState, actions: AgentUiAct
 }
 
 @Composable
-private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: AgentUiActions) {
+private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: AgentUiActions, onOpenAccounts: () -> Unit) {
     SettingsSection(title = route.title(), icon = route.icon()) {
         when (route) {
             SettingsRoute.RUNTIME -> RuntimeSettings(state, actions)
@@ -521,6 +528,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
             SettingsRoute.PRIVACY -> PrivacySettings(state, actions)
             SettingsRoute.CONNECTED_APPS -> ConnectedAppsSettings()
+            SettingsRoute.ACCOUNT_CONNECTIONS -> AccountConnectionsSettings(onOpenAccounts)
         }
     }
 }

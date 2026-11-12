@@ -1,5 +1,31 @@
 # Progress
 
+### Account connections in regular Settings - 2026-11-12
+
+Extracted account connectors from the parked Manager into `core.connections`
+and Settings > Account connections. Gmail and other existing ChatGPT/Claude
+connections now have separate, default-off switches for ordinary chats. Grants
+persist independently of the task board. The Manager, its inbox and team were
+not restored. Codex uses the existing read-only bridge; Claude receives only
+enabled account read tools, with revocation and startup-race checks.
+
+Evidence (Windows isolated worktree, Android SDK set, no local.properties):
+- `.\gradlew.bat test :app:assembleDevDebug :app:assembleDevDebugAndroidTest
+  :app:lintDevDebug --no-daemon --console=plain --continue`: BUILD SUCCESSFUL.
+  XML totals across JVM build variants: 3,091 case executions, 34 skips, zero
+  failures/errors. Debug/release and app flavors repeat some test cases.
+- `python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`: 24 OK.
+- `git diff --check`: clean.
+- API 35 x86_64 AOSP ATD, Pixel 7 profile: installed Dev Debug and its test APK
+  manually with replacement, then ran only `AccountConnectionsUiTest` through
+  `am instrument`: 3 passed. No connected-Gradle test task was used.
+  Inspected provider and empty-state screenshots with fixture data; see
+  `docs/testing/account-connections-20261112/README.md`.
+
+Not tested: live Gmail/account reads, physical ARM64 phone or voice account
+reads. No personal account was used and the user's phone was not updated.
+These checks are not the full release gate.
+
 ### Mike Manager taken out of dev — 2026-11-12
 
 At the owner's request, everything that belongs to the Manager implementation
