@@ -129,7 +129,7 @@ object SituationNeeds {
             location.status == "permission denied" && !deniedBefore -> "Location permission is missing. Request it once with apps_settings " +
                 "request_permissions android.permission.ACCESS_COARSE_LOCATION, then retry refresh_location once. If it is not granted: $ask"
             location.status == "permission denied" -> "The permission was already requested and is still missing; do not request it again. $ask"
-            else -> "The device has no usable fix (${location.status}); do not retry now. $ask"
+            else -> "The device has no usable fix (${if (location.status == "fresh") "the fix is too old" else location.status}); do not retry now. $ask"
         }
     }
 

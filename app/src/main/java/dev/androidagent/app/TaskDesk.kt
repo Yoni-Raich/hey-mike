@@ -288,7 +288,7 @@ class TaskDesk(
             situationStore.correct(field, value, now(), until); situationSnapshot()
         }, observeSituation = { observation -> situationStore.observe(observation, now()); situationSnapshot() },
         refreshLocation = {
-            dev.androidagent.devicetools.AndroidCapabilityPlatform(context).querySituationLocation().also { situationStore.recordLocation(it) }
+            dev.androidagent.devicetools.AndroidCapabilityPlatform(context).querySituationLocation().also { situationStore.recordLocation(it, now()) }
         }, recordSituationAsk = { field, purpose -> situationStore.recordAsk(field, purpose, now()); situationSnapshot() },
         declineSituation = { field, purpose -> situationStore.decline(field, purpose, now()); situationSnapshot() },
         savePlace = { key, value ->

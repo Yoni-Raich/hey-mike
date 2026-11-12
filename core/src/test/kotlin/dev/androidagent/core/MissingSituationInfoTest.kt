@@ -22,6 +22,7 @@ class MissingSituationInfoTest {
     private var role = TaskChatRole.MANAGER
     private val fixes = ArrayDeque<String>()
     private var reads = 0
+    private var nextFix: SituationLocation? = null
 
     private fun snapshot() = store.snapshot(clock, zone, emptySet())
     private fun refresh() = store.refresh(emptyList(), clock, zone, false, false, SavedPlaces.read(preferences)) { true }
@@ -33,7 +34,7 @@ class MissingSituationInfoTest {
         TaskTools(board, memory, roster, { role }, { "unused" }, now = { clock }, zone = { zone },
             situation = ::snapshot,
             correctSituation = { field, value, until -> store.correct(field, value, clock, until); snapshot() },
-            refreshLocation = { reads++; SituationLocation(fixes.removeFirst(), clock, clock).also { store.recordLocation(it) } },
+            refreshLocation = { reads++; (nextFix ?: SituationLocation(fixes.removeFirst(), clock, clock)).also { nextFix = null; store.recordLocation(it, clock) } },
             recordSituationAsk = { field, purpose -> store.recordAsk(field, purpose, clock); snapshot() },
             declineSituation = { field, purpose -> store.decline(field, purpose, clock); snapshot() },
             savePlace = { key, value -> SavedPlaces.write(preferences, key, value); store.answered("saved_place_$key", clock); refresh(); snapshot() })
@@ -79,6 +80,15 @@ class MissingSituationInfoTest {
         clock += 3 * 60_000
         val second = call(true, "operation" to "refresh_location")
         assertTrue(second.next().contains("do not request it again"))
+        assertEquals("ask", need("current_location").status())
+    }
+
+    @Test fun anOldCachedFixCountsAsAFailedReadNowAndLeadsToAQuestion() = runTest {
+        // The fix carries its own old time; the read happened now and must not be retried in a loop.
+        nextFix = SituationLocation("fresh", clock - 200_000, clock - 80_000, 32.0, 34.8, 50f, "network", "current_android_user:0", 1, 1)
+        val read = call(true, "operation" to "refresh_location")
+        assertTrue(read.next(), read.next().contains("do not retry now"))
+        assertEquals(clock, snapshot().locationAttempts.single().at)
         assertEquals("ask", need("current_location").status())
     }
 

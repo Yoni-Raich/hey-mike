@@ -11,15 +11,19 @@ read the tool gave no next step, so the Manager stopped at "unknown". New
 `correct` has default expiries for temporary fields; asks and location attempts
 are kept in the situation file and cleared by forget.
 
-Evidence (Windows, `--no-daemon`): `:core:test :app:assembleDevDebug
-:app:lintDevDebug` BUILD SUCCESSFUL; `:core:test` 1,106 cases, 0 failures, 0
-errors, 0 skips (11 new in `MissingSituationInfoTest`); lint 0 errors, 22
-warnings, 4 information. After a final `AtomicFiles` cleanup the situation,
-Manager-evidence, attention and follow-through suites (51 cases) were rerun:
-all pass. Not run: other modules' tests and the full release gate.
+Evidence (Windows, `--no-daemon`, final tree): `:workspace:test
+:app:testDevDebugUnitTest :core:test :app:assembleDevDebug :app:lintDevDebug`
+BUILD SUCCESSFUL. `:core:test` 1,107 cases, 0 failures/errors/skips (12 new in
+`MissingSituationInfoTest`); `:app:testDevDebugUnitTest` 185, 0 failures;
+`:workspace:test` 66 per variant, 0 failures, 14 skips. Lint: 0 errors, 22
+warnings, 4 information; re-analyzed after the last wording change, report
+unchanged. Location attempts are stamped with the read time, so an old cached fix
+does not cause a refresh loop. Not run: other modules' tests and the full
+release gate.
 
 Untested on a phone: no APK from this branch was installed. Unverified: that the
-model calls `need` and asks on the real Manager chat, the voice path (policy
+model calls `need` and asks on the real Manager chat, ordinary chats (they get
+only the skill text, no injected policy), the voice path (policy
 says to ask in the reply), `save_place` against the phone's real
 `preferences.json`, and how Android's permission dialog behaves after repeated
 denials. The `TaskDesk` wiring is covered by compile and lint only.

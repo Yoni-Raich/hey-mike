@@ -217,9 +217,10 @@ class SharedSituationStore(private val file: File) {
     }
 
     @Synchronized
-    fun recordLocation(location: SituationLocation): SharedSituation =
+    /** [readAt] is when the read happened; a returned fix carries its own, older time. */
+    fun recordLocation(location: SituationLocation, readAt: Long = location.observedAt): SharedSituation =
         save(state.copy(revision = state.revision + 1, location = location,
-            locationAttempts = (state.locationAttempts + LocationAttempt(location.status.take(60), location.observedAt)).takeLast(10),
+            locationAttempts = (state.locationAttempts + LocationAttempt(location.status.take(60), maxOf(location.observedAt, readAt))).takeLast(10),
             asks = if (location.status == "fresh") answeredAsks("current_location", location.observedAt) else state.asks))
 
     /** Collected data about the user goes; the user's own corrections stay. */
