@@ -162,6 +162,8 @@ class TaskTools(
                     val earlier = situation?.invoke()?.locationAttempts.orEmpty()
                     val location = (refreshLocation ?: error("Location is not connected here."))()
                     put("location", Json.encodeToJsonElement(SituationLocation.serializer(), location))
+                    // Only a fresh fix answers "where is the user now"; lastKnown is older and labeled as such.
+                    put("current", location.fresh(now()))
                     SituationNeeds.afterLocationRefresh(location, earlier, now())?.let { put("next", it) }
                 }
                 "need" -> {

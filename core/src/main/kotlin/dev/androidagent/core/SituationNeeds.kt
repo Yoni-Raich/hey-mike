@@ -49,10 +49,18 @@ object SituationNeeds {
         val until: Long? = null,
         val saveWith: String? = null,
         val note: String? = null,
+        /** An older device fix, never the current location; see [LAST_KNOWN_USE]. */
+        val lastKnown: LastKnownLocation? = null,
+        /** Outcome of the latest location read, so a device failure is explained as one, not blamed on the user. */
+        val lastRead: LocationAttempt? = null,
     ) {
         /** Only an "ask" on an interactive turn is recorded, so the next turn does not repeat it. */
         val asks: Boolean get() = status == "ask"
     }
+
+    const val LAST_KNOWN_USE = "lastKnown is an older device fix, not the current location. If the user only asks roughly where they are, " +
+        "you may share it as their last known location with its age and accuracy and say it is not confirmed. " +
+        "Never use it for travel, route, ETA, departure or as a confirmed current place."
 
     /** Default expiry for a temporary answer the user gave without a duration; null when one is required. */
     fun defaultUntil(field: String, now: Long): Long? = FIELDS[field]?.defaultTtlMs?.let { now + it }
@@ -64,6 +72,22 @@ object SituationNeeds {
             ?.let { "Saved ${it.joinToString { c -> c.field.removePrefix("saved_place_") }} address is not where the user is now." }
 
         known(field, situation, now)?.let { return it.copy(note = placesNote ?: it.note) }
+        if (field == "current_location") return locationNeed(resolveOther(field, spec, why, situation, now, interactive, placesNote), situation)
+        return resolveOther(field, spec, why, situation, now, interactive, placesNote)
+    }
+
+    /** A current-location answer always carries the last read's outcome and any last known fix, labeled. */
+    private fun locationNeed(resolution: Resolution, situation: SharedSituation): Resolution {
+        val lastKnown = situation.lastKnownLocation
+        val read = situation.locationAttempts.lastOrNull()
+        val failed = read?.takeIf { it.status != "fresh" && resolution.status in setOf("ask", "asked_recently") }
+            ?.let { " The last device read failed (${it.status}). Tell the user the phone could not get a location; it is not their mistake." }
+        return resolution.copy(lastKnown = lastKnown, lastRead = read,
+            next = resolution.next + failed.orEmpty() + (if (lastKnown != null) " $LAST_KNOWN_USE" else ""))
+    }
+
+    private fun resolveOther(field: String, spec: Field, why: String, situation: SharedSituation, now: Long, interactive: Boolean,
+        placesNote: String?): Resolution {
         situation.observations.lastOrNull { it.field == field && it.confidence != "stale" && it.expiresAt > now }?.let {
             return Resolution(field, "observed", "Use it as an attributed conclusion (${it.confidence}), not a verified fact. " +
                 "If the decision depends on it, confirm it with the user in one short question.", it.value, "observation", it.expiresAt, spec.saveWith)
@@ -124,12 +148,20 @@ object SituationNeeds {
         if (location.fresh(now)) return null
         val ask = "If the user's request needs their location, ask them where they are in one short question and save the answer with " +
             "situation operation=correct field=current_location (it expires by default). Never use a saved home or work address instead."
-        val deniedBefore = earlier.any { it.status == "permission denied" && now - it.at in 0 until DAY_MS && it.at < location.observedAt }
-        return when {
-            location.status == "permission denied" && !deniedBefore -> "Location permission is missing. Request it once with apps_settings " +
+        val deniedBefore = earlier.any { it.status == "permission denied" && now - it.at in 0 until DAY_MS && it.at < (location.attemptedAt ?: location.observedAt) }
+        val tried = location.tried.takeIf { it.isNotEmpty() }?.let { " Tried: ${it.joinToString()}." }.orEmpty()
+        val known = if (location.lastKnown != null) " $LAST_KNOWN_USE" else ""
+        return when (location.status) {
+            "permission denied" -> if (!deniedBefore) "Location permission is missing. Request it once with apps_settings " +
                 "request_permissions android.permission.ACCESS_COARSE_LOCATION, then retry refresh_location once. If it is not granted: $ask"
-            location.status == "permission denied" -> "The permission was already requested and is still missing; do not request it again. $ask"
-            else -> "The device has no usable fix (${if (location.status == "fresh") "the fix is too old" else location.status}); do not retry now. $ask"
+                else "The permission was already requested and is still missing; do not request it again. $ask"
+            "location disabled" -> "Location services are off on the phone. Tell the user; they can turn location on and ask again. " +
+                "Do not retry now. $ask"
+            "timeout" -> "The phone's location providers gave no fix within the time limit.$tried This is a device-side failure, " +
+                "not the user's: say so plainly. Do not retry now. $ask$known"
+            "provider unavailable" -> "No location provider is available on the phone right now.$tried Say so; do not retry now. $ask$known"
+            else -> "The phone could not get a usable fix (${if (location.status == "fresh") "the fix is too old" else location.status}).$tried " +
+                "Say it is a device-side failure; do not retry now. $ask$known"
         }
     }
 
@@ -141,5 +173,6 @@ object SituationNeeds {
             "short, focused question (ask_user where available, otherwise in your reply). A failed source is not the end: the next step is to ask. " +
             "Save the answer at once: temporary state with operation=correct (default expiry if the user gave none), home or work with " +
             "operation=save_place, other lasting facts with remember and their source. If the user will not say, record operation=decline. " +
-            "Never ask again what is answered or declined, never turn a saved address into the current location, and never infer a lasting habit from one answer."
+            "Never ask again what is answered or declined, never turn a saved address into the current location, and never infer a lasting habit from one answer. " +
+            "A lastKnownLocation is older than current: give it only as the last known location with its age and accuracy, never for travel, route or ETA."
 }

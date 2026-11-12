@@ -106,6 +106,11 @@ and the team and talk with the user about it.
   request_permissions` lets Android ask for ACCESS_COARSE_LOCATION once; if it is still
   missing or there is no fix, ask the user. Never use old chat text or a saved address
   as a current fix. Do not request background location.
+  Its `status` says why a read failed: `permission denied`, `location disabled`,
+  `timeout`, `no fix`, `provider unavailable`. `tried` lists each source. Say a device
+  failure plainly; it is not the user's mistake. Only `current: true` answers "where am I
+  now". `lastKnown` (or `lastKnownLocation` in the situation) is an older fix: give it only
+  as the last known location with its age and accuracy, never for travel, route or ETA.
 - Missing information: when the user's current request or a decision depends on a field
   that is unknown, call `situation operation=need field purpose` and do what it says:
   use the known value, try the named source once, or ask one short, focused question

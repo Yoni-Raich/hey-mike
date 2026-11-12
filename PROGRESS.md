@@ -1,5 +1,38 @@
 # Progress
 
+### Location read: fused/network with one budget, last known kept apart — 2026-11-12
+
+Root cause on 1212 (from code and the phone's dumpsys, `dumpsys location`):
+the read asked only the `network` provider, never `fused`; Mike's own 10 s
+`withTimeoutOrNull` removed the request (registered 16:07:16.124, removed
+16:07:26.123); a cached fix older than 2 minutes was dropped; and every failure
+returned one status, `no fresh fix`. COARSE was granted (appops allow, foreground),
+so permission was not the cause. Not proven: how long the phone's coarse network
+fix takes, and whether its coarse cache refreshes only about every 10 minutes.
+
+Change: `SituationLocationReader` (device-tools) tries fused (API 31+), network,
+then GPS only with FINE, in a 30 s total budget with per-provider cancellation.
+Distinct statuses, `tried`, `attemptedAt`, `permission`, `source` and `current`.
+A fix of 2-30 minutes on the same boot and profile is shown only as
+`lastKnownLocation` with its original time; it never fills `location`, the
+`current_location` need, travel, route or ETA. See ARCHITECTURE "Location read".
+
+Checks (worktree `missing-info-20261112`, branch `fix/location-read-20261112`):
+`./gradlew.bat :core:test :device-tools:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon`, exit 0. core 1120, device-tools
+126, app 187 tests, 0 failures. Lint 0 errors, 22 warnings (as before). New:
+`SituationLocationReaderTest` (12: COARSE only, provider fallback, 30 s timeout with
+every request cancelled, caller stop cancels, late callback ignored, fresh cache
+keeps its time, 7-minute cache only as lastKnown, 31 minutes dropped, permission /
+switch / provider failures, revoked mid-read), `LastKnownLocationTest` (10: age and
+original time, injection has no `location`/`lastFix`, need stays open, no renewal,
+boot/profile/policy/age gates, old file loads, forget clears it, next-step texts),
+and one `MissingSituationInfoTest` case for the tool result. `git diff --check` clean.
+
+Gaps: not run on a phone. Real fused/network behaviour, the time a coarse fix
+takes, and whether a 30 s budget is enough on the test phone are unverified.
+`:app:lintDevDebug` shows no MissingPermission issue; no instrumented test.
+
 ### Dev Debug 1212 for the phone — 2026-11-12
 
 Built from `e361c7d9` (both fixes plus the version bump) with

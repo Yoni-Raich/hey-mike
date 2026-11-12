@@ -74,6 +74,22 @@ class MissingSituationInfoTest {
         assertEquals(2, reads)
     }
 
+    @Test fun aTimedOutReadIsNotCurrentAndSaysItIsTheDevice() = runTest {
+        nextFix = SituationLocation("timeout", clock, clock, bootCount = 104, attemptedAt = clock, permission = "coarse",
+            tried = listOf("cache:7m old", "fused:timeout", "network:timeout"),
+            lastKnown = SituationFix(32.1, 34.8, 2000f, "fused", clock - 7 * 60_000, 1_000_000, 104, "p"))
+        val read = call(true, "operation" to "refresh_location")
+        assertEquals(false, read["current"]!!.jsonPrimitive.boolean)
+        assertNull(read["location"]!!.jsonObject["latitude"])
+        assertTrue(read.next().contains("device-side failure"))
+        assertTrue(read.next().contains("fused:timeout"))
+        assertTrue(read.next().contains(SituationNeeds.LAST_KNOWN_USE))
+        val ask = need("current_location")
+        assertEquals("ask", ask.status())
+        assertTrue(ask.next().contains("it is not their mistake"))
+        assertEquals("timeout", ask["lastRead"]!!.jsonObject["status"]!!.jsonPrimitive.content)
+    }
+
     @Test fun repeatedPermissionDenialStopsRequestingThePermission() = runTest {
         fixes += "permission denied"; fixes += "permission denied"
         call(true, "operation" to "refresh_location")

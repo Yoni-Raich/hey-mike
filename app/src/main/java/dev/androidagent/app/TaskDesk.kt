@@ -1333,7 +1333,7 @@ class TaskDesk(
         val shownIds = situation.commitments.map { it.taskId }.toSet()
         val refs = (notes.flatMap { it.sourceRefs + dev.androidagent.core.TaskSourceRef("memory", verified = true, noteId = it.id) } +
             situation.observations.flatMap { it.sourceRefs } +
-            (if (situation.location != null) listOf(dev.androidagent.core.TaskSourceRef("location", verified = true)) else emptyList()) +
+            (if (situation.location != null || situation.lastKnownLocation != null) listOf(dev.androidagent.core.TaskSourceRef("location", verified = true)) else emptyList()) +
             feedback.flatMap { it.sourceRefs } + situationTasks.filter { it.id in shownIds }.flatMap { it.sourceRefs } +
             (if (situation.calendar != null) listOf(dev.androidagent.core.TaskSourceRef("calendar", verified = true)) else emptyList()) +
             (if (situation.claims.any { it.source == "preferences.json" && it.confidence != "stale" })

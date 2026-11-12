@@ -5,6 +5,8 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -83,15 +85,70 @@ data class SituationClaim(
 data class SituationObservation(val field: String, val value: String, val observedAt: Long, val expiresAt: Long,
     val confidence: String, val evidence: List<TaskEvidence>, val sourceRefs: List<TaskSourceRef>)
 
+/**
+ * How old a device fix may be for each use.
+ *
+ * [CURRENT_MS]: an answer to "where am I now". Two minutes is about 150 m on foot and 2-3 km by car,
+ * still useful for "where am I" and a starting point.
+ * [LAST_KNOWN_MS]: a fix shown only as the last known location, with its age. Android refreshes the
+ * approximate (coarse) location for an app about every ten minutes, so 30 minutes covers two or three
+ * of those. After that the user can be anywhere in the city, and an old point misleads more than it helps.
+ * A last known fix never feeds travel, route, ETA or departure.
+ */
+object LocationFreshness {
+    const val CURRENT_MS = 120_000L
+    const val LAST_KNOWN_MS = 30 * 60_000L
+}
+
+/** One real device fix with its own time. [elapsedRealtimeMs] and [bootCount] give its age without the wall clock. */
+@Serializable
+data class SituationFix(val latitude: Double, val longitude: Double, val accuracyMeters: Float, val provider: String?,
+    val fixAt: Long, val elapsedRealtimeMs: Long, val bootCount: Int, val profile: String) {
+    fun valid(): Boolean = latitude.isFinite() && latitude in -90.0..90.0 && longitude.isFinite() && longitude in -180.0..180.0 &&
+        accuracyMeters.isFinite() && accuracyMeters >= 0 && elapsedRealtimeMs > 0
+
+    /** Age on this boot, or null when the boot or profile differs or the clock is not monotonic. */
+    fun ageMs(elapsedNowMs: Long?, bootNow: Int?, profileNow: String?): Long? =
+        if (elapsedNowMs == null || bootNow != bootCount || profileNow != profile) null
+        else (elapsedNowMs - elapsedRealtimeMs).takeIf { it >= 0 }
+}
+
+/** The last known fix as shown to the agent: never the current location. The note is always encoded, so the label reaches the model. */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class LastKnownLocation(val latitude: Double, val longitude: Double, val accuracyMeters: Float, val provider: String?,
+    val fixAt: Long, val ageMinutes: Long,
+    @EncodeDefault val note: String = "Last known location, not the current location. Say its age and accuracy; never use it for travel, route, ETA or departure.")
+
+/**
+ * The outcome of one interactive location read. [status] is "fresh" only for a fix younger than
+ * [LocationFreshness.CURRENT_MS]; every other status is a failure and carries no current coordinates.
+ * Failures: permission denied, location disabled, provider unavailable, timeout, no fix, provider error,
+ * profile unavailable, device clock unavailable. [tried] lists each source and its outcome, for diagnosis.
+ * [lastKnown] is an older real fix, kept apart from the current one.
+ */
 @Serializable
 data class SituationLocation(val status: String, val observedAt: Long, val expiresAt: Long,
     val latitude: Double? = null, val longitude: Double? = null, val accuracyMeters: Float? = null,
     val provider: String? = null, val profile: String? = null,
-    val elapsedRealtimeMs: Long? = null, val bootCount: Int? = null) {
+    val elapsedRealtimeMs: Long? = null, val bootCount: Int? = null,
+    /** When the read ran; observedAt of a fresh fix is the fix's own, older time. */
+    val attemptedAt: Long? = null,
+    /** coarse or fine: the location permission the read had. */
+    val permission: String? = null,
+    val tried: List<String> = emptyList(),
+    /** cache or live, for a fresh fix. */
+    val source: String? = null,
+    val lastKnown: SituationFix? = null) {
     fun fresh(now: Long): Boolean = status == "fresh" && observedAt <= now && expiresAt > now &&
-        expiresAt - observedAt in 1..120_000 && latitude?.let { it.isFinite() && it in -90.0..90.0 } == true &&
+        expiresAt - observedAt in 1..LocationFreshness.CURRENT_MS && latitude?.let { it.isFinite() && it in -90.0..90.0 } == true &&
         longitude?.let { it.isFinite() && it in -180.0..180.0 } == true &&
         accuracyMeters?.let { it.isFinite() && it >= 0 } == true && profile != null
+
+    /** The fix this read returned, for keeping as the last known location; null for a failure. */
+    fun asFix(): SituationFix? = if (status != "fresh" || latitude == null || longitude == null || accuracyMeters == null ||
+        elapsedRealtimeMs == null || bootCount == null || profile == null) null
+        else SituationFix(latitude, longitude, accuracyMeters, provider, observedAt, elapsedRealtimeMs, bootCount, profile).takeIf { it.valid() }
 }
 
 @Serializable
@@ -109,7 +166,7 @@ data class SituationAsk(val field: String, val purpose: String, val at: Long, va
 
 /** Outcome of one interactive location read, without coordinates. Used to stop repeated permission prompts. */
 @Serializable
-data class LocationAttempt(val status: String, val at: Long)
+data class LocationAttempt(val status: String, val at: Long, val tried: List<String> = emptyList())
 
 @Serializable
 data class AttentionDecision(val action: String, val reason: String, val sourceIds: List<String>, val asOf: Long, val nextCheck: Long? = null)
@@ -134,6 +191,10 @@ data class SharedSituation(
     val attention: List<AttentionDecision> = emptyList(),
     val asks: List<SituationAsk> = emptyList(),
     val locationAttempts: List<LocationAttempt> = emptyList(),
+    /** Stored newest real fix. A snapshot never exposes it; it shows [lastKnownLocation] instead, after the gates. */
+    val lastFix: SituationFix? = null,
+    /** In a snapshot: an older fix of this boot and profile, when there is no current one. */
+    val lastKnownLocation: LastKnownLocation? = null,
 )
 
 /** One owner serializes all writes. A failed write leaves the prior snapshot intact. */
@@ -220,13 +281,20 @@ class SharedSituationStore(private val file: File) {
     /** [readAt] is when the read happened; a returned fix carries its own, older time. */
     fun recordLocation(location: SituationLocation, readAt: Long = location.observedAt): SharedSituation =
         save(state.copy(revision = state.revision + 1, location = location,
-            locationAttempts = (state.locationAttempts + LocationAttempt(location.status.take(60), maxOf(location.observedAt, readAt))).takeLast(10),
+            locationAttempts = (state.locationAttempts + LocationAttempt(location.status.take(60), maxOf(location.observedAt, readAt), location.tried.take(8).map { it.take(60) })).takeLast(10),
+            lastFix = newestFix(listOfNotNull(state.lastFix, location.asFix(), location.lastKnown?.takeIf { it.valid() })),
             asks = if (location.status == "fresh") answeredAsks("current_location", location.observedAt) else state.asks))
+
+    /** The newest fix of the latest boot. A failed read never changes a fix's own time. */
+    private fun newestFix(fixes: List<SituationFix>): SituationFix? {
+        val boot = fixes.maxOfOrNull { it.bootCount } ?: return null
+        return fixes.filter { it.bootCount == boot }.maxByOrNull { it.elapsedRealtimeMs }
+    }
 
     /** Collected data about the user goes; the user's own corrections stay. */
     @Synchronized
     fun forgetObserved() { save(state.copy(revision = state.revision + 1, observations = emptyList(), location = null,
-        asks = emptyList(), locationAttempts = emptyList())) }
+        asks = emptyList(), locationAttempts = emptyList(), lastFix = null)) }
 
     @Synchronized
     fun recordDecision(decision: AttentionDecision) {
@@ -251,16 +319,26 @@ class SharedSituationStore(private val file: File) {
             it.observedAt <= now && it.expiresAt > now }
         val location = state.location?.takeIf { locationAllowed && it.fresh(now) &&
             calendarProfile != null && it.profile == calendarProfile && locationBootCount != null && it.bootCount == locationBootCount &&
-            elapsedNowMs != null && it.elapsedRealtimeMs != null && elapsedNowMs - it.elapsedRealtimeMs in 0 until 120_000 }
+            elapsedNowMs != null && it.elapsedRealtimeMs != null && elapsedNowMs - it.elapsedRealtimeMs in 0 until LocationFreshness.CURRENT_MS }
+        // An older real fix of this boot and profile is shown apart, with its age, and only when there is no current one.
+        val lastKnown = state.lastFix?.takeIf { location == null && locationAllowed && calendarProfile != null && it.valid() }?.let { fix ->
+            fix.ageMs(elapsedNowMs, locationBootCount, calendarProfile)?.takeIf { it < LocationFreshness.LAST_KNOWN_MS }?.let { age ->
+                LastKnownLocation(fix.latitude, fix.longitude, fix.accuracyMeters, fix.provider?.take(80), fix.fixAt, age / 60_000)
+            }
+        }
         return state.copy(asOf = now, timezone = zone.id, localTime = Instant.ofEpochMilli(now).atZone(zone).toString(), calendar = calendar,
-            location = location,
+            location = location?.copy(lastKnown = null), lastFix = null, lastKnownLocation = lastKnown,
             observations = state.observations.filter { it.sourceRefs.isNotEmpty() && it.sourceRefs.all(allowedSource) && it.observedAt <= now }
                 .map { if (it.expiresAt <= now) it.copy(confidence = "stale") else it },
             attention = state.attention.filter { it.sourceIds.all { id -> id in allowedTaskIds } },
             sourceGaps = (if (calendar == null) state.sourceGaps.filterNot { it == "calendar plan loaded" || it == "calendar plan truncated" } +
                 "calendar unavailable, expired or not allowed" else state.sourceGaps)
                 .filterNot { it == "location, travel and ETA providers unavailable" } +
-                listOf(if (location == null) "location unknown; an interactive refresh_location can request one fix" else "fresh device location; travel and ETA remain unknown"),
+                listOf(when {
+                    location != null -> "fresh device location; travel and ETA remain unknown"
+                    lastKnown != null -> "no current location; lastKnownLocation is ${lastKnown.ageMinutes} min old and not the current location"
+                    else -> "location unknown; an interactive refresh_location can request one fix"
+                }),
             claims = live + stale.map { it.copy(confidence = "stale") },
             commitments = state.commitments.filter { it.taskId in allowedTaskIds && (it.expiresAt == null || it.expiresAt > now) },
             asks = state.asks.filter { it.at <= now && now - it.at < SituationNeeds.ASK_HISTORY_MS },

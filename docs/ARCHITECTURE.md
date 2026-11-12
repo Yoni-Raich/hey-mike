@@ -143,13 +143,30 @@ removes observations and the cached device fix; user-supplied corrections remain
 
 `tasks situation operation=refresh_location` is one interactive, on-demand read
 through device-tools. It checks foreground coarse/fine permission, enabled Android
-location and a personal profile before provider access. A cached fix or a bounded
-ten-second current-fix request records coordinates, accuracy, provider, actual
-monotonic age, profile and boot count. Exposure requires the same boot/profile,
-current permission and enabled location, and age below two minutes by both clocks.
-Missing permission points to the existing Android permission-request tool; no
-permission is granted by this path. No location subscription, background permission,
-reverse geocoding, route, ETA or departure inference is added.
+location and a personal profile before provider access. Exposure requires the same
+boot/profile, current permission and enabled location, and age below two minutes by
+both clocks. Missing permission points to the existing Android permission-request
+tool; no permission is granted by this path. No location subscription, background
+permission, reverse geocoding, route, ETA or departure inference is added.
+
+Location read (2026-11-12). `SituationLocationReader` replaces the network-only,
+ten-second read. Providers are chosen by permission and SDK: `fused` (API 31+, when
+enabled), then `network`, then `gps` only with FINE; COARSE alone is enough and no
+permission is requested by this path. A cached fix younger than two minutes answers
+at once with its own time. Otherwise one `getCurrentLocation` per provider shares a
+30-second budget (Android's own limit for a current request, half the tool's 60 s):
+each provider gets an equal share of what is left, so a fast failure leaves its time
+to the next. Every request has a `CancellationSignal` that runs when its share ends or
+the caller is stopped; late callbacks are dropped. Statuses are distinct:
+`permission denied`, `location disabled`, `provider unavailable`, `timeout`, `no fix`,
+`provider error`; `tried` lists each source and outcome, `attemptedAt` the read time.
+Two minutes stays the limit for current (about 150 m on foot, 2-3 km by car). An older
+real fix of the same boot and profile, up to 30 minutes (two to three coarse refresh
+cycles), is kept as `lastFix` and shown only as `lastKnownLocation` with its original
+time, age and accuracy, never as `location`, never removing `current_location` from
+`unknown`, and never used for travel, route, ETA or departure. A failed read never
+renews a fix's time; an older cached fix never replaces a newer one. `need` carries
+`lastRead` so the agent explains a device failure as one, not the user's mistake.
 
 An explicit owner reminder can create a check on a proposed task without accepting
 or executing it. A proposal's existing expiry is extended through that requested
