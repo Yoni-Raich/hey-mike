@@ -111,6 +111,7 @@ class SignalInbox(
         mutable.value = store.loadSignals().sortedBy { it.capturedAt }
         loaded = true
     }
+    suspend fun refresh() = lock.withLock { mutable.value = store.loadSignals().sortedBy { it.capturedAt } }
 
     /**
      * Keep [message] if the user's settings allow it. Returns the stored
@@ -124,12 +125,19 @@ class SignalInbox(
         message.conversation?.let { if ("${message.app}|$it" in settings.excludedConversations) return null }
         if (SignalFilter.drop(message.app, "${message.conversation.orEmpty()} $text", ownPackage)) return null
         val id = idOf(message.app, message.conversation, message.sender, text, message.at)
-        val signal = TaskSignal(
-            id = id, source = SignalFilter.sourceOf(message.app), app = message.app,
+        val parts = text.chunked(MAX_TEXT)
+        val batch = parts.mapIndexed { index, part -> TaskSignal(
+            id = if(parts.size == 1) id else idOf(id, index), source = SignalFilter.sourceOf(message.app), app = message.app,
             conversation = message.conversation?.take(120), sender = message.sender?.take(80),
-            text = text.take(MAX_TEXT), group = message.group, at = message.at, capturedAt = now(),
-        )
-        return add(signal)
+            text = part, group = message.group, at = message.at, capturedAt = now(), sourceVerified = true,
+        ) }
+        return lock.withLock {
+            val source = "notification-capture"
+            val cursor = store.sourceCursor(source)
+            val fresh = store.capturePage(source, cursor, cursor + 1, batch)
+            mutable.value = (mutable.value + fresh).sortedBy { it.capturedAt }
+            fresh.firstOrNull()
+        }
     }
 
     /** A signal the app made itself: a chat that went quiet, a calendar check, the first backfill. */
@@ -137,13 +145,7 @@ class SignalInbox(
         // Reject duplicates before evicting a real pending message. The store
         // retains only an id/time receipt after raw text deletion.
         if (!store.insertSignal(signal)) return@withLock null
-        val next = (mutable.value + signal).sortedBy { it.capturedAt }
-        if (next.size > MAX_PENDING) {
-            // Oldest first out: a flood must not grow the store without bound.
-            val drop = next.take(next.size - MAX_PENDING).map { it.id }
-            store.deleteSignals(drop)
-            mutable.value = next.filterNot { it.id in drop }
-        } else mutable.value = next
+        mutable.value = (mutable.value + signal).sortedBy { it.capturedAt }
         signal
     }
 
@@ -175,6 +177,10 @@ class SignalInbox(
     suspend fun clear() = lock.withLock {
         store.deleteSignals(mutable.value.map { it.id })
         mutable.value = emptyList()
+    }
+    suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>) = lock.withLock {
+        val fresh = store.capturePage(source, expected, through, signals)
+        mutable.value = (mutable.value + fresh).sortedBy { it.capturedAt }
     }
 
     companion object {
@@ -227,7 +233,7 @@ object DiscoverySchedule {
         val readyAt = groups.mapValues { (_, signals) ->
             val quiet = signals.maxOf { it.capturedAt } + signals.maxOf(::quietFor)
             val capped = signals.minOf { it.capturedAt } + MAX_WAIT_MS
-            minOf(quiet, capped)
+            maxOf(minOf(quiet, capped), signals.maxOf { it.notBefore })
         }
         val intervalOpen = lastPassAt?.let { it + minIntervalMs } ?: Long.MIN_VALUE
         val ready = groups.filterKeys { readyAt.getValue(it) <= now }.values.flatten().sortedBy { it.capturedAt }

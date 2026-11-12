@@ -104,7 +104,12 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -126,13 +131,35 @@ import java.util.Locale
 
 // The board's own two colours, borrowed from the standing-rules strip so the
 // two features read as one family: teal is live and fine, amber waits for you.
-private val BoardTeal = Color(0xFF83D9CA)
+private val BoardTeal = Color(0xFF7DE4D4)
 private val BoardAmber = Color(0xFFF6B86A)
-private val AmberContainer = Color(0xFF241E14)
-private val AmberOutline = Color(0xFF4A3A24)
-private val SheetFill = Color(0xFF1B1B1B)
-private val ControlLine = Color(0xFF707070)
-private val ResultTint = Color(0xFF1E3A34)
+private val AmberContainer = Color(0xFF25221B)
+private val AmberOutline = Color(0xFF5B4A32)
+private val SheetFill = Color(0xFF101918)
+private val ControlLine = Color(0xFF536A67)
+private val ResultTint = Color(0xFF18332F)
+
+/** Preserve mixed Hebrew/English direction and render simple emphasis in model text. */
+@Composable
+private fun TaskContent(value: String, style: TextStyle, modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.onSurface, maxLines: Int = Int.MAX_VALUE) {
+    val text = remember(value) {
+        buildAnnotatedString {
+            var start = 0
+            val bold = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__")
+            bold.findAll(value).forEach { match ->
+                append(value.substring(start, match.range.first))
+                val begin = length
+                append(match.groups[1]?.value ?: match.groups[2]?.value.orEmpty())
+                addStyle(SpanStyle(fontWeight = FontWeight.SemiBold), begin, length)
+                start = match.range.last + 1
+            }
+            append(value.substring(start))
+        }
+    }
+    Text(text, modifier = modifier.fillMaxWidth(), style = style.copy(textDirection = TextDirection.Content, textAlign = TextAlign.Start),
+        color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+}
 
 /** Follow the phone's language; user-written text keeps its own direction. */
 internal fun taskText(english: String, hebrew: String): String =
@@ -237,7 +264,7 @@ private fun ErrorLine(text: String, dismiss: () -> Unit) {
 internal fun boardSubtitle(desk: TaskDeskState): String {
     if (!desk.settings.discoveryOn) return taskText("Background discovery is off", "החיפוש ברקע כבוי")
     desk.error?.let { return taskText("Discovery needs attention", "החיפוש דורש בדיקה") }
-    val last = desk.settings.lastPassAt ?: return taskText("Mike starts looking soon", "מייק יתחיל לחפש בקרוב")
+    val last = desk.settings.lastSuccessfulPassAt ?: return taskText("No completed discovery pass yet", "עדיין לא הושלם סבב חיפוש")
     return taskText("Mike looked ", "מייק בדק ") + ago(last)
 }
 
@@ -275,11 +302,9 @@ private fun BoardPage(state: AgentUiState, actions: AgentUiActions, open: (Strin
     val yours = tasks.filter { it.status == TaskStatus.MINE }
     val history = tasks.filter { it.status.closed || it.status == TaskStatus.SNOOZED }.sortedByDescending { it.updatedAt }
 
-    if (!desk.settings.discoveryOn) {
-        if (tasks.none { !it.status.closed }) DiscoveryOffCard(state, actions, openSources)
-        else TextButton(onClick = openSources) { Text(taskText("Background discovery is paused · Sources", "החיפוש ברקע מושהה · מקורות והגדרות")) }
-    }
+    if (!desk.settings.discoveryOn && tasks.none { !it.status.closed }) DiscoveryOffCard(state, actions, openSources)
     ManagerRow(desk, state, actions)
+    DiscoveryStatus(desk)
 
     if (tasks.none { !it.status.closed }) {
         Text(
@@ -289,13 +314,13 @@ private fun BoardPage(state: AgentUiState, actions: AgentUiActions, open: (Strin
             modifier = Modifier.padding(vertical = 12.dp),
         )
     }
-    val toCheck = reports + check
+    val toCheck = (reports + check).distinctBy { it.id }
     val decide = waiting.filterNot { it.category == TaskCategory.REPORT }
     if (decide.isNotEmpty()) {
         SectionLabel(taskText("Waiting for your decision", "מחכה להחלטה שלך"), decide.size, BoardAmber)
         var showAll by rememberSaveable { mutableStateOf(false) }
         (if (showAll) decide else decide.take(3)).forEach { TaskCard(it, desk, actions) { open(it.id) } }
-        if (decide.size > 3 && !showAll) TextButton(onClick = { showAll = true }) { Text("${decide.size - 3} more", color = BoardAmber) }
+        if (decide.size > 3 && !showAll) TextButton(onClick = { showAll = true }) { Text(taskText("${decide.size - 3} more", "עוד ${decide.size - 3}"), color = BoardAmber) }
     }
     if (onIt.isNotEmpty()) {
         SectionLabel(taskText("Mike is on it", "מייק מטפל בזה"), onIt.size, BoardTeal)
@@ -313,7 +338,46 @@ private fun BoardPage(state: AgentUiState, actions: AgentUiActions, open: (Strin
         var all by rememberSaveable { mutableStateOf(false) }
         SectionLabel(taskText("History", "היסטוריה"), history.size, MaterialTheme.colorScheme.onSurfaceVariant)
         (if (all) history.take(40) else history.take(3)).forEach { HistoryRow(it, actions) { open(it.id) } }
-        if (history.size > 3 && !all) TextButton(onClick = { all = true }) { Text("Show ${minOf(history.size, 40) - 3} more") }
+        if (history.size > 3 && !all) TextButton(onClick = { all = true }) { Text(taskText("Show ${minOf(history.size, 40) - 3} more", "הצגת עוד ${minOf(history.size, 40) - 3}")) }
+    }
+}
+
+@Composable
+private fun DiscoveryStatus(desk: TaskDeskState) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val status = when(desk.waitReason) {
+        "running" -> taskText("The team is processing new input", "הצוות מעבד מידע חדש")
+        "quota" -> taskText("Waiting for model usage to recover", "ממתין לחידוש מכסת השימוש במודל")
+        "cap" -> taskText("Daily pass limit reached", "החיפוש הגיע למכסה היומית")
+        "off" -> taskText("Background discovery is paused", "החיפוש ברקע מושהה")
+        "idle" -> taskText("Listening for new input", "ממתין למידע חדש")
+        "excluded" -> taskText("Waiting input is excluded or has unverified old sources", "המידע שממתין מוחרג או נאסף ממקור ישן שלא אומת")
+        else -> taskText("Collecting a batch before the next pass", "אוסף מידע לסבב הבא")
+    }
+    Surface(color = Color(0xFF1A2523), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { LiveLine(status, if(desk.waitReason in setOf("cap", "quota", "off")) BoardAmber else BoardTeal) }
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) taskText("Less", "פחות") else taskText("Details", "פרטים"), style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            if (expanded) Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(taskText("${desk.pendingSignals} inputs waiting · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} passes today",
+                    "${desk.pendingSignals} פריטי מידע ממתינים · ${desk.settings.passesToday}/${desk.settings.dailyPassCap} סבבים היום"), style = MaterialTheme.typography.labelMedium)
+                desk.nextCheckAt?.takeIf { desk.waitReason == "waiting" }?.let {
+                    Text(taskText("Next eligible check: ${shortTime(it)}", "הסבב הבא יוכל להתחיל ב־${shortTime(it)}"), style = MaterialTheme.typography.labelMedium)
+                }
+                if(desk.settings.captureGaps > 0) Text(taskText("${desk.settings.captureGaps} inputs were missed or expired. Coverage is partial.",
+                    "${desk.settings.captureGaps} פריטים לא נאספו או פגו. הכיסוי חלקי."), color = BoardAmber, style = MaterialTheme.typography.labelMedium)
+                if(desk.blockedSignals > 0) Text(taskText("${desk.blockedSignals} inputs stay outside model context because of source policy.",
+                    "${desk.blockedSignals} פריטים לא מועברים למודל בגלל הגדרות המקורות."), color = BoardAmber, style = MaterialTheme.typography.labelMedium)
+            }
+            if (!expanded && (desk.settings.captureGaps > 0 || desk.blockedSignals > 0)) {
+                Text(taskText("Some inputs need attention", "חלק מהמידע דורש בדיקה"), Modifier.padding(bottom = 8.dp),
+                    color = BoardAmber, style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
 }
 
@@ -357,20 +421,20 @@ private fun ManagerRow(desk: TaskDeskState, state: AgentUiState, actions: AgentU
     val mood = managerMood(desk, scoutBusy)
     Surface(
         onClick = { actions.onOpenBoardChat(manager) },
-        color = if (mood == EyeMood.NEEDS) AmberContainer else MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, if (mood == EyeMood.NEEDS) AmberOutline else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Open the Manager chat" },
+        color = Color(0xFF182D2A),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, BoardTeal.copy(alpha = 0.23f)),
+        modifier = Modifier.fillMaxWidth().semantics { contentDescription = taskText("Open the Manager chat", "פתיחת שיחת המנהל") },
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            MikeEye(mood, Modifier.size(52.dp), satellites = running)
-            Column(Modifier.weight(1f)) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            MikeEye(mood, Modifier.size(60.dp), satellites = running)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(taskText("Mike · Manager", "מייק · המנהל"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 val line = listOfNotNull(
                     waiting.takeIf { it > 0 }?.let { taskText("$it waiting for you", "$it מחכות לך") },
                     running.takeIf { it > 0 }?.let { taskText("$it running", "$it בביצוע") },
                 ).joinToString(" · ").ifEmpty { taskText("Talk to Mike about the board", "לדבר עם מייק על המשימות") }
-                Text(line, style = MaterialTheme.typography.bodySmall, color = if (waiting > 0) BoardAmber else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(line, style = MaterialTheme.typography.bodySmall, color = if (waiting > 0) BoardTeal else MaterialTheme.colorScheme.onSurfaceVariant)
             }
             ForwardChevron()
         }
@@ -379,10 +443,10 @@ private fun ManagerRow(desk: TaskDeskState, state: AgentUiState, actions: AgentU
 
 @Composable
 private fun SectionLabel(text: String, count: Int, color: Color) {
-    Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = color)
-        Text("$count", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+    Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text("$count", Modifier.clip(CircleShape).background(color.copy(alpha = 0.14f)).padding(horizontal = 8.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelMedium, color = color)
     }
 }
 
@@ -404,13 +468,14 @@ private fun sourceIcon(task: MikeTask): ImageVector = when (task.evidence.firstO
     else -> Icons.Outlined.Notifications
 }
 
-private fun sourceLine(task: MikeTask): String {
-    val first = task.evidence.firstOrNull()
-    val source = when (val s = first?.source ?: task.originKind) {
+private fun sourceName(source: String): String = when (source) {
         "whatsapp" -> "WhatsApp"; "email" -> taskText("Mail", "דואר"); "calendar" -> taskText("Calendar", "יומן"); "chat", "conversation", "backfill" -> taskText("Chat", "שיחה")
         "review" -> taskText("Nightly review", "סקירה לילית"); "upkeep" -> taskText("Memory upkeep", "סידור הזיכרון"); "signal", "notification" -> taskText("Notification", "התראה")
-        else -> s.replaceFirstChar { it.uppercase() }
+        else -> source.replaceFirstChar { it.uppercase() }
     }
+private fun sourceLine(task: MikeTask): String {
+    val first = task.evidence.firstOrNull()
+    val source = sourceName(first?.source ?: task.originKind)
     return listOfNotNull(source, first?.sender ?: task.requestedBy, shortTime(first?.at ?: task.createdAt)).joinToString(" · ")
 }
 
@@ -433,14 +498,14 @@ private fun TaskCard(task: MikeTask, desk: TaskDeskState, actions: AgentUiAction
     val failed = task.status == TaskStatus.FAILED
     Surface(
         onClick = open,
-        color = when { amber -> AmberContainer; failed -> MaterialTheme.colorScheme.errorContainer; else -> MaterialTheme.colorScheme.surface },
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, if (amber) AmberOutline else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        color = when { amber -> AmberContainer; failed -> MaterialTheme.colorScheme.errorContainer; else -> Color(0xFF1A2624) },
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, if (amber) AmberOutline else Color.White.copy(alpha = 0.08f)),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             MetaRow(task)
-            Text(task.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            TaskContent(task.title, MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 3)
             when (task.status) {
                 TaskStatus.PROPOSED, TaskStatus.SNOOZED -> ProposedBody(task)
                 TaskStatus.APPROVED -> {
@@ -480,14 +545,15 @@ private fun MetaRow(task: MikeTask) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProposedBody(task: MikeTask) {
-    Text(task.why, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    TaskContent(task.why, MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
     if (task.category == TaskCategory.TASK) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(16.dp).padding(top = 2.dp), tint = BoardTeal)
-            Text(taskText("Mike would: ", "מייק יעשה: ") + task.plan, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(BoardTeal.copy(alpha = 0.07f)).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(taskText("Mike's plan", "התוכנית של מייק"), style = MaterialTheme.typography.labelMedium, color = BoardTeal)
+            TaskContent(task.plan, MaterialTheme.typography.bodyMedium, maxLines = 2)
         }
     } else {
-        Text(task.plan, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
+        TaskContent(task.plan, MaterialTheme.typography.bodyMedium, maxLines = 3)
     }
     val tags = buildList {
         task.requestedBy?.let { add(Icons.Outlined.Person to taskText("$it asked, not you", "בקשה של $it, לא שלך")) }
@@ -498,13 +564,11 @@ private fun ProposedBody(task: MikeTask) {
         tags.forEach { (icon, label) -> Tag(icon, label) }
     }
     if (task.partialContext) {
-        Box(Modifier.fillMaxWidth().border(1.dp, ControlLine.copy(alpha = 0.6f), RoundedCornerShape(12.dp)).padding(10.dp)) {
-            Text(taskText("Mike saw only the latest messages. The task's chat may read more before acting.", "מייק ראה רק את ההודעות האחרונות. לפני הביצוע ייתכן שיהיה צורך בהקשר נוסף."),
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        Text(taskText("Some context is missing · Open for details", "חלק מההקשר חסר · לפרטים נוספים"),
+            style = MaterialTheme.typography.labelMedium, color = BoardAmber)
     }
     task.snoozedUntil?.takeIf { task.status == TaskStatus.SNOOZED }?.let {
-        Text("Not now · back ${shortTime(it)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(taskText("Not now · back ${shortTime(it)}", "לא עכשיו · יחזור ב־${shortTime(it)}"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -529,11 +593,11 @@ private fun LiveLine(text: String, color: Color) {
 }
 
 @Composable
-private fun ResultBlock(text: String) {
+private fun ResultBlock(text: String, expanded: Boolean = false) {
     Surface(color = ResultTint, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(taskText("What was done", "מה נעשה"), style = MaterialTheme.typography.labelMedium, color = BoardTeal, fontWeight = FontWeight.Bold)
-            Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
+            TaskContent(text, MaterialTheme.typography.bodyMedium, maxLines = if (expanded) Int.MAX_VALUE else 3)
         }
     }
 }
@@ -615,7 +679,7 @@ internal fun CardActions(task: MikeTask, desk: TaskDeskState, actions: AgentUiAc
 @Composable
 private fun MikeAction(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Button(onClick = onClick, modifier = modifier.heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors(
-        containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)) {
+        containerColor = Color(0xFF19584F), contentColor = Color(0xFFCCFFF4))) {
         Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text(label, fontWeight = FontWeight.SemiBold)
@@ -670,7 +734,7 @@ private fun HistoryRow(task: MikeTask, actions: AgentUiActions, open: () -> Unit
             if (task.status == TaskStatus.LOOKS_RESOLVED || task.status == TaskStatus.DISMISSED || task.status == TaskStatus.EXPIRED) {
                 TextButton(onClick = { actions.onTaskDecide(task.id, "restore", null, null) }) { Text(taskText("Restore", "החזרה ללוח")) }
             }
-            if (task.status == TaskStatus.SNOOZED) TextButton(onClick = { actions.onTaskDecide(task.id, "restore", null, null) }) { Text("Return now") }
+            if (task.status == TaskStatus.SNOOZED) TextButton(onClick = { actions.onTaskDecide(task.id, "wake", null, null) }) { Text(taskText("Return now", "להחזיר עכשיו")) }
         }
     }
 }
@@ -684,19 +748,19 @@ internal fun TaskDetail(task: MikeTask, desk: TaskDeskState, actions: AgentUiAct
     // a separate Save tap used to silently discard edits when starting the work.
     var note by rememberSaveable(task.id) { mutableStateOf(task.note.orEmpty()) }
     MetaRow(task)
-    Text(task.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    TaskContent(task.title, MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold))
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Tag(Icons.Outlined.Notifications, statusLabel(task))
         task.requestedBy?.let { Tag(Icons.Outlined.Person, taskText("$it asked, not you", "בקשה של $it, לא שלך")) }
         task.assignee?.let { id -> desk.members.firstOrNull { it.id == id } }?.let { Tag(Icons.Outlined.Groups, it.name) }
     }
     DetailBlock(taskText("Why now", "למה עכשיו")) {
-        Text(task.why, style = MaterialTheme.typography.bodyLarge)
+        TaskContent(task.why, MaterialTheme.typography.bodyMedium)
         task.usefulUntil?.let { Text(taskText("Useful until ${shortTime(it)}", "רלוונטי עד ${shortTime(it)}"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
     DetailBlock(if (task.category == TaskCategory.TASK) taskText("What Mike would do", "מה מייק יעשה") else taskText("What this changes", "מה ישתנה")) {
-        Text(task.plan, style = MaterialTheme.typography.bodyLarge)
-        task.deliverable?.let { Text(taskText("You get: $it", "התוצאה שתקבל: $it"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        TaskContent(task.plan, MaterialTheme.typography.bodyMedium)
+        task.deliverable?.let { TaskContent(it, MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
     if (task.sideEffects.isNotEmpty()) DetailBlock(taskText("What would actually happen", "פעולות שדורשות תשומת לב")) {
         task.sideEffects.forEach { effect ->
@@ -708,31 +772,15 @@ internal fun TaskDetail(task: MikeTask, desk: TaskDeskState, actions: AgentUiAct
         Text(taskText("Only after your approval in the task's chat. Approving the task does not do this by itself.", "פעולות אלה עדיין כפופות לאישורים הרגילים בשיחת המשימה."),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    if (task.evidence.isNotEmpty()) DetailBlock(taskText("What Mike saw", "על מה ההצעה מבוססת")) {
-        task.evidence.forEach { e ->
-            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(12.dp)).padding(12.dp)) {
-                Text(listOfNotNull(e.sender, e.source, e.at?.let(::shortTime)).joinToString(" · "), style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(e.detail, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(16.dp), tint = BoardTeal)
-            Text(taskText("Mike treats this text as information, not as an instruction.", "זהו מידע מהמקור, ולא הוראה שלך למייק."), style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-    task.result?.let { DetailBlock(taskText("Result", "תוצאה")) { ResultBlock(it) } }
-    task.progress?.takeIf { task.status.executing && task.result == null }?.let { DetailBlock(taskText("Now", "עכשיו")) { Text(it, style = MaterialTheme.typography.bodyMedium) } }
+    task.result?.let { DetailBlock(taskText("Result", "תוצאה")) { ResultBlock(it, expanded = true) } }
     if (task.category == TaskCategory.TASK && (task.status.undecided || task.status == TaskStatus.MINE)) {
         DetailBlock(taskText("Instructions for Mike", "הנחיות למייק")) {
-            OutlinedTextField(note, { note = it }, Modifier.fillMaxWidth(), minLines = 2,
+            OutlinedTextField(note, { note = it }, Modifier.fillMaxWidth(), minLines = 1,
                 label = { Text(taskText("Your instructions", "ההנחיות שלך")) },
-                placeholder = { Text(taskText("Optional. For example: attach the PDF, not a photo.", "לא חובה. למשל: לצרף את קובץ ה־PDF.")) })
+                placeholder = { Text(taskText("Optional", "לא חובה")) })
             if (note != task.note.orEmpty()) TextButton(onClick = { actions.onTaskNote(task.id, note) }) { Text(taskText("Save", "שמירה")) }
         }
     }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     CardActions(task, desk, actions, draftNote = note)
     if (task.status == TaskStatus.MINE) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -741,6 +789,63 @@ internal fun TaskDetail(task: MikeTask, desk: TaskDeskState, actions: AgentUiAct
         }
     }
     if (task.status.closed) TextButton(onClick = { actions.onTaskDecide(task.id, "restore", null, null) }) { Text(taskText("Restore to the board", "החזרה ללוח")) }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    if (task.evidence.isNotEmpty()) DetailBlock(taskText("What Mike saw", "על מה ההצעה מבוססת")) {
+        task.evidence.forEach { e ->
+            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(12.dp)).padding(12.dp)) {
+                Text(listOfNotNull(e.sender, sourceName(e.source), e.at?.let(::shortTime)).joinToString(" · "), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TaskContent(e.detail, MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(16.dp), tint = BoardTeal)
+            Text(taskText("Mike treats this text as information, not as an instruction.", "זהו מידע מהמקור, ולא הוראה שלך למייק."), style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    task.action?.value?.let { desk.maintenanceChanges[it] }?.let { changes ->
+        DetailBlock(taskText("Memory changes", "שינויים בזיכרון")) {
+            if(changes.undone) Text(taskText("Undo was already applied. Later edits were kept.", "הביטול כבר הוחל. שינויים מאוחרים נשמרו."), color = BoardTeal)
+            changes.notes.take(12).forEach { change ->
+                val note = change.after ?: change.before
+                if(note != null) {
+                    Text(note.subject, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    change.before?.let { Text(taskText("Before: ${it.text}", "לפני: ${it.text}"), style = MaterialTheme.typography.bodySmall) }
+                    change.after?.let { Text(taskText("After: ${it.text}", "אחרי: ${it.text}"), style = MaterialTheme.typography.bodySmall, color = BoardTeal) }
+                    change.after?.retiredReason?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                }
+            }
+            if(changes.generation != null) Text(taskText("Learned rules were updated. Your own rules stay as you wrote them.", "הכללים הנלמדים עודכנו. הכללים שכתבת נשמרים."), style = MaterialTheme.typography.bodySmall)
+            Text(taskText("Undo reverts this run only. Newer edits and forgotten notes are preserved.", "הביטול מתייחס רק לריצה הזו. שינויים מאוחרים וזיכרונות שביקשת לשכוח מוגנים."), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    if(task.partialContext) DetailBlock(taskText("Context is incomplete", "חסר הקשר")) {
+        Text(taskText("Reading an app may take the screen and mark messages read. This opens a draft in the Manager chat for you to send.",
+            "פתיחת אפליקציה עשויה לקחת את המסך ולסמן הודעות כנקראו. הכפתור יפתח בקשה מוכנה בצ׳אט המנהל, לשליחה שלך."), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { actions.onTaskContext(task.id) }) { Text(taskText("Ask Mike to read the context", "לבקש ממייק לקרוא את ההקשר")) }
+    }
+    val roles = desk.members.filter { it.kind == MemberKind.ROLE }
+    if(roles.isNotEmpty() && task.category == TaskCategory.TASK) DetailBlock(taskText("Assigned to", "אחראי")) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TextButton(onClick = { actions.onTaskAssign(task.id, null) }) { Text(taskText("Manager", "המנהל") + if(task.assignee == null) " ✓" else "") }
+            roles.forEach { role -> TextButton(onClick = { actions.onTaskAssign(task.id, role.id) }) { Text(role.name + if(task.assignee == role.id) " ✓" else "") } }
+        }
+    }
+    val history = desk.events.filter { it.taskId == task.id }.sortedByDescending { it.revision }
+    if(history.isNotEmpty()) DetailBlock(taskText("Decisions and activity", "החלטות ופעילות")) {
+        history.take(12).forEach { event ->
+            val action = event.decision?.choice?.let { choice -> when(choice) {
+                "do" -> taskText("Mike was asked to do it", "מייק התבקש לבצע")
+                "mine" -> taskText("You took it", "לקחת לטיפולך")
+                "done" -> taskText("Marked done", "סומן כבוצע")
+                "dismiss" -> taskText("Dismissed", "נדחה")
+                else -> choice
+            } } ?: when(event.kind) { "created" -> taskText("Proposed", "הוצע"); "note" -> taskText("Instructions changed", "ההנחיות עודכנו"); "outcome" -> taskText("Execution update", "עדכון ביצוע"); else -> taskText("Updated", "עודכן") }
+            Text("${shortTime(event.at)} · $action" + event.note?.let { "\n$it" }.orEmpty(), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    task.progress?.takeIf { task.status.executing && task.result == null }?.let { DetailBlock(taskText("Now", "עכשיו")) { Text(it, style = MaterialTheme.typography.bodyMedium) } }
 }
 
 private fun statusLabel(task: MikeTask): String = when (task.status) {
@@ -849,6 +954,21 @@ private fun MemberPage(member: TeamMember, state: AgentUiState, actions: AgentUi
         val status = memberStatus(member, desk, busy)
         Text(status.first, style = MaterialTheme.typography.labelLarge, color = status.second)
     }
+    var editing by rememberSaveable(member.id) { mutableStateOf(false) }
+    var name by rememberSaveable(member.id) { mutableStateOf(member.name) }
+    var role by rememberSaveable(member.id) { mutableStateOf(member.role) }
+    TextButton(onClick = { editing = !editing }) { Text(taskText("Edit this member", "עריכת חבר הצוות")) }
+    if(editing) {
+        OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text(taskText("Name", "שם")) })
+        OutlinedTextField(role, { role = it }, Modifier.fillMaxWidth(), label = { Text(taskText("Role", "תפקיד")) })
+        Button(onClick = { actions.onTaskRenameMember(member.id, name, role); editing = false }) { Text(taskText("Save", "שמירה")) }
+        if(member.kind == MemberKind.ROLE) {
+            state.taskDesk.members.filter { it.kind == MemberKind.ROLE && it.id != member.id }.forEach { target ->
+                TextButton(onClick = { actions.onTaskMergeMember(member.id, target.id) }) { Text(taskText("Merge into ${target.name}", "איחוד עם ${target.name}")) }
+            }
+            TextButton(onClick = { actions.onTaskRemoveMember(member.id) }) { Text(taskText("Remove role · keep chats", "הסרת תפקיד · השיחות יישמרו"), color = MaterialTheme.colorScheme.error) }
+        }
+    }
     val journal = member.journal.lines().filter { it.isNotBlank() }.reversed()
     SectionLabel(taskText("What ${member.name} did", "הפעילות של ${member.name}"), journal.size, MaterialTheme.colorScheme.onSurfaceVariant)
     if (journal.isEmpty()) Text(taskText("Nothing yet.", "עדיין אין פעילות."), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -918,6 +1038,16 @@ private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory
     ModelChoiceRow(taskText("Nightly review and memory", "סקירה לילית וניהול הזיכרון"), settings.reviewEngine, settings.reviewModel, state.modelCatalog) { engine, id ->
         actions.onTaskSettings { it.copy(reviewModel = id, reviewEngine = engine, reviewEffort = null) }
     }
+    Text(taskText("Automatic Manager reviews use the discovery model, up to four times a day. Nightly work uses the review model.",
+        "סקירות המנהל משתמשות במודל החיפוש, עד ארבע פעמים ביום. עבודת הלילה משתמשת במודל הסקירה."), style = MaterialTheme.typography.bodySmall)
+    Text(taskText("Discovery pass limit per day", "מגבלת סבבי חיפוש ביום"), style = MaterialTheme.typography.labelLarge)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf(4, 12, 24, 48).forEach { cap -> TextButton(onClick = { actions.onTaskSettings { it.copy(dailyPassCap = cap) } }) {
+            Text("$cap" + if(settings.dailyPassCap == cap) " ✓" else "")
+        } }
+    }
+    Text(taskText("Unprocessed input is retained for up to 72 hours. This limit counts jobs, not a price guarantee.",
+        "מידע שלא עובד נשמר עד 72 שעות. המגבלה סופרת סבבים, ואינה מבטיחה מחיר כספי."), style = MaterialTheme.typography.bodySmall)
 
     if (state.taskDesk.sourceApps.isNotEmpty()) {
         SectionLabel(taskText("Observed apps", "אפליקציות שנאספו מהן התראות"), state.taskDesk.sourceApps.size, MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1021,7 +1151,8 @@ private fun MemoryPage(desk: TaskDeskState, actions: AgentUiActions) {
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     LinearProgressIndicator(progress = { pressure }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
         color = if (pressure > 0.85f) BoardAmber else BoardTeal, trackColor = MaterialTheme.colorScheme.surfaceVariant)
-    Text("${live.size} notes · ${(pressure * 100).toInt()}% of the memory budget · ${desk.notes.count { it.retiredAt != null }} in the trash",
+    Text(taskText("${live.size} notes · ${(pressure * 100).toInt()}% of the memory budget · ${desk.notes.count { it.retiredAt != null }} in the trash",
+        "${live.size} זיכרונות · ${(pressure * 100).toInt()}% מתקציב הזיכרון · ${desk.notes.count { it.retiredAt != null }} בפח"),
         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (live.isEmpty()) Text(taskText("No notes yet.", "עדיין אין זיכרונות."), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     live.groupBy { it.subject }.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (subject, notes) ->
@@ -1031,7 +1162,7 @@ private fun MemoryPage(desk: TaskDeskState, actions: AgentUiActions) {
             }
             Spacer(Modifier.width(10.dp))
             Text("$subject · ${notes.size}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            TextButton(onClick = { actions.onTaskForgetSubject(subject) }) { Text("Forget all", color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = { actions.onTaskForgetSubject(subject) }) { Text(taskText("Forget all", "לשכוח הכול"), color = MaterialTheme.colorScheme.error) }
         }
         notes.sortedByDescending { it.at }.forEach { NoteRow(it, actions) }
     }
@@ -1043,15 +1174,15 @@ private fun NoteRow(note: MemoryNote, actions: AgentUiActions) {
         Row(Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(note.text, style = MaterialTheme.typography.bodyMedium)
-                note.cue?.let { Text("If: $it", style = MaterialTheme.typography.labelMedium, color = BoardTeal) }
+                note.cue?.let { Text(taskText("If: $it", "אם: $it"), style = MaterialTheme.typography.labelMedium, color = BoardTeal) }
                 Text(listOfNotNull(note.kind, note.level.takeIf { it != "detail" }, note.sender, note.source, shortTime(note.at),
                     note.useCount.takeIf { it > 0 }?.let { "used $it×" }).joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = { actions.onTaskPinNote(note.id, !note.pinned) }) {
-                Icon(Icons.Outlined.PushPin, if (note.pinned) "Unpin" else "Pin", tint = if (note.pinned) BoardTeal else MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(Icons.Outlined.PushPin, if (note.pinned) taskText("Unpin", "ביטול נעיצה") else taskText("Pin", "נעיצה"), tint = if (note.pinned) BoardTeal else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            IconButton(onClick = { actions.onTaskForgetNote(note.id) }) { Icon(Icons.Outlined.DeleteOutline, "Forget this note") }
+            IconButton(onClick = { actions.onTaskForgetNote(note.id) }) { Icon(Icons.Outlined.DeleteOutline, taskText("Forget this note", "לשכוח את הזיכרון")) }
         }
     }
 }

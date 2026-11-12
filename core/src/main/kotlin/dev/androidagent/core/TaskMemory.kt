@@ -55,6 +55,7 @@ class MemoryBook(
         mutable.value = store.loadNotes()
         loaded = true
     }
+    suspend fun refresh() = lock.withLock { mutable.value = store.loadNotes() }
 
     val live: List<MemoryNote> get() = mutable.value.filter { it.retiredAt == null && it.supersededBy == null }
 
@@ -74,6 +75,7 @@ class MemoryBook(
         recorderSessionId: String? = null,
         recorderRole: String? = null,
         signalIds: List<String> = emptyList(),
+        sourceRefs: List<TaskSourceRef> = emptyList(),
     ): MemoryNote = lock.withLock {
         val cleanText = text.trim().take(MAX_TEXT)
         require(cleanText.length >= 3) { "A note needs a line of text." }
@@ -84,7 +86,8 @@ class MemoryBook(
             at ?: now(), recorderSessionId, recorderRole, signalIds.distinct().take(32).map { it.take(120) })
         live.firstOrNull { it.subject.equals(cleanSubject, true) && it.text.equals(cleanText, true) }?.let { existing ->
             val merged = existing.copy(linkedTaskIds = (existing.linkedTaskIds + linkedTaskIds).distinct(),
-                provenance = (origins(existing) + provenance).distinct().takeLast(MAX_PROVENANCE))
+                provenance = (origins(existing) + provenance).distinct().takeLast(MAX_PROVENANCE),
+                sourceRefs = (existing.sourceRefs + sourceRefs).distinct())
             if (merged != existing) save(listOf(merged))
             return@withLock merged
         }
@@ -95,6 +98,7 @@ class MemoryBook(
             source = source.trim().take(60).ifEmpty { "chat" }, sender = sender?.trim()?.take(80)?.takeIf { it.isNotEmpty() },
             at = at ?: now(), level = level, linkedTaskIds = linkedTaskIds.distinct(),
             provenance = listOf(provenance),
+            sourceRefs = sourceRefs.distinct(),
         )
         save(listOf(note))
         note
@@ -104,9 +108,10 @@ class MemoryBook(
      * Notes about [subject] or matching [query], best first. Each returned
      * note is marked used: that is what keeps it through upkeep.
      */
-    suspend fun recall(query: String?, subject: String? = null, limit: Int = 12, markUsed: Boolean = true): List<MemoryNote> = lock.withLock {
+    suspend fun recall(query: String?, subject: String? = null, limit: Int = 12, markUsed: Boolean = true,
+        allowed: (MemoryNote) -> Boolean = { true }): List<MemoryNote> = lock.withLock {
         val words = words(query.orEmpty())
-        val scored = live.mapNotNull { note ->
+        val scored = live.filter(allowed).mapNotNull { note ->
             val subjectHit = subject != null && note.subject.equals(subject.trim(), true)
             val haystack = words("${note.subject} ${note.text} ${note.cue.orEmpty()} ${note.sender.orEmpty()}")
             val overlap = words.count { it in haystack }
@@ -151,6 +156,7 @@ class MemoryBook(
             linkedTaskIds = originals.flatMap { it.linkedTaskIds }.distinct(),
             provenance = originals.flatMap(::origins).distinct().takeLast(MAX_PROVENANCE),
             pinned = originals.any { it.pinned },
+            sourceRefs = originals.flatMap { it.sourceRefs }.distinct(),
             useCount = originals.sumOf { it.useCount }, lastUsedAt = originals.mapNotNull { it.lastUsedAt }.maxOrNull(),
         )
         save(originals.map { it.copy(supersededBy = merged.id, retiredAt = clock, retiredReason = "compacted") } + merged)
@@ -179,16 +185,25 @@ class MemoryBook(
 
     /** The user's own delete: immediate, no trash. */
     suspend fun forget(ids: Collection<String>) = lock.withLock {
-        store.deleteNotes(ids)
-        mutable.value = mutable.value.filterNot { it.id in ids }
+        forgetLocked(ids)
+    }
+
+    private suspend fun forgetLocked(ids: Collection<String>): Int {
+        val forgotten = ids.toMutableSet()
+        do {
+            val before = forgotten.size
+            mutable.value.filter { it.id in forgotten || it.compactedFrom.any(forgotten::contains) || it.supersededBy in forgotten || it.sourceRefs.any { ref -> ref.noteId in forgotten } }
+                .forEach { forgotten += it.id; forgotten += it.compactedFrom; it.supersededBy?.let(forgotten::add) }
+        } while (forgotten.size != before)
+        store.forgetNotes(forgotten)
+        mutable.value = mutable.value.filterNot { it.id in forgotten }
+        return forgotten.size
     }
 
     /** "Forget everything about X": every note with that subject, now. */
     suspend fun forgetSubject(subject: String): Int = lock.withLock {
         val ids = mutable.value.filter { it.subject.equals(subject.trim(), true) }.map { it.id }
-        store.deleteNotes(ids)
-        mutable.value = mutable.value.filterNot { it.id in ids }
-        ids.size
+        forgetLocked(ids)
     }
 
     /** Empty the trash. Retired notes older than [TRASH_MS] are deleted for good. */

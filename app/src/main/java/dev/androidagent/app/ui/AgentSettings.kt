@@ -261,6 +261,7 @@ internal fun AgentSettingsSheet(state: AgentUiState, actions: AgentUiActions) {
 
 @Composable
 private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val rows = state.setupRows()
     val ready = SetupChecklist.readyForRuns(rows)
     fun row(item: SetupItem) = rows.first { it.item == item }
@@ -387,6 +388,17 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     }
 
     HubGroup("Advanced") {
+        if (dev.androidagent.app.BuildConfig.DEBUG && dev.androidagent.app.BuildConfig.DELTA_TRANSFER) {
+            SettingsHubRow(
+                icon = Icons.Outlined.Visibility,
+                title = "WhatsApp widget experiment",
+                summary = "Opt-in preview and background diagnostics",
+                onClick = {
+                    context.startActivity(android.content.Intent(context,
+                        dev.androidagent.app.widgetprobe.WidgetProbeActivity::class.java))
+                },
+            )
+        }
         val runtime = row(SetupItem.RUNTIME)
         SettingsHubRow(
             icon = SettingsRoute.RUNTIME.icon(),
@@ -1236,7 +1248,8 @@ private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActio
     windows.forEach { window -> UsageWindowRow(window) }
     Text(
         if (usage == null) "Token usage is not available yet." else
-            "${usage.total} tokens · ${usage.input} input · ${usage.output} output · ${usage.cachedInput} cached",
+            "${usage.total} tokens · ${usage.input} input · ${usage.output} output · ${usage.cachedInput} cached" +
+                (contextFill(usage)?.let { " · context ${it.label}" } ?: ""),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

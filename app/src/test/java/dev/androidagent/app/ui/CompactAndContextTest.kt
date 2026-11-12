@@ -21,6 +21,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.CompactResult
+import dev.androidagent.core.TokenUsage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -48,6 +49,15 @@ class CompactAndContextTest {
         |------|--------|--------|
         | mcp__mike__tap | mike | 96 |
     """.trimIndent()
+
+    @Test fun contextChipShowsTheSizeAndHowFullTheWindowIs() {
+        assertNull(contextFill(null))
+        assertNull(contextFill(TokenUsage(500, 400, 100)))
+        val fill = contextFill(TokenUsage(0, 0, 0, contextWindow = 1_000_000, context = 412_000))!!
+        assertEquals("412.0k · 41%", fill.label)
+        assertEquals("Context: 412.0k tokens of 1.0m, 41% full", fill.spoken)
+        assertEquals("7.0k", contextFill(TokenUsage(0, 0, 0, context = 7_000))!!.label)
+    }
 
     @Test fun contextAnswerReadsAsAGaugeWithItsParts() {
         val usage = parseContextUsage(answer)!!

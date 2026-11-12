@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <application>
         <!-- Read-only QA evidence, available only to the shell/system DUMP grant. -->
         <receiver android:name=".QaEvidenceReceiver" android:exported="true" android:permission="android.permission.DUMP" />
+        <activity android:name=".widgetprobe.WidgetProbeActivity" android:exported="false" />
+        <!-- A user-started, ten-minute fetch from a user-bound local widget. -->
+        <service android:name=".widgetprobe.WidgetProbeService" android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
