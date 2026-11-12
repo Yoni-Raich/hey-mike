@@ -1,5 +1,48 @@
 # Architecture
 
+## Missing critical information — 2026-11-12
+
+Problem seen on 1211: the Manager was asked "where am I?", read
+`refresh_location` (permission denied), requested the permission (denied), read
+again ("no fresh fix") and stopped at "unknown". The code offered no step after a
+failed source: `permission denied` only said "request, then retry", `no fresh
+fix` had no next step, and the Manager prompt never said to ask when the current
+request depends on an unknown field. Saving the owner's complaint as a `rule`
+changed nothing in that path.
+
+`core/SituationNeeds` now owns the order for one field the current request needs:
+use what is known (fresh fix, the user's live statement, a saved place, a loaded
+calendar), else try the allowed source once, else ask the user one focused
+question, and save the answer where it belongs. `tasks situation` gains:
+
+- `need field purpose` returns `known | observed | try_source | ask |
+  asked_recently | declined | unresolved` with the next step. Only an `ask` on an
+  interactive user turn is recorded. Background turns (not the user's own words,
+  or the Coordinator) get `unresolved`: never ask, alert or notify about gaps.
+  Unknown fields the request does not need are never resolved, so unknowns alone
+  cause no questions.
+- `refresh_location` returns a `next` from the phone's recent read outcomes: the
+  first denial requests the permission once; a second denial within a day does
+  not request again; any failed read leads to asking the user.
+- `correct` gives temporary fields a default expiry when the user gave none
+  (location 2 h, travel mode 6 h, departure/return 12 h, errands 24 h);
+  availability still needs an explicit `until`. Addresses are refused there.
+- `save_place` writes home/work from the user's words into the lasting
+  `preferences.json` (merge, all other keys kept, atomic, 64 KB bound; an
+  unparsable file is left untouched), closes the open question and refreshes the
+  situation. Saved places stay known between refresh ticks and never fill
+  `current_location`.
+- `decline` records the user's refusal: no repeat for a day (temporary) or 30
+  days (lasting places). An unanswered question is not repeated for the same
+  purpose within 10 minutes; a new purpose may ask again.
+
+The situation file keeps bounded `asks` (40, last 30 days on read) and
+`locationAttempts` (10, status and time only, last day on read). Forgetting
+collected data clears both. The Manager context carries the one shared policy
+text (`SituationNeeds.guidance`), and the task-board and user-preferences skills
+describe the same paths. Not added: background or continuous location, reverse
+geocoding, habit inference from one answer, or any outgoing message.
+
 ## Shared tool helpers in core — 2026-11-08
 
 Text the model sees from more than one backend or engine has one owner in

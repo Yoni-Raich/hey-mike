@@ -111,6 +111,12 @@ class TaskTools(
     private val correctSituation: ((String, String, Long?) -> SharedSituation)? = null,
     private val observeSituation: ((SituationObservation) -> SharedSituation)? = null,
     private val refreshLocation: (suspend () -> SituationLocation)? = null,
+    /** Records a missing-information question put to the user, so the next turn does not repeat it. */
+    private val recordSituationAsk: ((String, String) -> SharedSituation)? = null,
+    /** The user's own refusal to give a field. */
+    private val declineSituation: ((String, String) -> SharedSituation)? = null,
+    /** Saves home or work from the user's words to the lasting preferences file and refreshes the situation. */
+    private val savePlace: (suspend (String, String) -> SharedSituation)? = null,
     private val runtimeStatus: (() -> JsonObject)? = null,
     /** Alerts, conversation context and the owner profile. Null where the phone side is not wired. */
     private val proactive: dev.androidagent.core.proactive.ProactiveTools? = null,
@@ -131,6 +137,8 @@ class TaskTools(
     private fun claimSources(session: String, ids: List<String>, args: JsonObject): List<TaskSourceRef> =
         (sources(session, ids) + citedNotes(args)).distinct().also { require(it.size <= 64) { "Too many sources for one claim." } }
 
+    private fun interactive(role: TaskChatRole, fromUser: Boolean) = fromUser && role in setOf(TaskChatRole.ORDINARY, TaskChatRole.MANAGER)
+
     override suspend fun invoke(sessionId: String, arguments: JsonObject, fromUser: Boolean): ToolResult =
         kotlinx.coroutines.withContext(permit(sessionId) ?: kotlin.coroutines.EmptyCoroutineContext) { invokeChecked(sessionId, arguments, fromUser) }
 
@@ -150,10 +158,34 @@ class TaskTools(
                 val field = arguments.text("field")
                 when (arguments.text("operation") ?: if (field == null) "read" else "correct") {
                 "refresh_location" -> {
-                    require(fromUser && role in setOf(TaskChatRole.ORDINARY, TaskChatRole.MANAGER)) { "Location refresh needs an interactive user turn." }
+                    require(interactive(role, fromUser)) { "Location refresh needs an interactive user turn." }
+                    val earlier = situation?.invoke()?.locationAttempts.orEmpty()
                     val location = (refreshLocation ?: error("Location is not connected here."))()
                     put("location", Json.encodeToJsonElement(SituationLocation.serializer(), location))
-                    if (location.status == "permission denied") put("next", "Use apps_settings request_permissions with android.permission.ACCESS_COARSE_LOCATION; Android asks the user. Then retry refresh_location.")
+                    SituationNeeds.afterLocationRefresh(location, earlier, now())?.let { put("next", it) }
+                }
+                "need" -> {
+                    val wanted = field ?: error("Give the field the current request needs.")
+                    val purpose = arguments.text("purpose") ?: arguments.text("why") ?: error("Give purpose: why the current request needs it.")
+                    val live = interactive(role, fromUser)
+                    val resolution = SituationNeeds.resolve(wanted, purpose, situation?.invoke() ?: SharedSituation(), now(), live)
+                    if (live && resolution.asks) recordSituationAsk?.invoke(wanted, purpose)
+                    put("need", Json.encodeToJsonElement(SituationNeeds.Resolution.serializer(), resolution))
+                }
+                "decline" -> {
+                    require(interactive(role, fromUser)) { "Only the user's current words can decline a question." }
+                    val declined = (declineSituation ?: error("Situation questions are not connected here."))(
+                        field ?: error("Give the declined field."), arguments.text("purpose") ?: "declined")
+                    put("situation", Json.encodeToJsonElement(SharedSituation.serializer(), declined))
+                    put("saved", "The user's refusal is recorded; do not ask for this again for now.")
+                }
+                "save_place" -> {
+                    require(interactive(role, fromUser)) { "Only the user's current words can save a place." }
+                    val key = (field ?: error("Give field saved_place_home or saved_place_work.")).removePrefix("saved_place_")
+                    require(key in SavedPlaces.KEYS) { "A saved place is saved_place_home or saved_place_work." }
+                    val saved = (savePlace ?: error("Saved places are not connected here."))(key, arguments.text("value") ?: error("Give the place."))
+                    put("situation", Json.encodeToJsonElement(SharedSituation.serializer(), saved))
+                    put("saved", "Saved as the user's $key place. It is a lasting address, never the current location.")
                 }
                 "observe" -> {
                     require(role == TaskChatRole.MANAGER) { "Only the Manager may record a situation observation." }
@@ -176,9 +208,11 @@ class TaskTools(
                 }
                 "correct" -> {
                     require(field != null) { "Give the corrected field." }
+                    require(!field.startsWith("saved_place_")) { "A home or work address is lasting: use situation operation=save_place." }
                     require(fromUser && role in setOf(TaskChatRole.ORDINARY, TaskChatRole.MANAGER)) { "Only the user's current words can correct the situation." }
                     val value = arguments.text("value") ?: error("Give the corrected value.")
                     val until = arguments.text("until")?.let { TaskBoard.parseTime(it, zone()) ?: error("Give a valid expiry time.") }
+                        ?: SituationNeeds.defaultUntil(field, now())
                     val corrected = (correctSituation ?: error("Situation correction is not available."))(field, value, until)
                     put("situation", Json.encodeToJsonElement(SharedSituation.serializer(), corrected))
                 }
@@ -188,7 +222,7 @@ class TaskTools(
                     val state = TaskSituation.snapshot(board.tasks.value, now(), zone(), board.settings.value.readCalendar, ::visible)
                     put("situation", Json.encodeToJsonElement(SituationSnapshot.serializer(), state))
                 }
-                else -> error("Situation operation is read, correct, observe or refresh_location.")
+                else -> error("Situation operation is read, need, correct, save_place, decline, observe or refresh_location.")
                 }
                 put("note", "Unknown or stale fields are not facts or permission.")
             }
@@ -681,7 +715,7 @@ class TaskTools(
                         put("type", "string")
                         put("enum", buildJsonArray { listOf("list", "get", "status", "situation", "propose", "update", "observe", "brief", "followup", "decide", "remember", "recall", "merge", "retire", "team", "rule", "playbook", "finish", "coach_review", "alert", "context", "profile", "manager_chat").forEach { add(it) } })
                     })
-                    put("operation", str("profile: read/set/learn. playbook: list/read/write. situation: read/correct/observe/refresh_location. Location refresh is one read on an interactive user turn, not background tracking."))
+                    put("operation", str("profile: read/set/learn. playbook: list/read/write. situation: read/need/correct/save_place/decline/observe/refresh_location. need resolves one field the current request depends on and returns the next step (use, try a source, or ask once). Location refresh is one read on an interactive user turn, not background tracking."))
                     put("confidence", str("situation observe: reported or inferred. Include source time in at, expiry in until and evidence; inference never becomes a verified fact."))
                     put("path", str("playbook: relative Markdown path, e.g. sources/whatsapp.md. Never an absolute path."))
                     put("content", str("playbook write: full new file content. Empty content removes a learned subfile. Keep evidence and date; user.md cannot be changed here."))
@@ -689,8 +723,9 @@ class TaskTools(
                     put("id", str("A card id, or the event id for coach_review."))
                     put("disposition", str("coach_review: applied, no_change, defer or retry."))
                     put("reviewEvidence", str("coach_review: short evidence for this event."))
-                    put("field", str("situation correct/observe: current_location, travel_mode, departure_or_return, errands_on_route or availability. Only correct can record an explicit owner statement; observe keeps an attributed conclusion separate."))
-                    put("value", str("situation correct/observe: short value; requires a future until. observe also requires at, confidence and evidence. Cite a related card with id and memory with noteIds."))
+                    put("field", str("situation correct/observe: current_location, travel_mode, departure_or_return, errands_on_route or availability. Only correct can record an explicit owner statement; observe keeps an attributed conclusion separate. need/decline also take saved_place_home, saved_place_work, eta, route or calendar_plan; save_place takes saved_place_home or saved_place_work."))
+                    put("purpose", str("situation need/decline: why the user's current request needs this field, in a few words."))
+                    put("value", str("situation correct/observe/save_place: short value; correct uses a default expiry for temporary fields when until is omitted (availability needs until). observe also requires at, confidence and evidence. Cite a related card with id and memory with noteIds."))
                     put("offset", str("get: event-history offset from nextOffset. manager_chat: messages to skip back from the newest, from nextOffset."))
                     put("ids", strArray("Card ids (decide) or note ids (merge, retire, remember links cards)."))
                     put("title", str("propose: the work in a few words, in the user's language."))

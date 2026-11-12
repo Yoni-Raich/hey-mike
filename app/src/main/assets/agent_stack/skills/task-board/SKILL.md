@@ -32,7 +32,10 @@ tasks(mode="status")                                -> live pause reason, model 
 tasks(mode="situation")                             -> current facts, attributed observations and explicit unknowns
 tasks(mode="situation", operation="refresh_location") -> one device fix on an interactive user turn; no tracking
 tasks(mode="situation", operation="observe", field, value, confidence, at, until, evidence=[...])
-tasks(mode="situation", operation="correct", field, value, until) -> only the user's current statement
+tasks(mode="situation", operation="correct", field, value, until?) -> only the user's current statement; temporary fields get a default expiry
+tasks(mode="situation", operation="need", field, purpose) -> the next step for one field the current request needs
+tasks(mode="situation", operation="save_place", field=saved_place_home|saved_place_work, value) -> the user's own lasting address
+tasks(mode="situation", operation="decline", field, purpose?) -> the user would not say; do not ask again for now
 ```
 
 ## When to propose
@@ -99,10 +102,20 @@ and the team and talk with the user about it.
   A direct reminder request can use `followup` on an undecided task without requiring
   the user to select "mine". This schedules only a check, not the task itself.
 - Read `situation` for current state. `refresh_location` is an explicit, single read
-  through Android. If permission is missing, `apps_settings request_permissions` lets
-  Android ask for ACCESS_COARSE_LOCATION; retry only after the grant. Never use old
-  chat text or a saved address as a current fix. Expired/unavailable location and ETA
-  remain unknown. Do not request background location.
+  through Android. Follow its `next`: if permission is missing, `apps_settings
+  request_permissions` lets Android ask for ACCESS_COARSE_LOCATION once; if it is still
+  missing or there is no fix, ask the user. Never use old chat text or a saved address
+  as a current fix. Do not request background location.
+- Missing information: when the user's current request or a decision depends on a field
+  that is unknown, call `situation operation=need field purpose` and do what it says:
+  use the known value, try the named source once, or ask one short, focused question
+  (`ask_user` where available, otherwise in your reply). A failed source leads to the
+  question, not to "I don't know". Do not ask about unknowns the request does not need,
+  and a background turn never asks or alerts about missing information.
+- Save the answer where it belongs, at once: where the user is now, travel mode,
+  departure and errands with `correct` (temporary, expires); home or work with
+  `save_place` (lasting); other lasting facts with `remember`. If they will not say,
+  `decline`. One answer is not a habit, and a saved address is never the current location.
 - Save temporary conclusions with `situation operation=observe`, a supported field
   (current_location, travel_mode, departure_or_return, errands_on_route, availability),
   source `at`, future `until`, evidence and `confidence=reported` or `inferred`.

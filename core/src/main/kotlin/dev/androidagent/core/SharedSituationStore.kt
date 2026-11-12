@@ -38,6 +38,33 @@ object SavedPlaces {
             }
         }
     } catch (_: Exception) { Result(reason = "preferences could not be read or parsed") }
+
+    const val SOURCE = "preferences.json"
+    val KEYS = setOf("home", "work")
+
+    /**
+     * Saves one named place from the user's own words. Every other key in the file is kept, the write is
+     * atomic, and a file that cannot be parsed is left untouched rather than replaced.
+     */
+    fun write(file: File, key: String, value: String) {
+        require(key in KEYS) { "A saved place is home or work." }
+        val place = value.trim()
+        require(place.isNotEmpty() && place.length <= 300) { "Give a short place, up to 300 characters." }
+        val root = if (file.isFile && file.length() > 0) {
+            require(file.length() <= 65_536) { "The preferences file is too large to update." }
+            Json.parseToJsonElement(file.readText(Charsets.UTF_8)) as? kotlinx.serialization.json.JsonObject
+                ?: error("The preferences file is not a JSON object; it was left unchanged.")
+        } else kotlinx.serialization.json.JsonObject(emptyMap())
+        val addresses = (root["addresses"] as? kotlinx.serialization.json.JsonObject).orEmpty() + (key to kotlinx.serialization.json.JsonPrimitive(place))
+        val text = Json { prettyPrint = true }.encodeToString(kotlinx.serialization.json.JsonObject.serializer(),
+            kotlinx.serialization.json.JsonObject(root + ("addresses" to kotlinx.serialization.json.JsonObject(addresses))))
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        require(bytes.size <= 65_536) { "The preferences file would become too large." }
+        file.parentFile?.mkdirs()
+        val temp = File(file.parentFile, file.name + ".tmp")
+        temp.outputStream().use { out -> out.write(bytes); out.fd.sync() }
+        AtomicFiles.replace(temp, file)
+    }
 }
 
 /** Local, versioned claims. A claim is evidence, never permission to act. */
@@ -76,6 +103,14 @@ data class SituationCalendar(val status: String, val observedAt: Long, val expir
     val windowStart: Long, val windowEnd: Long, val limit: Int, val profile: String? = null,
     val events: List<SituationCalendarEvent> = emptyList())
 
+/** One missing-information question the agent put to the user, or the user's refusal to answer it. */
+@Serializable
+data class SituationAsk(val field: String, val purpose: String, val at: Long, val status: String)
+
+/** Outcome of one interactive location read, without coordinates. Used to stop repeated permission prompts. */
+@Serializable
+data class LocationAttempt(val status: String, val at: Long)
+
 @Serializable
 data class AttentionDecision(val action: String, val reason: String, val sourceIds: List<String>, val asOf: Long, val nextCheck: Long? = null)
 
@@ -97,6 +132,8 @@ data class SharedSituation(
     val conflicts: List<String> = emptyList(),
     val calendar: SituationCalendar? = null,
     val attention: List<AttentionDecision> = emptyList(),
+    val asks: List<SituationAsk> = emptyList(),
+    val locationAttempts: List<LocationAttempt> = emptyList(),
 )
 
 /** One owner serializes all writes. A failed write leaves the prior snapshot intact. */
@@ -114,7 +151,7 @@ class SharedSituationStore(private val file: File) {
         allowed: (MikeTask) -> Boolean): SharedSituation {
         val projected = TaskSituation.snapshot(tasks, now, zone, calendarEnabled, allowed)
         val kept = state.claims.filter { it.source == "user" }.takeLast(40) + places.places.map { (name, value) ->
-            SituationClaim("saved_place_$name", value, "preferences.json", now, now + 120_000, "user_saved")
+            SituationClaim("saved_place_$name", value, SavedPlaces.SOURCE, now, now + 120_000, "user_saved")
         }
         val next = state.copy(revision = state.revision + 1, asOf = now, lastRefreshAt = now, timezone = zone.id,
             localTime = Instant.ofEpochMilli(now).atZone(zone).toString(), claims = kept,
@@ -139,8 +176,31 @@ class SharedSituationStore(private val file: File) {
         require(field != "availability" || value.trim() in setOf("available", "quiet")) { "Availability must be available or quiet." }
         require(expiresAt != null && expiresAt > now && expiresAt <= now + 7 * 86_400_000L) { "Give an expiry within seven days." }
         val claim = SituationClaim(field, value.trim(), "user", now, expiresAt, "user_supplied")
-        return save(state.copy(revision = state.revision + 1, claims = (state.claims.filterNot { it.field == field && it.source == "user" } + claim).takeLast(40)))
+        return save(state.copy(revision = state.revision + 1, claims = (state.claims.filterNot { it.field == field && it.source == "user" } + claim).takeLast(40),
+            asks = answeredAsks(field, now)))
     }
+
+    /** Records that the agent asked the user for [field]; an answer or refusal replaces it. */
+    @Synchronized
+    fun recordAsk(field: String, purpose: String, now: Long): SharedSituation = ask(field, purpose, now, "asked")
+
+    /** The user's own refusal to give [field]. It keeps the agent from asking again for a while. */
+    @Synchronized
+    fun decline(field: String, purpose: String, now: Long): SharedSituation = ask(field, purpose, now, "declined")
+
+    /** A lasting answer saved elsewhere (for example a saved place) closes the open question. */
+    @Synchronized
+    fun answered(field: String, now: Long): SharedSituation = save(state.copy(revision = state.revision + 1, asks = answeredAsks(field, now)))
+
+    private fun ask(field: String, purpose: String, now: Long, status: String): SharedSituation {
+        require(field in SituationNeeds.FIELDS) { "Unsupported situation field." }
+        val why = purpose.trim().take(160).ifEmpty { "unspecified" }
+        val kept = state.asks.filterNot { it.field == field }
+        return save(state.copy(revision = state.revision + 1, asks = (kept + SituationAsk(field, why, now, status)).takeLast(40)))
+    }
+
+    private fun answeredAsks(field: String, now: Long): List<SituationAsk> =
+        state.asks.map { if (it.field == field && it.status != "answered") it.copy(status = "answered", at = now) else it }
 
     @Synchronized
     fun observe(observation: SituationObservation, now: Long): SharedSituation {
@@ -158,10 +218,14 @@ class SharedSituationStore(private val file: File) {
 
     @Synchronized
     fun recordLocation(location: SituationLocation): SharedSituation =
-        save(state.copy(revision = state.revision + 1, location = location))
+        save(state.copy(revision = state.revision + 1, location = location,
+            locationAttempts = (state.locationAttempts + LocationAttempt(location.status.take(60), location.observedAt)).takeLast(10),
+            asks = if (location.status == "fresh") answeredAsks("current_location", location.observedAt) else state.asks))
 
+    /** Collected data about the user goes; the user's own corrections stay. */
     @Synchronized
-    fun forgetObserved() { save(state.copy(revision = state.revision + 1, observations = emptyList(), location = null)) }
+    fun forgetObserved() { save(state.copy(revision = state.revision + 1, observations = emptyList(), location = null,
+        asks = emptyList(), locationAttempts = emptyList())) }
 
     @Synchronized
     fun recordDecision(decision: AttentionDecision) {
@@ -178,7 +242,8 @@ class SharedSituationStore(private val file: File) {
     fun snapshot(now: Long, zone: ZoneId, allowedTaskIds: Set<String>, calendarAllowed: Boolean = true,
         calendarProfile: String? = null, locationAllowed: Boolean = false, locationBootCount: Int? = null, elapsedNowMs: Long? = null,
         allowedSource: (TaskSourceRef) -> Boolean = { true }): SharedSituation {
-        val live = state.claims.filter { it.observedAt <= now && (it.expiresAt == null || it.expiresAt > now) }
+        // Saved places mirror the lasting preferences file on every refresh; a late tick does not make them unknown.
+        val live = state.claims.filter { it.observedAt <= now && (it.expiresAt == null || it.expiresAt > now || it.source == SavedPlaces.SOURCE) }
         val stale = state.claims.filterNot { it in live }
         val conflicts = live.groupBy { it.field }.filterValues { claims -> claims.map { it.value }.distinct().size > 1 }.keys.sorted()
         val calendar = state.calendar?.takeIf { calendarAllowed && (calendarProfile == null || it.profile == calendarProfile) &&
@@ -197,6 +262,8 @@ class SharedSituationStore(private val file: File) {
                 listOf(if (location == null) "location unknown; an interactive refresh_location can request one fix" else "fresh device location; travel and ETA remain unknown"),
             claims = live + stale.map { it.copy(confidence = "stale") },
             commitments = state.commitments.filter { it.taskId in allowedTaskIds && (it.expiresAt == null || it.expiresAt > now) },
+            asks = state.asks.filter { it.at <= now && now - it.at < SituationNeeds.ASK_HISTORY_MS },
+            locationAttempts = state.locationAttempts.filter { it.at <= now && now - it.at < SituationNeeds.DAY_MS },
             unknown = state.unknown.filterNot { field -> (field == "current_location" && location != null) ||
                 (field == "calendar_plan" && calendar?.status == "complete") ||
                 (live.any { it.field == field } && field !in conflicts) }, conflicts = conflicts)

@@ -36,4 +36,5 @@ Add keys under these sections as needed; keep the file valid JSON.
 1. **Check first.** When a task leaves the app or place open ("message dad", "navigate home", "play some music"), read the file and use what it says without asking. With `quick-actions`, this picks the intent: `waze.navigate` when maps is Waze, `sms.send` when messaging is SMS.
 2. **Ask only when it is missing,** or when the saved value is ambiguous for this task.
 3. **Save lasting preferences.** When the user states one ("I always use Waze", "home is Herzl 1"), update the file right away and tell them it is saved. Do not save one-off choices.
+   For home or work, a chat with the `tasks` tool can use `tasks(mode="situation", operation="save_place", field="saved_place_home", value=...)`: it writes this same file, keeps every other key, and updates Mike's shared situation at once. A saved address is never where the user is now.
 4. **Never store secrets** — passwords, codes, card or ID numbers — even if asked.

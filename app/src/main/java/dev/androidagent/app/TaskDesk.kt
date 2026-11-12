@@ -289,6 +289,13 @@ class TaskDesk(
         }, observeSituation = { observation -> situationStore.observe(observation, now()); situationSnapshot() },
         refreshLocation = {
             dev.androidagent.devicetools.AndroidCapabilityPlatform(context).querySituationLocation().also { situationStore.recordLocation(it) }
+        }, recordSituationAsk = { field, purpose -> situationStore.recordAsk(field, purpose, now()); situationSnapshot() },
+        declineSituation = { field, purpose -> situationStore.decline(field, purpose, now()); situationSnapshot() },
+        savePlace = { key, value ->
+            withIo { dev.androidagent.core.SavedPlaces.write(dev.androidagent.workspace.WorkspaceSeeder.preferencesFile(home), key, value) }
+            situationStore.answered("saved_place_$key", now())
+            refreshSituation()
+            situationSnapshot()
         }, runtimeStatus = { buildJsonObject {
             val settings = board.settings.value
             val today = Instant.ofEpochMilli(now()).atZone(zone()).toLocalDate().toString()

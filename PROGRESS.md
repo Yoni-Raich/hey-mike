@@ -1,5 +1,29 @@
 # Progress
 
+### Missing critical information: ask instead of stopping at "unknown" — 2026-11-12
+
+Branch `fix/missing-critical-info-20261112` from `feat/manager-20261112` (1211),
+worktree `.claude/worktrees/missing-info-20261112`. Root cause and design are in
+`docs/ARCHITECTURE.md` ("Missing critical information"): after a failed location
+read the tool gave no next step, so the Manager stopped at "unknown". New
+`core/SituationNeeds` plus `tasks situation` operations `need`, `save_place`,
+`decline`; `refresh_location` now returns a next step that ends in a question;
+`correct` has default expiries for temporary fields; asks and location attempts
+are kept in the situation file and cleared by forget.
+
+Evidence (Windows, `--no-daemon`): `:core:test :app:assembleDevDebug
+:app:lintDevDebug` BUILD SUCCESSFUL; `:core:test` 1,106 cases, 0 failures, 0
+errors, 0 skips (11 new in `MissingSituationInfoTest`); lint 0 errors, 22
+warnings, 4 information. After a final `AtomicFiles` cleanup the situation,
+Manager-evidence, attention and follow-through suites (51 cases) were rerun:
+all pass. Not run: other modules' tests and the full release gate.
+
+Untested on a phone: no APK from this branch was installed. Unverified: that the
+model calls `need` and asks on the real Manager chat, the voice path (policy
+says to ask in the reply), `save_place` against the phone's real
+`preferences.json`, and how Android's permission dialog behaves after repeated
+denials. The `TaskDesk` wiring is covered by compile and lint only.
+
 ### One Manager branch: feat/manager-20261112 (1211) — 2026-11-12
 
 All Manager work now lives on `feat/manager-20261112`: `refactor/manager-core`
