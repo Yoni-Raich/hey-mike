@@ -44,6 +44,18 @@ import org.junit.Test
 import java.io.File
 
 class CodexEngineTest {
+    @Test fun backgroundProfileKeepsNativeWritesAndExecutionClosed() {
+        val profile = EngineProfile("background", sandbox = "read-only", approvalPolicy = "never", readOnly = true)
+        val start = CodexEngine.startSessionParams("/background", null, emptyList(), profile)
+        assertEquals("read-only", start["sandbox"]?.jsonPrimitive?.content)
+        assertEquals("never", start["approvalPolicy"]?.jsonPrimitive?.content)
+        val config = start.getValue("config").jsonObject
+        for (feature in listOf("shell_tool", "unified_exec", "js_repl", "multi_agent", "multi_agent_v2", "apps", "plugins", "image_generation")) {
+            assertEquals("false", config["features.$feature"]?.jsonPrimitive?.content)
+        }
+        assertEquals("disabled", config["web_search"]?.jsonPrimitive?.content)
+        assertEquals(config, CodexEngine.resumeSessionParams("/background", "t", null, emptyList(), profile)["config"])
+    }
     @Test fun tokenUsageAndMultipleLimitWindowsAreParsedWithoutInventingMissingQuota() {
         val usage = CodexEngine.parseTokenUsage(Json.parseToJsonElement("""{"total":{"totalTokens":180,"inputTokens":120,"outputTokens":60,"cachedInputTokens":40},"modelContextWindow":200000}""").jsonObject)!!
         assertEquals(180L, usage.total)
@@ -500,15 +512,18 @@ class CodexEngineTest {
 
     @Test fun aComputersThreadCarriesItsOwnPathAccessAndInstructions() {
         // A Windows path is not a File on the phone: it must reach Codex as typed.
-        val profile = EngineProfile("computer rules", sandbox = "workspace-write", approvalPolicy = "on-request", inlineImages = true)
-        val start = CodexEngine.startSessionParams("C:\\Users\\Yoni Raich\\src\\app", null, emptyList(), profile)
-        assertEquals("C:\\Users\\Yoni Raich\\src\\app", start["cwd"]?.jsonPrimitive?.content)
-        assertEquals("workspace-write", start["sandbox"]?.jsonPrimitive?.content)
-        assertEquals("on-request", start["approvalPolicy"]?.jsonPrimitive?.content)
-        assertEquals("computer rules", start["developerInstructions"]?.jsonPrimitive?.content)
-        val resume = CodexEngine.resumeSessionParams("D:\\work", "t1", null, null, profile)
-        assertEquals("D:\\work", resume["cwd"]?.jsonPrimitive?.content)
-        assertEquals("on-request", resume["approvalPolicy"]?.jsonPrimitive?.content)
+        for (sandbox in listOf("workspace-write", "danger-full-access")) {
+            val profile = EngineProfile("computer rules", sandbox = sandbox, approvalPolicy = "on-request", inlineImages = true)
+            val start = CodexEngine.startSessionParams("C:\\Users\\Yoni Raich\\src\\app", null, emptyList(), profile)
+            assertEquals("C:\\Users\\Yoni Raich\\src\\app", start["cwd"]?.jsonPrimitive?.content)
+            assertEquals(sandbox, start["sandbox"]?.jsonPrimitive?.content)
+            assertEquals("on-request", start["approvalPolicy"]?.jsonPrimitive?.content)
+            assertEquals("computer rules", start["developerInstructions"]?.jsonPrimitive?.content)
+            val resume = CodexEngine.resumeSessionParams("D:\\work", "t1", null, null, profile)
+            assertEquals("D:\\work", resume["cwd"]?.jsonPrimitive?.content)
+            assertEquals(sandbox, resume["sandbox"]?.jsonPrimitive?.content)
+            assertEquals("on-request", resume["approvalPolicy"]?.jsonPrimitive?.content)
+        }
     }
 
     @Test fun aPictureForAnotherMachineTravelsInsideTheRequest() {

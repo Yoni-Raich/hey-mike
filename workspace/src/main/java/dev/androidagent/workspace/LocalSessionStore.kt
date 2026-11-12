@@ -48,14 +48,25 @@ class LocalSessionStore(context: Context) : SessionStore {
     init { db.execSQL("UPDATE messages SET state='interrupted' WHERE state='streaming'") }
 
     override suspend fun createSession(engine: EngineKind): ChatSession = mutate { create(engine) }
+    override suspend fun createRetainedSession(engine: EngineKind, title: String, context: String): ChatSession = mutate {
+        create(engine, title = title, initialContext = context)
+    }
     override suspend fun createChildSession(parentSessionId: String, engine: EngineKind, title: String): ChatSession = mutate {
         check(loadSessions().any { it.id == parentSessionId }) { "Parent chat no longer exists." }
         create(engine, parentSessionId, title)
     }
-    private fun create(engine: EngineKind, parent: String? = null, title: String = "New chat"): ChatSession {
+    private fun create(engine: EngineKind, parent: String? = null, title: String = "New chat", initialContext: String? = null): ChatSession {
         val now = System.currentTimeMillis()
-        val session = ChatSession(UUID.randomUUID().toString(), title, now, now, hasMessages = false, engine = engine, titlePending = parent == null, parentSessionId = parent)
-        db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now); put("engine", engine.name); put("title_pending", if (session.titlePending) 1 else 0); put("parent_session", parent) })
+        val session = ChatSession(UUID.randomUUID().toString(), title, now, now, hasMessages = initialContext != null, engine = engine, titlePending = parent == null && initialContext == null, parentSessionId = parent)
+        db.beginTransaction()
+        try {
+            db.insertOrThrow("sessions", null, ContentValues().apply { put("id", session.id); put("title", session.title); put("created", now); put("updated", now); put("engine", engine.name); put("title_pending", if (session.titlePending) 1 else 0); put("parent_session", parent) })
+            if (initialContext != null) db.insertOrThrow("messages", null, ContentValues().apply {
+                put("id", UUID.randomUUID().toString()); put("session", session.id); put("role", "system"); put("text", initialContext)
+                put("created", now); put("state", "complete"); put("attachments", "[]")
+            })
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
         workspace(session.id).mkdirs()
         refresh()
         return session
@@ -112,6 +123,7 @@ class LocalSessionStore(context: Context) : SessionStore {
         Unit
     }
     override suspend fun setThread(sessionId: String, threadId: String) = mutate { db.execSQL("UPDATE sessions SET thread=? WHERE id=?", arrayOf(threadId, sessionId)); refresh() }
+    override suspend fun clearThread(sessionId: String) = mutate { db.execSQL("UPDATE sessions SET thread=NULL, catch_up=NULL WHERE id=?", arrayOf(sessionId)); refresh() }
     override suspend fun setEngine(sessionId: String, engine: EngineKind) = mutate {
         val session = loadSessions().firstOrNull { it.id == sessionId } ?: return@mutate
         val next = EngineSwitch.switch(session, engine, System.currentTimeMillis())

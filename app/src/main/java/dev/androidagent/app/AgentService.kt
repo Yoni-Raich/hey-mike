@@ -58,9 +58,11 @@ class AgentService : Service() {
         return START_NOT_STICKY
     }
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onTaskRemoved(rootIntent: Intent?) { stopAll(); stopSelf() }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!graph.taskDesk.state.value.settings.discoveryOn) { stopAll(pauseDiscovery = false); stopSelf() }
+    }
     override fun onDestroy() {
-        stopAll()
+        stopAll(pauseDiscovery = false)
         graph.adb.stopAutoReconnect()
         graph.scope.launch {
             runCatching { graph.browserHost.closeAll() }
@@ -73,7 +75,8 @@ class AgentService : Service() {
         keepAwake.release()
         super.onDestroy()
     }
-    private fun stopAll() {
+    private fun stopAll(pauseDiscovery: Boolean = true) {
+        if (pauseDiscovery) graph.taskDesk.pauseBackground()
         graph.queue.pause()
         graph.coordinator.endVoice()
         graph.coordinator.stop()

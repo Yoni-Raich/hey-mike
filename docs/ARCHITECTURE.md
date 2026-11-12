@@ -1,5 +1,79 @@
 # Architecture
 
+## Task board, Manager and background team — 2026-10-25
+
+`core/TaskBoard*` owns proposals, user decisions, execution receipts and recovery.
+`TaskTools` is a chat-local tool, like questions and child chats; `device-tools`
+remains the sole device gateway. `workspace/LocalTaskBoardStore` keeps cards,
+memory, team, settings and pending signals in a separate private SQLite file.
+A stored status never dispatches work. A user tap, or the user's own current
+input in an owning chat, calls the decision path. It reserves the attempt key
+before dispatching through `SessionAgents`. Unknown outcomes retain that key
+and cannot be retried as new work. A late receipt after Stop is cancelled.
+
+`app/TaskDesk` joins the board to normal chats. The Manager has a pinned entry,
+an eye built from the dot orb, and the team pages. Scout, Coach and Librarian
+are inspectable chats; each background pass gets a fresh engine context.
+Task execution uses normal child chats, with the existing Stop and approval
+paths. Up to three extra named roles can own task kinds. Backstage chats and
+the Manager's descendants are reached from the board rather than the normal
+chat list. “I'll do it” stays on the board until the user marks it done.
+
+Team chats are created with their title and initial context in one storage
+transaction. Empty-draft cleanup skips them. On upgrade, missing built-in
+chats are repaired and stale queued passes for missing chats are cancelled.
+
+Collection is opt-in. The notification listener checks the package before
+extracting message text, splits MessagingStyle messages, and filters codes
+and payment confirmations before storage. Private messages and groups can
+be excluded. On listener reconnect, active notifications are replayed only to
+the board, never to automation actions. Text-free bounded receipts dedupe
+reposted messages even after their raw text has been deleted. Quiet chats,
+a one-time recent-chat backfill and calendar changes also produce signals.
+This does not read WhatsApp's database, backup or screen. Notification access
+does not supply all mail or WhatsApp history.
+
+`DiscoverySchedule` batches input with quiet periods and a maximum wait;
+passes are at least twenty minutes apart and have a daily cap. The foreground
+service supports user-enabled collection. A persisted fifteen-minute native
+JobScheduler job also wakes the app after process loss; Android can defer it
+in Doze or low battery. A system job has an eight-minute work window and
+stops only backstage turns on expiry. Explicit Stop pauses discovery and
+removes its scheduled job. The chosen engine's own unexpired quota reading
+is used, not another engine or account's quota.
+
+Background device-tool names are filtered at session open and every operation
+is checked again before dispatch. Claude runs with an empty native tool set,
+strict app MCP configuration, no user settings and no session persistence.
+Codex gets a read-only sandbox, never approvals, disabled shell/JS/agents/apps/
+plugins/image generation/web search, and an ephemeral thread. Native approval
+requests from a backstage run are declined. Unsupported engines fail closed.
+These are source and protocol controls; native sandbox behavior still needs
+physical runtime validation. The app and its engines share a Linux UID, so
+this is not a security boundary against a normal fully privileged chat.
+
+The Scout must call `tasks(mode="finish")` with its exact batch after saving
+all useful cards and memory. Raw signals are removed only after that receipt
+and a successful completed run. Interrupted or failed passes keep their batch
+within the bounded retention limit. Backstage input is not copied into the
+app trace, and native background transcripts are ephemeral. Saved cards,
+memory, tool results and short team journals remain inspectable.
+
+Memory has no fixed expiry. Compaction merges less-used old details into
+summaries/profiles, preserves provenance, and refuses pinned notes or notes
+linked to open cards. Source signal links join memory to cards automatically.
+Retired notes have a seven-day undo window. A user-owned `mike-playbook` skill
+has bounded Markdown files and separate `user.md` rules. Coach and Librarian
+can write learned files only through the bounded tool endpoint, never
+`user.md`; learned text cannot change sources, permissions or execution gates.
+Nightly review and memory upkeep keep snapshots and offer report cards with
+undo. Their model and engine are selected in Sources.
+The trusted app home is resolved once before playbook path checks: Android's
+`/data/data` and `/data/user/0` aliases are valid roots. Links inside the
+playbook and paths outside it remain blocked.
+
+See [task-board validation](testing/task-board-20261025.md).
+
 ## Deterministic UI timeout regression — 2026-10-23
 
 The ADB UI observation timeout regression uses a virtual coroutine scheduler
