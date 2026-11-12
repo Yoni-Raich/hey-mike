@@ -345,6 +345,14 @@ private fun BoardPage(state: AgentUiState, actions: AgentUiActions, open: (Strin
 @Composable
 private fun DiscoveryStatus(desk: TaskDeskState) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val briefingWait = when(desk.briefingWait) {
+        "cap" -> taskText("Manager briefings reached today's limit", "תדריכי המנהל הגיעו למכסה היומית")
+        "quota" -> taskText("Manager is waiting for model quota", "המנהל ממתין לחידוש מכסת המודל")
+        "interval" -> taskText("A follow-up is waiting for the next Manager review", "מעקב ממתין לסקירת המנהל הבאה")
+        "pending" -> taskText("Manager has a briefing to prepare", "המנהל צריך להכין תדריך")
+        else -> null
+    }
+    briefingWait?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = BoardAmber) }
     val status = when(desk.waitReason) {
         "running" -> taskText("The team is processing new input", "הצוות מעבד מידע חדש")
         "quota" -> taskText("Waiting for model usage to recover", "ממתין לחידוש מכסת השימוש במודל")
@@ -773,6 +781,16 @@ internal fun TaskDetail(task: MikeTask, desk: TaskDeskState, actions: AgentUiAct
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     task.result?.let { DetailBlock(taskText("Result", "תוצאה")) { ResultBlock(it, expanded = true) } }
+    task.commitment?.let { follow -> DetailBlock(taskText("Follow-up", "מעקב")) {
+        Text(taskText("Owner: ${if(follow.owner == "user") "you" else "Mike"} · Next check: ${shortTime(follow.nextCheckAt)}",
+            "באחריות ${if(follow.owner == "user") "שלך" else "מייק"} · בדיקה חוזרת: ${shortTime(follow.nextCheckAt)}"), style = MaterialTheme.typography.bodyMedium)
+        follow.deadlineAt?.let { Text(taskText("Deadline: ${shortTime(it)}", "מועד אחרון: ${shortTime(it)}")) }
+        follow.completionEvidence?.let { TaskContent(taskText("Looks complete—please confirm: $it", "נראה שהושלם — לאישורך: $it"), MaterialTheme.typography.bodyMedium) }
+        Text(taskText("Ask the Manager to change the follow-up time. A check never starts work.",
+            "אפשר לבקש מהמנהל לשנות את מועד הבדיקה. מעקב אינו מפעיל ביצוע."), style = MaterialTheme.typography.bodySmall)
+    } }
+    task.briefing?.deliveredAt?.let { Text(taskText("Briefing saved in Manager chat · ${shortTime(it)}", "התדריך נשמר בצ׳אט המנהל · ${shortTime(it)}"),
+        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     if (task.category == TaskCategory.TASK && (task.status.undecided || task.status == TaskStatus.MINE)) {
         DetailBlock(taskText("Instructions for Mike", "הנחיות למייק")) {
             OutlinedTextField(note, { note = it }, Modifier.fillMaxWidth(), minLines = 1,
@@ -785,6 +803,7 @@ internal fun TaskDetail(task: MikeTask, desk: TaskDeskState, actions: AgentUiAct
     if (task.status == TaskStatus.MINE) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryAction(taskText("Done", "בוצע")) { actions.onTaskDecide(task.id, "done", null, null) }
+            TonalAction(taskText("Check tomorrow", "בדיקה חוזרת מחר")) { actions.onTaskDecide(task.id, "check_later", null, null) }
             MikeAction(taskText("Mike, do it after all", "בעצם, מייק יבצע")) { actions.onTaskDecide(task.id, "do", note, null) }
         }
     }
@@ -997,6 +1016,7 @@ private fun MemberPage(member: TeamMember, state: AgentUiState, actions: AgentUi
 
 // ----- Sources and memory -----------------------------------------------------------
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory: () -> Unit) {
     val settings = state.taskDesk.settings
@@ -1031,13 +1051,31 @@ private fun SourcesPage(state: AgentUiState, actions: AgentUiActions, openMemory
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 
-    SectionLabel(taskText("Models", "מודלים"), 2, MaterialTheme.colorScheme.onSurfaceVariant)
+    SectionLabel(taskText("Models", "מודלים"), 3, MaterialTheme.colorScheme.onSurfaceVariant)
     ModelChoiceRow(taskText("Discovery passes", "חיפוש משימות"), settings.passEngine, settings.passModel, state.modelCatalog) { engine, id ->
         actions.onTaskSettings { it.copy(passModel = id, passEngine = engine, passEffort = null) }
     }
     ModelChoiceRow(taskText("Nightly review and memory", "סקירה לילית וניהול הזיכרון"), settings.reviewEngine, settings.reviewModel, state.modelCatalog) { engine, id ->
         actions.onTaskSettings { it.copy(reviewModel = id, reviewEngine = engine, reviewEffort = null) }
     }
+    ModelChoiceRow(taskText("Approved task execution", "ביצוע משימות שאישרת"), settings.executionEngine ?: settings.passEngine,
+        settings.executionModel, state.modelCatalog, inherited = settings.executionEngine == null) { engine, id ->
+        actions.onTaskSettings { it.copy(executionEngine = engine, executionModel = id, executionEffort = null) }
+    }
+    if(settings.executionEngine != null) TextButton(onClick = {
+        actions.onTaskSettings { it.copy(executionEngine = null, executionModel = null, executionEffort = null) }
+    }) { Text(taskText("Use the Manager's model", "שימוש במודל של המנהל")) }
+    state.modelCatalog.firstOrNull { it.engine == settings.executionEngine && it.id == settings.executionModel }
+        ?.reasoningEfforts?.takeIf { it.isNotEmpty() }?.let { efforts ->
+            Text(taskText("Execution thinking level", "רמת חשיבה לביצוע"), style = MaterialTheme.typography.labelMedium)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                efforts.forEach { effort -> TextButton(onClick = { actions.onTaskSettings { it.copy(executionEffort = effort.value) } }) {
+                    Text(effort.value + if(settings.executionEffort == effort.value) " ✓" else "")
+                } }
+            }
+        }
+    Text(taskText("Without an execution override, tasks use the Manager's model and thinking level. Follow-ups appear in Manager chat; notifications are quiet and optional in Android settings.",
+        "ללא בחירת מודל לביצוע, המשימות משתמשות במודל וברמת החשיבה של המנהל. תדריכים ומעקבים מופיעים בצ׳אט המנהל; ההתראות שקטות וניתן לכבות אותן בהגדרות Android."), style = MaterialTheme.typography.bodySmall)
     Text(taskText("Automatic Manager reviews use the discovery model, up to four times a day. Nightly work uses the review model.",
         "סקירות המנהל משתמשות במודל החיפוש, עד ארבע פעמים ביום. עבודת הלילה משתמשת במודל הסקירה."), style = MaterialTheme.typography.bodySmall)
     Text(taskText("Discovery pass limit per day", "מגבלת סבבי חיפוש ביום"), style = MaterialTheme.typography.labelLarge)
@@ -1107,14 +1145,15 @@ private fun SwitchRow(icon: ImageVector, title: String, subtitle: String, checke
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ModelChoiceRow(label: String, engine: EngineKind, current: String?, options: List<AgentModel>, choose: (EngineKind, String?) -> Unit) {
+internal fun ModelChoiceRow(label: String, engine: EngineKind, current: String?, options: List<AgentModel>, inherited: Boolean = false, choose: (EngineKind, String?) -> Unit) {
     var open by rememberSaveable(label) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Column(Modifier.fillMaxWidth().clickable { open = !open }.heightIn(min = 56.dp).padding(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(label, fontSize = 15.sp)
             val name = options.firstOrNull { it.id == current && it.engine == engine }?.displayName ?: current ?: taskText("Default", "ברירת מחדל")
-            Text("${engine.name.lowercase().replaceFirstChar { it.uppercase() }} · $name", color = BoardTeal, fontSize = 14.sp)
+            Text(if(inherited) taskText("Manager's model and thinking level", "המודל ורמת החשיבה של המנהל")
+                else "${engine.name.lowercase().replaceFirstChar { it.uppercase() }} · $name", color = BoardTeal, fontSize = 14.sp)
         }
         if (open) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             EngineKind.entries.forEach { kind ->

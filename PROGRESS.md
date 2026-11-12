@@ -1,5 +1,19 @@
 # Progress
 
+### Personal assistant follow-through — 2026-10-28
+
+Continues the reviewed 1178 snapshot in the isolated
+`personal-assistant-flow-20261028` worktree after Astra's usage-limit stop.
+Adds owner-feedback capture/context, commitments, source-checked Manager
+briefings with stable delivery IDs, quiet notifications, tested narrow learned
+filters and explicit execution profiles. Candidate 1179 builds and passes
+881 core tests, 57 workspace tests (14 skipped), 171 app JVM tests and all nine
+direct emulator UI fixtures. App lint: zero errors, 21 warnings. APK identity,
+debug signature and 16 KiB alignment verified. No hosting-phone install or live
+model background success is claimed. Worktree, build bucket and candidate APK
+are retained for review/delivery; no push, merge or publication.
+See [checks and remaining proof](docs/testing/personal-assistant-flow-20261028.md).
+
 ### Manager face carried onto 1177 — 2026-10-27
 
 The user-supplied face APK was tasks1170, below installed context-window1177.

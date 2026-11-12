@@ -289,8 +289,13 @@ class LocalTaskBoardStore(context: Context) : TaskBoardStore {
             fresh.forEach {
                 write(SIGNAL, it.id, json.encodeToString(TaskSignal.serializer(), it)); write(RECEIPT, it.id, it.capturedAt.toString())
                 write("source_ref", it.id, json.encodeToString(TaskSourceRef.serializer(), TaskSourcePolicy.of(it)))
+                dev.androidagent.core.TaskFollowThrough.feedback(it)?.let { event ->
+                    write(EVENT, event.id, json.encodeToString(TaskEvent.serializer(), event))
+                }
             }
             val cutoff = signals.maxOfOrNull { it.capturedAt }?.minus(SignalInbox.DEDUPE_MS)
+            db.execSQL("DELETE FROM records WHERE kind=? AND id LIKE 'feedback:%' AND rowid NOT IN " +
+                "(SELECT rowid FROM records WHERE kind=? AND id LIKE 'feedback:%' ORDER BY rowid DESC LIMIT 500)", arrayOf(EVENT, EVENT))
             if(cutoff != null) db.execSQL("DELETE FROM records WHERE kind=? AND CAST(payload AS INTEGER) < ?", arrayOf<Any>(RECEIPT, cutoff))
             db.execSQL("DELETE FROM records WHERE kind=? AND rowid NOT IN (SELECT rowid FROM records WHERE kind=? ORDER BY rowid DESC LIMIT ?)",
                 arrayOf<Any>(RECEIPT, RECEIPT, SignalInbox.MAX_RECEIPTS))

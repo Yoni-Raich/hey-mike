@@ -40,6 +40,24 @@ Every rule carries real user event IDs and dates. A machine-completed result is
 not proof that the user liked the work. Add one dated entry to `CHANGELOG.md` saying
 what changed and why.
 
+Owner `feedback` events also contain actual words from Manager/member chat. Use clear
+lasting corrections and preferences, not one-off commands or quoted requests. Each write
+must cite at least one exact feedback/decision event ID supplied in this review.
+
+For a narrow automatic skip preference, place this optional tested block in a matching
+`kinds/` or `sources/` Markdown file, alongside its event IDs and explanation:
+
+```mike-filter
+{"kind":"delivery","examples":[{"title":"Parcel update","kind":"delivery","ignored":true},{"title":"Prepare a meeting","kind":"meeting","ignored":false}]}
+```
+
+Optional `source` and `words` (all phrases must match the title) narrow the filter.
+It must contain both a matching case and a counterexample and pass the executable matcher.
+The Scout's proposal tool enforces it. It can suppress suggestions, never authorize actions.
+Keep important exceptions as counterexamples. Failed cases refuse the write. Undo of the
+generation restores the previous filter. Free-form prose guidance still has no automatic
+semantic quality score; do not claim that saving it proves improvement.
+
 ## Report
 
 If you changed anything, post one report card:

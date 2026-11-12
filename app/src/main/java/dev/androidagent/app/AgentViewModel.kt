@@ -1069,7 +1069,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(infoMessage = null) }
             // The Manager's and a member's chat carry the board's state before the
             // user's words; the chat shows only what the user typed.
-            val owner = graph.taskDesk.ownerContext(id)
+            val owner = graph.taskDesk.ownerContext(id, text)
             graph.queue.submit(QueuedTurn(sessionId = id, prompt = owner?.let { it + "\n" + prompt } ?: prompt,
                 imagePaths = images.map { it.absolutePath },
                 model = model, effort = snapshot.selectedReasoningEffort ?: choice.turnEffort,

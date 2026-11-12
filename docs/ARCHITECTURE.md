@@ -1,5 +1,29 @@
 # Architecture
 
+## Manager follow-through — 2026-10-28
+
+Owner messages in Manager/member chats are captured separately from automated
+output. Their attributed feedback journal is bounded; Coach consumes actual owner
+events. Manager turns select bounded memories and corrections with current source
+policy. Automatically injected context contributes its source references to later
+managed writes. Live memory has no fixed expiry.
+
+Commitments record owner, next check and a real deadline independent of proposal
+expiry. New evidence may inform decided open work but cannot change a frozen
+execution plan or close it. Manager reviews create an atomic, source-checked
+briefing outbox on the existing cards. Stable chat message IDs prevent duplicate
+delivery after restart. Delivery rechecks eligibility and policy. Quiet private
+notifications only open the owning chat and never start work or answer approvals.
+Discovery, quota and review limits apply; delivery gaps remain visible.
+
+Optional learned `mike-filter` blocks are narrow suggestion filters with executable
+examples and counterexamples. They cannot grant permissions or dispatch anything.
+An owner-rule fingerprint invalidates old filters when explicit owner rules change.
+Free-form learned prose remains context, without a claimed semantic quality gate.
+Execution profiles are explicit and preserved in approved snapshots when overridden;
+otherwise the Manager's profile is passed explicitly to its child.
+See [validation and limits](testing/personal-assistant-flow-20261028.md).
+
 ## Task board visual refresh — 2026-10-26
 
 The Manager and member avatars share a two-eyed particle renderer. It retains

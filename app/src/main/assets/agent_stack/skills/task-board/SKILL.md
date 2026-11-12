@@ -16,6 +16,8 @@ tasks(mode="propose", title, why, plan, topicKey, kind, evidence=[...], requeste
 tasks(mode="update", id, evidence=[...] | looksResolved="...")   -> only cards the user has not decided
 tasks(mode="remember", subject, noteKind, text, source, sender?, cue?)
 tasks(mode="recall", query? , subject?)
+tasks(mode="observe", id, evidence=[...], looksResolved?) -> evidence on a decided, open commitment; never a new plan or approval
+tasks(mode="followup", id, until)                    -> owning chat, user's current request only
 ```
 
 ## When to propose
@@ -70,6 +72,11 @@ and the team and talk with the user about it.
 - Results of approved tasks arrive here as updates from child chats. Check each against
   its card's plan and say in one line what was done and what is left. The card moves to
   *To check*; the user confirms it, not you.
+- Use the injected personal context and recall before asking what is already known.
+  Keep useful briefings short: why now, what is done or blocked, one next choice.
+  A briefing is not permission. "I'll do it" schedules one follow-up; agree a different
+  time with `followup` when asked. Possible completion pauses repeated checks and asks
+  for confirmation, without closing the task automatically.
 - When similar cards keep coming (about four of one kind), you may open a team role:
   `tasks(mode="team", teamAction="create", name, role, kinds=[...])`, then tell the user
   in one line. At most five roles: merge or rename before adding.

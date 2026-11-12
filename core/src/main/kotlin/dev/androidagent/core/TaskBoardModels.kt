@@ -162,6 +162,10 @@ data class MikeTask(
     val progress: String? = null,
     val revision: Long = 0,
     val sourceRefs: List<TaskSourceRef> = emptyList(),
+    val commitment: TaskCommitment? = null,
+    val briefing: TaskBriefing? = null,
+    /** A deadline is separate from proposal expiry. */
+    val deadlineAt: Long? = null,
 )
 
 /** A topic or kind the user said never to suggest again. */
@@ -228,6 +232,8 @@ data class TaskSignal(
     val notBefore: Long = 0,
     /** Set by the current personal-profile capture path; old external input stays unverified. */
     val sourceVerified: Boolean = false,
+    /** App-owned: this is the user's message in a Manager/member chat, not model output. */
+    val ownerFeedback: Boolean = false,
 )
 
 @Serializable
@@ -302,6 +308,9 @@ data class TaskBoardSettings(
     val managerReviewDay: String? = null,
     val managerReviewsToday: Int = 0,
     val managerReviewSessionId: String? = null,
+    val executionEngine: EngineKind? = null,
+    val executionModel: String? = null,
+    val executionEffort: String? = null,
 )
 
 /** What the board, memory, signals and team read and write. One store, one transaction each. */
@@ -358,6 +367,8 @@ class InMemoryTaskBoardStore : TaskBoardStore {
         val fresh = signals.filter { it.id !in this.signals && it.id !in seenSignals }
         check(this.signals.size + fresh.size <= SignalInbox.MAX_PENDING) { "Capture is waiting: the inbox is full." }
         fresh.forEach { this.signals[it.id] = it; seenSignals[it.id] = it.capturedAt }
+        fresh.mapNotNull(TaskFollowThrough::feedback).forEach { events[it.id] = it }
+        events.values.filter { it.kind == "feedback" }.dropLast(500).forEach { events.remove(it.id) }
         cursors[source] = through
         fresh
     }
