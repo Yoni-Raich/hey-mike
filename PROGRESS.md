@@ -1,5 +1,16 @@
 # Progress
 
+### Dev Debug 1213 for the phone — 2026-11-12
+
+Built from `9b73594c` (1212 plus `4c94fe5c`, `fec766ab` and the version bump) with
+`:app:assembleDevDebug --no-daemon`, exit 0. aapt2: `dev.androidagent.app.dev`
+1213 `0.14.0-dev.manager1213`. APK Signature Scheme v2, one signer, SHA-256
+`f65c3469...dda1ee`, the same debug key as 1212. APK SHA-256
+`763ce2dde5d381a62cb0398be59634057767fb17590761cf82e25de89e8e278c`, 342,418,564
+bytes, copied to `artifacts/hey-mike-0.14.0-dev.manager1213.apk`. Tests: the
+location-read entry below, on the same code. Install and phone checks are done
+from the chat phone, not recorded here.
+
 ### Location read: fused/network with one budget, last known kept apart — 2026-11-12
 
 Root cause on 1212 (from code and the phone's dumpsys, `dumpsys location`):
