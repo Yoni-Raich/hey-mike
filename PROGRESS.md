@@ -1,5 +1,16 @@
 # Progress
 
+### Local Manager cleanup completed - 2026-11-12
+
+Archived remaining research/design source, legacy source patches and original local
+branch heads on `side/mike-manager` before removing 13 related worktrees,
+17 redundant local branches, 14 temporary build directories and three Manager APKs.
+C: free space increased by about 6.9 GiB. Shared-cache junction targets survived.
+Final checks confirmed the selected paths and refs are gone, all archived snapshots
+remain reachable, and remote dev is unchanged. Main-checkout tracked changes were kept.
+No app build or phone test was run. Full file and branch manifest:
+`docs/history/manager-local-cleanup-20261112.md`.
+
 ### Local Manager drafts archived - 2026-11-12
 
 At the owner's request, eight dirty local worktrees are saved as separate

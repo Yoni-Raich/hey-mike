@@ -716,3 +716,18 @@ Local cleanup targets are the worktrees and branches below, the Manager temporar
   }
 }
 ```
+
+## Cleanup completed
+
+Completed at `2026-11-12T20:00:57.9404369Z`.
+
+- Removed 13 Manager-related worktree folders and their Git registrations.
+- Removed 17 redundant local branches; all saved heads remain ancestors of this side branch.
+- Removed 14 task-specific temporary build/test directories and three Manager APK copies.
+- Removed the local research/design files after their exact bytes were saved in this branch.
+- Detached 17 shared-cache junctions without deleting their target directories.
+- Closed the old Claude Remote Control session holding the final empty worktree directory.
+- C: free space increased by about 6.9 GiB during cleanup.
+- Final checks: selected paths absent; local refs absent; all archived snapshots and saved branch heads reachable; shared cache targets present; remote dev unchanged.
+- Existing tracked changes in the main checkout were left unchanged. Other worktrees, remote branches and the installed phone app were outside the cleanup.
+- No app build or device test was run for this filesystem cleanup.
