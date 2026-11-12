@@ -12,8 +12,9 @@ was reverted on `dev` and kept on a side branch instead:
 - Side branch `side/mike-manager` (= `feat/manager-20261112`, `a7bf6666`) holds
   current dev before this revert plus all 20 Manager commits.
 - **Re-integration note:** git treats #149 and #157 as already merged. To bring
-  the Manager back, first revert this branch's revert commits, then merge
-  `side/mike-manager`; a plain merge will not restore the reverted code.
+  the Manager back, first revert all of PR #160 (merged with a merge commit:
+  `git revert -m 1 <merge>`), then merge `side/mike-manager`. A plain merge
+  will not restore the reverted code or the trimmed hooks.
 - Later commits that used the board were trimmed too: Claude wake cycles
   (`lastInputFromUser`), Claude history seeding (`readOnly`), and Stop and
   session notifications (`taskDesk`). The read-only full-access test went with

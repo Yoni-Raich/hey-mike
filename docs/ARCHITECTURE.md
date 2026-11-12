@@ -3385,7 +3385,7 @@ block stays as the fallback for an engine that cannot.
   their own (status Ready or ERROR), including child and open chats. Stopped,
   interrupted and voice runs get none.
 - **Full access.** Each chat has a permission level. Full access is per chat
-  and inherited by delegated child chats, never by read-only backstage chats.
+  and inherited by delegated child chats.
   It auto-allows local approvals and engine approvals, and writes an
   `approval_auto_allowed` trace entry.
 - **Storage.** The level is stored HMAC-signed with an Android Keystore key,
