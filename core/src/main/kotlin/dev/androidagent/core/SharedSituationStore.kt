@@ -5,8 +5,6 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.time.ZoneId
-import kotlinx.serialization.EncodeDefault
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -103,7 +101,13 @@ object LocationFreshness {
 /** One real device fix with its own time. [elapsedRealtimeMs] and [bootCount] give its age without the wall clock. */
 @Serializable
 data class SituationFix(val latitude: Double, val longitude: Double, val accuracyMeters: Float, val provider: String?,
-    val fixAt: Long, val elapsedRealtimeMs: Long, val bootCount: Int, val profile: String) {
+    val fixAt: Long, val elapsedRealtimeMs: Long, val bootCount: Int, val profile: String,
+    /** coarse or fine; null on fixes stored before it was kept, treated as coarse. */
+    val permission: String? = null,
+    /** The written place for this fix. Naming it never changes [fixAt] or [elapsedRealtimeMs]. */
+    val place: SituationPlace? = null) {
+    fun sameFix(boot: Int?, elapsed: Long?): Boolean = boot == bootCount && elapsed == elapsedRealtimeMs
+
     fun valid(): Boolean = latitude.isFinite() && latitude in -90.0..90.0 && longitude.isFinite() && longitude in -180.0..180.0 &&
         accuracyMeters.isFinite() && accuracyMeters >= 0 && elapsedRealtimeMs > 0
 
@@ -112,13 +116,6 @@ data class SituationFix(val latitude: Double, val longitude: Double, val accurac
         if (elapsedNowMs == null || bootNow != bootCount || profileNow != profile) null
         else (elapsedNowMs - elapsedRealtimeMs).takeIf { it >= 0 }
 }
-
-/** The last known fix as shown to the agent: never the current location. The note is always encoded, so the label reaches the model. */
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
-data class LastKnownLocation(val latitude: Double, val longitude: Double, val accuracyMeters: Float, val provider: String?,
-    val fixAt: Long, val ageMinutes: Long,
-    @EncodeDefault val note: String = "Last known location, not the current location. Say its age and accuracy; never use it for travel, route, ETA or departure.")
 
 /**
  * The outcome of one interactive location read. [status] is "fresh" only for a fix younger than
@@ -139,7 +136,9 @@ data class SituationLocation(val status: String, val observedAt: Long, val expir
     val tried: List<String> = emptyList(),
     /** cache or live, for a fresh fix. */
     val source: String? = null,
-    val lastKnown: SituationFix? = null) {
+    val lastKnown: SituationFix? = null,
+    /** The written place of this fix, attached after the read; see [LocationRefresh]. */
+    val place: SituationPlace? = null) {
     fun fresh(now: Long): Boolean = status == "fresh" && observedAt <= now && expiresAt > now &&
         expiresAt - observedAt in 1..LocationFreshness.CURRENT_MS && latitude?.let { it.isFinite() && it in -90.0..90.0 } == true &&
         longitude?.let { it.isFinite() && it in -180.0..180.0 } == true &&
@@ -148,7 +147,8 @@ data class SituationLocation(val status: String, val observedAt: Long, val expir
     /** The fix this read returned, for keeping as the last known location; null for a failure. */
     fun asFix(): SituationFix? = if (status != "fresh" || latitude == null || longitude == null || accuracyMeters == null ||
         elapsedRealtimeMs == null || bootCount == null || profile == null) null
-        else SituationFix(latitude, longitude, accuracyMeters, provider, observedAt, elapsedRealtimeMs, bootCount, profile).takeIf { it.valid() }
+        else SituationFix(latitude, longitude, accuracyMeters, provider, observedAt, elapsedRealtimeMs, bootCount, profile, permission, place)
+            .takeIf { it.valid() }
 }
 
 @Serializable
@@ -193,8 +193,13 @@ data class SharedSituation(
     val locationAttempts: List<LocationAttempt> = emptyList(),
     /** Stored newest real fix. A snapshot never exposes it; it shows [lastKnownLocation] instead, after the gates. */
     val lastFix: SituationFix? = null,
-    /** In a snapshot: an older fix of this boot and profile, when there is no current one. */
-    val lastKnownLocation: LastKnownLocation? = null,
+    /** In a snapshot: an older fix of this boot and profile, when there is no current one, as a written place. */
+    val lastKnownLocation: LocationView? = null,
+    /**
+     * In a snapshot: the current fix as a written place. A snapshot never carries coordinates: [location] and
+     * [lastFix] are storage only and always null in it.
+     */
+    val currentLocation: LocationView? = null,
 )
 
 /** One owner serializes all writes. A failed write leaves the prior snapshot intact. */
@@ -285,10 +290,31 @@ class SharedSituationStore(private val file: File) {
             lastFix = newestFix(listOfNotNull(state.lastFix, location.asFix(), location.lastKnown?.takeIf { it.valid() })),
             asks = if (location.status == "fresh") answeredAsks("current_location", location.observedAt) else state.asks))
 
-    /** The newest fix of the latest boot. A failed read never changes a fix's own time. */
+    /** The newest fix of the latest boot. A failed read never changes a fix's own time; a known name stays with its fix. */
     private fun newestFix(fixes: List<SituationFix>): SituationFix? {
         val boot = fixes.maxOfOrNull { it.bootCount } ?: return null
-        return fixes.filter { it.bootCount == boot }.maxByOrNull { it.elapsedRealtimeMs }
+        val newest = fixes.filter { it.bootCount == boot }.maxByOrNull { it.elapsedRealtimeMs } ?: return null
+        val named = fixes.filter { it.sameFix(newest.bootCount, newest.elapsedRealtimeMs) }.mapNotNull { it.place }
+        return newest.copy(place = named.firstOrNull { it.resolved } ?: named.firstOrNull())
+    }
+
+    /** The stored newest fix, for naming it. Never shown to the model as is. */
+    @Synchronized
+    fun newestFix(): SituationFix? = state.lastFix
+
+    /**
+     * Attaches a written place to the stored fix it was looked up for. Times are not touched. Nothing happens
+     * when that fix is gone (forgotten, or replaced by a newer one), and a failure never replaces a known name.
+     */
+    @Synchronized
+    fun attachPlace(bootCount: Int, elapsedRealtimeMs: Long, place: SituationPlace): SharedSituation {
+        fun keep(old: SituationPlace?) = if (old?.resolved == true && !place.resolved) old else place
+        val fix = state.lastFix?.takeIf { it.sameFix(bootCount, elapsedRealtimeMs) }
+        val location = state.location?.takeIf { it.status == "fresh" && it.bootCount == bootCount && it.elapsedRealtimeMs == elapsedRealtimeMs }
+        if (fix == null && location == null) return state
+        return save(state.copy(revision = state.revision + 1,
+            lastFix = fix?.copy(place = keep(fix.place)) ?: state.lastFix,
+            location = location?.copy(place = keep(location.place)) ?: state.location))
     }
 
     /** Collected data about the user goes; the user's own corrections stay. */
@@ -323,11 +349,16 @@ class SharedSituationStore(private val file: File) {
         // An older real fix of this boot and profile is shown apart, with its age, and only when there is no current one.
         val lastKnown = state.lastFix?.takeIf { location == null && locationAllowed && calendarProfile != null && it.valid() }?.let { fix ->
             fix.ageMs(elapsedNowMs, locationBootCount, calendarProfile)?.takeIf { it < LocationFreshness.LAST_KNOWN_MS }?.let { age ->
-                LastKnownLocation(fix.latitude, fix.longitude, fix.accuracyMeters, fix.provider?.take(80), fix.fixAt, age / 60_000)
+                PlaceDetail.view(fix, PlaceDetail.LAST_KNOWN, age)
             }
         }
+        // The current fix as a written place; the gate above guarantees elapsedNowMs and the fix's own clock.
+        val current = location?.asFix()?.let { own ->
+            val named = own.copy(place = own.place ?: state.lastFix?.takeIf { it.sameFix(own.bootCount, own.elapsedRealtimeMs) }?.place)
+            PlaceDetail.view(named, PlaceDetail.CURRENT, elapsedNowMs!! - own.elapsedRealtimeMs)
+        }
         return state.copy(asOf = now, timezone = zone.id, localTime = Instant.ofEpochMilli(now).atZone(zone).toString(), calendar = calendar,
-            location = location?.copy(lastKnown = null), lastFix = null, lastKnownLocation = lastKnown,
+            location = null, lastFix = null, lastKnownLocation = lastKnown, currentLocation = current,
             observations = state.observations.filter { it.sourceRefs.isNotEmpty() && it.sourceRefs.all(allowedSource) && it.observedAt <= now }
                 .map { if (it.expiresAt <= now) it.copy(confidence = "stale") else it },
             attention = state.attention.filter { it.sourceIds.all { id -> id in allowedTaskIds } },
@@ -335,7 +366,9 @@ class SharedSituationStore(private val file: File) {
                 "calendar unavailable, expired or not allowed" else state.sourceGaps)
                 .filterNot { it == "location, travel and ETA providers unavailable" } +
                 listOf(when {
-                    location != null -> "fresh device location; travel and ETA remain unknown"
+                    current != null && current.placeStatus == SituationPlace.RESOLVED ->
+                        "fresh device location at ${current.precision} level; travel and ETA remain unknown"
+                    current != null -> "fresh device fix but its place name is unavailable (${current.placeReason}); travel and ETA remain unknown"
                     lastKnown != null -> "no current location; lastKnownLocation is ${lastKnown.ageMinutes} min old and not the current location"
                     else -> "location unknown; an interactive refresh_location can request one fix"
                 }),
@@ -343,7 +376,7 @@ class SharedSituationStore(private val file: File) {
             commitments = state.commitments.filter { it.taskId in allowedTaskIds && (it.expiresAt == null || it.expiresAt > now) },
             asks = state.asks.filter { it.at <= now && now - it.at < SituationNeeds.ASK_HISTORY_MS },
             locationAttempts = state.locationAttempts.filter { it.at <= now && now - it.at < SituationNeeds.DAY_MS },
-            unknown = state.unknown.filterNot { field -> (field == "current_location" && location != null) ||
+            unknown = state.unknown.filterNot { field -> (field == "current_location" && current != null) ||
                 (field == "calendar_plan" && calendar?.status == "complete") ||
                 (live.any { it.field == field } && field !in conflicts) }, conflicts = conflicts)
     }

@@ -50,7 +50,7 @@ object SituationNeeds {
         val saveWith: String? = null,
         val note: String? = null,
         /** An older device fix, never the current location; see [LAST_KNOWN_USE]. */
-        val lastKnown: LastKnownLocation? = null,
+        val lastKnown: LocationView? = null,
         /** Outcome of the latest location read, so a device failure is explained as one, not blamed on the user. */
         val lastRead: LocationAttempt? = null,
     ) {
@@ -117,9 +117,13 @@ object SituationNeeds {
 
     private fun known(field: String, situation: SharedSituation, now: Long): Resolution? {
         if (field in situation.conflicts) return null
-        if (field == "current_location") situation.location?.takeIf { it.fresh(now) }?.let {
-            return Resolution(field, "known", "Use the device fix.", "${it.latitude},${it.longitude} ±${it.accuracyMeters?.toInt()}m",
-                "device_location", it.expiresAt)
+        if (field == "current_location") situation.currentLocation?.let {
+            val until = it.fixAt + LocationFreshness.CURRENT_MS
+            return if (it.placeStatus == SituationPlace.RESOLVED) Resolution(field, "known",
+                "Use it at its precision (${it.precision}): ${it.note}", it.place, "device_location", until)
+            else Resolution(field, "known", "A current device fix exists but its place name is unavailable (${it.placeReason}). " +
+                "Do not guess a place; if the request needs one, ask the user in one short question.", "place name unavailable",
+                "device_location", until)
         }
         if (field == "calendar_plan" && situation.calendar?.status == "complete")
             return Resolution(field, "known", "Use the loaded calendar plan.", source = "calendar", until = situation.calendar.expiresAt)
@@ -174,5 +178,7 @@ object SituationNeeds {
             "Save the answer at once: temporary state with operation=correct (default expiry if the user gave none), home or work with " +
             "operation=save_place, other lasting facts with remember and their source. If the user will not say, record operation=decline. " +
             "Never ask again what is answered or declined, never turn a saved address into the current location, and never infer a lasting habit from one answer. " +
+            "Device locations are written places (currentLocation, lastKnownLocation): use one only at its precision; a city-level place " +
+            "never names a street or building, and an unavailable place name is never guessed. " +
             "A lastKnownLocation is older than current: give it only as the last known location with its age and accuracy, never for travel, route or ETA."
 }

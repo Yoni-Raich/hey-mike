@@ -155,6 +155,11 @@ class TaskDesk(
 ) {
     private val store = LocalTaskBoardStore(context)
     private val situationStore = dev.androidagent.core.SharedSituationStore(File(context.filesDir, "task-situation-v1.json"))
+    /** Names device fixes in the phone's language; its cache is location history and is cleared with collected data. */
+    private val placeNamer = dev.androidagent.core.PlaceNamer(
+        lookup = { lat, lon, tag -> dev.androidagent.devicetools.AndroidPlaceGeocoder(context).lookup(lat, lon, tag) },
+        locale = { dev.androidagent.core.PlaceDetail.locale(dev.androidagent.devicetools.AndroidPlaceGeocoder.languageTags(context)) },
+        now = { now() })
     val board = TaskBoard(store, now, zone)
     val memory = MemoryBook(store, now)
     val signals = SignalInbox(store, now)
@@ -288,7 +293,9 @@ class TaskDesk(
             situationStore.correct(field, value, now(), until); situationSnapshot()
         }, observeSituation = { observation -> situationStore.observe(observation, now()); situationSnapshot() },
         refreshLocation = {
-            dev.androidagent.devicetools.AndroidCapabilityPlatform(context).querySituationLocation().also { situationStore.recordLocation(it, now()) }
+            dev.androidagent.core.LocationRefresh.run(situationStore, placeNamer, { now() }) {
+                dev.androidagent.devicetools.AndroidCapabilityPlatform(context).querySituationLocation()
+            }
         }, recordSituationAsk = { field, purpose -> situationStore.recordAsk(field, purpose, now()); situationSnapshot() },
         declineSituation = { field, purpose -> situationStore.decline(field, purpose, now()); situationSnapshot() },
         savePlace = { key, value ->
@@ -812,7 +819,7 @@ class TaskDesk(
     /** Ask every connector for its state, for the Connections cards. */
     fun refreshConnections() { scope.launch(Dispatchers.IO) { connections.refresh(::publish) } }
 
-    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); withIo { ledger.clear() }; proactive.book.clear(); proactive.profile.forgetLearned(); store.clearSourceStats(); situationStore.forgetObserved(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
+    fun forgetCollected() { scope.launch { invalidateMemoryWork(); signals.clear(); withIo { ledger.clear() }; proactive.book.clear(); proactive.profile.forgetLearned(); store.clearSourceStats(); situationStore.forgetObserved(); placeNamer.clear(); legacySignals = store.quarantineLegacySignals(now(), clear = true); publish() } }
     fun liftSuppression(entry: dev.androidagent.core.TaskSuppression) { scope.launch { board.removeSuppression(entry) } }
 
     fun addUserRule(rule: String) { scope.launch(Dispatchers.IO) { runCatching { playbook.addUserRule(rule) } } }
@@ -1333,7 +1340,7 @@ class TaskDesk(
         val shownIds = situation.commitments.map { it.taskId }.toSet()
         val refs = (notes.flatMap { it.sourceRefs + dev.androidagent.core.TaskSourceRef("memory", verified = true, noteId = it.id) } +
             situation.observations.flatMap { it.sourceRefs } +
-            (if (situation.location != null || situation.lastKnownLocation != null) listOf(dev.androidagent.core.TaskSourceRef("location", verified = true)) else emptyList()) +
+            (if (situation.currentLocation != null || situation.lastKnownLocation != null) listOf(dev.androidagent.core.TaskSourceRef("location", verified = true)) else emptyList()) +
             feedback.flatMap { it.sourceRefs } + situationTasks.filter { it.id in shownIds }.flatMap { it.sourceRefs } +
             (if (situation.calendar != null) listOf(dev.androidagent.core.TaskSourceRef("calendar", verified = true)) else emptyList()) +
             (if (situation.claims.any { it.source == "preferences.json" && it.confidence != "stale" })

@@ -87,13 +87,13 @@ class ManagerEvidenceLoopTest {
             store.recordLocation(SituationLocation("fresh", clock, clock + 120_000, 32.0, 35.0, 1200f, "network", "current_android_user:0", 50_000, 1))
             val reopened = SharedSituationStore(path)
             val state = reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = true, locationBootCount = 1, elapsedNowMs = 50_000)
-            assertNotNull(state.location); assertFalse("current_location" in state.unknown)
+            assertNotNull(state.currentLocation); assertFalse("current_location" in state.unknown)
             assertTrue("eta" in state.unknown); assertTrue("route" in state.unknown)
-            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = false, locationBootCount = 1, elapsedNowMs = 50_000).location)
-            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:11", locationAllowed = true, locationBootCount = 1, elapsedNowMs = 50_000).location)
-            assertNull(reopened.snapshot(clock + 120_000, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = true, locationBootCount = 1, elapsedNowMs = 50_000).location)
-            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = true, locationBootCount = 2, elapsedNowMs = 50_000).location)
-            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = true, locationBootCount = 1, elapsedNowMs = 170_000).location)
+            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = false, locationBootCount = 1, elapsedNowMs = 50_000).currentLocation)
+            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:11", locationAllowed = true, locationBootCount = 1, elapsedNowMs = 50_000).currentLocation)
+            assertNull(reopened.snapshot(clock + 120_000, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = true, locationBootCount = 1, elapsedNowMs = 50_000).currentLocation)
+            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = true, locationBootCount = 2, elapsedNowMs = 50_000).currentLocation)
+            assertNull(reopened.snapshot(clock, zone, emptySet(), calendarProfile = "current_android_user:0", locationAllowed = true, locationBootCount = 1, elapsedNowMs = 170_000).currentLocation)
         } finally { path.parentFile.deleteRecursively() }
     }
 

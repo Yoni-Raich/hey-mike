@@ -168,6 +168,34 @@ time, age and accuracy, never as `location`, never removing `current_location` f
 renews a fix's time; an older cached fix never replaces a newer one. `need` carries
 `lastRead` so the agent explains a device failure as one, not the user's mistake.
 
+Written place (2026-11-12). The model gets a place, not coordinates. After a read is
+recorded, `LocationRefresh` names the newest stored fix once through the platform
+`Geocoder` (`AndroidPlaceGeocoder`: the API 33+ listener, or the blocking call on its
+own daemon thread on API 30-32), bounded by `PlaceNamer` at 6 s (read 30 s + 6 s stays
+under the tool's 60 s). No public Nominatim or other third-party service. On most
+phones the platform geocoder is Google Play services: it sends the coordinates to that
+backend and needs a network. The language is Hebrew when any phone language is Hebrew
+(`iw` is `he`), else the first one. The address parts are stored on the fix
+(`SituationFix.place`); the label is computed when shown, from the fix's accuracy and
+permission: house number at 25 m or better, street at 100 m, neighborhood at 750 m,
+city up to 15 km, else region, and never finer than the city without FINE (Android
+coarsens COARSE to about 2 km). Feature names and address lines are not kept, so a fix
+near a company building never reads as "at that company"; a saved home or work place is
+never matched to a fix. A failure (no geocoder, service unavailable, timeout, no
+address, error) leaves the fix as it is with `placeStatus: unavailable` and the reason;
+a current fix stays current, the agent is told not to guess, and a later failure never
+replaces a known name. Naming never changes `fixAt` or the elapsed clock and never
+makes an older fix current; if the fix was forgotten or replaced meanwhile, nothing is
+attached. The in-memory cache (32 entries, keyed by language, precision and a cell a
+little smaller than that precision; names 24 h, "no address" 1 h, failures not cached)
+is cleared with forget-collected-data. A snapshot read never geocodes.
+Contract change: a snapshot carries `currentLocation` and `lastKnownLocation` as
+`LocationView` (place, precision, placeStatus, accuracy, fixAt, age, provider, note) and
+never `location` or `lastFix`; `refresh_location` returns a `LocationReadView`; a known
+`current_location` need has the place as its value. The coordinates stay in the
+app-private situation file, which an agent shell on the phone could still read. There is
+no diagnostics switch that shows coordinates.
+
 An explicit owner reminder can create a check on a proposed task without accepting
 or executing it. A proposal's existing expiry is extended through that requested
 check when necessary; its plan and decision stay unchanged. Closed/snoozed cards

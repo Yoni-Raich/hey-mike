@@ -1,5 +1,23 @@
 # Progress
 
+### Written place instead of coordinates — 2026-11-12
+
+Branch `feat/location-place-20261112` on 1213 (`ab3e80fc`). The model now sees a
+written place at the precision the fix supports; see the "Written place" decision in
+`docs/ARCHITECTURE.md`. Checks, all with `--no-daemon`: `:core:test` 1136 tests,
+0 failed (16 new in `LocationPlaceTest`: coarse 2000 m shows only the city although the
+geocoder returned a street and house; fine 12-15 m shows the address; fallback to region;
+unavailable name never invented; slow geocoder cut at 6 s on virtual time and not cached;
+IOException, error, no geocoder, no address; cache per area, language (`iw` = `he`),
+expiry and clear; times kept; stale fix stays last known after naming; forget during
+naming attaches nothing; reload and a 1213 file; a recursive check that no
+refresh/read/need/correct/decline/save_place output or injected snapshot has latitude,
+longitude, elapsed clock, lastFix or street keys or the coordinate values);
+`:device-tools:testDebugUnitTest` 127, 0 failed; `:app:testDevDebugUnitTest` 187,
+0 failed; `:app:assembleDevDebug` exit 0; `:app:lintDevDebug` 0 errors.
+Not tested: the real `Geocoder` on a phone (presence, Hebrew output, latency, offline
+behavior, API 30-32 path), which needs a phone build. No install was made.
+
 ### Dev Debug 1213 for the phone — 2026-11-12
 
 Built from `9b73594c` (1212 plus `4c94fe5c`, `fec766ab` and the version bump) with

@@ -36,16 +36,16 @@ class LastKnownLocationTest {
     @Test fun aFixOlderThanTwoMinutesIsOnlyTheLastKnownLocation() {
         store.recordLocation(fresh(), t0)
         val current = snap(minute)
-        assertNotNull(current.location)
+        assertNotNull(current.currentLocation)
         assertNull(current.lastKnownLocation)
         assertFalse("current_location" in current.unknown)
 
         val later = snap(3 * minute)
-        assertNull(later.location)
+        assertNull(later.currentLocation)
         val last = later.lastKnownLocation!!
         assertEquals(3, last.ageMinutes)
         assertEquals(t0, last.fixAt) // its own time, never renewed
-        assertEquals(1500f, last.accuracyMeters)
+        assertEquals(1500, last.accuracyMeters)
         assertTrue("current_location" in later.unknown)
         assertTrue("eta" in later.unknown && "route" in later.unknown && "travel_mode" in later.unknown)
         assertTrue(later.sourceGaps.any { it.contains("not the current location") })
@@ -83,7 +83,7 @@ class LastKnownLocationTest {
         store.recordLocation(failed("timeout", t0 + 6 * minute, olderCache), t0 + 6 * minute)
         val last = snap(7 * minute).lastKnownLocation!!
         assertEquals(t0, last.fixAt)
-        assertEquals(32.08, last.latitude, 0.0)
+        assertEquals(1500, last.accuracyMeters) // the newer fix, not the 3000 m cache
         assertEquals(7, last.ageMinutes)
     }
 
@@ -91,7 +91,7 @@ class LastKnownLocationTest {
         val cache = SituationFix(32.1, 34.8, 2000f, "fused", t0 - 9 * minute, e0 - 9 * minute, boot, profile)
         store.recordLocation(failed("timeout", t0, cache), t0)
         val situation = snap(0)
-        assertNull(situation.location)
+        assertNull(situation.currentLocation)
         assertEquals(9, situation.lastKnownLocation!!.ageMinutes)
         assertEquals(t0 - 9 * minute, situation.lastKnownLocation!!.fixAt)
     }
@@ -112,7 +112,7 @@ class LastKnownLocationTest {
     @Test fun aFixOfAnotherBootIsNotCurrentEvenWhenTheWallClockSaysSo() {
         store.recordLocation(fresh(), t0)
         val rebooted = snap(minute, bootNow = boot + 1)
-        assertNull(rebooted.location)
+        assertNull(rebooted.currentLocation)
         assertTrue("current_location" in rebooted.unknown)
     }
 
@@ -128,7 +128,7 @@ class LastKnownLocationTest {
             """"locationAttempts":[{"status":"no fresh fix","at":$t0}]}""")
         val reloaded = SharedSituationStore(file).snapshot(t0 + minute, zone, emptySet(), calendarProfile = profile,
             locationAllowed = true, locationBootCount = boot, elapsedNowMs = e0)
-        assertNull(reloaded.location)
+        assertNull(reloaded.currentLocation)
         assertNull(reloaded.lastKnownLocation)
         assertEquals(listOf<String>(), reloaded.locationAttempts.single().tried)
     }

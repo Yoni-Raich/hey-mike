@@ -111,6 +111,11 @@ and the team and talk with the user about it.
   failure plainly; it is not the user's mistake. Only `current: true` answers "where am I
   now". `lastKnown` (or `lastKnownLocation` in the situation) is an older fix: give it only
   as the last known location with its age and accuracy, never for travel, route or ETA.
+  Locations come as written places (`place`, `precision`, `placeStatus`, `note`), never
+  coordinates. Say no more than `precision` allows: a `city` place names no street or
+  building. When `placeStatus` is `unavailable`, the phone has a fix but no name: do not
+  guess one; if the request needs it, ask the user. A saved home or work address is not
+  where the user is unless they say so.
 - Missing information: when the user's current request or a decision depends on a field
   that is unknown, call `situation operation=need field purpose` and do what it says:
   use the known value, try the named source once, or ask one short, focused question

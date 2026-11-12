@@ -96,7 +96,7 @@ internal class SituationLocationReader(private val backend: Backend, private val
             tried += if (newest == null) "cache:none" else "cache:${(now - newest.elapsedMs) / 60_000}m old"
             lastKnown = newest?.takeIf { now - it.elapsedMs < LocationFreshness.LAST_KNOWN_MS }?.let {
                 SituationFix(it.latitude, it.longitude, it.accuracyMeters!!, it.provider?.take(80),
-                    backend.now() - (now - it.elapsedMs), it.elapsedMs, boot!!, profile)
+                    backend.now() - (now - it.elapsedMs), it.elapsedMs, boot!!, profile, permission = level)
             }
             if (providers.isEmpty()) return fail("provider unavailable")
 
@@ -126,7 +126,7 @@ internal class SituationLocationReader(private val backend: Backend, private val
                         // A coarse provider may answer with an older fix: keep it apart, never as current.
                         if (age < LocationFreshness.LAST_KNOWN_MS && (lastKnown?.elapsedRealtimeMs ?: 0) < fix.elapsedMs)
                             lastKnown = SituationFix(fix.latitude, fix.longitude, fix.accuracyMeters!!, fix.provider?.take(80),
-                                backend.now() - age, fix.elapsedMs, boot!!, profile)
+                                backend.now() - age, fix.elapsedMs, boot!!, profile, permission = level)
                         "stale ${age / 60_000}m"
                     } ?: "timeout"
                 } catch (e: SecurityException) { throw e }

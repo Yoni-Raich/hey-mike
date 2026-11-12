@@ -161,7 +161,8 @@ class TaskTools(
                     require(interactive(role, fromUser)) { "Location refresh needs an interactive user turn." }
                     val earlier = situation?.invoke()?.locationAttempts.orEmpty()
                     val location = (refreshLocation ?: error("Location is not connected here."))()
-                    put("location", Json.encodeToJsonElement(SituationLocation.serializer(), location))
+                    // A written place at the precision the fix supports; the coordinates stay in the store.
+                    put("location", Json.encodeToJsonElement(LocationReadView.serializer(), PlaceDetail.read(location, now())))
                     // Only a fresh fix answers "where is the user now"; lastKnown is older and labeled as such.
                     put("current", location.fresh(now()))
                     SituationNeeds.afterLocationRefresh(location, earlier, now())?.let { put("next", it) }
