@@ -243,7 +243,8 @@ class AgentCoordinator(
             // The chat's engine names every message this run shows; run() reads
             // it again from the store before anything is checked.
             runEngine = engineKind ?: sessions.sessions.value.firstOrNull { it.id == sessionId }?.engine ?: EngineKind.CODEX
-            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}", runId = UUID.randomUUID().toString())
+            mutableState.value = RunState(RunPhase.STARTING, sessionId, "Starting ${runEngine.label}", runId = UUID.randomUUID().toString(),
+                agentInput = agentContext)
             completion = runCompletion
             thread = null
             turn = null
@@ -340,7 +341,7 @@ class AgentCoordinator(
             screenSticky = false
             // Nobody typed this turn, so it never counts as the user's go-ahead.
             lastInputFromUser = false
-            mutableState.value = RunState(RunPhase.THINKING, session.id, "Working", runId = UUID.randomUUID().toString())
+            mutableState.value = RunState(RunPhase.THINKING, session.id, "Working", runId = UUID.randomUUID().toString(), agentInput = true)
             token to runCompletion
         }
         // Before the turn's first words, so the chat shows why it woke.
@@ -855,6 +856,7 @@ class AgentCoordinator(
                             status = if (stopConfirmed) "Stopped" else "Stopped locally; computer interruption could not be confirmed",
                             stopConfirmed = stopConfirmed,
                             runId = context.snapshot.runId,
+                            agentInput = context.snapshot.agentInput,
                         )
                         context.snapshot.sessionId?.let { id -> mutableOutcomes.value = mutableOutcomes.value + (id to mutableState.value) }
                     }
@@ -1999,6 +2001,7 @@ class AgentCoordinator(
                         sessionId = sessionId,
                         status = if (final.outcome == "interrupted") "Interrupted" else "Ready",
                         runId = state.value.runId,
+                        agentInput = state.value.agentInput,
                     )
                 }
                 mutableOutcomes.value = mutableOutcomes.value + (sessionId to mutableState.value)

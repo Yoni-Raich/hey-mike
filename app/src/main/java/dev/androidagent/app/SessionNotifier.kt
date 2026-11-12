@@ -55,11 +55,17 @@ internal object SessionNotices {
     /**
      * The conversations at work and what each is doing, by the chat the user
      * knows: a delegated chat counts as its source. [hidden] chats work
-     * backstage and have no screen to open.
+     * backstage and have no screen to open; a [team] chat working on input
+     * from the app or other agents is team progress, not the user's request.
      */
-    fun running(states: Map<String, RunState>, owner: (String) -> String, hidden: (String) -> Boolean): Map<String, String> {
+    fun running(
+        states: Map<String, RunState>,
+        owner: (String) -> String,
+        hidden: (String) -> Boolean,
+        team: (String) -> Boolean = { false },
+    ): Map<String, String> {
         val result = LinkedHashMap<String, String>()
-        states.filter { (chat, state) -> state.active && !hidden(chat) }
+        states.filter { (chat, state) -> state.active && !hidden(chat) && !(state.agentInput && team(chat)) }
             // The chat's own run names the work better than a child's does.
             .entries.sortedBy { (chat, _) -> if (owner(chat) == chat) 0 else 1 }
             .forEach { (chat, state) -> result.getOrPut(owner(chat)) { line(state) } }
@@ -95,6 +101,32 @@ internal object SessionNotices {
         else -> null
     }
 
+    /**
+     * Whether this chat's ending is a team update, which stays in the chat and
+     * on the board and never reaches the notification shade:
+     * - a backstage chat ([hidden]: Scout, Coach, Librarian, Coordinator);
+     * - a delegated child chat, whose result its source chat reports;
+     * - a [team] chat (Manager, team member) whose turn came from the app or
+     *   other agents rather than from the user's own message.
+     * Approvals and questions are not endings and are never filtered here.
+     */
+    fun teamUpdate(
+        chat: String,
+        outcome: RunState,
+        owner: (String) -> String,
+        hidden: (String) -> Boolean,
+        team: (String) -> Boolean,
+    ): Boolean = hidden(chat) || owner(chat) != chat || (outcome.agentInput && team(chat))
+
+    /** The ending to announce for [chat], or null when there is none or it is a team update. */
+    fun announced(
+        chat: String,
+        outcome: RunState,
+        owner: (String) -> String,
+        hidden: (String) -> Boolean,
+        team: (String) -> Boolean,
+    ): Ending? = if (teamUpdate(chat, outcome, owner, hidden, team)) null else ending(outcome)
+
     /** One line of a long reply, for a notification. */
     fun preview(text: String, limit: Int = 400): String =
         text.trim().replace(Regex("\\n{2,}"), "\n").let { if (it.length <= limit) it else it.take(limit - 1).trimEnd() + "…" }
@@ -117,6 +149,8 @@ class SessionNotifier(
     private val owner: (String) -> String = { it },
     /** Backstage chats: they finish and work without telling anyone. */
     private val hidden: (String) -> Boolean = { false },
+    /** Team chats the user can open (Manager, team members): their agent-fed turns are team updates. */
+    private val team: (String) -> Boolean = { false },
 ) {
     private val manager = NotificationManagerCompat.from(context)
     private val approvalsUp = mutableMapOf<String, String>()
@@ -126,7 +160,7 @@ class SessionNotifier(
 
     /** The conversations at work, for the "Mike is working" notification that groups them. */
     val running: Flow<Map<String, String>> =
-        runs.sessionStates.map { SessionNotices.running(it, owner, hidden) }.distinctUntilChanged().conflate()
+        runs.sessionStates.map { SessionNotices.running(it, owner, hidden, team) }.distinctUntilChanged().conflate()
 
     init {
         scope.launch {
@@ -143,10 +177,20 @@ class SessionNotifier(
             runs.outcomes.collect { outcomes ->
                 outcomes.forEach { (chat, outcome) ->
                     if (!endingsSeen.add(chat + ":" + (outcome.runId ?: outcome.status))) return@forEach
+                    if (SessionNotices.teamUpdate(chat, outcome, owner, hidden, team)) {
+                        // Also clears what an earlier version posted for this chat.
+                        runCatching { manager.cancel(chat, FINISHED_ID) }
+                        return@forEach
+                    }
                     val ending = SessionNotices.ending(outcome) ?: return@forEach
                     scope.launch { announce(chat, outcome, ending) }
                 }
             }
+        }
+        // Earlier versions announced backstage passes and child chats; clear what they left in the shade.
+        scope.launch {
+            sessions.sessions.first { it.isNotEmpty() }
+            clearTeamEndings()
         }
         // A finished chat stops being news once it is opened or runs again.
         scope.launch {
@@ -231,6 +275,13 @@ class SessionNotifier(
             .build()
         synchronized(finishedUp) { finishedUp += chat }
         post(chat, FINISHED_ID) { notification }
+    }
+
+    /** Removes "finished" notifications that belong to backstage or child chats. */
+    private fun clearTeamEndings() {
+        val shown = runCatching { context.getSystemService(NotificationManager::class.java)?.activeNotifications }.getOrNull() ?: return
+        shown.filter { it.id == FINISHED_ID && it.tag != null && (hidden(it.tag) || owner(it.tag) != it.tag) }
+            .forEach { runCatching { manager.cancel(it.tag, FINISHED_ID) } }
     }
 
     // endregion

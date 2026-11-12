@@ -16,6 +16,14 @@ object TaskBriefingDelivery {
         briefing.chatSavedAt == null -> Action.SAVE_CHAT
         else -> Action.ATTEMPT_NOTIFICATION
     }
+
+    /**
+     * A follow-up time or deadline on a card the user took on is a reminder they asked for, so it
+     * may post its quiet notification. Every other briefing (a proposal, waiting, review, failed or
+     * resolved status) is a team update: saved in the Manager chat and on the board, never posted.
+     */
+    fun reminder(briefing: TaskBriefing): Boolean =
+        briefing.occurrence.startsWith("check:") || briefing.occurrence.startsWith("deadline:")
 }
 
 /** The Manager's durable outbox. The board lock orders card and policy edits with chat insertion;
@@ -30,6 +38,7 @@ class ManagerBriefingDelivery(
     private val occurrenceAllowed: (MikeTask, TaskBriefing) -> Boolean = { _, _ -> true },
     private val quietUntil: suspend (MikeTask) -> Long?,
     private val recorded: suspend (MikeTask) -> Unit,
+    /** Posts the quiet notification for a [reminder][TaskBriefingDelivery.reminder]; team updates never reach it. */
     private val notify: suspend (String, String, String, String) -> Pair<String, String>,
     private val onFailure: (Exception) -> Unit,
 ) {
@@ -95,6 +104,10 @@ class ManagerBriefingDelivery(
                 }
                 if (!active()) return@forEach
                 if (!eligible()) { finishObsolete(); return@forEach }
+                if (!TaskBriefingDelivery.reminder(briefing)) {
+                    board.delivered(task.id, briefing.id, CHAT_ONLY_NOTE, CHAT_ONLY)
+                    return@forEach
+                }
                 if (!board.beginBriefingNotification(task.id, briefing.id)) {
                     val current = board.task(task.id)?.briefing
                     if (current?.id == briefing.id && current.notificationAttemptedAt != null && current.deliveredAt == null)
@@ -112,5 +125,10 @@ class ManagerBriefingDelivery(
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { onFailure(e) }
         }
+    }
+
+    companion object {
+        const val CHAT_ONLY = "chat_only"
+        const val CHAT_ONLY_NOTE = "Saved in Manager chat. Team updates post no notification."
     }
 }

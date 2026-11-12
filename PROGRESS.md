@@ -1,5 +1,40 @@
 # Progress
 
+### Team updates no longer post notifications — 2026-11-12
+
+Same branch and worktree as the missing-information fix. The root cause and
+the rule are in `docs/ARCHITECTURE.md` ("Team updates stay out of the
+notification shade"). In short, `SessionNotifier` announced the end of every
+run, including backstage Scout passes and their retries.
+
+New tests:
+
+- `SessionNoticesTest`: 2 new. Scout, child chats and agent-fed Manager turns
+  are never announced. The user's own Manager request and an ordinary chat are
+  announced. Approvals stay.
+- `AgentRunsTest`: 1 new and 1 extended. `agentInput` survives to the outcome
+  for a backstage pass, a child wake-up and an engine-started turn, and is false
+  for the user's message.
+- `ManagerBriefingDeliveryTest`: 1 new. A status briefing is saved once and
+  never posted or retried. A follow-up reminder still posts once.
+
+Evidence (Windows, `--no-daemon --continue`, the full CI gate list from
+`android.yml`: web, core, automations, engine-codex, engine-claude,
+mcp-loopback, runtime, workspace, remote, device-tools and app unit tests,
+`:app:assembleDevDebug`, `:app:lintDevDebug`). The first run failed one test:
+`SituationCalendarAdapterTest` (device-tools) still expected a saved home to
+expire. That came from the missing-information commit, whose test run had not
+included device-tools. The test is fixed in `fac4d26e`. On the rerun: BUILD
+SUCCESSFUL. `:core:test` 1,109 cases, `:app:testDevDebugUnitTest` 187,
+`:device-tools:testDebugUnitTest` 114, all with 0 failures, errors or skips.
+Lint: 0 errors, 22 warnings. `git diff --check` clean.
+
+Not verified on a phone: no APK from this branch was installed. Untested:
+- the shade sweep and per-chat cancel of notifications posted by 1211;
+- `TaskDesk.isTeamChat` wiring, covered by compile and lint only;
+- whether the user's typing into a Manager run started by team input still
+  counts as a team update. Limit: the flag stays set for that run.
+
 ### Missing critical information: ask instead of stopping at "unknown" — 2026-11-12
 
 Branch `fix/missing-critical-info-20261112` from `feat/manager-20261112` (1211),

@@ -48,6 +48,32 @@ class ManagerBriefingDeliveryTest {
         assertEquals("good\n\nGood message", chat.saved.single().text)
     }
 
+    @Test fun aTeamStatusBriefingIsSavedOnceAndNeverPostedWhileTheUsersFollowUpStillIs() = runTest {
+        val store = InMemoryTaskBoardStore()
+        add(store, "follow-up", 1)
+        // A card the team is waiting on, with no follow-up time of the user's: its briefing is a status update.
+        store.saveTask(MikeTask("status", "status", "why", "plan", originKind = "chat", topicKey = "status",
+            createdAt = 2, updatedAt = 2, status = TaskStatus.WAITING, sourceRefs = listOf(ref)))
+        val board = board(store)
+        board.prepareBriefing("follow-up", "Time to check", emptyList())
+        board.prepareBriefing("status", "Still waiting for a reply", emptyList())
+        assertFalse(TaskBriefingDelivery.reminder(board.task("status")!!.briefing!!))
+        assertTrue(TaskBriefingDelivery.reminder(board.task("follow-up")!!.briefing!!))
+        val chat = FakeChat()
+        val posted = mutableListOf<String>()
+        repeat(3) { delivery(board, chat, notify = { _, title, _, _ -> posted += title; "posted" to "posted" }).deliver("manager") }
+        assertEquals(listOf("follow-up"), posted)
+        assertEquals(2, chat.saved.size)
+        val status = board.task("status")!!.briefing!!
+        assertNotNull(status.deliveredAt)
+        assertNull(status.notificationAttemptedAt)
+        assertEquals(ManagerBriefingDelivery.CHAT_ONLY, status.notificationState)
+        // After a restart there is nothing left to post or retry.
+        delivery(board(store), chat, notify = { _, title, _, _ -> posted += title; "posted" to "posted" }).deliver("manager")
+        assertEquals(listOf("follow-up"), posted)
+        assertEquals(2, chat.saved.size)
+    }
+
     @Test fun sourceAndCardRevokedBeforeGateNeverAppend() = runTest {
         for (revokeSource in listOf(true, false)) {
             val store = InMemoryTaskBoardStore(); add(store, "card", 1)

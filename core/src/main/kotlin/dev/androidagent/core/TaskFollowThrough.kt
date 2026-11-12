@@ -26,7 +26,7 @@ data class TaskBriefing(
     val deliveryNote: String? = null,
     val chatSavedAt: Long? = null,
     val notificationAttemptedAt: Long? = null,
-    /** posted | disabled | blocked | unknown | cancelled; never means opened or useful. */
+    /** posted | disabled | blocked | unknown | cancelled | chat_only (a team update); never means opened or useful. */
     val notificationState: String? = null,
     /** Freeze the visible chat text so a retry keeps the same message content. */
     val title: String? = null,

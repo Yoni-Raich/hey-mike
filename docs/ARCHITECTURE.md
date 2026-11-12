@@ -1,5 +1,49 @@
 # Architecture
 
+## Team updates stay out of the notification shade — 2026-11-12
+
+Problem seen on 1211: Scout pushes all the time. Cause: `SessionNotifier`
+(session notifications, #159) posted a high-priority "finished" notification
+for every chat run that ended `Ready` or with an error. It already hid
+backstage chats from the "working" rows, but not from endings. So every Scout,
+Coach, Librarian and Coordinator pass posted a heads-up push, and so did every
+retry of a failed pass. Child chats also posted their own push before their
+source chat reported the same result.
+
+The fix classifies by role and turn origin in code, not by text:
+
+- `RunState.agentInput` says the turn came from the app or another agent: a
+  backstage pass, child updates delivered to an idle chat, an automatic
+  continuation, or a turn the engine started itself. `AgentCoordinator` sets it
+  at the start and keeps it on the final `Ready`/`Stopped` state. Error states
+  are copies, so they keep it.
+- `SessionNotices.teamUpdate` treats these endings as team updates. A team
+  update posts nothing and cancels that chat's earlier "finished"
+  notification:
+  - a backstage chat (`isBackgroundSession`);
+  - a delegated child chat (its source chat reports the result);
+  - an agent-fed turn in a team chat (Manager or member, `TaskDesk.isTeamChat`).
+
+  The user's own request still announces its ending, in any chat. An ordinary
+  chat still announces a child result once, on the source chat. Team-progress
+  rows under "Mike is working" follow the same rule.
+- Manager briefings: `TaskBriefingDelivery.reminder` passes only `check:`
+  (a follow-up time the user set) and `deadline:` occurrences to the quiet
+  `manager_briefings` notification. Proposal, waiting, review, failed and
+  resolved briefings are saved in the Manager chat and on the board as
+  `chat_only`. They are never posted, so a restart has nothing to retry.
+- Not changed, on purpose:
+  - approvals and `ask_user` questions, from any chat;
+  - the foreground "Mike is working" notification;
+  - automation-rule NOTIFY actions;
+  - alerts raised with `tasks mode=alert` (`ProactiveDesk`). Alerts are a
+    separate, gated type: the Alerts switch, daily budgets, quiet hours,
+    dedupe by signal, and Not important/Later buttons.
+
+  No saved preference: the rule is fixed by role and origin. Old
+  notifications are cleared by a sweep after sessions load, and by the next
+  team ending of each chat.
+
 ## Missing critical information — 2026-11-12
 
 Problem seen on 1211: the Manager was asked "where am I?", read

@@ -125,6 +125,8 @@ class AgentRunsTest {
         advanceUntilIdle()
         assertNull(rig.runs.stateOf("one"))
         assertEquals(listOf("CI passed"), rig.store.assistant("one"))
+        // Nobody typed it: in a team chat its ending is a team update.
+        assertTrue(rig.runs.outcomes.value["one"]!!.agentInput)
         rig.close()
     }
 
@@ -495,6 +497,31 @@ class AgentRunsTest {
         runCurrent()
         assertTrue(rig.engine.approvals.isEmpty())
         assertTrue("source-question" in rig.engine.answered)
+        rig.close()
+    }
+
+    @Test fun anOutcomeTellsWhetherTheTurnCameFromTheUserOrFromTheTeam() = runTest {
+        val rig = Rig(this); rig.deliverChildren(); runCurrent()
+        // A backstage pass is app input; its ending must be recognisable as a team update.
+        rig.runs.send(QueuedTurn(sessionId = "two", prompt = "Background board job", displayPrompt = "Discovery pass", agentContext = true))
+        runCurrent()
+        assertTrue(rig.runs.stateOf("two")!!.agentInput)
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-two", turnId = "turn-thread-two"))
+        runCurrent()
+        assertEquals("Ready", rig.runs.outcomes.value["two"]!!.status)
+        assertTrue(rig.runs.outcomes.value["two"]!!.agentInput)
+        // The user's own message is not.
+        rig.runs.send("one", "Do it"); runCurrent()
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-one", turnId = "turn-thread-one"))
+        runCurrent()
+        assertFalse(rig.runs.outcomes.value["one"]!!.agentInput)
+        // A child result that wakes its idle source chat is team input too.
+        rig.agents.invoke("one", request()) { true }; runCurrent()
+        val child = rig.agents.tasks.value.single().sessionId!!
+        rig.engine.emit(EngineEvent.MessageCompleted("Finished result", "thread-$child", "turn-thread-$child", "c", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-$child", turnId = "turn-thread-$child"))
+        runCurrent(); advanceTimeBy(501); runCurrent()
+        assertTrue(rig.runs.stateOf("one")!!.agentInput)
         rig.close()
     }
 

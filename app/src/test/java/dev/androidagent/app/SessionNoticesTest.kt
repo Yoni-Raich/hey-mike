@@ -70,6 +70,42 @@ class SessionNoticesTest {
         assertNull(SessionNotices.ending(RunState(status = "Voice ended")))
     }
 
+    @Test fun teamUpdatesNeverReachTheShadeButTheUsersOwnRequestsDo() {
+        val done = RunState(status = "Ready", runId = "r")
+        val fed = done.copy(agentInput = true)
+        val failed = RunState(phase = RunPhase.ERROR, status = "No connection", agentInput = true)
+        val sources = mapOf("child" to "chat", "manager-child" to "manager")
+        val owner: (String) -> String = { sources[it] ?: it }
+        val hidden: (String) -> Boolean = { it == "scout" }
+        val team: (String) -> Boolean = { it == "manager" }
+        fun announced(chat: String, outcome: RunState) = SessionNotices.announced(chat, outcome, owner, hidden, team)
+        // Scout and other backstage passes: never, done or failed, whatever their input.
+        assertNull(announced("scout", fed)); assertNull(announced("scout", failed)); assertNull(announced("scout", done))
+        // A delegated child: its source chat reports it, so the child itself is never announced.
+        assertNull(announced("child", done)); assertNull(announced("manager-child", done))
+        // The Manager chat working on a briefing or child updates is team work...
+        assertNull(announced("manager", fed)); assertNull(announced("manager", failed))
+        // ...but the user's own request in the Manager chat still tells them it finished.
+        assertEquals(SessionNotices.Ending.DONE, announced("manager", done))
+        // An ordinary chat keeps its notification, also for a child result the user asked for: one, on the source.
+        assertEquals(SessionNotices.Ending.DONE, announced("chat", done))
+        assertEquals(SessionNotices.Ending.DONE, announced("chat", fed))
+        assertEquals(SessionNotices.Ending.FAILED, announced("chat", failed))
+        assertNull(announced("chat", RunState(status = "Stopped")))
+    }
+
+    @Test fun teamProgressHasNoRowButApprovalsFromAnyChatStillDo() {
+        val states = linkedMapOf(
+            "manager" to working.copy(agentInput = true),
+            "scout" to RunState(phase = RunPhase.TOOL, approval = approval, agentInput = true),
+            "chat" to working.copy(agentInput = true),
+        )
+        val rows = SessionNotices.running(states, self, hidden = { it == "scout" }, team = { it == "manager" })
+        assertEquals(mapOf("chat" to "Reading the page"), rows)
+        // An approval is something the user must answer: it is never classed as a team update.
+        assertEquals(setOf("request-1"), SessionNotices.approvalsDue(states, self).keys)
+    }
+
     @Test fun aLongReplyIsCutForTheNotification() {
         assertEquals("One\nTwo", SessionNotices.preview("  One\n\n\nTwo "))
         assertEquals("aaaa…", SessionNotices.preview("a".repeat(50), limit = 5))

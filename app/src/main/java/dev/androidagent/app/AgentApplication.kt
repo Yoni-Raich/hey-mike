@@ -568,6 +568,7 @@ class AgentGraph(private val app: Application) {
         sessionNotices = SessionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat,
             owner = { child -> runCoordinator.ancestorsOf(child).lastOrNull() ?: child },
             hidden = { taskDesk.isBackgroundSession(it) },
+            team = { taskDesk.isTeamChat(it) },
         )
         queue = SessionRunQueue(
             scope,

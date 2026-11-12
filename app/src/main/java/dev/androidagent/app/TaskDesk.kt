@@ -370,6 +370,9 @@ class TaskDesk(
             run, data, handler, book, activeRules, withIo { book.fingerprint() }, refs, coachDispositions = dispositions, learned = learned)
     }
 
+    /** A team chat the user can open: the Manager or a team member. */
+    fun isTeamChat(id: String): Boolean = roleOf(id) in setOf(TaskChatRole.MANAGER, TaskChatRole.MEMBER)
+
     fun isBackgroundSession(id: String): Boolean = roleOf(id) in setOf(TaskChatRole.SCOUT, TaskChatRole.COACH, TaskChatRole.LIBRARIAN, TaskChatRole.COORDINATOR) ||
         (!ready && sessions.sessions.value.any { it.id == id && it.title.endsWith(BACKSTAGE_SUFFIX) })
 
@@ -1304,6 +1307,7 @@ class TaskDesk(
         recorded = { task ->
             situationStore.recordDecision(dev.androidagent.core.AttentionDecision("send", "briefing saved to Manager chat", listOf(task.id), now()))
         },
+        // Only the user's own follow-up times and deadlines reach the shade; team status briefings stay in the chat.
         notify = { manager, title, text, id ->
             TaskBriefingNotifier.show(context, manager, title, text, id).let { it.state to it.note }
         },

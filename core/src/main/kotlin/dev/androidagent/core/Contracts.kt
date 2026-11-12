@@ -550,6 +550,12 @@ data class RunState(
     val runId: String? = null,
     /** The run ended at a usage limit of [engine][LimitReached], not on an ordinary error. */
     val limit: LimitReached? = null,
+    /**
+     * The turn came from the app or another agent (a backstage pass, updates
+     * from child chats, an automatic continuation), not from the user's own
+     * message. Kept to the end of the run, so its ending can be told apart.
+     */
+    val agentInput: Boolean = false,
 ) {
     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
 
