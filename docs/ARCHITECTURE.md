@@ -20,98 +20,11 @@ Text the model sees from more than one backend or engine has one owner in
 
 Golden tests in `core/src/test` pin the exact output of each helper.
 
-## Mike's face — 2026-11-02
-
-`MikeEye` draws a flat robot head instead of a dot sphere. It is plain Compose
-`Canvas` on a 200-unit design square scaled to the box, so one drawing serves every
-size from a 24 dp avatar to the team page. Mood parameters ease toward per-mood
-targets, and motion phases accumulate, so changing mood never makes the head jump.
-
-Moods keep their meaning: teal is alive, amber is "waiting for you", grey-teal is
-paused. Thinking is lavender and done is green; a team member's `tint` still colours
-the eyes. Each running task adds one chin light (at most four) where the sphere drew
-one moon. The visor highlight path and the eye constants are built once, so a frame
-allocates nothing of its own.
-Reduced motion draws one still frame. The face never reads Codex or Claude events;
-it only takes `EyeMood`, so UI still observes app state, not raw engine JSON.
-
-Other orbs (`AgentOrb`, `VoiceSphere`, overlay) keep their own look. Changing them is
-a separate decision.
-
-
-## Unified task board and personal assistant — 2026-10-29
-
-The board, Manager, team UI and follow-through are one feature. This integration
-brings the complete reviewed 1179 working source onto `dev` after the selected
-account, privacy and control changes. The repository version and runtime pins
-stay on `dev`; 1179 identifies the source candidate, not a new release.
-
-`core/TaskBoard*` owns proposals, revisions, user decisions, commitments and
-execution receipts. `TaskDesk` joins it to the normal run queue and child chats;
-`LocalTaskBoardStore` keeps the separate private SQLite board. A saved status or
-reminder never executes work. Explicit owner input or a tap freezes the approved
-plan and reserves an attempt key before normal `SessionAgents` dispatch. Unknown
-outcomes keep their key for review. Execution carries the selected engine,
-model and thinking level, falling back explicitly to the Manager profile.
-
-The Manager and role chats stay interactive and survive empty-chat cleanup.
-Scout, Coach, Librarian and internal Manager review are read-only background
-roles. Native Codex uses an ephemeral read-only thread with approvals and native
-execution tools disabled; Claude uses no native tools, strict app MCP and no
-user settings or persisted session. App tool allowlists and write provenance
-checks apply again at dispatch. Backstage voice is refused before engine open.
-These controls share the app UID and still need physical native-runtime proof.
-
-Collection is opt-in. Final chat revisions use a durable SQLite feed cursor;
-bounded signals, dedupe receipts and visible coverage gaps prevent silent loss.
-Both live notifications and reconnect replay reject non-personal or unknown
-Android users before payload access. Replay feeds only the task reader, never
-automation actions. Enabled packages/conversations are checked before extraction.
-Calendar reads need their explicit permission. Collection never opens another
-app or reads its database. Historical WhatsApp/mail sync is outside this feature.
-
-Background models edit staged board/memory/team/rule generations. SQLite commits
-preimage-checked changes, consumed input, run receipt and rule generation in one
-transaction. Source policy revisions are checked at reads, queued preparation,
-commit and briefing delivery. Cancellation cannot fall back to a live writer.
-Revoked or forgotten sources follow dependent context and learned rules; undo
-compensates only its own run and preserves later user edits. Durable memory has
-no fixed age expiry. Explicit owner rules remain separate from learned guidance.
-
-Owner messages are attributed separately from automated output. Manager turns
-select bounded relevant memory and feedback with source provenance. Taking a
-task records its owner, next check and actual deadline independently of proposal
-expiry. Scout can add evidence to open decided work, but cannot rewrite its
-frozen plan or silently close it. Check tomorrow changes follow-up time only.
-
-Manager reviews prepare at most three briefs, four reviews per day and thirty
-minutes apart, under discovery and quota limits. An atomic outbox and stable
-chat message IDs prevent duplicate append after restart. Delivery rechecks source
-policy and current task state. Quiet, private notifications only open the Manager
-chat. Coach changes cite actual owner feedback; optional narrow suggestion
-filters pass examples and counterexamples and expire when owner rules change.
-
-Background queue entries persist only a job reference. Personal prompts are
-prepared in memory after policy checks; owner turns have queue priority. Global
-Stop pauses collection, queue and runs while keeping the existing synchronous
-limit-recovery fences. A recovery dispatch guard is checked again after suspended
-preparation. Process restart does not replay task execution. The opt-in persisted
-JobScheduler job can be deferred by Android; its eight-minute window stops only
-backstage runs. The UI exposes real successful-pass times and waiting reasons.
-
-The shared particle face, Hebrew board/detail/team pages and commitment controls
-use the same decision paths as chat. Current integration checks and remaining
-phone proof: [unified validation](testing/tasks-assistant-unified-20261029.md).
-Earlier candidate checks are retained in [board](testing/task-board-20261025.md),
-[reliability](testing/task-board-v2-20261026.md) and
-[follow-through](testing/personal-assistant-flow-20261028.md); those historical
-build numbers and validation results are not current delivery evidence.
-
 ## Selected feature integration — 2026-10-29
 
 This integration carries the seven changes selected after the conversation
-audit onto `dev`. The later unified integration above also carries task-board,
-Manager and personal-assistant work. The changes below do not enable account starts,
+audit onto `dev`. Task-board, Manager and personal-assistant work remain in
+their original worktrees. The changes below do not enable account starts,
 collection or automatic continuation without the user's setting.
 
 - **Usage-limit recovery:** `UsageLimitRecovery` stores each chat's plan,
@@ -135,8 +48,8 @@ collection or automatic continuation without the user's setting.
 - **Personal notifications:** `PersonalNotificationPolicy` rejects unknown,
   other-user and profile notifications before payload access or consumer
   lookup. It compares Android user identity, never a package blocklist. The
-  unified listener applies this same boundary to active-notification replay
-  and the task-board reader before reading content.
+  current `dev` listener has no active-notification replay or task-board reader;
+  adding either requires applying the same boundary before reading content.
   Already stored data is not removed by this change.
 - **MCP confirmations:** supported empty form confirmations use the existing
   per-chat Allow/Deny card. Responses carry MCP `action`/`content`, are consumed
@@ -3472,7 +3385,7 @@ block stays as the fallback for an engine that cannot.
   their own (status Ready or ERROR), including child and open chats. Stopped,
   interrupted and voice runs get none.
 - **Full access.** Each chat has a permission level. Full access is per chat
-  and inherited by delegated child chats, never by read-only backstage chats.
+  and inherited by delegated child chats.
   It auto-allows local approvals and engine approvals, and writes an
   `approval_auto_allowed` trace entry.
 - **Storage.** The level is stored HMAC-signed with an Android Keystore key,

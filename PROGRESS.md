@@ -1,5 +1,35 @@
 # Progress
 
+### Mike Manager taken out of dev — 2026-11-12
+
+At the owner's request, everything that belongs to the Manager implementation
+was reverted on `dev` and kept on a side branch instead:
+
+- Reverted PR #157 (Mike's robot face in the chat top bar) and PR #149 (task
+  board, Manager, team roles, follow-through, `tasks` tool and its skills).
+  The later changes from #155, #156 and #159 stay; their links into the board
+  (tool policy, read-only backstage chats, `tasks` dispatch) were removed.
+- Side branch `side/mike-manager` (= `feat/manager-20261112`, `a7bf6666`) holds
+  current dev before this revert plus all 20 Manager commits.
+- **Re-integration note:** git treats #149 and #157 as already merged. To bring
+  the Manager back, first revert all of PR #160 (merged with a merge commit:
+  `git revert -m 1 <merge>`), then merge `side/mike-manager`. A plain merge
+  will not restore the reverted code or the trimmed hooks.
+- Later commits that used the board were trimmed too: Claude wake cycles
+  (`lastInputFromUser`), Claude history seeding (`readOnly`), and Stop and
+  session notifications (`taskDesk`). The read-only full-access test went with
+  the read-only chats.
+
+Evidence (Windows worktree, `ANDROID_HOME` set):
+- `.\gradlew.bat test :app:assembleDevDebug :app:assembleDevDebugAndroidTest
+  :app:lintDevDebug --no-daemon --continue`: BUILD SUCCESSFUL, no test
+  failures, no new lint errors.
+- `python -m unittest tools.test_prepare_runtime`: 16 OK. `git diff --check`: clean.
+
+Not tested: phone install and a live run. dev's `versionCode` is 1183; the
+phone runs Manager build 1214, so a dev build will not install over it
+without raising the version.
+
 ### Notifications APK 1209 installation attempt — 2026-11-11
 
 At the owner's explicit request, built commit `8c2521d9` with
@@ -126,26 +156,6 @@ Evidence (Windows, worktree build):
 Untested: not installed or run on a phone. The changes only move code, but no
 device run confirms the a11y/ADB `act_and_observe` path or the Claude/Codex
 turn text on hardware.
-
-### Mike's face is a robot — 2026-11-02
-
-Replaced the dotted sphere in `MikeEye` with a flat ceramic robot head: a dark
-visor, two glowing pill eyes and small ear pads. The API (`EyeMood`, `tint`,
-`satellites`, `animate`, `description`) is unchanged, so every place that shows
-Mike (task strip, board, team page, avatars) gets the new face without edits. The
-other orbs (`AgentOrb`, `VoiceSphere`, the overlay orb) are not part of this change.
-
-Evidence: `:app:compileDevDebugKotlin`, `:app:lintDevDebug` (0 errors, 21 warnings,
-as before) and `:app:testDevDebugUnitTest` (344 cases, 0 failures, including the
-new `MikeEyeTest`) passed; `git diff --check` is clean. On the API 35 x86_64
-emulator `emulator-5566` only, `MikeEyeUiTest` drew all six moods at 96, 64, 40, 30,
-24 and 56 dp and the nine existing `TaskBoardUiTest` cases passed. Captures are in
-[`docs/testing/mike-robot-face-20261102/`](docs/testing/mike-robot-face-20261102/).
-
-Not tested: the physical phone, the live drawer/strip with real tasks, a release
-APK, battery cost over a long session, and reduced-motion on a device. The captures
-are fixture frames, not a recording, so the motion itself was checked only on the
-HTML prototype and by reading the frame loop.
 
 ### Dev update version — 2026-10-30
 
