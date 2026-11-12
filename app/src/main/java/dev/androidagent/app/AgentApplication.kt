@@ -147,6 +147,15 @@ class AgentGraph(private val app: Application) {
     )
     /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
     val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
+    private val windowPreferences = app.getSharedPreferences("ui", 0)
+    /** Whether chats may use a model's long context window (Claude's 1M). Kept on this phone, read at start. */
+    var longContext: Boolean = windowPreferences.getBoolean(KEY_LONG_CONTEXT, true)
+        set(value) {
+            field = value
+            windowPreferences.edit().putBoolean(KEY_LONG_CONTEXT, value).apply()
+            engine.setLongContext(value)
+        }
+    init { engine.setLongContext(longContext) }
     val chatTitles = dev.androidagent.core.ChatTitleManager(sessions, engine)
     // Beside CODEX_HOME, never inside it: Codex must only see the live sign-in.
     val accounts = CodexAccountVault(runtime.codexHomeDirectory, java.io.File(runtime.runtimeRoot, "accounts"))
@@ -460,7 +469,8 @@ class AgentGraph(private val app: Application) {
         },
     )
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
-    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools,
+        restricted = taskDesk::isBackgroundSession, ownerContext = taskDesk::ownerContext) { runCoordinator }
     init {
         scope.launch {
             A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
@@ -525,6 +535,7 @@ class AgentGraph(private val app: Application) {
             scope,
             coordinator,
             sessions,
+            prepare = taskDesk::prepareTurn,
             // A turn a rule queued has a moment; a turn a person sent does not
             // expire. Dropping a stale one is reported, never silent.
             onExpired = { turn ->
@@ -535,7 +546,8 @@ class AgentGraph(private val app: Application) {
                                 id = java.util.UUID.randomUUID().toString(),
                                 sessionId = turn.sessionId,
                                 role = "assistant",
-                                text = "This did not run: the phone was busy until after the moment it was for.",
+                                text = if(turn.boardJobId == null) "This did not run: the phone was busy until after the moment it was for."
+                                    else "This background job did not run. Its window expired or its source settings changed. Retained input will be checked in a fresh pass.",
                                 createdAt = System.currentTimeMillis(),
                             ),
                         )
@@ -597,3 +609,5 @@ private fun publishWithoutNative(part: File, target: File, @Suppress("UNUSED_PAR
     if (target.exists()) target.delete()
     check(part.renameTo(target)) { "Could not finish the copy at ${target.name}." }
 }
+
+private const val KEY_LONG_CONTEXT = "longContext"

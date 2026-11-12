@@ -1,5 +1,74 @@
 # Architecture
 
+## Task board visual refresh — 2026-10-26
+
+The Manager and member avatars share a two-eyed particle renderer. It retains
+team tints, state descriptions and the reduced-motion still frame. Board cards
+show a short reason and plan, while the full evidence and activity remain in
+the detail page. Decision controls come before the evidence; sensitive-action
+notes still appear before the controls. Task content uses its own paragraph
+direction, independently of the UI language. Discovery details are expandable;
+coverage warnings remain visible when collapsed. These are presentation
+changes: user decisions still use the existing task decision paths.
+
+## Task-board reliability — 2026-10-26
+
+The board now captures finalized message revisions from a SQLite feed in
+`sessions.db` schema 10. Equal times, new short chats, and long messages do
+not share a timestamp cursor. Capture inserts a whole page and advances its
+cursor in one board transaction. Backpressure keeps the source page for a
+later try. Long notifications are split without dropping their tail. A full
+notification inbox refuses new input, keeps existing input, and shows a gap.
+
+Every meaningful card change has a revision and event. Approval freezes the
+plan, destination and user note in its execution receipt. `tasks get` supplies
+the full card and paged history. The Coach reads actual decision/note/outcome
+events; its consumed event IDs are saved with the result. A machine result is
+not a user success verdict. Snoozed cards have their own Wake transition.
+
+Background jobs use the existing run queue. Its durable entry contains a job
+ID; personal input is prepared in memory only after current-policy checks.
+Raw pending input survives a failed run. A restart cancels stale queued work
+and rebuilds future read passes; it never replays task execution. A cancelled
+pass cannot fall back to the live tool handler and save a late result.
+
+Models edit an isolated board/memory/team copy. SQLite checks the source
+policy epoch and changed record preimages, then commits outputs, events,
+consumed input, job receipt, maintenance cursor and active rule generation
+together. Conflicts keep current user changes and the unprocessed input.
+The rules generation is finalized first, with a SHA-256 file manifest. A crash
+before the DB commit leaves an inactive generation, not half-live rules.
+Only `tasks playbook` selects the active generation. `user.md` remains separate.
+Generations are read-only except for explicit Forget revocation.
+
+Sources follow cards, memory, recalled context and learned rules. Current
+exclusions apply at managed reads, dispatch and commit. Unknown legacy
+external provenance stays outside automatic context. Forget cancels old work,
+follows compaction links, saves text-free tombstones, removes affected note
+undo payloads and revokes dependent learned files in retained generations.
+Undo compensates this run only; later notes, edits and forgotten items stay.
+Legacy whole-memory snapshots are not accepted by the new Undo endpoint.
+This is managed data removal, not forensic erasure or deletion of original
+messages, user-owned chats, or old external exports.
+
+An internal read-only Manager review organizes roles from useful new events,
+at most four times a day and thirty minutes apart. Its own role/report updates
+cannot trigger it again. It cannot execute tasks. It uses the selected
+discovery model. User Manager chat stays separate. Backstage voice is refused
+before a normal native thread can open; Manager voice gets owner context.
+Normal full-access chats still share the app's Linux UID. These checks are
+not an OS sandbox against a fully privileged chat.
+
+Maintenance records successful completion separately from attempts. Failed
+nightly work backs off two hours. Memory pages rotate through up to 160 notes;
+live notes have no age expiry. User pins and open-card links protect notes.
+The UI shows real successful-pass time, pending input, quota/cap waits,
+coverage gaps, decision history, before/after upkeep and team controls.
+Reading missing conversation context opens a user draft in the Manager chat;
+collection never takes the screen.
+
+See [implementation checks and remaining proof](testing/task-board-v2-20261026.md).
+
 ## Task board, Manager and background team — 2026-10-25
 
 `core/TaskBoard*` owns proposals, user decisions, execution receipts and recovery.
@@ -66,8 +135,8 @@ Retired notes have a seven-day undo window. A user-owned `mike-playbook` skill
 has bounded Markdown files and separate `user.md` rules. Coach and Librarian
 can write learned files only through the bounded tool endpoint, never
 `user.md`; learned text cannot change sources, permissions or execution gates.
-Nightly review and memory upkeep keep snapshots and offer report cards with
-undo. Their model and engine are selected in Sources.
+Nightly review and memory upkeep stage changes and offer run-specific report
+cards with compensating undo. Their model and engine are selected in Sources.
 The trusted app home is resolved once before playbook path checks: Android's
 `/data/data` and `/data/user/0` aliases are valid roots. Links inside the
 playbook and paths outside it remain blocked.

@@ -23,6 +23,7 @@ package dev.androidagent.engineclaude
 import dev.androidagent.core.CompactResult
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.core.SecretRedactor
+import dev.androidagent.core.TokenUsage
 import dev.androidagent.engineclaude.ClaudeProtocol.string
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.JsonArray
@@ -101,6 +102,8 @@ internal class ClaudeStreamMapper(
     private var generatedText = 0
     private var lastText: EngineEvent.MessageCompleted? = null
     private val builtinTools = mutableMapOf<String, Pair<String, String>>()
+    /** The chat's last counts. A turn's result has its totals; each model call, the context size. */
+    private var usage: TokenUsage? = null
 
     fun begin(turnId: String, frameUuid: String, internal: Boolean = false): Turn {
         check(active == null) { "A turn is already running in this chat." }
@@ -224,11 +227,18 @@ internal class ClaudeStreamMapper(
 
     private fun system(message: JsonObject): List<Signal> {
         val turn = visibleTurn(message)
+        var shrunk: Signal? = null
         if (message.string("subtype") == "compact_boundary") {
             // A compaction the app asked for is internal and shows no events; keep its sizes for the caller.
-            (cycleTurn() ?: active)?.takeIf { it.internal && !it.ended }
-                ?.let { it.compact = compactResult(message["compact_metadata"] as? JsonObject) }
+            val compact = compactResult(message["compact_metadata"] as? JsonObject)
+            (cycleTurn() ?: active)?.takeIf { it.internal && !it.ended }?.let { it.compact = compact }
+            // The smaller context shows now, not at the next model call.
+            shrunk = compact?.tokensAfter?.let(::contextChanged)
         }
+        return listOfNotNull(shrunk) + systemEvents(message, turn)
+    }
+
+    private fun systemEvents(message: JsonObject, turn: Turn?): List<Signal> {
         return when (message.string("subtype")) {
             "init" -> {
                 busy = true
@@ -245,6 +255,14 @@ internal class ClaudeStreamMapper(
             }.orEmpty()
             else -> emptyList()
         }
+    }
+
+    /** A usage event for a new context size; null when the size has not changed. */
+    private fun contextChanged(context: Long): Signal? {
+        if (usage?.context == context) return null
+        val next = (usage ?: TokenUsage(0, 0, 0)).copy(context = context)
+        usage = next
+        return Signal.Emit(EngineEvent.UsageChanged(threadId, usage = next))
     }
 
     private fun compactResult(metadata: JsonObject?): CompactResult? {
@@ -329,6 +347,7 @@ internal class ClaudeStreamMapper(
         val bodyId = body.string("id").ifBlank { null }
         if (bodyId != null && bodyId != messageId) { messageId = bodyId; textIndex = null }
         val signals = mutableListOf<Signal>()
+        ClaudeProtocol.contextTokens(body)?.let(::contextChanged)?.let { signals += it }
         for (block in blocks) {
             when (block.string("type")) {
                 "text" -> {
@@ -391,7 +410,11 @@ internal class ClaudeStreamMapper(
         val turn = cycleTurn()
         owner = null
         val signals = mutableListOf<Signal>()
-        ClaudeProtocol.parseUsage(message)?.let { signals += Signal.Emit(EngineEvent.UsageChanged(threadId, usage = it)) }
+        ClaudeProtocol.parseUsage(message)?.let { totals ->
+            val merged = totals.copy(context = usage?.context, contextWindow = totals.contextWindow ?: usage?.contextWindow)
+            usage = merged
+            signals += Signal.Emit(EngineEvent.UsageChanged(threadId, usage = merged))
+        }
         if (turn == null) return signals
         val failed = (message["is_error"] as? JsonPrimitive)?.booleanOrNull == true || message.string("subtype") != "success"
         val status = when {

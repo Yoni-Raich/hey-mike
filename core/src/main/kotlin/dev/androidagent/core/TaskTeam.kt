@@ -48,6 +48,11 @@ class TeamRoster(
         mutable.value = store.loadMembers().sortedBy(::order)
         loaded = true
     }
+    suspend fun refresh() = lock.withLock { mutable.value = store.loadMembers().sortedBy(::order) }
+    suspend fun repairRoleChats(chat: suspend (TeamMember) -> String) = lock.withLock {
+        mutable.value.filter { it.kind == MemberKind.ROLE && (it.sessionId == null || it.sessionId?.startsWith("pending:") == true) }
+            .forEach { save(it.copy(sessionId = chat(it))) }
+    }
 
     fun member(id: String): TeamMember? = mutable.value.firstOrNull { it.id == id }
     fun bySession(sessionId: String): TeamMember? = mutable.value.firstOrNull { it.sessionId == sessionId }
@@ -68,7 +73,8 @@ class TeamRoster(
     }
 
     /** A new task role. Only the Manager creates them; the cap makes it merge instead of multiply. */
-    suspend fun createRole(name: String, role: String, kinds: List<String>, chat: suspend (TeamMember) -> String): TeamMember = lock.withLock {
+    suspend fun createRole(name: String, role: String, kinds: List<String>, chat: suspend (TeamMember) -> String,
+        sourceRefs: List<TaskSourceRef> = emptyList()): TeamMember = lock.withLock {
         val cleanName = name.trim().take(24).ifEmpty { error("Give the role a short name.") }
         require(mutable.value.none { it.name.equals(cleanName, true) }) { "A member is already called $cleanName." }
         require(mutable.value.count { it.kind == MemberKind.ROLE } < MAX_ROLES) {
@@ -76,24 +82,25 @@ class TeamRoster(
         }
         val cleanKinds = kinds.map(TaskBoard::topicKey).filter { it.isNotEmpty() }.distinct().take(8)
         require(cleanKinds.isNotEmpty()) { "Name the card kinds this role takes." }
-        val id = "role-" + TaskBoard.topicKey(cleanName).take(32).ifEmpty { SignalInbox.idOf(cleanName, now()) }
+        val id = "role-" + java.util.UUID.randomUUID().toString()
         require(member(id) == null) { "A role with this id exists." }
         val usedHues = mutable.value.map { it.hue }
         val hue = ROLE_HUES.firstOrNull { candidate -> usedHues.none { kotlin.math.abs(it - candidate) < 12f } } ?: ROLE_HUES.first()
         val member = TeamMember(id, cleanName, role.trim().take(120), MemberKind.ROLE, hue, taskKinds = cleanKinds,
-            createdAt = now(), createdBy = "manager")
+            createdAt = now(), createdBy = "manager", sourceRefs = sourceRefs)
         val withChat = member.copy(sessionId = chat(member))
         save(withChat)
         withChat
     }
 
-    suspend fun rename(id: String, name: String?, role: String?, kinds: List<String>?): TeamMember = lock.withLock {
+    suspend fun rename(id: String, name: String?, role: String?, kinds: List<String>?, sourceRefs: List<TaskSourceRef> = emptyList()): TeamMember = lock.withLock {
         val current = member(id) ?: error("No member has id $id.")
         val next = current.copy(
             name = name?.trim()?.take(24)?.takeIf { it.isNotEmpty() } ?: current.name,
             role = role?.trim()?.take(120)?.takeIf { it.isNotEmpty() } ?: current.role,
             taskKinds = kinds?.map(TaskBoard::topicKey)?.filter { it.isNotEmpty() }?.distinct()?.take(8)
                 ?.takeIf { current.kind == MemberKind.ROLE } ?: current.taskKinds,
+            sourceRefs = (current.sourceRefs + sourceRefs).distinct(),
         )
         save(next); next
     }
