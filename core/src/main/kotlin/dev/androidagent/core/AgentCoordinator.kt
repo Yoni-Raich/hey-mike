@@ -551,6 +551,7 @@ class AgentCoordinator(
                         mutableState.value = state.value.copy(
                             phase = RunPhase.ERROR, status = error.message ?: "Run failed", controlling = false,
                             outcomeUnknown = awaitingTurn || turn != null,
+                            limit = UsageLimitText.recognize(error.message)?.copy(engine = runEngine),
                         )
                     }
                 }
@@ -1434,7 +1435,10 @@ class AgentCoordinator(
                         val error = event.error ?: "${runEngine.label} could not finish"
                         synchronized(lifecycleLock) {
                             assistantOutcome = "error"
-                            mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = error)
+                            mutableState.value = state.value.copy(
+                                phase = RunPhase.ERROR, status = error,
+                                limit = (event.limitReached ?: UsageLimitText.recognize(error))?.copy(engine = runEngine),
+                            )
                         }
                         state.value.sessionId?.let { sessions.append(message(it, "system", error)) }
                     }
@@ -1464,6 +1468,7 @@ class AgentCoordinator(
                         assistantOutcome = "error"
                         mutableState.value = state.value.copy(
                             phase = RunPhase.ERROR, status = event.message, outcomeUnknown = event.uncertain,
+                            limit = (event.limitReached ?: UsageLimitText.recognize(event.message))?.copy(engine = runEngine),
                         )
                     }
                     completion?.complete(Unit)

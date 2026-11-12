@@ -126,6 +126,11 @@ class MemoryBook(
         scored.map { found -> mutable.value.first { it.id == found.id } }
     }
 
+    /** Context actually injected into an owner turn counts as retrieval, even without a recall call. */
+    suspend fun used(ids: Collection<String>) = lock.withLock {
+        save(live.filter { it.id in ids }.map { it.copy(useCount = it.useCount + 1, lastUsedAt = now()) })
+    }
+
     /** Note that cards cite these notes. Linked notes are never compacted away while the card is open. */
     suspend fun link(ids: Collection<String>, taskId: String) = lock.withLock {
         val clock = now()

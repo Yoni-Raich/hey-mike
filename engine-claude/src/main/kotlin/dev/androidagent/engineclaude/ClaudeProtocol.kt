@@ -583,13 +583,20 @@ internal object ClaudeProtocol {
         val type = info.string("rateLimitType")
         if (type == "overage") return null
         val name = windowName(type.ifBlank { "five_hour" }).first
-        val resetsAt = (info["resetsAt"] as? JsonPrimitive)?.longOrNull
-            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull }
+        val resetsAt = rejectionReset(info)
         val base = "You have reached your Claude $name usage limit."
         if (resetsAt == null || resetsAt <= 0) return base
         val reset = Instant.ofEpochSecond(resetsAt).atZone(zone)
         val pattern = if (resetsAt - now.epochSecond < 24 * 3600) "HH:mm" else "EEE d MMM, HH:mm"
         return "$base It resets at ${reset.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))}."
+    }
+
+    /** Epoch seconds at which a `rejected` limit resets, when the CLI said. */
+    fun rejectionReset(info: JsonObject): Long? {
+        val type = info.string("rateLimitType")
+        return ((info["resetsAt"] as? JsonPrimitive)?.longOrNull
+            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull })
+            ?.takeIf { it > 0 }
     }
 
     /** Token usage from a `result` frame. Input counts cache reads and writes, as the context does. */

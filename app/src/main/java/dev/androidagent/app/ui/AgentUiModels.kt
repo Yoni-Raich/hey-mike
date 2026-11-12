@@ -258,7 +258,33 @@ data class AgentUiState(
     val defaultEngine: EngineKind = EngineKind.CODEX,
     /** Claude subscription setup. [accountStatus] stays the Codex sign-in. */
     val claude: ClaudeUiState = ClaudeUiState(),
+    /** The open chat's usage-limit plan, and its stop when it hit a limit. */
+    val limits: ChatLimits = ChatLimits(),
+    /** The sheet that sets what the open chat does at a usage limit. */
+    val isLimitPlanOpen: Boolean = false,
 )
+
+/** An account or provider a chat can run as, offered when it hits a usage limit. */
+data class LimitOption(
+    val target: dev.androidagent.core.LimitTarget,
+    /** "Codex" or "Claude". */
+    val provider: String,
+    /** The account's email, or the computer whose Claude it is. */
+    val account: String?,
+    /** Epoch millis at which it has usage again; null when it has usage now. */
+    val freeAt: Long?,
+    /** What the chat runs as now. */
+    val current: Boolean,
+)
+
+/** What the open chat does at a usage limit, whether it stopped at one, and where it can go. */
+data class ChatLimits(
+    val plan: dev.androidagent.core.LimitPlan = dev.androidagent.core.LimitPlan(),
+    val stop: dev.androidagent.core.LimitStop? = null,
+    val options: List<LimitOption> = emptyList(),
+) {
+    fun option(target: dev.androidagent.core.LimitTarget): LimitOption? = options.firstOrNull { it.target.key == target.key }
+}
 
 /** Claude subscription setup: the one-time download and the sign-in. */
 data class ClaudeUiState(
@@ -409,6 +435,18 @@ data class AgentUiActions(
     val onLongContextChanged: (Boolean) -> Unit = {},
     val onRenameSession: (sessionId: String, title: String) -> Unit = { _, _ -> },
     val onCompact: () -> Unit = {},
+    /** Open or close the sheet that sets what this chat does at a usage limit. */
+    val onOpenLimitPlan: () -> Unit = {},
+    val onCloseLimitPlan: () -> Unit = {},
+    val onSaveLimitPlan: (dev.androidagent.core.LimitPlan) -> Unit = {},
+    /** The stopped chat goes on by itself once its usage resets. */
+    val onContinueAtReset: () -> Unit = {},
+    val onCancelLimitWait: () -> Unit = {},
+    /** Try the stopped chat again now, on what it runs as. */
+    val onContinueNow: () -> Unit = {},
+    /** Move the stopped chat to another account or provider and go on there. */
+    val onSwitchAfterLimit: (dev.androidagent.core.LimitTarget) -> Unit = {},
+    val onDismissLimit: () -> Unit = {},
     val onTogglePlanMode: () -> Unit = {},
     val onShowStatus: () -> Unit = {},
     val onDeleteSession: (String) -> Unit = {},

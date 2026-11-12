@@ -1,5 +1,29 @@
 # Architecture
 
+## Manager follow-through — 2026-10-28
+
+Owner messages in Manager/member chats are captured separately from automated
+output. Their attributed feedback journal is bounded; Coach consumes actual owner
+events. Manager turns select bounded memories and corrections with current source
+policy. Automatically injected context contributes its source references to later
+managed writes. Live memory has no fixed expiry.
+
+Commitments record owner, next check and a real deadline independent of proposal
+expiry. New evidence may inform decided open work but cannot change a frozen
+execution plan or close it. Manager reviews create an atomic, source-checked
+briefing outbox on the existing cards. Stable chat message IDs prevent duplicate
+delivery after restart. Delivery rechecks eligibility and policy. Quiet private
+notifications only open the owning chat and never start work or answer approvals.
+Discovery, quota and review limits apply; delivery gaps remain visible.
+
+Optional learned `mike-filter` blocks are narrow suggestion filters with executable
+examples and counterexamples. They cannot grant permissions or dispatch anything.
+An owner-rule fingerprint invalidates old filters when explicit owner rules change.
+Free-form learned prose remains context, without a claimed semantic quality gate.
+Execution profiles are explicit and preserved in approved snapshots when overridden;
+otherwise the Manager's profile is passed explicitly to its child.
+See [validation and limits](testing/personal-assistant-flow-20261028.md).
+
 ## Task board visual refresh — 2026-10-26
 
 The Manager and member avatars share a two-eyed particle renderer. It retains
@@ -3440,3 +3464,43 @@ Decided 2026-10-01, on top of the section above.
   skills are not listed in the composer. Mac Desktop handoff and real
   phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
   evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
+## A chat that hits a usage limit continues by itself
+
+A turn stopped by a usage limit used to end on a red error line, and the user
+had to come back and type "continue". Now the stop is a state of the chat,
+with a plan the user sets inside the chat.
+
+- **Detection.** The engine says so where it can: Claude's
+  `rate_limit_event` rejection carries `resetsAt`, and Codex's error carries
+  `codexErrorInfo: usageLimitExceeded`. Both reach `EngineEvent.TurnFinished`
+  and `Failure` as `limitReached`. The coordinator falls back to
+  `UsageLimitText.recognize` on the error text, then stamps the run's engine
+  into `RunState.limit`.
+- **Plan per chat.** `LimitPlan(continueAtReset, switchTo)`: an ordered list
+  of `LimitTarget`s (a Codex account, or Claude) to move to, and whether to
+  wait for the reset when none is free. It is set from the `/limits` command,
+  the composer chip, or the card's "Set up for next time".
+- **`UsageLimitRecovery` (`:core`)** watches `AgentRuns.outcomes` and handles
+  each `runId` once. With no plan the chat is `STOPPED` and the card offers
+  "Continue at HH:mm", the other accounts, and "Try again now". With a plan it
+  moves to the first target that can run and is not known to be out
+  (`SWITCHING`, then `CONTINUING`), or waits (`WAITING`) until the earliest of
+  the current account's reset and the targets' resets, plus 60s of grace. A
+  reset that is not reported is tried again after 30 minutes. A target that
+  failed to switch counts as out for 30 minutes, so a wait does not loop on
+  it. Automatic tries stop after 12 in a row; "Continue now" is the user's own
+  call and starts the count again.
+- **Continuing** is an ordinary queued turn (`QueuedTurn`, shown as an agent
+  note "Continuing after the usage limit"). A change of engine travels with
+  the turn, so the coordinator's `ChatHandoff` tells the new engine what was
+  said. A change of Codex account goes through `switchCodexAccount`, which
+  waits until no chat and no voice runs, pauses the queue, closes the engine,
+  activates the account and reads its usage; the open screen follows through
+  `accountSwitched`.
+- **Waiting with the app closed.** Plans, stops and the out-of-usage marks are
+  saved in `limit-recovery.json` under the runtime root. One alarm
+  (`LimitWakeReceiver`) is set for the earliest wait: exact when the user
+  allows exact alarms, otherwise `setAndAllowWhileIdle`. It starts
+  `AgentService` and runs `dispatchDue` in the app scope. A stop restored
+  while it was switching is decided again.

@@ -52,6 +52,7 @@ data class TaskProposal(
     val category: TaskCategory = TaskCategory.TASK,
     val action: TaskAction? = null,
     val sourceRefs: List<TaskSourceRef> = emptyList(),
+    val deadlineAt: Long? = null,
 )
 
 sealed class ProposeOutcome {
@@ -196,6 +197,7 @@ class TaskBoard(
             usefulUntil = until,
             partialContext = proposal.partialContext,
             sourceRefs = proposal.sourceRefs,
+            deadlineAt = proposal.deadlineAt,
         )
         put(task)
         ProposeOutcome.Created(task)
@@ -264,6 +266,7 @@ class TaskBoard(
             "do" -> return startWork(id, decision)
             "continue" -> return continueWork(id, decision)
             "stop" -> return stopWork(id, decision)
+            "check_later" -> return checkLater(id, until ?: (clock + DAY_MS))
         }
         return lock.withLock {
             val task = required(id)
@@ -271,7 +274,8 @@ class TaskBoard(
                 "mine" -> {
                     check(task.category == TaskCategory.TASK) { "Only a task can be taken by the user." }
                     check(task.status.undecided || task.status in setOf(TaskStatus.FAILED, TaskStatus.STOPPED)) { "This card is ${task.status.wire}." }
-                    task.copy(status = TaskStatus.MINE, decision = decision, note = decision.note ?: task.note)
+                    task.copy(status = TaskStatus.MINE, decision = decision, note = decision.note ?: task.note,
+                        commitment = TaskFollowThrough.accepted(task, "user", clock, until), briefing = null)
                 }
                 "dismiss" -> {
                     check(task.status !in setOf(TaskStatus.APPROVED, TaskStatus.RUNNING, TaskStatus.WAITING)) { "Stop the work first." }
@@ -297,7 +301,7 @@ class TaskBoard(
                     check(task.status.closed) { "Only a closed card can come back." }
                     unsuppress(task)
                     task.copy(status = TaskStatus.PROPOSED, decision = decision, dismissReason = null, closedAt = null,
-                        resolvedEvidence = null, snoozedUntil = null)
+                        resolvedEvidence = null, snoozedUntil = null, commitment = null, briefing = null)
                 }
                 "wake" -> {
                     check(task.status == TaskStatus.SNOOZED) { "Only a postponed task can return now." }
@@ -326,7 +330,9 @@ class TaskBoard(
                 execution = TaskExecution("${task.id}#$attempt", rounds = attempt, startedAt = decision.at,
                     approvedPlan = ApprovedTaskPlan(task.revision, SignalInbox.idOf(task.plan, task.computer, task.project,
                         decision.note ?: task.note, task.sideEffects), task.title, task.plan, task.deliverable,
-                        task.computer, task.project, decision.note ?: task.note, task.sideEffects)), result = null, resultAt = null)
+                        task.computer, task.project, decision.note ?: task.note, task.sideEffects,
+                        mutableSettings.value.executionEngine, mutableSettings.value.executionModel, mutableSettings.value.executionEffort)),
+                commitment = TaskFollowThrough.accepted(task, "mike", decision.at), briefing = null, result = null, resultAt = null)
             put(next)
             next to attempt
         }
@@ -443,6 +449,47 @@ class TaskBoard(
             )
             if (next != task) put(next.copy(updatedAt = now()))
         }
+    }
+
+    /** New evidence may inform follow-up, never rewrite an approved plan or close decided work. */
+    suspend fun observe(id: String, evidence: List<TaskEvidence>, completion: String?, refs: List<TaskSourceRef>): MikeTask = lock.withLock {
+        val task = required(id)
+        check(!task.status.closed && !task.status.undecided) { "Use update for an undecided card." }
+        require(evidence.isNotEmpty()) { "Follow-up needs source evidence." }
+        val commitment = task.commitment ?: TaskFollowThrough.accepted(task, if(task.status == TaskStatus.MINE) "user" else "mike", now())
+        val next = task.copy(evidence = (task.evidence + evidence.map { it.copy(detail = it.detail.take(MAX_DETAIL)) }).distinct().takeLast(MAX_EVIDENCE),
+            sourceRefs = (task.sourceRefs + refs).distinct(), updatedAt = now(),
+            commitment = commitment.copy(completionEvidence = completion?.trim()?.take(MAX_DETAIL)?.takeIf { it.isNotEmpty() }
+                ?: commitment.completionEvidence, checkedAt = now()))
+        put(next); required(id)
+    }
+
+    suspend fun checkLater(id: String, until: Long): MikeTask = lock.withLock {
+        val task = required(id)
+        check(!task.status.closed && task.commitment != null) { "This card has no open commitment." }
+        require(until >= now() + 60_000 && until <= now() + 90 * DAY_MS) { "Choose a future follow-up within 90 days." }
+        put(task.copy(commitment = task.commitment.copy(nextCheckAt = until, completionEvidence = null), updatedAt = now()))
+        required(id)
+    }
+
+    suspend fun prepareBriefing(id: String, text: String, refs: List<TaskSourceRef>): MikeTask = lock.withLock {
+        val task = required(id)
+        val occurrence = TaskFollowThrough.occurrence(task, now()) ?: error("No follow-up is due for this card.")
+        if(task.briefing?.occurrence == occurrence) return@withLock task
+        require(text.trim().length in 3..800) { "Keep the briefing between 3 and 800 characters." }
+        val allRefs = (task.sourceRefs + refs).distinct()
+        put(task.copy(briefing = TaskBriefing(SignalInbox.idOf(task.id, occurrence), occurrence, text.trim(), now(), allRefs),
+            sourceRefs = allRefs, updatedAt = now()))
+        required(id)
+    }
+
+    suspend fun delivered(id: String, briefingId: String, note: String) = lock.withLock {
+        val task = required(id)
+        val briefing = task.briefing?.takeIf { it.id == briefingId } ?: return@withLock
+        // Delivery bookkeeping is not a new learning event or task revision.
+        val next = task.copy(briefing = briefing.copy(deliveredAt = now(), deliveryNote = note))
+        store.saveTask(next)
+        mutableTasks.value = mutableTasks.value.map { if(it.id == id) next else it }
     }
 
     /** Wake snoozed cards, expire stale ones, and forget very old history. */

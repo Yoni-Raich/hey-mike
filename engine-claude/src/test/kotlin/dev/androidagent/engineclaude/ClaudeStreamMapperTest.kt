@@ -215,6 +215,18 @@ class ClaudeStreamMapperTest {
             "You have reached your Claude 5-hour usage limit. It resets at 16:30.",
             events.filterIsInstance<EngineEvent.TurnFinished>().single().error,
         )
+        val limit = events.filterIsInstance<EngineEvent.TurnFinished>().single().limitReached
+        assertEquals(1790785800L, limit?.resetsAt)
+    }
+
+    @Test fun anOrdinaryFailureIsNotAUsageLimit() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        val events = mapper.feed(listOf(
+            line("""{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1790785800,"rateLimitType":"five_hour"}}"""),
+            line("""{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Overloaded"}"""),
+        )).events()
+        assertEquals(null, events.filterIsInstance<EngineEvent.TurnFinished>().single().limitReached)
     }
 
     @Test fun mcpToolUseIsLeftToTheToolBridge() {

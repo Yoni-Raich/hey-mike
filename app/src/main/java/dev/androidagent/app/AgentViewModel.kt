@@ -297,6 +297,26 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 else -> Unit
             }
         } }
+        // What the open chat does at a usage limit, and where it stands.
+        viewModelScope.launch {
+            combine(
+                current,
+                graph.limitRecovery.plans,
+                graph.limitRecovery.stops,
+                graph.sessions.sessions.map { all -> all.associate { it.id to it.engine } }.distinctUntilChanged(),
+                mutable.map { Triple(it.savedAccounts, it.claude.ready to it.claude.account?.label, it.computerClaude) }.distinctUntilChanged(),
+            ) { _, _, _, _, _ -> }.collect { projectLimits() }
+        }
+        // A chat that ran out moved to another Codex account: the screen reads the live account again.
+        viewModelScope.launch {
+            graph.accountSwitched.collect {
+                engines = engines.withLimits(EngineKind.CODEX, emptyList())
+                runCatching { graph.engine.account() }.getOrNull()?.let { status -> mutable.update { it.copy(accountStatus = status) } }
+                refreshSavedAccounts()
+                runCatching { loadModels() }
+                project()
+            }
+        }
         // Claude's own sign-in and its 5-hour and weekly limits. The home
         // screen widget shows them too, under the account's name.
         viewModelScope.launch { graph.claudeEngine.events.collect { event ->
@@ -843,7 +863,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val chats = graph.computers.state.value.bindings.filterValues { it.computerId == id }.keys
         check(chats.none { graph.coordinator.phaseOf(it) != null }) { "Stop the chat running on this computer first." }
         graph.remote.disconnect(id)
-        chats.forEach { chat -> graph.queue.cancelSession(chat); graph.sessions.deleteSession(chat) }
+        chats.forEach { chat -> graph.queue.cancelSession(chat); graph.limitRecovery.forget(chat); graph.sessions.deleteSession(chat) }
         withContext(Dispatchers.IO) { graph.computers.remove(id) }
         mutable.update { state -> state.copy(folderBrowser = state.folderBrowser?.takeIf { it.computerId != id }) }
     }
@@ -997,7 +1017,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End the voice conversation before deleting it."); return }
-        task { graph.queue.cancelSession(id); graph.sessions.deleteSession(id) }
+        task { graph.queue.cancelSession(id); graph.limitRecovery.forget(id); graph.sessions.deleteSession(id) }
     }
     fun send(text: String, attachments: List<PendingAttachment>) {
         val id = current.value ?: return
@@ -1069,7 +1089,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(infoMessage = null) }
             // The Manager's and a member's chat carry the board's state before the
             // user's words; the chat shows only what the user typed.
-            val owner = graph.taskDesk.ownerContext(id)
+            val owner = graph.taskDesk.ownerContext(id, text)
             graph.queue.submit(QueuedTurn(sessionId = id, prompt = owner?.let { it + "\n" + prompt } ?: prompt,
                 imagePaths = images.map { it.absolutePath },
                 model = model, effort = snapshot.selectedReasoningEffort ?: choice.turnEffort,
@@ -1116,6 +1136,56 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val id = current.value ?: return
         val text = statusSummary(mutable.value)
         task { note(id, text) }
+    }
+
+    /**
+     * The open chat's limit plan, its stop, and every account or provider it
+     * could run as, with when each has usage again.
+     */
+    private suspend fun projectLimits() {
+        val id = current.value
+        if (id == null) { mutable.update { it.copy(limits = ChatLimits(), isLimitPlanOpen = false) }; return }
+        val state = mutable.value
+        val engine = graph.sessions.getSession(id)?.engine ?: EngineKind.CODEX
+        val recovery = graph.limitRecovery
+        val vault = state.savedAccounts
+        val computer = graph.computers.binding(id)?.let { graph.computers.computer(it.computerId) }
+        val options = withContext(Dispatchers.IO) {
+            buildList {
+                vault.accounts.forEach { account ->
+                    val target = LimitTarget(EngineKind.CODEX, account.id)
+                    add(LimitOption(target, "Codex", account.label, recovery.freeAt(target), engine == EngineKind.CODEX && account.id == vault.activeId))
+                }
+                val codex = state.accountStatus
+                if (vault.accounts.isEmpty() && codex?.signedIn == true) {
+                    val target = LimitTarget(EngineKind.CODEX)
+                    add(LimitOption(target, "Codex", codex.label, recovery.freeAt(target), engine == EngineKind.CODEX))
+                }
+                if (EngineKind.CLAUDE in enginesFor(id, engine, state)) {
+                    val target = LimitTarget(EngineKind.CLAUDE)
+                    val who = computer?.let { "On ${it.label}" } ?: state.claude.account?.takeIf { it.signedIn }?.label
+                    add(LimitOption(target, "Claude", who, recovery.freeAt(target), engine == EngineKind.CLAUDE))
+                }
+            }
+        }
+        if (current.value != id) return
+        mutable.update { it.copy(limits = ChatLimits(recovery.planOf(id), recovery.stops.value[id], options)) }
+    }
+
+    fun saveLimitPlan(plan: LimitPlan) = limitAction { graph.limitRecovery.setPlan(it, plan) }
+    fun continueAtReset() = limitAction { graph.limitRecovery.continueAtReset(it) }
+    fun cancelLimitWait() = limitAction { graph.limitRecovery.cancelWait(it) }
+    fun continueAfterLimit() = limitAction { graph.limitRecovery.continueNow(it) }
+    fun switchAfterLimit(target: LimitTarget) = limitAction { graph.limitRecovery.switchNow(it, target) }
+    fun dismissLimit() = limitAction { graph.limitRecovery.dismiss(it) }
+
+    // A switch of account can wait for other chats to finish, so these run beside the screen, not in it.
+    private fun limitAction(block: suspend (String) -> Unit) {
+        val id = current.value ?: return
+        graph.scope.launch {
+            try { block(id) } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error(failure.message ?: "Something went wrong.") }
+        }
     }
 
     // A line in the chat that records what a command did; the model never sees it.
@@ -1386,7 +1456,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { error("No app on this phone can open the sign-in page.") }
     }
 
-    private val accountChange = kotlinx.coroutines.sync.Mutex()
+    private val accountChange get() = graph.accountChange
 
     /**
      * Sign in to one more account. The live one is saved and taken off

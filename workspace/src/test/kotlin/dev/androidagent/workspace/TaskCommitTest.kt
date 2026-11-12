@@ -13,6 +13,37 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class TaskCommitTest {
+    @Test fun briefingIsAnAtomicOutboxAndConcurrentOwnerDecisionsWin() = runBlocking {
+        val store = store()
+        val board = TaskBoard(store, now = { 1_000_000L }).apply { load() }
+        val task = (board.propose(TaskProposal("Form", "Tomorrow", "Draft form", sourceRefs = listOf(TaskSourceRef("chat"))), "conversation", "owner") as ProposeOutcome.Created).task
+        val data = StagedTaskData.create(store)
+        val staged = TaskBoard(data.store, now = { 1_000_000L }).apply { load() }
+        staged.prepareBriefing(task.id, "The form is due tomorrow", listOf(TaskSourceRef("chat")))
+        val changes = data.changes("brief", 0, null, null)
+        board.decide(task.id, "mine", "tap")
+        assertTrue(runCatching { store.commitChanges(changes, run("brief").copy(purpose = "manager")) }.isFailure)
+        assertNull(store.loadTasks().single().briefing)
+        val fresh = StagedTaskData.create(store)
+        val freshBoard = TaskBoard(fresh.store, now = { 1_000_000L + TaskFollowThrough.DAY }).apply { load() }
+        val pending = freshBoard.prepareBriefing(task.id, "You took this form. Is it ready?", listOf(TaskSourceRef("chat")))
+        store.commitChanges(fresh.changes("follow", 0, null, null), run("follow").copy(purpose = "manager"))
+        val reopened = LocalTaskBoardStore(RuntimeEnvironment.getApplication())
+        assertEquals(pending.briefing!!.id, reopened.loadTasks().single().briefing!!.id)
+        assertNull(reopened.loadTasks().single().briefing!!.deliveredAt)
+    }
+    @Test fun ownerFeedbackIsCommittedWithTheCursorAndSurvivesRawDeletion() = runBlocking {
+        val store = store()
+        val signal = TaskSignal("owner-msg", "chat", text = "Please keep replies short", at = 1, capturedAt = 1,
+            sessionId = "manager", sourceVerified = true, ownerFeedback = true)
+        store.capturePage("messages", 0, 1, listOf(signal))
+        store.deleteSignals(listOf(signal.id))
+        val reopened = LocalTaskBoardStore(RuntimeEnvironment.getApplication())
+        assertEquals(1, reopened.sourceCursor("messages"))
+        assertEquals(signal.text, reopened.loadEvents().single { it.kind == "feedback" }.note)
+        assertTrue(runCatching { reopened.capturePage("messages", 0, 2, listOf(signal.copy(id = "bad"))) }.isFailure)
+        assertFalse(reopened.loadEvents().any { it.id == "feedback:bad" })
+    }
     @Test fun aFullLegacyInboxIsPreservedWithoutBlockingVerifiedNewCapture() = runBlocking {
         val store = store()
         repeat(SignalInbox.MAX_PENDING) { index -> store.insertSignal(TaskSignal("legacy-$index", "whatsapp", app = "com.whatsapp",

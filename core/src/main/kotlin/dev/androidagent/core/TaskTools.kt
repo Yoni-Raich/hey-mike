@@ -22,6 +22,8 @@ package dev.androidagent.core
 
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -103,8 +105,11 @@ class TaskTools(
     private val allowedSource: (TaskSourceRef) -> Boolean = { true },
     private val playbookProvider: (() -> TaskPlaybook)? = null,
     private val reportRunId: String? = null,
+    private val reviewEvidence: Set<String> = emptySet(),
 ) : TaskToolHandler {
     private val observed = java.util.concurrent.ConcurrentHashMap<String, Set<TaskSourceRef>>()
+    private val briefed = mutableSetOf<String>()
+    private val briefingMutex = Mutex()
     private fun observe(session: String, refs: List<TaskSourceRef>) {
         observed.compute(session) { _, old -> (old.orEmpty() + refs).also { require(it.size <= 10_000) { "Source context is full. Start a fresh pass before reading more." } } }
     }
@@ -123,6 +128,23 @@ class TaskTools(
             "get" -> get(role, sessionId, arguments)
             "propose" -> propose(role, sessionId, arguments)
             "update" -> update(role, sessionId, arguments)
+            "observe" -> observe(role, sessionId, arguments)
+            "brief" -> briefingMutex.withLock {
+                val task = board.task(arguments.text("id") ?: error("Give the card id.")) ?: error("No such card.")
+                require(visible(task)) { "This card uses an excluded source." }
+                require(task.id in briefed || briefed.size < 3) { "At most three briefings per review." }
+                val refs = sources(sessionId, emptyList()).also { require(it.all(allowedSource)) { "A briefing source is excluded." } }
+                val saved = board.prepareBriefing(task.id, arguments.text("text") ?: error("Give a short briefing."), refs)
+                briefed.add(task.id)
+                ok { put("task", brief(saved)) }
+            }
+            "followup" -> {
+                require(fromUser) { "Only the user's current words can change a follow-up time." }
+                val task = board.task(arguments.text("id") ?: error("Give the card id.")) ?: error("No such card.")
+                require(visible(task) && (role != TaskChatRole.MEMBER || task.assignee == team.bySession(sessionId)?.id)) { "This card is not available here." }
+                val until = arguments.text("until")?.let { TaskBoard.parseTime(it, zone()) } ?: error("Give a future follow-up time.")
+                ok { put("task", brief(board.checkLater(task.id, until))) }
+            }
             "decide" -> decide(role, sessionId, arguments, fromUser)
             "remember" -> remember(arguments, role, sessionId)
             "recall" -> recall(arguments, role, sessionId)
@@ -205,6 +227,7 @@ class TaskTools(
             sideEffects = strings(args["sideEffects"]),
             kind = args.text("kind"),
             usefulUntil = args.text("usefulUntil")?.let { TaskBoard.parseTime(it, zone()) ?: error("usefulUntil is not a date or time I can read.") },
+            deadlineAt = args.text("deadlineAt")?.let { TaskBoard.parseTime(it, zone()) ?: error("Give a valid deadline.") },
             partialContext = (args["partialContext"] as? JsonPrimitive)?.booleanOrNull ?: false,
             category = category,
             action = action,
@@ -214,6 +237,16 @@ class TaskTools(
             },
         )
         require(proposal.sourceRefs.all(allowedSource)) { "This proposal uses an excluded source." }
+        if(role == TaskChatRole.SCOUT && category == TaskCategory.TASK) {
+            val book = playbookProvider?.invoke() ?: playbook
+            val ownerRules = book?.read("user.md").orEmpty()
+            val ignored = book?.list()?.filter { it.startsWith("kinds/") || it.startsWith("sources/") }?.any { path ->
+                TaskSuggestionFilter.active(book.read(path), ownerRules).any { rule ->
+                    rule.ignores(proposal.title, proposal.kind, proposal.evidence.firstOrNull()?.source)
+                }
+            } == true
+            if(ignored) return ChatTools.refused("learned_filter", "A tested learned preference suppresses this suggestion. No work was started.")
+        }
         val origin = when (role) {
             TaskChatRole.SCOUT -> "signal"
             TaskChatRole.COACH -> "review"
@@ -259,6 +292,16 @@ class TaskTools(
         return ok { put("task", brief(task)) }
     }
 
+    private suspend fun observe(role: TaskChatRole, sessionId: String, args: JsonObject): ToolResult {
+        val task = board.task(args.text("id") ?: error("Give the card id.")) ?: error("No such card.")
+        require(visible(task) && (role != TaskChatRole.MEMBER || task.assignee == team.bySession(sessionId)?.id)) { "This card is unavailable." }
+        val facts = evidence(args["evidence"])
+        val refs = sources(sessionId, facts.mapNotNull { it.signalId })
+        require(refs.all(allowedSource)) { "This evidence uses an excluded source." }
+        return ok { put("task", brief(board.observe(task.id, facts, args.text("looksResolved"), refs)))
+            put("note", "Saved evidence for review. No plan, decision or execution was changed.") }
+    }
+
     private suspend fun decide(role: TaskChatRole, sessionId: String, args: JsonObject, fromUser: Boolean): ToolResult {
         if (!fromUser) {
             return ChatTools.refused("not_the_user", "Only the user's own words decide a card, and the newest input in this turn is not " +
@@ -268,7 +311,7 @@ class TaskTools(
         require(ids.isNotEmpty()) { "Give id or ids." }
         require(ids.size <= 10) { "Decide at most 10 cards at once." }
         val choice = args.text("choice") ?: error("Give choice.")
-        require(choice in setOf("do", "mine", "dismiss", "snooze", "done", "continue", "stop", "restore", "wake")) { "Unknown choice $choice." }
+        require(choice in setOf("do", "mine", "dismiss", "snooze", "done", "continue", "stop", "restore", "wake", "check_later")) { "Unknown choice $choice." }
         val member = team.bySession(sessionId)
         val results = ids.map { id ->
             if (role == TaskChatRole.MEMBER) require(board.task(id)?.assignee == member?.id) { "Card $id belongs to another member." }
@@ -327,7 +370,11 @@ class TaskTools(
                 require(role in setOf(TaskChatRole.COACH, TaskChatRole.LIBRARIAN)) { "Only the Coach and Librarian can write learned files." }
                 val path = args.text("path") ?: error("Give the learned path.")
                 val content = (args["content"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: error("Give the full learned file content.")
-                book.writeLearned(path, content, sources(session, emptyList()))
+                TaskSuggestionFilter.parse(content) // Executable filters must pass positive and negative cases.
+                if(role == TaskChatRole.COACH && content.isNotBlank() && reviewEvidence.isNotEmpty()) {
+                    require(reviewEvidence.any { content.contains(it) }) { "Cite a real owner feedback event ID from this review before saving a learned change." }
+                }
+                book.writeLearned(path, TaskSuggestionFilter.stamp(content, book.read("user.md")), sources(session, emptyList()))
                 ok { put("saved", path) }
             }
             else -> error("Playbook operation is list, read or write.")
@@ -417,6 +464,9 @@ class TaskTools(
         task.note?.let { put("userNote", it.take(400)) }
         task.progress?.let { put("progress", it.take(200)) }
         task.result?.let { put("result", it.take(600)) }
+        task.deadlineAt?.let { put("deadlineAt", Instant.ofEpochMilli(it).toString()) }
+        task.commitment?.let { put("commitment", Json.encodeToJsonElement(TaskCommitment.serializer(), it)) }
+        put("briefingDue", TaskFollowThrough.needsBrief(task, now()))
     }
 
     private fun noteJson(note: MemoryNote): JsonObject = buildJsonObject {
@@ -466,12 +516,12 @@ class TaskTools(
 
         val MODES: Map<TaskChatRole, Set<String>> = mapOf(
             TaskChatRole.ORDINARY to setOf("list", "get", "propose", "remember", "recall", "playbook"),
-            TaskChatRole.MANAGER to setOf("list", "get", "propose", "update", "decide", "remember", "recall", "team", "rule", "playbook"),
-            TaskChatRole.MEMBER to setOf("list", "get", "propose", "update", "decide", "remember", "recall", "playbook"),
-            TaskChatRole.SCOUT to setOf("list", "get", "propose", "update", "remember", "recall", "playbook", "finish"),
+            TaskChatRole.MANAGER to setOf("list", "get", "propose", "update", "observe", "followup", "decide", "remember", "recall", "team", "rule", "playbook"),
+            TaskChatRole.MEMBER to setOf("list", "get", "propose", "update", "observe", "followup", "decide", "remember", "recall", "playbook"),
+            TaskChatRole.SCOUT to setOf("list", "get", "propose", "update", "observe", "remember", "recall", "playbook", "finish"),
             TaskChatRole.COACH to setOf("list", "get", "propose", "recall", "playbook"),
             TaskChatRole.LIBRARIAN to setOf("list", "get", "propose", "remember", "recall", "merge", "retire", "playbook"),
-            TaskChatRole.COORDINATOR to setOf("list", "get", "team", "playbook"),
+            TaskChatRole.COORDINATOR to setOf("list", "get", "team", "playbook", "brief", "recall"),
         )
 
         private fun str(description: String) = buildJsonObject { put("type", "string"); put("description", description) }
@@ -493,7 +543,7 @@ class TaskTools(
                 put("properties", buildJsonObject {
                     put("mode", buildJsonObject {
                         put("type", "string")
-                        put("enum", buildJsonArray { listOf("list", "get", "propose", "update", "decide", "remember", "recall", "merge", "retire", "team", "rule", "playbook", "finish").forEach { add(it) } })
+                        put("enum", buildJsonArray { listOf("list", "get", "propose", "update", "observe", "brief", "followup", "decide", "remember", "recall", "merge", "retire", "team", "rule", "playbook", "finish").forEach { add(it) } })
                     })
                     put("operation", str("playbook: list, read or write. Writes are learned files only."))
                     put("path", str("playbook: relative Markdown path, e.g. sources/whatsapp.md. Never an absolute path."))
@@ -530,6 +580,7 @@ class TaskTools(
                     put("project", str("propose: the project or folder on that computer."))
                     put("sideEffects", strArray("propose: effects the plan has: sends, pays, deletes, books, posts."))
                     put("usefulUntil", str("propose/update: ISO-8601 time after which the card is no longer useful."))
+                    put("deadlineAt", str("propose: real deadline, ISO-8601; separate from proposal expiry."))
                     put("partialContext", buildJsonObject { put("type", "boolean"); put("description", "The notification did not show enough of the conversation.") })
                     put("looksResolved", str("update: evidence that the need is already handled."))
                     put("action", buildJsonObject {
@@ -542,7 +593,7 @@ class TaskTools(
                     })
                     put("choice", buildJsonObject {
                         put("type", "string")
-                        put("enum", buildJsonArray { listOf("do", "mine", "dismiss", "snooze", "done", "continue", "stop", "restore").forEach { add(it) } })
+                        put("enum", buildJsonArray { listOf("do", "mine", "dismiss", "snooze", "done", "continue", "stop", "restore", "wake", "check_later").forEach { add(it) } })
                     })
                     put("reason", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { DismissReason.entries.forEach { add(it.wire) } }) })
                     put("note", str("decide: the user's own instructions or follow-up, in their words."))

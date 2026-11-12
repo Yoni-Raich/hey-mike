@@ -754,7 +754,8 @@ class CodexEngine(
                 compactions[params.string("threadId")]?.let {
                     if (it.turnId == turn.string("id")) it.finished.complete(TurnEnd(turn.string("status"), turnError))
                 }
-                stream.emit(EngineEvent.TurnFinished(turn.string("status"), turnError, params.string("threadId"), turn.string("id")))
+                stream.emit(EngineEvent.TurnFinished(turn.string("status"), turnError, params.string("threadId"), turn.string("id"),
+                    limitReached = usageLimitOf(turn["error"] as? JsonObject)))
             }
             method == "account/login/completed" -> {
                 if (params["success"]?.jsonPrimitive?.booleanOrNull == false) stream.emit(EngineEvent.Failure(params.string("error").ifBlank { "Sign-in failed" }))
@@ -779,6 +780,7 @@ class CodexEngine(
                 } else {
                     stream.emit(EngineEvent.Failure(
                         error?.let(::rpcErrorMessage) ?: "Codex reported an error", threadId, turnId,
+                        limitReached = usageLimitOf(error),
                     ))
                 }
             }
@@ -814,6 +816,22 @@ class CodexEngine(
     }
 
     companion object {
+        /**
+         * The turn stopped because the ChatGPT account is out of usage, as
+         * Codex says it: `codexErrorInfo` is `usageLimitExceeded`, as a plain
+         * value or as the key of an object. When it resets is not in the
+         * error; the account's last rate-limit reading says.
+         */
+        internal fun usageLimitOf(error: JsonObject?): LimitReached? {
+            val info = error?.get("codexErrorInfo") ?: return null
+            val kind = when (info) {
+                is JsonPrimitive -> info.contentOrNull
+                is JsonObject -> info.keys.singleOrNull()
+                else -> null
+            }
+            return if (kind.equals("usageLimitExceeded", ignoreCase = true)) LimitReached(engine = EngineKind.CODEX) else null
+        }
+
         /** How long a compaction may run before the caller stops waiting; Codex goes on without it. */
         private const val COMPACT_WAIT_MS = 5 * 60_000L
 

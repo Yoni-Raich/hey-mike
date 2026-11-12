@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddComment
+import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
@@ -123,6 +124,7 @@ import dev.androidagent.app.ChatEngines
 import dev.androidagent.core.AgentCommand
 import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.EngineKind
+import dev.androidagent.core.LimitPhase
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
 import dev.androidagent.core.VoicePhase
@@ -222,6 +224,7 @@ internal fun AgentComposer(
             ComposerCommand.MODEL -> if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
             ComposerCommand.RENAME -> { skill = null; renaming = true }
             ComposerCommand.STATUS -> actions.onShowStatus()
+            ComposerCommand.LIMITS -> actions.onOpenLimitPlan()
         }
     }
     val runEngineCommand: (AgentCommand) -> Unit = { command ->
@@ -242,6 +245,7 @@ internal fun AgentComposer(
             ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting
             ComposerCommand.MODEL -> !active && !voiceActive && !compacting
             ComposerCommand.RENAME -> state.activeSessionId != null
+            ComposerCommand.LIMITS -> state.activeSessionId != null
             else -> true
         }
     }
@@ -380,6 +384,9 @@ internal fun AgentComposer(
                 ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
             }
             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
+            if (state.limits.plan.active || state.limits.stop?.phase == LimitPhase.WAITING) {
+                LimitChip(state.limits, actions.onOpenLimitPlan)
+            }
             contextFill(state.tokenUsage)?.let { fill ->
                 Spacer(Modifier.weight(1f))
                 // The details hang off the chip, as the model menu does.
@@ -397,6 +404,7 @@ internal fun AgentComposer(
             }
         }
     }
+    if (state.isLimitPlanOpen) LimitPlanSheet(state.limits, actions.onSaveLimitPlan, actions.onCloseLimitPlan)
     if (browsing) {
         SkillsSheet(
             skills = state.availableSkills,
@@ -812,6 +820,7 @@ private fun ComposerCommand.icon(): ImageVector = when (this) {
     ComposerCommand.MODEL -> Icons.Outlined.Tune
     ComposerCommand.RENAME -> Icons.Outlined.DriveFileRenameOutline
     ComposerCommand.STATUS -> Icons.Outlined.Info
+    ComposerCommand.LIMITS -> Icons.Outlined.Autorenew
 }
 
 /** Every skill and command, with search; opened from the Skills chip. */

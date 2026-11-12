@@ -468,6 +468,12 @@ class AgentGraph(private val app: Application) {
             LastUsageStore.current(reading.orEmpty(), System.currentTimeMillis() / 1000L).any { (it.usedPercent ?: 0.0) >= 90.0 }
         },
     )
+    /** Chats that stopped at a usage limit, and what each does about it. */
+    val limitRecovery: dev.androidagent.core.UsageLimitRecovery
+    /** One Codex account switch at a time, from Settings or from a chat that ran out. */
+    val accountChange = kotlinx.coroutines.sync.Mutex()
+    /** A switch made outside Settings finished, with the new live account's id; the screen reads it again. */
+    val accountSwitched = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools,
         restricted = taskDesk::isBackgroundSession, ownerContext = taskDesk::ownerContext) { runCoordinator }
@@ -555,6 +561,11 @@ class AgentGraph(private val app: Application) {
                 }
             },
         )
+        limitRecovery = dev.androidagent.core.UsageLimitRecovery(
+            CoroutineScope(scope.coroutineContext + Dispatchers.Default),
+            dev.androidagent.core.LimitBook(File(runtime.runtimeRoot, "limit-recovery.json")),
+            AppLimitRecoveryHost(app, this),
+        ).also { it.watch(runCoordinator.outcomes) }
         automationHost = AutomationHost(
             context = app,
             library = automations,
@@ -601,6 +612,42 @@ class AgentGraph(private val app: Application) {
         runCatching {
             WorkspaceSeeder.ensureGlobalPreferences(runtime.homeDirectory, File(app.filesDir, "sessions"), app)
         }
+    }
+}
+
+/**
+ * Make saved Codex account [id] the live one, for a chat that ran out of
+ * usage. Codex writes auth.json while it runs, so like the switch in
+ * Settings this waits until no chat and no voice conversation is running,
+ * holds the queue, and swaps with the app-server stopped.
+ */
+suspend fun AgentGraph.switchCodexAccount(id: String, waitMillis: Long = 15 * 60_000L) {
+    val deadline = System.currentTimeMillis() + waitMillis
+    while (true) {
+        while (coordinator.anyActive || voice.state.value.active) {
+            check(System.currentTimeMillis() < deadline) { "Other chats were still running." }
+            delay(1_000)
+        }
+        accountChange.lock()
+        val wasPaused = queue.paused.value
+        queue.pause()
+        if (coordinator.anyActive || voice.state.value.active) {
+            // Something started in between: let it run, and try again when it ends.
+            accountChange.unlock()
+            if (!wasPaused) queue.resume()
+            continue
+        }
+        try {
+            engine.close()
+            withContext(Dispatchers.IO) { accounts.activate(id) }
+            engine.account()
+            runCatching { engine.refreshUsage() }
+        } finally {
+            accountChange.unlock()
+            accountSwitched.tryEmit(id)
+            if (!wasPaused) queue.resume()
+        }
+        return
     }
 }
 

@@ -16,6 +16,7 @@ data class TaskEvent(
     val reason: DismissReason? = null,
     val outcome: String? = null,
     val result: String? = null,
+    val sourceRefs: List<TaskSourceRef> = emptyList(),
 )
 
 /** The input the user approved. A later card edit cannot widen this attempt. */
@@ -30,4 +31,7 @@ data class ApprovedTaskPlan(
     val project: String? = null,
     val note: String? = null,
     val sideEffects: List<String> = emptyList(),
+    val engine: EngineKind? = null,
+    val model: String? = null,
+    val reasoningEffort: String? = null,
 )

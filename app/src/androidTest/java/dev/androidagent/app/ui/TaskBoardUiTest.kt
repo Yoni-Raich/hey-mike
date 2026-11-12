@@ -32,6 +32,23 @@ class TaskBoardUiTest {
     private val card = MikeTask(id = "draft", title = "להכין טיוטה לדנה", why = "דנה ביקשה מסמך לבדיקה", plan = "להכין טיוטה ולהציג אותה",
         evidence = listOf(TaskEvidence("whatsapp", "אפשר להכין טיוטה?", "דנה")), originKind = "signal", topicKey = "draft", kind = "draft", createdAt = 1, updatedAt = 1)
 
+    @Test fun ownedCommitmentShowsItsFollowupAndTomorrowDoesNotExecute() {
+        val before = Locale.getDefault(); Locale.setDefault(Locale("he"))
+        val decisions = mutableListOf<String>()
+        try {
+            val task = card.copy(status = TaskStatus.MINE, commitment = TaskCommitment("user", 1_800_000_000_000L,
+                completionEvidence = "דנה כתבה שהטופס הגיע"))
+            compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) {
+                TaskBoardSheet(AgentUiState(taskBoardPage = "card:draft", taskDesk = TaskDeskState(ready = true, tasks = listOf(task))),
+                    AgentUiActions(onTaskDecide = { _, choice, _, _ -> decisions += choice }))
+            } }
+            compose.onNodeWithText("מעקב").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("בדיקה חוזרת מחר").performScrollTo().performClick()
+            assertEquals(listOf("check_later"), decisions)
+            capture("follow-up")
+        } finally { Locale.setDefault(before) }
+    }
+
     @Test fun faceCanBeCapturedAsAStillFrame() {
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
