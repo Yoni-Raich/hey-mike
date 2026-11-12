@@ -81,6 +81,21 @@ class TaskSafetyTest {
         } finally { home.deleteRecursively() }
     }
 
+    @Test fun learnedRuleOriginsFromAnotherBuildStillLoad() {
+        // A phone moved between builds kept `eventId` and a field no build knows yet.
+        val home = Files.createTempDirectory("mike-playbook-origins").toFile()
+        try {
+            val book = TaskPlaybook(home).apply { seed(); writeLearned("roles/manager.md", "Keep it short.") }
+            File(book.directory, ".origins.json").writeText("""{"roles/manager.md":[{"source":"chat"},""" +
+                """{"source":"user","verified":true,"eventId":"feedback:message:779","futureField":1}]}""")
+            val refs = book.sourcesOf("roles/manager.md")
+            assertEquals(listOf("chat", "user"), refs.map { it.source })
+            assertEquals("feedback:message:779", refs[1].eventId)
+            book.writeLearned("roles/coach.md", "Check the evidence.")
+            assertTrue(File(book.directory, ".origins.json").readText().contains("feedback:message:779"))
+        } finally { home.deleteRecursively() }
+    }
+
     @Test fun trustedHomeIsNormalizedBeforeCheckingLearnedPaths() {
         val home = Files.createTempDirectory("mike-playbook-home").toFile()
         try {

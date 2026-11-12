@@ -170,7 +170,7 @@ class TaskPlaybook(home: File, private val rootOverride: File? = null,
         val source = File(snapshots, id)
         // Validate memory before changing any live file. A broken snapshot must leave it alone.
         val notes = File(source, NOTES)
-        val restored = if (notes.isFile) Json.decodeFromString(ListSerializer(MemoryNote.serializer()), notes.readText()) else emptyList()
+        val restored = if (notes.isFile) STORED.decodeFromString(ListSerializer(MemoryNote.serializer()), notes.readText()) else emptyList()
         val playbook = File(source, "playbook")
         if (playbook.isDirectory) {
             val user = File(directory, "user.md").takeIf { it.isFile }?.readText()
@@ -193,7 +193,7 @@ class TaskPlaybook(home: File, private val rootOverride: File? = null,
 
     private fun origins(): Map<String, List<TaskSourceRef>> {
         val file = checkedFile(".origins.json")
-        return if(!file.exists()) emptyMap() else Json.decodeFromString(kotlinx.serialization.builtins.MapSerializer(
+        return if(!file.exists()) emptyMap() else STORED.decodeFromString(kotlinx.serialization.builtins.MapSerializer(
             kotlinx.serialization.serializer<String>(), ListSerializer(TaskSourceRef.serializer())), file.readText())
     }
     fun sourcesOf(path: String): List<TaskSourceRef> = if(path == "user.md") emptyList() else origins()[path].orEmpty()
@@ -309,6 +309,8 @@ class TaskPlaybook(home: File, private val rootOverride: File? = null,
         const val MAX_FILE_CHARS = 12_000
         const val MAX_TOTAL_BYTES = 240_000L
         private const val NOTES = "notes.json"
+        // Saved files outlive app versions: another build may add a field this one does not know.
+        private val STORED = Json { ignoreUnknownKeys = true }
         private val STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC)
         private val ID = Regex("[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{8,24}")
         private val LEARNED_PATH = Regex("(?:sources|people|kinds|roles|playbooks)/[A-Za-z0-9][A-Za-z0-9_-]{0,79}\\.md")
