@@ -244,7 +244,6 @@ class AgentGraph(private val app: Application) {
     }
     /** Stop one chat's run, as its Stop button does. */
     fun stopChat(id: String) {
-        if (id == taskDesk.state.value.managerSessionId || taskDesk.isBackgroundSession(id)) taskDesk.pauseBackground()
         runCoordinator.stop(id)
         if (id == voiceConversation.sessionId.value) {
             runCoordinator.endVoice()
@@ -538,7 +537,6 @@ class AgentGraph(private val app: Application) {
         )
         sessionNotices = SessionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat,
             owner = { child -> runCoordinator.ancestorsOf(child).lastOrNull() ?: child },
-            hidden = { taskDesk.isBackgroundSession(it) },
         )
         queue = SessionRunQueue(
             scope,

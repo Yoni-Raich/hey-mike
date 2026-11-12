@@ -14,6 +14,20 @@ was reverted on `dev` and kept on a side branch instead:
 - **Re-integration note:** git treats #149 and #157 as already merged. To bring
   the Manager back, first revert this branch's revert commits, then merge
   `side/mike-manager`; a plain merge will not restore the reverted code.
+- Later commits that used the board were trimmed too: Claude wake cycles
+  (`lastInputFromUser`), Claude history seeding (`readOnly`), and Stop and
+  session notifications (`taskDesk`). The read-only full-access test went with
+  the read-only chats.
+
+Evidence (Windows worktree, `ANDROID_HOME` set):
+- `.\gradlew.bat test :app:assembleDevDebug :app:assembleDevDebugAndroidTest
+  :app:lintDevDebug --no-daemon --continue`: BUILD SUCCESSFUL, no test
+  failures, no new lint errors.
+- `python -m unittest tools.test_prepare_runtime`: 16 OK. `git diff --check`: clean.
+
+Not tested: phone install and a live run. dev's `versionCode` is 1183; the
+phone runs Manager build 1214, so a dev build will not install over it
+without raising the version.
 
 ### Notifications APK 1209 installation attempt — 2026-11-11
 

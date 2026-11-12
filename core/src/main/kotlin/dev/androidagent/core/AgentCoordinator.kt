@@ -321,8 +321,6 @@ class AgentCoordinator(
             overlaySpeech = null
             runWorkspace = sessions.workspace(session.id)
             screenSticky = false
-            // Nobody typed this turn, so it never counts as the user's go-ahead.
-            lastInputFromUser = false
             mutableState.value = RunState(RunPhase.THINKING, session.id, "Working", runId = UUID.randomUUID().toString())
             token to runCompletion
         }

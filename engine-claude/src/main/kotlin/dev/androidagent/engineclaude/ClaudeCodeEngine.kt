@@ -584,7 +584,7 @@ class ClaudeCodeEngine(
         if (turns.isEmpty()) return true
         val chat = chats[threadId] ?: return false
         return chat.lock.withLock {
-            if (chat.readOnly || !chat.idle()) return@withLock false
+            if (!chat.idle()) return@withLock false
             if (chat.alive) chat.stopProcess()
             val records = ClaudeProtocol.transcriptRecords(threadId, chat.cwd, turns, Instant.now()) { UUID.randomUUID().toString() }
             val added = try {
