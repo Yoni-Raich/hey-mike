@@ -125,6 +125,7 @@ internal object ClaudeProtocol {
         effort: String?,
         mcpConfig: String,
         systemPromptFile: String,
+        readOnly: Boolean = false,
     ): List<String> = buildList {
         add("-p")
         add("--input-format"); add("stream-json")
@@ -135,16 +136,17 @@ internal object ClaudeProtocol {
         if (resume) { add("--resume"); add(sessionId) } else { add("--session-id"); add(sessionId) }
         add("--model"); add(model)
         if (effort != null) { add("--effort"); add(effort) }
-        add("--tools"); add(BUILTIN_TOOLS.joinToString(","))
+        add("--tools"); add(if (readOnly) "" else BUILTIN_TOOLS.joinToString(","))
         add("--strict-mcp-config")
         add("--mcp-config"); add(mcpConfig)
-        add("--allowedTools"); add(ALLOWED_TOOLS.joinToString(","))
+        add("--allowedTools"); add(if (readOnly) "$MCP_TOOL_PREFIX*" else ALLOWED_TOOLS.joinToString(","))
         add("--permission-mode"); add("dontAsk")
         // Only the app-owned user settings under the private HOME: that is
         // where the on-device skills are installed. Project and local
         // settings never apply.
-        add("--setting-sources"); add("user")
+        add("--setting-sources"); add(if (readOnly) "" else "user")
         add("--system-prompt-file"); add(systemPromptFile)
+        if (readOnly) add("--no-session-persistence")
     }
 
     /**
@@ -203,6 +205,20 @@ internal object ClaudeProtocol {
         if (userSettingsOnly) { add("--setting-sources"); add("user") }
         add("--no-session-persistence")
     }
+
+    /** The model that starts a usage window: the smallest, since the answer is never read. */
+    const val WINDOW_MODEL = "haiku"
+
+    /**
+     * A process that sends one short message to start the plan's 5-hour
+     * window: no tools, no settings, no transcript, a one-line system prompt.
+     */
+    fun windowStartArgs(): List<String> = listOf(
+        "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+        "--model", WINDOW_MODEL,
+        "--system-prompt", "This is an automatic message from Hey Mike that starts the usage window. Reply with one word.",
+    )
 
     val AUTH_STATUS_ARGS = listOf("auth", "status", "--json")
     val AUTH_LOGIN_ARGS = listOf("auth", "login", "--claudeai")
@@ -567,13 +583,20 @@ internal object ClaudeProtocol {
         val type = info.string("rateLimitType")
         if (type == "overage") return null
         val name = windowName(type.ifBlank { "five_hour" }).first
-        val resetsAt = (info["resetsAt"] as? JsonPrimitive)?.longOrNull
-            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull }
+        val resetsAt = rejectionReset(info)
         val base = "You have reached your Claude $name usage limit."
         if (resetsAt == null || resetsAt <= 0) return base
         val reset = Instant.ofEpochSecond(resetsAt).atZone(zone)
         val pattern = if (resetsAt - now.epochSecond < 24 * 3600) "HH:mm" else "EEE d MMM, HH:mm"
         return "$base It resets at ${reset.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))}."
+    }
+
+    /** Epoch seconds at which a `rejected` limit resets, when the CLI said. */
+    fun rejectionReset(info: JsonObject): Long? {
+        val type = info.string("rateLimitType")
+        return ((info["resetsAt"] as? JsonPrimitive)?.longOrNull
+            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull })
+            ?.takeIf { it > 0 }
     }
 
     /** Token usage from a `result` frame. Input counts cache reads and writes, as the context does. */

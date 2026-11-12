@@ -31,7 +31,7 @@ import dev.androidagent.core.EngineKind
  */
 enum class RemoteAccess(val sandbox: String, val approvalPolicy: String) {
     ASK("workspace-write", "on-request"),
-    FULL("danger-full-access", "never"),
+    FULL("danger-full-access", "on-request"),
 }
 
 /** A computer the user added. The password is kept apart, in [RemoteStore]. */

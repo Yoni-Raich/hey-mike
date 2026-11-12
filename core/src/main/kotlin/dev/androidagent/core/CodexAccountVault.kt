@@ -121,6 +121,34 @@ class CodexAccountVault(
         write(Index(stored.active.takeIf { it != id }, stored.accounts.filterNot { it.id == id }))
     }
 
+    /**
+     * Copy the saved account [id] to [target], for a short run of a second
+     * Codex that is not the live one. Refuses the live account: two
+     * processes refreshing one sign-in would leave one of them with a spent
+     * refresh token.
+     */
+    fun lend(id: String, target: File) = synchronized(lock) {
+        val stored = read()
+        val account = stored.accounts.firstOrNull { it.id == id } ?: error("That account is no longer saved on this phone.")
+        check(stored.active != id) { "${account.label} is the live account." }
+        val source = slot(id)
+        check(source.isFile) { "The sign-in for ${account.label} is missing. Remove it and sign in again." }
+        copyAtomically(source, target)
+    }
+
+    /**
+     * Keep what a run borrowed with [lend] wrote back: Codex rewrites the
+     * file when it refreshes a token, and the old copy would not work again.
+     * Ignored when the account went live or was removed in the meantime.
+     */
+    fun takeBack(id: String, from: File) = synchronized(lock) {
+        val stored = read()
+        if (!from.isFile || stored.active == id || stored.accounts.none { it.id == id }) return@synchronized
+        val slot = slot(id)
+        val bytes = from.readBytes()
+        if (bytes.isNotEmpty() && !(slot.isFile && slot.readBytes().contentEquals(bytes))) writeAtomically(slot, bytes)
+    }
+
     private fun saveLiveLocked(stored: Index) {
         val active = stored.active ?: return
         if (liveAuth.isFile && stored.accounts.any { it.id == active }) copyAtomically(liveAuth, slot(active))

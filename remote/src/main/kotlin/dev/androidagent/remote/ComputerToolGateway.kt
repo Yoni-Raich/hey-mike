@@ -129,7 +129,7 @@ class ComputerToolGateway(
                             version.updateMessage?.let { put("codexUpdateMessage", it) }
                         }
                         hub.claudeState.value[c.id]?.takeIf { it.installed }?.let { put("claudeCodeVersion", it.version) }
-                        put("access", if (c.access == RemoteAccess.ASK) "asks before commands outside the project" else "full access")
+                        put("access", if (c.access == RemoteAccess.ASK) "asks before extra access or risky commands" else "full file access; Codex asks before risky commands")
                         put("projects", buildJsonArray { projects(c.id).forEach { add(it) } })
                         put("recentConversations", buildJsonArray {
                             threads.take(RECENT).forEach { t ->

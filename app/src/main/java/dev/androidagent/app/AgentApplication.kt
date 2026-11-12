@@ -75,6 +75,9 @@ class AgentApplication : Application(), AutomationHostOwner {
     override val automationHost: AutomationHost?
         get() = if (::graph.isInitialized) graph.automationHost else null
 
+    override val taskSignals: dev.androidagent.core.TaskSignalSink?
+        get() = if (::graph.isInitialized) graph.taskDesk.sink else null
+
     override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
 }
 
@@ -160,13 +163,37 @@ class AgentGraph(private val app: Application) {
     val usageBook = AccountUsageBook(java.io.File(runtime.runtimeRoot, "accounts/usage.json"))
     // Claude's last 5-hour and weekly limits, so the usage sheet has them after a restart.
     val claudeUsage = LastUsageStore(java.io.File(runtime.runtimeRoot, "claude-usage.json"))
+    /** Held by an account switch and by a usage-window start, so a sign-in is never swapped while it is lent. */
+    val accountFiles = kotlinx.coroutines.sync.Mutex()
+    /** Starts each account's 5-hour window when the last one ends, when the user turned that on. */
+    val usageWindows = UsageWindowKeeper(
+        app,
+        dev.androidagent.core.UsageWindowJournal(java.io.File(runtime.runtimeRoot, "accounts/usage-windows.json")),
+        accounts,
+        usageBook,
+        claudeUsage,
+        claudeEngine,
+        liveTokens = { refresh, previous ->
+            dev.androidagent.remote.PhoneAccountTokens(phoneEngine, java.io.File(runtime.codexHomeDirectory, "auth.json"))
+                .current(refresh, previous)
+        },
+        accountFiles = accountFiles,
+        onReading = { engine, live ->
+            dev.androidagent.app.widget.UsageWidget.refresh(app)
+            // The open screen shows the live account's quota from the main
+            // app-server; read it there too, but never start it for this.
+            if (engine == dev.androidagent.core.EngineKind.CODEX && live &&
+                runtime.status.value.phase == dev.androidagent.core.RuntimePhase.RUNNING
+            ) runCatching { phoneEngine.refreshUsage() }
+        },
+    )
     val adb = AndroidAdbTransport(app)
     private lateinit var runCoordinator: AgentRuns
     // Declared before the gateways: they take `overlay` as a constructor argument,
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
-        onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
+        onStop = { taskDesk.pauseBackground(); queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
         onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
         accessibilityService = { A11yServiceHandle.service.value },
@@ -426,12 +453,36 @@ class AgentGraph(private val app: Application) {
     val coordinator: AgentRuns
         get() = runCoordinator
     val queue: SessionRunQueue
+    /**
+     * Mike's task board: the Manager, the team, discovery in the background.
+     * Declared before the coordinators, which ask it which tools a chat may use.
+     */
+    val taskDesk = TaskDesk(
+        app, scope, sessions, runtime.homeDirectory,
+        agents = { sessionAgents },
+        runs = { runCoordinator },
+        queue = { queue },
+        quotaLow = { kind ->
+            val reading = if (kind == dev.androidagent.core.EngineKind.CLAUDE) claudeUsage.read()?.limits
+                else accounts.state().activeId?.let { usageBook.all()[it]?.limits }
+            LastUsageStore.current(reading.orEmpty(), System.currentTimeMillis() / 1000L).any { (it.usedPercent ?: 0.0) >= 90.0 }
+        },
+    )
+    /** Chats that stopped at a usage limit, and what each does about it. */
+    val limitRecovery: dev.androidagent.core.UsageLimitRecovery
+    /** One Codex account switch at a time, from Settings or from a chat that ran out. */
+    val accountChange = kotlinx.coroutines.sync.Mutex()
+    /** A switch made outside Settings finished, with the new live account's id; the screen reads it again. */
+    val accountSwitched = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
-    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools,
+        restricted = taskDesk::isBackgroundSession, ownerContext = taskDesk::ownerContext) { runCoordinator }
     init {
         scope.launch {
             A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
         }
+        // Any process start (boot, update, an alarm) re-arms the next window start.
+        scope.launch(Dispatchers.IO) { runCatching { usageWindows.rearm() } }
         runCoordinator = AgentRuns(scope, engine, onStopSession = { id ->
             if (::sessionAgents.isInitialized) sessionAgents.stop(id)
             if (id != null) runCoordinator.family(id).forEach(computerTasks::stopOrigin)
@@ -450,6 +501,9 @@ class AgentGraph(private val app: Application) {
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
                 sessionAgents = { sessionAgents },
+                taskTools = { taskDesk.tools },
+                toolPolicy = { session, name, arguments -> taskDesk.toolRefusal(session, name, arguments) },
+                readOnlySession = { taskDesk.isBackgroundSession(it) },
             )
         })
         val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
@@ -487,6 +541,7 @@ class AgentGraph(private val app: Application) {
             scope,
             coordinator,
             sessions,
+            prepare = taskDesk::prepareTurn,
             // A turn a rule queued has a moment; a turn a person sent does not
             // expire. Dropping a stale one is reported, never silent.
             onExpired = { turn ->
@@ -497,7 +552,8 @@ class AgentGraph(private val app: Application) {
                                 id = java.util.UUID.randomUUID().toString(),
                                 sessionId = turn.sessionId,
                                 role = "assistant",
-                                text = "This did not run: the phone was busy until after the moment it was for.",
+                                text = if(turn.boardJobId == null) "This did not run: the phone was busy until after the moment it was for."
+                                    else "This background job did not run. Its window expired or its source settings changed. Retained input will be checked in a fresh pass.",
                                 createdAt = System.currentTimeMillis(),
                             ),
                         )
@@ -505,6 +561,11 @@ class AgentGraph(private val app: Application) {
                 }
             },
         )
+        limitRecovery = dev.androidagent.core.UsageLimitRecovery(
+            CoroutineScope(scope.coroutineContext + Dispatchers.Default),
+            dev.androidagent.core.LimitBook(File(runtime.runtimeRoot, "limit-recovery.json")),
+            AppLimitRecoveryHost(app, this),
+        ).also { it.watch(runCoordinator.outcomes) }
         automationHost = AutomationHost(
             context = app,
             library = automations,
@@ -516,6 +577,8 @@ class AgentGraph(private val app: Application) {
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.
         runCatching { automationHost.start() }
+        taskDesk.start()
+        TaskBackgroundHost(app, scope, taskDesk).start()
         runCatching {
             // Claude reads the same skills from its own home.
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app, claudeHost.homeDirectory)
@@ -549,6 +612,42 @@ class AgentGraph(private val app: Application) {
         runCatching {
             WorkspaceSeeder.ensureGlobalPreferences(runtime.homeDirectory, File(app.filesDir, "sessions"), app)
         }
+    }
+}
+
+/**
+ * Make saved Codex account [id] the live one, for a chat that ran out of
+ * usage. Codex writes auth.json while it runs, so like the switch in
+ * Settings this waits until no chat and no voice conversation is running,
+ * holds the queue, and swaps with the app-server stopped.
+ */
+suspend fun AgentGraph.switchCodexAccount(id: String, waitMillis: Long = 15 * 60_000L) {
+    val deadline = System.currentTimeMillis() + waitMillis
+    while (true) {
+        while (coordinator.anyActive || voice.state.value.active) {
+            check(System.currentTimeMillis() < deadline) { "Other chats were still running." }
+            delay(1_000)
+        }
+        accountChange.lock()
+        val wasPaused = queue.paused.value
+        queue.pause()
+        if (coordinator.anyActive || voice.state.value.active) {
+            // Something started in between: let it run, and try again when it ends.
+            accountChange.unlock()
+            if (!wasPaused) queue.resume()
+            continue
+        }
+        try {
+            engine.close()
+            withContext(Dispatchers.IO) { accounts.activate(id) }
+            engine.account()
+            runCatching { engine.refreshUsage() }
+        } finally {
+            accountChange.unlock()
+            accountSwitched.tryEmit(id)
+            if (!wasPaused) queue.resume()
+        }
+        return
     }
 }
 

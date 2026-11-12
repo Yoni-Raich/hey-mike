@@ -1,5 +1,220 @@
 # Progress
 
+### Assistant flow 1179 plus usage-limit recovery — 2026-10-28
+
+Built a separate combined Dev Debug candidate, 1180 /
+`0.14.0-dev.assistant-flow-limits1180`. The base is the exact 1179 source
+manifest on `c65fe575`; all 23 saved hashes and the 1179 APK hash matched.
+Applied limit-recovery commit `8c899bcc`, keeping the task-board graph and
+adding the recovery graph. Original worktrees were not edited.
+
+Scoped core/workspace/Codex/Claude/app unit tests, app assembly, test-APK
+assembly and app lint PASS: 1,296 JVM cases, zero failures/errors, 14 existing
+workspace skips; lint has zero errors, 21 warnings. Runtime-preparation Python
+tests: 16 PASS. APK metadata, matching 1179 debug certificate and 16 KiB
+alignment PASS. All 41 native/asset entries match 1179; the combined DEX
+contains both recovery and assistant-follow-through code. No phone install,
+new UI fixture run or real limit/background proof. Source, build bucket and
+APK are retained; no commit, push, merge or publication in this task.
+See [the combined build record](docs/testing/assistant-flow-limits-20261028.md).
+
+### Personal assistant follow-through — 2026-10-28
+
+Continues the reviewed 1178 snapshot in the isolated
+`personal-assistant-flow-20261028` worktree after Astra's usage-limit stop.
+Adds owner-feedback capture/context, commitments, source-checked Manager
+briefings with stable delivery IDs, quiet notifications, tested narrow learned
+filters and explicit execution profiles. Candidate 1179 builds and passes
+881 core tests, 57 workspace tests (14 skipped), 171 app JVM tests and all nine
+direct emulator UI fixtures. App lint: zero errors, 21 warnings. APK identity,
+debug signature and 16 KiB alignment verified. No hosting-phone install or live
+model background success is claimed. Worktree, build bucket and candidate APK
+are retained for review/delivery; no push, merge or publication.
+See [checks and remaining proof](docs/testing/personal-assistant-flow-20261028.md).
+
+### Manager face carried onto 1177 — 2026-10-27
+
+The user-supplied face APK was tasks1170, below installed context-window1177.
+The user accepted building a forward update. A new isolated worktree at
+`C:/Users/SHIRA/.codex/worktrees/manager-eye-on-1177-20261027` preserves the
+712-file 1177 source snapshot and replaces only the shared `MikeEye.kt`
+renderer with Claude's `8d0f088` version. Version is 1178 /
+`0.14.0-dev.manager-eye1178`; runtime pins and all data-handling code stay.
+The saved 1177 APK hash matches the phone's installed base APK exactly.
+
+App unit tests (171), eight direct UI fixtures, app assembly/test assembly
+and app lint (zero errors, 21 warnings) pass. Signature and 16 KiB alignment
+pass; all bundled native/skill assets match installed 1177 byte for byte.
+Phone installation is pending. Evidence and remaining gaps:
+[manager-eye update](docs/testing/manager-eye-1178-20261027.md). No other
+worktree was changed, and the local build-storage config removed no buckets.
+
+### Task board visual refresh — 2026-10-26
+
+In the same isolated task-board worktree, the Manager and team now use a
+two-eyed teal particle face with a still frame for reduced motion. The board
+and task details have a quieter hierarchy, earlier decision controls, compact
+discovery status and content-aware direction for mixed Hebrew/English. Simple
+bold markup is rendered in task text. Final dev build 1174, app unit tests
+(170 cases) and app lint passed; eight direct Compose tests passed on an
+isolated emulator, including edited-instruction dispatch and a large-font case.
+Fixture screenshots and logs are in `%TEMP%/hey-mike/task-board-v2/validation/`.
+The APK was copied to the phone; `apps_settings app_info` later confirmed
+installed version 1174 / `0.14.0-dev.task-design1174`. The installed-file
+hash and real-phone UI have not been checked. The worktree and build artifacts
+are retained for review.
+
+### Task-board reliability implementation — 2026-10-26
+
+The user approved the deep implementation plan. Work continues from `6bf1f35`
+in `C:/Users/SHIRA/.codex/worktrees/task-board-v2-20261026`, branch
+`feat/task-board-reliability`, preserving the source used for 1172 and other
+dirty checkouts. Capture/feed, event history, source policy, staged commits,
+safe note undo, job-reference queueing and restricted Manager reviews are
+implemented. Two broad Gradle gates passed; a late prompt regression caught
+a stale in-build snapshot and was fixed in a frozen-source scoped gate.
+Final scoped core/workspace/app: 1,094 cases, no failures/errors, 14 skips;
+11 direct emulator tests passed. App lint, runtime-preparation tests and
+diff whitespace checks passed. Exact dev build 1173 was verified and copied
+to Downloads. The user confirmed installation; phone app_info then verified
+1173 / 0.14.0-dev.task-board1173. Installed-file hash and the full real-device
+journey remain unverified. No personal data was cleared. See
+[current evidence and remaining checks](docs/testing/task-board-v2-20261026.md).
+
+### Personal-profile notification capture — 2026-10-26
+
+Isolated branch `fix/personal-profile-notifications` uses a verified local
+tasks1170 source snapshot at `bd25170` above `origin/dev` (`053cc14a`). The
+original task-board checkout and main checkout were not edited. A shared
+fail-closed policy now rejects other Android users/profiles before payload
+access in live notification callbacks, active replay and the task message
+reader. Personal capture and existing collection settings remain downstream.
+No app setting previously offered profile filtering.
+
+Windows/JDK 21: `:automations:testDebugUnitTest` PASS (19 cases, API 30/35);
+`:core:test :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug`
+PASS with `--no-daemon --max-workers=2
+-Pkotlin.compiler.execution.strategy=in-process`. Core 839 + app 170 cases:
+zero failures/errors/skips. App lint: zero errors, 21 warnings, three
+informational findings. Extra `:automations:lintDebug` FAIL: three missing-
+permission errors at unchanged `AndroidAutomationActions.kt` (145/233) and
+`AutomationWifi.kt` (66); these permissions exist in the app manifest.
+No baseline, suppression or lint setting was added. `git diff --check` PASS.
+
+Dev Debug APK: `dev.androidagent.app.dev`, code 1171 /
+`0.14.0-dev.personal1171` via build overrides. SHA-256:
+`3ca184098d41b851f90b0e341ca6af2b47d7f8a12e149970820d2c7a71e09436`.
+Android Debug/v2 signature and 16 KiB ZIP alignment PASS; its certificate
+matches the existing task-worktree APK, not independently the phone.
+Kept APK/logs: `C:\Users\SHIRA\AppData\Local\Temp\hey-mike\personal-profile-notifications-20261026\`.
+Worktree retained for review at `C:\Users\SHIRA\.codex\worktrees\personal-profile-notifications-20261026`;
+central build bucket retained at `build/031650f34452e280`. Task-local storage
+reported `removed:[]`; no other build bucket was removed.
+
+No phone install, physical work-profile test, live notification-body read,
+push/merge or full release gate. The running tasks1170 app is unchanged.
+Previously saved signals/cards remain, and old queued work can still run.
+Details: [policy and evidence](docs/testing/personal-notification-profile-20261026.md).
+
+### Task board and background team — 2026-10-25
+
+Continued the saved `feat/proactive-task-board` work in
+`.claude/worktrees/proactive-tasks-20261025`. Adds the board, Manager eye,
+inspectable team, notification/chat/calendar collection, user-selected
+models, memory compaction and bounded learned playbooks. Fixed uncertain
+dispatch recovery, Stop during start, dedupe after raw deletion, protected
+memory links and restricted engine sessions. Also carries the installed
+1167 PC-approval behavior forward.
+
+The combined scoped unit/build/AndroidTest assembly/lint gate passed twice:
+1,369 tests, zero failures/errors, 17 existing skips. Four final emulator UI
+fixtures passed; the modal content color was corrected after screenshot
+inspection. Python runtime-preparation tests: 16 passed. No runtime pins
+changed; cached inputs passed their pinned hashes. No other buckets removed.
+
+1168 was installed on the hosting Nothing A059, including a matching installed
+base-APK hash. A reported Manager failure then exposed empty-draft cleanup
+deleting team sessions. 1169 creates retained team chats atomically, protects
+them from cleanup and repairs missing built-ins. Its scoped gate passed;
+five emulator tests passed, including the real Activity/ViewModel lifecycle.
+Phone metadata confirms 1169 installed. A second phone report exposed Android
+app-home aliases rejected by the playbook link guard. Source is now 1170;
+the trusted home is normalized and internal links remain blocked. Its scoped
+build/unit/lint gate passed (1,370 latest JVM cases, zero failures/errors,
+17 skips). The exact Android error reproduced twice on 1169; all seven final
+Android tests pass on 1170 (8.875s). The test fixture now avoids waiting on the
+Manager's continuous animation. 1170 was transferred and installation started,
+but Mike disconnected during replacement: installed version/hash and live
+Manager/discovery verification await reopening the phone app. Do not repeat
+the install before reading current state. The feature worktree, build bucket
+and task temp evidence are retained for that follow-up. Details and runtime limits:
+[validation](docs/testing/task-board-20261025.md).
+
+### Start each account's 5-hour window by itself — 2026-10-26
+
+The user has two Codex accounts and one Claude account in Mike. A plan's
+5-hour window starts only at the first message after it resets, so they sent
+"hi" by hand to start the clock. New switch in Settings > Accounts (off by
+default): when an account's window ends, Mike sends it one short message and
+the next window starts then. Covers every saved Codex account without
+switching (second private app-server; a saved sign-in is lent by the vault,
+the live one signs in with its current tokens) and the Claude account
+(throwaway `claude -p` to Haiku). One alarm, a short `specialUse` foreground
+service, a journal with back-off. Design in `docs/ARCHITECTURE.md` ("Starting
+5-hour windows by themselves"). Not an automation rule: a rule's actions run
+on the live account only, so they cannot reach the other accounts.
+
+From `origin/dev` `053cc14a`, Windows/JDK 21: `:core:test
+:engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest
+:runtime:testDebugUnitTest :remote:testDebugUnitTest :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon --max-workers=2` PASS.
+Result XML: core 827, engine-codex 63, engine-claude 105, runtime 85, remote
+150 (3 skipped, unchanged), app 170; zero failures or errors. Lint: zero
+errors. The two new warnings (API-level check on the foreground type) were
+fixed afterwards. New tests: `UsageWindowsTest` (planner, journal, settings
+line), vault lend/take-back, `CodexWindowStarterTest` against a scripted
+app-server, `ClaudeUsageWindowTest` against the fake CLI.
+`git diff --check` clean.
+
+Protocol check on the PC's Codex app-server 0.130 (signed out, empty
+CODEX_HOME, no message sent): `thread/start` with `ephemeral`, `read-only`,
+`never` and developer instructions is accepted and writes no rollout. The PC's
+Claude Code 2.1.302 lists `--system-prompt`, `--no-session-persistence`,
+`--setting-sources` and `--tools`. The phone runs Codex 0.163.0 and pins
+Claude Code 2.1.293; neither was exercised here.
+
+Runtime staging hit HTTP 404 on the pinned Alpine musl URL again; the build
+used the cached archive, whose SHA-256 matches the pin (`ac281d1e...703782`).
+
+Not yet tested on a phone: a real start for a saved and a live Codex account
+and for Claude, the alarm and foreground service in the background, and
+whether the reading right after a start already shows the new reset time.
+### Usage limit: continue at reset, or move to another account — 2026-10-28
+
+A chat stopped by a usage limit now shows a card instead of a red error: when
+the usage resets, a one-tap "Continue at HH:mm", the other accounts and
+providers with whether they have usage now, and "Try again now". Each chat can
+have a plan, from `/limits`, the composer chip or the card: an ordered list of
+Codex accounts and Claude to move to, and whether to wait for the reset. The
+chat then continues by itself, also with the app closed (one alarm). Design in
+`docs/ARCHITECTURE.md`, "A chat that hits a usage limit continues by itself".
+
+Branch `feat/limit-auto-continue` from `dev` `b9ea151`, Windows:
+`:core:test` (13 new `UsageLimitRecoveryTest` cases), `:engine-claude:test`,
+`:engine-codex:testDebugUnitTest`, `:app:testDevDebugUnitTest` and
+`:app:lintDevDebug` PASS; `:app:assembleDevDebug` PASS; `git diff --check`
+clean. The build first failed in `prepareCodexRuntime`: Alpine no longer
+serves `musl-1.2.5-r12.apk` (HTTP 404). A local copy with the pinned SHA-256
+was placed in the build bucket; the pin itself needs a durable source.
+
+Not tested:
+- Nothing ran on a phone: no real limit, account switch, provider handoff or
+  alarm wake-up was seen.
+- The Codex error shape (`codexErrorInfo: usageLimitExceeded`) comes from the
+  app-server's naming, not from a captured limit; text recognition is the
+  fallback.
+- Without the exact-alarm permission the wake-up may come late under Doze.
+
 ### Long context switch in the model menu — 2026-10-27
 
 Claude Code gives every model a 1M window on the user's plan, and every reply

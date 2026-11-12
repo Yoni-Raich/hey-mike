@@ -1,5 +1,179 @@
 # Architecture
 
+## Manager follow-through — 2026-10-28
+
+Owner messages in Manager/member chats are captured separately from automated
+output. Their attributed feedback journal is bounded; Coach consumes actual owner
+events. Manager turns select bounded memories and corrections with current source
+policy. Automatically injected context contributes its source references to later
+managed writes. Live memory has no fixed expiry.
+
+Commitments record owner, next check and a real deadline independent of proposal
+expiry. New evidence may inform decided open work but cannot change a frozen
+execution plan or close it. Manager reviews create an atomic, source-checked
+briefing outbox on the existing cards. Stable chat message IDs prevent duplicate
+delivery after restart. Delivery rechecks eligibility and policy. Quiet private
+notifications only open the owning chat and never start work or answer approvals.
+Discovery, quota and review limits apply; delivery gaps remain visible.
+
+Optional learned `mike-filter` blocks are narrow suggestion filters with executable
+examples and counterexamples. They cannot grant permissions or dispatch anything.
+An owner-rule fingerprint invalidates old filters when explicit owner rules change.
+Free-form learned prose remains context, without a claimed semantic quality gate.
+Execution profiles are explicit and preserved in approved snapshots when overridden;
+otherwise the Manager's profile is passed explicitly to its child.
+See [validation and limits](testing/personal-assistant-flow-20261028.md).
+
+## Task board visual refresh — 2026-10-26
+
+The Manager and member avatars share a two-eyed particle renderer. It retains
+team tints, state descriptions and the reduced-motion still frame. Board cards
+show a short reason and plan, while the full evidence and activity remain in
+the detail page. Decision controls come before the evidence; sensitive-action
+notes still appear before the controls. Task content uses its own paragraph
+direction, independently of the UI language. Discovery details are expandable;
+coverage warnings remain visible when collapsed. These are presentation
+changes: user decisions still use the existing task decision paths.
+
+The 1178 local update carries the ring-eyed particle face from `8d0f088` onto
+the installed context-window1177 source. Its relaxed particle lattice is
+cached and prepared off the UI thread; gaze pushes nearby dots through a
+spring. The component contract, reduced-motion path and Manager mood mapping
+stay in the shared avatar component. Task handling, storage and context-meter
+code are unchanged by this visual update.
+
+## Task-board reliability — 2026-10-26
+
+The board now captures finalized message revisions from a SQLite feed in
+`sessions.db` schema 10. Equal times, new short chats, and long messages do
+not share a timestamp cursor. Capture inserts a whole page and advances its
+cursor in one board transaction. Backpressure keeps the source page for a
+later try. Long notifications are split without dropping their tail. A full
+notification inbox refuses new input, keeps existing input, and shows a gap.
+
+Every meaningful card change has a revision and event. Approval freezes the
+plan, destination and user note in its execution receipt. `tasks get` supplies
+the full card and paged history. The Coach reads actual decision/note/outcome
+events; its consumed event IDs are saved with the result. A machine result is
+not a user success verdict. Snoozed cards have their own Wake transition.
+
+Background jobs use the existing run queue. Its durable entry contains a job
+ID; personal input is prepared in memory only after current-policy checks.
+Raw pending input survives a failed run. A restart cancels stale queued work
+and rebuilds future read passes; it never replays task execution. A cancelled
+pass cannot fall back to the live tool handler and save a late result.
+
+Models edit an isolated board/memory/team copy. SQLite checks the source
+policy epoch and changed record preimages, then commits outputs, events,
+consumed input, job receipt, maintenance cursor and active rule generation
+together. Conflicts keep current user changes and the unprocessed input.
+The rules generation is finalized first, with a SHA-256 file manifest. A crash
+before the DB commit leaves an inactive generation, not half-live rules.
+Only `tasks playbook` selects the active generation. `user.md` remains separate.
+Generations are read-only except for explicit Forget revocation.
+
+Sources follow cards, memory, recalled context and learned rules. Current
+exclusions apply at managed reads, dispatch and commit. Unknown legacy
+external provenance stays outside automatic context. Forget cancels old work,
+follows compaction links, saves text-free tombstones, removes affected note
+undo payloads and revokes dependent learned files in retained generations.
+Undo compensates this run only; later notes, edits and forgotten items stay.
+Legacy whole-memory snapshots are not accepted by the new Undo endpoint.
+This is managed data removal, not forensic erasure or deletion of original
+messages, user-owned chats, or old external exports.
+
+An internal read-only Manager review organizes roles from useful new events,
+at most four times a day and thirty minutes apart. Its own role/report updates
+cannot trigger it again. It cannot execute tasks. It uses the selected
+discovery model. User Manager chat stays separate. Backstage voice is refused
+before a normal native thread can open; Manager voice gets owner context.
+Normal full-access chats still share the app's Linux UID. These checks are
+not an OS sandbox against a fully privileged chat.
+
+Maintenance records successful completion separately from attempts. Failed
+nightly work backs off two hours. Memory pages rotate through up to 160 notes;
+live notes have no age expiry. User pins and open-card links protect notes.
+The UI shows real successful-pass time, pending input, quota/cap waits,
+coverage gaps, decision history, before/after upkeep and team controls.
+Reading missing conversation context opens a user draft in the Manager chat;
+collection never takes the screen.
+
+See [implementation checks and remaining proof](testing/task-board-v2-20261026.md).
+
+## Task board, Manager and background team — 2026-10-25
+
+`core/TaskBoard*` owns proposals, user decisions, execution receipts and recovery.
+`TaskTools` is a chat-local tool, like questions and child chats; `device-tools`
+remains the sole device gateway. `workspace/LocalTaskBoardStore` keeps cards,
+memory, team, settings and pending signals in a separate private SQLite file.
+A stored status never dispatches work. A user tap, or the user's own current
+input in an owning chat, calls the decision path. It reserves the attempt key
+before dispatching through `SessionAgents`. Unknown outcomes retain that key
+and cannot be retried as new work. A late receipt after Stop is cancelled.
+
+`app/TaskDesk` joins the board to normal chats. The Manager has a pinned entry,
+an eye built from the dot orb, and the team pages. Scout, Coach and Librarian
+are inspectable chats; each background pass gets a fresh engine context.
+Task execution uses normal child chats, with the existing Stop and approval
+paths. Up to three extra named roles can own task kinds. Backstage chats and
+the Manager's descendants are reached from the board rather than the normal
+chat list. “I'll do it” stays on the board until the user marks it done.
+
+Team chats are created with their title and initial context in one storage
+transaction. Empty-draft cleanup skips them. On upgrade, missing built-in
+chats are repaired and stale queued passes for missing chats are cancelled.
+
+Collection is opt-in. The notification listener checks the package before
+extracting message text, splits MessagingStyle messages, and filters codes
+and payment confirmations before storage. Private messages and groups can
+be excluded. On listener reconnect, active notifications are replayed only to
+the board, never to automation actions. Text-free bounded receipts dedupe
+reposted messages even after their raw text has been deleted. Quiet chats,
+a one-time recent-chat backfill and calendar changes also produce signals.
+This does not read WhatsApp's database, backup or screen. Notification access
+does not supply all mail or WhatsApp history.
+
+`DiscoverySchedule` batches input with quiet periods and a maximum wait;
+passes are at least twenty minutes apart and have a daily cap. The foreground
+service supports user-enabled collection. A persisted fifteen-minute native
+JobScheduler job also wakes the app after process loss; Android can defer it
+in Doze or low battery. A system job has an eight-minute work window and
+stops only backstage turns on expiry. Explicit Stop pauses discovery and
+removes its scheduled job. The chosen engine's own unexpired quota reading
+is used, not another engine or account's quota.
+
+Background device-tool names are filtered at session open and every operation
+is checked again before dispatch. Claude runs with an empty native tool set,
+strict app MCP configuration, no user settings and no session persistence.
+Codex gets a read-only sandbox, never approvals, disabled shell/JS/agents/apps/
+plugins/image generation/web search, and an ephemeral thread. Native approval
+requests from a backstage run are declined. Unsupported engines fail closed.
+These are source and protocol controls; native sandbox behavior still needs
+physical runtime validation. The app and its engines share a Linux UID, so
+this is not a security boundary against a normal fully privileged chat.
+
+The Scout must call `tasks(mode="finish")` with its exact batch after saving
+all useful cards and memory. Raw signals are removed only after that receipt
+and a successful completed run. Interrupted or failed passes keep their batch
+within the bounded retention limit. Backstage input is not copied into the
+app trace, and native background transcripts are ephemeral. Saved cards,
+memory, tool results and short team journals remain inspectable.
+
+Memory has no fixed expiry. Compaction merges less-used old details into
+summaries/profiles, preserves provenance, and refuses pinned notes or notes
+linked to open cards. Source signal links join memory to cards automatically.
+Retired notes have a seven-day undo window. A user-owned `mike-playbook` skill
+has bounded Markdown files and separate `user.md` rules. Coach and Librarian
+can write learned files only through the bounded tool endpoint, never
+`user.md`; learned text cannot change sources, permissions or execution gates.
+Nightly review and memory upkeep stage changes and offer run-specific report
+cards with compensating undo. Their model and engine are selected in Sources.
+The trusted app home is resolved once before playbook path checks: Android's
+`/data/data` and `/data/user/0` aliases are valid roots. Links inside the
+playbook and paths outside it remain blocked.
+
+See [task-board validation](testing/task-board-20261025.md).
+
 ## Deterministic UI timeout regression — 2026-10-23
 
 The ADB UI observation timeout regression uses a virtual coroutine scheduler
@@ -1305,6 +1479,55 @@ shapes the raw reading with the same reset rule as the Codex rows
 (`readSaved`, `AccountUsageOverview.rows(..., claude)`). When there are more
 than four orbs the Claude row keeps its place and the Codex accounts make room.
 
+### Starting 5-hour windows by themselves
+
+A plan's 5-hour window does not start when the last one ends; it starts at
+the first message after that. An account nobody writes to sits with no window
+running, and the next five hours begin only when the person comes back. With
+the switch in Settings > Accounts on (off by default), Mike sends each account
+one short message ("hi") the minute its window ends, so the next reset comes
+five hours after that minute.
+
+- **Deciding** is `UsageWindowPlanner` (`:core`, pure). It reads the readings
+  already kept for the widget (`AccountUsageBook`, `LastUsageStore`): a window
+  whose reset time is ahead waits for it (plus a grace minute); one that has
+  reset, or was never read, is due. A used-up limit of the same plan (the
+  weekly one) holds everything until it resets, since a message would only
+  fail; a limit of one model ("weekly · Opus", a Codex model bucket) does not.
+  A Codex account's plan window is the shortest `Codex · …` one.
+- **Remembering** is `UsageWindowJournal` (`accounts/usage-windows.json`):
+  the switch and the last try per account. A try since the last reset counts:
+  a success waits one window even when no new reading came back, a failure
+  backs off from 10 minutes, doubling, to at most 3 hours. Times and short
+  messages only, never credentials.
+- **Codex** runs on a second app-server (`AndroidRuntimeHost` with its own
+  CODEX_HOME, `runtime/usage-windows/.codex`, its own process and proxy), never
+  the one chats use, through `CodexWindowStarter` (`:engine-codex`): an
+  ephemeral thread, read-only, no approvals, no tools, the account's default
+  model at its lowest effort, then `account/rateLimits/read`. The default
+  model, not the cheapest: a smaller model can carry a limit of its own, and a
+  message there would not start the plan's window. A saved account's sign-in
+  is lent by the vault (`lend`, then `takeBack` keeps a token the side run
+  refreshed) and deleted from the side home afterwards. The live account is
+  never lent - two processes refreshing one sign-in leave one with a spent
+  refresh token - so the side app-server signs in with its current tokens
+  (`chatgptAuthTokens`, the same path a computer chat uses) and asks the main
+  app-server to refresh them. Every start and every account switch hold
+  `AgentGraph.accountFiles`, so a switch waits for a lent sign-in to come back.
+- **Claude** has one sign-in: `ClaudeCodeEngine.startUsageWindow` sends "hi"
+  to Haiku from a throwaway `claude -p` with no tools, no settings and no
+  transcript, then asks `get_usage` for both windows.
+- **Running** is `UsageWindowKeeper` (`:app`). One alarm, exact when allowed,
+  re-armed after every start, reading, account change and process start (and
+  by `UsageWindowBootReceiver` after a restart or update). It starts
+  `UsageWindowService`, a short `specialUse` foreground service with a quiet
+  notification, which runs the due starts one at a time and stops. If Android
+  refuses the foreground start (an inexact alarm does not allow one), the
+  receiver runs them within the broadcast's time instead.
+
+The reading a start brings back is recorded under its account like any other,
+which redraws the widget and tells the planner when the new window ends.
+
 ## Rich chat presentation
 
 Assistant markdown is rendered with Markwon (tables, strikethrough, prism4j
@@ -2289,7 +2512,20 @@ land an hour late. `AutomationHost.canFireOnTime()` reports which, because
 "19:00" arriving at 20:10 is a different action rather than a slow one.
 
 **The notification listener enforces the privacy contract in the order its
-checks are written.** Our own notifications are dropped first, so a rule's
+checks are written.** `PersonalNotificationPolicy` first requires the
+`StatusBarNotification.user` to equal `Process.myUserHandle()`. Work, private,
+other-user and all-user notifications are rejected before accessing the
+notification payload or consulting automation/task consumers. Missing handles,
+unavailable user metadata/services and exceptions fail closed. The app's own
+context must also be outside a managed profile (API 30+), and outside any
+profile on API 33+. The check uses public APIs and does not assume user 0 or
+globally exclude a package that can also be used personally. It runs for live
+callbacks, active-notification replay after reconnect, and direct calls to
+`TaskNotificationReader`. The task board's startup chat backfill does not read
+Android notifications. Existing signals/cards are not deleted or reclassified;
+old stored signals do not retain Android profile provenance.
+
+Our own notifications are then dropped, so a rule's
 `notify` can never trigger the rule that posted it; ongoing and group-summary
 notifications are dropped as status rather than events; then **the package is
 checked before the title or body is touched**, against
@@ -2298,7 +2534,11 @@ rules, with `"*"` included only by an enabled all-apps rule. An app outside that
 scope is never read, and with no notification rule at all the service reads
 nothing. Only then are title and text extracted, and they go
 no further than the evaluator unless the rule's own actions interpolate them.
-Nothing is stored: there is no notification log and no tool that can ask for one.
+Automation rules store no notification log. The task board's separate, bounded
+signal inbox keeps only messages admitted by this profile boundary and its
+existing collection settings. See
+[notification profile checks](testing/personal-notification-profile-20261026.md)
+for supported settings, API behavior, tests and deployment limits.
 
 **A voice rule carries its context through startup and speaks first.**
 `voice_call.opening` is the first utterance; optional `context` carries the
@@ -3224,3 +3464,43 @@ Decided 2026-10-01, on top of the section above.
   skills are not listed in the composer. Mac Desktop handoff and real
   phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
   evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
+
+## A chat that hits a usage limit continues by itself
+
+A turn stopped by a usage limit used to end on a red error line, and the user
+had to come back and type "continue". Now the stop is a state of the chat,
+with a plan the user sets inside the chat.
+
+- **Detection.** The engine says so where it can: Claude's
+  `rate_limit_event` rejection carries `resetsAt`, and Codex's error carries
+  `codexErrorInfo: usageLimitExceeded`. Both reach `EngineEvent.TurnFinished`
+  and `Failure` as `limitReached`. The coordinator falls back to
+  `UsageLimitText.recognize` on the error text, then stamps the run's engine
+  into `RunState.limit`.
+- **Plan per chat.** `LimitPlan(continueAtReset, switchTo)`: an ordered list
+  of `LimitTarget`s (a Codex account, or Claude) to move to, and whether to
+  wait for the reset when none is free. It is set from the `/limits` command,
+  the composer chip, or the card's "Set up for next time".
+- **`UsageLimitRecovery` (`:core`)** watches `AgentRuns.outcomes` and handles
+  each `runId` once. With no plan the chat is `STOPPED` and the card offers
+  "Continue at HH:mm", the other accounts, and "Try again now". With a plan it
+  moves to the first target that can run and is not known to be out
+  (`SWITCHING`, then `CONTINUING`), or waits (`WAITING`) until the earliest of
+  the current account's reset and the targets' resets, plus 60s of grace. A
+  reset that is not reported is tried again after 30 minutes. A target that
+  failed to switch counts as out for 30 minutes, so a wait does not loop on
+  it. Automatic tries stop after 12 in a row; "Continue now" is the user's own
+  call and starts the count again.
+- **Continuing** is an ordinary queued turn (`QueuedTurn`, shown as an agent
+  note "Continuing after the usage limit"). A change of engine travels with
+  the turn, so the coordinator's `ChatHandoff` tells the new engine what was
+  said. A change of Codex account goes through `switchCodexAccount`, which
+  waits until no chat and no voice runs, pauses the queue, closes the engine,
+  activates the account and reads its usage; the open screen follows through
+  `accountSwitched`.
+- **Waiting with the app closed.** Plans, stops and the out-of-usage marks are
+  saved in `limit-recovery.json` under the runtime root. One alarm
+  (`LimitWakeReceiver`) is set for the earliest wait: exact when the user
+  allows exact alarms, otherwise `setAndAllowWhileIdle`. It starts
+  `AgentService` and runs `dispatchDue` in the app scope. A stop restored
+  while it was switching is decided again.

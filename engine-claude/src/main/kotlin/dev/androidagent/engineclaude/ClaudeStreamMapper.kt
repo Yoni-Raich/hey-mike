@@ -22,6 +22,8 @@ package dev.androidagent.engineclaude
 
 import dev.androidagent.core.CompactResult
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.EngineKind
+import dev.androidagent.core.LimitReached
 import dev.androidagent.core.SecretRedactor
 import dev.androidagent.core.TokenUsage
 import dev.androidagent.engineclaude.ClaudeProtocol.string
@@ -66,6 +68,8 @@ internal class ClaudeStreamMapper(
         val frames: MutableSet<String> = mutableSetOf()
         @Volatile var interruptRequested = false
         var rejection: String? = null
+        /** Set with [rejection]: the account is out of usage, until this reset. */
+        var limit: LimitReached? = null
         var syntheticError: String? = null
         var workStarted = false
         var authRetries = 0
@@ -160,7 +164,8 @@ internal class ClaudeStreamMapper(
         val signals = mutableListOf<Signal>()
         if (!turn.internal) {
             if (status == "completed") lastText?.let { signals += Signal.Emit(it.copy(phase = "final_answer")) }
-            signals += Signal.Emit(EngineEvent.TurnFinished(status, error, threadId, turn.turnId))
+            val limit = turn.limit?.takeIf { status == "failed" && error == turn.rejection }
+            signals += Signal.Emit(EngineEvent.TurnFinished(status, error, threadId, turn.turnId, limitReached = limit))
         }
         signals += Signal.Ended(turn, status)
         retire(turn)
@@ -400,7 +405,12 @@ internal class ClaudeStreamMapper(
 
     private fun rateLimit(message: JsonObject): List<Signal> {
         val info = message["rate_limit_info"] as? JsonObject ?: return emptyList()
-        cycleTurn()?.let { turn -> ClaudeProtocol.rejectionMessage(info, zone, clock())?.let { turn.rejection = it } }
+        cycleTurn()?.let { turn ->
+            ClaudeProtocol.rejectionMessage(info, zone, clock())?.let {
+                turn.rejection = it
+                turn.limit = LimitReached(ClaudeProtocol.rejectionReset(info), EngineKind.CLAUDE)
+            }
+        }
         val limits = ClaudeProtocol.parseRateLimits(info)
         return if (limits.isEmpty()) emptyList() else listOf(Signal.Emit(EngineEvent.UsageChanged(null, limits = limits)))
     }

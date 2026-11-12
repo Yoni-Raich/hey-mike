@@ -35,6 +35,7 @@ import dev.androidagent.core.RecoverableConnection
 import dev.androidagent.core.SecretRedactor
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolResult
+import dev.androidagent.core.UsageLimit
 import dev.androidagent.engineclaude.ClaudeProtocol.string
 import dev.androidagent.engineclaude.ClaudeStreamMapper.Signal
 import kotlinx.coroutines.CancellationException
@@ -58,6 +59,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
@@ -184,6 +190,69 @@ class ClaudeCodeEngine(
             }
             val limits = reply?.let(ClaudeProtocol::parseUsageReply).orEmpty()
             if (limits.isNotEmpty()) stream.emit(EngineEvent.UsageChanged(null, limits = limits))
+        }
+    }
+
+    /**
+     * Start the plan's 5-hour window: one short message ("hi") on a
+     * throwaway process with no tools and no transcript. The window starts at
+     * the first message after a reset, so the message is the point and its
+     * answer is thrown away.
+     *
+     * @return the limits Claude reported after it, also emitted as a usage
+     *   reading; empty when it reported none.
+     */
+    suspend fun startUsageWindow(): List<UsageLimit> = withContext(Dispatchers.IO) {
+        check(installed()) { computer?.notReady ?: DOWNLOAD_FIRST }
+        val process = host.start(ClaudeProtocol.windowStartArgs(), home(), emptyMap())
+        try {
+            launch { drain(process.errorStream) }
+            var reported = emptyList<UsageLimit>()
+            var rejection: String? = null
+            val answered = CompletableDeferred<Result<Unit>>()
+            val usage = CompletableDeferred<JsonObject?>()
+            launch {
+                runCatching {
+                    process.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                        for (line in lines) {
+                            val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
+                            when (message.string("type")) {
+                                "rate_limit_event" -> (message["rate_limit_info"] as? JsonObject)?.let { info ->
+                                    ClaudeProtocol.parseRateLimits(info).takeIf { it.isNotEmpty() }?.let { reported = it }
+                                    ClaudeProtocol.rejectionMessage(info)?.let { rejection = it }
+                                }
+                                "result" -> answered.complete(
+                                    if ((message["is_error"] as? JsonPrimitive)?.booleanOrNull == true) {
+                                        Result.failure(IllegalStateException(rejection ?: message.string("result").ifBlank { "Claude did not answer." }.take(300)))
+                                    } else Result.success(Unit),
+                                )
+                                "control_response" -> {
+                                    val response = message["response"] as? JsonObject ?: continue
+                                    if (response.string("request_id") != WINDOW_USAGE_ID) continue
+                                    usage.complete(if (response.string("subtype") == "success") response["response"] as? JsonObject else null)
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                answered.complete(Result.failure(IllegalStateException(rejection ?: "Claude stopped before answering.")))
+                usage.complete(null)
+            }
+            val writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
+            fun send(frame: JsonObject) = writer.apply { write(frame.toString()); newLine(); flush() }
+            send(ClaudeProtocol.userFrame(UUID.randomUUID().toString(), buildJsonArray {
+                add(buildJsonObject { put("type", "text"); put("text", WINDOW_MESSAGE) })
+            }))
+            (withTimeoutOrNull(WINDOW_TIMEOUT_MS) { answered.await() } ?: Result.failure(IllegalStateException("Claude did not answer in time."))).getOrThrow()
+            // The process now knows the limits; the full reading has every window.
+            runCatching { send(ClaudeProtocol.usageRequest(WINDOW_USAGE_ID)) }
+            val read = withTimeoutOrNull(USAGE_TIMEOUT_MS) { usage.await() }?.let(ClaudeProtocol::parseUsageReply).orEmpty()
+            val limits = read.ifEmpty { reported }
+            if (limits.isNotEmpty()) stream.emit(EngineEvent.UsageChanged(null, limits = limits))
+            limits
+        } finally {
+            process.destroyForcibly()
         }
     }
 
@@ -375,6 +444,13 @@ class ClaudeCodeEngine(
      */
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String =
         openSessionAt(workspace.absolutePath, threadId, model, tools)
+
+    override suspend fun openReadOnlySession(workspace: File, model: String?, tools: List<ToolDefinition>): String {
+        check(computer == null) { "Background tasks must run on the phone." }
+        val id = openSessionAt(workspace.absolutePath, null, model, tools)
+        chats.getValue(id).readOnly = true
+        return id
+    }
 
     /** Give an idle native session back to another client, without stopping a running turn. */
     suspend fun releaseSession(threadId: String) {
@@ -594,18 +670,13 @@ class ClaudeCodeEngine(
 
     // ---- one chat process ---------------------------------------------------------
 
-    private data class RunningConfig(
-        val model: String,
-        val effort: String?,
-        val toolNames: List<String>,
-        val runtime: String,
-        val longContext: Boolean,
-    )
+    private data class RunningConfig(val model: String, val effort: String?, val toolNames: List<String>, val runtime: String, val readOnly: Boolean, val longContext: Boolean)
 
     private class ChatStartException(message: String, val notFound: Boolean) : IllegalStateException(message)
 
     private inner class Chat(val threadId: String, val cwd: String, @Volatile var resumable: Boolean) {
         @Volatile var requireExisting = false
+        @Volatile var readOnly = false
         val lock = Mutex()
         val state = Any()
         // Paths are shown relative to the chat folder only where this JVM can name it.
@@ -647,9 +718,9 @@ class ClaudeCodeEngine(
 
         private fun dir(): File = File(host.homeDirectory, "mike-chats/$threadId")
 
-        /** Start or restart the process when it is gone or its model, effort, tools or window changed. Caller holds [lock]. */
+        /** Start or restart the process when it is gone or its model, effort or tools changed. Caller holds [lock]. */
         suspend fun ensureRunning() {
-            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, longContext)
+            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, readOnly, longContext)
             if (alive && running == wanted) return
             check(idle()) { "A turn is already running in this chat." }
             stopProcess()
@@ -729,7 +800,7 @@ class ClaudeCodeEngine(
                 val mcpFile = File(dir, MCP_CONFIG_FILE)
                 writePrivate(mcpFile, toolServer.start())
                 val args = ClaudeProtocol.chatArgs(
-                    threadId, resume, ClaudeProtocol.windowModel(model, long), effort, mcpFile.absolutePath, promptFile.absolutePath,
+                    threadId, resume, ClaudeProtocol.windowModel(model, long), effort, mcpFile.absolutePath, promptFile.absolutePath, readOnly,
                 )
                 attach(host.start(args, File(cwd).apply { mkdirs() }, ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, long)))
                 val reply = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { control("initialize") }
@@ -1156,6 +1227,9 @@ class ClaudeCodeEngine(
         private const val PROMPT_FILE = "system-prompt.md"
         private const val PROBE_ID = "probe-initialize"
         private const val PROBE_USAGE_ID = "probe-usage"
+        private const val WINDOW_USAGE_ID = "window-usage"
+        private const val WINDOW_MESSAGE = "hi"
+        private const val WINDOW_TIMEOUT_MS = 90_000L
         private const val USAGE_TIMEOUT_MS = 20_000L
         private val STOPPED = ToolResult("Run stopped. No device action was performed.", success = false)
         private const val HANDSHAKE_TIMEOUT_MS = 60_000L
