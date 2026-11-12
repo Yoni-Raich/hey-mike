@@ -1,5 +1,17 @@
 # Progress
 
+### Dev Debug 1214 for the phone — 2026-11-12
+
+Built from `bec50f8a` (1213 plus `1948e1bb`, `c890bb97` and the version bump) with
+`:app:assembleDevDebug --no-daemon`, exit 0. aapt2: `dev.androidagent.app.dev`
+1214 `0.14.0-dev.manager1214`. APK Signature Scheme v2, one signer, SHA-256
+`f65c3469...dda1ee`, the same debug key as 1213. APK SHA-256
+`18efa346ec62f5e8f7e3602c7276f1f914b7962e7525df017975776fd84e8785`, 342,483,388
+bytes, copied to `artifacts/hey-mike-0.14.0-dev.manager1214.apk`. The dex holds
+`AndroidPlaceGeocoder`, `PlaceNamer` and `LocationRefresh`; the bundled task-board
+skill has the written-place text. Tests: the written-place entry below, on the same
+code. Install and the phone's Geocoder check are done from the chat phone.
+
 ### Written place instead of coordinates — 2026-11-12
 
 Branch `feat/location-place-20261112` on 1213 (`ab3e80fc`). The model now sees a
