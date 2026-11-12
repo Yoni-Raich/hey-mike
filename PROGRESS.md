@@ -1,5 +1,16 @@
 # Progress
 
+### Local Manager drafts archived - 2026-11-12
+
+At the owner's request, eight dirty local worktrees are saved as separate
+staged and working-file snapshot commits in the history of `side/mike-manager`.
+The extra parents of this archive commit preserve their base histories too.
+See `docs/history/manager-local-archive-20261112.md` for hashes and restore steps.
+All captured blobs were verified. Source HEADs, statuses, changed-file hashes
+and original index hashes were checked unchanged before and after capture.
+The app source stays at build 1214; these old drafts were not functionally merged.
+No build, test suite, phone installation or live run was performed for archival.
+
 ### Dev Debug 1214 for the phone — 2026-11-12
 
 Built from `bec50f8a` (1213 plus `1948e1bb`, `c890bb97` and the version bump) with
