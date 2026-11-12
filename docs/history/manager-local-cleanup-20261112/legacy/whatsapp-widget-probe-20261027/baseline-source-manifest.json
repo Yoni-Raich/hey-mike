@@ -1,0 +1,206 @@
+[
+  {
+    "path": "PROGRESS.md",
+    "sha256": "6341CC529CEA99627055BDB2B751E950948AAA0F5D6F919FF3F506DF3D0E0EFD"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/TaskTeamLifecycleTest.kt",
+    "sha256": "6BDFC9ED66985867FD2AC7C0F17EF78C54981ACAEC007EA4E233840454A24421"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/TaskBoardUiTest.kt",
+    "sha256": "5B0E8D48B71690B37CB3A486EC08936108CE25E4DE420954DB22C6E65F372C1E"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/memory-upkeep/SKILL.md",
+    "sha256": "1E9DF848863CD1EB20DE0897D93ACFE2F363615B3AE8CF6C7B6D89F47D0A08EF"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/task-review/SKILL.md",
+    "sha256": "C0A693A1D987343D9397090D19E2D355143C15A5B899C0D313BA9D95D8931FEA"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/AgentApplication.kt",
+    "sha256": "AFB4B489087EC2BB8F37743CD4A421A027F2CAAA214797C1EC74D105A5A549D4"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/AgentViewModel.kt",
+    "sha256": "BA7A2E1E48B2896754B53C953A2A77222D6F0261FE0412F4F7FC3E530A301130"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/MainActivity.kt",
+    "sha256": "5382CA5F9DC6EDE3230DA2346F924C5E6AB4F56E58F1B9AEFFFDFE5065EA57FA"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/TaskDesk.kt",
+    "sha256": "6FED36759C53BFB10F0FBC8F3796874A6AC619E6D035E13B5AD39AD10FDE23E7"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/VoiceConversation.kt",
+    "sha256": "076C4EB02B70C962052FA15D4F7083E7D9C05712434CB46A3B312DC633F44D83"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AgentSettings.kt",
+    "sha256": "B9E60DE80559F2BCE75F3E7D65420C4BCD3A3FCD0EF7262CF2196F03CC3F0475"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt",
+    "sha256": "C8207F27524F0E5E9E5D77A8C46BFAA205F9C2A0A77FF80ED214F716D83879D0"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ChatComposer.kt",
+    "sha256": "5ADC0B2836CB17F6226006C53A14DA4324C1AF414BFB82770BA1266825D1B100"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/CompactAndContext.kt",
+    "sha256": "BA43C5C17B2914E1DDCD283248353E658C3B2CAD6A45D7B7F83D171FF79D6249"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/MikeEye.kt",
+    "sha256": "85D3F3A75EACB50CFC72DE4C736410B28CF89DDFD96B6833F5A7F84A9E9BA159"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ModelMenu.kt",
+    "sha256": "E3C58200EDD6854D3B5530CC4E6A57C55B40AB6FE4559F759A4B0D39BA536BA5"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/TaskBoardSheet.kt",
+    "sha256": "E5955952AA3486A9635EDDA1C0458E31B6C7097BAE50DF7C3ED29F6BC0AD7AD6"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/CompactAndContextTest.kt",
+    "sha256": "364ACCAE32AAC6FEE8434592577B0A5A44E2423BAE98FBF5FC3C5811066058AE"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/Contracts.kt",
+    "sha256": "860A01488AE750863712AB20499FC75A0A9A3081CA22BDE2220E718BDC6E1101"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SessionRunQueue.kt",
+    "sha256": "688C23471B37D94CECD32D6344852F65FA5A504C41C5266B7148B5C4EF95AA8E"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskBoard.kt",
+    "sha256": "111894EAF9F0791456691214954AA0E1936C413EF4249017E9F695208DFF40BD"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskBoardModels.kt",
+    "sha256": "A9B95AB0923E1069712F2F93C4DEFF630535107A8B9465DD8C857566D86FB85E"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskMemory.kt",
+    "sha256": "D94D0823B5317046B53BFF6190307F84B3AC6C42B24E4361CDA821AFD038F560"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskPlaybook.kt",
+    "sha256": "4A9E1324CBD1DAA4855F46CB9ABD94DC4A04EB4C562EFE1CA88F81A6CBCB788E"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskPrompts.kt",
+    "sha256": "959F762665644EE8064839D794690EED949221D8DD059965EDD44BC5AD233DEE"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskSignals.kt",
+    "sha256": "405606EB37BB31F4608D5E58F7E0A9613CF9DFF1ED649F5D9F822168D8A83F45"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskTeam.kt",
+    "sha256": "0EED97F3D75D5A610D0A4548037985FEA663C4FCE97FEFF1C994596790DC5E3E"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskTools.kt",
+    "sha256": "43BFB1652CB94D9C44D93CFFA30163F4E8341806092FC846CA22350F9E509243"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/SessionRunQueueExpiryTest.kt",
+    "sha256": "5A462F4DC117141035D46E1ADFB6F6B60F6C0D239E1FF64F9B08FC4DCF6786BC"
+  },
+  {
+    "path": "docs/ARCHITECTURE.md",
+    "sha256": "D73A30F19F7E529763E9E12C3FBD3FC9E9EEF74C1FC5C656A02DEBB39494FFF1"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeCodeEngine.kt",
+    "sha256": "73EDE5567CB262ED123D21E67EAA50EDE74D4A72A595AFF244AAC1EF94468917"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt",
+    "sha256": "782C411C2D22684025ABF24940CE450C36785423720A322FE471A97CA19A405C"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapper.kt",
+    "sha256": "98692EBEE28B2AED8D5C6CDF4B80C209A24396E090FE9FD5AE75E75D22D7E241"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeCodeEngineTest.kt",
+    "sha256": "E2EF7EF09DC141A062AA9A8307F9FE47D8838AFD1566C473EC349A9E342B5E11"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeProtocolTest.kt",
+    "sha256": "84E9330D5BB6AC6DDC33F7D04C74C7E5D541935CB6E4777030DC13E6C5114B06"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapperTest.kt",
+    "sha256": "D63A8FE5BCAEC7CC6E3C644315C84F445A8F7A0AC316CB7F9FB06CD1DB1AC880"
+  },
+  {
+    "path": "engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt",
+    "sha256": "659BBADD56E53EABF464EE512542F734870498A389FE3D3400BE7A63739A37EA"
+  },
+  {
+    "path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexEngineTest.kt",
+    "sha256": "82850E282CA07DA15829C372084771D2E509ED4004C7F695CC90DE096D6ABFA7"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/RemoteHub.kt",
+    "sha256": "7A7146244E847DBD0370A994DA88F3C43A5E2B53595B6F117FB1474EF4AC8E3A"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/RoutingAgentEngine.kt",
+    "sha256": "FB69F01D19A1F929D558DF1265512D065FF2FD129AB1D5D8E875188FA19178F8"
+  },
+  {
+    "path": "version.properties",
+    "sha256": "13B179E0A32DACBDC03843B4CB66C2848ADFD8ABCF2CABFDA6C0042E7A1384EB"
+  },
+  {
+    "path": "workspace/src/main/java/dev/androidagent/workspace/LocalSessionStore.kt",
+    "sha256": "28144B86615CA5E12ACC6EF0E7D63EA93CB6708ACC2DD40AAFF588DFB5D809AB"
+  },
+  {
+    "path": "workspace/src/main/java/dev/androidagent/workspace/LocalTaskBoardStore.kt",
+    "sha256": "1CD75BBEC9F76C518138BF5288D0F06CBF6017080BE3E42F2EA998B053B10858"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/LocalSessionStoreTest.kt",
+    "sha256": "4950316F1044B0C82DF825B618FE702E040C2EF0DEED71F6229669E7A0C2FA14"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskChanges.kt",
+    "sha256": "FBA9A70D6FCDEBD7133C42E18A4DBD4C49A1A270D661897EAB1BF7006CE82DCD"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskJournal.kt",
+    "sha256": "A7E7B4A70C6F007F9958099626A2E2455F986F80AD712D341DD9A39E89CC4D3B"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskSourcePolicy.kt",
+    "sha256": "CBF41BBBD4FCB4D42F083558974B52762E80FCD6C432A6D32A53F737EF6DF483"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/TaskReliabilityTest.kt",
+    "sha256": "3585DF16A8EB29E75874E2921E66DA244C5C66471F80E49EC248B0C5BCB95079"
+  },
+  {
+    "path": "docs/plans/task-board-reliability-and-manager-20261026.md",
+    "sha256": "B314A8C58241240AEDDC56917091D3A32F23A94048F759746473318616C2E6C8"
+  },
+  {
+    "path": "docs/testing/task-board-v2-20261026.md",
+    "sha256": "4EA35BDD76F980DF70AA69FAB9CF04825D1264471C0550394A182C3AB31D7862"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/TaskCommitTest.kt",
+    "sha256": "4570EC24CD176A51AC620D39DFC9250C6CF71BEBF2248832D876A3286B5F9BC5"
+  }
+]

@@ -1,0 +1,2906 @@
+[
+  {
+    "path": ".agents/skills/commit-signoff/SKILL.md",
+    "sha256": "45791933d203aaffeaa3672736e2596227444a4fb63ec4d3dabd8761763bc7dc"
+  },
+  {
+    "path": ".agents/skills/phone-apk-delivery/SKILL.md",
+    "sha256": "bbf16e5dd294349b4c37e46a1c523ded5521603d13df44bcef61395a707a964c"
+  },
+  {
+    "path": ".agents/skills/repo-maintenance/SKILL.md",
+    "sha256": "2d942a3b75a1f52096626c92b43f4b6b917070360c1c388b2842479b7c1852d4"
+  },
+  {
+    "path": ".agents/skills/repo-maintenance/scripts/ci_history.py",
+    "sha256": "5eb4afb565f6e04bd8c10ced9b40703b44a70c89d79e3651c837382d10747521"
+  },
+  {
+    "path": ".agents/skills/repo-maintenance/scripts/test_ci_history.py",
+    "sha256": "44966e8f7864bef76dd53df0a6990d4a8e9c578ad9d14bfe00f247f106760197"
+  },
+  {
+    "path": ".agents/skills/repo-structure-guard/SKILL.md",
+    "sha256": "b6b163756749901a977f6de6088aea63ca6f248b61af9a5ce9899baebc26bd29"
+  },
+  {
+    "path": ".agents/skills/worktree-lifecycle/SKILL.md",
+    "sha256": "610a6186092d3fab65f350c8eec9dd2ea2d09b4cff6076ad054de73dc8f6a203"
+  },
+  {
+    "path": ".agents/skills/worktree-lifecycle/scripts/test_worktree.py",
+    "sha256": "3d8d4411119c257a37d47ebf3045b499c5d78f51f26cd80dbac92af7c293ef1e"
+  },
+  {
+    "path": ".agents/skills/worktree-lifecycle/scripts/worktree.ps1",
+    "sha256": "7a79ef3a08376769b1947c17834b59022e7c2d95f882ff39074906f546cb7968"
+  },
+  {
+    "path": ".gitattributes",
+    "sha256": "a647497bd004e16c27daf5f23f9adc4373234fb45cc7e6afa1137bd4ed63d41e"
+  },
+  {
+    "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+    "sha256": "cbb46f28ec7045ce7dcfe0ccb884223307e46427d5fa717af51ac69fe8acad3b"
+  },
+  {
+    "path": ".github/ISSUE_TEMPLATE/config.yml",
+    "sha256": "32f832b50a97f0b75da091d59ad203228053e5de96cb01269bd743178beffe71"
+  },
+  {
+    "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+    "sha256": "7d333a141eab7e794b230fa5b7f4521652af588465ce4631e2e3dbf2a51c54e5"
+  },
+  {
+    "path": ".github/copilot-instructions.md",
+    "sha256": "28663885634daea49872505392827c21700705635e66d273719151ccbfc41e94"
+  },
+  {
+    "path": ".github/dependabot.yml",
+    "sha256": "162066f39d490293834db794ddf0cfb4f80f62df6b8e7c6278ecfda9df0e6ec0"
+  },
+  {
+    "path": ".github/pull_request_template.md",
+    "sha256": "2a59c30fbf039b503a97808c30fa0176a77555ea7cd09b075e0bee63899716a5"
+  },
+  {
+    "path": ".github/workflows/android.yml",
+    "sha256": "2f327ffc53f6881e1653a2236c0fbaa5327ec416e021310076bbe7e3bca86837"
+  },
+  {
+    "path": ".github/workflows/dev-nightly.yml",
+    "sha256": "d410970cbfd4dd315f23433adcb307707616197df9c9544315cf2ac9fd2266ca"
+  },
+  {
+    "path": ".gitignore",
+    "sha256": "c9c03916b5baa0c22b3012440a6b940637ef5660af7e85a8437aac62cf45ca8d"
+  },
+  {
+    "path": "AGENTS.md",
+    "sha256": "d5921ff09ae00c26316582457ec57c76ea1eda43d61de32fda07b97940991769"
+  },
+  {
+    "path": "CHANGELOG.md",
+    "sha256": "2b1b882e92321e59125a92992756cf9275c226d7c26fc0259d45b14b8de5dcf7"
+  },
+  {
+    "path": "CLA.md",
+    "sha256": "f7ec90e349fe4ae14e5db1387ef31f1d86562b9c94134eb96c6508040e8f4683"
+  },
+  {
+    "path": "CODE_OF_CONDUCT.md",
+    "sha256": "131b0e8f8849ea47572a4128e2e7afc50e7e1c663128e30bfdbaf9f16afecd8f"
+  },
+  {
+    "path": "CONTRIBUTING.md",
+    "sha256": "08322133c86f7e2d49952341a636e27492f57872c785f1d43f21f1f2178333e8"
+  },
+  {
+    "path": "LICENSE",
+    "sha256": "6f1e622c82a380075843bb084a7ec3b1f1d12a4a02526d75e78b0924a860aa75"
+  },
+  {
+    "path": "LICENSE-COMMERCIAL.md",
+    "sha256": "bef49a1e67f40f171d0ed08a642810629f4ea3cd374f2cd502d33ef3a7d01c88"
+  },
+  {
+    "path": "NOTICE",
+    "sha256": "c24da3870bc17fbbff60eaef9a09a60e96208ba2bda32a1b35a47e4669e4b02a"
+  },
+  {
+    "path": "PROGRESS.md",
+    "sha256": "8f2938f64e75ca32f562463458ee0986fde2c0ed704fd853bc7d3e44718feeaa"
+  },
+  {
+    "path": "README.md",
+    "sha256": "f6621dfb856b204a88daab127f60a5d59087baacabd12a49d07d711b6da20649"
+  },
+  {
+    "path": "SECURITY.md",
+    "sha256": "9278dacd3553348d99de19635c50e66649b2a0f6cd2bc4f537f0b32256139293"
+  },
+  {
+    "path": "a11y/build.gradle.kts",
+    "sha256": "f4a5bde9b725d7706a6b271d37a4ec20e47e066e0ab2771fa0042671df667c49"
+  },
+  {
+    "path": "a11y/src/main/AndroidManifest.xml",
+    "sha256": "2ff49d85053d8740df36cec8667d89da4c4e2a112e0193eb2cb7b095c3468085"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/A11yAvailability.kt",
+    "sha256": "68c6dd3fff1fccb84992c8abdfacb4694c92c194a7985b1e0e30ebdff67b4c29"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/A11yDeviceTools.kt",
+    "sha256": "3ad4652045e8f9bf4f0715fee051fb89951e867d17a604b003ad88de7cbdfb52"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/A11yNodeView.kt",
+    "sha256": "d2cf788b1d59a52e9b9bf5119db46f362e7349578b65a8824d66971bd98d1d4b"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/AgentAccessibilityService.kt",
+    "sha256": "9d7dcc26d362dd9ee73419399b587ac5f7bc500b9d3c6d1a4765b506b6695e83"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/AssistantScreenText.kt",
+    "sha256": "38fadda6b1910e735a841bfa205bed34753a1404a25b572d08f5c26cbfa77127"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/IntentTools.kt",
+    "sha256": "d0d5a58e65a30eb7e5ccca591797ea3cae893c6af4a2abd201abf16b09a74618"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/NodeTraversal.kt",
+    "sha256": "092de02556ffe96b49e075836ffb84addda97bf542eb4ba38a0763a782ecfb7d"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/PairingScan.kt",
+    "sha256": "389d80c49cc7ea250a3f23d091043d8b998ce53db4cc8e89447c22c9eb3c8951"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/ScreenChangePolicy.kt",
+    "sha256": "4bce1df858295531be45766dd50efb93231b8f4cbd0875cb9c84b15b8691b8dc"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/Screenshotter.kt",
+    "sha256": "d60a4753f3a37da58b66a0a735e2ec047e4ce49658f2edb31d76e604f7873e8b"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/SendGuard.kt",
+    "sha256": "a30be8d2b7d469e2668164b3cccb96d1e7e7ce69302ee7b33162fcf7e7215073"
+  },
+  {
+    "path": "a11y/src/main/java/dev/androidagent/a11y/TextValueVerification.kt",
+    "sha256": "e69e0d15b812b48be58c8bb70bb803ccaf86df74cbe017c9239cfadf2f6a5afb"
+  },
+  {
+    "path": "a11y/src/main/res/values/strings.xml",
+    "sha256": "caef04e25837b951b72beee17ecba1ccaf960b98580379ddce990ba0a5ac2511"
+  },
+  {
+    "path": "a11y/src/main/res/xml/agent_accessibility_service.xml",
+    "sha256": "544620b644843afbdfa242ae8ce35c38dfbfdba316000769ee58d474dc3cea54"
+  },
+  {
+    "path": "a11y/src/test/java/dev/androidagent/a11y/A11yToolSchemaTest.kt",
+    "sha256": "bff10b97cb2f2f8695657d1f5c4d03ec16f3d487aa16abc3ff6068d31cea33ce"
+  },
+  {
+    "path": "a11y/src/test/java/dev/androidagent/a11y/NodeTraversalTest.kt",
+    "sha256": "84c0859caf88c6e71727a6a3f4c66f9c9f314e5ce68ea1497e0567659d608870"
+  },
+  {
+    "path": "a11y/src/test/java/dev/androidagent/a11y/PairingScanTest.kt",
+    "sha256": "19d526c40f893815ef083aa140cb6bf40aa5d2f795ecae7a16d3075a6f9c36be"
+  },
+  {
+    "path": "a11y/src/test/java/dev/androidagent/a11y/ScreenChangePolicyTest.kt",
+    "sha256": "88fb96236a629f2e9c47cdac7c8acbbdda52ff8cd2d057d17d91ccc4ce3a76ef"
+  },
+  {
+    "path": "a11y/src/test/java/dev/androidagent/a11y/SendGuardTest.kt",
+    "sha256": "57e4c87958c9c4dfb9d303622ea84d2983d827c79a2fc70c1e3f65057b3609f9"
+  },
+  {
+    "path": "a11y/src/test/java/dev/androidagent/a11y/TextValueVerificationTest.kt",
+    "sha256": "c2b2d226685d147660c5ea6eb50731197ce887eb3f2e412bd2667238c65cc4f9"
+  },
+  {
+    "path": "adb/build.gradle.kts",
+    "sha256": "cd52b917721416a2214e4ca91b2a54a4e1f9cf6b21fa23c66d1cce6323cd5b44"
+  },
+  {
+    "path": "adb/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "adb/src/main/kotlin/dev/androidagent/adb/AdbAutoConnectPlan.kt",
+    "sha256": "970769021b09f2542186932e7708f810f7952f287e7cc75996b84337b79f1298"
+  },
+  {
+    "path": "adb/src/main/kotlin/dev/androidagent/adb/AdbReconnectPolicy.kt",
+    "sha256": "d86414911b0da4c77a6a1bb727956c4900a0075705a53ebfb2125c98e09540a1"
+  },
+  {
+    "path": "adb/src/main/kotlin/dev/androidagent/adb/AdbServiceDiscovery.kt",
+    "sha256": "d0c2a011e3d930ec7d44240a355812576cc2e8e26270ade04c7f4c568bb72c7a"
+  },
+  {
+    "path": "adb/src/main/kotlin/dev/androidagent/adb/AndroidAdbTransport.kt",
+    "sha256": "466453cacf04d93ee4c4ccaabec9daab4d4fe8746cb922af1a568fed3af60188"
+  },
+  {
+    "path": "adb/src/test/kotlin/dev/androidagent/adb/AdbAutoConnectPlanTest.kt",
+    "sha256": "0002f680c56070c530869af70588ee495f34874a6c34087295e65cf3122a98dc"
+  },
+  {
+    "path": "adb/src/test/kotlin/dev/androidagent/adb/AdbReconnectPolicyTest.kt",
+    "sha256": "6b963f02b3759319a1748f56282eb027048319a6b39b9955b0df3152cee16f4c"
+  },
+  {
+    "path": "android_ai_agent_mvp_brief.md",
+    "sha256": "cfa758958647a1a64a5dd4fbf24e6776ff2c95dc2691f4f405c93ee0d82cffb3"
+  },
+  {
+    "path": "app/build.gradle.kts",
+    "sha256": "399235c23e1bd06ad051b8e2f5fbd70062d292cfd04e484e5dfbf1b36e83f4ae"
+  },
+  {
+    "path": "app/proguard-rules.pro",
+    "sha256": "426613679b34a0569fc67cd09d04f01ffdb8544c9823d245990cd74b160b37bc"
+  },
+  {
+    "path": "app/src/androidTest/AndroidManifest.xml",
+    "sha256": "d1b187ab27b872dad3b72ee5b2840ee7feb9d08f9e669aa05865a7cb04aa927a"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/A11yToolsHardwareTest.kt",
+    "sha256": "495b70d89cfff8f62565d7640b512b0062f6e32513a8a47706013c8e267b081c"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ClaudeEngineDeviceTest.kt",
+    "sha256": "8a2cd46343d88eec746e7980f81f0f87a60ef382d1dbc4719a261e11c8a72c76"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ProductionDeviceTest.kt",
+    "sha256": "03abc1572bc4009dbace08fe77fd0e53b8f530a984d816eff84cde9eb8b3910f"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/TaskPlaybookAndroidTest.kt",
+    "sha256": "faaeafc56bbe7a32aa4463f9357cce2f134ce69a610be43a02e625651d326da4"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/TaskTeamLifecycleTest.kt",
+    "sha256": "6bdfc9ed66985867fd2ac7c0f17ef78c54981acaec007ea4e233840454a24421"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ime/ImeEditorFixture.kt",
+    "sha256": "585365363c8ffada2ff82abe485adf526ed625b4b4b4b3ca62e7b26447f2d85c"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ime/UnicodeImeTest.kt",
+    "sha256": "8b3576c73b97e5ef90b1e7d9fda169687aaecff8c9d3aa7724578c3ac48f4795"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/overlay/FloatingControlOverlayTest.kt",
+    "sha256": "a6dff744fb300a508b20d5e9c42bbeba6b37a978ca34cfa640ff555d36840c73"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/overlay/OverlayFixtureActivity.kt",
+    "sha256": "f8939e3a7ea1b50334a6ca98438874898d0aa2221f1f55864dccbb5f56ad5dd9"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/ChatLibraryUiTest.kt",
+    "sha256": "b133a7fb16df96ce435628c8c832414b0451f3b242e8edef688026dec86798e6"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/ChatUiTest.kt",
+    "sha256": "5005614c3c0a80c70f7028b2e4cd21d1a274a24613011bb7d15916724c015664"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/ChildAgentsUiTest.kt",
+    "sha256": "be945d1b592739e88d5f75ae39578d21f22de17274714fc42fbf5f1f109e7a99"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/CompactAndContextUiTest.kt",
+    "sha256": "bd28f86964f82b510ccce25466610216911eaba3c9c5d20ee60c96054e80301c"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/ComputerClaudeSetupUiTest.kt",
+    "sha256": "2e15380f6dd153d8261f8782e6f538d166cb1a9bf48d1effc6d76f04ce8f75f4"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/McpApprovalUiTest.kt",
+    "sha256": "9483121cc793bbe3f04310f8e73c712ef8767b95f8ce2def1e9759846abbda3a"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/MessageActionsUiTest.kt",
+    "sha256": "f7dd401e2d0eff4fea7eb15f7d14f5fa3bc9d1a3f1edbf171a6e3b149a9fc028"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/RuntimeVersionsUiTest.kt",
+    "sha256": "672d786c341af9a5688f821e2c7bbf8b3de7cd59d42a81e46c2fac12962d0219"
+  },
+  {
+    "path": "app/src/androidTest/java/dev/androidagent/app/ui/TaskBoardUiTest.kt",
+    "sha256": "f34d5389d48fd27c946e4194133fdf28fcc82fe20805ac55c6e13cd1397523bc"
+  },
+  {
+    "path": "app/src/debug/AndroidManifest.xml",
+    "sha256": "a11d707036d39e1a39eac15e4e61a33e52c0c87a497cd0f8e753b918b8006121"
+  },
+  {
+    "path": "app/src/debug/java/dev/androidagent/app/QaEvidenceReceiver.kt",
+    "sha256": "6ad91d4715f505141c848ce95d1aecf40cc25f6e1aaec8bba0086540a9759b81"
+  },
+  {
+    "path": "app/src/dev/assets/agent_stack/skills/files-across-devices/SKILL.md",
+    "sha256": "254efcb7ac14908fc8840bf5004dfd41e1efee4bf71b18e5ad3f6b385eafef9c"
+  },
+  {
+    "path": "app/src/dev/res/mipmap-anydpi-v26/ic_launcher.xml",
+    "sha256": "1cd9df0e9ca73519c85451bc73e2b95717f47bfe2654a1161e01c66258f8111b"
+  },
+  {
+    "path": "app/src/dev/res/values/colors.xml",
+    "sha256": "ed403d789503409094b41d6fbfcaddf70c5552ae8244ca35272b52bab593cba2"
+  },
+  {
+    "path": "app/src/main/AndroidManifest.xml",
+    "sha256": "645c7c4126089eb377bad7781dfa7a290ff296fbe496fb577b5ebbd28b93e3fd"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/AGENTS.md",
+    "sha256": "1c1eeb09e047d9bd45f6ff68bbc63aef8092e7f698e490cc90f4948f04891958"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/preferences.json",
+    "sha256": "ca5f1bd30954fe87813f5be6bb5e6b36bc4e7a73c87aa260494da13c4edb22e1"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/app-cards/SKILL.md",
+    "sha256": "4356d808c07a55c7cb36b152b8aa79e0bf60a68a2f001d6e8ebd968be5198eea"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/automations/SKILL.md",
+    "sha256": "b4e7107c057e7de158148cdd361d6a45e087d30ba479f392d10e0f4c77558e46"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/browser/SKILL.md",
+    "sha256": "adfc7c5c1113b4a8c67e30630b4b90741bdf254a43ffe62b4d6d475ae16e9341"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/connected-apps/SKILL.md",
+    "sha256": "a672011bb3c72b8e7107454a4826c95b133304c99806e5783ff12e0f2340f56f"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/device-automation/SKILL.md",
+    "sha256": "ca8bcdfdf06265d99b77eeb93b5634f7743cc227313d2ba7388ce8933eb233aa"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/device-capabilities/SKILL.md",
+    "sha256": "6be6219d561318e8c1d3c70d6051d5d583669db284b548af619238fe1eba80da"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/files-across-devices/SKILL.md",
+    "sha256": "7928bca228d1d87ac2433f575b8394a5cb68973489695db0f16025c4571f6476"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/media-output-check/SKILL.md",
+    "sha256": "b9c97ec3547ee9e0c81f88fa875b3a8cebfab38ba32a68015e564892e11816ea"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/memory-upkeep/SKILL.md",
+    "sha256": "1e9df848863cd1eb20de0897d93acfe2f363615b3ae8cf6c7b6d89f47d0a08ef"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/quick-actions/SKILL.md",
+    "sha256": "1afc63c6202536ef6f1b6b93e2877be3ff2b4c299b786b106049e52ff7c23dea"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/quick-actions/scripts/act.sh",
+    "sha256": "08c0ef06cace61eb702da16af2e59cb78c00534e5fbf1d37eea22981962894e8"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/quick-actions/scripts/intents.tsv",
+    "sha256": "655eb67d581d63acd44c7097dc4bebdb688a427fe9ca7b81ee038ec9a661f743"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/task-board/SKILL.md",
+    "sha256": "36c2e1d97057ca9d8de3d944ab2745e225baeed32d551f1851d54f33549fc1f1"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/task-discovery/SKILL.md",
+    "sha256": "7bf7faf0710db8696f845536dbc22a1807dc2ff6bc90098f27445a84a772b74d"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/task-review/SKILL.md",
+    "sha256": "069a044bff6897398ee2b58057c62a3cbc9894252b731e11753f4180bc3c64f5"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/user-preferences/SKILL.md",
+    "sha256": "85df526dd0b2dac401339b812c25d1f5521fbd51255a3a4867c4d553e701e3cf"
+  },
+  {
+    "path": "app/src/main/assets/agent_stack/skills/workflows/SKILL.md",
+    "sha256": "de218b0989f23486d83f3dec48dbd55d0f3128982f953af1b6d8f91a3c8edbd1"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/AgentApplication.kt",
+    "sha256": "93694d8a03d0bc9bd6b1d934b36b60508580905dc3d40c05eed51f9ff53f7de5"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/AgentService.kt",
+    "sha256": "daee86f1053eb5d098cdbd28d4fd38a5c7f581fe223cff8dec00f2d132e36c71"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/AgentViewModel.kt",
+    "sha256": "11c7f36a4468d3bb4f712ba1c123b7f49057df11b138d3deabe07ce2338d5cd4"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ConnectedAppsController.kt",
+    "sha256": "a9a9f20edd71019b0a413eca93a8f7dee3f29ff66469b1e5df221ea0fd0cfb8b"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ConversationKeepAwake.kt",
+    "sha256": "faad1a04f34e7bfde03e6ccda8500d7dea0865f7e6ffd4d196c5b4042c250540"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/EngineChoices.kt",
+    "sha256": "c49dba64c7de09335906d197518a429b90344337c6956cd5e8b9ac78318a5b0e"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/KeystoreSendGrantStore.kt",
+    "sha256": "3facd34a9e3f3ae1c36479314f9337d4659c407b1703397392b10c1c750ba3e7"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/LimitRecoveryWiring.kt",
+    "sha256": "1db960e418e47a8d4ae38c616fdc0c6ed2dc2faf5a13ada458c68fe6cb08412f"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/MainActivity.kt",
+    "sha256": "b7e178dfdfb864b33cacbcae1d1cb7ff6c29d4ed8cdfed36a86448e62d59f326"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/QuestionNotifier.kt",
+    "sha256": "e1c3d085dc40621b033bcbd6e2572faa747b98336fd05735e0a54cbbc33c3276"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/RemoteMediaLoader.kt",
+    "sha256": "137e8d9b04a81c43f65d0e0d10a04424cf21bd596cc2b178bdac209493bf1de6"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/RuntimePermissionBroker.kt",
+    "sha256": "6ff120624dd0a7e4b1002c4f5c624c19ff3b6d09d4f14fa5cc37d56710c80ce1"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/SessionAgentSetup.kt",
+    "sha256": "77ef53487fbd2862e777c1fb5aff62774e1cfddab1c19de2cf63514e6c0c0789"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/TaskBackgroundHost.kt",
+    "sha256": "06c840df9f8dc8122a0831ba4b756ba501b9255fbc849ed97abd92ba3d1c9c66"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/TaskBriefingNotifier.kt",
+    "sha256": "f1defd06d2ba6fecd4ee2ee48f1521c09ce1b2b610103fb86c0e73b63e600f2c"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/TaskDesk.kt",
+    "sha256": "605c11a0a0b31951699082d104092d50e94cba490aa8dadc157181d999b420c5"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/UiLatencyProbe.kt",
+    "sha256": "65f8b660fe55cdf9e81bfb7a2b4e88a62c45b8c99d8672ef9dbed27d2087a038"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/UsageWindowKeeper.kt",
+    "sha256": "f0e168e791196b75fe30519891d7a6ecc83be71efb19f467f5d88f014f9910d5"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/VoiceConversation.kt",
+    "sha256": "076c4eb02b70c962052fa15d4f7083e7d9c05712434cb46a3b312dc633f44d83"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/AgentRecognitionService.kt",
+    "sha256": "f3b3c38795c8926f9bb3710dea796c10c25b31f8d6f75848d324dd94ff703572"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/AgentVoiceInteractionService.kt",
+    "sha256": "d590154e4f123bde9493fdac73ac4d39e4f4867957201c1ef25c5c4025ef66b2"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/AgentVoiceInteractionSessionService.kt",
+    "sha256": "b4994633e6a01ef4ffd97096a5af196772b052ea2c16af8ba68b6d83708ca650"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/AssistEntryActivity.kt",
+    "sha256": "90cadcbc21d2755ca4aec4c7b4b1dee953de961ac334f58d7e316d133d1ad866"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/AssistLaunch.kt",
+    "sha256": "aa4d333275bf0b33d1c3e62c5ccfc114a72cc4873b59b6976fd16ea6436f6b33"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/AssistantInputMode.kt",
+    "sha256": "a5523f386cacbeed570d77f7ee6bf87639de5b0b9a8ae99392d8ecb3b330bb43"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/AssistantPanelView.kt",
+    "sha256": "f460c9beed557ecc96696b61816c9ab2fa5b10e99c76aae338a160387fda194a"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/EdgeGlowView.kt",
+    "sha256": "3f9fd555938a3c3a63d5a80e57c939acb82ecca507171c32764a7d2c37567bdd"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/assist/ScreenText.kt",
+    "sha256": "f083c5a59e4bbccd00dd1a5d511c04ddc381f3569b5846e330b87e3bdd28373e"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ime/AgentInputMethodService.kt",
+    "sha256": "2d040be550c0b94d9254a1b02347038b56fe88b83a93817ed504f44c7d3adb04"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AccountSwitcher.kt",
+    "sha256": "f7959c39ca62f6c0ee73d9ac450d8c5fa0b677c6fa33c2154b7c6e4bc37564df"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AgentControls.kt",
+    "sha256": "4b8b20d16479c9daf049488a1960cebaa9f97a5d9dfe261c2c438e74b1c4a9c0"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AgentOrb.kt",
+    "sha256": "ec8930565d76c0b2ac713e008b43b860fcdf2f8ba2a4f14f9331b8a35c3588dc"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AgentPulse.kt",
+    "sha256": "66accc4e3ad748a186903010dfdbbd0ec4c86ae6a1b736bf4c7311f6ff638456"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AgentSettings.kt",
+    "sha256": "b9e60de80559f2bce75f3e7d65420c4bcd3a3fcd0ef7262cf2196f03cc3f0475"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt",
+    "sha256": "b979f6b4b03389f1f3ec6c3a71d79a6952b2a24ea5a9e975b4391c67aa3c70cf"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AndroidAgentScreen.kt",
+    "sha256": "33841180de362a375105bf63950fe2b1b409999239c39266724fb4a40a9e4da8"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ApprovalSummary.kt",
+    "sha256": "513370352ab68123deba36d6dabefa0133eb14376e6286f34a1d8e516024d532"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AutomationStrip.kt",
+    "sha256": "09da8dab3b9c4f3547224c4738beba96c8f79af48b625e6772ece962767ed5d0"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/AutomationsSheet.kt",
+    "sha256": "045a9c472cd92b4e1a30211b79a1eee3e5c4694b877fceae5592324fc4e76730"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/BrowserPanel.kt",
+    "sha256": "d0fa3ca770fa3377cdaf894aff34f967b8326cf0f0ee4f83839ecacf3d1d6f54"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ChatComposer.kt",
+    "sha256": "74444fde814a18d70637c61c16e2395566c9b642961b8271b6fc2406d5d2382b"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ChatLibrary.kt",
+    "sha256": "a3632bb5a6da09872bd33af30f872eb2a8895d3a51ea9d45417ff85ac7feb42c"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ChatLibraryDrawer.kt",
+    "sha256": "e4b2de4ca5baa5059fa6130d6c406ba38aac046b8f391587eba3fbd8dd978419"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ChatRows.kt",
+    "sha256": "d8202473bc8222292ade7bf87bd1ba1bf3e6b124b88f7a7d1c4f75e1c7831262"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ChatTopBar.kt",
+    "sha256": "99c6a0cb7164a87a4fa7178154fb7486f176cffc422e7f6bb2e34b9475d833b0"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ChildAgents.kt",
+    "sha256": "eda27382136069564fa64b1af502c09bf6221bcdb73ebfe40e3f7da922c43c2f"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ClaudeSetup.kt",
+    "sha256": "840c16de4e2d42c765ce891e137012ada2bafeae529c0dabb3934dde4a386af8"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/CodeLanguages.java",
+    "sha256": "aca34718f6df8d31b8007d69f5201a6f424e32f1c192f5450f3be153b6831318"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/CompactAndContext.kt",
+    "sha256": "ba43c5c17b2914e1ddcd283248353e658c3b2cad6a45d7b7f83d171ff79d6249"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ComposerCommands.kt",
+    "sha256": "53d097181298cebea3771fcb995042d453b8662ea99987af098ceceef712c3c1"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ComputerClaudeSetup.kt",
+    "sha256": "7b7357dc1e96f060802075a8b9ae279342041784c6176a6c268df55fca992551"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ComputersSheet.kt",
+    "sha256": "bd3ed065d73895eece0b35a0b0e85221ad4558e18206347f95691fe45e41e1c8"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ConnectedAppsSettings.kt",
+    "sha256": "417153238a867a6f2a24203ac0a044bbc10941ade5a0b3c82814df040099d11e"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/DeviceActions.kt",
+    "sha256": "7535fd3c51bad9eda75fc96be2b73ed29fc6b194d55f52cfab6543e5292e09c0"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/DrawerMotion.kt",
+    "sha256": "72faab5d0faf1657839e7fdd4ec711cc7127b1f41704d4ebb7a4ed29164454d3"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/InlineMedia.kt",
+    "sha256": "c4227446a5ac847e7329c4435e22fd08ba90a56a99d321f8a371e334dd8072f6"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/LimitRecoveryUi.kt",
+    "sha256": "ec6ef9ed4608dab7d124aa77760ed069bd20211b2368c04d20604169e32ca1cd"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/MessageActions.kt",
+    "sha256": "425ff84cf56ed35a7e73712998ceca5057a0ff6a60dcb2b65523fc81353c094a"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/MikeEye.kt",
+    "sha256": "5947c08d258a61e0f5ff78ac25a3b5304946736d43aff0491c3c8e7788ecab09"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/ModelMenu.kt",
+    "sha256": "e3c58200edd6854d3b5530cc4e6a57c55b40ab6fe4559f759a4b0d39ba536ba5"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/NewChatPlace.kt",
+    "sha256": "3d3bb1a7825ca98d343f178a683b18d59599cda68cb82a13d73b87030c259c20"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/OnboardingFlow.kt",
+    "sha256": "04682475f8ee43123ae8bbc78e27417602d1e0f055ef896f861b959e13b3257a"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/PcChats.kt",
+    "sha256": "1f597b906f72038f477b8f7846bc03fce785c7b2fcc781f1cd8ea57e33c6ddc4"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/PcDrawerSection.kt",
+    "sha256": "2bf0016a09bc3430b9b4fcce386e94248ae731ba0e26b3d629c6352c8e922a7a"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/QuestionCard.kt",
+    "sha256": "cf1871ef949a67db18b8a9a3580dc2902fa1f82c622593aafadbd116ce5836fc"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/RemoteActivity.kt",
+    "sha256": "abc1b9bb56c9939fb99414b3b11986f2262ab4ac421835b98bcc448f52ecb844"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/RichMessage.kt",
+    "sha256": "67036269112083b1dc3c5d1c79547721b4fc73991b7bd63587518e24a90efdf3"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/TaskBoardSheet.kt",
+    "sha256": "265c3a0bba141f434e91cb32dc3cf2fe1aab7a1c97de69a64fe1ce571195b9c0"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/TasksStrip.kt",
+    "sha256": "163a64e3039fb43620a6624c2b27b188116bc6a256c049b820666ab53373a5c5"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/TransferBanner.kt",
+    "sha256": "bba9e35dce20f36935ff11e5c4e473c859d19b7a560ec8b5d31a6308503c747d"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/UsageMeter.kt",
+    "sha256": "1207f6807dbd8c7503f52739183d425e933ab9d56c6ce634f05c4b6c585ecff3"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/VoiceMode.kt",
+    "sha256": "f795857d57a3e7dd37d9b85cde7a563b33b923930f714340144ad236a4e9383e"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/VoiceSphere.kt",
+    "sha256": "68a89ff366eb05ae8476fc9e9a1e3e90242d66aed43e981a41c587974bafcb90"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/ui/WorkspaceFiles.kt",
+    "sha256": "116427b4ae173f04e7d458dd9603fc9a1ca67cf33e8edb91a143c2c3d05a81a4"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/update/AppUpdateManager.kt",
+    "sha256": "0e6a458814842d69c6ae115e8b1fa30eb48ea75449e676fcdc319f9eeda7ba41"
+  },
+  {
+    "path": "app/src/main/java/dev/androidagent/app/widget/UsageWidget.kt",
+    "sha256": "7f5bed4cf139f01176a69113f90445cea6ab03911fb60cf03433bf81b7d27026"
+  },
+  {
+    "path": "app/src/main/res/drawable/ic_agent.xml",
+    "sha256": "1e5dface101f0dc29aa10f2cc9b1335823b51567a7286f803605f110ba25d779"
+  },
+  {
+    "path": "app/src/main/res/drawable/ic_launcher_foreground.xml",
+    "sha256": "683af15b667ebef817a1dcaa2b4b9bdaabdb35d220b5f101c84c3a20de456cab"
+  },
+  {
+    "path": "app/src/main/res/drawable/ic_launcher_monochrome.xml",
+    "sha256": "908e095520cc06257f819df9480ce2939ca08f5ba570e4a4b45121e8f50e5e34"
+  },
+  {
+    "path": "app/src/main/res/drawable/widget_usage_background.xml",
+    "sha256": "465d69c8d6089c05804bccefd19f8232cf74aff781de6592898688b44f12e0ed"
+  },
+  {
+    "path": "app/src/main/res/layout/widget_usage.xml",
+    "sha256": "8fd12653d1fc1e4ce4509707d95bc0d08e324e085f6f51cc8aedd8aa394afe06"
+  },
+  {
+    "path": "app/src/main/res/layout/widget_usage_account.xml",
+    "sha256": "032e8b7777d6f553fd7ae8b6faacf6a0c771b8553fa6a826b9f83b5632dfec1c"
+  },
+  {
+    "path": "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+    "sha256": "6f4726302611a8a200c39417fc6038f2fc4bbca787eba37cb201710b27e449de"
+  },
+  {
+    "path": "app/src/main/res/values/styles.xml",
+    "sha256": "be6f7d9be15d2ca95d63fa3609f9895deaf2c98b6bdfbf3fc97a2a07115d6588"
+  },
+  {
+    "path": "app/src/main/res/values/widget_strings.xml",
+    "sha256": "26e34c417101470627d6a4f23a64a62524b8327dd0cfc45bf74817a64817708c"
+  },
+  {
+    "path": "app/src/main/res/xml/agent_input_method.xml",
+    "sha256": "454f7c4c54c5b96ca345dd797d4b728c02fb3505b67a12d189fb38c63462761f"
+  },
+  {
+    "path": "app/src/main/res/xml/agent_recognition_service.xml",
+    "sha256": "84361aedf2bde1aa54e36623ed0a1ef95c69d0116dfa77f1c4fc96f9d6e13d1b"
+  },
+  {
+    "path": "app/src/main/res/xml/agent_voice_interaction_service.xml",
+    "sha256": "48b879e353ebdf7b4a147d5868e5928611e6200d080ba975015c170a372ddc11"
+  },
+  {
+    "path": "app/src/main/res/xml/data_extraction_rules.xml",
+    "sha256": "95e24e74031ea4631e0e774656179973b65d64e426d49c18ca961cc3cff9c430"
+  },
+  {
+    "path": "app/src/main/res/xml/file_paths.xml",
+    "sha256": "2d58e40caf9e3382257cb6c8dd6b0fcba7614cf68d6aaa4cb6a7d49021c714c7"
+  },
+  {
+    "path": "app/src/main/res/xml/full_backup_content.xml",
+    "sha256": "e030721c2276e446fcf0f6ef92bd5772ad9eaecd5c5b28404f8b1c889d2a770c"
+  },
+  {
+    "path": "app/src/main/res/xml/usage_widget_info.xml",
+    "sha256": "2e15f4d907788ef62b8f4c28a391d94fddcbdcec35288a527daba0979a2df5ac"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ChildAgentItemTest.kt",
+    "sha256": "56f16be5eb6ff441c1d6ef167295847e74d783513743b7aba2641f9b0b81e895"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ConversationKeepAwakeControllerTest.kt",
+    "sha256": "34039808023bdd7b90a27af3791233cac0848dd8b12b1d9be579216037f5a398"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/EngineChoicesTest.kt",
+    "sha256": "80a3a7477457affd070452d98c836a388ce71a00ca5de90a941a535784319874"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/QuestionNoticesTest.kt",
+    "sha256": "eae61b0cb115be98016dfd9c06ef13ffaa185729c0670248091c700d9e084f26"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/RemoteMediaLoaderTest.kt",
+    "sha256": "228bec7cb6ed133e08ec4a2a0f0bc5e12731a47e052233534272bb85d31c99da"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/SessionAgentSetupTest.kt",
+    "sha256": "67a97578052f64a7d7865731b79f471669a748c654dc76a41a96f0c71c2732bb"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/assist/ScreenTextTest.kt",
+    "sha256": "7d108c964376c45c9bc86c23b960949343121d31a66288a5b67316d270dfc461"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/AgentTypographyTest.kt",
+    "sha256": "72016fa4eb562962554d68fbfbaf1270ac5acccdde0b87bb5039fcc67528bccf"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/ApprovalSummaryTest.kt",
+    "sha256": "02c13d576be134a4919d28dabf667b3e7e0dc7867a483a77d535729cc0c80967"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/BrowserPanelTest.kt",
+    "sha256": "a71229ed2504f37168fa33b4a3a333bf3867fe1972bdf8254244d2edcc0ec09f"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/ChatLibraryTest.kt",
+    "sha256": "5c38d998b185c6c66874c7449ad89764ad58fb301a294199579ebf7061c43826"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/ChatRowsTest.kt",
+    "sha256": "7cdd7562bf008157633d7fd07c4a48ab9f51ed01fa6005ac5376049fc117b11d"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/ChatTopBarTest.kt",
+    "sha256": "0979fb35594abaddf790f9b93c708a0d668b8ed718dea214f6e2ef229edd6bc3"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/ClaudeSetupTest.kt",
+    "sha256": "c85c9f1e47db66372e7e59c963f2287f277777a5d7735fe00cd1b6cb99992800"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/CompactAndContextTest.kt",
+    "sha256": "364accae32aac6fee8434592577b0a5a44e2423bae98fbf5fc3c5811066058ae"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/ComposerCommandsTest.kt",
+    "sha256": "9aae61b1179b17c6a4d1ae7acf4a77aa9072fc7829a2030a6efbc9b117a935ea"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/ModelMenuTest.kt",
+    "sha256": "8fd0429b5a563abd666a02aa3a9d83a6c35cf53cbcdc5fcbcaa0c5c02310e2fa"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/PcChatsTest.kt",
+    "sha256": "ed6f92e9934e9dabfc5c31bef173d50136928a613473d44e6718c8cb8ddfb0ee"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/RemoteActivityTest.kt",
+    "sha256": "7dfbffff97434c685922f08634f683fe296c6507dc6f6583916742c81cba0a0a"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/UsageMeterTest.kt",
+    "sha256": "9ad16246c5f98ee27a6beac1305678b5f4b13aaa142f206de438637804c325d8"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/VoiceSummonTest.kt",
+    "sha256": "3338106233fd4f1d7a0ba33c7923c0bbd4f97911e650990bd5e09d82390c0563"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/ui/WorkspaceFilesTest.kt",
+    "sha256": "5477ab8f0e75a422745a33a5d672fc6c0116c0e7f94adbafb0b032350d2d7c20"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/update/AppUpdateManagerTest.kt",
+    "sha256": "1cb3d1339ab501c8702a70a51ee7877e7e74b72de49809d9b000999074b735c9"
+  },
+  {
+    "path": "app/src/test/java/dev/androidagent/app/widget/UsageWidgetTest.kt",
+    "sha256": "a46bf1633332c89712a97663cfa80008141ea065e6ce42feb6ebb21c6fc881be"
+  },
+  {
+    "path": "automations/build.gradle.kts",
+    "sha256": "54ae8720caee3a534332880c347d957098dd2b1979ffb49c5f97fbfccafca943"
+  },
+  {
+    "path": "automations/src/main/AndroidManifest.xml",
+    "sha256": "66f55e60a24f53588ed65ddad1049539a26a33d1657f3a514223a8ec0e0b4b2f"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/AndroidAutomationActions.kt",
+    "sha256": "25a0bc4640e14c615b1e9d701fd9502d7bf6d64a7ae10ea3c8916b1708ac37cc"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/AutomationAlarms.kt",
+    "sha256": "8355f148cea37ac479c5cf2c0731947459c3854c4dce5dd66f000c9890595e4d"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/AutomationBluetooth.kt",
+    "sha256": "d477513c8614c92d5c829b4760ff391eabfc5e097d111bd5e560cbf74a8dc2f1"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/AutomationHost.kt",
+    "sha256": "e6a9af0333a6351887664bde372c4516ae34aa39e2171b5f8915ebef1289f557"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/AutomationNotificationListener.kt",
+    "sha256": "e178cd5892d6048c6014e3fd73abce5d71c4edabc7a47d9339c401392fa0f019"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/AutomationWifi.kt",
+    "sha256": "9c03efcdda8bd591dd99bc15a196a536c366fa3d779ef417afcdf5a6bb31645a"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/PersonalNotificationPolicy.kt",
+    "sha256": "4222af1605f8c703d6b2a34b56c254da4cf1220126016e8cac2b9ace78f009c9"
+  },
+  {
+    "path": "automations/src/main/kotlin/dev/androidagent/automations/TaskNotificationReader.kt",
+    "sha256": "d740868522bb836a3eb39e2c16b6b807e9a9e5a9cb10546b9324d18ab4d14871"
+  },
+  {
+    "path": "automations/src/test/kotlin/dev/androidagent/automations/PersonalNotificationPolicyTest.kt",
+    "sha256": "037bb3469ad3bc93e371dc466a961391bf3103d3e51bb3c223c91d66df53995f"
+  },
+  {
+    "path": "build.gradle.kts",
+    "sha256": "c2163b07837ba7869027509425db9b92d2baca0dfbf129557222841a9aa632bb"
+  },
+  {
+    "path": "connect-host/build.gradle.kts",
+    "sha256": "b2b9c04ed90a42efb2d8a5d6b0c085e798636ccbc2a75795f689b01773531329"
+  },
+  {
+    "path": "connect-host/src/main/AndroidManifest.xml",
+    "sha256": "86a3baba154fd0b79ccb047fb792a07495363df2c467aa09865a7cf005cc0a07"
+  },
+  {
+    "path": "connect-host/src/main/java/dev/androidagent/connect/AndroidConnectTransport.kt",
+    "sha256": "016b4868e942fe0945f6d0e739e0111fe62e1ad8b1fd6e6657737c9a0f8dd6be"
+  },
+  {
+    "path": "connect-protocol/LICENSE",
+    "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+  },
+  {
+    "path": "connect-protocol/build.gradle.kts",
+    "sha256": "e9f4bf38215efa7d67bebc1526ec61ec1518dd4470d1a1bc89e1ae9f66c6a2f2"
+  },
+  {
+    "path": "connect-protocol/src/main/kotlin/dev/heymike/connect/Protocol.kt",
+    "sha256": "befee7f5428a46b1a1b139a3615a35080216073b42a6b9204ac8728fb06645d1"
+  },
+  {
+    "path": "connect-protocol/src/main/kotlin/dev/heymike/connect/Schema.kt",
+    "sha256": "d7ec940cb78ca1340fcb2f53611c29b974440201796d59cf6e1b2f718632cca7"
+  },
+  {
+    "path": "connect-protocol/src/test/kotlin/dev/heymike/connect/ProtocolTest.kt",
+    "sha256": "6d0b54de19c1a0032d9f9d327f9b93f62862e3b5b2591a6bd31856a9b8b91432"
+  },
+  {
+    "path": "connect-sdk-testing/LICENSE",
+    "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+  },
+  {
+    "path": "connect-sdk-testing/build.gradle.kts",
+    "sha256": "e4435034662b02cff1a1fe6b7a448e70c8e961f6460838e04eb955be97c1c959"
+  },
+  {
+    "path": "connect-sdk-testing/src/main/AndroidManifest.xml",
+    "sha256": "8bd85a8fc13f61efab68aeec94a7c3a76cd1946ba63dd01109278e817cf717e5"
+  },
+  {
+    "path": "connect-sdk-testing/src/main/java/dev/heymike/connect/testing/ConnectTestHost.kt",
+    "sha256": "c73ad6a914dd505243c56f3236862a81e6a8c018fe72e464c1702f04a2090474"
+  },
+  {
+    "path": "connect-sdk/LICENSE",
+    "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+  },
+  {
+    "path": "connect-sdk/README.md",
+    "sha256": "b501d8a3b75d062013ac603b11f6bc2179e75e1cb1960bc1329e2ac75094ff74"
+  },
+  {
+    "path": "connect-sdk/build.gradle.kts",
+    "sha256": "503e6bb40495878b8b4832845946f0cc18908164e85dae884a3b1596ff541bec"
+  },
+  {
+    "path": "connect-sdk/consumer-rules.pro",
+    "sha256": "c1f2ad5801afcef19e568b1670389e64396a72741df487a5029c733b8c02b541"
+  },
+  {
+    "path": "connect-sdk/developer-kit/README.md",
+    "sha256": "c4dea4fe7c7f2456b455cc52b4b4dd3609784d6f22edf7b3b5afda91d4ca8c21"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/README.md",
+    "sha256": "15b24655695b4bfbeb157b946e856da9deb32be1d0b696c43e5aeff219cc5ccf"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/app/build.gradle.kts",
+    "sha256": "187bf6934a7112d11dc7a5302849762efb8ce36c5b4bb13ba0e754d3bd2a11f8"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/app/src/main/AndroidManifest.xml",
+    "sha256": "4f38ad6bafec48ace6ce0f07bdb3d24b9ae7acd22dbd96fc295c029dd7e35073"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/app/src/main/java/dev/heymike/connect/example/DisplaySettings.kt",
+    "sha256": "a87d466e44b3af04efcc143198e7d7017ec6695774f9f70a54273f7b5650c3b0"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/app/src/main/java/dev/heymike/connect/example/PreferencesActivity.kt",
+    "sha256": "667956dabf0b6b4ab85cfbb6e7703c9feef2902080fca61c094695c0201c49df"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/app/src/main/java/dev/heymike/connect/example/PreferencesConnection.kt",
+    "sha256": "81f60c6708685b4e540491552bd9483688ad26c2f23d72926dc65e3c6683176a"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/build.gradle.kts",
+    "sha256": "ea21eacf75b1f2fff36d329cdf8299d31dd13b21e4ec37c056eff3a45df942a0"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/gradle.properties",
+    "sha256": "1d071b1956cfa73f8ac67fe391e8cee37e72c67f02301e5c7f88175bd8a5271f"
+  },
+  {
+    "path": "connect-sdk/developer-kit/examples/preferences-provider/settings.gradle.kts",
+    "sha256": "7a029e0e460754daf634adf8130cbcc1d21d0903925cc580787622cc1eb11fb2"
+  },
+  {
+    "path": "connect-sdk/developer-kit/skills/mike-connect-app-audit/SKILL.md",
+    "sha256": "393a57914e7575ba6e0d67cbae0e2a0d44b80a0319e001fa97e79d1b638fbc2d"
+  },
+  {
+    "path": "connect-sdk/developer-kit/skills/mike-connect-app-audit/assets/capability-plan.md",
+    "sha256": "dbcba053a39ed64dd5d96df36f75f1f725c2be7cad3c3aefe03b5f4ae86f84ee"
+  },
+  {
+    "path": "connect-sdk/developer-kit/skills/mike-connect-app-audit/references/capability-design.md",
+    "sha256": "9eac875c66e7785c322d2a18ccb72bddefaa418eb72f54dfaf8988971c72e27b"
+  },
+  {
+    "path": "connect-sdk/developer-kit/skills/mike-connect-integrate/SKILL.md",
+    "sha256": "a60d7cc255e19dbee57aa7851569590a34a524fa0c06feac04459108d233d5f6"
+  },
+  {
+    "path": "connect-sdk/developer-kit/skills/mike-connect-integrate/references/android-provider.md",
+    "sha256": "87c72271e9c696091e71e16fbfb8be57353c406340a33fc2da6d6bed1cb95cb3"
+  },
+  {
+    "path": "connect-sdk/developer-kit/skills/mike-connect-integrate/references/protocol-profile.md",
+    "sha256": "b225a1583f2899eef3fa901c1baac37c3728ae51f82534804145818748fc03bb"
+  },
+  {
+    "path": "connect-sdk/developer-kit/skills/mike-connect-integrate/references/validation.md",
+    "sha256": "9e22e473c21a98c2b52f236b5628f0f66008511685c1954cdfbab8a3a260679d"
+  },
+  {
+    "path": "connect-sdk/src/main/AndroidManifest.xml",
+    "sha256": "a9c436f687cf238109e814c4572a5cdc44e76aa2cfd7162bb9e392e0599956e2"
+  },
+  {
+    "path": "connect-sdk/src/main/aidl/dev/heymike/connect/ConnectMessage.aidl",
+    "sha256": "28bc31a3d33e3579bee90169d7bbf1a0cfef060725ea9835cbd1c23a89244c43"
+  },
+  {
+    "path": "connect-sdk/src/main/aidl/dev/heymike/connect/IConnectCallback.aidl",
+    "sha256": "143b3501fbb64659c4901e4570144bbc012a4063f3febc841966cea3b14fdacb"
+  },
+  {
+    "path": "connect-sdk/src/main/aidl/dev/heymike/connect/IMikeConnect.aidl",
+    "sha256": "05d15b41e6b4858b6c70f34130bca9c0acc8af255b50db0047689013d7733c47"
+  },
+  {
+    "path": "connect-sdk/src/main/java/dev/heymike/connect/ConnectMessage.kt",
+    "sha256": "3f5fba498b70169fd313976d959b18624284eeb8ccb1c5bb47e787f2e524963d"
+  },
+  {
+    "path": "connect-sdk/src/main/java/dev/heymike/connect/MikeConnect.kt",
+    "sha256": "da1780994d8afb09c205a66075f37bd5baae51467efdfeb4158e657fc1e4fcc7"
+  },
+  {
+    "path": "connect-sdk/src/main/java/dev/heymike/connect/MikeConnectService.kt",
+    "sha256": "28f3c85564450a5a5c50384f2bde3a25d4f3b1121d4aa32cdc0b41a859cddae6"
+  },
+  {
+    "path": "connect-sdk/src/main/java/dev/heymike/connect/RequestLedger.kt",
+    "sha256": "3dea033d814893619c81a45c954388c9e3435a7938470fa8280deb872efc7c95"
+  },
+  {
+    "path": "connect-sdk/src/main/java/dev/heymike/connect/TrustedAgents.kt",
+    "sha256": "2854e3ff29196f9d3f83a5e4c82e245214c891c3788dd2a34337103148fad5c6"
+  },
+  {
+    "path": "connect-sdk/src/main/java/dev/heymike/connect/UiTrampolineActivity.kt",
+    "sha256": "e9b33a771c8cc2e3dc668fb1f09e1fe7e5728c9b7798b1d080a2b99e77797e7c"
+  },
+  {
+    "path": "connect-sdk/src/main/res/values-v30/bools.xml",
+    "sha256": "e186d8ade9bd61020ca67f2aaa799a6e65ce02a1803a6d26796ca6e947e4b418"
+  },
+  {
+    "path": "connect-sdk/src/main/res/values/bools.xml",
+    "sha256": "db00d9aa808d0ac0f3d7bf2ef617943168567f1cb32a7c7484c1c5d0d8651758"
+  },
+  {
+    "path": "connect-sdk/src/test/java/dev/heymike/connect/RequestLedgerTest.kt",
+    "sha256": "012fdb982a4e9ddc6e47d7c4f29da35d75d428327b8ad86add32510d3058cc19"
+  },
+  {
+    "path": "connect-sdk/src/test/java/dev/heymike/connect/ServiceDispatchTest.kt",
+    "sha256": "09bcd8037ba9493265b1fbe46c357f6d5e8817800662989d966598ea59b954f2"
+  },
+  {
+    "path": "core/build.gradle.kts",
+    "sha256": "2ceef6eaeca743e527bb9798d6aa626b25a5c25a47df33f3fe84136823a5d452"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AccountUsageBook.kt",
+    "sha256": "ee91b6afbba42403c577f7192fc2f01821826014ad0c56755147d400c2d1b8e0"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt",
+    "sha256": "0c73e30d3d4a59756f0fbe91a85f36204e9b681d4109bb610d2ddecb8ceaea3f"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AgentRuns.kt",
+    "sha256": "af3268cdff4882ec312dd364709e93e34910979acef245ce1e41fe791bee631e"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ApprovalReply.kt",
+    "sha256": "e25e1f55749ad5c2def25e0c0ea012acf10d3748305ccfe70ab2cb7022b9eb9f"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AssistantScreenText.kt",
+    "sha256": "6e3178623ff3f8fac54110514c5fa1f8caaf35692aa2987ff0ff586be9e5f46d"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AtomicTransferFile.kt",
+    "sha256": "a480ec7d6656e08eee9c110c82f3e9faf593982aea7f890b33d1eb6b19aec0bf"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationCondition.kt",
+    "sha256": "64dc16cae750fce2bebc992efb0a5d2eb8d8345a7f46d71df21ad7961bd04bc6"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationConnection.kt",
+    "sha256": "d9658cab77adb667451a2ba06fac26d5662e8b170a30d8e1d4afcce4a0e0729b"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationDeviceStates.kt",
+    "sha256": "8261e883f5d9928f636fecd1d29d53f6442122268ab8f8ec480bf0c6e7974990"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationEditor.kt",
+    "sha256": "c39c47de38086d08d265607b6f6d5891da99d3f2cb688398952172b03e3dae1b"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationEvaluator.kt",
+    "sha256": "7d6e0db4b1f5074252f69f33cbf97eb5dbfba57a2c9d6ee3134618e79ed94592"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationEvent.kt",
+    "sha256": "63e619d6fc5fcb7c4b3aedea2c1de5939294a8778cc2aab1313278010e7cc384"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationJournal.kt",
+    "sha256": "eabcc9a924262a8d1dd48390771d65aae8cc35dc759d8bffee7a5101a853da60"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationLibrary.kt",
+    "sha256": "ef12cad9aba6ae3178d92e515ef6860519671c463c340dd78bca746a30b8a5f4"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationOutputGate.kt",
+    "sha256": "dec71df3d9366b7ce90ab2459a10f2e8fbea7fc98c2efbb5bec97a50aa22208c"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationOverview.kt",
+    "sha256": "825b46b85c1e10997170dcb6d0cf601cd34b0fb4137499c9ecdf2ddd18c0a09b"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationRule.kt",
+    "sha256": "d6b41b010af51cbff081ac4d0b78ff8eeb73699afc2e9c21ff0fa11e3f238455"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationRunner.kt",
+    "sha256": "249329be5f75d86f940ea1b8a910b3b1ec57c976792012e8d9519775c4abcb4f"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationToolGateway.kt",
+    "sha256": "f96f4eafaa2a39ab9e015254c0654ff431f9d59880a1026cc628ee95847f1ed8"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationTrigger.kt",
+    "sha256": "49b4cc91e823d2a0fb7c20a83199cb0d3b0805984a176278992fa6201f0c5a53"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/AutomationVoiceRequest.kt",
+    "sha256": "0ee6d0d6dba1c54d630f821b09ac88dc122601cfc38243b24f902c9331be67c5"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ChatDayGroups.kt",
+    "sha256": "572e6aa05269461569f55304d41f2baab210c87865f2b0494fc6a26ed0fcf263"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ChatTitles.kt",
+    "sha256": "66efb66721f86fceccf8bbd7ef88a6283ca7608c5b0acdedd883d9b6f6a7c2b9"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ChatTools.kt",
+    "sha256": "fd2c7d4d382f352069f2c9eea5a0b9b8afd330c05b4b47e9a79881c8cab0cf63"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/CodexAccountVault.kt",
+    "sha256": "78f4688f2812883b6c501b2a3ed1f652bc0145cc7930439ea901c6e7bfdf226e"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/CompositeDeviceToolGateway.kt",
+    "sha256": "fe3b12f16d8f37ea62f0ccef841916d50bc1b2e771895d4ccb9f3d8f425c4dc0"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ConnectedAppStatus.kt",
+    "sha256": "65c67f42898c4ce804d0f5ce1c82e4c37117770a1d493f5e452df2bff23ca047"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ConnectedApps.kt",
+    "sha256": "54f3b9d59119bf8ba0418cf193430ed694031fd776394260c1b37d579f2e8131"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/Contracts.kt",
+    "sha256": "6eb0570a1837141ffeb2b5616932b325d87a7ccc2b48d9fc1d6d6965f49e3a69"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/CopyFileGateway.kt",
+    "sha256": "bf414d4cd7c98b4df0beaba1c7e323d036f752c145e645990ae3cf8cb4b4baa6"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/DeltaTransfer.kt",
+    "sha256": "6f9ab3c9b5957cd3f49736ac535d078a3fedd6bf3fe182d3dd6d15f2d9dc9fb6"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/DeviceLease.kt",
+    "sha256": "5dd33e305d2f91c7632fb0f6002f08d20299ca59ee2e128a1e5a2e04c90bed22"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/EngineSwitch.kt",
+    "sha256": "82645096875a4bb8b3c218039da2a7ff7d177db9c154c8130e66d930fd51bfc1"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/FileTransfer.kt",
+    "sha256": "56b56f8a64e48128d0e6b8c0e90a981ee50758c559fa89c0bb9c216b83ee22fd"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/IntentExtras.kt",
+    "sha256": "d804b79c5f830ea32e405d802b22f5601efb7d0e0c84abfe98e4682504ff1267"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/IntentPolicy.kt",
+    "sha256": "a84294d61b069e1063e60663946d88705c60f2f7c656b10a8d666c05530e8f9f"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/KeepAwakePolicy.kt",
+    "sha256": "5dff231aab4998237014941c1b2adce04ca3064fa4e81bef2f50c48a2744fa6c"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/KnowledgeStore.kt",
+    "sha256": "2539ac5581352c37c2c40b62c5e78694b2c6f13ee7e7d36ce4638a50e82b50f9"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/KnowledgeToolGateway.kt",
+    "sha256": "42789505e77facd532f6162bc04b7c0a3a652d8d5dddc7524c60ea49a972001c"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/LastUsageStore.kt",
+    "sha256": "232d9ffbacdd9effaf42a26fcdd9c1f0a18536b262125f2401228e6322a183c5"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/NetDiagnostics.kt",
+    "sha256": "5c207cf49f94ed6f19e6de49bfed43d03b3bccfdb1498fc3a6c14730ebce5b72"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/Onboarding.kt",
+    "sha256": "dd6d880f536c86a8a3f4830b2c6ebd2ee848a67406b0d77271946205ab0fce32"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ProxyDiagnostics.kt",
+    "sha256": "83fc0a6db303717e83cf6061072240778d9fb64e19b504eecbbe63c9a2b01b62"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/RemoteMedia.kt",
+    "sha256": "5afc12536ae77267dbb8657f49c8ba05d6a81dc9cbda1e10646f163e6b5e4c11"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/RunSummary.kt",
+    "sha256": "147b14423757af7a8cd79c4ec630456834beb3935d231932f32963814286bb7a"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SecretRedactor.kt",
+    "sha256": "6d0a8675dacdba106b3235f59a0ea61b902db23accae587da162f7923819f255"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SendApproval.kt",
+    "sha256": "2cbe31fdecfdf02620e43c01d2e3a373eb5c7657d2e6e1e1fa5a5ace89672d7b"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SessionAgentDelivery.kt",
+    "sha256": "d7b4ee23ebdc290e20fbefef5582d4d5a650a14e8c86f7ea1f6948ebefc28e1a"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SessionAgentUpdate.kt",
+    "sha256": "b97c6591cba04e1015fe45bae09ab60b37a9ecac1229b6e23310da2dd14328f7"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SessionAgents.kt",
+    "sha256": "0a6109b585ad236f75b7ca5445252b5daecc91f460a39b6a903ba763c694aeb1"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SessionRunQueue.kt",
+    "sha256": "688c23471b37d94cecd32d6344852f65fa5a504c41c5266b7148b5c4ef95aa8e"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/SetupChecklist.kt",
+    "sha256": "b1d16d255a96fe63ecb0c324680b58d055115d18ac62af69c0114fd8eb668c44"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskBoard.kt",
+    "sha256": "c9507a84d137508e7f2f9234ab7eee0248838666b2f6e8438623601f00ad74c7"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskBoardModels.kt",
+    "sha256": "cddefda2b5ff2f8b5e0a90c972f048e67f886e9b930a054046d56f5cee41e908"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskChanges.kt",
+    "sha256": "23253426a34ccd8721b7fc143333e8bc6bf493a122eac2a18a6a3cc83a708a12"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskFollowThrough.kt",
+    "sha256": "bff80d1958d45a60536f374a231ba8eeb0e89a4e9d339799e0dd30cb266892dd"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskJournal.kt",
+    "sha256": "1f2fae87af5bdd5c0c191174125deded08f1839f47a7db8f1edae34b34d5427b"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskMemory.kt",
+    "sha256": "be79e744e6b595ee10454ff421ab83b55ad5e5172bae2012a39158d18380f883"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskPlaybook.kt",
+    "sha256": "4a9e1324cbd1daa4855f46cb9abd94dc4a04eb4c562efe1ca88f81a6cbcb788e"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskPrompts.kt",
+    "sha256": "8465e21609369e90988128457e6d18f5e45dc808d2ced245368aa1dfbc142f24"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskSignals.kt",
+    "sha256": "405606eb37bb31f4608d5e58f7e0a9613cf9dff1ed649f5d9f822168d8a83f45"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskSourcePolicy.kt",
+    "sha256": "15abf54d91792558a35d3cbc1087c6a0bd92a6c40d777ae4be73ae9ea1ac927a"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskSuggestionFilter.kt",
+    "sha256": "73b336e1915ddedd095197d213f95025ae9283224557c57d24df595ee3c25aba"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskTeam.kt",
+    "sha256": "0eed97f3d75d5a610d0a4548037985fea663c4fce97feff1c994596790dc5e3e"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/TaskTools.kt",
+    "sha256": "bb54284b66eeeeb91741cedc8adafafa77d6bd7aa41bb74f72faefa8824bfb06"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/ToolSchemaAudit.kt",
+    "sha256": "da880f14086fca27451cb48cd0ab5c0d1bbb7142daf89240ceab3f373515fab6"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/UiObservation.kt",
+    "sha256": "6fce4afe9ba14ec13d408a8e2e1ab6788fb7facfc3f8134e3501e49bff4d963d"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/UsageLimitRecovery.kt",
+    "sha256": "8bb2317f9559deccce50ffecf8bcbc4bfeab00ea051480eb1860a61f83b5d7eb"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/UsageSummary.kt",
+    "sha256": "0cc6b86618fcde5ccc5963adbbf2002c134853c3167a0baf8d6a1d026ec8a08e"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/UsageWindows.kt",
+    "sha256": "0aec0f935f74f5d058527826734a9f1ebe2ca4a90be520467472f2be6130fbfc"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/VoiceChildUpdates.kt",
+    "sha256": "75e3ab1f0806d5524d4859e2b34aa7c75f5e4bf3ea4eb2223db30286b3552e50"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/WorkflowCallRegistry.kt",
+    "sha256": "f04826d2a86744b324c74717a1478b375fba5c78119e6731ca5438f3cbc3a6e1"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/WorkflowDefinition.kt",
+    "sha256": "f82bd441bdb9bdbabb135d3b0b243e74cbe20c7f5b57e67dcc80a2f5c431ab08"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/WorkflowEngine.kt",
+    "sha256": "1c7cf9e452b101061900eb0855992d925afd58e4927689d50e0efb726edb640d"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/WorkflowLibrary.kt",
+    "sha256": "eef200e1d927c1abd834bc99465ac59b38ecfd53433ac4fe8a9b35ed70125842"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/WorkflowRunner.kt",
+    "sha256": "f5dc8cfae0dc5a8e53c4146dee2d942c6bb60443b32bd4ce6374bd4cea40f11a"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/WorkflowStore.kt",
+    "sha256": "aa439a46c281e9363c5bc8d6531a3e2a551325d47470b6daf23786a6b3ff447b"
+  },
+  {
+    "path": "core/src/main/kotlin/dev/androidagent/core/WorkflowToolGateway.kt",
+    "sha256": "2274ed174e25c777806c1a468437b99017ad12cea68ac9a0bdf961c35e182663"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AccountUsageBookTest.kt",
+    "sha256": "066dd2242e1eb0c0cd10e47cf959646823ac2bbbd25c5c56b7230b89c4b7cfb4"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ActPlanTest.kt",
+    "sha256": "b7290cd3010697d34034776805af9779c1647ec5fb237bd81d017cbde8b6e834"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AgentCoordinatorTest.kt",
+    "sha256": "3d9c0eb1386d04e75e5807bcf40f5f5adbdfeb5881c11e4d3c7e5a23eed77798"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AgentRunsTest.kt",
+    "sha256": "69a3f1c1767015a4ee5192ea10f45a3e865819033e5e0f5a4f6f662766cd5c23"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ApprovalReplyTest.kt",
+    "sha256": "9ad1daddd6bce289642b0d91b19426165bdacab0b0d2b9a748a33c855e73b7f9"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AtomicTransferFileTest.kt",
+    "sha256": "3215d1496bc77bf473f9b1dcb0880121b031b7403f35f7495754cc4c1e316943"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationDeviceStatesTest.kt",
+    "sha256": "b60cf78545fac59e3da9ab47cda9a51ebaa078f83f8fb2003d802698f526dd06"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationEditorTest.kt",
+    "sha256": "a9fd1a13d28662bd07c4921194244e46e27ba0c23f5dddbaf5a53ca95acbdb5f"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationEvaluatorTest.kt",
+    "sha256": "44d0073a9af66adee515edc953dfb36fa0086d9e7ebb3e40ca8e9f53bd653bac"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationJournalTest.kt",
+    "sha256": "1208bab79e9406ec916f2ccbe581fae6f6d409447694fe55c56251e6bc7d6afe"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationLibraryTest.kt",
+    "sha256": "e52cfe17fc14ec51be473dbc4e1269b87fc112e9350d09476135a36903d9ea03"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationOutputGateTest.kt",
+    "sha256": "02ab14942c6ab7e91eba136b8fd6d046565478cb277eddc25708337991759da6"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationOverviewTest.kt",
+    "sha256": "bf3bfba6da289bde13086dcb24d4f74c0ac4f82c27c8022f73ab53e8945be5ff"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationRuleTest.kt",
+    "sha256": "3e9d2f241fbedb161f9fa121abdff79ccc471d1973bacbf38f15ff937bc796dd"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationRunnerTest.kt",
+    "sha256": "1ff0c63c37a6bd79ca0c953a934d39b17b2780b05b6dfbd9ff89d51288a82eb7"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationToolGatewayTest.kt",
+    "sha256": "a33ede4cde73023b8f834201376b116914fa2cabca645082af4c22bd677efa66"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationVoiceRequestTest.kt",
+    "sha256": "cbf612df6572c1e972cbed265d948f5637be6ce3d5b03f32c0c917425f13d7e9"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/AutomationWakeupsTest.kt",
+    "sha256": "4f027dd5a074713815ea91bbef82acf3a14d90256f07eadb71867f004c0060a5"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ChatDayGroupsTest.kt",
+    "sha256": "333bec9d69eb40362e74ad93a5e7acd073de64d7f5a00a0d1427a67f381e675e"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ChatSessionEngineTest.kt",
+    "sha256": "94517210bcdb1c0882e3f1676dfe7ce0a9634f03d1ba524952e23d17cc939ea8"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ChatTitleManagerTest.kt",
+    "sha256": "4e0bb87714d2558d8c475a482d18a3ff7d929b86cc80ac1830852f411d218054"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/CodexAccountVaultTest.kt",
+    "sha256": "94fc3ad1fb6d4a0b285a37cd751c5dc43c371403d317d74135c541669f7a68e7"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/CompositeDeviceToolGatewayTest.kt",
+    "sha256": "ef2f59bc9f1091d680d83b843cb56e5b0f562be109f0d48a82c986f8eae69fee"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ConnectedAppStatusTest.kt",
+    "sha256": "4c02eff359d748f7c643c6c17d2c0543ded16118822537bb1c9332806fd4f82f"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ConnectedAppsGatewayTest.kt",
+    "sha256": "ab95137f3602d45266d4f24794c537be482f92b1271d6e5a23c3891ee2d23c46"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/CoordinatorAutomationTest.kt",
+    "sha256": "88c5414b5c9106e2ebbafdf2ea78f803361e4525af04691658d37c7bfd6a8e22"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/CopyFileGatewayTest.kt",
+    "sha256": "8d562ce8857f66fccfb43df958dc8bad87ed0d3f3c3f0dcd2486f6f5e8373331"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/DeltaTransfersTest.kt",
+    "sha256": "e37a512ef67147eb1301c681d1c53be9a7b5bffcbc0ff54077b9bdd2f10f7056"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/EngineSwitchTest.kt",
+    "sha256": "b9f8ff2bc4d70cc6adf234a7e7367d84bbf9bc2891af893f149a50ffa2f2f7dd"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/FileTransferTest.kt",
+    "sha256": "958f97d8b3c6f25e226468c238ac7a18e24465a78742f3096c9c8948dc1f7b48"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/IntentExtrasTest.kt",
+    "sha256": "9b18311a2698711a13e43ab0b8a4a25f014becb25ed5fe90f8f760c7d2bcf8a2"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/IntentPolicyTest.kt",
+    "sha256": "6f7d8c2e8ea7053cf0f1cddffd7f09c4c7f3ab491dec264edd1a4d1dd87d31ee"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/KeepAwakePolicyTest.kt",
+    "sha256": "dc179d9a11462bd483f4b024d33be01b823f8277a00b92c3125518e933e95f95"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/KnowledgeStoreTest.kt",
+    "sha256": "1ee503110e8c3140777666cbf0b23608fac5adbce2b3621c472e943380ac8b1a"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/LastUsageStoreTest.kt",
+    "sha256": "6d62b3efcbfcd0b5a081c962f8c7a22a406908c8322d9477c523e91f6a767d90"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/NetDiagnosticsTest.kt",
+    "sha256": "7b928a42b78c87829393f871ea9859f8c74f76c9db5911a6db594a8d91a028ae"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/OnboardingTest.kt",
+    "sha256": "4eff84815ab36b4b8911dea07b78a25ee68dcf4e94301a406685b04e0e317a60"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ProxyDiagnosticsTest.kt",
+    "sha256": "a516481b51d90361d784aeebac6f2cd05aaf4e64d5fd134d743e5f7a64dcf25f"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/RemoteMediaRefTest.kt",
+    "sha256": "d28a14017b1bc280964b1a55ccb2c021e53114958dd2fca26bb854ed19b52cbc"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/RunSummaryTest.kt",
+    "sha256": "44675646af9428b7f68ebae0b37ed6b07cb0e424516fcc512024afc7eb12ecb5"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/SecretRedactorAnthropicTest.kt",
+    "sha256": "c696c4ae76310f783139d7ca2612c0d12049f8e2571ef84a0dee5569485232dd"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/SessionAgentDeliveryTest.kt",
+    "sha256": "c0fa7a751d5f204317d4c60208146fdb6d74cf28849415177857432a3f4c7e63"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/SessionAgentsTest.kt",
+    "sha256": "864aa7035281bc038c66a86c3b3cfb4b35dc99a2c7a6af30871e9fcf7021ddf1"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/SessionRunQueueExpiryTest.kt",
+    "sha256": "5a462f4dc117141035d46e1adfb6f6b60f6c0d239e1ff64f9b08fc4dcf6786bc"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/SetupChecklistTest.kt",
+    "sha256": "56544a516623b3f9fac53c59c503fcfdec4db31a881f3bab36afd7340b59df00"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/TaskBoardTest.kt",
+    "sha256": "f6d1fe069266d7e7ae2d91d2429c3d91eca03f86bd1482cab20d40bec06832b3"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/TaskFollowThroughTest.kt",
+    "sha256": "2272ce8296241158755a976308a51d47c6d1a6c3b5b7097eb2ebbfaa74bcf666"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/TaskReliabilityTest.kt",
+    "sha256": "4f7b03d6d9e2ef8ace3139d7a33b8ab1184ab3825ef4b0ae82b283eb365582c1"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/TaskSafetyTest.kt",
+    "sha256": "5e59a6802b8ced70be56b1042d54d1bd4395f58610d5e068496a8b5a5103e512"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/ToolSchemaAuditTest.kt",
+    "sha256": "081b2814fb735c70fd4a38c69b9eef2384573316d5784dcb2765bfc1a11a95de"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/UiObservationSerializerTest.kt",
+    "sha256": "e33246d81eae0a0b7669e9a60c595d11a4ce40a3ff1b1180024f5b151386ed3c"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/UsageLimitRecoveryTest.kt",
+    "sha256": "ed77c0d85e4af869bd364d47ba76dac10494657cf8023c069606faad4f4691ed"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/UsageSummaryTest.kt",
+    "sha256": "953015976d1435e0ec1e5ffeba5b00330569b7dcac0345c62f035c312c2de045"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/UsageWindowsTest.kt",
+    "sha256": "d71a7b7a6991e3bbf168d77b5e8eeb829a0370329170a4a6b4e67fff3cb3dbdc"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/VoiceChildUpdatesTest.kt",
+    "sha256": "f7b1dff5189aac0fcba04dcaf33ada01c4c75adf27ec421487b0734ad977df32"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/WorkflowCallTest.kt",
+    "sha256": "dc2c54518e528c47473a21d577cadad25e6905fc85332a5bad5bc9bb01f056e5"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/WorkflowDefinitionTest.kt",
+    "sha256": "689ad28fd2a3de6080c93c8bf9e9177b8d149548ed1a0634cabfb11ad99f01be"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/WorkflowEngineTest.kt",
+    "sha256": "2008100c43a880119b3c49504c6f6baebe6302648b9fdcc60fede37291499124"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/WorkflowLibraryTest.kt",
+    "sha256": "60937f1d0d45860672b1ebf8b3c9ce22706f135fb71b79072177b6dbf4fab3cd"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/WorkflowRunnerTest.kt",
+    "sha256": "f22a27572f4c43cab4f41d3e17a15d1d294e3095feb604f3ee7c1645364253b6"
+  },
+  {
+    "path": "core/src/test/kotlin/dev/androidagent/core/WorkflowToolGatewayTest.kt",
+    "sha256": "ee035f221b476b797af17589269b30ac358c7a1bdad88802f8f87fbf0d9aafa7"
+  },
+  {
+    "path": "device-tools/build.gradle.kts",
+    "sha256": "bd4e54ef1930a21ac87d1221797a09d7dcb2f86c15887f3901a0c54b97c712f4"
+  },
+  {
+    "path": "device-tools/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "device-tools/src/main/kotlin/dev/androidagent/devicetools/AndroidCapabilityPlatform.kt",
+    "sha256": "3c8ee7d15391bad7b708734ff13e8484a42a18fb0786dd843207ac046c64314c"
+  },
+  {
+    "path": "device-tools/src/main/kotlin/dev/androidagent/devicetools/AndroidCapabilityTools.kt",
+    "sha256": "0acb1d57bc074458280237873a2cc99e2069e7b31a64f35d9ffb635f2a34d916"
+  },
+  {
+    "path": "device-tools/src/main/kotlin/dev/androidagent/devicetools/AndroidDeviceTools.kt",
+    "sha256": "3b902ed5b8dba3d40201ba209e2fca96a268a42d09e2ecf83446b8f526cf860f"
+  },
+  {
+    "path": "device-tools/src/main/kotlin/dev/androidagent/devicetools/CapabilityPlatform.kt",
+    "sha256": "436f848594f08235c5dd6e9f505de1701821a06181a8d1cb24038a629c968ce5"
+  },
+  {
+    "path": "device-tools/src/main/kotlin/dev/androidagent/devicetools/CapabilityPolicy.kt",
+    "sha256": "d8244ee6be38166914f1bed76f85ab3262e2e9a1ce55ecca94c10e2215a14a07"
+  },
+  {
+    "path": "device-tools/src/main/kotlin/dev/androidagent/devicetools/PhoneStoragePlace.kt",
+    "sha256": "0f4b5f20fbe91fe174a3b36a9a9d6c79561d5cbbe5ba9adf54af58d380e09e56"
+  },
+  {
+    "path": "device-tools/src/test/kotlin/dev/androidagent/devicetools/AndroidDeviceToolsTest.kt",
+    "sha256": "002a04d5039625f465afb6f588d68cfaa25ea06a5611a337497244af80fdb445"
+  },
+  {
+    "path": "device-tools/src/test/kotlin/dev/androidagent/devicetools/CapabilityToolsTest.kt",
+    "sha256": "684c9033ac8e6025a841775f1bc92a1af335bbaf93b209e604e54b550f332ddf"
+  },
+  {
+    "path": "device-tools/src/test/kotlin/dev/androidagent/devicetools/DeviceToolSchemaTest.kt",
+    "sha256": "d928880a288f10921a0225179d0c84e9d8061e5d7f4e5c16632305cc0c667d83"
+  },
+  {
+    "path": "docs/ARCHITECTURE.md",
+    "sha256": "ad4addf0ea46f1bf9bafa6d70d390c0dda2c043e605ff42372e85d52793a3596"
+  },
+  {
+    "path": "docs/DEV_NIGHTLY.md",
+    "sha256": "7d1ba9a534d63695166f9f3bc58fa287622a5b2e3652b3e2c7284180bc66dc9d"
+  },
+  {
+    "path": "docs/GETTING_STARTED.md",
+    "sha256": "f6b834d29122ce5caf90486e1ba85a81e6d4ac9e29119b692677bf3a84ba58a8"
+  },
+  {
+    "path": "docs/INDEX.md",
+    "sha256": "3a0ea90f23d8e2591a3c1443f73c5b27f5795eeb3e11b55ff9ba0aedce751791"
+  },
+  {
+    "path": "docs/KNOWN_ISSUES.md",
+    "sha256": "0c0265e9f33c85fae8602fc3e13fd25df0672f9235ded4c8400690ebf1de820d"
+  },
+  {
+    "path": "docs/MIKE_CONNECT_PUBLISHING.md",
+    "sha256": "f1433f87d9c3c90894a97f6eae90581b4ac61ed8b54834b65d37046f49141f81"
+  },
+  {
+    "path": "docs/MIKE_CONNECT_TESTING.md",
+    "sha256": "8f7157108884d0c3f6eea74653c66eee5c073c11ae42ef069a028279c5054539"
+  },
+  {
+    "path": "docs/PERMISSIONS_AND_PRIVACY.md",
+    "sha256": "4d5c5280703a28203e85a6c7ce3c3307d37ee58348a71f2f86e69840addd0a6c"
+  },
+  {
+    "path": "docs/RELEASES.md",
+    "sha256": "7f1be070c289ed7033c8339fab909987ce3ca76aee75f3f2adbb533bda9deda2"
+  },
+  {
+    "path": "docs/RELEASE_READINESS_2026-09-26.md",
+    "sha256": "205beebc7ba4716be7187dc4b88422307df52f92dec9ece947f5b1bf22619bd5"
+  },
+  {
+    "path": "docs/TESTING.md",
+    "sha256": "1750c05f68f2f37a1626ba547a24e964fd6e7c0ba64aef522ea780ee6dbce4d2"
+  },
+  {
+    "path": "docs/design/MIKE_CONNECT_IMPLEMENTATION.md",
+    "sha256": "c22b5a7709ffb00e5957249de588cbfdcc188a988aa4e1d59b79f1588c740d26"
+  },
+  {
+    "path": "docs/design/MIKE_CONNECT_SDK.md",
+    "sha256": "6c646dca3f45673405ae873c693af76d0cd7bf97e1a01c63b6ea7f25b3ecb218"
+  },
+  {
+    "path": "docs/design/NEW_USER_EXPERIENCE.md",
+    "sha256": "03ded6d59f85dcf5dad82b62ec9ef31a52bbd10174bb91d3c27a9eba3da149a0"
+  },
+  {
+    "path": "docs/design/new-user-experience/Ability.dc.html",
+    "sha256": "c1cf0dd56f95792444b8e833017c9ec090499f4406112e3ac01567125fb0c3ea"
+  },
+  {
+    "path": "docs/design/new-user-experience/Approval.dc.html",
+    "sha256": "32a277ace01847e5527c6cbf5bf5af319fe47836e558737ffbc1eacb7c733aa1"
+  },
+  {
+    "path": "docs/design/new-user-experience/Consent.dc.html",
+    "sha256": "053a2e40f340d509da0067663efc2f145957be2e5422a1b964728b33aebdfac0"
+  },
+  {
+    "path": "docs/design/new-user-experience/Drawer.dc.html",
+    "sha256": "c133f9fcc7b4b29813a2ddf608918cfc77baa225840b3d0959ad0bd701d22686"
+  },
+  {
+    "path": "docs/design/new-user-experience/Handover.dc.html",
+    "sha256": "8218e117ed40980523ec7d908779d93f340bab30f9a6d0281cd222c55e5af516"
+  },
+  {
+    "path": "docs/design/new-user-experience/JustInTime.dc.html",
+    "sha256": "5756f8cf45d3349c65845ad228fe3351e5a2eb093f8000b8f473b6c28a010922"
+  },
+  {
+    "path": "docs/design/new-user-experience/Main.dc.html",
+    "sha256": "7a74b5246bef3eab9b3dab1b67e5b92219472c57a63a643b9a92ac90650ac1c9"
+  },
+  {
+    "path": "docs/design/new-user-experience/Orb.dc.html",
+    "sha256": "1bc9652ca1fe7cb15a45c3a329a450b70316f7af81c46ffc3530aef3d0211bec"
+  },
+  {
+    "path": "docs/design/new-user-experience/Plan.dc.html",
+    "sha256": "3062224f3c395bc6e0af90a308a10d92b5e0b80f2ae91881ef89d166c1d52e67"
+  },
+  {
+    "path": "docs/design/new-user-experience/Privacy.dc.html",
+    "sha256": "b8254c85232fdcbbce77ef237e29bedcd8d1d92bf0fcdbae0da597d00557c649"
+  },
+  {
+    "path": "docs/design/new-user-experience/Ready.dc.html",
+    "sha256": "4735ce566555a37df452a0cc437afe589a53e8aa64ccb1f031b9a2f044210ddc"
+  },
+  {
+    "path": "docs/design/new-user-experience/Restricted.dc.html",
+    "sha256": "b23a5378b39ab355aa423f27e2ab138a7b2eacf4d71bb56d45f4aa190ab8138f"
+  },
+  {
+    "path": "docs/design/new-user-experience/ScreenAccess.dc.html",
+    "sha256": "1adbf07fcfb1cf5fc59e5f207a506ccfbe73d57f848b6e9e09428c550e2d90d5"
+  },
+  {
+    "path": "docs/design/new-user-experience/Settings.dc.html",
+    "sha256": "dbf4b3c20adbef36cd2e8d864fffb16dda2b420d8b989028bc51004fd9132963"
+  },
+  {
+    "path": "docs/design/new-user-experience/SignIn.dc.html",
+    "sha256": "053a7bf11f11232f66ef42b09b7a2dc63e2ce339d961be4c444718cfd2018b2c"
+  },
+  {
+    "path": "docs/history/2026-10-18-mike-connect-developer-kit.md",
+    "sha256": "6bfdffe72de3e327f7677570664004b4dc1e4aa7d6f05840e9efb51432e25e82"
+  },
+  {
+    "path": "docs/history/2026-10-18-mike-connect-sdk.md",
+    "sha256": "e77ad12885b1626d8778e11c13b4bf146b82d58dbb68758ede7a66effb32e495"
+  },
+  {
+    "path": "docs/history/CLEANUP-2026-09-09.md",
+    "sha256": "abce1b8880c084d3d0d4c7e64e5067a68f1eb8c1c92dc8760c19e3b9c0ce7f91"
+  },
+  {
+    "path": "docs/history/PROGRESS-2026-09-09.md",
+    "sha256": "c9bf278584651805e2857cf87cae9f2c178cfe95c55f5d285a2de8eb629e0e5d"
+  },
+  {
+    "path": "docs/history/maintenance-ci-2026-10-23.md",
+    "sha256": "0129f6ecddb03f84ab542e117341cde0abaa0be2ecde5a42e79f00ed723fbeea"
+  },
+  {
+    "path": "docs/history/maintenance-tests-2026-10-23.md",
+    "sha256": "af3a6555dac513ded49628a4e85141c63daa24c707f2099070d2310533f1f98f"
+  },
+  {
+    "path": "docs/images/demo-youtube.gif",
+    "sha256": "435966913fcc7b3e9b01fdab5ceb695d162a55acd44dcfa9f1918747186d6537"
+  },
+  {
+    "path": "docs/plans/task-board-reliability-and-manager-20261026.md",
+    "sha256": "e9af92ad38c0c52fff8e15deb5d17fc1e340bad513b9558808c71162e43e1b26"
+  },
+  {
+    "path": "docs/superpowers/specs/2026-09-30-claude-subscription-design.md",
+    "sha256": "509afb01d9d3bbd159e91df8efde98ac90c89ff4ea397a5237c9545111b1f1f7"
+  },
+  {
+    "path": "docs/testing/apk-delta-transfer-20261012.md",
+    "sha256": "579746f404f088d95af951ec20c607fd03d0675b9c8ceb9609a37adf0721673b"
+  },
+  {
+    "path": "docs/testing/assistant-flow-limits-20261028.md",
+    "sha256": "e5a3639c080065a3b9af257d9cd68c34c36d5d1e7426d6a2b45a6b8f07cf8b85"
+  },
+  {
+    "path": "docs/testing/assistant-screen-text-20261009/RESULTS.md",
+    "sha256": "7cf2dcb4f03b87a7ca4d4e7c21307606b3035066a5947cb4306b9831bb8086fb"
+  },
+  {
+    "path": "docs/testing/claude-session-sync-20261010/PLAN.md",
+    "sha256": "3e04785ea3e1aebf2243de4df69d516aaf60623108be8307a7a86d17dcfa5a58"
+  },
+  {
+    "path": "docs/testing/claude-session-sync-20261010/RESULTS.md",
+    "sha256": "0e960445994c400ef888f5ecca906b47f8507ab7d83691ac53ac79514149c9b3"
+  },
+  {
+    "path": "docs/testing/claude-session-sync-20261010/ui/chat-claude-check-failed.png",
+    "sha256": "a96d38f342dbd1dbde66411c1029ac60e3a3d8b6d49989bc27405aeafa408a1e"
+  },
+  {
+    "path": "docs/testing/claude-session-sync-20261010/ui/chat-claude-held-by-client.png",
+    "sha256": "3d3b6c6410ffcbde75a7ca2d9ff83e96dacd60faebcadc7c47c7dc39a58b6d37"
+  },
+  {
+    "path": "docs/testing/claude-session-sync-20261010/ui/chat-claude-session-strip.png",
+    "sha256": "a8ab3c9d3d6305d289607b312bbde65c14ff217125f35dd317ba303b3388b2bf"
+  },
+  {
+    "path": "docs/testing/claude-tool-search-20261014.md",
+    "sha256": "3cf31a8f266728cbb5eca3adbe182506e244858277bd14c342f20be30a3ce7f3"
+  },
+  {
+    "path": "docs/testing/codex-reconnect-20261013.md",
+    "sha256": "634502e2a0abb178864c278d2a34b43511f0e7402d179424dade3d154e2ba835"
+  },
+  {
+    "path": "docs/testing/computer-use-approvals-20261028.md",
+    "sha256": "c8a41a42304f599b8a311f62462e89ef6be21667eaf21b7100b227c90cc940c5"
+  },
+  {
+    "path": "docs/testing/e2e-findings-fixes-20261008/PLAN.md",
+    "sha256": "0ccec898787d21d1de1adb9afefd892c0272a3f8846c1c9580ade0ae1e13bf73"
+  },
+  {
+    "path": "docs/testing/e2e-findings-fixes-20261008/RESULTS.md",
+    "sha256": "93bd1122a15019324b612d47bd8b0e857c69035ca5a37025fd938cb82a94cc50"
+  },
+  {
+    "path": "docs/testing/e2e-findings-fixes-20261008/STRESS-20261009.md",
+    "sha256": "19b94b80ff998135804e646eeddf3654004a8225f58d8cf6234e03c902b57eae"
+  },
+  {
+    "path": "docs/testing/e2e-findings-fixes-20261008/STRESS-FIXES-20261009.md",
+    "sha256": "764285598e6e5eeeea616a39d4ec439b4e380bcc03bc230dc2f9fad135d0723e"
+  },
+  {
+    "path": "docs/testing/internal-browser-batching-20261015.md",
+    "sha256": "ca77a45abfedd39697188b082d572a78f5a0f2bec22011015bba659670360e53"
+  },
+  {
+    "path": "docs/testing/internal-browser-deep-xiaomi-20261015.md",
+    "sha256": "aef1c62ad6f22f585263f9ba236c8314ebfe8f992a49c39fd42f4bb19dc19666"
+  },
+  {
+    "path": "docs/testing/internal-browser-performance-20261015.md",
+    "sha256": "743ef175fdcaff49852681b697dbd8416b9256098675223f41e7a96a701ad77c"
+  },
+  {
+    "path": "docs/testing/manager-eye-1178-20261027.md",
+    "sha256": "657619981af4c297e62da42d0823a4f02f537d9cac21ab2cfc4ce53038741b73"
+  },
+  {
+    "path": "docs/testing/personal-assistant-flow-20261028.md",
+    "sha256": "83c5459b018ab84fe6a8d0b6b668df2717314a5bbafccfd4c503de52a77d299c"
+  },
+  {
+    "path": "docs/testing/personal-notification-profile-20261026.md",
+    "sha256": "75b49f1e0e6a6f81dcfe700594de6823166548126d6c09be8cb283db1e8de630"
+  },
+  {
+    "path": "docs/testing/relay-startup-20261014.md",
+    "sha256": "6451707120d5eb7c2b068c5a6cfcd326784a1147356c62b274dfd4ec3acd86c3"
+  },
+  {
+    "path": "docs/testing/session-subagents-voice-20261011/CLAUDE-UPGRADE.md",
+    "sha256": "d89aa34834552f486f63be6ccbd7862364ab9b5b14c465477249e8982d4e9ca4"
+  },
+  {
+    "path": "docs/testing/session-subagents-voice-20261011/LIVE-UPDATES.md",
+    "sha256": "b5293415d6d9584890a00713c136a7acce5946eb1107fc4424424c3de3351452"
+  },
+  {
+    "path": "docs/testing/session-subagents-voice-20261011/RESULTS.md",
+    "sha256": "46fa042754e233427231c49308601374b36ef015e265e61daa21f344e496eb37"
+  },
+  {
+    "path": "docs/testing/session-subagents-voice-20261011/ui/subagents-hebrew-large-font.png",
+    "sha256": "a644cf65e432f2245e375d458447b78a333ac1083738f08d47c94afcb2486b01"
+  },
+  {
+    "path": "docs/testing/session-subagents-voice-20261011/ui/subagents-live-parent-update.png",
+    "sha256": "f2185cf41c3ab346ac764e9fd2a376b4ec58857f4078dd14d628dcf7884dcf2a"
+  },
+  {
+    "path": "docs/testing/session-subagents-voice-20261011/ui/subagents-parent.png",
+    "sha256": "20263c03c0190fe01219e82aa87cc5fb48d6e3f14248f51a04127e130ce2901a"
+  },
+  {
+    "path": "docs/testing/session-subagents-voice-20261011/ui/subagents-voice.png",
+    "sha256": "9f5d6652269ea8624193188e215c6e59a03aef78c0242331442937a27122918d"
+  },
+  {
+    "path": "docs/testing/task-board-20261025.md",
+    "sha256": "b0a45a6e1675cdcb8d19f0595919cf795c64bcc7670466fe7f8f4f27af70c103"
+  },
+  {
+    "path": "docs/testing/task-board-v2-20261026.md",
+    "sha256": "4cb38f105b162615cfa83d15c5991e5660fd19d2a5b304405e0003aaca5d25b8"
+  },
+  {
+    "path": "docs/testing/voice-child-update-timing-129-20261011.md",
+    "sha256": "ab7c69a913a969532cd39726df3353a4c40651cbf4d1bf717825acb0ed116a7b"
+  },
+  {
+    "path": "engine-claude/build.gradle.kts",
+    "sha256": "bcb320b8f3eb9fb854eb0af9b723bf7e3c9eebee61d62144570b25b2f75baf23"
+  },
+  {
+    "path": "engine-claude/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeCodeEngine.kt",
+    "sha256": "b012cd13973401edc85f823e49fe22340675f504bf41e185e0f56cbee08effcb"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeComputer.kt",
+    "sha256": "c4519fb733b581af5731a6ee10d54a239b72b893c782c2f83da47ea515a17fea"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeInstructions.kt",
+    "sha256": "14fa54f98f3e145e6cf550fa3be0e318a1539832ff389bc65cd015123af1454e"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt",
+    "sha256": "efe10772676b0b3b4e682988b415fd1db53c380670e9fd1448ed2588b3449697"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapper.kt",
+    "sha256": "40c91c09982b4c303066f925aa551a01b0a7616017bfdf26f852dba8018ed135"
+  },
+  {
+    "path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/McpToolServer.kt",
+    "sha256": "28a3495e6c6d969fdfa20aa8f12870d4296e2c7390f475cd345369ec61a7257a"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeCodeEngineTest.kt",
+    "sha256": "e2ef7ef09dc141a062aa9a8307f9fe47d8838afd1566c473ec349a9e342b5e11"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeComputerTest.kt",
+    "sha256": "1914088650cb0120ce7c151bc26e5f33ba5709063e4652c93cdcb37f8d837f5c"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeProtocolTest.kt",
+    "sha256": "84e9330d5bb6ac6ddc33f7d04c74c7e5d541935cb6e4777030dc13e6c5114b06"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeSlashCatalogTest.kt",
+    "sha256": "fbdd23002e36f801fa3316a7b4e524d0d03b7c268ceb0791ceed6d84a13e62e8"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapperTest.kt",
+    "sha256": "9490a6b3443b22d00951ab3eca8b2f80308639e0a5d1b3a6eeffff438a934a21"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeUsageWindowTest.kt",
+    "sha256": "7cef9d450e6de67e6431dec2868a7ffdce7c57678651d2717f5af4c7224efcc0"
+  },
+  {
+    "path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/FakeClaude.kt",
+    "sha256": "59fe06da77056e5a5d50a3d38af8f54890ba1327173072a023c436f6d0163b46"
+  },
+  {
+    "path": "engine-claude/src/test/resources/claude/initialize-commands-2.1.295.json",
+    "sha256": "488ec9108ea3148534ab7dac1440f1ebd9561c3b3f1a068124031513a5350977"
+  },
+  {
+    "path": "engine-claude/src/test/resources/claude/initialize-response-2.1.293.jsonl",
+    "sha256": "75534a2845ffb96c7459961270f0c72010b6d29d64a4f26f09c716343c0f6638"
+  },
+  {
+    "path": "engine-claude/src/test/resources/claude/initialize-response.jsonl",
+    "sha256": "d1886546f01bbb5e62e897f01a496a6fadef0920d41ba524de988862ca2ee01c"
+  },
+  {
+    "path": "engine-claude/src/test/resources/claude/resume-not-found.jsonl",
+    "sha256": "740e0e37bcb20bb3494e997f650a3d8db4e1a18e86de26835c19dfd9bba9d1c4"
+  },
+  {
+    "path": "engine-claude/src/test/resources/claude/turn-interrupt-steer-glob.jsonl",
+    "sha256": "f63ef46967a461e505866556495163650be2e96361ca0a9679bb45e9141c0378"
+  },
+  {
+    "path": "engine-claude/src/test/resources/claude/turn-text.jsonl",
+    "sha256": "066bfa1a191063c916083a444a03d860f95c26b1f38c53f35b3778cc1900ac37"
+  },
+  {
+    "path": "engine-claude/src/test/resources/claude/turn-then-compact.jsonl",
+    "sha256": "b57a02d4a106214bfff34bcdde13888dd094347b805c2016a56f91c48d5af028"
+  },
+  {
+    "path": "engine-codex/build.gradle.kts",
+    "sha256": "c7571efb88dc619724b342d08cd52419f0b663cc7061d16aabc3ce81fdb55ea6"
+  },
+  {
+    "path": "engine-codex/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt",
+    "sha256": "d1891b5fd82d9912fa21d1df35813366579b07b8ea888b5f6486854cd8bb9185"
+  },
+  {
+    "path": "engine-codex/src/main/java/dev/androidagent/enginecodex/CodexThread.kt",
+    "sha256": "b728f95ee8b4ea217d6da7b93663c78271343f88b9a81f8269dd74072da06bcd"
+  },
+  {
+    "path": "engine-codex/src/main/java/dev/androidagent/enginecodex/CodexTransportJson.kt",
+    "sha256": "bd66f0cdff4f7f5920e19d679ba06f3fbd5b9234464a73da3384e258ddcdb055"
+  },
+  {
+    "path": "engine-codex/src/main/java/dev/androidagent/enginecodex/CodexWindowStarter.kt",
+    "sha256": "49175a095e6ab5fd7f4de233cb4d79fadbe3950a57b3e067b8a7c630dba98e4a"
+  },
+  {
+    "path": "engine-codex/src/main/java/dev/androidagent/enginecodex/McpConfirmation.kt",
+    "sha256": "91b5700bacf46325fd1fa6895aa5bf3aaae114d5d51f1d83a07f898c9582d10e"
+  },
+  {
+    "path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexApprovalTest.kt",
+    "sha256": "b7804705fe295ed70f336eac7b6b022186446c26a5b200b7a4e7c9ecaaf2c500"
+  },
+  {
+    "path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexCompactionTest.kt",
+    "sha256": "dd28510a061129b5814b4e2f213345219165f4a6366af209ea66f639b222a461"
+  },
+  {
+    "path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexEngineTest.kt",
+    "sha256": "82850e282ca07da15829c372084771d2e509ed4004c7f695cc90de096d6abfa7"
+  },
+  {
+    "path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexErrorNotificationTest.kt",
+    "sha256": "eb58acf43b939013e518434c3ad404974e23ffda431064b33c41e798ca1b0d3b"
+  },
+  {
+    "path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexTransportJsonTest.kt",
+    "sha256": "0a336b13f470206d11b2391eaaae13b51daac185979029795f2f558f0ebaaaa6"
+  },
+  {
+    "path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexWindowStarterTest.kt",
+    "sha256": "0c4f1d2987e68113d28f02716e568dfa59320520f397555f752680e4facf4e36"
+  },
+  {
+    "path": "gradle.properties",
+    "sha256": "ae894102792c3c06b11a9c0bafcb7695687d81600e61345260ff7927f800dad2"
+  },
+  {
+    "path": "gradle/wrapper/gradle-wrapper.jar",
+    "sha256": "498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17"
+  },
+  {
+    "path": "gradle/wrapper/gradle-wrapper.properties",
+    "sha256": "d5c23e3dcdf30974a50af37d042b5d8692159c25754da5aebe0466135bfa2b70"
+  },
+  {
+    "path": "gradlew",
+    "sha256": "7592b8b56685b28cedab8cc8d7537ddd26eeadf6f4745127b56a4d8e06d368cb"
+  },
+  {
+    "path": "gradlew.bat",
+    "sha256": "06ad6e6ae8e538fa72eafd589fdf85d45f9736a5cd120e3a4df398ea729fd5dc"
+  },
+  {
+    "path": "mcp-loopback/build.gradle.kts",
+    "sha256": "c889424a0f1d4d86d335306b5d6dc591483e4cafc8a613b9306e3025bea6ccb9"
+  },
+  {
+    "path": "mcp-loopback/src/main/kotlin/dev/androidagent/mcp/LoopbackHttp.kt",
+    "sha256": "10b95f2391e2f7951fa1c608885d381ef7b63d4641988d997b19829f9e53e140"
+  },
+  {
+    "path": "mcp-loopback/src/main/kotlin/dev/androidagent/mcp/LoopbackMcpServer.kt",
+    "sha256": "727a82564b1dd4f1d2b1b63a1d4c02d8b65e19646708f5f7a079b4432457a3a5"
+  },
+  {
+    "path": "mcp-loopback/src/main/kotlin/dev/androidagent/mcp/McpEndpoint.kt",
+    "sha256": "4f62fe9b52606eb0386bbf1a574f18565c6f5fc0edcfed1431b8fd39e67a4bb7"
+  },
+  {
+    "path": "mcp-loopback/src/test/kotlin/dev/androidagent/mcp/LoopbackMcpServerTest.kt",
+    "sha256": "829f947551152dffd658a77be4d7554c31ab75aa6f004158365b03dcd5c3c70a"
+  },
+  {
+    "path": "overlay/build.gradle.kts",
+    "sha256": "f49e5aa48935d7639e98b84d1ee77aee0f40f5e9c503345e9f7f5b9cda144fe3"
+  },
+  {
+    "path": "overlay/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "overlay/src/main/java/dev/androidagent/overlay/FloatingControlOverlay.kt",
+    "sha256": "c232995ff67e0aad1537434767affc8b5c2da39f0b2221d8058fc95b62e2fa05"
+  },
+  {
+    "path": "overlay/src/main/java/dev/androidagent/overlay/OverlayOrbView.kt",
+    "sha256": "7fb03ed643d11354ca99fcb90b8eaf7bf63acfc1517bc17d4d67d82517fff77f"
+  },
+  {
+    "path": "overlay/src/main/kotlin/dev/androidagent/overlay/OverlayPresentation.kt",
+    "sha256": "28f0b946f82cb098adef042d09712a13a93923f9a4f6aab46000c0a0838ecc7c"
+  },
+  {
+    "path": "overlay/src/test/kotlin/dev/androidagent/overlay/OverlayPresentationTest.kt",
+    "sha256": "7cee2a61de2c11a769db1d8c4ee4cbefba699e170e48ac49736a50eaa5c5bdb3"
+  },
+  {
+    "path": "remote/build.gradle.kts",
+    "sha256": "065cff973ff144834400fecfb4b629358250dfc4ba976998ff17ed7848dfbf91"
+  },
+  {
+    "path": "remote/consumer-rules.pro",
+    "sha256": "dcf26f5e05f9e995ec385553e061ef8ed87e58a1ec4bf9b79cba65f586aa98e8"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ChildSessionTargets.kt",
+    "sha256": "e59ce047620f9d02a7a97a61761bf5fef0c1e36bccce496325755fd707018f1e"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ClaudeDesktop.kt",
+    "sha256": "1708d3074b0752ede9ebc5b8e04cb1ee704ff6a399526183b79b2f7d15fa6e63"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ClaudeHistorySync.kt",
+    "sha256": "74a33af52915bd73dc8f041e6d85e267d3e09baff05cc40dae7e0759b1bc1799"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ClaudeOnComputer.kt",
+    "sha256": "b54617dcfdedd7d09904e5212f1d35a4242090d69d260476ef1e10694ca821e5"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ClaudeSessionFiles.kt",
+    "sha256": "342948067105585c65828f7e838a6abbffca2020d22c4fa625c483ccc52701a2"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/CodexComputerUpdates.kt",
+    "sha256": "9b1eaaf4178bf7ee48641b5bf433c1484415e014d157eb9b29d432ba495f05c8"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/CodexRelayProcess.kt",
+    "sha256": "c79eef8325cf86513089690a13ba71f6c9485661f2fa9385a8fad4049dfe7c44"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/CodexRelayScripts.kt",
+    "sha256": "cd39a9b4c576ed596c97a05e8715f8337d26ddb416db9b2edea86a35bc734845"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ComputerClaudeSignIn.kt",
+    "sha256": "0a3fc4826f7dbd1c21a394f47d9b1dacaf3b1d026d97c9c1a1e369e3cbc31b92"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ComputerConversation.kt",
+    "sha256": "4db9d68c4b1fa15e92740c44d8b988e0a9ce5c3460b2674587b3327c780bb967"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ComputerPlace.kt",
+    "sha256": "2aa095a166d0dd1aed5db0e8445e756ad28827881c6bd7fa39d449dc0c48372e"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ComputerTasks.kt",
+    "sha256": "9649831501b3ae0f2b6baa93279d5c8c2ee3372d4690f81d520782f88eac39d2"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ComputerToolGateway.kt",
+    "sha256": "2123be7862250a88ef253b03bca90a4dbbad47fc6f21ef824ef4dd3f4bd1260e"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/KeystoreSecretBox.kt",
+    "sha256": "73582c1d77163718a263c80dc535d0179f57ee8faaf49db00929f188465702cb"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/LinuxHost.kt",
+    "sha256": "95969b4529b6b3e7c82ff8841670c574f5e35cbfed0d94bd3544f0d220d4e699"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/PhoneAccountTokens.kt",
+    "sha256": "835eb2f8fad4a7ce51724395ca37f3dfab8b446f8cc178ea770de162d5011897"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/RemoteHub.kt",
+    "sha256": "7a7146244e847dbd0370a994da88f3c43a5e2b53595b6f117fb1474ef4ac8e3a"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/RemoteInstructions.kt",
+    "sha256": "b3bc87992f523287ae8e018f749d674e3b35800a462b7d0d6f17c15cd1d05723"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/RemoteStore.kt",
+    "sha256": "2985112fa993a477b6fa28ffec4f4c70efac0b80c2ff8e43a176fc9f90bad267"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/RoutingAgentEngine.kt",
+    "sha256": "2d22bcd30254212267f72b71208261e96727bbb46c76c14496625d93186a81ae"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/SshDeltaPeer.kt",
+    "sha256": "07e15967d949289e4a35b5ceca724fa43740dad685eb7b69bb9c28d54b6f2a97"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/SshLink.kt",
+    "sha256": "50873877b30df802c22d25256f81ab5563c3510675408fd1acd1c8c766ca35ce"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/ThreadRefreshGate.kt",
+    "sha256": "6c815106471002cbaf1a4cd88bd1a02c8ad8bba3953ba3e3a2ceea80f6003a02"
+  },
+  {
+    "path": "remote/src/main/kotlin/dev/androidagent/remote/WindowsHost.kt",
+    "sha256": "7835663cc0db362f07e509a8793461e119b62fb9fdf2747fee1344d52c303106"
+  },
+  {
+    "path": "remote/src/main/resources/codex-relay/relay.cs",
+    "sha256": "417889cdbb7f3c5973e16cb8574b6224615fc17308fc46ee386a9b1bc751c2a8"
+  },
+  {
+    "path": "remote/src/main/resources/codex-relay/relay.ps1",
+    "sha256": "bbd0c906c6fb498d6ab982f7227c75fb8244f7a0e7bc2ab44e5616033e2b8f05"
+  },
+  {
+    "path": "remote/src/main/resources/codex_runtime.py",
+    "sha256": "c0c119a2cc9b36e2df72e50f0237af0c539a5c9a02dd8b7d61d5defa07957fa5"
+  },
+  {
+    "path": "remote/src/main/resources/dev/androidagent/remote/claude_sessions.ps1",
+    "sha256": "8c48b5de4d383db56673f5cc90a8b6df05ef4b5caa991e06bd3f9ce7c8487685"
+  },
+  {
+    "path": "remote/src/main/resources/dev/androidagent/remote/claude_sessions.py",
+    "sha256": "d4e4a017b2b38e029e3e9581a96a49d28a6fcc0ec4b48e28704896c9cfc89c17"
+  },
+  {
+    "path": "remote/src/main/resources/file-transfer/host_transfer.py",
+    "sha256": "f6ae00ab31c92fee192e93475bf412d1edfd94340149f481e8f1c839ba1f2fc1"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ChildSessionTargetsTest.kt",
+    "sha256": "38d491a8f30e18800461a3f4592aa43b7531f00b4d70ea8ee86023919830eba5"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ClaudeDesktopTest.kt",
+    "sha256": "11471002d7ff55daf63ca8a3b7c1b773e5ffcad936eff049c23e7fb5c5d0f2aa"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ClaudeHistorySyncTest.kt",
+    "sha256": "6082f9e611d0b43ab99dfd4f72f69cdeef018662f67b936bc0e304cd59cdcaf9"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ClaudeOnComputerTest.kt",
+    "sha256": "fb2e0bdb0c98a9a96a63600b148186f0d1d44a31ef2e9c9955f0a297bc6a2936"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/CodexRelayEngineIntegrationTest.kt",
+    "sha256": "9b0f2a0a5971f627f5dad24356b5c5a08a0f3f7c7d96a1d4f2bee081281bb18c"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/CodexRelayHostTest.kt",
+    "sha256": "79ded773c1b97b6e87f717e52cb129cff73838fdf832c1bf0e7bb9dc19a9e0d4"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/CodexRelayProcessTest.kt",
+    "sha256": "6a0b7b08ed6d7cf2258d055ddb81bcbfa61a54f0130f44f0a97b57d9027482be"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/CodexRelayWindowsJobTest.kt",
+    "sha256": "f09b20975c7a8d15352eed73e392ac219c4931ffd04407465df45c71b071c667"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ComputerClaudeSignInTest.kt",
+    "sha256": "6164fde24f5c3d4b344863019d66361c65c561e4ec4a4caf4f95d4946a936a03"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ComputerPlaceTest.kt",
+    "sha256": "6c6e5f8c1fe20ef69de8ad36f6b9f4472c0cf69a0d8297cf4677020a6006e971"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ComputerSubagentIntegrationTest.kt",
+    "sha256": "ea9e07fdb2669f58f361d998ed822b9ff770799e8b12b931a3dcc2c11425c81c"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ComputerTasksTest.kt",
+    "sha256": "c04f400ed5112c23ea0b666bdeaed951e40de39fafbba3790303a28786c3846b"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ComputerToolGatewayTest.kt",
+    "sha256": "019e1a369e783b73c2ceaaee281a1d41d20355b81255af6a1e49fa9cc79a6e1a"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/DeltaProcessReleaseTest.kt",
+    "sha256": "2f8b830e29ab53abaf72303e7e282554369d8df9a50afb2cf52e111ffbb28a4c"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/LinuxHostTest.kt",
+    "sha256": "687999153a2d9a173981bad4048b1812b19355886af3aa159fd7e4a0f69c498a"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/PhoneAccountTokensTest.kt",
+    "sha256": "0484cf225e32a0e3fcf16a0c5550bb5df0b8c6e1917f5ffd4413870cbae7eea7"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/RemoteAttachmentNamesTest.kt",
+    "sha256": "0d96d130b36a29809d3fa20f5c451ca501ace9b0cbeb18cf8e61a989b2faefd2"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/RemoteStoreTest.kt",
+    "sha256": "86097d2a8d13f3b3cf87ae8d735f61565bc903b6b217f171242853de7fdc873f"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/RoutingAgentEngineTest.kt",
+    "sha256": "4db6975c34e7da0934ec9052d5bf39ff46568464361bcd63647e8b426beb5057"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/SftpCancellationTest.kt",
+    "sha256": "712521c261b852008ba65c68b9a94048e96ab0de167dfe04a1ac9b1e638148ad"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/SshDeltaPeerTest.kt",
+    "sha256": "c34f37e2843328fbe3f185db6c4cb63e0d209f42172ab8a26047a417beaae346"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/SshLinkTest.kt",
+    "sha256": "f3691ab99ec43a7fb567c28e9b0b64feaf28ee0e5ea08f53a75656e4a038538a"
+  },
+  {
+    "path": "remote/src/test/kotlin/dev/androidagent/remote/ThreadRefreshGateTest.kt",
+    "sha256": "9417d38c893ee56883937e22ac01bb042138362d6d8df7d440c5622cc9ca444b"
+  },
+  {
+    "path": "remote/src/test/resources/codex-relay/job-fixture.cs",
+    "sha256": "d70c2595f58d7956d734700ada2b02f031cab74ed8fdfed96c5b9aeb8bab5441"
+  },
+  {
+    "path": "research/runtime/android-codex-runtime-feasibility.md",
+    "sha256": "06c479318df2040ffe3c0d4964a49d3d66a518ddaa29775e9e91928357757f09"
+  },
+  {
+    "path": "research/runtime/app-server-package-1534/codex-package.json",
+    "sha256": "7b5fd4e6426f42630d2818ea0d6115bb6cf98979ff92c1a32cf9238026450027"
+  },
+  {
+    "path": "runtime/build.gradle.kts",
+    "sha256": "e7fa00fcc137dc0e080bcdafd0b6f2b37f4ef0a233e52fd3bbd1b9bd82eac9a0"
+  },
+  {
+    "path": "runtime/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/AndroidClaudeHost.kt",
+    "sha256": "2d99d6ba353a3e106dbe1f3ddcf435e58ae1a2679dc9faba13458b81b2a77f8a"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/AndroidRuntimeHost.kt",
+    "sha256": "55ae13bda1b6c50ca6519c6153385bcea07e1fc91ed3e7563d85428900f54807"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/BundledCaFile.kt",
+    "sha256": "2fc4bba258054a9211f00d0ac588a519bfba3cd54ee3d2ac60f8f1f525260e16"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/ClaudeEnvironment.kt",
+    "sha256": "b365141ae4a12fea8239387d89205c3e838f633bf057b767777c94bd4ce0779f"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/ClaudeReleaseClient.kt",
+    "sha256": "bd9d853c68d8c30289d93b761f44948af2670e7a213c79c22b1b6ddcd79aeab9"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/ClaudeRuntimeInstaller.kt",
+    "sha256": "79fc509fb9053d0c53cf21b2476d346309e64376fd2c29403eb496121498c954"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/ClaudeRuntimeProbe.kt",
+    "sha256": "80d31bdee8c3e9ef7f37429477617e175b168e6d616a64710b7a027fce6459dc"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/ClaudeRuntimeUpdates.kt",
+    "sha256": "6d2167eb57758458c98c0a9152e45f9e3778f31e6d5c389176fc8d25148ee09f"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/CodexUpdateCheck.kt",
+    "sha256": "1b7d7684134e386ad3f6e051c343a2441f0a5653510e0044214737384217a486"
+  },
+  {
+    "path": "runtime/src/main/kotlin/dev/androidagent/runtime/LocalhostConnectProxy.kt",
+    "sha256": "6aed0057ba7bce2262783418b71f52661dc7023f1189100cefac9594d26552ec"
+  },
+  {
+    "path": "runtime/src/main/resources/claude-code-release-key.asc",
+    "sha256": "e0aba2e10a3cfc8bc728e3eb6e0b81aae91c49b07f7cda3384a5b8f0e6d7f834"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/AndroidClaudeHostTest.kt",
+    "sha256": "f5f627d4448ab1e3f846f22244b9d91ccd497f560d6bbd1580f698bb4e7e6369"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/AndroidRuntimeHostConfigTest.kt",
+    "sha256": "ce8265d374cf434419eb2b1e5c8ea3b6101db3672f535f635b5613cd7cb6a7fc"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/ClaudeEnvironmentTest.kt",
+    "sha256": "babd845a6a5f62fc10b45d48f5359abe7f9ae0e23a654760eb5269b981d25f9a"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/ClaudeReleaseClientTest.kt",
+    "sha256": "ab421bda5ebfbd8d2fb982e69dd3f41acb761905b5c74a8cda7eb56f402e5178"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/ClaudeRuntimeInstallerTest.kt",
+    "sha256": "fd9d3ce710abf66bc3d348e9ba9ae6d19d4545ced14acb89bc30bfb908e5d1e7"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/ClaudeRuntimeProbeTest.kt",
+    "sha256": "d566758cb26374db63cdcab0d83527adcef6f83536930454a781ecf7043b1b1d"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/ClaudeRuntimeUpdatesTest.kt",
+    "sha256": "f8721f3b51b5b437519491c04f60e4b00b7eb93ab65c90940234c198fc083bb9"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/ClaudeRuntimeUpgradeTest.kt",
+    "sha256": "45c7752905f3c5b26737f67573b5c6de99b9c0ada3b438fd7a108b71782b1334"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/CodexUpdateCheckTest.kt",
+    "sha256": "a1ae9f6ad23570f26b07e11dfaff3e1f5d713f49bb031b9ae6c0c489cc2e45ce"
+  },
+  {
+    "path": "runtime/src/test/kotlin/dev/androidagent/runtime/LocalhostConnectProxyTest.kt",
+    "sha256": "05ccc1caac71c6279c9a02d61032c7402dc4cd77f6547a8d0eb7d58d68c1d2a1"
+  },
+  {
+    "path": "runtime/src/test/resources/claude/manifest-2.1.293.json",
+    "sha256": "ce867df78920b885ffcd8ddeb5b12f867bbb34f8a7dd85d42740d48b4c6ef351"
+  },
+  {
+    "path": "runtime/src/test/resources/claude/manifest-2.1.293.json.sig",
+    "sha256": "0b65969825bb30d4e393094890a5b7bd068a4a3066e7bbc38ff403e0fc5b063c"
+  },
+  {
+    "path": "runtime/src/test/resources/claude/manifest-2.1.302.json",
+    "sha256": "d7d4f193bfebb48733027b0dc43d6996d99f5335d152961a729730e55bbd5aa1"
+  },
+  {
+    "path": "runtime/src/test/resources/claude/manifest-2.1.302.json.sig",
+    "sha256": "1ef6bd3a0939b8efedce0706c441a1c5c4eb76ea5bbdb43e0c2a944e10df53ee"
+  },
+  {
+    "path": "samples/connect-clock/build.gradle.kts",
+    "sha256": "c33f3eb1cd63eea7bd859f000b04f52c36c0941f60eac7a96d4b63a586e0990e"
+  },
+  {
+    "path": "samples/connect-clock/src/androidTest/java/dev/heymike/connect/sample/CallerSecurityTest.kt",
+    "sha256": "5d01a1771a0191a3a1fcbec14888f75ddba00af7cc39e094724a89a6702ac7a6"
+  },
+  {
+    "path": "samples/connect-clock/src/main/AndroidManifest.xml",
+    "sha256": "eb6fa3c6425d0316d7879bc7cbc6c25ebb11d6c70a7a4e120e4b0b08279ad58c"
+  },
+  {
+    "path": "samples/connect-clock/src/main/java/dev/heymike/connect/sample/ClockActivity.kt",
+    "sha256": "07b88c7519479b9bf54fee699417805ad40d357a14785d37c49094b5b358b9d1"
+  },
+  {
+    "path": "samples/connect-clock/src/main/java/dev/heymike/connect/sample/ClockConnectService.kt",
+    "sha256": "3ebf2f08089ecbec3b9d04430b3410bc2a5e9bbcbd3e294acbc17eedbbad6d31"
+  },
+  {
+    "path": "settings.gradle.kts",
+    "sha256": "6e33052e9ca765456aaf7c668be4365bde16a50acbbcb0901a09170dc66d2de1"
+  },
+  {
+    "path": "third_party/licenses/HDiffPatch-5.1.3-MIT.txt",
+    "sha256": "f864235526c927b2bbf956b310c71bf9bbabc8207629efed633d0a9baf6d1549"
+  },
+  {
+    "path": "third_party/licenses/bouncy-castle-1.86-MIT.txt",
+    "sha256": "be0592a6c76f398356fbf252a4fb43476fb3ca3c45331428c2f4f22c499e8311"
+  },
+  {
+    "path": "third_party/licenses/openai-codex-app-server-0.159.2-Apache-2.0.txt",
+    "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+  },
+  {
+    "path": "third_party/licenses/xxHash-0.8.3-BSD-2-Clause.txt",
+    "sha256": "a2973411d278045bde3c7161b911e0680d53e2d73d6457c77068d2e55d816d67"
+  },
+  {
+    "path": "third_party/licenses/zstd-1.5.7-BSD-3-Clause.txt",
+    "sha256": "d3baadc2e1dd7a7e0b483633e6b39743c16a16f28d696baff507fcd451f3d4ad"
+  },
+  {
+    "path": "tools/browser-probe/README.md",
+    "sha256": "21730f4bd250abef9427ae95bd87051542bbacecd199f89b7d78781ef46670c6"
+  },
+  {
+    "path": "tools/browser-probe/build.gradle.kts",
+    "sha256": "effdf7e84d2942340c46e89abb9f570e69bccb8a504e3c92ded4ba178668ecec"
+  },
+  {
+    "path": "tools/browser-probe/gradle.properties",
+    "sha256": "00acf0e13df85c7e8413cf37f538116df6ffc039ed5fe1174dcc315467d9f11f"
+  },
+  {
+    "path": "tools/browser-probe/settings.gradle.kts",
+    "sha256": "e3ef59a66f40584cf7f10f0a9f6cdb7e7f95e26ae4c6db600647516ccda375fe"
+  },
+  {
+    "path": "tools/browser-probe/src/main/AndroidManifest.xml",
+    "sha256": "78d30106fdbf32784631a113b1be46fab36ffd80e719ba18d1e4aba8df42966a"
+  },
+  {
+    "path": "tools/browser-probe/src/main/java/dev/androidagent/browserprobe/DeepProbeActivity.kt",
+    "sha256": "1baea42894c4a81a3c822a621ed4ab2210a479cdf236dc1cc9b37772a1193dfb"
+  },
+  {
+    "path": "tools/browser-probe/src/main/java/dev/androidagent/browserprobe/ProbeActivity.kt",
+    "sha256": "e48b6a8fca84c7f769c1df10bd26f720e692716388235368abd5bf0bf3837790"
+  },
+  {
+    "path": "tools/build_host_delta.py",
+    "sha256": "9e4c34dd06011753207c0608a5b3d2d19b709477bc627af961537cf07a5bc1f0"
+  },
+  {
+    "path": "tools/e2e_validation/README.md",
+    "sha256": "9a0756ef793d46540f378c49bd9329aeeb6d2bc562b4bda63939c1f59d4e647b"
+  },
+  {
+    "path": "tools/e2e_validation/analyze_trace.py",
+    "sha256": "6e9478507dcf18877388d0e81a979af10bbfda4c7b1fdd28d9c564cf9d692c19"
+  },
+  {
+    "path": "tools/e2e_validation/collect.py",
+    "sha256": "10b3bdb0df7063800be7d9237dd1f7c490e010d9c9a448dc63a8efb15a363a4d"
+  },
+  {
+    "path": "tools/e2e_validation/export_artifacts.py",
+    "sha256": "adcedda5a83732ee7f2e91753c2fb885a35523c85e07d8105f74bf15c323db3e"
+  },
+  {
+    "path": "tools/e2e_validation/fixture/build.gradle.kts",
+    "sha256": "869b57608f5d4350e533202bd2f5d88554383564041af84d35faa1357f40f152"
+  },
+  {
+    "path": "tools/e2e_validation/fixture/settings.gradle.kts",
+    "sha256": "73a37a78ebfb41aa89670c2fde53a8ee7aa4bb00b6c10dcac572ba3d5847ae51"
+  },
+  {
+    "path": "tools/e2e_validation/fixture/src/main/AndroidManifest.xml",
+    "sha256": "8d7781aa249cac1e46f93bffa43b4087f156896fc81b606da04fa7297a4e3e71"
+  },
+  {
+    "path": "tools/e2e_validation/fixture/src/main/java/dev/androidagent/qa/fixture/EvidenceReceiver.java",
+    "sha256": "a7fae22e49e44353d74b5858b306d0a03ed4cfcda6acd186402fe59c28176e49"
+  },
+  {
+    "path": "tools/e2e_validation/fixture/src/main/java/dev/androidagent/qa/fixture/FixtureActivity.java",
+    "sha256": "5045d31f7d8ae8d97a740503deae4d355dfa52073e9f9cb0f2f17eeb97610066"
+  },
+  {
+    "path": "tools/e2e_validation/latency.py",
+    "sha256": "715723efa879f7aeb9b80a9d35476210dc149fdbb6b19ad5b15975ba15ad43bd"
+  },
+  {
+    "path": "tools/e2e_validation/measure_ui.py",
+    "sha256": "c74dc5b1a239f8aa80b006b9dffffe559836ec1c9e71b44f84a8a8facff6978f"
+  },
+  {
+    "path": "tools/e2e_validation/runner.py",
+    "sha256": "6ef0a19029ff2a26123dcc3fcf1cc227c53390de36f7c5ca4182757c4a8a70e7"
+  },
+  {
+    "path": "tools/e2e_validation/test_helpers.py",
+    "sha256": "20e90c4e2a6eac0517cdab3981ecdd28a1af6f8d0896dc6f9491c13fd993088f"
+  },
+  {
+    "path": "tools/e2e_validation/test_latency.py",
+    "sha256": "51feaf096cc3c93c6186ad0d0f7354b6eaff9f39c63df01a7fefd9e77a1535cc"
+  },
+  {
+    "path": "tools/package_mike_connect.py",
+    "sha256": "164aaf32014ff5076ddbbdd965561ae06e423c16a22a1679075a06f7b3295efd"
+  },
+  {
+    "path": "tools/prepare_file_delta.py",
+    "sha256": "72ae3f1fffa68b1bd253834af0b42fff8c2b26b7787b38a211d4828bc09d2fd6"
+  },
+  {
+    "path": "tools/prepare_runtime.py",
+    "sha256": "8e1cbf037b52a1ad20959e2a898436367065dfd249477dd1b34aa95b72b71ea3"
+  },
+  {
+    "path": "tools/test_claude_sessions.py",
+    "sha256": "cee320e5f7044faa76905973ab9c0238cc32128ba3b3558e3c0ec135b2209944"
+  },
+  {
+    "path": "tools/test_codex_runtime.py",
+    "sha256": "b89673c053d664e5999b5a52ab528bad0ca79b9b230cb32cce6bd1b9c8f6749b"
+  },
+  {
+    "path": "tools/test_host_transfer.py",
+    "sha256": "b1ac9440a2b52a6921e026ea2fea2d7eafd78acf094fa16c4c65009e9ce11637"
+  },
+  {
+    "path": "tools/test_package_mike_connect.py",
+    "sha256": "97c881f684ba807ec26e11061676b2dbcfae9445d38dbd29e3592641255d8c63"
+  },
+  {
+    "path": "tools/test_prepare_runtime.py",
+    "sha256": "b562298b9c562686ef9173b9593e557d40b76259dd367693dbbe5a18c8bb5d63"
+  },
+  {
+    "path": "version.properties",
+    "sha256": "9ae13df595ad07bc5df33189d49584495b2bda5f4b66bf9ae4082a1f12bd8a21"
+  },
+  {
+    "path": "voice/build.gradle.kts",
+    "sha256": "6bf3c64c9cb36b322e9841b1b09462c406e53b0704d5d259c9f4a413ca7cbbf7"
+  },
+  {
+    "path": "voice/src/main/AndroidManifest.xml",
+    "sha256": "71b8d6b877396a45c53367662750e570e91ab4f6048e797d3bda47ddfcfb717e"
+  },
+  {
+    "path": "voice/src/main/kotlin/dev/androidagent/voice/AndroidRealtimeVoiceController.kt",
+    "sha256": "8de129c9077b7329a1bc3b2f8a1cf590064832a89c21af8a0d150408c31e4a69"
+  },
+  {
+    "path": "voice/src/main/kotlin/dev/androidagent/voice/BluetoothHeadphones.kt",
+    "sha256": "3c8027996af59d4dbb6514772ca46ac7856234c50e8254bbd5ce073cd4486477"
+  },
+  {
+    "path": "voice/src/main/kotlin/dev/androidagent/voice/CommunicationAudioRoute.kt",
+    "sha256": "be84fb4c3a317bd48f0ac72a76be6445e81188e4e17f75db668396c0d8fc1792"
+  },
+  {
+    "path": "voice/src/main/kotlin/dev/androidagent/voice/VoiceInputGate.kt",
+    "sha256": "325274da0eaad44f221fa123f32b0af084141789bfc2a9284b0a824b32a2f441"
+  },
+  {
+    "path": "voice/src/main/kotlin/dev/androidagent/voice/VoiceLevelMeter.kt",
+    "sha256": "6655c6a35e45e388bf393b4c78a368733dd88cce8ad8fe8911506fe77fff4398"
+  },
+  {
+    "path": "voice/src/main/kotlin/dev/androidagent/voice/WebRtcRealtimeAudioSession.kt",
+    "sha256": "f3f6c64988d39c663e4ae142065f87db266d0ddeb0372d1547a3ecb374ee80de"
+  },
+  {
+    "path": "voice/src/test/kotlin/dev/androidagent/voice/AndroidRealtimeVoiceControllerTest.kt",
+    "sha256": "4a7db87aee87caf4ea537964df2ca9f4dd9154b0a1e6ec9d8d5995d933992973"
+  },
+  {
+    "path": "voice/src/test/kotlin/dev/androidagent/voice/BluetoothHeadphonesTest.kt",
+    "sha256": "fcd3fde7c06fa660646f5931e6eed94799f0ebb5db8506dc78bdc26e064c7331"
+  },
+  {
+    "path": "voice/src/test/kotlin/dev/androidagent/voice/VoiceInputGateTest.kt",
+    "sha256": "29198ad218f58bc44a68c6e59528e8c4c14ef0cdcbeaaec8ee6b83352770a310"
+  },
+  {
+    "path": "voice/src/test/kotlin/dev/androidagent/voice/VoiceLevelMeterTest.kt",
+    "sha256": "08881239d4ff4c037b22af3ad802eda4d4e706112ac2b6e98cf410e61a1815eb"
+  },
+  {
+    "path": "web/build.gradle.kts",
+    "sha256": "5bfbcb3f418ca32e3971e3b1e41365f1f1c4d019e32b6054fdde641803d20841"
+  },
+  {
+    "path": "web/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/AndroidBrowserHost.kt",
+    "sha256": "9f799480126988a85e08859cfdc1bf20c6014aba118781e5e6235f7f3b22469a"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/BrowserSession.kt",
+    "sha256": "b3e9a37e254a7995a1c5d95f9bda351a38f34ff3ad957842bfdbe4f131c9618a"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/BrowserTimings.kt",
+    "sha256": "0cf9b265c0b75c49e1af4f6668215e3de66d56104c23527a8f1c29c86b403956"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/CdpClient.kt",
+    "sha256": "dcca80242783c71d5f8ccfc0758e7b0f2c8201f815580f88d34d62f5efba9e04"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/DevToolsWire.kt",
+    "sha256": "6d686292633e93dfb6deaf3d93ec522a069960e2c991d0039e0a938ca33a8bfa"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/WebToolGateway.kt",
+    "sha256": "d3367964835a57565e265d531f1e00f843cf34a524bfbca0b65413ad07597d80"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/WebUrlPolicy.kt",
+    "sha256": "2210be98cc5598469b1dfc0382d83a389d5271aab8e8e2489c733bdc31f01485"
+  },
+  {
+    "path": "web/src/main/kotlin/dev/androidagent/web/WebViewInput.kt",
+    "sha256": "51d312a0ee824c66e2ac00dc6eaa1a7b2703b711c30bf28eb7c0f05d93e9ba56"
+  },
+  {
+    "path": "web/src/main/resources/dev/androidagent/web/page_agent.js",
+    "sha256": "b6e72bca05bb8b11ae4a2d4e5aa3cb90590b57abb8901488651b7e4650c8cf43"
+  },
+  {
+    "path": "web/src/test/kotlin/dev/androidagent/web/AndroidBrowserHostTest.kt",
+    "sha256": "519a56d3c3e3a84b4bc5cdb14e33bae0c859becd1c38fe1e0b0462fdf454c121"
+  },
+  {
+    "path": "web/src/test/kotlin/dev/androidagent/web/BrowserIntegrationTest.kt",
+    "sha256": "3c4af8e3c21fce9625a04b808b5199474b940434980d26231d3b8ddb4902f4bb"
+  },
+  {
+    "path": "web/src/test/kotlin/dev/androidagent/web/BrowserWaitTest.kt",
+    "sha256": "c96c256dc6a5cced3e6e07eccb5a4f7ae0de10bc1803b0123c25fe19b41f9b65"
+  },
+  {
+    "path": "web/src/test/kotlin/dev/androidagent/web/WebToolGatewayTest.kt",
+    "sha256": "24c45921c7f3d7555478fca8d74b166bd882e25b8dc9dc290647b21b45a12e9b"
+  },
+  {
+    "path": "web/src/test/kotlin/dev/androidagent/web/WebUrlPolicyTest.kt",
+    "sha256": "26d48e081a80428cc21b8eba89d7f769cb3fe47427fb09c1a94072b02240cf1c"
+  },
+  {
+    "path": "workspace/build.gradle.kts",
+    "sha256": "70826c28fdfaf622acd023291015fa1dec6915942a340f3722ec85afe0855557"
+  },
+  {
+    "path": "workspace/consumer-rules.pro",
+    "sha256": "15eb06d939124b91f2a294319a39e612b921261adec32e8a405da19627334116"
+  },
+  {
+    "path": "workspace/src/main/AndroidManifest.xml",
+    "sha256": "a39f2408db4c26b383b69e5b705580e63a70567317b166f4663078ab0912ad0c"
+  },
+  {
+    "path": "workspace/src/main/cpp/delta_jni.c",
+    "sha256": "e4129d7f50f12a47d9736e185abd27762a80b88a3539babbebeee73cae603080"
+  },
+  {
+    "path": "workspace/src/main/java/dev/androidagent/workspace/LocalSessionStore.kt",
+    "sha256": "28144b86615ca5e12acc6ef0e7d63ea93cb6708acc2dd40aaff588dfb5d809ab"
+  },
+  {
+    "path": "workspace/src/main/java/dev/androidagent/workspace/LocalTaskBoardStore.kt",
+    "sha256": "021c2f81570112e7bd95b77257809ede55837d7c5f30914cd07a7d86564805ae"
+  },
+  {
+    "path": "workspace/src/main/java/dev/androidagent/workspace/WorkspaceSeeder.kt",
+    "sha256": "35538a290292e94501303840603582c9e18b4ec045102ef36da97158bf276c19"
+  },
+  {
+    "path": "workspace/src/main/kotlin/dev/androidagent/workspace/NativeAtomicPublisher.kt",
+    "sha256": "d497b2dad0454edaafd9ad735a01004931ed2af6f0002babe9b7ab1ed9556568"
+  },
+  {
+    "path": "workspace/src/main/kotlin/dev/androidagent/workspace/NativeDeltaApplier.kt",
+    "sha256": "861d480d206570f3e79e6ebab17199263ece76ae91cd7229fc44bfc5f309ffc3"
+  },
+  {
+    "path": "workspace/src/main/kotlin/dev/androidagent/workspace/TransferBlobStore.kt",
+    "sha256": "8f34a98b67b0c8f6c0f85f387507635ec3b710487842b72d98ba630d5a739b96"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/LocalSessionStoreTest.kt",
+    "sha256": "4950316f1044b0c82df825b618fe702e040c2ef0deed71f6229669e7a0c2fa14"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/NativeAtomicPublisherTest.kt",
+    "sha256": "3f961f0bfba8714bddaa6ba3da5159c7143745a07eb3126684328373ae394f7d"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/NativeDeltaApplierTest.kt",
+    "sha256": "68dcd5c469500671edd73f9408ef077da1dd6cd7bb8f90ea610371615aeec3ef"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/QuickActionsScriptTest.kt",
+    "sha256": "c286fdde39f765038993d8c822c551a4b322d22ca482818e3268a2d1d5d9726f"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/TaskCommitTest.kt",
+    "sha256": "7dfb1443bb335561b9a695d7f06099b4095be676b8fedc40002511573a41b096"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/TransferBlobStoreTest.kt",
+    "sha256": "1f80a849709c7f1a535fe74ce05cf8d90acde9988f2a2a20cfa65dd2331986ed"
+  },
+  {
+    "path": "workspace/src/test/kotlin/dev/androidagent/workspace/WorkspaceSeederTest.kt",
+    "sha256": "fd43538f43adfbcac7637f94aace36e94bf3ca351d7b6cd55cb704cf54edfad6"
+  }
+]

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike's team - {{TITLE}}</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+/*@include parts/manager.css*/
+/*@include parts/team.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+</head>
+<body style="--hue-rgb:{{HUE}}">
+<!--@include parts/icons.html-->
+<div class="mscreen {{SCREEN_CLASS}}">
+  <div class="aura"></div>
+  <div class="sb"><span>14:36</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+  <div class="mtop">
+    <button class="ibtn" aria-label="חזרה לצוות"><svg class="ic mir"><use href="#i-back"/></svg></button>
+    <span class="grow"></span>
+    <button class="ibtn mute" aria-label="עוד פעולות"><svg class="ic"><use href="#i-more"/></svg></button>
+  </div>
+
+  <section class="mhero">
+    <canvas class="orb" data-orb="a" data-face="{{FACE}}" data-state="{{STATE}}" data-size="156" data-ring data-seed="3"></canvas>
+    <h1>{{NAME}}</h1>
+    <p class="role">{{ROLE}}</p>
+    <span class="state {{STATE_CLASS}}">{{STATE_HTML}}</span>
+  </section>
+
+  <div class="mbody">
+    {{NOW_HTML}}
+
+    <div class="section off"><b>מה עשה</b><span class="n">{{COUNT}}</span><i></i></div>
+    <div class="tl">
+      {{TIMELINE_HTML}}
+    </div>
+
+    <div class="group links">
+      <a class="row"><span class="tile"><svg class="ic s18"><use href="#i-book"/></svg></span><div class="t"><b>{{PLAYBOOK_TITLE}}</b><span>{{PLAYBOOK_SUB}}</span></div><svg class="ic s18 mir muted"><use href="#i-chev"/></svg></a>
+      <a class="row"><span class="tile"><svg class="ic s18"><use href="#i-eye"/></svg></span><div class="t"><b>{{SEES_TITLE}}</b><span>{{SEES_SUB}}</span></div><svg class="ic s18 mir muted"><use href="#i-chev"/></svg></a>
+    </div>
+  </div>
+
+  <div class="mdock">
+    <div class="sugg">{{CHIPS_HTML}}</div>
+    <div class="composer">
+      <span class="ibtn mute" style="width:44px;height:44px"><svg class="ic"><use href="#i-plus"/></svg></span>
+      <span class="ph">{{PLACEHOLDER}}</span>
+      <span class="send"><svg class="ic s18"><use href="#i-arrow-up"/></svg></span>
+    </div>
+    <p class="help">הנחיות שנכתבות כאן נשמרות בכללים שלך, והמאמן לא משנה אותן.</p>
+  </div>
+</div>
+
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

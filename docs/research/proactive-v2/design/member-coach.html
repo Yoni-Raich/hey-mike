@@ -1,0 +1,1023 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike's team - Coach</title>
+<meta name="viewport" content="width=412">
+<style>
+/* Tokens. Dark values are the shipped scheme (AndroidAgentScreen.kt AgentDarkColors,
+   AutomationStrip.kt, ChatTopBar.kt, ChatLibraryDrawer.kt on origin/dev).
+   Light values are a PROPOSAL: the shipped app is dark only. */
+:root {
+  color-scheme: dark;
+  /* scheme */
+  --bg: #000000;
+  --on-bg: #F2F2F2;
+  --surface: #202020;
+  --on-surface: #F2F2F2;
+  --surface-variant: #303030;
+  --on-surface-variant: #AAAAAA;
+  --primary: #F4F4F4;
+  --on-primary: #111111;
+  --primary-container: #252525;
+  --on-primary-container: #F4F4F4;
+  --outline-variant: #3A3A3A;
+  --secondary: #83D9CA;
+  --secondary-container: #174E47;
+  --on-secondary-container: #A1F2E1;
+  --tertiary-container: #1E3A34;
+  --on-tertiary-container: #CDEFE5;
+  --error: #FFB4AB;
+  --error-container: #2B1D1B;
+  --on-error-container: #FFDAD6;
+  /* the strip's family: teal = live/ok, amber = needs attention */
+  --ready: #83D9CA;
+  --blocked: #F6B86A;
+  --off: #8F8F8F;
+  --blocked-container: #241E14;
+  --blocked-outline: #4A3A24;
+  /* sheet and warm drawer ground */
+  --sheet: #1B1B1B;
+  --drawer: #141413;
+  --drawer-tile: #1F1E1C;
+  --drawer-line: #232220;
+  --warm-ink: #ECEBE6;
+  --warm-muted: #8E8C85;
+  --warm-faint: #6C6A64;
+  /* derived, not new colours: alpha of the above */
+  --card: #202020;
+  --card-line: color-mix(in srgb, #3A3A3A 55%, transparent);
+  --inset: color-mix(in srgb, #303030 45%, transparent);
+  --hair: color-mix(in srgb, #3A3A3A 50%, transparent);
+  --scrim: rgba(0,0,0,.62);
+  --teal-ink: #83D9CA;      /* teal as text */
+  --amber-ink: #F6B86A;     /* amber as text */
+  --mike-ink: #ECEBE6;      /* Mike's own words in the Manager chat */
+  --aura-teal: rgba(131,217,202,.10);
+  --aura-amber: rgba(246,184,106,.09);
+  --disabled: #444444;
+  --control-line: #707070;   /* border of an interactive outline control: 3:1 on the sheet and on cards */
+
+  /* shape */
+  --r-sheet: 28px;
+  --r-card: 18px;
+  --r-row: 14px;
+  --r-bubble: 20px;
+  --r-chip: 16px;
+  --r-badge: 7px;
+  --r-btn: 24px;
+
+  /* type (sp -> px at 1.0 font scale) */
+  --fs-body-l: 17px;  --lh-body-l: 27px;
+  --fs-body-m: 14px;  --lh-body-m: 21px;
+  --fs-title-m: 16px; --lh-title-m: 24px;
+  --fs-title-s: 14px; --lh-title-s: 20px;
+  --fs-label-m: 12px; --lh-label-m: 16px;
+  --fs-label-s: 11px; --lh-label-s: 16px;
+  --fs-head-s: 24px;  --lh-head-s: 32px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #FAF9F6;
+  --on-bg: #1A1A19;
+  --surface: #FFFFFF;
+  --on-surface: #1A1A19;
+  --surface-variant: #ECEBE6;
+  --on-surface-variant: #5A5953;
+  --primary: #1A1A19;
+  --on-primary: #F4F4F4;
+  --primary-container: #ECEBE6;
+  --on-primary-container: #1A1A19;
+  --outline-variant: #D8D6CE;
+  --secondary: #0F6B5E;
+  --secondary-container: #D3EFE8;
+  --on-secondary-container: #00352E;
+  --tertiary-container: #DCEFE9;
+  --on-tertiary-container: #0B3B33;
+  --error: #B3261E;
+  --error-container: #FCE8E6;
+  --on-error-container: #5C1410;
+  --ready: #14776A;
+  --blocked: #B87400;
+  --off: #77766F;
+  --blocked-container: #FBEFD9;
+  --blocked-outline: #E7CFA3;
+  --sheet: #F3F2EE;
+  --drawer: #F3F2EE;
+  --drawer-tile: #FFFFFF;
+  --drawer-line: #E4E2DA;
+  --warm-ink: #1F1F1D;
+  --warm-muted: #6B6A63;
+  --warm-faint: #8A8982;
+  --card: #FFFFFF;
+  --card-line: #E1DFD7;
+  --inset: #F1F0EB;
+  --hair: #E1DFD7;
+  --scrim: rgba(20,20,18,.38);
+  --teal-ink: #0F6B5E;
+  --amber-ink: #8A5A00;
+  --mike-ink: #1F1F1D;
+  --aura-teal: rgba(20,119,106,.10);
+  --aura-amber: rgba(184,116,0,.10);
+  --disabled: #D8D6CE;
+  --control-line: #85837B;
+}
+
+/* Shared components. Logical properties only, so RTL needs no overrides. */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { background: var(--bg); }
+body {
+  width: 412px; min-height: 915px; margin: 0 auto 0 0; position: relative;
+  background: var(--bg); color: var(--on-surface);
+  font-family: Roboto, "Segoe UI", "Noto Sans Hebrew", "Arial Hebrew", system-ui, sans-serif;
+  font-size: var(--fs-body-m); line-height: var(--lh-body-m);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+@media (min-width: 700px) { body { margin: 0 auto; } }   /* phone mockup centred on a desktop window */
+p, li, .why { text-wrap: pretty; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.ltr { direction: ltr; unicode-bidi: isolate; display: inline-block; }   /* numbers, Latin names */
+.num { unicode-bidi: isolate; }
+
+/* ---------- icons ---------- */
+.ic { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.ic.s14 { width: 14px; height: 14px; stroke-width: 1.9; }
+.ic.s16 { width: 16px; height: 16px; stroke-width: 1.85; }
+.ic.s18 { width: 18px; height: 18px; }
+.ic.s24 { width: 24px; height: 24px; stroke-width: 1.6; }
+[dir="rtl"] .mir { transform: scaleX(-1); }   /* direction-bearing glyphs only */
+
+/* ---------- status bar ---------- */
+.sb { height: 28px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 500; color: var(--on-bg); }
+.sb .r { display: flex; gap: 6px; align-items: center; }
+.sb .bat { width: 20px; height: 10px; border: 1.4px solid currentColor; border-radius: 3px; position: relative; opacity: .9; }
+.sb .bat::after { content: ""; position: absolute; inset: 1.5px; inline-size: 60%; background: currentColor; border-radius: 1px; }
+
+/* ---------- sheet frame (ModalBottomSheet look) ---------- */
+.behind { height: 24px; background: var(--bg); position: relative; overflow: hidden; }
+.behind::after { content: ""; position: absolute; inset: 0; background: var(--scrim); }
+.sheet { background: var(--sheet); border-radius: var(--r-sheet) var(--r-sheet) 0 0; min-height: calc(915px - 52px); position: relative; padding-bottom: 28px; }
+.grab { width: 32px; height: 4px; border-radius: 2px; background: var(--outline-variant); margin: 0 auto; position: relative; top: 10px; }
+.pad { padding-inline: 20px; }
+
+/* ---------- header ---------- */
+.hdr { display: flex; align-items: center; gap: 4px; min-height: 56px; padding-inline: 8px 12px; margin-top: 14px; }
+.hdr h1 { font-size: var(--fs-head-s); line-height: var(--lh-head-s); font-weight: 700; flex: 1; letter-spacing: 0; }
+.hdr .sub { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); font-weight: 400; display: block; margin-top: 1px; }
+.ibtn { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; color: var(--on-surface); flex: none; position: relative; }
+.ibtn.mute { color: var(--on-surface-variant); }
+.badge-dot { position: absolute; top: 11px; inset-inline-end: 11px; width: 9px; height: 9px; border-radius: 50%; background: var(--bg); display: grid; place-items: center; }
+.badge-dot::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--blocked); }
+
+/* ---------- section labels (RuleGroup) ---------- */
+.section { display: flex; align-items: center; gap: 8px; margin: 26px 0 12px; }
+.section b { font-size: 12px; line-height: 16px; font-weight: 700; color: var(--accent, var(--on-surface-variant)); }
+.section .n { font-size: 12px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.section i { flex: 1; height: 1px; background: var(--hair); }
+.section.amber { --accent: var(--amber-ink); }
+.section.teal  { --accent: var(--teal-ink); }
+.section.off   { --accent: var(--off); }
+
+/* ---------- cards ---------- */
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--card-line); border-radius: var(--r-card); padding: 16px; position: relative; }
+.card.amber { background: var(--blocked-container); border-color: var(--blocked-outline); }
+.card.teal  { background: var(--tertiary-container); border-color: color-mix(in srgb, var(--secondary) 28%, transparent); }
+.card.quiet { background: transparent; }
+.card.dim { opacity: .74; }
+.src { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); min-height: 18px; }
+.src .sep { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .55; }
+.src .grow { flex: 1; }
+.src .place { display: inline-flex; align-items: center; gap: 4px; }
+.title { font-size: var(--fs-title-m); line-height: var(--lh-title-m); font-weight: 600; margin-top: 8px; color: var(--on-surface); }
+.why { margin-top: 4px; font-size: 14px; line-height: 21px; color: color-mix(in srgb, var(--on-surface) 74%, transparent); }
+.plan { margin-top: 12px; padding: 10px 12px; border-radius: var(--r-row); background: var(--inset); font-size: 13.5px; line-height: 20px; color: color-mix(in srgb, var(--on-surface) 86%, transparent); }
+.plan .k { display: block; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--on-surface-variant); margin-bottom: 2px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--hair); font-size: 12px; line-height: 16px; color: color-mix(in srgb, var(--on-surface) 80%, transparent); white-space: nowrap; }
+.tag .ic { color: var(--on-surface-variant); }
+.tag.warn .ic { color: var(--blocked); }
+.tag.who { border-color: color-mix(in srgb, var(--on-surface-variant) 45%, transparent); }
+.actions { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+
+/* ---------- buttons ---------- */
+.btn { height: 48px; padding: 0 20px; border-radius: var(--r-btn); display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.btn.primary { background: var(--primary); color: var(--on-primary); }
+.btn.mike { background: var(--secondary-container); color: var(--on-secondary-container); }   /* teal = Mike's own action */
+.btn.tonal { background: color-mix(in srgb, var(--surface-variant) 75%, transparent); color: var(--on-surface); }
+.btn.outline { border: 1px solid var(--control-line); color: var(--on-surface); }
+.btn.ghost { color: var(--on-surface-variant); padding: 0 14px; }
+.btn.danger { border: 1px solid color-mix(in srgb, var(--error) 50%, transparent); color: var(--error); }
+.btn.grow { flex: 1; }
+.btn.round { width: 48px; padding: 0; border-radius: 50%; color: var(--on-surface-variant); }
+.btn.sm { height: 40px; padding: 0 16px; font-size: 13px; }
+
+/* ---------- chips ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { height: 34px; padding: 0 14px; border-radius: var(--r-chip); background: color-mix(in srgb, var(--surface-variant) 45%, transparent); color: var(--on-surface); font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.chip.sel { background: var(--secondary-container); color: var(--on-secondary-container); }
+.chip.outline { background: transparent; border: 1px solid var(--control-line); }
+
+/* ---------- small marks ---------- */
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c, var(--off)); flex: none; }
+.dot.teal { --c: var(--ready); } .dot.amber { --c: var(--blocked); } .dot.off { --c: var(--off); }
+.dot.live { animation: livedot 2.4s ease-in-out infinite; }
+@keyframes livedot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--c); }
+.status.teal { --c: var(--teal-ink); } .status.amber { --c: var(--amber-ink); } .status.off { --c: var(--on-surface-variant); }
+.bar { height: 3px; border-radius: 2px; background: var(--hair); overflow: hidden; margin-top: 12px; }
+.bar > i { display: block; height: 100%; width: 38%; border-radius: 2px; background: var(--ready); margin-inline-start: 12%; animation: slide 2.6s ease-in-out infinite alternate; }
+@keyframes slide { from { margin-inline-start: 0; } to { margin-inline-start: 58%; } }
+.quote { border-inline-start: 2px solid var(--outline-variant); padding-inline-start: 12px; font-size: 14px; line-height: 21px; color: var(--on-surface-variant); }
+.muted { color: var(--on-surface-variant); }
+.small { font-size: 12px; line-height: 16px; }
+.label { font-size: 12px; line-height: 16px; font-weight: 700; color: var(--on-surface-variant); }
+
+/* ---------- list rows (settings style) ---------- */
+.group { background: var(--card); border: 1px solid var(--card-line); border-radius: var(--r-card); overflow: hidden; }
+.row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 16px; position: relative; }
+.row + .row::before { content: ""; position: absolute; inset-inline: 16px; top: 0; height: 1px; background: var(--hair); }
+.row .t { flex: 1; min-width: 0; }
+.row .t b { display: block; font-weight: 500; font-size: 15px; line-height: 20px; }
+.row .t span { display: block; font-size: 12.5px; line-height: 17px; color: var(--on-surface-variant); }
+.tile { width: 36px; height: 36px; border-radius: 10px; background: var(--inset); display: grid; place-items: center; color: var(--on-surface); flex: none; }
+.switch { width: 52px; height: 32px; border-radius: 16px; background: var(--primary); position: relative; flex: none; }
+.switch::after { content: ""; position: absolute; top: 4px; inset-inline-end: 4px; width: 24px; height: 24px; border-radius: 50%; background: var(--on-primary); }
+.switch.off { background: transparent; border: 2px solid var(--outline-variant); }
+.switch.off::after { inset-inline-end: auto; inset-inline-start: 4px; top: 4px; width: 16px; height: 16px; margin: 4px; background: var(--off); }
+.switch.teal { background: var(--secondary); }
+.switch.teal::after { background: var(--bg); }
+
+/* ---------- composer ---------- */
+.composer { display: flex; align-items: center; gap: 8px; height: 56px; padding-inline: 6px 6px; border: 1px solid #5C5C5C; border-radius: 28px; color: var(--on-surface-variant); }
+:root[data-theme="light"] .composer { border-color: #BDBBB3; }
+.composer .ph { flex: 1; font-size: 15px; color: var(--on-surface-variant); padding-inline: 6px; }
+.composer .send { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--disabled); color: var(--on-surface-variant); }
+.composer .send.on { background: var(--primary); color: var(--on-primary); }
+
+/* ---------- orb canvases ---------- */
+canvas.orb { display: block; }
+
+/* ---------- design-review annotations (not product UI) ---------- */
+.note { font-family: "Cascadia Mono", Consolas, monospace; font-size: 10.5px; line-height: 14px; color: var(--on-surface-variant); direction: ltr; unicode-bidi: isolate; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot.live, .bar > i { animation: none; }
+}
+html.still .dot.live, html.still .bar > i { animation: none; }
+
+/* Task board components, shared by the board, the detail, the card states, the Manager chat. */
+.mgr { display: flex; align-items: center; gap: 12px; padding: 10px 14px 10px 12px; min-height: 68px; border-radius: var(--r-card); border: 1px solid var(--card-line);
+  background: linear-gradient(to left, color-mix(in srgb, var(--blocked) 9%, transparent), transparent 70%), var(--card); }
+.mgr .t b { display: block; font-size: 15px; line-height: 20px; font-weight: 600; }
+.mgr .t span { display: block; font-size: 12.5px; line-height: 17px; color: var(--on-surface-variant); margin-top: 1px; }
+.mgr .t { flex: 1; min-width: 0; }
+.mgr .t span em { font-style: normal; color: var(--amber-ink); font-weight: 600; }
+
+.plan.flat { background: none; padding: 0; margin-top: 8px; display: flex; gap: 8px; align-items: flex-start; color: color-mix(in srgb, var(--on-surface) 80%, transparent); }
+.plan.flat .ic { margin-top: 2px; color: var(--teal-ink); width: 16px; height: 16px; }
+.plan.flat b { font-weight: 600; color: var(--on-surface); }
+
+.partial { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: var(--r-row); border: 1px dashed var(--outline-variant); }
+.partial .ic { color: var(--on-surface-variant); margin-top: 2px; }
+.partial p { flex: 1; font-size: 13px; line-height: 19px; color: var(--on-surface-variant); }
+.linkbtn { height: 40px; padding: 0 6px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px; color: var(--teal-ink); border-radius: 10px; }
+
+.run { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; line-height: 19px; color: color-mix(in srgb, var(--on-surface) 82%, transparent); }
+.run .status { font-size: 12px; }
+.ask { margin-top: 10px; font-size: 14px; line-height: 21px; color: var(--on-surface); }
+.ask .q { display: block; font-size: 11px; font-weight: 600; color: var(--amber-ink); line-height: 14px; margin-bottom: 2px; }
+.result { margin-top: 12px; padding: 12px 14px; border-radius: var(--r-row); background: color-mix(in srgb, var(--secondary-container) 38%, transparent); }
+.result .k { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--teal-ink); margin-bottom: 4px; line-height: 14px; }
+.result p { font-size: 14px; line-height: 21px; color: var(--on-surface); }
+
+.nightly { display: flex; gap: 12px; }
+.nightly .mark { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--secondary-container) 60%, transparent); color: var(--teal-ink); flex: none; }
+.nightly ul { list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.nightly li { font-size: 13.5px; line-height: 20px; color: color-mix(in srgb, var(--on-surface) 82%, transparent); padding-inline-start: 14px; position: relative; }
+.nightly li::before { content: ""; position: absolute; inset-inline-start: 0; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: var(--on-surface-variant); }
+.nightly li small { display: block; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+
+.todo { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 4px; }
+.todo + .todo { border-top: 1px solid var(--hair); }
+.todo .box { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--outline-variant); flex: none; margin-inline: 12px 0; }
+.todo .t { flex: 1; min-width: 0; }
+.todo .t b { display: block; font-size: 15px; line-height: 20px; font-weight: 500; }
+.todo .t span { display: block; font-size: 12.5px; line-height: 17px; color: var(--on-surface-variant); }
+
+.hrow { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 0; }
+.hrow + .hrow { border-top: 1px solid var(--hair); }
+.hrow .mk { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--inset); color: var(--on-surface-variant); flex: none; }
+.hrow .mk.ok { color: var(--teal-ink); }
+.hrow .t { flex: 1; min-width: 0; }
+.hrow .t b { display: block; font-size: 14px; line-height: 20px; font-weight: 500; color: color-mix(in srgb, var(--on-surface) 86%, transparent); }
+.hrow .t span { display: block; font-size: 12px; line-height: 17px; color: var(--on-surface-variant); }
+.more { display: flex; align-items: center; justify-content: center; gap: 6px; height: 44px; margin-top: 4px; color: var(--on-surface-variant); font-size: 13px; font-weight: 500; }
+
+/* dismiss reasons: they open inside the card, not in a dialog */
+.why-not { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.why-not .q { font-size: 12.5px; color: var(--on-surface-variant); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+.why-not .chips { gap: 8px; }
+
+/* The Manager chat: calmer and cleaner than an ordinary chat, with Mike present. */
+.mgr-screen { position: relative; min-height: 915px; display: flex; flex-direction: column; overflow: hidden; }
+.aura { position: absolute; inset: 0 0 auto 0; height: 520px; pointer-events: none;
+  background: radial-gradient(ellipse 360px 300px at 50% 170px, var(--aura, var(--aura-teal)), transparent 72%); }
+.st-needs { --aura: var(--aura-amber); }
+.mtop { position: relative; z-index: 2; height: 52px; display: flex; align-items: center; padding-inline: 4px; }
+.mtop .grow { flex: 1; }
+.mtop .badge { position: absolute; top: 5px; inset-inline-start: 4px; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; background: var(--blocked); color: #1a1100; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.mtop .badge.teal { background: var(--secondary-container); color: var(--on-secondary-container); }
+
+.presence { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; margin-top: -6px; }
+.presence #hero { margin: -14px 0 -30px; }
+.presence .name { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: 0; display: flex; align-items: baseline; gap: 8px; color: var(--on-surface); }
+.presence .name small { font-size: 13px; font-weight: 400; color: var(--on-surface-variant); }
+.presence .line { margin-top: 4px; display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; line-height: 20px; color: var(--c, var(--on-surface-variant)); }
+.st-needs .presence .line { --c: var(--amber-ink); }
+.st-thinking .presence .line, .st-working .presence .line, .st-done .presence .line { --c: var(--teal-ink); }
+.crew-pill { --pill: color-mix(in srgb, var(--surface-variant) 35%, var(--bg)); margin-top: 10px; height: 40px; padding: 0 10px 0 12px; border-radius: 20px; display: inline-flex; align-items: center; gap: 10px; background: var(--pill); color: var(--on-surface-variant); font-size: 12.5px; }
+.facepile { display: flex; align-items: center; }
+.facepile .av { width: 30px; height: 30px; border-radius: 50%; background: var(--pill); margin-inline-start: -9px; flex: none; position: relative; }
+.facepile .av:first-child { margin-inline-start: 0; }
+.facepile .av.attn { z-index: 2; }   /* whoever needs you is never covered by a neighbour */
+.facepile canvas { display: block; }
+
+.feed { position: relative; z-index: 1; flex: 1; padding: 16px 20px 0; display: flex; flex-direction: column; gap: 12px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px); mask-image: linear-gradient(to bottom, transparent 0, #000 22px); }
+.mike { font-size: 16px; line-height: 25px; color: var(--mike-ink); max-width: 100%; }
+.mike + .mike { margin-top: -4px; }
+.me { align-self: flex-end; max-width: 84%; background: var(--primary-container); color: var(--on-primary-container); padding: 11px 16px; border-radius: var(--r-bubble); font-size: 16px; line-height: 24px; }
+.mini { padding: 14px; border-radius: 16px; }
+.mini .title { margin-top: 6px; font-size: 15px; line-height: 22px; }
+.mini .tags { margin-top: 10px; }
+.mini .actions { margin-top: 12px; }
+.mini .btn { height: 44px; font-size: 13.5px; }
+.mini .btn.round { width: 44px; }
+.report { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 8px 6px 12px; border-radius: 16px; border: 1px solid var(--card-line); background: color-mix(in srgb, var(--card) 70%, transparent); }
+.report .mark { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--secondary-container) 60%, transparent); color: var(--teal-ink); flex: none; }
+.report .t { flex: 1; min-width: 0; }
+.report .t b { display: block; font-size: 14px; line-height: 19px; font-weight: 600; }
+.report .t span { display: block; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+.activity { display: flex; align-items: center; gap: 10px; align-self: flex-start; padding: 6px 6px 6px 14px; border-radius: 22px; background: color-mix(in srgb, var(--surface-variant) 40%, transparent); font-size: 13px; line-height: 18px; color: color-mix(in srgb, var(--on-surface) 88%, transparent); }
+.activity .st { color: var(--teal-ink); font-weight: 600; }
+.activity .ibtn { width: 32px; height: 32px; color: var(--on-surface-variant); }
+
+.dock { position: relative; z-index: 2; padding: 8px 16px 8px; }
+.sugg { display: flex; gap: 8px; overflow: hidden; margin-bottom: 8px; }
+.sugg .chip { flex: none; background: transparent; border: 1px solid var(--control-line); height: 34px; font-size: 13px; }
+.gesture { height: 14px; margin-top: 6px; display: grid; place-items: center; }
+.gesture i { width: 112px; height: 4px; border-radius: 2px; background: var(--on-surface); opacity: .55; }
+
+/* Mike's team: member rows, role chips, avatar frames. */
+.mem { display: flex; align-items: center; gap: 14px; min-height: 76px; padding: 10px 14px 10px 10px; position: relative; }
+.mem + .mem::before { content: ""; position: absolute; inset-inline: 74px 14px; top: 0; height: 1px; background: var(--hair); }
+.mem .av { width: 56px; height: 56px; flex: none; display: grid; place-items: center; }
+.mem .t { flex: 1; min-width: 0; }
+.mem .t b { display: flex; align-items: center; gap: 8px; font-size: 16px; line-height: 22px; font-weight: 600; }
+.mem .t .role { display: block; font-size: 12.5px; line-height: 18px; color: var(--on-surface-variant); margin-top: 1px; }
+.mem .t .st { display: flex; align-items: center; gap: 7px; font-size: 12.5px; line-height: 18px; margin-top: 4px; color: var(--on-surface-variant); }
+.mem .t .st.teal { color: var(--teal-ink); }
+.mem .t .st.amber { color: var(--amber-ink); font-weight: 600; }
+.autotag { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 10.5px; line-height: 16px; font-weight: 600; color: var(--on-surface-variant); border: 1px solid var(--hair); }
+.autotag.new { color: var(--teal-ink); border-color: color-mix(in srgb, var(--secondary) 35%, transparent); }
+.mem.attn { background: linear-gradient(to left, color-mix(in srgb, var(--blocked) 8%, transparent), transparent 70%); }
+.lead { padding: 14px 16px; display: flex; align-items: center; gap: 14px; border-radius: var(--r-card); border: 1px solid var(--card-line);
+  background: radial-gradient(ellipse 220px 120px at 15% 50%, var(--aura-teal), transparent 70%), var(--card); }
+.lead .t b { display: block; font-size: 17px; line-height: 24px; font-weight: 700; }
+.lead .t span { display: block; font-size: 12.5px; line-height: 18px; color: var(--on-surface-variant); margin-top: 2px; }
+.foot { margin-top: 16px; font-size: 12.5px; line-height: 19px; color: var(--on-surface-variant); display: flex; gap: 10px; align-items: flex-start; }
+.foot .ic { margin-top: 2px; }
+
+/* member page */
+.mscreen { position: relative; min-height: 915px; padding-bottom: 8px; }
+.mscreen .aura { height: 420px; background: radial-gradient(ellipse 340px 260px at 50% 150px, rgba(var(--hue-rgb), .13), transparent 72%); }
+.mscreen.needs .aura { background: radial-gradient(ellipse 340px 260px at 50% 150px, var(--aura-amber), transparent 72%); }
+.mhero { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; text-align: center; margin-top: -4px; }
+.mhero canvas { margin: -6px 0 -4px; }
+.mhero h1 { font-size: 24px; line-height: 30px; font-weight: 700; }
+.mhero .role { font-size: 14px; line-height: 20px; color: var(--on-surface-variant); margin-top: 3px; max-width: 300px; }
+.mhero .state { margin-top: 10px; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px; border-radius: 14px; font-size: 12.5px; font-weight: 600; background: var(--inset); color: var(--on-surface-variant); }
+.mhero .state.teal { color: var(--teal-ink); background: color-mix(in srgb, var(--secondary-container) 45%, transparent); }
+.mhero .state.amber { color: var(--amber-ink); background: var(--blocked-container); border: 1px solid var(--blocked-outline); }
+.mbody { position: relative; z-index: 1; padding: 6px 20px 0; }
+.now { margin-top: 18px; }
+.now .title { margin-top: 2px; font-size: 15px; }
+.now .sub { font-size: 12.5px; line-height: 18px; color: var(--on-surface-variant); margin-top: 3px; }
+.tl .day { font-size: 12px; font-weight: 700; color: var(--on-surface-variant); margin: 14px 0 2px; padding-inline-start: 28px; }
+.tl .it { position: relative; padding: 9px 0 9px; padding-inline-start: 28px; }
+.tl .it::before { content: ""; position: absolute; inset-inline-start: 5px; top: 0; bottom: 0; width: 1px; background: var(--hair); }
+.tl .it:first-child::before, .tl .day + .it::before { top: 18px; }
+.tl .it .mk { position: absolute; inset-inline-start: 0; top: 14px; width: 11px; height: 11px; border-radius: 50%; background: var(--sheet); border: 2px solid var(--outline-variant); }
+.tl .it.ok .mk { border-color: var(--teal-ink); background: var(--teal-ink); }
+.tl .it.run .mk { border-color: var(--teal-ink); box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal-ink) 20%, transparent); }
+.tl .it.warn .mk { border-color: var(--blocked); background: var(--blocked); }
+.tl .row1 { display: flex; gap: 10px; align-items: baseline; }
+.tl .tm { font-size: 12px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; flex: none; min-width: 36px; }
+.tl .tt { font-size: 14.5px; line-height: 21px; font-weight: 500; flex: 1; }
+.tl .tt small { display: block; font-size: 12.5px; line-height: 18px; font-weight: 400; color: var(--on-surface-variant); }
+.tl .out { margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-inline-start: 46px; }
+.outchip { height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 600; display: inline-flex; gap: 5px; align-items: center; background: var(--inset); color: var(--on-surface-variant); }
+.outchip.ok { background: color-mix(in srgb, var(--secondary-container) 55%, transparent); color: var(--teal-ink); }
+.outchip.warn { background: var(--blocked-container); color: var(--amber-ink); border: 1px solid var(--blocked-outline); }
+.outlink { font-size: 12.5px; font-weight: 600; color: var(--on-surface-variant); display: inline-flex; gap: 4px; align-items: center; }
+.tl .talk { padding-inline-start: 28px; padding-block: 8px; position: relative; display: flex; flex-direction: column; }
+.tl .talk::before { content: ""; position: absolute; inset-inline-start: 5px; top: 0; bottom: 0; width: 1px; background: var(--hair); }
+.tl .talk .me { align-self: flex-end; max-width: 88%; font-size: 14.5px; line-height: 21px; padding: 9px 14px; }
+.tl .talk .reply { margin-top: 8px; font-size: 14.5px; line-height: 22px; color: var(--mike-ink); display: flex; gap: 10px; align-items: flex-start; }
+.tl .talk .reply small { display: block; font-size: 12px; color: var(--on-surface-variant); margin-top: 3px; }
+.tl .talk .reply canvas { flex: none; margin-top: 1px; }
+.quietrow { font-size: 12.5px; color: var(--on-surface-variant); padding-inline-start: 28px; padding-block: 6px; position: relative; display: flex; gap: 8px; align-items: center; }
+.quietrow::before { content: ""; position: absolute; inset-inline-start: 5px; top: 0; bottom: 0; width: 1px; background: var(--hair); }
+.links { margin-top: 18px; }
+.mdock { position: sticky; bottom: 0; z-index: 3; padding: 34px 16px 8px; background: linear-gradient(to top, var(--bg) 72%, transparent); margin-top: -10px; }
+.mdock .help { font-size: 11.5px; line-height: 16px; color: var(--on-surface-variant); text-align: center; margin-top: 8px; padding-inline: 12px; }
+
+</style>
+<script>
+/* Page setup. Query options (used for the PNG renders and for review):
+   ?theme=light   light palette (proposal; the shipped app is dark only)
+   ?still         freeze all motion (a deterministic pose per orb state)
+   ?t=3.2         the clock, in seconds, for a still frame
+   ?scroll=900    scroll the page before it is captured
+   ?state=needs   page-specific state (see each page)
+   Reduced motion (prefers-reduced-motion) behaves like ?still. */
+(function () {
+  var q = new URLSearchParams(location.search);
+  var root = document.documentElement;
+  root.dataset.theme = q.get('theme') === 'light' ? 'light' : 'dark';
+  var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.__STILL = q.has('still') || reduced;
+  window.__T = q.has('t') ? parseFloat(q.get('t')) : null;
+  window.__Q = q;
+  if (window.__STILL) root.classList.add('still');
+  window.addEventListener('load', function () {
+    var y = parseFloat(q.get('scroll') || '0');
+    if (y) window.scrollTo(0, y);
+    document.title = String(Math.ceil(document.documentElement.scrollHeight));
+  });
+})();
+
+</script>
+</head>
+<body style="--hue-rgb:184,214,140">
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- Stroke icons, 24 grid. Direction-bearing ones (back, chev, send, undo, restore) get class "mir" where used. -->
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.4"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-computer" viewBox="0 0 24 24"><rect x="4.5" y="5" width="15" height="10.5" rx="1.6"/><path d="M2.5 19h19"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5.5l6.5 6.5L9 18.5"/></symbol>
+  <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="M5.5 9l6.5 6.5L18.5 9"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5.5M11.5 5.5L5 12l6.5 6.5"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.6 4.6L19 7.5"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 11.5L20 4l-5.4 16-3.3-6.3z"/><path d="M11.3 13.7L20 4"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V6M6 11.5L12 5.5l6 6"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.2A8 8 0 1 1 9.8 4a6.4 6.4 0 0 0 10.2 10.2z"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9z"/><path d="M18.5 16.5v3M17 18h3"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.8 3.1-6 7-6s7 2.2 7 6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.4c0 4.3-2.9 7.7-7 9.6-4.1-1.9-7-5.3-7-9.6V6z"/><path d="M9 12l2.2 2.2L15.2 10"/></symbol>
+  <symbol id="i-tasks" viewBox="0 0 24 24"><path d="M10 6.5h10M10 12h10M10 17.5h10"/><path d="M3.8 6.3l1.3 1.3 2.4-2.6M3.8 11.8l1.3 1.3 2.4-2.6M3.8 17.3l1.3 1.3 2.4-2.6"/></symbol>
+  <symbol id="i-tune" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h2M12 17h8"/><circle cx="16" cy="7" r="2.4"/><circle cx="9" cy="17" r="2.4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.8 7l.9 12.2h8.6L17.2 7"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9.5 8.5h5.2a4.2 4.2 0 0 1 0 8.4H8"/><path d="M12 4.8L8.3 8.5 12 12.2"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.3-5.4"/><path d="M4.2 4.5v4.4h4.4"/><path d="M12 8v4.2l2.8 1.6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.2"/><path d="M4.5 7.5l7.5 5.8 7.5-5.8"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2.2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M6 5h12a2.5 2.5 0 0 1 2.5 2.5v6A2.5 2.5 0 0 1 18 16h-6.2L7.5 19.5V16H6a2.5 2.5 0 0 1-2.5-2.5v-6A2.5 2.5 0 0 1 6 5z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.8 12S6.2 5.8 12 5.8 21.2 12 21.2 12 17.8 18.2 12 18.2 2.8 12 2.8 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M6 4h11.5a1.5 1.5 0 0 1 1.5 1.5V20H8a2 2 0 0 1-2-2z"/><path d="M6 18a2 2 0 0 1 2-2h11M10 8h5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.5l8.5 14.5h-17z"/><path d="M12 10v4M12 16.8h.01"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4.5 19.5h4L19 9l-4-4L4.5 15.5z"/><path d="M13 7l4 4"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3.5L5.5 13.5H11l-1 7 7.5-10H12z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3.5h7L18 8v12.5H6.5z"/><path d="M13.5 3.5V8H18"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4.2l2 2.3H19A1.5 1.5 0 0 1 20.5 9.3V17.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z"/><path d="M10 20.5h4"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c0-3.3 2.7-5.2 6-5.2s6 1.9 6 5.2"/><path d="M15.8 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.6c2.2.5 3.6 2.2 3.6 4.9"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><path d="M12 12l5.5-5.5"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M3 9.5a13 13 0 0 1 18 0M6 13a8.6 8.6 0 0 1 12 0M9 16.4a4.2 4.2 0 0 1 6 0M12 19.6h.01"/></symbol>
+</svg>
+
+<div class="mscreen ">
+  <div class="aura"></div>
+  <div class="sb"><span>14:36</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+  <div class="mtop">
+    <button class="ibtn" aria-label="חזרה לצוות"><svg class="ic mir"><use href="#i-back"/></svg></button>
+    <span class="grow"></span>
+    <button class="ibtn mute" aria-label="עוד פעולות"><svg class="ic"><use href="#i-more"/></svg></button>
+  </div>
+
+  <section class="mhero">
+    <canvas class="orb" data-orb="a" data-face="coach" data-state="done" data-size="156" data-ring data-seed="3"></canvas>
+    <h1>מאמן</h1>
+    <p class="role">בודק החלטות ומשפר את ספר ההנחיות</p>
+    <span class="state teal"><svg class="ic s14"><use href="#i-check"/></svg>סיים הלילה · עדכן 3 כללים</span>
+  </section>
+
+  <div class="mbody">
+    <section class="now"><div class="card"><span class="label">עכשיו</span><h3 class="title">עדכן 2 כללים והציע שינוי אחד</h3><p class="sub">כל השינויים של הלילה בכרטיס אחד בלוח, עם ביטול בלחיצה</p></div></section>
+
+    <div class="section off"><b>מה עשה</b><span class="n">5</span><i></i></div>
+    <div class="tl">
+      <div class="day">הלילה · 03:12</div><div class="it warn"><span class="mk"></span><div class="row1"><span class="tm">03:15</span><span class="tt">הציע להחריג אפליקציה<small>14 מתוך 15 ההצעות ממנה נדחו</small></span></div><div class="out"><span class="outchip warn">מחכה להחלטה שלך</span><span class="outlink">לכרטיס<svg class="ic s14 mir"><use href="#i-chev"/></svg></span></div></div><div class="it ok"><span class="mk"></span><div class="row1"><span class="tm">03:14</span><span class="tt">כלל חדש: בבקשות של דנה, להציע טיוטת תשובה<small>אושרו 5 מתוך 5</small></span></div><div class="out"><span class="outchip ok"><svg class="ic s14"><use href="#i-check"/></svg>כלל עודכן</span><span class="outlink">לבטל<svg class="ic s14 mir"><use href="#i-chev"/></svg></span></div></div><div class="it ok"><span class="mk"></span><div class="row1"><span class="tm">03:14</span><span class="tt">כלל חדש: לא להציע משימות מהתראות משלוחים<small>12 מתוך 12 נדחו</small></span></div><div class="out"><span class="outchip ok"><svg class="ic s14"><use href="#i-check"/></svg>כלל עודכן</span><span class="outlink">לבטל<svg class="ic s14 mir"><use href="#i-chev"/></svg></span></div></div><div class="it "><span class="mk"></span><div class="row1"><span class="tm">03:12</span><span class="tt">סקר 23 החלטות מ-7 הימים האחרונים<small>הצעות שאושרו, נדחו ותוקנו</small></span></div></div><div class="day">אתמול</div><div class="it "><span class="mk"></span><div class="row1"><span class="tm">03:11</span><span class="tt">לא שינה כללים<small>אין עדיין מספיק החלטות חדשות</small></span></div><div class="out"><span class="outchip ">הושלם</span></div></div>
+    </div>
+
+    <div class="group links">
+      <a class="row"><span class="tile"><svg class="ic s18"><use href="#i-book"/></svg></span><div class="t"><b>ספר ההנחיות</b><span>9 כללים · עודכן הלילה</span></div><svg class="ic s18 mir muted"><use href="#i-chev"/></svg></a>
+      <a class="row"><span class="tile"><svg class="ic s18"><use href="#i-eye"/></svg></span><div class="t"><b>מה הוא לא יכול לשנות</b><span>מקורות, מגבלות, אוטונומיה והכללים שלך</span></div><svg class="ic s18 mir muted"><use href="#i-chev"/></svg></a>
+    </div>
+  </div>
+
+  <div class="mdock">
+    <div class="sugg"><span class="chip">למה שינית את זה?</span><span class="chip">תחזיר את הכלל הקודם</span></div>
+    <div class="composer">
+      <span class="ibtn mute" style="width:44px;height:44px"><svg class="ic"><use href="#i-plus"/></svg></span>
+      <span class="ph">כתבו למאמן</span>
+      <span class="send"><svg class="ic s18"><use href="#i-arrow-up"/></svg></span>
+    </div>
+    <p class="help">הנחיות שנכתבות כאן נשמרות בכללים שלך, והמאמן לא משנה אותן.</p>
+  </div>
+</div>
+
+<script>
+/* Mike's orb with a face: one drawing engine, written so it ports to a Compose Canvas.
+   - The base is the app's own orb: ~220 points on a tilted, turning sphere, glow behind
+     (AgentOrb.kt). Larger sizes use more points, like VoiceSphere.kt.
+   - Everything else (void, ring, disk, eyes, iris, satellites, status ring) is plain
+     drawCircle / drawArc / radial gradient: no shaders, no blur filters, no allocation per frame.
+   Usage: <canvas class="orb" data-orb="a|b|c|plain" data-state="idle|thinking|working|needs|done"
+                  data-face="manager|scout|librarian|coach|msgs|meet|pc" data-ring data-tasks="3"> */
+(function () {
+  'use strict';
+  var TAU = Math.PI * 2;
+  var clamp = function (x, a, b) { return Math.min(b, Math.max(a, x)); };
+  var lerp = function (a, b, t) { return a + (b - a) * t; };
+  var mix = function (a, b, t) { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)]; };
+  var mul = function (a, k) { return [a[0] * k, a[1] * k, a[2] * k]; };
+  var sstep = function (a, b, x) { var t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  var hash = function (n) { var x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+  var rgba = function (c, a) { return 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + clamp(a, 0, 1).toFixed(3) + ')'; };
+
+  var PAL = {
+    dark: { teal: [131, 217, 202], amber: [246, 184, 106], gray: [143, 143, 143], hi: [255, 255, 255], pupil: '#000', track: [255, 255, 255], hue: 1, glow: 1 },
+    light: { teal: [20, 119, 106], amber: [184, 116, 0], gray: [110, 110, 104], hi: [8, 36, 32], pupil: '#0b0b0b', track: [0, 0, 0], hue: 0.58, glow: 0.7 }
+  };
+  var theme = function () { return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'; };
+
+  /* ---- the family: one grammar (void, ring, pupil), different details ---- */
+  var FACES = {
+    manager:   { hue: null,            disk: 1, lid: 1,    rings: 1, sweep: 0, radar: 0, orbit: 0, rp: 0.2,  vs: 1.1 },
+    scout:     { hue: [158, 197, 232], disk: 0, lid: 1,    rings: 1, sweep: 0, radar: 1, orbit: 0, rp: 0.15, vs: 0.82 },
+    librarian: { hue: [188, 170, 232], disk: 0, lid: 0.5,  rings: 1, sweep: 0, radar: 0, orbit: 0, rp: 0.16, vs: 0.82 },
+    coach:     { hue: [184, 214, 140], disk: 0, lid: 1,    rings: 2, sweep: 0, radar: 0, orbit: 0, rp: 0.14, vs: 0.82 },
+    msgs:      { hue: [214, 202, 178], disk: 0, lid: 1,    rings: 1, sweep: 0, radar: 0, orbit: 2, rp: 0.15, vs: 0.82 },
+    meet:      { hue: [222, 186, 160], disk: 0, lid: 1,    rings: 1, sweep: 0, radar: 0, orbit: 1, rp: 0.15, vs: 0.82 },
+    pc:        { hue: [180, 196, 210], disk: 0, lid: 1,    rings: 1, sweep: 0, radar: 0, orbit: 3, rp: 0.15, vs: 0.82 }
+  };
+
+  /* ---- state tables (targets; the live loop eases toward them) ---- */
+  var BASE = {
+    mix: 0.6, amber: 0, level: 0.1, glow: 0.22, spin: 0.22,
+    ring: 0.55, ring2: 0, pupil: 1, lid: 1,
+    diskA: 0.45, diskRx: 1.75, diskRy: 0.34, diskSpeed: 0.05, tilt: -12, tiltSwing: 0, tiltHz: 0.25,
+    pulse: 0, pulseHz: 0.3, sweep: 0, scan: 0, wander: 1, gx: 0, gy: 0, blink: 1, sats: 0, ripple: 0,
+    squint: 0, rx: 1, ry: 1, happy: 0, head: 0,
+    ir: 1, pr: 0.2, fibA: 0.45, rot: 0.02, stream: 0, catch: 0, shift: 0
+  };
+  var ST = {
+    a: {
+      idle:     { mix: 0.62, level: 0.1, glow: 0.22, ring: 0.6, diskA: 0.62, diskRx: 1.85, diskRy: 0.3, diskSpeed: 0.05, wander: 1, blink: 1, spin: 0.22 },
+      thinking: { mix: 1, level: 0.3, glow: 0.32, ring: 0.9, diskA: 0.9, diskRx: 2.25, diskRy: 0.46, diskSpeed: 0.2, tiltSwing: 9, pulse: 0.3, pulseHz: 0.9, sweep: 1, scan: 0.45, wander: 0.3, blink: 0, spin: 0.5, pupil: 0.92 },
+      working:  { mix: 1, level: 0.3, glow: 0.28, ring: 0.8, diskA: 0.62, diskSpeed: 0.1, gy: 0.12, wander: 0.35, blink: 1, spin: 0.35, sats: 1 },
+      needs:    { mix: 1, amber: 1, level: 0.2, glow: 0.3, ring: 1, ring2: 0.55, diskA: 0.5, diskRx: 1.7, diskRy: 0.36, diskSpeed: 0.035, gy: 0.5, pulse: 0.5, pulseHz: 0.33, wander: 0.25, blink: 0, spin: 0.12 },
+      done:     { mix: 1, level: 0.1, glow: 0.2, ring: 0.7, diskA: 0.32, diskRx: 1.35, diskRy: 0.07, diskSpeed: 0.02, lid: 0.78, ripple: 1, wander: 0, blink: 0, spin: 0.15 }
+    },
+    b: {
+      idle:     { mix: 0.62, level: 0.1, glow: 0.2, wander: 1, blink: 1, spin: 0.22 },
+      thinking: { mix: 1, level: 0.3, glow: 0.3, squint: 0.82, scan: 0.35, gy: -0.3, wander: 0.2, blink: 0, spin: 0.5, pulse: 0.1, pulseHz: 1.1 },
+      working:  { mix: 1, level: 0.3, glow: 0.26, rx: 0.9, ry: 0.62, gy: 0.4, wander: 0.2, blink: 1, spin: 0.35, sats: 1 },
+      needs:    { mix: 1, amber: 1, level: 0.2, glow: 0.3, ry: 1.28, rx: 1.06, gy: 0.5, head: -7, wander: 0.2, blink: 0, spin: 0.12, pulse: 0.5, pulseHz: 0.33 },
+      done:     { mix: 1, level: 0.1, glow: 0.2, happy: 1, wander: 0, blink: 0, spin: 0.15, ripple: 1 }
+    },
+    c: {
+      idle:     { mix: 0.62, level: 0.1, glow: 0.2, pr: 0.2, fibA: 0.42, rot: 0.02, wander: 1, blink: 1, spin: 0.2 },
+      thinking: { mix: 1, level: 0.3, glow: 0.3, pr: 0.2, fibA: 0.7, rot: 0.12, pulse: 1, pulseHz: 0.6, wander: 0.3, blink: 0, spin: 0.45 },
+      working:  { mix: 1, level: 0.3, glow: 0.26, pr: 0.15, fibA: 0.5, rot: 0.04, stream: 1, wander: 0.3, blink: 1, spin: 0.35, sats: 1 },
+      needs:    { mix: 1, amber: 1, level: 0.2, glow: 0.3, pr: 0.3, fibA: 0.6, rot: 0.01, gy: 0.5, pulse: 0.4, pulseHz: 0.33, wander: 0.2, blink: 0, spin: 0.1 },
+      done:     { mix: 1, level: 0.1, glow: 0.2, pr: 0.09, fibA: 0.5, rot: 0.01, catch: 1, wander: 0, blink: 0, spin: 0.15, ripple: 1 }
+    }
+  };
+  // collection switched off: the eye is closed, nothing moves
+  var PAUSED = { mix: 0.25, level: 0.04, glow: 0.08, ring: 0.3, diskA: 0.18, diskRy: 0.03, diskSpeed: 0.01, lid: 0.07, blink: 0, wander: 0, spin: 0.06, squint: 1, fibA: 0.25, pr: 0.1, rot: 0 };
+  ST.a.paused = PAUSED; ST.b.paused = PAUSED; ST.c.paused = PAUSED;
+  var POSE = { idle: 1.9, thinking: 3.1, working: 2.0, needs: 1.6, done: 1.3, paused: 1.0 };
+  var BLINK_EVERY = { a: 9, b: 8, c: 8 };
+
+  var ptsCache = {};
+  function points(n) {
+    if (ptsCache[n]) return ptsCache[n];
+    var a = new Float32Array(n * 3);
+    for (var i = 0; i < n; i++) {
+      var y = 1 - i / (n - 1) * 2, r = Math.sqrt(1 - y * y), ang = i * 2.399963;
+      a[i * 3] = Math.cos(ang) * r; a[i * 3 + 1] = y; a[i * 3 + 2] = Math.sin(ang) * r;
+    }
+    return (ptsCache[n] = a);
+  }
+
+  function blinkClose(t, every, seed) {
+    var k = Math.floor(t / every), best = 0;
+    for (var j = k - 1; j <= k; j++) {
+      if (j < 0) continue;
+      var start = (j + 0.3 + 0.6 * hash(j * 1.7 + seed)) * every, dt = t - start, c = 0;
+      if (dt >= 0 && dt < 0.3) c = dt < 0.09 ? dt / 0.09 : dt < 0.13 ? 1 : 1 - (dt - 0.13) / 0.17;
+      best = Math.max(best, c);
+    }
+    return best;
+  }
+
+  /* ------------------------------------------------------------ */
+  function setup(cv) {
+    var S = parseFloat(cv.dataset.size) || cv.clientWidth || parseFloat(cv.style.width) || 64;
+    var dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(S * dpr); cv.height = Math.round(S * dpr);
+    cv.style.width = S + 'px'; cv.style.height = S + 'px';
+    cv._S = S; cv._dpr = dpr; cv._ctx = cv.getContext('2d');
+    cv._dir = (cv.dataset.orb || 'a').toLowerCase();
+    cv._face = cv.dataset.face || 'manager';
+    cv._ring = cv.hasAttribute('data-ring');
+    cv._seed = parseFloat(cv.dataset.seed) || (Math.random() * 10);
+    cv._tasks = parseInt(cv.dataset.tasks || '3', 10);
+    cv._rtl = getComputedStyle(cv).direction === 'rtl';
+    cv._ph = { spin: 0, disk: 0, rot: 0, t: 0 };
+    setState(cv, cv.dataset.state || 'idle', true);
+  }
+
+  function target(cv, state) {
+    var dir = cv._dir === 'plain' ? 'a' : cv._dir;
+    var o = {}, k, src = (ST[dir] || ST.a)[state] || ST.a.idle;
+    for (k in BASE) o[k] = BASE[k];
+    for (k in src) o[k] = src[k];
+    return o;
+  }
+  function setState(cv, state, snap) {
+    cv._state = state; cv._tgt = target(cv, state);
+    if (snap || !cv._cur) { cv._cur = {}; for (var k in cv._tgt) cv._cur[k] = cv._tgt[k]; }
+  }
+
+  /* ------------------------------------------------------------ */
+  function draw(cv, t) {
+    var ctx = cv._ctx, S = cv._S, P = cv._cur, ph = cv._ph, dpr = cv._dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, S, S);
+    var pal = PAL[theme()], face = FACES[cv._face] || FACES.manager, dir = cv._dir;
+    var hue = face.hue ? mul(face.hue, pal.hue) : null;
+    var base = hue ? mix(hue, pal.amber, P.amber * 0.5) : mix(mix(pal.gray, pal.teal, P.mix), pal.amber, P.amber);
+    var ka = 0.55 + 0.45 * P.mix;
+    var cx = S / 2, cy = S / 2, R = S * (cv._ring ? 0.35 : 0.33);
+    var detail = clamp((S - 30) / 90, 0, 1);
+    var bt = clamp((S - 48) / 52, 0, 1);          // dot sizes blend smoothly from the small orb to the large one
+    var big = bt > 0.5;
+    var u = S / 40;
+    var close = P.blink > 0.5 ? blinkClose(t, BLINK_EVERY[dir === 'plain' ? 'a' : dir] * (cv._state === 'working' ? 1.3 : 1), cv._seed) : 0;
+    var lid = clamp(P.lid * (face.lid < 1 && dir === 'a' ? lerp(face.lid, 1, P.amber) : 1) * (1 - 0.94 * close), 0.05, 1);
+    var dirx = cv._rtl ? -1 : 1;                                  // logical "end" side
+    var gx = clamp(P.gx + P.wander * 0.08 * Math.sin(t * 0.37 + cv._seed) + P.scan * Math.sin(t * 0.62 + cv._seed * 1.3), -1, 1) * dirx;
+    var gy = clamp(P.gy + P.wander * 0.06 * Math.sin(t * 0.29 + 1.7 + cv._seed), -1, 1);
+    var pulse = P.pulse * Math.sin(t * TAU * P.pulseHz);
+    var glowA = pal.glow;
+
+    // glow behind (same two-stop radial as AgentOrb)
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.5);
+    g.addColorStop(0, rgba(base, (0.2 + 0.3 * P.level + 0.5 * P.glow * 0.25) * glowA * ka));
+    g.addColorStop(1, rgba(base, 0));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, S * 0.5, 0, TAU); ctx.fill();
+
+    // satellites behind
+    var sats = (dir === 'plain' || cv._face !== 'manager') ? 0 : Math.round(cv._tasks * clamp(P.sats, 0, 1));
+    if (sats > 0) drawSats(ctx, cx, cy, R, S, t, base, pal, sats, true, u);
+
+    // carve: where the face is, the dots step back
+    var eye = { x: cx, y: cy, ry: 1 };
+    var carve = null;
+    if (dir === 'a') {
+      var ex = cx + gx * 0.2 * R, ey = cy + gy * 0.17 * R;
+      eye = { x: ex, y: ey };
+      var sm = lerp(1.35, 1, detail), lidc = Math.max(lid, 0.2), vi = 0.33 * face.vs * R * sm, vo = 0.62 * face.vs * R * sm;
+      carve = function (sx, sy) { var dx = sx - ex, dy = (sy - ey) / lidc; return sstep(vi, vo, Math.sqrt(dx * dx + dy * dy)); };
+    } else if (dir === 'b') {
+      var by = cy - 0.06 * R + gy * 0.1 * R, bx = gx * 0.12 * R, sp = 0.34 * R, hr = P.head * Math.PI / 180;
+      var e1 = rot(cx + bx - sp, by, cx, cy, hr), e2 = rot(cx + bx + sp, by, cx, cy, hr);
+      eye = { e1: e1, e2: e2 };
+      carve = function (sx, sy) {
+        var d1 = Math.hypot(sx - e1[0], (sy - e1[1]) * 0.8), d2 = Math.hypot(sx - e2[0], (sy - e2[1]) * 0.8);
+        return 0.25 + 0.75 * sstep(0.16 * R, 0.4 * R, Math.min(d1, d2));
+      };
+    } else if (dir === 'c') {
+      var ix = cx + gx * 0.16 * R, iy = cy + gy * 0.14 * R, ri = 0.6 * R * P.ir;
+      eye = { x: ix, y: iy, ri: ri };
+      carve = function (sx, sy) { var d = Math.hypot(sx - ix, sy - iy); return 0.28 + 0.72 * sstep(ri * 0.8, ri * 1.2, d); };
+    }
+
+    // the orb itself
+    var N = Math.round(lerp(170, 560, detail));
+    var pts = points(N);
+    var cY = Math.cos(ph.spin), sY = Math.sin(ph.spin), cX = Math.cos(0.38), sX = Math.sin(0.38);
+    for (var i = 0; i < N; i++) {
+      var x = pts[i * 3], y = pts[i * 3 + 1], z = pts[i * 3 + 2];
+      var wob = Math.sin(3.1 * x + t * 1.9) * Math.sin(2.7 * y - t * 1.3) * Math.sin(3.3 * z + t * 2.2);
+      var push = 1 + 0.05 * wob * (0.4 + P.level);
+      var px = x * push, py = y * push, pz = z * push;
+      var tx = px * cY + pz * sY, tz = -px * sY + pz * cY;
+      var ty = py * cX - tz * sX, tzz = py * sX + tz * cX;
+      var persp = 2.8 / (2.8 - tzz), depth = clamp((tzz + 1) / 2, 0, 1);
+      var sx = cx + tx * R * persp, sy = cy + ty * R * persp;
+      var a = (0.1 + 0.9 * depth * depth) * ka * (carve ? carve(sx, sy) : 1);
+      if (a < 0.02) continue;
+      var r = lerp((0.35 + 0.75 * depth) * u * (1 + 0.3 * P.level), Math.max(0.42, (0.55 + 1.35 * depth) * 0.9 * S / 360 * 1.25), bt);
+      ctx.fillStyle = rgba(mix(base, pal.hi, clamp(P.level * 0.6 * depth, 0, 1)), a);
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, TAU); ctx.fill();
+    }
+
+    if (dir === 'a') drawA(ctx, eye, R, S, P, ph, t, base, pal, face, lid, pulse, gx, gy, detail, u, big);
+    else if (dir === 'b') drawB(ctx, eye, cx, cy, R, S, P, t, base, pal, lid, pulse, u, big);
+    else if (dir === 'c') drawC(ctx, eye, R, S, P, ph, t, base, pal, lid, pulse, u, big, detail);
+
+    if (sats > 0) drawSats(ctx, cx, cy, R, S, t, base, pal, sats, false, u);
+
+    if (P.ripple > 0.01) {
+      var k = ((t * 0.42) % 1), rr = lerp(R * 0.3, R * 1.45, 1 - Math.pow(1 - k, 3));
+      ctx.lineWidth = Math.max(1, S / 160 * 1.4);
+      ctx.strokeStyle = rgba(base, 0.55 * Math.pow(1 - k, 1.6) * P.ripple);
+      ctx.beginPath(); ctx.arc(eye.x || cx, eye.y || cy, rr, 0, TAU); ctx.stroke();
+    }
+
+    if (cv._ring) statusRing(ctx, cx, cy, S, cv._state, t, hue || base, pal, cv._rtl, !!hue);
+  }
+
+  function rot(x, y, cx, cy, a) { var c = Math.cos(a), s = Math.sin(a); return [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c]; }
+
+  /* ---- Direction A: the singularity eye ---- */
+  function drawA(ctx, e, R, S, P, ph, t, base, pal, face, lid, pulse, gx, gy, detail, u, big) {
+    var rp = face.rp * R * P.pupil * (1 + 0.05 * pulse) * lerp(1.5, 1, detail);   // small sizes: a bigger eye
+    var ringR = rp * 1.12, w = Math.max(1, S / 120 * 1.3);
+    var hi = pal.hi, bright = mix(base, hi, theme() === 'dark' ? 0.55 : 0.15);
+    ctx.save();
+    ctx.translate(e.x, e.y); ctx.scale(1, lid);
+    // light bent around the hole
+    var hg = ctx.createRadialGradient(0, 0, rp * 0.9, 0, 0, rp * 3.4);
+    hg.addColorStop(0, rgba(base, (0.34 * P.ring + 0.1 * Math.abs(pulse)) * pal.glow));
+    hg.addColorStop(1, rgba(base, 0));
+    ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(0, 0, rp * 3.4, 0, TAU); ctx.fill();
+
+    var tilt = (P.tilt + P.tiltSwing * Math.sin(t * TAU * P.tiltHz)) * Math.PI / 180;
+    var M = face.disk ? Math.round(lerp(20, 190, detail)) : 0;
+    var ox = gx * 0.3 * rp, oy = gy * 0.3 * rp;       // the ring drifts toward where the cards are
+    var disk = [];
+    for (var j = 0; j < M; j++) {
+      var rho = 1 + 0.7 * Math.pow(hash(j * 3.1), 1.5);
+      var th = hash(j * 1.3) * TAU + ph.disk * TAU * Math.pow(rho, -1.5);
+      var s = Math.sin(th), c = Math.cos(th), far = s < 0;
+      var lx = rho * P.diskRx * rp * c, ly;
+      if (far) ly = -(rp * 1.2 + (rho - 1) * rp * 0.8) * Math.pow(-s, 0.75) * (P.diskRy > 0.2 ? 1 : 0.6 + P.diskRy * 2);
+      else ly = rho * P.diskRy * rp * s;
+      var tr = rot(lx, ly, 0, 0, tilt);
+      disk.push([tr[0] + ox, tr[1] + oy, far, rho, c]);
+    }
+    var dr = Math.max(0.55, lerp(S / 40 * 0.9, S / 360 * 2.3, clamp((S - 48) / 52, 0, 1)));
+    var fade = function (d) { var f = 1 - 0.5 * (d[3] - 1) / 0.7; return P.diskA * f; };
+    for (j = 0; j < disk.length; j++) { var d = disk[j]; if (!d[2]) continue; ctx.fillStyle = rgba(mix(base, hi, 0.2), fade(d) * 0.7); ctx.beginPath(); ctx.arc(d[0], d[1], dr * 0.85, 0, TAU); ctx.fill(); }
+
+    // the pupil: pure dark, so the ring defines it (on #000 it is the background itself)
+    var px = gx * 0.16 * rp, py = gy * 0.16 * rp;
+    ctx.fillStyle = pal.pupil; ctx.beginPath(); ctx.arc(px, py, rp, 0, TAU); ctx.fill();
+
+    // photon ring: three strokes, no blur filter
+    var ra = clamp(P.ring + 0.12 * pulse, 0, 1);
+    ctx.lineCap = 'round';
+    var strokes = [[w * 5.2, 0.07], [w * 2.4, 0.2], [w, 0.95]];
+    for (var q = 0; q < strokes.length; q++) {
+      ctx.lineWidth = strokes[q][0]; ctx.strokeStyle = rgba(q === 2 ? bright : base, ra * strokes[q][1]);
+      ctx.beginPath(); ctx.arc(px * 0.5, py * 0.5, ringR, 0, TAU); ctx.stroke();
+    }
+    if (face.rings === 2) {
+      ctx.lineWidth = w * 0.8; ctx.strokeStyle = rgba(base, ra * 0.55);
+      ctx.beginPath(); ctx.arc(px * 0.3, py * 0.3, ringR * 1.62, 0, TAU); ctx.stroke();
+    }
+    if (P.ring2 > 0.02) {                                   // needs you: a second, slower ring breathes outward
+      var br = 0.5 + 0.5 * Math.sin(t * TAU * P.pulseHz);
+      ctx.lineWidth = w * 0.9; ctx.strokeStyle = rgba(base, P.ring2 * (0.35 + 0.5 * br));
+      ctx.beginPath(); ctx.arc(px * 0.5, py * 0.5, ringR * (1.55 + 0.18 * br), 0, TAU); ctx.stroke();
+    }
+    if (face.radar) {                                       // scout: a radar arc turning around the ring
+      var ph0 = t * TAU * (0.16 + 0.55 * clamp(P.level * 2.2 - 0.2, 0, 1)) - 1.7;
+      var rr = ringR * 2.05;
+      ctx.lineWidth = w * 0.9;
+      for (var seg = 0; seg < 16; seg++) {
+        ctx.strokeStyle = rgba(bright, (0.12 + 0.6 * (seg / 16)) * (0.35 + 0.65 * P.ring));
+        ctx.beginPath(); ctx.arc(0, 0, rr, ph0 - (16 - seg) * 0.06, ph0 - (15 - seg) * 0.06); ctx.stroke();
+      }
+    }
+    for (j = 0; j < disk.length; j++) {                     // near side of the disk crosses in front
+      d = disk[j]; if (d[2]) continue;
+      ctx.fillStyle = rgba(mix(base, hi, 0.35), fade(d) * 1.05);
+      ctx.beginPath(); ctx.arc(d[0], d[1], dr, 0, TAU); ctx.fill();
+    }
+    if (P.sweep > 0.02 && face.disk) {                      // a comet on the ring while it thinks
+      var phi = t * 1.9 + 1;
+      for (var k = 0; k < 12; k++) {
+        var aa = phi - k * 0.11;
+        ctx.fillStyle = rgba(mix(base, hi, 0.7), Math.pow(1 - k / 12, 2) * 0.95 * P.sweep);
+        ctx.beginPath(); ctx.arc(Math.cos(aa) * ringR * 1.02, Math.sin(aa) * ringR * 1.02, dr * (1.25 - k * 0.07), 0, TAU); ctx.fill();
+      }
+    }
+    var orb = face.orbit;                                   // task crew: dots show how many areas it covers
+    for (k = 0; k < orb; k++) {
+      var oa = t * 0.5 * (1 + P.level * 2) + k * TAU / orb;
+      ctx.fillStyle = rgba(bright, 0.85);
+      ctx.beginPath(); ctx.arc(Math.cos(oa) * ringR * 2.15, Math.sin(oa) * ringR * 2.15, dr * 1.9, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* ---- Direction B: two soft dots ---- */
+  function drawB(ctx, e, cx, cy, R, S, P, t, base, pal, lid, pulse, u, big) {
+    var bright = mix(base, pal.hi, theme() === 'dark' ? 0.72 : 0.1);
+    var squint = clamp(P.squint + 0.1 * pulse, 0, 1);
+    var rx = 0.075 * R * P.rx * lerp(1, 1.35, squint);
+    var ry = 0.125 * R * P.ry * lerp(1, 0.2, squint) * (0.06 + 0.94 * lid / 1);
+    var pair = [e.e1, e.e2];
+    for (var i = 0; i < 2; i++) {
+      var p = pair[i];
+      ctx.save(); ctx.translate(p[0], p[1]);
+      var hap = P.happy;
+      var gl = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(rx, ry) * 3.2);
+      gl.addColorStop(0, rgba(base, 0.42 * pal.glow)); gl.addColorStop(1, rgba(base, 0));
+      ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(0, 0, Math.max(rx, ry) * 3.2, 0, TAU); ctx.fill();
+      if (hap < 0.98) {
+        ctx.globalAlpha = 1 - hap;
+        ctx.fillStyle = rgba(bright, 0.95);
+        ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, TAU); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      if (hap > 0.02) {                                     // done: eyes rest as soft closed arcs
+        ctx.globalAlpha = hap; ctx.lineCap = 'round';
+        ctx.lineWidth = Math.max(1.2, R * 0.06); ctx.strokeStyle = rgba(bright, 0.95);
+        ctx.beginPath(); ctx.arc(0, R * 0.05, R * 0.1, Math.PI * 1.18, Math.PI * 1.82); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+  }
+
+  /* ---- Direction C: an iris made of the orb's own light ---- */
+  function drawC(ctx, e, R, S, P, ph, t, base, pal, lid, pulse, u, big, detail) {
+    var bright = mix(base, pal.hi, theme() === 'dark' ? 0.6 : 0.12);
+    var ri = e.ri * lerp(0.35, 1, (lid - 0.05) / 0.95);         // blink: the light closes inward
+    var rp = (P.pr + 0.022 * pulse) * R * lerp(0.4, 1, (lid - 0.05) / 0.95);
+    var F = Math.round(lerp(22, 52, detail));
+    ctx.save(); ctx.translate(e.x, e.y);
+    var cg = ctx.createRadialGradient(0, 0, rp * 0.95, 0, 0, rp * 2.6);
+    cg.addColorStop(0, rgba(base, 0.5 * pal.glow)); cg.addColorStop(1, rgba(base, 0));
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, rp * 2.6, 0, TAU); ctx.fill();
+    var rotation = ph.rot * TAU;
+    ctx.lineCap = 'round';
+    var lw = Math.max(0.6, S / 160);
+    for (var k = 0; k < F; k++) {
+      var h1 = hash(k * 2.3), h2 = hash(k * 5.7 + 1);
+      var a = k / F * TAU + rotation + (h1 - 0.5) * 0.08;
+      var r0 = rp * 1.12, r1 = ri * (0.6 + 0.4 * h1);
+      var wave = 0.5 + 0.5 * Math.sin(a * 2 - t * 1.2 * (P.pulse > 0.5 ? 1 : 0.4) + k * 0.2);
+      var al = P.fibA * (0.35 + 0.65 * h2) * (0.7 + 0.5 * wave);
+      var ca = Math.cos(a), sa = Math.sin(a);
+      ctx.lineWidth = lw; ctx.strokeStyle = rgba(base, al * 0.8);
+      ctx.beginPath(); ctx.moveTo(ca * r0, sa * r0); ctx.lineTo(ca * r1, sa * r1); ctx.stroke();
+      var tipR = P.stream > 0.5 ? r0 + ((t * 0.55 + h1) % 1) * (r1 - r0) : r1;
+      var tipA = P.stream > 0.5 ? Math.sin(Math.PI * ((t * 0.55 + h1) % 1)) : 1;
+      ctx.fillStyle = rgba(bright, al * 1.15 * tipA);
+      ctx.beginPath(); ctx.arc(ca * tipR, sa * tipR, Math.max(0.5, lerp(S / 40 * 0.7, S / 360 * 1.7, clamp((S - 48) / 52, 0, 1))), 0, TAU); ctx.fill();
+    }
+    var rings = [0.78, 0.9];
+    for (var q = 0; q < rings.length; q++) {
+      var cnt = Math.round(lerp(12, 26, detail)) + q * 6, rr = ri * rings[q];
+      for (k = 0; k < cnt; k++) {
+        var aa = k / cnt * TAU + t * (q ? -0.09 : 0.06) * (0.4 + P.level * 3);
+        ctx.fillStyle = rgba(base, 0.3 * P.fibA / 0.45 * (0.6 + 0.4 * Math.sin(k + t)));
+        ctx.beginPath(); ctx.arc(Math.cos(aa) * rr, Math.sin(aa) * rr, Math.max(0.45, lerp(S / 40 * 0.5, S / 360 * 1.2, clamp((S - 48) / 52, 0, 1))), 0, TAU); ctx.fill();
+      }
+    }
+    ctx.lineWidth = lw; ctx.strokeStyle = rgba(bright, 0.3);
+    ctx.beginPath(); ctx.arc(0, 0, ri * 1.02, 0, TAU); ctx.stroke();
+    ctx.fillStyle = pal.pupil; ctx.beginPath(); ctx.arc(0, 0, rp, 0, TAU); ctx.fill();
+    if (P.catch > 0.02) {
+      ctx.fillStyle = rgba(pal.hi, 0.85 * P.catch);
+      ctx.beginPath(); ctx.arc(-rp * 0.32, -rp * 0.36, Math.max(1, rp * 0.2), 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* ---- one satellite per running task ---- */
+  function drawSats(ctx, cx, cy, R, S, t, base, pal, n, behind, u) {
+    var Ro = R * 1.24, tilt = -18 * Math.PI / 180;
+    for (var i = 0; i < n; i++) {
+      var th = t * 0.62 + i * TAU / n, z = Math.sin(th);
+      if ((z < 0) !== behind) continue;
+      var p = rot(cx + Math.cos(th) * Ro, cy + Math.sin(th) * Ro * 0.3, cx, cy, tilt);
+      var r = Math.max(1.1, S / 110) * (0.8 + 0.25 * z);
+      var g = ctx.createRadialGradient(p[0], p[1], 0, p[0], p[1], r * 3.4);
+      g.addColorStop(0, rgba(base, 0.55)); g.addColorStop(1, rgba(base, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p[0], p[1], r * 3.4, 0, TAU); ctx.fill();
+      ctx.fillStyle = rgba(mix(base, pal.hi, 0.5), behind ? 0.6 : 0.95);
+      ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, TAU); ctx.fill();
+    }
+  }
+
+  /* ---- the status ring around an avatar: the same grammar for every crew member ---- */
+  function statusRing(ctx, cx, cy, S, state, t, col, pal, rtl, member) {
+    var r = S / 2 - 1.6, w = S >= 80 ? 2.2 : 1.8;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = w; ctx.strokeStyle = rgba(pal.track, 0.1);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
+    var teal = pal.teal, amber = pal.amber, c;
+    if (state === 'thinking') {
+      var a0 = t * TAU * 0.45;
+      ctx.lineWidth = w; ctx.strokeStyle = rgba(member ? col : teal, 0.95);
+      ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + TAU * 0.27); ctx.stroke();
+    } else if (state === 'working') {
+      ctx.lineWidth = w; ctx.strokeStyle = rgba(teal, 0.5);
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
+      var a1 = t * TAU * 0.38;
+      ctx.strokeStyle = rgba(teal, 1); ctx.lineWidth = w * 1.15;
+      ctx.beginPath(); ctx.arc(cx, cy, r, a1, a1 + TAU * 0.2); ctx.stroke();
+    } else if (state === 'needs') {
+      ctx.lineWidth = w * (1.05 + 0.2 * Math.sin(t * 2.1)); ctx.strokeStyle = rgba(amber, 0.98);
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
+    } else if (state === 'done') {
+      ctx.lineWidth = w; ctx.strokeStyle = rgba(teal, 0.9);
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
+    }
+    if (state === 'needs' || state === 'done') {
+      var bx = cx + (rtl ? -1 : 1) * r * 0.72, by = cy + r * 0.72, br = Math.min(10, Math.max(3.4, S * 0.1));
+      ctx.fillStyle = theme() === 'dark' ? '#000' : '#FAF9F6';
+      ctx.beginPath(); ctx.arc(bx, by, br + 1.8, 0, TAU); ctx.fill();
+      ctx.fillStyle = rgba(state === 'needs' ? amber : teal, 1);
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, TAU); ctx.fill();
+      if (state === 'done') {
+        ctx.lineWidth = Math.max(1.1, br * 0.28); ctx.strokeStyle = theme() === 'dark' ? '#00201b' : '#fff';
+        ctx.beginPath(); ctx.moveTo(bx - br * 0.45, by + br * 0.02); ctx.lineTo(bx - br * 0.1, by + br * 0.38); ctx.lineTo(bx + br * 0.5, by - br * 0.34); ctx.stroke();
+      } else {
+        ctx.lineWidth = Math.max(1.1, br * 0.3); ctx.strokeStyle = theme() === 'dark' ? '#241400' : '#fff';
+        ctx.beginPath(); ctx.moveTo(bx, by - br * 0.5); ctx.lineTo(bx, by + br * 0.08); ctx.stroke();
+        ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.arc(bx, by + br * 0.46, ctx.lineWidth * 0.55, 0, TAU); ctx.fill();
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------ */
+  var orbs = [], running = false, last = 0;
+  function stepParams(cv, dt) {
+    var k, rate = 1 - Math.exp(-dt * 4.5);
+    for (k in cv._tgt) cv._cur[k] += (cv._tgt[k] - cv._cur[k]) * rate;
+    cv._ph.spin += dt * cv._cur.spin; cv._ph.disk += dt * cv._cur.diskSpeed; cv._ph.rot += dt * cv._cur.rot;
+  }
+  function frame(now) {
+    var dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016; last = now;
+    var t = now / 1000;
+    for (var i = 0; i < orbs.length; i++) {
+      var cv = orbs[i];
+      var r = cv.getBoundingClientRect();
+      if (r.bottom < -50 || r.top > innerHeight + 50) continue;
+      stepParams(cv, dt); draw(cv, t + cv._seed);
+    }
+    requestAnimationFrame(frame);
+  }
+  function drawStill(cv) {
+    var t = window.__T != null ? window.__T : (POSE[cv._state] || 2);
+    t += cv._seed * 0;                                       // stills are deterministic
+    for (var k in cv._tgt) cv._cur[k] = cv._tgt[k];
+    cv._ph.spin = t * cv._cur.spin; cv._ph.disk = t * cv._cur.diskSpeed; cv._ph.rot = t * cv._cur.rot;
+    draw(cv, t);
+  }
+  function init(rootEl) {
+    var list = (rootEl || document).querySelectorAll('canvas[data-orb]');
+    for (var i = 0; i < list.length; i++) { if (!list[i]._ctx) { setup(list[i]); orbs.push(list[i]); } }
+    if (window.__STILL) { orbs.forEach(function (cv) { cv._seed = parseFloat(cv.dataset.seed) || 1.7; drawStill(cv); }); }
+    else if (!running) { running = true; requestAnimationFrame(frame); }
+  }
+  window.MikeOrb = { init: init, setState: function (cv, s) { setState(cv, s, window.__STILL); if (window.__STILL) drawStill(cv); } };
+  document.addEventListener('DOMContentLoaded', function () { init(); });
+})();
+
+</script>
+</body>
+</html>

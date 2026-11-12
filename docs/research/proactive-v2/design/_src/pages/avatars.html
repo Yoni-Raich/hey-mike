@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike's team - avatar system</title>
+<meta name="viewport" content="width=1100">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+<style>
+  body { width: 1100px; padding: 36px 40px 56px; }
+  h1 { font-size: 28px; line-height: 36px; font-weight: 700; }
+  .lead { color: var(--on-surface-variant); font-size: 15px; line-height: 24px; max-width: 800px; margin-top: 6px; }
+  h2 { font-size: 15px; line-height: 20px; font-weight: 700; margin: 38px 0 14px; display: flex; gap: 10px; align-items: center; }
+  h2 i { flex: 1; height: 1px; background: var(--hair); }
+  .family { display: flex; gap: 8px; justify-content: space-between; }
+  .fam { text-align: center; width: 132px; }
+  .fam canvas { margin: 0 auto; }
+  .fam b { display: block; font-size: 14px; line-height: 20px; margin-top: 2px; }
+  .fam span { display: block; font-size: 12px; line-height: 17px; color: var(--on-surface-variant); padding: 0 4px; }
+  .fam.lead-m { width: 168px; }
+  .grid { display: grid; grid-template-columns: 170px repeat(5, 1fr); align-items: center; }
+  .grid .ch { font-size: 12.5px; font-weight: 700; text-align: center; padding-bottom: 10px; }
+  .grid .ch span { display: block; font-weight: 400; font-size: 11px; color: var(--on-surface-variant); line-height: 15px; }
+  .grid .rn { padding: 6px 0; font-size: 14px; font-weight: 600; border-top: 1px solid var(--hair); height: 78px; display: flex; flex-direction: column; justify-content: center; }
+  .grid .rn span { font-weight: 400; font-size: 12px; color: var(--on-surface-variant); }
+  .grid .c { border-top: 1px solid var(--hair); height: 78px; display: grid; place-items: center; }
+  .small-row { display: flex; flex-direction: column; gap: 14px; }
+  .small-row .grp { display: flex; gap: 10px; align-items: center; }
+  .small-row .grp .sep { width: 18px; }
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .rules div { border: 1px solid var(--card-line); background: var(--card); border-radius: 16px; padding: 14px 16px; font-size: 13.5px; line-height: 21px; color: color-mix(in srgb, var(--on-surface) 84%, transparent); }
+  .rules b { display: block; font-size: 14px; margin-bottom: 4px; color: var(--on-surface); }
+</style>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<h1>מערכת האווטארים של הצוות</h1>
+<p class="lead">משפחה אחת: אותו כדור נקודות, אותה עין. המנהל הוא היחיד עם דיסק צבירה, והוא גדול יותר. כל חבר צוות מקבל גוון ופרט אחד בפנים. המצב נקרא מהטבעת שמסביב לאווטאר, בצורה ובצבע, ומהעין עצמה.</p>
+
+<h2>המשפחה במנוחה <i></i><span class="note">hue + one face detail each; manager = teal, accretion disk, larger</span></h2>
+<div class="family">
+  <div class="fam lead-m"><canvas class="orb" data-orb="a" data-state="idle" data-size="168" data-ring data-seed="1"></canvas><b>מייק</b><span>המנהל · דיסק צבירה</span></div>
+  <div class="fam"><canvas class="orb" data-orb="a" data-face="scout" data-state="idle" data-size="128" data-ring data-seed="1"></canvas><b>צופה</b><span>קשת מכ״ם<br>גוון קרח</span></div>
+  <div class="fam"><canvas class="orb" data-orb="a" data-face="librarian" data-state="idle" data-size="128" data-ring data-seed="1"></canvas><b>ספרן</b><span>עין חצי עצומה<br>גוון לילך</span></div>
+  <div class="fam"><canvas class="orb" data-orb="a" data-face="coach" data-state="idle" data-size="128" data-ring data-seed="1"></canvas><b>מאמן</b><span>טבעת כפולה<br>גוון עלה</span></div>
+  <div class="fam"><canvas class="orb" data-orb="a" data-face="msgs" data-state="idle" data-size="128" data-ring data-seed="1"></canvas><b>הודעות ותשובות</b><span>שתי נקודות מקיפות<br>גוון אבן</span></div>
+  <div class="fam"><canvas class="orb" data-orb="a" data-face="meet" data-state="idle" data-size="128" data-ring data-seed="1"></canvas><b>פגישות</b><span>נקודה מקיפה אחת<br>גוון חרס</span></div>
+  <div class="fam"><canvas class="orb" data-orb="a" data-face="pc" data-state="idle" data-size="128" data-ring data-seed="1"></canvas><b>פרויקטים במחשב</b><span>שלוש נקודות מקיפות<br>גוון ערפל</span></div>
+</div>
+
+<h2>חמישה מצבים, בגודל 56 <i></i><span class="note">the ring is the same for everyone</span></h2>
+<div class="grid" id="grid"></div>
+
+<h2>גדלים קטנים <i></i><span class="note">24 / 30 (face pile) / 40 / 56</span></h2>
+<div class="small-row" id="small"></div>
+
+<h2>כללי המשפחה <i></i></h2>
+<div class="rules">
+  <div><b>מה משותף</b>כדור הנקודות של AgentOrb, עין של אישון כהה וטבעת פוטונים, אותה בהירות ואותו כרום. הצבעים של המצבים: טורקיז חי, ענבר מחכה לך.</div>
+  <div><b>מה שונה</b>גוון פסטל באותה בהירות, רחוק מהטורקיז, מהענבר ומהכחול החזק של ״שליטה במסך״. פרט אחד בעין. בתחומים: מספר קבוע של נקודות מקיפות.</div>
+  <div><b>המנהל נשאר הכי ייחודי</b>הוא היחיד עם דיסק צבירה, השביט והלוויינים של משימות רצות. אף חבר צוות לא יגדל מעבר ל-56 ברשימה, והמנהל תמיד 76 ומעלה.</div>
+</div>
+
+<script>
+(function () {
+  var states = [
+    ['idle', 'במנוחה', 'ללא טבעת'],
+    ['thinking', 'חושב', 'קשת אחת מסתובבת'],
+    ['working', 'עובד', 'טבעת טורקיז + קטע נע'],
+    ['needs', 'צריך אותך', 'טבעת ענבר + נקודה'],
+    ['done', 'סיים', 'טבעת טורקיז + וי']
+  ];
+  var members = [
+    ['manager', 'מייק', 'המנהל'], ['scout', 'צופה', 'סורק'], ['librarian', 'ספרן', 'זיכרון'],
+    ['coach', 'מאמן', 'החלטות'], ['msgs', 'הודעות ותשובות', 'תחום'], ['meet', 'פגישות', 'תחום'], ['pc', 'פרויקטים במחשב', 'תחום']
+  ];
+  var g = document.getElementById('grid');
+  var h = '<div></div>' + states.map(function (s) { return '<div class="ch">' + s[1] + '<span>' + s[2] + '</span></div>'; }).join('');
+  members.forEach(function (m, i) {
+    h += '<div class="rn">' + m[1] + '<span>' + m[2] + '</span></div>';
+    states.forEach(function (s) {
+      h += '<div class="c"><canvas class="orb" data-orb="a" data-face="' + m[0] + '" data-state="' + s[0] + '" data-size="56" data-ring data-seed="' + (i + 1) + '"></canvas></div>';
+    });
+  });
+  g.innerHTML = h;
+  var sm = document.getElementById('small'), out = '';
+  [['manager', 'מייק'], ['scout', 'צופה'], ['coach', 'מאמן']].forEach(function (m) {
+    out += '<div class="grp">' + states.map(function (s) {
+      return [24, 30, 40].map(function (n) { return '<canvas class="orb" data-orb="a" data-face="' + m[0] + '" data-state="' + s[0] + '" data-size="' + n + '" data-ring data-seed="2"></canvas>'; }).join('') + '<span class="sep"></span>';
+    }).join('') + '</div>';
+  });
+  sm.innerHTML = out;
+})();
+</script>
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

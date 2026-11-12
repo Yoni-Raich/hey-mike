@@ -1,0 +1,31 @@
+{
+  "baseline": "c65fe575ab56710e8948de3126a8cee967e01c9a",
+  "branch": "feat/personal-assistant-flow",
+  "versionCode": 1179,
+  "apkSha256": "1c5e58b96b64506ab4978d2c0fe1703fb9c1cd9eb6681a6d858172c1d1e5eb24",
+  "changedFiles": {
+    "PROGRESS.md": "3d733166af507aae9d54de36424b80cf0642e31370a0f3c661a3e9194e044f36",
+    "app/src/androidTest/java/dev/androidagent/app/ui/TaskBoardUiTest.kt": "f34d5389d48fd27c946e4194133fdf28fcc82fe20805ac55c6e13cd1397523bc",
+    "app/src/main/assets/agent_stack/skills/task-board/SKILL.md": "36c2e1d97057ca9d8de3d944ab2745e225baeed32d551f1851d54f33549fc1f1",
+    "app/src/main/assets/agent_stack/skills/task-discovery/SKILL.md": "7bf7faf0710db8696f845536dbc22a1807dc2ff6bc90098f27445a84a772b74d",
+    "app/src/main/assets/agent_stack/skills/task-review/SKILL.md": "069a044bff6897398ee2b58057c62a3cbc9894252b731e11753f4180bc3c64f5",
+    "app/src/main/java/dev/androidagent/app/AgentViewModel.kt": "103434d41028ae545239d5082c7cd12d6f6412e9924402ece138766d04f34caf",
+    "app/src/main/java/dev/androidagent/app/TaskBriefingNotifier.kt": "bd2846ab6698b591e97382e79bc314791c64a80831f7ad7c17bdb136f6d78049",
+    "app/src/main/java/dev/androidagent/app/TaskDesk.kt": "605c11a0a0b31951699082d104092d50e94cba490aa8dadc157181d999b420c5",
+    "app/src/main/java/dev/androidagent/app/ui/TaskBoardSheet.kt": "265c3a0bba141f434e91cb32dc3cf2fe1aab7a1c97de69a64fe1ce571195b9c0",
+    "core/src/main/kotlin/dev/androidagent/core/TaskBoard.kt": "c9507a84d137508e7f2f9234ab7eee0248838666b2f6e8438623601f00ad74c7",
+    "core/src/main/kotlin/dev/androidagent/core/TaskBoardModels.kt": "cddefda2b5ff2f8b5e0a90c972f048e67f886e9b930a054046d56f5cee41e908",
+    "core/src/main/kotlin/dev/androidagent/core/TaskFollowThrough.kt": "8dfb11698b15733016f951b0d29d05a6268d8dd7dac6693297897ab501df3fbe",
+    "core/src/main/kotlin/dev/androidagent/core/TaskJournal.kt": "56406fd7aed9c1d2d505fc15ca3a12aea9f778332a5140910620cca6e468401b",
+    "core/src/main/kotlin/dev/androidagent/core/TaskMemory.kt": "be79e744e6b595ee10454ff421ab83b55ad5e5172bae2012a39158d18380f883",
+    "core/src/main/kotlin/dev/androidagent/core/TaskPrompts.kt": "8465e21609369e90988128457e6d18f5e45dc808d2ced245368aa1dfbc142f24",
+    "core/src/main/kotlin/dev/androidagent/core/TaskSuggestionFilter.kt": "78e5788f2bbe92b680276255a785cd176430e33e08268ee4c3f36e6efb44d13e",
+    "core/src/main/kotlin/dev/androidagent/core/TaskTools.kt": "bb54284b66eeeeb91741cedc8adafafa77d6bd7aa41bb74f72faefa8824bfb06",
+    "core/src/test/kotlin/dev/androidagent/core/TaskFollowThroughTest.kt": "5ee48fc925b68bafc0e4e778d2f30d4371232a45687cec0deac9f8fa812888e9",
+    "docs/ARCHITECTURE.md": "a866e5d8f6c8f52e7a75fba8d7159fd70054fd2e9239ad375c33638ce94ccb9e",
+    "docs/testing/personal-assistant-flow-20261028.md": "c3319003b745987dfa1b47449cad911216e8ff9f3369b1408e329c3121a37657",
+    "version.properties": "96b986d6b1aaa191e45128ec03fd5f240313f356cfe44658afa42c986b684ac8",
+    "workspace/src/main/java/dev/androidagent/workspace/LocalTaskBoardStore.kt": "021c2f81570112e7bd95b77257809ede55837d7c5f30914cd07a7d86564805ae",
+    "workspace/src/test/kotlin/dev/androidagent/workspace/TaskCommitTest.kt": "e103c3a53aad8849299883d3a692899222d72aaa7dcb54bf566e477ae3cc4728"
+  }
+}

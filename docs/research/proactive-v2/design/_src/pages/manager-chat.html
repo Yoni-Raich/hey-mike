@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike the manager - chat</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+/*@include parts/manager.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<div class="mgr-screen st-needs" id="screen">
+  <div class="aura"></div>
+  <div class="sb"><span>08:14</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+
+  <div class="mtop">
+    <button class="ibtn" aria-label="פתח צ׳אטים וכללים"><svg class="ic"><use href="#i-menu"/></svg></button>
+    <span class="grow"></span>
+    <button class="ibtn" aria-label="לוח המשימות. 3 מחכות להחלטה" style="position:relative"><svg class="ic"><use href="#i-tasks"/></svg><span class="badge" id="badge">3</span></button>
+    <button class="ibtn mute" aria-label="עוד"><svg class="ic"><use href="#i-more"/></svg></button>
+  </div>
+
+  <section class="presence">
+    <canvas class="orb" id="hero" data-orb="a" data-state="needs" data-size="176"></canvas>
+    <div class="name">מייק<small>המנהל</small></div>
+    <div class="line" id="line"><i class="dot amber live" id="ldot"></i><span id="ltext">3 הצעות מחכות להחלטה שלך</span></div>
+    <button class="crew-pill" aria-label="הצוות של מייק. שישה חברים. לאחד יש שאלה אליך">
+      <span class="facepile">
+        <span class="av attn"><canvas class="orb" data-orb="a" data-face="meet" data-state="needs" data-size="30" data-ring data-seed="5"></canvas></span>
+        <span class="av"><canvas class="orb" data-orb="a" data-face="msgs" data-state="working" data-size="30" data-ring data-seed="4"></canvas></span>
+        <span class="av"><canvas class="orb" data-orb="a" data-face="scout" data-state="thinking" data-size="30" data-ring data-seed="1"></canvas></span>
+        <span class="av"><canvas class="orb" data-orb="a" data-face="librarian" data-state="idle" data-size="30" data-ring data-seed="2"></canvas></span>
+        <span class="av"><canvas class="orb" data-orb="a" data-face="coach" data-state="idle" data-size="30" data-ring data-seed="3"></canvas></span>
+        <span class="av"><canvas class="orb" data-orb="a" data-face="pc" data-state="idle" data-size="30" data-ring data-seed="6"></canvas></span>
+      </span>
+      <span>הצוות</span>
+      <svg class="ic s16 mir"><use href="#i-chev"/></svg>
+    </button>
+  </section>
+
+  <section class="feed">
+    <div class="report">
+      <span class="mark"><svg class="ic s18"><use href="#i-moon"/></svg></span>
+      <div class="t"><b>הלילה סידרתי את הלוח</b><span>עדכנתי 3 כללים · מיזגתי 2 הערות</span></div>
+      <button class="btn ghost sm"><svg class="ic s16 mir"><use href="#i-undo"/></svg>לבטל</button>
+    </div>
+
+    <p class="mike">בוקר טוב. עברתי על 14 הודעות, ורובן לא דורשות כלום. החשובה היא הטופס של דנה.</p>
+
+    <article class="card mini">
+      <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · דנה · 14:10</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+      <h3 class="title">לשלוח לדנה את הטופס החתום</h3>
+      <div class="tags">
+        <span class="tag who"><svg class="ic s14"><use href="#i-person"/></svg>הבקשה של דנה, לא שלך</span>
+        <span class="tag warn"><svg class="ic s14"><use href="#i-send"/></svg>שולח הודעה</span>
+      </div>
+      <div class="actions">
+        <button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>מייק, תעשה</button>
+        <button class="btn tonal">אני אעשה</button>
+        <button class="btn round" aria-label="לא רלוונטי"><svg class="ic"><use href="#i-close"/></svg></button>
+      </div>
+    </article>
+
+    <div class="me">תשלח לה, ותוסיף גם את עמוד 2</div>
+
+    <p class="mike">מתחיל. אראה לך את ההודעה לפני שליחה.</p>
+    <div class="activity">
+      <canvas class="orb" data-orb="plain" data-state="working" data-size="26" data-seed="7"></canvas>
+      <span><span class="st">עובד</span> · הטופס של דנה</span>
+      <button class="ibtn" aria-label="לעצור"><svg class="ic s16"><use href="#i-stop"/></svg></button>
+    </div>
+  </section>
+
+  <div class="dock">
+    <div class="sugg">
+      <span class="chip">מה דחוף?</span><span class="chip">מה עשית הלילה?</span><span class="chip">תפסיק להציע…</span>
+    </div>
+    <div class="composer">
+      <span class="ibtn mute" style="width:44px;height:44px"><svg class="ic"><use href="#i-plus"/></svg></span>
+      <span class="ph">דברו עם מייק על הלוח</span>
+      <span class="send"><svg class="ic s18"><use href="#i-arrow-up"/></svg></span>
+    </div>
+    <div class="gesture"><i></i></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var S = {
+    idle:     ['הלוח שקט', 'off', 'idle'],
+    thinking: ['עובר על ההתראות החדשות…', 'teal', 'thinking'],
+    working:  ['מטפל ב-2 משימות', 'teal', 'working'],
+    needs:    ['3 הצעות מחכות להחלטה שלך', 'amber', 'needs'],
+    done:     ['סיימתי. כדאי שתבדוק', 'teal', 'done']
+  };
+  var q = (window.__Q && window.__Q.get('state')) || 'needs';
+  if (!S[q]) q = 'needs';
+  var root = document.getElementById('screen');
+  root.className = 'mgr-screen st-' + q;
+  document.getElementById('hero').dataset.state = q;
+  document.getElementById('ltext').textContent = S[q][0];
+  document.getElementById('ldot').className = 'dot live ' + S[q][1];
+  if (q === 'idle') document.getElementById('badge').style.display = 'none';
+})();
+</script>
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - Tasks strip states</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+/*@include parts/strip.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+<style>
+  body { background: var(--drawer); padding: 20px 16px 28px; }
+  .sbk { margin-bottom: 22px; }
+  .sbk .note { display: block; margin-bottom: 8px; }
+  .sbk .why { font-size: 12px; line-height: 17px; color: var(--warm-muted); margin-top: 8px; }
+  h1 { font-size: 18px; line-height: 24px; margin: 4px 4px 18px; color: var(--warm-ink); font-weight: 600; }
+</style>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<h1>פס המשימות: כל המצבים</h1>
+
+<div class="sbk"><span class="note">needs · 3 waiting, 1 running, 1 to check</span>
+  <div class="tstrip">
+    <div class="h"><canvas class="orb" data-orb="a" data-state="needs" data-size="30" data-ring data-seed="2"></canvas><b>משימות</b><svg class="ic s16 mir muted"><use href="#i-chev"/></svg></div>
+    <div class="chipsrow"><span class="sc amber pad48">3 מחכות לך</span><span class="sc pad48"><i class="dot teal"></i>1 בעבודה</span><span class="sc pad48">1 לבדיקה</span></div>
+    <div class="line"><i class="dot amber"></i><span>הכי דחוף: הטופס של דנה, עד יום שלישי</span></div>
+  </div>
+  <p class="why">ברירת המחדל כשיש הצעות. הצ׳יפ הענבר פותח את הלוח על הסעיף הראשון.</p></div>
+
+<div class="sbk"><span class="note">quiet · nothing new</span>
+  <div class="tstrip">
+    <div class="h"><canvas class="orb" data-orb="a" data-state="idle" data-size="30" data-ring data-seed="2"></canvas><b>משימות</b><svg class="ic s16 mir muted"><use href="#i-chev"/></svg></div>
+    <div class="line"><i class="dot off"></i><span>הכול שקט. מייק בדק לפני 12 דקות</span></div>
+  </div>
+  <p class="why">בלי צ׳יפים. הפס לא תופס מקום כשאין מה לומר.</p></div>
+
+<div class="sbk"><span class="note">thinking · a discovery pass is running</span>
+  <div class="tstrip">
+    <div class="h"><canvas class="orb" data-orb="a" data-state="thinking" data-size="30" data-ring data-seed="2"></canvas><b>משימות</b><svg class="ic s16 mir muted"><use href="#i-chev"/></svg></div>
+    <div class="line teal"><i class="dot teal live"></i><span>מייק סורק 12 הודעות חדשות…</span></div>
+  </div>
+  <p class="why">הקשת הנעה באווטאר והנקודה החיה הם כל האנימציה. אין ספינר.</p></div>
+
+<div class="sbk"><span class="note">working · tasks running</span>
+  <div class="tstrip">
+    <div class="h"><canvas class="orb" data-orb="a" data-state="working" data-size="30" data-ring data-seed="2"></canvas><b>משימות</b><svg class="ic s16 mir muted"><use href="#i-chev"/></svg></div>
+    <div class="chipsrow"><span class="sc pad48"><i class="dot teal live"></i>2 בעבודה</span><span class="sc pad48">2 מחכות לך</span></div>
+    <div class="line teal"><i class="dot teal"></i><span>מייק עובד על הטופס של דנה</span></div>
+  </div></div>
+
+<div class="sbk"><span class="note">blocked · a running task asks you something</span>
+  <div class="tstrip" style="background:var(--blocked-container);border-color:var(--blocked-outline)">
+    <div class="h"><canvas class="orb" data-orb="a" data-state="needs" data-size="30" data-ring data-seed="2"></canvas><b>משימות</b><svg class="ic s16 mir muted"><use href="#i-chev"/></svg></div>
+    <div class="chipsrow"><span class="sc amber pad48">1 מחכה לתשובה שלך</span></div>
+    <div class="line amber"><i class="dot amber"></i><span>מייק שואל: לאיזו כתובת מייל לשלוח את החשבונית?</span></div>
+  </div>
+  <p class="why">הפס כולו מקבל את הרקע הענבר של כלל חסום באוטומציות. זה המצב היחיד שבו הפס כולו משנה צבע.</p></div>
+
+<div class="sbk"><span class="note">done · results to check</span>
+  <div class="tstrip">
+    <div class="h"><canvas class="orb" data-orb="a" data-state="done" data-size="30" data-ring data-seed="2"></canvas><b>משימות</b><svg class="ic s16 mir muted"><use href="#i-chev"/></svg></div>
+    <div class="chipsrow"><span class="sc pad48"><svg class="ic s14" style="color:var(--teal-ink)"><use href="#i-check"/></svg>2 לבדיקה</span></div>
+    <div class="line teal"><i class="dot teal"></i><span>מייק סיים: העברת תמונות החתונה</span></div>
+  </div></div>
+
+<div class="sbk"><span class="note">paused · collection is off</span>
+  <div class="tstrip">
+    <div class="h"><canvas class="orb" data-orb="a" data-state="paused" data-size="30" data-ring data-seed="2"></canvas><b>משימות</b><span class="sc amber pad48" style="height:30px"><svg class="ic s14"><use href="#i-pause"/></svg>מושהה</span></div>
+    <div class="line amber"><i class="dot amber"></i><span>האיסוף כבוי, ולכן הלוח לא מתעדכן</span></div>
+  </div>
+  <p class="why">העין עצומה והכדור שקט. רואים במבט אחד שמייק לא קורא כרגע, בלי לפתוח שום מסך.</p></div>
+
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

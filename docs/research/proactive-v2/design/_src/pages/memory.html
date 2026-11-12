@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - Memory notes</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+<style>
+  .intro { font-size: 14px; line-height: 21px; color: var(--on-surface-variant); margin-top: 2px; }
+  .filters { display: flex; gap: 8px; margin-top: 16px; overflow: hidden; }
+  .filters .chip { flex: none; }
+  .who-h { display: flex; align-items: center; gap: 10px; margin: 26px 0 10px; }
+  .who-h .av { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; background: var(--inset); color: var(--on-surface); }
+  .who-h .av.proj { border-radius: 10px; color: var(--teal-ink); }
+  .who-h b { font-size: 15px; font-weight: 600; flex: 1; }
+  .who-h .n { font-size: 12px; color: var(--on-surface-variant); }
+  .note-c { padding: 13px 14px 8px 8px; }
+  .note-c .top { display: flex; gap: 8px; align-items: flex-start; }
+  .note-c p.txt { flex: 1; font-size: 14.5px; line-height: 22px; color: var(--on-surface); padding-inline-start: 6px; }
+  .note-c .meta2 { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 8px 6px 4px; font-size: 12px; color: var(--on-surface-variant); }
+  .kind { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 11px; background: var(--inset); font-size: 11px; font-weight: 600; color: var(--on-surface); }
+  .kind.warn { background: var(--blocked-container); color: var(--amber-ink); border: 1px solid var(--blocked-outline); }
+  .cue { margin: 8px 6px 0; padding: 8px 12px; border-radius: 12px; background: var(--inset); font-size: 13px; line-height: 19px; color: color-mix(in srgb, var(--on-surface) 84%, transparent); display: flex; gap: 8px; }
+  .cue .ic { color: var(--teal-ink); margin-top: 2px; }
+  .linked { display: inline-flex; align-items: center; gap: 5px; color: var(--teal-ink); font-weight: 500; }
+  .act { display: flex; gap: 0; margin-inline-start: -4px; }
+  .act .ibtn { width: 40px; height: 40px; color: var(--on-surface-variant); }
+  .sheet { padding-bottom: 40px; }
+</style>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<div class="sb"><span>14:41</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+<div class="behind"></div>
+<main class="sheet">
+  <div class="grab"></div>
+  <header class="hdr">
+    <button class="ibtn" aria-label="חזרה למקורות"><svg class="ic mir"><use href="#i-back"/></svg></button>
+    <h1>מה מייק זוכר</h1>
+    <button class="ibtn mute" aria-label="חיפוש"><svg class="ic"><use href="#i-search"/></svg></button>
+  </header>
+
+  <div class="pad">
+    <p class="intro">הערות קצרות שמייק שומר במקום ההודעות עצמן. אפשר לערוך כל אחת או למחוק אותה.</p>
+    <div class="filters">
+      <span class="chip sel">הכול · 37</span><span class="chip">דנה</span><span class="chip">נועם</span><span class="chip">פרויקט אורן</span><span class="chip">משפחה</span>
+    </div>
+
+    <div class="who-h"><span class="av">ד</span><b>דנה</b><span class="n">3 הערות</span></div>
+    <div class="stack">
+      <article class="card note-c">
+        <div class="top"><p class="txt">דנה ביקשה את הטופס החתום עד יום שלישי.</p>
+          <span class="act"><button class="ibtn" aria-label="עריכה"><svg class="ic s18"><use href="#i-edit"/></svg></button><button class="ibtn" aria-label="מחיקה"><svg class="ic s18"><use href="#i-trash"/></svg></button></span></div>
+        <div class="meta2"><span class="kind">בקשה</span><span>וואטסאפ · 25.10</span><span class="linked"><svg class="ic s14"><use href="#i-link"/></svg>קשורה למשימה פתוחה, נשמרת</span></div>
+        <div class="cue"><svg class="ic s16"><use href="#i-bolt"/></svg><span>אם דנה תכתוב על הטופס: הוא נשלח ב-26.10</span></div>
+      </article>
+      <article class="card note-c">
+        <div class="top"><p class="txt">דנה היא רואת החשבון.</p>
+          <span class="act"><button class="ibtn" aria-label="עריכה"><svg class="ic s18"><use href="#i-edit"/></svg></button><button class="ibtn" aria-label="מחיקה"><svg class="ic s18"><use href="#i-trash"/></svg></button></span></div>
+        <div class="meta2"><span class="kind">עובדה</span><span>וואטסאפ · 3.9</span><span>נשמרת עד שתשתנה</span></div>
+      </article>
+    </div>
+
+    <div class="who-h"><span class="av proj"><svg class="ic s16"><use href="#i-folder"/></svg></span><b>פרויקט אורן</b><span class="n">2 הערות</span></div>
+    <div class="stack">
+      <article class="card note-c" style="background:var(--blocked-container);border-color:var(--blocked-outline)">
+        <div class="top"><p class="txt">הפגישה עם נועם: 17:00 היום, או עברה לרביעי?</p>
+          <span class="act"><button class="ibtn" aria-label="עריכה"><svg class="ic s18"><use href="#i-edit"/></svg></button><button class="ibtn" aria-label="מחיקה"><svg class="ic s18"><use href="#i-trash"/></svg></button></span></div>
+        <div class="meta2"><span class="kind warn">סתירה</span><span>שתי הערות אומרות דברים שונים · ספרן, 03:02</span></div>
+      </article>
+      <article class="card note-c">
+        <div class="top"><p class="txt">בדיקות הפרויקט רצות בכל דחיפה לענף הראשי.</p>
+          <span class="act"><button class="ibtn" aria-label="עריכה"><svg class="ic s18"><use href="#i-edit"/></svg></button><button class="ibtn" aria-label="מחיקה"><svg class="ic s18"><use href="#i-trash"/></svg></button></span></div>
+        <div class="meta2"><span class="kind">עובדה</span><span>צ׳אט במחשב · 21.10</span><span>פג בעוד 26 ימים</span></div>
+      </article>
+    </div>
+
+    <div style="margin-top:26px">
+      <button class="btn danger" style="width:100%"><svg class="ic s18"><use href="#i-trash"/></svg>לשכוח הכול על דנה</button>
+    </div>
+  </div>
+</main>
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

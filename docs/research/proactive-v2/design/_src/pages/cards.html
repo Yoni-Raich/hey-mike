@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - task card in every status</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+<style>
+  body { background: var(--sheet); padding: 18px 20px 40px; }
+  h1 { font-size: 20px; line-height: 28px; font-weight: 700; margin: 6px 0 4px; }
+  .lede { font-size: 13px; line-height: 19px; color: var(--on-surface-variant); }
+  .g { margin: 28px 0 10px; font-size: 12px; font-weight: 700; color: var(--on-surface-variant); display: flex; gap: 8px; align-items: center; }
+  .g i { flex: 1; height: 1px; background: var(--hair); }
+  .v { margin-top: 18px; }
+  .v > .note { display: flex; justify-content: space-between; margin-bottom: 7px; }
+  .v > .note span:last-child { font-family: inherit; direction: rtl; }
+  .card.err { background: var(--error-container); border-color: color-mix(in srgb, var(--error) 28%, transparent); }
+  .card.err .k { color: var(--error); }
+  .k { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  .detail-line { margin-top: 8px; font-size: 13px; line-height: 19px; color: var(--on-surface-variant); }
+  .compact-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--card-line); border-radius: var(--r-card); background: transparent; }
+  .compact-row .t { flex: 1; min-width: 0; }
+  .compact-row .t b { display: block; font-weight: 500; font-size: 14.5px; line-height: 20px; }
+  .compact-row .t span { display: block; font-size: 12.5px; line-height: 17px; color: var(--on-surface-variant); }
+  .kind { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px; background: var(--inset); font-size: 11px; font-weight: 600; color: var(--on-surface-variant); }
+  .evidence { margin-top: 10px; }
+</style>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<h1>כרטיס משימה בכל מצב</h1>
+<p class="lede">הכרטיס הוא אותו כרטיס בכל המצבים: כותרת, מקור, כפתורים. רק השורה האמצעית והכפתורים משתנים. ענבר = ממתין לך, טורקיז = מייק פעיל או סיים, אדום רק לכישלון.</p>
+
+<div class="g">פעילות<i></i></div>
+
+<div class="v"><div class="note"><span>proposed</span><span>הצעה חדשה</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · דנה</span><i class="sep"></i><span>14:10</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+  <h3 class="title">לשלוח לדנה את הטופס החתום</h3>
+  <p class="why">היא צריכה אותו עד יום שלישי.</p>
+  <p class="plan flat"><svg class="ic"><use href="#i-sparkle"/></svg><span><b>מייק יעשה:</b> ימצא את הטופס ויכין תשובה עם הקובץ.</span></p>
+  <div class="tags"><span class="tag who"><svg class="ic s14"><use href="#i-person"/></svg>הבקשה של דנה, לא שלך</span><span class="tag warn"><svg class="ic s14"><use href="#i-send"/></svg>שולח הודעה</span></div>
+  <div class="actions"><button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>מייק, תעשה</button><button class="btn tonal">אני אעשה</button><button class="btn round" aria-label="לא רלוונטי"><svg class="ic"><use href="#i-close"/></svg></button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>proposed + partial context</span><span>ראה רק חלק מהשיחה</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · הורים כיתה ב׳</span><i class="sep"></i><span>13:05</span></div>
+  <h3 class="title">לאשר שעת איסוף ביום חמישי</h3>
+  <div class="partial"><svg class="ic s18"><use href="#i-info"/></svg><p>ראיתי רק את ההודעות האחרונות בשיחה.</p><button class="linkbtn"><svg class="ic s16"><use href="#i-eye"/></svg>לקרוא את השיחה</button></div>
+  <div class="actions"><button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>מייק, תעשה</button><button class="btn tonal">אני אעשה</button><button class="btn round" aria-label="לא רלוונטי"><svg class="ic"><use href="#i-close"/></svg></button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>proposed + dismiss reasons open</span><span>אחרי לחיצה על ✕</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-mail"/></svg><span>מייל · חברת הניקיון</span><i class="sep"></i><span>10:42</span></div>
+  <h3 class="title">לאשר את ההצעה של חברת הניקיון</h3>
+  <div class="why-not">
+    <div class="q"><span>למה לא?</span><button class="btn ghost sm" style="height:32px;padding:0 8px">לדלג</button></div>
+    <div class="chips"><span class="chip outline">כבר עשיתי</span><span class="chip outline">לא עכשיו</span><span class="chip outline">טעות</span><span class="chip outline">אל תציע דברים כאלה</span></div>
+  </div>
+</article></div>
+
+<div class="v"><div class="note"><span>approved → starting</span><span>מתחיל</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · דנה</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+  <h3 class="title">לשלוח לדנה את הטופס החתום</h3>
+  <div class="run"><span class="status teal"><i class="dot teal live"></i>מתחיל</span><span class="muted">פותח צ׳אט למשימה</span></div>
+  <div class="bar"><i></i></div>
+</article></div>
+
+<div class="v"><div class="note"><span>running</span><span>מייק עובד</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · יוסי הנגר</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+  <h3 class="title">לתאם מועד למדידות במטבח</h3>
+  <div class="run"><span class="status teal"><i class="dot teal live"></i>עובד · 4 דק׳</span><span class="muted">מחפש את הפרטים בשיחה עם יוסי</span></div>
+  <div class="bar"><i></i></div>
+  <div class="actions"><button class="btn tonal grow">לפתוח צ׳אט</button><button class="btn ghost"><svg class="ic s18"><use href="#i-stop"/></svg>לעצור</button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>waiting (question or approval in its chat)</span><span>מחכה לך</span></div>
+<article class="card amber">
+  <div class="src"><svg class="ic s14"><use href="#i-mail"/></svg><span>מייל · רחל לוי</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+  <h3 class="title">לשלוח חשבונית לרחל</h3>
+  <p class="ask"><span class="q">מייק שואל</span>לאיזו כתובת מייל לשלוח את החשבונית?</p>
+  <div class="actions"><button class="btn primary grow">לענות בצ׳אט</button><button class="btn ghost"><svg class="ic s18"><use href="#i-stop"/></svg>לעצור</button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>review</span><span>לבדיקה</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-folder"/></svg><span>תמונות · אלבום החתונה</span><span class="grow"></span><span class="status teal"><svg class="ic s14"><use href="#i-check"/></svg>מייק סיים</span></div>
+  <h3 class="title">להעביר את תמונות החתונה לתיקייה משותפת</h3>
+  <div class="result"><span class="k">מה נעשה</span><p>הועברו 48 תמונות לתיקייה ״חתונה״ בדרייב. לא&nbsp;נמחק&nbsp;דבר.</p></div>
+  <div class="actions"><button class="btn primary grow"><svg class="ic s18"><use href="#i-check"/></svg>בוצע</button><button class="btn tonal grow">להמשיך</button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>failed</span><span>נכשל</span></div>
+<article class="card err">
+  <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · דנה</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+  <h3 class="title">לשלוח לדנה את הטופס החתום</h3>
+  <p class="detail-line"><span class="k" style="display:inline-flex;color:var(--error)"><svg class="ic s14"><use href="#i-alert"/></svg>לא הצלחתי</span> וואטסאפ לא נפתח. מצאתי את הקובץ, ולא נשלח דבר.</p>
+  <div class="actions"><button class="btn primary grow">לנסות שוב</button><button class="btn tonal">אני אעשה</button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>stopped</span><span>נעצר על ידך</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · יוסי הנגר</span><span class="grow"></span><span class="status"><svg class="ic s14"><use href="#i-stop"/></svg>נעצר</span></div>
+  <h3 class="title">לתאם מועד למדידות במטבח</h3>
+  <p class="detail-line">עצרת בשלב 2 מתוך 3. מה שכבר נשלח לא בוטל: נשלחה הודעה אחת ליוסי.</p>
+  <div class="actions"><button class="btn tonal grow">להמשיך</button><button class="btn tonal">אני אעשה</button><button class="btn ghost">לסגור</button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>unknown (after a restart)</span><span>לא ברור מה קרה</span></div>
+<article class="card amber">
+  <div class="src"><svg class="ic s14"><use href="#i-mail"/></svg><span>מייל · רחל לוי</span></div>
+  <h3 class="title">לשלוח חשבונית לרחל</h3>
+  <p class="detail-line">האפליקציה הופעלה מחדש באמצע המשימה, ולכן לא ברור אם החשבונית נשלחה. כדאי לבדוק בצ׳אט לפני שממשיכים.</p>
+  <div class="actions"><button class="btn primary grow">לבדוק בצ׳אט</button><button class="btn tonal">אני אעשה</button></div>
+</article></div>
+
+<div class="g">שלך וסגורות<i></i></div>
+
+<div class="v"><div class="note"><span>mine</span><span>שלך</span></div>
+<div class="compact-row"><span class="box" style="width:24px;height:24px;border-radius:50%;border:2px solid var(--outline-variant);flex:none"></span><div class="t"><b>לקנות מתנה ליום ההולדת של מיכל</b><span>וואטסאפ · מיכל · עד יום חמישי</span></div></div></div>
+
+<div class="v"><div class="note"><span>snoozed</span><span>נדחה למועד אחר</span></div>
+<div class="compact-row"><span class="hrow" style="min-height:0;padding:0"><span class="mk"><svg class="ic s16"><use href="#i-clock"/></svg></span></span><div class="t"><b>להזמין תור לרופא שיניים</b><span>לא עכשיו · יחזור מחר ב-09:00</span></div><button class="btn ghost sm">להחזיר עכשיו</button></div></div>
+
+<div class="v"><div class="note"><span>done</span><span>הושלם</span></div>
+<div class="compact-row"><span class="hrow" style="min-height:0;padding:0"><span class="mk ok"><svg class="ic s16"><use href="#i-check"/></svg></span></span><div class="t"><b>נשלח הטופס לאורי</b><span>הושלם · אתמול 18:20</span></div></div></div>
+
+<div class="v"><div class="note"><span>dismissed</span><span>נדחה</span></div>
+<div class="compact-row"><span class="hrow" style="min-height:0;padding:0"><span class="mk"><svg class="ic s16"><use href="#i-close"/></svg></span></span><div class="t"><b>להזמין שולחן במסעדה</b><span>נדחה: כבר עשיתי</span></div></div></div>
+
+<div class="v"><div class="note"><span>expired</span><span>פג תוקף</span></div>
+<div class="compact-row"><span class="hrow" style="min-height:0;padding:0"><span class="mk"><svg class="ic s16"><use href="#i-clock"/></svg></span></span><div class="t"><b>לאשר הגעה לחתונה של עדי</b><span>פג תוקף · היה רלוונטי עד יום ראשון</span></div></div></div>
+
+<div class="v"><div class="note"><span>looks_resolved</span><span>נראה פתור</span></div>
+<article class="card">
+  <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · אורי</span><span class="grow"></span><span class="kind"><svg class="ic s14"><use href="#i-check"/></svg>נראה פתור</span></div>
+  <h3 class="title">לדחות את הפגישה עם אורי</h3>
+  <div class="quote-box" style="margin-top:10px;padding:10px 12px;background:var(--inset);border-radius:14px"><div class="small muted" style="margin-bottom:4px">הודעה חדשה · 16:40</div><div class="quote">לא צריך, ביטלתי את הפגישה.</div></div>
+  <div class="actions"><button class="btn tonal grow">זה לא פתור, לשחזר</button><button class="btn ghost">אישור</button></div>
+</article></div>
+
+<div class="g">הצעות מייק על עצמו<i></i></div>
+
+<div class="v"><div class="note"><span>setting suggestion (from the nightly review)</span><span>הצעה להגדרה</span></div>
+<article class="card">
+  <div class="src"><span class="kind"><svg class="ic s14"><use href="#i-tune"/></svg>הצעה להגדרה</span><span class="grow"></span><span>הלילה · מאמן</span></div>
+  <h3 class="title">להחריג את האפליקציה ״משלוחים מהירים״?</h3>
+  <p class="why">14 מתוך 15 ההצעות ממנה נדחו.</p>
+  <p class="detail-line" style="margin-top:6px">שום דבר לא ישתנה עד שתאשר.</p>
+  <div class="actions"><button class="btn primary grow">להחריג</button><button class="btn tonal grow">להשאיר</button></div>
+</article></div>
+
+<div class="v"><div class="note"><span>capability gap (from the nightly review)</span><span>הצעה ללמד</span></div>
+<article class="card">
+  <div class="src"><span class="kind"><svg class="ic s14"><use href="#i-sparkle"/></svg>הצעה ללמד את מייק</span><span class="grow"></span><span>הלילה · מאמן</span></div>
+  <h3 class="title">ללמד את מייק לשלוח חשבוניות?</h3>
+  <p class="why">בחרת ״אני אעשה״ ב-5 משימות כאלה, ומייק נכשל פעמיים.</p>
+  <div class="actions"><button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>ללמד</button><button class="btn tonal">לא עכשיו</button></div>
+</article></div>
+
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

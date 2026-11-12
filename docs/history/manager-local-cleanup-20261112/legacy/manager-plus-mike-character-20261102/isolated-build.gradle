@@ -1,0 +1,14 @@
+gradle.beforeProject { project ->
+    def module = project.path == ':' ? '_root' : project.path.substring(1).replace(':', '/')
+    project.layout.buildDirectory.set(new File('C:/Users/SHIRA/AppData/Local/Temp/hey-mike/manager-plus-mike-character-20261102/build', module))
+    project.afterEvaluate {
+        project.tasks.matching { it.name == 'prepareCodexRuntime' }.configureEach { task ->
+            task.doLast {
+                project.copy {
+                    from 'C:/Users/SHIRA/Documents/AI/Android-agent-use/.claude/worktrees/manager-plus-mike-character-20261102/app/build/generated/runtime'
+                    into 'C:/Users/SHIRA/AppData/Local/Temp/hey-mike/manager-plus-mike-character-20261102/build/app/generated/runtime'
+                }
+            }
+        }
+    }
+}

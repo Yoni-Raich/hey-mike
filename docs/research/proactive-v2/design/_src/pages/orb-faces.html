@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - orb faces</title>
+<meta name="viewport" content="width=1260">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+<style>
+  body { width: 1260px; padding: 36px 40px 56px; }
+  h1 { font-size: 28px; line-height: 36px; font-weight: 700; }
+  .lead { color: var(--on-surface-variant); font-size: 15px; line-height: 24px; max-width: 760px; margin-top: 6px; }
+  h2 { font-size: 15px; line-height: 20px; font-weight: 700; margin: 40px 0 14px; color: var(--on-surface); display: flex; gap: 10px; align-items: center; }
+  h2 i { flex: 1; height: 1px; background: var(--hair); }
+  .grid { display: grid; grid-template-columns: 190px repeat(5, 1fr); gap: 0 10px; align-items: start; }
+  .colh { font-size: 13px; font-weight: 700; padding: 0 6px 10px; text-align: center; }
+  .colh .note { display: block; margin-top: 1px; font-weight: 400; }
+  .rowh { padding: 28px 8px 0 0; }
+  .rowh b { display: block; font-size: 16px; line-height: 22px; }
+  .rowh .k { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--inset); font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+  .rowh p { font-size: 12.5px; line-height: 19px; color: var(--on-surface-variant); margin-top: 4px; }
+  .cell { text-align: center; border-top: 1px solid var(--hair); padding: 14px 0 18px; }
+  .cell canvas { margin: 0 auto; }
+  .cell p { font-size: 12px; line-height: 17px; color: var(--on-surface-variant); padding: 0 10px; margin-top: 2px; min-height: 34px; }
+  .rec { color: var(--teal-ink); font-size: 11px; font-weight: 700; margin-inline-start: 8px; }
+  .sizes { display: grid; grid-template-columns: 190px repeat(5, 1fr); gap: 0 10px; align-items: center; }
+  .sizes .cell { border-top: 1px solid var(--hair); padding: 12px 0; display: flex; justify-content: center; gap: 18px; align-items: center; }
+  .sizes .rowh { padding: 0 8px 0 0; }
+  .ctx { display: flex; gap: 18px; align-items: center; }
+  .bar-demo { display: flex; align-items: center; gap: 10px; background: var(--bg); border: 1px solid var(--card-line); border-radius: 14px; padding: 6px 12px 6px 16px; }
+  .bar-demo .tt { font-size: 15px; font-weight: 600; line-height: 18px; }
+  .bar-demo .st { font-size: 12px; color: var(--on-surface-variant); }
+  .live { display: flex; gap: 40px; align-items: center; margin-top: 8px; }
+  .live .tabs { display: flex; flex-direction: column; gap: 14px; }
+  .live .chips .chip { cursor: pointer; }
+</style>
+</head>
+<body>
+<!--@include parts/icons.html-->
+
+<h1>הפנים של מייק</h1>
+<p class="lead">שלושה כיוונים לאותו כדור. כל הכיוונים בנויים מאותו כדור נקודות של AgentOrb, כך שהמנהל מרגיש חלק מהאפליקציה. כל שורה מראה חמישה מצבים. הצבעים: טורקיז = חי ותקין, ענבר = מחכה לך.</p>
+
+<h2>חמשת המצבים בכל כיוון <i></i> <span class="note">orb diameter 168px, dark</span></h2>
+<div class="grid" id="grid"></div>
+
+<h2>קריאות בגדלים קטנים (כיוון א) <i></i> <span class="note">24 / 32 / 48 px</span></h2>
+<div class="sizes" id="sizes"></div>
+
+<h2>מצב נוסף: מושהה <i></i> <span class="note">collection off: the eye is closed, nothing moves</span></h2>
+<div class="ctx" id="paused"></div>
+
+<h2>בתוך שורת הכותרת של הצ'אט <i></i> <span class="note">32px orb + 48dp target, same slot as the status orb</span></h2>
+<div class="ctx" id="ctx"></div>
+
+<h2>חי: לחצו על מצב <i></i> <span class="note">live; motion is off with ?still or reduced motion</span></h2>
+<div class="live">
+  <canvas class="orb" id="liveOrb" data-orb="a" data-state="needs" data-size="280"></canvas>
+  <div class="tabs">
+    <div class="chips" id="dirChips"></div>
+    <div class="chips" id="stateChips"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var states = [['idle', 'במנוחה'], ['thinking', 'חושב · סריקה'], ['working', 'עובד · משימות רצות'], ['needs', 'צריך אותך'], ['done', 'סיים']];
+  var rows = [
+    { d: 'a', k: 'א', t: 'עין חור שחור', p: 'אישון שחור וטבעת פוטונים דקה, דיסק נקודות סביבו. מתכווץ-ממצמץ לעתים רחוקות. הדיסק נסחף אל הכרטיסים.', rec: true,
+      cues: ['הדיסק מסתובב לאט · מצמוץ נדיר', 'הדיסק מתרחב ומאיץ · שביט על הטבעת · סורק הצידה', 'לוויין אחד לכל משימה רצה', 'ענבר · הדיסק נסחף אל הכרטיסים · טבעת שנייה נושמת', 'הדיסק נרגע לטבעת · אדווה אחת'] },
+    { d: 'b', k: 'ב', t: 'פנים שקטות', p: 'שתי נקודות אור רכות על הכדור. מכווצות עיניים כשחושב, נעצמות ברוגע כשסיים. בלי פה.',
+      cues: ['שתי נקודות · מצמוץ', 'מכווצות עיניים · מציצות למעלה', 'עיניים קטנות ממוקדות כלפי מטה', 'עיניים גדולות · ענבר · הטיית ראש קלה', 'עיניים עצומות ברוגע'] },
+    { d: 'c', k: 'ג', t: 'קשתית של אור', p: 'הנקודות של הכדור מתארגנות לקשתית: סיבים וטבעות נקודות סביב אישון כהה.',
+      cues: ['קשתית שקטה · מצמוץ פנימה', 'הקשתית מסתובבת · האישון נושם', 'אור זורם החוצה מהאישון', 'אישון רחב ומוחזק · ענבר', 'אישון מתכווץ · ניצוץ'] }
+  ];
+  var g = document.getElementById('grid');
+  g.insertAdjacentHTML('beforeend', '<div></div>' + states.map(function (s) { return '<div class="colh">' + s[1] + '<span class="note">' + s[0] + '</span></div>'; }).join(''));
+  rows.forEach(function (r) {
+    var h = '<div class="rowh"><span class="k">' + r.k + '</span><b>' + r.t + (r.rec ? '<span class="rec">מומלץ</span>' : '') + '</b><p>' + r.p + '</p></div>';
+    states.forEach(function (s, i) {
+      h += '<div class="cell"><canvas class="orb" data-orb="' + r.d + '" data-state="' + s[0] + '" data-size="168"></canvas><p>' + r.cues[i] + '</p></div>';
+    });
+    g.insertAdjacentHTML('beforeend', h);
+  });
+
+  var sz = document.getElementById('sizes'), h2 = '<div class="rowh"><b>גדלים</b><p>הטבעת והאישון נשארים קריאים; הדיסק הופך לפס ברור רק מגודל 44 ומעלה</p></div>';
+  states.forEach(function (s) {
+    h2 += '<div class="cell">' + [24, 32, 48].map(function (n) { return '<canvas class="orb" data-orb="a" data-state="' + s[0] + '" data-size="' + n + '"></canvas>'; }).join('') + '</div>';
+  });
+  sz.innerHTML = h2;
+
+  var cx = document.getElementById('ctx');
+  cx.innerHTML = states.map(function (s) {
+    var line = { idle: 'מוכן', thinking: 'סורק התראות…', working: '2 משימות רצות', needs: 'מחכה להחלטה שלך', done: 'סיים את המשימה' }[s[0]];
+    var col = { idle: 'var(--on-surface-variant)', thinking: 'var(--teal-ink)', working: 'var(--teal-ink)', needs: 'var(--amber-ink)', done: 'var(--teal-ink)' }[s[0]];
+    return '<div class="bar-demo"><canvas class="orb" data-orb="a" data-state="' + s[0] + '" data-size="40" data-ring></canvas><div><div class="tt">מייק</div><div class="st" style="color:' + col + '">' + line + '</div></div></div>';
+  }).join('');
+
+  document.getElementById('paused').innerHTML = [['a', 'א · עין חור שחור'], ['b', 'ב · פנים שקטות'], ['c', 'ג · קשתית של אור']].map(function (r) {
+    return '<div class="bar-demo"><canvas class="orb" data-orb="' + r[0] + '" data-state="paused" data-size="96"></canvas><div><div class="tt">' + r[1] + '</div><div class="st">מושהה · האיסוף כבוי</div></div></div>';
+  }).join('');
+
+  var dc = document.getElementById('dirChips'), sc = document.getElementById('stateChips'), live = document.getElementById('liveOrb');
+  dc.innerHTML = rows.map(function (r) { return '<button class="chip' + (r.d === 'a' ? ' sel' : '') + '" data-d="' + r.d + '">' + r.k + ' · ' + r.t + '</button>'; }).join('');
+  sc.innerHTML = states.map(function (s) { return '<button class="chip' + (s[0] === 'needs' ? ' sel' : '') + '" data-s="' + s[0] + '">' + s[1] + '</button>'; }).join('');
+  dc.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    live._dir = b.dataset.d; MikeOrb.setState(live, live._state);
+    Array.prototype.forEach.call(dc.children, function (c) { c.classList.toggle('sel', c === b); });
+  });
+  sc.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    MikeOrb.setState(live, b.dataset.s);
+    Array.prototype.forEach.call(sc.children, function (c) { c.classList.toggle('sel', c === b); });
+  });
+})();
+</script>
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

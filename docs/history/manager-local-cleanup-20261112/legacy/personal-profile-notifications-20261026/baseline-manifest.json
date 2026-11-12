@@ -1,0 +1,242 @@
+[
+  {
+    "Path": "app/src/androidTest/java/dev/androidagent/app/TaskPlaybookAndroidTest.kt",
+    "Sha256": "886E2C24AD89FF6FF9988CCD79F7ADE051BF526A2E4AE42D8CA81812C706B483"
+  },
+  {
+    "Path": "app/src/androidTest/java/dev/androidagent/app/TaskTeamLifecycleTest.kt",
+    "Sha256": "E64C7CDF14EA29376B0B223BA03A8125FC665A55DDF18CD4B1A7F1F1C66F7B84"
+  },
+  {
+    "Path": "app/src/androidTest/java/dev/androidagent/app/ui/TaskBoardUiTest.kt",
+    "Sha256": "C7E6825DBB4AF58CE87885DE5D469E03B07212E4B411B204D157E92BF7582A77"
+  },
+  {
+    "Path": "app/src/main/AndroidManifest.xml",
+    "Sha256": "91EF9779DFA2D3CA04A302E8E8BA82A585187D8795770BB9FE472BBA5F0F0976"
+  },
+  {
+    "Path": "app/src/main/assets/agent_stack/AGENTS.md",
+    "Sha256": "BBAB53C8E56CC4D66FF825DD20B4EEA49478A06648D23F1BCDCB6B9B0776275D"
+  },
+  {
+    "Path": "app/src/main/assets/agent_stack/skills/memory-upkeep/SKILL.md",
+    "Sha256": "8536580F2F246AC2D12449F74B900358ACF1A534CAB3C1FE658D520C87116E84"
+  },
+  {
+    "Path": "app/src/main/assets/agent_stack/skills/task-board/SKILL.md",
+    "Sha256": "FA9D6577CF67970D7AD205C8BC403DD0E47187CA1A368FC7963C75E3BC03159A"
+  },
+  {
+    "Path": "app/src/main/assets/agent_stack/skills/task-discovery/SKILL.md",
+    "Sha256": "FF5D5B2D00263B2934BC7D128A7C723B393ECD1111349785983F93FB76A3A3DD"
+  },
+  {
+    "Path": "app/src/main/assets/agent_stack/skills/task-review/SKILL.md",
+    "Sha256": "D062CEF8E5D9C9FB7AABFDA02A7BA14A2E22737A05C5F1CBF41A33BA26362768"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/AgentApplication.kt",
+    "Sha256": "150BA346A68642480C1896009E82E43C7BFA675CDA663E99293C56D6A6813B1F"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/AgentService.kt",
+    "Sha256": "DAEE86F1053EB5D098CDBD28D4FD38A5C7F581FE223CFF8DEC00F2D132E36C71"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/AgentViewModel.kt",
+    "Sha256": "E9CC6DF1AF85B5A25C4473B8C32784C54AF6A3460EAA5F494686C5D05582092B"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/MainActivity.kt",
+    "Sha256": "94F31EA2C8ACC4EDF669565EF5AC433400E4BDD92AEA9297A7E0D549D2629554"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/TaskBackgroundHost.kt",
+    "Sha256": "6B30D1E28CBD3C4D0BD3E1499ECDDB80779929B2370B26F49D0EADB787B79BE0"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/TaskDesk.kt",
+    "Sha256": "9A665FE68190FAC72C64BF52E66BA8BB9CE7B243207F0B87C68A380C93CF8B22"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt",
+    "Sha256": "7825FDE1A4D125E6887362C877EAF77988E87BD7740C9D67B42E36F1631FCA83"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/ui/AndroidAgentScreen.kt",
+    "Sha256": "306BF347E9C396B9A600C5AFB084B935026592F45E472F59A2A3D9A7F33D165E"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/ui/ChatLibraryDrawer.kt",
+    "Sha256": "E3CBAE2A39AB1BB9DD4AEE2725DD03F118A9F25E714365EEBA0F3E731DEE89E9"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/ui/ComputersSheet.kt",
+    "Sha256": "BD3ED065D73895EECE0B35A0B0E85221AD4558E18206347F95691FE45E41E1C8"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/ui/MikeEye.kt",
+    "Sha256": "DC08A26DE9F6B4A435521BDC8D94492BFC403DB6ACD7E1EC3FE4FB728DD7F479"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/ui/TaskBoardSheet.kt",
+    "Sha256": "12CE2453BA8BA572A0D8688EA2CEC2F4EB93F2A05623609328E455CCBCF0B125"
+  },
+  {
+    "Path": "app/src/main/java/dev/androidagent/app/ui/TasksStrip.kt",
+    "Sha256": "53E80CA1E14F10CC2807FAFC1E1D2795934D3AF1A550252DE84F072807C28B5B"
+  },
+  {
+    "Path": "automations/src/main/kotlin/dev/androidagent/automations/AutomationHost.kt",
+    "Sha256": "FA07EC4EC90A8B6899A15B4535DA38424EDFEDC318BE1877AE2BD6D281FB0789"
+  },
+  {
+    "Path": "automations/src/main/kotlin/dev/androidagent/automations/AutomationNotificationListener.kt",
+    "Sha256": "DEE634497AD0C8E3D488A5A252C2E7F580147D922B66D777C9A84D2B3DD63A3B"
+  },
+  {
+    "Path": "automations/src/main/kotlin/dev/androidagent/automations/TaskNotificationReader.kt",
+    "Sha256": "C746E94D1D8EFCED139618A3F52D79AD9CA56207E756E74BE1B043EFCCED5B42"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt",
+    "Sha256": "8C77D52863E3E7558FE432CFB54CD340AC51916A18D7E5F8F85A2B3824A4BB84"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/ChatTools.kt",
+    "Sha256": "31405342D98A1FC832630058EA0837B9BE4929CC3E4E70666C02FBCC4CD10A71"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/Contracts.kt",
+    "Sha256": "F6B9964E8CE8ADC4CCF16F0D566A098FF2D89EEA7BE755AFBE1A7FF06306931A"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskBoard.kt",
+    "Sha256": "E8D056932FC5E7F09E4C1E6E96884D6F5100533EA59DF169121120C401218909"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskBoardModels.kt",
+    "Sha256": "25862A0CCF48BDADB829FD86AC34F877D125E4E85664FA1072B5957FCFF2CB4E"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskMemory.kt",
+    "Sha256": "FE43E9406E2DD0D3ED4701F6FAA2D4D4848322CD581BBA45C91C208416BE2EBC"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskPlaybook.kt",
+    "Sha256": "9CB4F1722D9C34FDAC3D340E29A73D4865C1ED092F1BB828EEF524409B3D01A5"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskPrompts.kt",
+    "Sha256": "A1E8794D810AFD3784348000AD52157A71339CF50764CFC9450E05BB366DCAE8"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskSignals.kt",
+    "Sha256": "A4B139E351CD642B81F3B97E7A07855CB1F2F1BD913C8E8B8C5C846B45736441"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskTeam.kt",
+    "Sha256": "6D697EDB6AE29B741DA68384DD311B968317A70ED892147DC6B6D0668F18C309"
+  },
+  {
+    "Path": "core/src/main/kotlin/dev/androidagent/core/TaskTools.kt",
+    "Sha256": "1F2D551A66C9D9C63E5E71265949FD69EA0CF01CCA1B666DC4AE63232F0422D8"
+  },
+  {
+    "Path": "core/src/test/kotlin/dev/androidagent/core/AgentCoordinatorTest.kt",
+    "Sha256": "33E42D45B973AAEA78522D1F7BA7CBA081F063D08EE7C8A2DD8D2B33E6F7236B"
+  },
+  {
+    "Path": "core/src/test/kotlin/dev/androidagent/core/TaskBoardTest.kt",
+    "Sha256": "1C9AF90F11EAEA54CA37D7DD6CED2C454CFB95EA7E378FB87B387C4E3686FF0B"
+  },
+  {
+    "Path": "core/src/test/kotlin/dev/androidagent/core/TaskSafetyTest.kt",
+    "Sha256": "595F941146DA489079660DE23F4F2279292700DF0EE9CA383F64102D52DE37C9"
+  },
+  {
+    "Path": "docs/ARCHITECTURE.md",
+    "Sha256": "80934C6F423082E6DB39CDBEF46201DCCD447705C8AC9958BD52B51475FDD98C"
+  },
+  {
+    "Path": "docs/testing/task-board-20261025.md",
+    "Sha256": "064C008E3866BCC57F7D751BF3C8EA12A2222DDFF4517E5199DD417C88877095"
+  },
+  {
+    "Path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeCodeEngine.kt",
+    "Sha256": "227D60FE11DD2E7FA3804D8117B027CB51D324B49F93854A9EA06440E5661F75"
+  },
+  {
+    "Path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeInstructions.kt",
+    "Sha256": "482C609A370E447A459779FB29878876FC9E0AB6DF73409CF2979D090C1E6304"
+  },
+  {
+    "Path": "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt",
+    "Sha256": "CC4E629F1CCCC43B581C50A8202C3B69A164AB10F0A6B26F9EB30B5398BE1FA0"
+  },
+  {
+    "Path": "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeProtocolTest.kt",
+    "Sha256": "CA101B938F85A3764FDA03658BED67B4362465BB4B53AF29F3E613ECB030BBC5"
+  },
+  {
+    "Path": "engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt",
+    "Sha256": "BE2A2C524317545290C1542F978E4B7BA04A6D3292D0D28DE1A05727FC857600"
+  },
+  {
+    "Path": "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexEngineTest.kt",
+    "Sha256": "87C341B80BBEF7B638C38BEF868CC8B995003204C5E3FF1D680EABA1D9F2CF06"
+  },
+  {
+    "Path": "PROGRESS.md",
+    "Sha256": "C9BB2E55637117C801CDA62B210F8F7F52612AFAD376EB8941519A6CDBED6B7F"
+  },
+  {
+    "Path": "remote/src/main/kotlin/dev/androidagent/remote/ComputerToolGateway.kt",
+    "Sha256": "2123BE7862250A88EF253B03BCA90A4DBBAD47FC6F21EF824EF4DD3F4BD1260E"
+  },
+  {
+    "Path": "remote/src/main/kotlin/dev/androidagent/remote/RemoteInstructions.kt",
+    "Sha256": "2B959B0F18272FF63C5500726813C5A1B45667150E01E6F47C8F3D968EE3E195"
+  },
+  {
+    "Path": "remote/src/main/kotlin/dev/androidagent/remote/RemoteStore.kt",
+    "Sha256": "2985112FA993A477B6FA28FFEC4F4C70EFAC0B80C2FF8E43A176FC9F90BAD267"
+  },
+  {
+    "Path": "remote/src/main/kotlin/dev/androidagent/remote/RoutingAgentEngine.kt",
+    "Sha256": "8D047493D921D3CC54C4296864E0A06AB71A1ADC6692E8C7523165B8B1E0B4A5"
+  },
+  {
+    "Path": "remote/src/test/kotlin/dev/androidagent/remote/ClaudeOnComputerTest.kt",
+    "Sha256": "FB2E0BDB0C98A9A96A63600B148186F0D1D44A31EF2E9C9955F0A297BC6A2936"
+  },
+  {
+    "Path": "remote/src/test/kotlin/dev/androidagent/remote/ComputerSubagentIntegrationTest.kt",
+    "Sha256": "C17577DD28F66710DF0D4E8F384C5D65B82A2152AF8FF12C0021FCFABABCFCCF"
+  },
+  {
+    "Path": "remote/src/test/kotlin/dev/androidagent/remote/RemoteStoreTest.kt",
+    "Sha256": "86097D2A8D13F3B3CF87AE8D735F61565BC903B6B217F171242853DE7FDC873F"
+  },
+  {
+    "Path": "version.properties",
+    "Sha256": "3EB5862F9A5DE8772D83C1EDFFDCEB98B51EB9F90DCC1B13D3606F4D67E3C281"
+  },
+  {
+    "Path": "workspace/src/main/java/dev/androidagent/workspace/LocalSessionStore.kt",
+    "Sha256": "51368AE268E71897D1F1D7F5F6E5F46156FD169BE6C93040E56E0F5D18BE9AF7"
+  },
+  {
+    "Path": "workspace/src/main/java/dev/androidagent/workspace/LocalTaskBoardStore.kt",
+    "Sha256": "447E5C66F8317EFB1BC6AEDE2773E4E58EE774872D2D162176015D33904AF132"
+  },
+  {
+    "Path": "workspace/src/main/java/dev/androidagent/workspace/WorkspaceSeeder.kt",
+    "Sha256": "35A5A164E6AF130E272D3C5F8CBAAF690874E3F0D9A0435108911FBDB8CB7F5E"
+  },
+  {
+    "Path": "workspace/src/test/kotlin/dev/androidagent/workspace/WorkspaceSeederTest.kt",
+    "Sha256": "1DBB63C5479BB166FA22CC32E1F4B80E21B28B261A2AB3438A951BD7434C755C"
+  }
+]

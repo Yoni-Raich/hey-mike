@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - Tasks board</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<div class="sb"><span>14:32</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+<div class="behind"></div>
+
+<main class="sheet">
+  <div class="grab"></div>
+  <header class="hdr">
+    <button class="ibtn" aria-label="חזרה"><svg class="ic mir"><use href="#i-back"/></svg></button>
+    <h1>משימות<span class="sub">מייק סרק לפני 12 דקות</span></h1>
+    <button class="ibtn mute" aria-label="מקורות והגדרות"><svg class="ic"><use href="#i-tune"/></svg></button>
+  </header>
+
+  <div class="pad">
+    <a class="mgr" aria-label="מייק המנהל. שלוש החלטות מחכות לך. פתח שיחה">
+      <canvas class="orb" data-orb="a" data-state="needs" data-size="48" data-ring></canvas>
+      <div class="t"><b>מייק · המנהל</b><span><em>3 החלטות</em> מחכות לך · משימה אחת רצה</span></div>
+      <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+    </a>
+
+    <!-- 1. needs your decision -->
+    <div class="section amber"><b>מחכים להחלטה שלך</b><span class="n">3</span><i></i></div>
+    <div class="stack">
+
+      <article class="card">
+        <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · דנה</span><i class="sep"></i><span>14:10</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+        <h3 class="title">לשלוח לדנה את הטופס החתום</h3>
+        <p class="why">היא צריכה אותו עד יום שלישי.</p>
+        <p class="plan flat"><svg class="ic"><use href="#i-sparkle"/></svg><span><b>מייק יעשה:</b> ימצא את הטופס החתום בהורדות ויכין תשובה עם הקובץ.</span></p>
+        <div class="tags">
+          <span class="tag who"><svg class="ic s14"><use href="#i-person"/></svg>הבקשה של דנה, לא שלך</span>
+          <span class="tag warn"><svg class="ic s14"><use href="#i-send"/></svg>שולח הודעה</span>
+        </div>
+        <div class="actions">
+          <button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>מייק, תעשה</button>
+          <button class="btn tonal">אני אעשה</button>
+          <button class="btn round" aria-label="לא רלוונטי"><svg class="ic"><use href="#i-close"/></svg></button>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="src"><svg class="ic s14"><use href="#i-calendar"/></svg><span>יומן · פגישה עם נועם</span><i class="sep"></i><span>17:00</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-computer"/></svg>במחשב · פרויקט אורן</span></div>
+        <h3 class="title">להכין סיכום לפגישה עם נועם</h3>
+        <p class="why">הפגישה בעוד שעתיים ואין עדיין מסמך הכנה.</p>
+        <p class="plan flat"><svg class="ic"><use href="#i-sparkle"/></svg><span><b>מייק יעשה:</b> יקרא את שרשור המייל האחרון ויכתוב סיכום של חצי עמוד.</span></p>
+        <div class="tags">
+          <span class="tag"><svg class="ic s14"><use href="#i-eye"/></svg>קריאה בלבד · לא שולח דבר</span>
+        </div>
+        <div class="actions">
+          <button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>מייק, תעשה</button>
+          <button class="btn tonal">אני אעשה</button>
+          <button class="btn round" aria-label="לא רלוונטי"><svg class="ic"><use href="#i-close"/></svg></button>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · הורים כיתה ב׳</span><i class="sep"></i><span>13:05</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+        <h3 class="title">לאשר שעת איסוף ביום חמישי</h3>
+        <p class="why">שאלו מי יכול לאסוף את הילדים בשעה 15:30.</p>
+        <div class="partial">
+          <svg class="ic s18"><use href="#i-info"/></svg>
+          <p>ראיתי רק את ההודעות האחרונות בשיחה.</p>
+          <button class="linkbtn"><svg class="ic s16"><use href="#i-eye"/></svg>לקרוא את השיחה</button>
+        </div>
+        <div class="tags">
+          <span class="tag who"><svg class="ic s14"><use href="#i-person"/></svg>הבקשה של הקבוצה, לא שלך</span>
+          <span class="tag warn"><svg class="ic s14"><use href="#i-send"/></svg>שולח הודעה</span>
+        </div>
+        <div class="actions">
+          <button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>מייק, תעשה</button>
+          <button class="btn tonal">אני אעשה</button>
+          <button class="btn round" aria-label="לא רלוונטי"><svg class="ic"><use href="#i-close"/></svg></button>
+        </div>
+      </article>
+
+      <button class="more">עוד 2 הצעות<svg class="ic s16"><use href="#i-chev-down"/></svg></button>
+    </div>
+
+    <!-- 2. Mike is on it -->
+    <div class="section teal"><b>מייק עובד על זה</b><span class="n">2</span><i></i></div>
+    <div class="stack">
+      <article class="card amber">
+        <div class="src"><svg class="ic s14"><use href="#i-mail"/></svg><span>מייל · רחל לוי</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+        <h3 class="title">לשלוח חשבונית לרחל</h3>
+        <p class="ask"><span class="q">מייק שואל</span>לאיזו כתובת מייל לשלוח את החשבונית?</p>
+        <div class="actions">
+          <button class="btn primary grow">לענות בצ׳אט</button>
+          <button class="btn ghost"><svg class="ic s18"><use href="#i-stop"/></svg>לעצור</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · יוסי הנגר</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+        <h3 class="title">לתאם מועד למדידות במטבח</h3>
+        <div class="run"><span class="status teal"><i class="dot teal live"></i>עובד · 4 דק׳</span><span class="muted">מחפש את הפרטים בשיחה עם יוסי</span></div>
+        <div class="bar"><i></i></div>
+        <div class="actions">
+          <button class="btn tonal grow">לפתוח צ׳אט</button>
+          <button class="btn ghost"><svg class="ic s18"><use href="#i-stop"/></svg>לעצור</button>
+        </div>
+      </article>
+    </div>
+
+    <!-- 3. check Mike's work -->
+    <div class="section teal"><b>לבדיקה שלך</b><span class="n">2</span><i></i></div>
+    <div class="stack">
+      <article class="card nightly">
+        <div class="mark"><svg class="ic s18"><use href="#i-moon"/></svg></div>
+        <div style="flex:1;min-width:0">
+          <div class="src" style="min-height:0">הלילה · 03:10</div>
+          <h3 class="title" style="margin-top:2px">מה שיניתי ולמה</h3>
+          <ul>
+            <li>הפסקתי להציע משימות מהתראות משלוחים<small>12 מתוך 12 נדחו בשבועיים</small></li>
+            <li>בבקשות של דנה אציע טיוטת תשובה<small>אושרו 5 מתוך 5</small></li>
+          </ul>
+          <div class="actions" style="margin-top:12px">
+            <button class="btn outline sm"><svg class="ic s16 mir"><use href="#i-undo"/></svg>לבטל שינויים</button>
+            <button class="btn ghost sm">עוד שינוי אחד</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="src"><svg class="ic s14"><use href="#i-folder"/></svg><span>תמונות · אלבום החתונה</span><span class="grow"></span><span class="status teal"><svg class="ic s14"><use href="#i-check"/></svg>מייק סיים</span></div>
+        <h3 class="title">להעביר את תמונות החתונה לתיקייה משותפת</h3>
+        <div class="result">
+          <span class="k">מה נעשה</span>
+          <p>הועברו 48 תמונות לתיקייה ״חתונה״ בדרייב. לא&nbsp;נמחק&nbsp;דבר.</p>
+        </div>
+        <div class="actions">
+          <button class="btn primary grow"><svg class="ic s18"><use href="#i-check"/></svg>בוצע</button>
+          <button class="btn tonal grow">להמשיך</button>
+        </div>
+      </article>
+    </div>
+
+    <!-- 4. yours -->
+    <div class="section off"><b>שלך</b><span class="n">2</span><i></i></div>
+    <div>
+      <div class="todo"><span class="box"></span><div class="t"><b>לקנות מתנה ליום ההולדת של מיכל</b><span>וואטסאפ · מיכל · עד יום חמישי</span></div></div>
+      <div class="todo"><span class="box"></span><div class="t"><b>להחזיר שיחה לאילן הגרפיקאי</b><span>שיחה שלא נענתה · אתמול</span></div></div>
+    </div>
+
+    <!-- 5. history -->
+    <div class="section off"><b>היסטוריה</b><span class="n">18</span><i></i></div>
+    <div>
+      <div class="hrow"><span class="mk ok"><svg class="ic s16"><use href="#i-check"/></svg></span><div class="t"><b>נשלח הטופס לאורי</b><span>הושלם · אתמול</span></div></div>
+      <div class="hrow"><span class="mk"><svg class="ic s16"><use href="#i-close"/></svg></span><div class="t"><b>להזמין שולחן במסעדה</b><span>נדחה: כבר עשיתי</span></div></div>
+      <div class="hrow"><span class="mk"><svg class="ic s16 mir"><use href="#i-restore"/></svg></span><div class="t"><b>לדחות את הפגישה עם אורי</b><span>נראה פתור: אורי כתב שהפגישה בוטלה</span></div><button class="btn ghost sm">לשחזר</button></div>
+    </div>
+  </div>
+</main>
+
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

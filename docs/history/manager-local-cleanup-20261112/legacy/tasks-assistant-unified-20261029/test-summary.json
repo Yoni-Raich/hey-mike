@@ -1,0 +1,76 @@
+{
+  "modules": {
+    "core": {
+      "tests": 902,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "workspace": {
+      "tests": 57,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 14
+    },
+    "automations": {
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "engine-codex": {
+      "tests": 69,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "engine-claude": {
+      "tests": 109,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "web": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "runtime": {
+      "tests": 85,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "remote": {
+      "tests": 165,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3
+    },
+    "device-tools": {
+      "tests": 106,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "mcp-loopback": {
+      "tests": 15,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "app": {
+      "tests": 172,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "total": {
+    "tests": 1733,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 17
+  }
+}

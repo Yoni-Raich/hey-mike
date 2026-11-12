@@ -1,0 +1,49 @@
+/* The Manager chat: calmer and cleaner than an ordinary chat, with Mike present. */
+.mgr-screen { position: relative; min-height: 915px; display: flex; flex-direction: column; overflow: hidden; }
+.aura { position: absolute; inset: 0 0 auto 0; height: 520px; pointer-events: none;
+  background: radial-gradient(ellipse 360px 300px at 50% 170px, var(--aura, var(--aura-teal)), transparent 72%); }
+.st-needs { --aura: var(--aura-amber); }
+.mtop { position: relative; z-index: 2; height: 52px; display: flex; align-items: center; padding-inline: 4px; }
+.mtop .grow { flex: 1; }
+.mtop .badge { position: absolute; top: 5px; inset-inline-start: 4px; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; background: var(--blocked); color: #1a1100; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.mtop .badge.teal { background: var(--secondary-container); color: var(--on-secondary-container); }
+
+.presence { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; margin-top: -6px; }
+.presence #hero { margin: -14px 0 -30px; }
+.presence .name { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: 0; display: flex; align-items: baseline; gap: 8px; color: var(--on-surface); }
+.presence .name small { font-size: 13px; font-weight: 400; color: var(--on-surface-variant); }
+.presence .line { margin-top: 4px; display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; line-height: 20px; color: var(--c, var(--on-surface-variant)); }
+.st-needs .presence .line { --c: var(--amber-ink); }
+.st-thinking .presence .line, .st-working .presence .line, .st-done .presence .line { --c: var(--teal-ink); }
+.crew-pill { --pill: color-mix(in srgb, var(--surface-variant) 35%, var(--bg)); margin-top: 10px; height: 40px; padding: 0 10px 0 12px; border-radius: 20px; display: inline-flex; align-items: center; gap: 10px; background: var(--pill); color: var(--on-surface-variant); font-size: 12.5px; }
+.facepile { display: flex; align-items: center; }
+.facepile .av { width: 30px; height: 30px; border-radius: 50%; background: var(--pill); margin-inline-start: -9px; flex: none; position: relative; }
+.facepile .av:first-child { margin-inline-start: 0; }
+.facepile .av.attn { z-index: 2; }   /* whoever needs you is never covered by a neighbour */
+.facepile canvas { display: block; }
+
+.feed { position: relative; z-index: 1; flex: 1; padding: 16px 20px 0; display: flex; flex-direction: column; gap: 12px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px); mask-image: linear-gradient(to bottom, transparent 0, #000 22px); }
+.mike { font-size: 16px; line-height: 25px; color: var(--mike-ink); max-width: 100%; }
+.mike + .mike { margin-top: -4px; }
+.me { align-self: flex-end; max-width: 84%; background: var(--primary-container); color: var(--on-primary-container); padding: 11px 16px; border-radius: var(--r-bubble); font-size: 16px; line-height: 24px; }
+.mini { padding: 14px; border-radius: 16px; }
+.mini .title { margin-top: 6px; font-size: 15px; line-height: 22px; }
+.mini .tags { margin-top: 10px; }
+.mini .actions { margin-top: 12px; }
+.mini .btn { height: 44px; font-size: 13.5px; }
+.mini .btn.round { width: 44px; }
+.report { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 8px 6px 12px; border-radius: 16px; border: 1px solid var(--card-line); background: color-mix(in srgb, var(--card) 70%, transparent); }
+.report .mark { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--secondary-container) 60%, transparent); color: var(--teal-ink); flex: none; }
+.report .t { flex: 1; min-width: 0; }
+.report .t b { display: block; font-size: 14px; line-height: 19px; font-weight: 600; }
+.report .t span { display: block; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+.activity { display: flex; align-items: center; gap: 10px; align-self: flex-start; padding: 6px 6px 6px 14px; border-radius: 22px; background: color-mix(in srgb, var(--surface-variant) 40%, transparent); font-size: 13px; line-height: 18px; color: color-mix(in srgb, var(--on-surface) 88%, transparent); }
+.activity .st { color: var(--teal-ink); font-weight: 600; }
+.activity .ibtn { width: 32px; height: 32px; color: var(--on-surface-variant); }
+
+.dock { position: relative; z-index: 2; padding: 8px 16px 8px; }
+.sugg { display: flex; gap: 8px; overflow: hidden; margin-bottom: 8px; }
+.sugg .chip { flex: none; background: transparent; border: 1px solid var(--control-line); height: 34px; font-size: 13px; }
+.gesture { height: 14px; margin-top: 6px; display: grid; place-items: center; }
+.gesture i { width: 112px; height: 4px; border-radius: 2px; background: var(--on-surface); opacity: .55; }

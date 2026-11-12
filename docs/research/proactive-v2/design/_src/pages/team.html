@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike's team</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+/*@include parts/team.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<div class="sb"><span>08:16</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+<div class="behind"></div>
+
+<main class="sheet">
+  <div class="grab"></div>
+  <header class="hdr">
+    <button class="ibtn" aria-label="חזרה למייק"><svg class="ic mir"><use href="#i-back"/></svg></button>
+    <h1>הצוות של מייק<span class="sub">עובדים ברקע. אפשר להיכנס לכל אחד ולכתוב לו</span></h1>
+  </header>
+
+  <div class="pad" style="margin-top:6px">
+    <a class="lead" aria-label="מייק המנהל. פתח שיחה">
+      <canvas class="orb" data-orb="a" data-state="needs" data-size="76" data-ring></canvas>
+      <div class="t" style="flex:1"><b>מייק · המנהל</b><span>מנהל את הלוח, מקבל את התוצאות ומוסר לך דוח בכל בוקר</span></div>
+      <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+    </a>
+
+    <div class="section off"><b>הליבה</b><span class="n">3</span><i></i></div>
+    <div class="group">
+      <a class="mem">
+        <span class="av"><canvas class="orb" data-orb="a" data-face="scout" data-state="thinking" data-size="56" data-ring data-seed="1"></canvas></span>
+        <div class="t"><b>צופה</b><span class="role">סורק הודעות ויומן ומחפש משימות</span>
+          <span class="st teal"><i class="dot teal live"></i>סורק עכשיו · 12 הודעות חדשות</span></div>
+        <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+      </a>
+      <a class="mem">
+        <span class="av"><canvas class="orb" data-orb="a" data-face="librarian" data-state="idle" data-size="56" data-ring data-seed="2"></canvas></span>
+        <div class="t"><b>ספרן</b><span class="role">מסדר את הזיכרון כל לילה</span>
+          <span class="st"><i class="dot off"></i>במנוחה · ההרצה הבאה ב-03:00</span></div>
+        <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+      </a>
+      <a class="mem">
+        <span class="av"><canvas class="orb" data-orb="a" data-face="coach" data-state="done" data-size="56" data-ring data-seed="3"></canvas></span>
+        <div class="t"><b>מאמן</b><span class="role">בודק החלטות ומשפר את ספר ההנחיות</span>
+          <span class="st teal"><svg class="ic s14"><use href="#i-check"/></svg>סיים הלילה · עדכן 3 כללים</span></div>
+        <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+      </a>
+    </div>
+
+    <div class="section off"><b>לפי תחומים</b><span class="n">3</span><i></i></div>
+    <div class="group">
+      <a class="mem attn">
+        <span class="av"><canvas class="orb" data-orb="a" data-face="meet" data-state="needs" data-size="56" data-ring data-seed="5"></canvas></span>
+        <div class="t"><b>פגישות<span class="autotag new">חדש</span></b><span class="role">הכנה, זימונים וסיכומים</span>
+          <span class="st amber"><i class="dot amber live"></i>שאלה אליך: להזמין את נועם ליומן?</span></div>
+        <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+      </a>
+      <a class="mem">
+        <span class="av"><canvas class="orb" data-orb="a" data-face="msgs" data-state="working" data-size="56" data-ring data-seed="4"></canvas></span>
+        <div class="t"><b>הודעות ותשובות</b><span class="role">טפסים, בקשות ותשובות לאנשים</span>
+          <span class="st teal"><i class="dot teal live"></i>עובד על 2 משימות</span></div>
+        <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+      </a>
+      <a class="mem">
+        <span class="av"><canvas class="orb" data-orb="a" data-face="pc" data-state="idle" data-size="56" data-ring data-seed="6"></canvas></span>
+        <div class="t"><b>פרויקטים במחשב</b><span class="role">בדיקות, ענפים ודוחות</span>
+          <span class="st"><i class="dot off"></i>במנוחה · 6 משימות הושלמו</span></div>
+        <svg class="ic s18 mir muted"><use href="#i-chev"/></svg>
+      </a>
+    </div>
+
+    <p class="foot"><svg class="ic s16"><use href="#i-info"/></svg><span>מייק פותח תחום חדש כשמצטברות משימות דומות, כמו ״פגישות״ אחרי ארבע הכנות. אפשר למזג תחומים או להסתיר אותם.</span></p>
+    <div style="margin-top:12px;display:flex"><button class="btn ghost sm" style="padding-inline:0"><svg class="ic s16"><use href="#i-tune"/></svg>ניהול תחומים</button></div>
+  </div>
+</main>
+
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - Sources</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+<style>
+  .intro { font-size: 14px; line-height: 21px; color: var(--on-surface-variant); margin-top: 2px; }
+  .lab { margin: 26px 4px 8px; }
+  .val { font-size: 13px; color: var(--on-surface-variant); display: flex; align-items: center; gap: 4px; }
+  .row .t b small { display: inline-block; margin-inline-start: 6px; }
+  .locked { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-card); border: 1px dashed var(--outline-variant); margin-top: 12px; }
+  .locked .ic { color: var(--teal-ink); margin-top: 2px; }
+  .locked b { display: block; font-weight: 600; font-size: 14.5px; line-height: 20px; }
+  .locked span { display: block; font-size: 12.5px; line-height: 18px; color: var(--on-surface-variant); margin-top: 2px; }
+  .master { padding: 4px 4px; }
+  .master .row { min-height: 68px; }
+  .row .t b.big { font-size: 16px; }
+  .excl { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--on-surface-variant); }
+  .sheet { padding-bottom: 40px; }
+</style>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<div class="sb"><span>14:40</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+<div class="behind"></div>
+<main class="sheet">
+  <div class="grab"></div>
+  <header class="hdr">
+    <button class="ibtn" aria-label="חזרה ללוח המשימות"><svg class="ic mir"><use href="#i-back"/></svg></button>
+    <h1>מקורות</h1>
+  </header>
+
+  <div class="pad">
+    <p class="intro">מייק קורא התראות כדי לזהות משימות. את הטקסט הגולמי הוא מוחק אחרי שבדק אותו, ומשאיר רק הערות קצרות שאפשר לראות ולמחוק.</p>
+
+    <div class="group master" style="margin-top:18px">
+      <div class="row"><span class="tile" style="background:color-mix(in srgb,var(--secondary-container) 60%,transparent);color:var(--teal-ink)"><svg class="ic s18"><use href="#i-radar"/></svg></span>
+        <div class="t"><b class="big">סריקה ברקע</b><span>הסריקה האחרונה לפני 12 דקות</span></div><span class="switch teal"></span></div>
+    </div>
+
+    <div class="label lab">מה מייק קורא</div>
+    <div class="group">
+      <div class="row"><span class="tile"><svg class="ic s18"><use href="#i-chat"/></svg></span><div class="t"><b>וואטסאפ</b><span>התראות הודעות · <span class="excl" style="display:inline">3 שיחות מוחרגות</span></span></div><span class="switch"></span></div>
+      <div class="row"><span class="tile"><svg class="ic s18"><use href="#i-mail"/></svg></span><div class="t"><b>Gmail</b><span>שולח, נושא ותקציר בלבד</span></div><span class="switch"></span></div>
+      <div class="row"><span class="tile"><svg class="ic s18"><use href="#i-calendar"/></svg></span><div class="t"><b>יומן</b><span>48 השעות הקרובות</span></div><span class="switch"></span></div>
+      <div class="row"><span class="tile"><svg class="ic s18"><use href="#i-sparkle"/></svg></span><div class="t"><b>השיחות של מייק</b><span>שיחות שהסתיימו, עד 14 יום אחורה</span></div><span class="switch"></span></div>
+      <div class="row"><span class="tile"><svg class="ic s18"><use href="#i-bell"/></svg></span><div class="t"><b>משלוחים מהירים</b><span>מוחרגת · 14 מתוך 15 הצעות נדחו</span></div><span class="switch off"></span></div>
+      <div class="row"><span class="tile" style="color:var(--on-surface-variant)"><svg class="ic s18"><use href="#i-plus"/></svg></span><div class="t"><b style="color:var(--on-surface-variant);font-weight:500">עוד אפליקציות</b><span>בחר מה עוד לקרוא או להחריג</span></div><svg class="ic s18 mir muted"><use href="#i-chev"/></svg></div>
+    </div>
+
+    <div class="locked">
+      <svg class="ic"><use href="#i-shield"/></svg>
+      <div style="flex:1"><b>קודי אימות והתחברות</b><span>לא נשמרים אף פעם. זה נכון תמיד, ואי אפשר לשנות.</span></div>
+      <svg class="ic s16 muted"><use href="#i-lock"/></svg>
+    </div>
+
+    <div class="label lab">מודל</div>
+    <div class="group">
+      <div class="row"><div class="t"><b>מודל לסריקה</b><span>מה שסורק את ההתראות</span></div><span class="val">GPT-5.1 · בינוני<svg class="ic s16 mir"><use href="#i-chev"/></svg></span></div>
+      <div class="row"><div class="t"><b>מודל לסקירה הלילית</b><span>מה שבודק החלטות ומשפר הנחיות</span></div><span class="val">GPT-5.1 · גבוה<svg class="ic s16 mir"><use href="#i-chev"/></svg></span></div>
+      <div class="row"><div class="t"><b>תקרה יומית</b><span>סריקות לפני שמייק מפסיק</span></div><span class="val">30 · היום 14<svg class="ic s16 mir"><use href="#i-chev"/></svg></span></div>
+    </div>
+
+    <div class="label lab">מה נאסף עכשיו</div>
+    <div class="group">
+      <div class="row"><div class="t"><b>מחכה לבדיקה</b><span>4 הודעות · יימחקו אחרי הסריקה הבאה</span></div></div>
+      <div class="row"><span class="tile"><svg class="ic s18"><use href="#i-book"/></svg></span><div class="t"><b>הערות זיכרון</b><span>37 הערות · לפי אדם ופרויקט</span></div><svg class="ic s18 mir muted"><use href="#i-chev"/></svg></div>
+    </div>
+
+    <div style="margin-top:22px">
+      <button class="btn danger" style="width:100%"><svg class="ic s18"><use href="#i-trash"/></svg>למחוק את כל מה שנאסף</button>
+      <p class="small muted" style="margin-top:10px;text-align:center;line-height:18px">מוחק הודעות שממתינות והערות זיכרון. כרטיסים וכללים נשארים.</p>
+    </div>
+  </div>
+</main>
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

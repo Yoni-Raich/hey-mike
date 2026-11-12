@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - Tasks strip in the chat drawer</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+/*@include parts/strip.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<div class="drawer-wrap">
+  <div class="dim"></div>
+  <nav class="drawer">
+    <div class="sb"><span>08:20</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+    <div class="dhead">
+      <h2>צ׳אטים</h2>
+      <button class="ibtn" aria-label="חיפוש"><svg class="ic"><use href="#i-search"/></svg></button>
+      <button class="ibtn" aria-label="סגירה"><svg class="ic"><use href="#i-close"/></svg></button>
+    </div>
+
+    <div class="dbody">
+      <!-- the strip: at most three chips and one sentence, whatever the number of tasks -->
+      <button class="tstrip" aria-label="משימות. 3 מחכות לך, אחת בעבודה, אחת לבדיקה. הכי דחוף: הטופס של דנה">
+        <div class="h">
+          <canvas class="orb" data-orb="a" data-state="needs" data-size="30" data-ring data-seed="2"></canvas>
+          <b>משימות</b>
+          <svg class="ic s16 mir muted"><use href="#i-chev"/></svg>
+        </div>
+        <div class="chipsrow">
+          <span class="sc amber pad48">3 מחכות לך</span>
+          <span class="sc pad48"><i class="dot teal"></i>1 בעבודה</span>
+          <span class="sc pad48">1 לבדיקה</span>
+        </div>
+        <div class="line"><i class="dot amber"></i><span>הכי דחוף: הטופס של דנה, עד יום שלישי</span></div>
+      </button>
+
+      <!-- the manager is one pinned chat, not a section; the team is not in this list at all -->
+      <div class="dsec">מוצמד</div>
+      <a class="chatrow mike">
+        <canvas class="orb" data-orb="a" data-state="needs" data-size="44" data-ring data-seed="2"></canvas>
+        <div class="t"><b>מייק · המנהל</b><span>הטופס של דנה מוכן לשליחה, מחכה לאישור</span></div>
+        <span class="unread">1</span>
+      </a>
+
+      <div class="dsec">היום</div>
+      <a class="chatrow sel"><span class="ico"><svg class="ic"><use href="#i-chat"/></svg></span><div class="t"><b>תכנון היום</b><span>GPT-5.1 · בטלפון</span></div><span class="when">08:02</span></a>
+      <a class="chatrow"><span class="ico"><svg class="ic"><use href="#i-computer"/></svg></span><div class="t"><b>בדיקת מסמכי הפרויקט</b><span>פרויקט אורן · במחשב</span></div><span class="when">07:40</span></a>
+      <a class="chatrow"><span class="ico"><svg class="ic"><use href="#i-chat"/></svg></span><div class="t"><b>מתכון לעוגת גבינה</b><span>GPT-5.1 · בטלפון</span></div><span class="when">06:15</span></a>
+      <div class="dsec">אתמול</div>
+      <a class="chatrow"><span class="ico"><svg class="ic"><use href="#i-chat"/></svg></span><div class="t"><b>השוואת מחירי מקרר</b><span>GPT-5.1 · בטלפון</span></div><span class="when">21:30</span></a>
+      <a class="chatrow"><span class="ico"><svg class="ic"><use href="#i-computer"/></svg></span><div class="t"><b>תיקון בדיקות שנכשלו</b><span>פרויקט אורן · במחשב</span></div><span class="when">17:12</span></a>
+      <a class="chatrow"><span class="ico"><svg class="ic"><use href="#i-chat"/></svg></span><div class="t"><b>הודעת תודה לספק</b><span>GPT-5.1 · בטלפון</span></div><span class="when">11:48</span></a>
+    </div>
+
+    <div class="dfoot">
+      <a><svg class="ic s18"><use href="#i-calendar"/></svg>אוטומציות</a>
+      <a><svg class="ic s18"><use href="#i-folder"/></svg>קבצים</a>
+      <a><svg class="ic s18"><use href="#i-tune"/></svg>הגדרות</a>
+    </div>
+  </nav>
+</div>
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

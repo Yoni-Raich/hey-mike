@@ -1,0 +1,118 @@
+/* Tokens. Dark values are the shipped scheme (AndroidAgentScreen.kt AgentDarkColors,
+   AutomationStrip.kt, ChatTopBar.kt, ChatLibraryDrawer.kt on origin/dev).
+   Light values are a PROPOSAL: the shipped app is dark only. */
+:root {
+  color-scheme: dark;
+  /* scheme */
+  --bg: #000000;
+  --on-bg: #F2F2F2;
+  --surface: #202020;
+  --on-surface: #F2F2F2;
+  --surface-variant: #303030;
+  --on-surface-variant: #AAAAAA;
+  --primary: #F4F4F4;
+  --on-primary: #111111;
+  --primary-container: #252525;
+  --on-primary-container: #F4F4F4;
+  --outline-variant: #3A3A3A;
+  --secondary: #83D9CA;
+  --secondary-container: #174E47;
+  --on-secondary-container: #A1F2E1;
+  --tertiary-container: #1E3A34;
+  --on-tertiary-container: #CDEFE5;
+  --error: #FFB4AB;
+  --error-container: #2B1D1B;
+  --on-error-container: #FFDAD6;
+  /* the strip's family: teal = live/ok, amber = needs attention */
+  --ready: #83D9CA;
+  --blocked: #F6B86A;
+  --off: #8F8F8F;
+  --blocked-container: #241E14;
+  --blocked-outline: #4A3A24;
+  /* sheet and warm drawer ground */
+  --sheet: #1B1B1B;
+  --drawer: #141413;
+  --drawer-tile: #1F1E1C;
+  --drawer-line: #232220;
+  --warm-ink: #ECEBE6;
+  --warm-muted: #8E8C85;
+  --warm-faint: #6C6A64;
+  /* derived, not new colours: alpha of the above */
+  --card: #202020;
+  --card-line: color-mix(in srgb, #3A3A3A 55%, transparent);
+  --inset: color-mix(in srgb, #303030 45%, transparent);
+  --hair: color-mix(in srgb, #3A3A3A 50%, transparent);
+  --scrim: rgba(0,0,0,.62);
+  --teal-ink: #83D9CA;      /* teal as text */
+  --amber-ink: #F6B86A;     /* amber as text */
+  --mike-ink: #ECEBE6;      /* Mike's own words in the Manager chat */
+  --aura-teal: rgba(131,217,202,.10);
+  --aura-amber: rgba(246,184,106,.09);
+  --disabled: #444444;
+  --control-line: #707070;   /* border of an interactive outline control: 3:1 on the sheet and on cards */
+
+  /* shape */
+  --r-sheet: 28px;
+  --r-card: 18px;
+  --r-row: 14px;
+  --r-bubble: 20px;
+  --r-chip: 16px;
+  --r-badge: 7px;
+  --r-btn: 24px;
+
+  /* type (sp -> px at 1.0 font scale) */
+  --fs-body-l: 17px;  --lh-body-l: 27px;
+  --fs-body-m: 14px;  --lh-body-m: 21px;
+  --fs-title-m: 16px; --lh-title-m: 24px;
+  --fs-title-s: 14px; --lh-title-s: 20px;
+  --fs-label-m: 12px; --lh-label-m: 16px;
+  --fs-label-s: 11px; --lh-label-s: 16px;
+  --fs-head-s: 24px;  --lh-head-s: 32px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #FAF9F6;
+  --on-bg: #1A1A19;
+  --surface: #FFFFFF;
+  --on-surface: #1A1A19;
+  --surface-variant: #ECEBE6;
+  --on-surface-variant: #5A5953;
+  --primary: #1A1A19;
+  --on-primary: #F4F4F4;
+  --primary-container: #ECEBE6;
+  --on-primary-container: #1A1A19;
+  --outline-variant: #D8D6CE;
+  --secondary: #0F6B5E;
+  --secondary-container: #D3EFE8;
+  --on-secondary-container: #00352E;
+  --tertiary-container: #DCEFE9;
+  --on-tertiary-container: #0B3B33;
+  --error: #B3261E;
+  --error-container: #FCE8E6;
+  --on-error-container: #5C1410;
+  --ready: #14776A;
+  --blocked: #B87400;
+  --off: #77766F;
+  --blocked-container: #FBEFD9;
+  --blocked-outline: #E7CFA3;
+  --sheet: #F3F2EE;
+  --drawer: #F3F2EE;
+  --drawer-tile: #FFFFFF;
+  --drawer-line: #E4E2DA;
+  --warm-ink: #1F1F1D;
+  --warm-muted: #6B6A63;
+  --warm-faint: #8A8982;
+  --card: #FFFFFF;
+  --card-line: #E1DFD7;
+  --inset: #F1F0EB;
+  --hair: #E1DFD7;
+  --scrim: rgba(20,20,18,.38);
+  --teal-ink: #0F6B5E;
+  --amber-ink: #8A5A00;
+  --mike-ink: #1F1F1D;
+  --aura-teal: rgba(20,119,106,.10);
+  --aura-amber: rgba(184,116,0,.10);
+  --disabled: #D8D6CE;
+  --control-line: #85837B;
+}

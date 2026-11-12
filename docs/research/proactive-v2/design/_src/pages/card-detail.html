@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mike - task detail</title>
+<meta name="viewport" content="width=412">
+<style>
+/*@include parts/tokens.css*/
+/*@include parts/components.css*/
+/*@include parts/tasks.css*/
+</style>
+<script>
+/*@include parts/page.js*/
+</script>
+<style>
+  .detail-title { font-size: 22px; line-height: 30px; font-weight: 700; margin-top: 10px; }
+  .meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--on-surface-variant); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; background: var(--inset); font-size: 12px; font-weight: 600; color: var(--on-surface); }
+  .blk { margin-top: 24px; }
+  .blk > .label { display: block; margin-bottom: 8px; }
+  .blk p { font-size: 15px; line-height: 23px; color: color-mix(in srgb, var(--on-surface) 86%, transparent); }
+  .blk .until { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12.5px; color: var(--on-surface-variant); }
+  .steps { list-style: none; counter-reset: s; display: flex; flex-direction: column; gap: 10px; }
+  .steps li { counter-increment: s; display: flex; gap: 12px; font-size: 14.5px; line-height: 22px; align-items: flex-start; }
+  .steps li::before { content: counter(s); flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--inset); display: grid; place-items: center; font-size: 12px; font-weight: 600; margin-top: 0; color: var(--on-surface-variant); }
+  .steps li.ask::before { background: var(--blocked-container); color: var(--amber-ink); border: 1px solid var(--blocked-outline); }
+  .panel { padding: 14px 16px; border-radius: var(--r-row); background: var(--card); border: 1px solid var(--card-line); }
+  .effect { display: flex; gap: 12px; align-items: flex-start; }
+  .effect .ic { color: var(--blocked); margin-top: 2px; }
+  .effect b { display: block; font-weight: 600; font-size: 14.5px; line-height: 21px; }
+  .effect span { display: block; font-size: 12.5px; line-height: 18px; color: var(--on-surface-variant); margin-top: 2px; }
+  .quote-box { padding: 12px 14px; background: var(--inset); border-radius: var(--r-row); }
+  .quote-box .who { font-size: 12px; color: var(--on-surface-variant); display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .quote-box .q { border-inline-start: 2px solid var(--outline-variant); padding-inline-start: 12px; font-size: 15px; line-height: 23px; color: var(--on-surface); }
+  .rule { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 12.5px; line-height: 18px; color: var(--on-surface-variant); }
+  .rule .ic { margin-top: 1px; color: var(--teal-ink); }
+  .read p { font-size: 13.5px; line-height: 20px; }
+  .read .why-blue { display: flex; gap: 8px; margin-top: 8px; font-size: 12.5px; line-height: 18px; color: var(--amber-ink); }
+  .field { border: 1px solid var(--control-line); border-radius: 16px; padding: 12px 14px; min-height: 92px; font-size: 15px; line-height: 23px; position: relative; background: transparent; }
+  
+  .field .caret { display: inline-block; width: 1.5px; height: 18px; background: var(--teal-ink); vertical-align: -3px; margin-inline-start: 1px; }
+  .field-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .field-h .label { font-size: 13px; color: var(--on-surface); font-weight: 600; }
+  .field-h span { font-size: 12px; color: var(--on-surface-variant); }
+  .dismiss { margin-top: 24px; }
+  .dismiss .q { font-size: 13px; color: var(--on-surface-variant); margin-bottom: 10px; }
+  .bar-fixed { position: sticky; bottom: 0; margin-top: 28px; padding: 14px 20px calc(18px); background: linear-gradient(to top, var(--sheet) 72%, transparent); }
+  .bar-fixed .actions { margin: 0; }
+  .bar-fixed .hint { text-align: center; font-size: 12px; color: var(--on-surface-variant); margin-top: 10px; }
+  .sheet { padding-bottom: 0; }
+</style>
+</head>
+<body>
+<!--@include parts/icons.html-->
+<div class="sb"><span>14:33</span><span class="r"><svg class="ic s14"><use href="#i-wifi"/></svg><span class="bat"></span></span></div>
+<div class="behind"></div>
+
+<main class="sheet">
+  <div class="grab"></div>
+  <header class="hdr">
+    <button class="ibtn" aria-label="חזרה ללוח המשימות"><svg class="ic mir"><use href="#i-back"/></svg></button>
+    <h1 style="font-size:20px;line-height:28px">משימה</h1>
+    <button class="ibtn mute" aria-label="עוד פעולות"><svg class="ic"><use href="#i-more"/></svg></button>
+  </header>
+
+  <div class="pad">
+    <div class="src"><svg class="ic s14"><use href="#i-chat"/></svg><span>וואטסאפ · דנה</span><i class="sep"></i><span>14:10</span><span class="grow"></span><span class="place"><svg class="ic s14"><use href="#i-phone"/></svg>בטלפון</span></div>
+    <h2 class="detail-title">לשלוח לדנה את הטופס החתום</h2>
+    <div class="meta">
+      <span class="pill"><i class="dot amber"></i>מחכה להחלטה שלך</span>
+      <span class="tag who" style="height:24px"><svg class="ic s14"><use href="#i-person"/></svg>הבקשה של דנה, לא שלך</span>
+    </div>
+
+    <section class="blk">
+      <span class="label">למה עכשיו</span>
+      <p>דנה כתבה ב-14:10 שהיא צריכה את הטופס החתום עד יום שלישי. נשארו שלושה ימים.</p>
+      <div class="until"><svg class="ic s14"><use href="#i-clock"/></svg>רלוונטי עד יום שלישי</div>
+    </section>
+
+    <section class="blk">
+      <span class="label">מה מייק יעשה</span>
+      <div class="panel">
+        <ol class="steps">
+          <li>לחפש את הטופס החתום בתיקיית ההורדות</li>
+          <li>לנסח לדנה תשובה קצרה ולצרף את הקובץ</li>
+          <li class="ask">להראות לך את ההודעה ולשלוח רק אחרי שתאשר</li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="blk">
+      <span class="label">מה יקרה בפועל</span>
+      <div class="panel effect">
+        <svg class="ic"><use href="#i-send"/></svg>
+        <div><b>שולח הודעה לדנה בוואטסאפ</b><span>רק אחרי אישור שלך בצ׳אט. אישור המשימה לא שולח דבר בעצמו.</span></div>
+      </div>
+    </section>
+
+    <section class="blk">
+      <span class="label">מה מייק ראה</span>
+      <div class="quote-box">
+        <div class="who"><svg class="ic s14"><use href="#i-chat"/></svg>דנה · וואטסאפ · 14:10</div>
+        <div class="q">היי, אפשר את הטופס החתום עד יום שלישי? תודה!</div>
+      </div>
+      <div class="rule"><svg class="ic s16"><use href="#i-shield"/></svg><span>מייק מתייחס לטקסט הזה כמידע ולא כהוראה.</span></div>
+    </section>
+
+    <section class="blk">
+      <div class="partial read" style="margin-top:0">
+        <svg class="ic s18"><use href="#i-info"/></svg>
+        <div style="flex:1">
+          <p>ראיתי רק 3 הודעות אחרונות בשיחה. אפשר לתת לו לקרוא את כולה.</p>
+          <div class="why-blue"><svg class="ic s16"><use href="#i-eye"/></svg><span>השיחה תיפתח על המסך. פתיחה מסמנת הודעות כנקראו, ודנה תראה וי כחול.</span></div>
+          <button class="btn outline sm" style="margin-top:12px"><svg class="ic s16"><use href="#i-eye"/></svg>לקרוא את השיחה</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="blk">
+      <div class="field-h"><span class="label">הוראות למייק</span><span>לא חובה</span></div>
+      <div class="field">תצרף גם את העמוד השני של הטופס<span class="caret"></span></div>
+    </section>
+
+    <section class="dismiss">
+      <p class="q">לא מתאים? אפשר לסגור עם סיבה, וזה ילמד את מייק</p>
+      <div class="chips">
+        <span class="chip outline">כבר עשיתי</span>
+        <span class="chip outline">לא עכשיו</span>
+        <span class="chip outline">טעות</span>
+        <span class="chip outline">אל תציע דברים כאלה</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="bar-fixed">
+    <div class="actions">
+      <button class="btn mike grow"><svg class="ic s18"><use href="#i-sparkle"/></svg>מייק, תעשה</button>
+      <button class="btn tonal">אני אעשה</button>
+    </div>
+  </div>
+</main>
+
+<script>
+/*@include parts/orb.js*/
+</script>
+</body>
+</html>

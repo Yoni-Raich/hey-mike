@@ -1,0 +1,2118 @@
+diff --git a/PROGRESS.md b/PROGRESS.md
+index cec00919..1cf5f264 100644
+--- a/PROGRESS.md
++++ b/PROGRESS.md
+@@ -1,5 +1,31 @@
+ # Progress
+ 
++### Usage limit: continue at reset, or move to another account — 2026-10-28
++
++A chat stopped by a usage limit now shows a card instead of a red error: when
++the usage resets, a one-tap "Continue at HH:mm", the other accounts and
++providers with whether they have usage now, and "Try again now". Each chat can
++have a plan, from `/limits`, the composer chip or the card: an ordered list of
++Codex accounts and Claude to move to, and whether to wait for the reset. The
++chat then continues by itself, also with the app closed (one alarm). Design in
++`docs/ARCHITECTURE.md`, "A chat that hits a usage limit continues by itself".
++
++Branch `feat/limit-auto-continue` from `dev` `b9ea151`, Windows:
++`:core:test` (13 new `UsageLimitRecoveryTest` cases), `:engine-claude:test`,
++`:engine-codex:testDebugUnitTest`, `:app:testDevDebugUnitTest` and
++`:app:lintDevDebug` PASS; `:app:assembleDevDebug` PASS; `git diff --check`
++clean. The build first failed in `prepareCodexRuntime`: Alpine no longer
++serves `musl-1.2.5-r12.apk` (HTTP 404). A local copy with the pinned SHA-256
++was placed in the build bucket; the pin itself needs a durable source.
++
++Not tested:
++- Nothing ran on a phone: no real limit, account switch, provider handoff or
++  alarm wake-up was seen.
++- The Codex error shape (`codexErrorInfo: usageLimitExceeded`) comes from the
++  app-server's naming, not from a captured limit; text recognition is the
++  fallback.
++- Without the exact-alarm permission the wake-up may come late under Doze.
++
+ ### Long context switch in the model menu — 2026-10-27
+ 
+ Claude Code gives every model a 1M window on the user's plan, and every reply
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 217c99c0..de971a08 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -84,6 +84,7 @@
+             <meta-data android:name="android.appwidget.provider" android:resource="@xml/usage_widget_info" />
+         </receiver>
+         <receiver android:name=".QuestionAnswerReceiver" android:exported="false" />
++        <receiver android:name=".LimitWakeReceiver" android:exported="false" />
+         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
+             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+         </provider>
+diff --git a/app/src/main/java/dev/androidagent/app/AgentApplication.kt b/app/src/main/java/dev/androidagent/app/AgentApplication.kt
+index bf0bf46f..20c6ef75 100644
+--- a/app/src/main/java/dev/androidagent/app/AgentApplication.kt
++++ b/app/src/main/java/dev/androidagent/app/AgentApplication.kt
+@@ -426,6 +426,12 @@ class AgentGraph(private val app: Application) {
+     val coordinator: AgentRuns
+         get() = runCoordinator
+     val queue: SessionRunQueue
++    /** Chats that stopped at a usage limit, and what each does about it. */
++    val limitRecovery: dev.androidagent.core.UsageLimitRecovery
++    /** One Codex account switch at a time, from Settings or from a chat that ran out. */
++    val accountChange = kotlinx.coroutines.sync.Mutex()
++    /** A switch made outside Settings finished, with the new live account's id; the screen reads it again. */
++    val accountSwitched = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+     /** The live voice conversation, shared by the chat screen and the assistant panel. */
+     val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
+     init {
+@@ -505,6 +511,11 @@ class AgentGraph(private val app: Application) {
+                 }
+             },
+         )
++        limitRecovery = dev.androidagent.core.UsageLimitRecovery(
++            CoroutineScope(scope.coroutineContext + Dispatchers.Default),
++            dev.androidagent.core.LimitBook(File(runtime.runtimeRoot, "limit-recovery.json")),
++            AppLimitRecoveryHost(app, this),
++        ).also { it.watch(runCoordinator.outcomes) }
+         automationHost = AutomationHost(
+             context = app,
+             library = automations,
+@@ -552,6 +563,42 @@ class AgentGraph(private val app: Application) {
+     }
+ }
+ 
++/**
++ * Make saved Codex account [id] the live one, for a chat that ran out of
++ * usage. Codex writes auth.json while it runs, so like the switch in
++ * Settings this waits until no chat and no voice conversation is running,
++ * holds the queue, and swaps with the app-server stopped.
++ */
++suspend fun AgentGraph.switchCodexAccount(id: String, waitMillis: Long = 15 * 60_000L) {
++    val deadline = System.currentTimeMillis() + waitMillis
++    while (true) {
++        while (coordinator.anyActive || voice.state.value.active) {
++            check(System.currentTimeMillis() < deadline) { "Other chats were still running." }
++            delay(1_000)
++        }
++        accountChange.lock()
++        val wasPaused = queue.paused.value
++        queue.pause()
++        if (coordinator.anyActive || voice.state.value.active) {
++            // Something started in between: let it run, and try again when it ends.
++            accountChange.unlock()
++            if (!wasPaused) queue.resume()
++            continue
++        }
++        try {
++            engine.close()
++            withContext(Dispatchers.IO) { accounts.activate(id) }
++            engine.account()
++            runCatching { engine.refreshUsage() }
++        } finally {
++            accountChange.unlock()
++            accountSwitched.tryEmit(id)
++            if (!wasPaused) queue.resume()
++        }
++        return
++    }
++}
++
+ /** The official release's copy publication: unchanged behaviour, no native library. */
+ private fun publishWithoutNative(part: File, target: File, @Suppress("UNUSED_PARAMETER") replace: Boolean) {
+     if (target.exists()) target.delete()
+diff --git a/app/src/main/java/dev/androidagent/app/AgentViewModel.kt b/app/src/main/java/dev/androidagent/app/AgentViewModel.kt
+index c38a24ea..6121a0d7 100644
+--- a/app/src/main/java/dev/androidagent/app/AgentViewModel.kt
++++ b/app/src/main/java/dev/androidagent/app/AgentViewModel.kt
+@@ -295,6 +295,26 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
+                 else -> Unit
+             }
+         } }
++        // What the open chat does at a usage limit, and where it stands.
++        viewModelScope.launch {
++            combine(
++                current,
++                graph.limitRecovery.plans,
++                graph.limitRecovery.stops,
++                graph.sessions.sessions.map { all -> all.associate { it.id to it.engine } }.distinctUntilChanged(),
++                mutable.map { Triple(it.savedAccounts, it.claude.ready to it.claude.account?.label, it.computerClaude) }.distinctUntilChanged(),
++            ) { _, _, _, _, _ -> }.collect { projectLimits() }
++        }
++        // A chat that ran out moved to another Codex account: the screen reads the live account again.
++        viewModelScope.launch {
++            graph.accountSwitched.collect {
++                engines = engines.withLimits(EngineKind.CODEX, emptyList())
++                runCatching { graph.engine.account() }.getOrNull()?.let { status -> mutable.update { it.copy(accountStatus = status) } }
++                refreshSavedAccounts()
++                runCatching { loadModels() }
++                project()
++            }
++        }
+         // Claude's own sign-in and its 5-hour and weekly limits. The home
+         // screen widget shows them too, under the account's name.
+         viewModelScope.launch { graph.claudeEngine.events.collect { event ->
+@@ -837,7 +857,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
+         val chats = graph.computers.state.value.bindings.filterValues { it.computerId == id }.keys
+         check(chats.none { graph.coordinator.phaseOf(it) != null }) { "Stop the chat running on this computer first." }
+         graph.remote.disconnect(id)
+-        chats.forEach { chat -> graph.queue.cancelSession(chat); graph.sessions.deleteSession(chat) }
++        chats.forEach { chat -> graph.queue.cancelSession(chat); graph.limitRecovery.forget(chat); graph.sessions.deleteSession(chat) }
+         withContext(Dispatchers.IO) { graph.computers.remove(id) }
+         mutable.update { state -> state.copy(folderBrowser = state.folderBrowser?.takeIf { it.computerId != id }) }
+     }
+@@ -990,7 +1010,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
+         }
+         if (graph.coordinator.phaseOf(id) != null) { error("Stop this chat before deleting it."); return }
+         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End the voice conversation before deleting it."); return }
+-        task { graph.queue.cancelSession(id); graph.sessions.deleteSession(id) }
++        task { graph.queue.cancelSession(id); graph.limitRecovery.forget(id); graph.sessions.deleteSession(id) }
+     }
+     fun send(text: String, attachments: List<PendingAttachment>) {
+         val id = current.value ?: return
+@@ -1106,6 +1126,56 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
+         task { note(id, text) }
+     }
+ 
++    /**
++     * The open chat's limit plan, its stop, and every account or provider it
++     * could run as, with when each has usage again.
++     */
++    private suspend fun projectLimits() {
++        val id = current.value
++        if (id == null) { mutable.update { it.copy(limits = ChatLimits(), isLimitPlanOpen = false) }; return }
++        val state = mutable.value
++        val engine = graph.sessions.getSession(id)?.engine ?: EngineKind.CODEX
++        val recovery = graph.limitRecovery
++        val vault = state.savedAccounts
++        val computer = graph.computers.binding(id)?.let { graph.computers.computer(it.computerId) }
++        val options = withContext(Dispatchers.IO) {
++            buildList {
++                vault.accounts.forEach { account ->
++                    val target = LimitTarget(EngineKind.CODEX, account.id)
++                    add(LimitOption(target, "Codex", account.label, recovery.freeAt(target), engine == EngineKind.CODEX && account.id == vault.activeId))
++                }
++                val codex = state.accountStatus
++                if (vault.accounts.isEmpty() && codex?.signedIn == true) {
++                    val target = LimitTarget(EngineKind.CODEX)
++                    add(LimitOption(target, "Codex", codex.label, recovery.freeAt(target), engine == EngineKind.CODEX))
++                }
++                if (EngineKind.CLAUDE in enginesFor(id, engine, state)) {
++                    val target = LimitTarget(EngineKind.CLAUDE)
++                    val who = computer?.let { "On ${it.label}" } ?: state.claude.account?.takeIf { it.signedIn }?.label
++                    add(LimitOption(target, "Claude", who, recovery.freeAt(target), engine == EngineKind.CLAUDE))
++                }
++            }
++        }
++        if (current.value != id) return
++        mutable.update { it.copy(limits = ChatLimits(recovery.planOf(id), recovery.stops.value[id], options)) }
++    }
++
++    fun saveLimitPlan(plan: LimitPlan) = limitAction { graph.limitRecovery.setPlan(it, plan) }
++    fun continueAtReset() = limitAction { graph.limitRecovery.continueAtReset(it) }
++    fun cancelLimitWait() = limitAction { graph.limitRecovery.cancelWait(it) }
++    fun continueAfterLimit() = limitAction { graph.limitRecovery.continueNow(it) }
++    fun switchAfterLimit(target: LimitTarget) = limitAction { graph.limitRecovery.switchNow(it, target) }
++    fun dismissLimit() = limitAction { graph.limitRecovery.dismiss(it) }
++
++    // A switch of account can wait for other chats to finish, so these run beside the screen, not in it.
++    private fun limitAction(block: suspend (String) -> Unit) {
++        val id = current.value ?: return
++        graph.scope.launch {
++            try { block(id) } catch (cancelled: CancellationException) { throw cancelled }
++            catch (failure: Exception) { error(failure.message ?: "Something went wrong.") }
++        }
++    }
++
+     // A line in the chat that records what a command did; the model never sees it.
+     private suspend fun note(sessionId: String, text: String) =
+         graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), sessionId, "note", text, System.currentTimeMillis()))
+@@ -1372,7 +1442,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
+             .onFailure { error("No app on this phone can open the sign-in page.") }
+     }
+ 
+-    private val accountChange = kotlinx.coroutines.sync.Mutex()
++    private val accountChange get() = graph.accountChange
+ 
+     /**
+      * Sign in to one more account. The live one is saved and taken off
+diff --git a/app/src/main/java/dev/androidagent/app/LimitRecoveryWiring.kt b/app/src/main/java/dev/androidagent/app/LimitRecoveryWiring.kt
+new file mode 100644
+index 00000000..f071a566
+--- /dev/null
++++ b/app/src/main/java/dev/androidagent/app/LimitRecoveryWiring.kt
+@@ -0,0 +1,167 @@
++/*
++ * Hey Mike - an on-device Android AI agent.
++ * Copyright (C) 2025-2026 Yoni Raich
++ *
++ * SPDX-License-Identifier: AGPL-3.0-only
++ *
++ * This file is part of Hey Mike, which is dual-licensed. You may use it under
++ * the terms of the GNU Affero General Public License, version 3, as published
++ * by the Free Software Foundation, or under a commercial license from the
++ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package dev.androidagent.app
++
++import android.app.AlarmManager
++import android.app.PendingIntent
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.os.Build
++import androidx.core.content.ContextCompat
++import dev.androidagent.core.ChatMessage
++import dev.androidagent.core.EngineKind
++import dev.androidagent.core.LimitRecoveryHost
++import dev.androidagent.core.LimitTarget
++import dev.androidagent.core.QueuedTurn
++import dev.androidagent.core.UsageLimit
++import dev.androidagent.core.UsageLimitRecovery
++import dev.androidagent.core.label
++import dev.androidagent.runtime.ClaudeInstallPhase
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import kotlinx.coroutines.withTimeoutOrNull
++import java.util.UUID
++
++/**
++ * What [UsageLimitRecovery] does through the app: which account a chat is on,
++ * the Codex account switch, the queue, and the wake-up alarm.
++ */
++internal class AppLimitRecoveryHost(private val app: Context, private val graph: AgentGraph) : LimitRecoveryHost {
++    private val alarms = LimitAlarm(app)
++
++    override suspend fun current(sessionId: String): LimitTarget? {
++        val session = graph.sessions.getSession(sessionId) ?: return null
++        return when (session.engine) {
++            EngineKind.CODEX -> LimitTarget(EngineKind.CODEX, liveAccount())
++            EngineKind.CLAUDE -> LimitTarget(EngineKind.CLAUDE)
++        }
++    }
++
++    override suspend fun canRun(sessionId: String, target: LimitTarget): Boolean = when (target.engine) {
++        EngineKind.CODEX -> target.accountId == null ||
++            withContext(Dispatchers.IO) { graph.accounts.state().accounts.any { it.id == target.accountId } }
++        // A computer's Claude is its own sign-in there; the plan only offers it when that computer has one.
++        EngineKind.CLAUDE -> graph.computers.binding(sessionId) != null ||
++            (graph.claudeHost.installState.value.phase == ClaudeInstallPhase.INSTALLED && graph.claudeUsage.account() != null)
++    }
++
++    override fun readings(target: LimitTarget): List<UsageLimit> = runCatching {
++        when (target.engine) {
++            EngineKind.CODEX -> target.accountId?.let { graph.usageBook.all()[it]?.limits }.orEmpty()
++            EngineKind.CLAUDE -> graph.claudeUsage.readSaved()?.limits.orEmpty()
++        }
++    }.getOrDefault(emptyList())
++
++    override suspend fun switchTo(sessionId: String, target: LimitTarget) {
++        val account = target.accountId
++        if (target.engine == EngineKind.CODEX && account != null && account != liveAccount()) {
++            graph.switchCodexAccount(account)
++        }
++        // A change of engine travels with the continuation turn itself: the
++        // coordinator moves the chat and tells the new engine what was said.
++    }
++
++    override suspend fun continueChat(sessionId: String, engine: EngineKind) {
++        val session = graph.sessions.getSession(sessionId) ?: error("Chat no longer exists.")
++        // The chat's own model stays when the engine does; a new engine starts on its default.
++        val same = session.engine == engine
++        // The app may have been woken by the alarm alone: the run needs the service to stay alive.
++        runCatching { ContextCompat.startForegroundService(app, Intent(app, AgentService::class.java)) }
++        graph.queue.submit(QueuedTurn(
++            sessionId = sessionId,
++            prompt = UsageLimitRecovery.CONTINUE_PROMPT,
++            model = session.model?.takeIf { same },
++            effort = session.reasoningEffort?.takeIf { same },
++            engine = engine,
++            displayPrompt = UsageLimitRecovery.CONTINUE_SHOWN,
++            agentContext = true,
++        ))
++    }
++
++    override suspend fun note(sessionId: String, text: String) {
++        if (graph.sessions.getSession(sessionId) == null) return
++        graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), sessionId, "note", text, System.currentTimeMillis()))
++    }
++
++    override fun wakeAt(atMillis: Long?) = if (atMillis == null) alarms.cancel() else alarms.arm(atMillis)
++
++    override fun label(target: LimitTarget): String = when (target.engine) {
++        EngineKind.CLAUDE -> "Claude"
++        EngineKind.CODEX -> target.accountId
++            ?.let { id -> runCatching { graph.accounts.state().accounts.firstOrNull { it.id == id }?.label }.getOrNull() }
++            ?.let { "Codex ($it)" } ?: EngineKind.CODEX.label
++    }
++
++    private suspend fun liveAccount(): String? = withContext(Dispatchers.IO) { runCatching { graph.accounts.state().activeId }.getOrNull() }
++}
++
++/**
++ * One alarm for the earliest chat waiting for its usage to reset, so the wait
++ * holds when the app is closed. Exact when the user allowed exact alarms,
++ * otherwise as close as Doze lets it; the chat continues either way.
++ */
++private class LimitAlarm(private val context: Context) {
++    private val manager: AlarmManager? = context.getSystemService(AlarmManager::class.java)
++
++    fun arm(atMillis: Long) {
++        val manager = manager ?: return
++        val pending = pending(create = true) ?: return
++        val exact = runCatching { Build.VERSION.SDK_INT < Build.VERSION_CODES.S || manager.canScheduleExactAlarms() }.getOrDefault(false)
++        runCatching {
++            if (exact) manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pending)
++            else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pending)
++        }.onFailure { runCatching { manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pending) } }
++    }
++
++    fun cancel() {
++        val pending = pending(create = false) ?: return
++        runCatching { manager?.cancel(pending) }
++        pending.cancel()
++    }
++
++    private fun pending(create: Boolean): PendingIntent? = PendingIntent.getBroadcast(
++        context, REQUEST_CODE, Intent(context, LimitWakeReceiver::class.java).setAction(ACTION),
++        PendingIntent.FLAG_IMMUTABLE or (if (create) PendingIntent.FLAG_UPDATE_CURRENT else PendingIntent.FLAG_NO_CREATE),
++    )
++
++    companion object {
++        const val ACTION = "dev.androidagent.app.LIMIT_RESET"
++        const val REQUEST_CODE = 0x4C52
++    }
++}
++
++/** A chat's usage resets now. It only wakes the app: what is due is decided from the saved waits. */
++class LimitWakeReceiver : BroadcastReceiver() {
++    override fun onReceive(context: Context, intent: Intent) {
++        val graph = (context.applicationContext as? AgentApplication)?.graph ?: return
++        // The service keeps the process alive for the turn; an exact alarm may start it from the background.
++        runCatching { ContextCompat.startForegroundService(context, Intent(context, AgentService::class.java)) }
++        val done = goAsync()
++        val work = graph.scope.launch { graph.limitRecovery.dispatchDue() }
++        // A broadcast has seconds, a switch of account may take longer: the work goes on in the app's scope.
++        graph.scope.launch {
++            withTimeoutOrNull(8_000) { work.join() }
++            done.finish()
++        }
++    }
++}
+diff --git a/app/src/main/java/dev/androidagent/app/MainActivity.kt b/app/src/main/java/dev/androidagent/app/MainActivity.kt
+index 4f65a56f..7c475168 100644
+--- a/app/src/main/java/dev/androidagent/app/MainActivity.kt
++++ b/app/src/main/java/dev/androidagent/app/MainActivity.kt
+@@ -358,6 +358,14 @@ class MainActivity : ComponentActivity() {
+         onLongContextChanged = model::longContext,
+         onRenameSession = { id, title -> model.rename(id, title) },
+         onCompact = { ensureService(); model.compact() },
++        onOpenLimitPlan = { model.editUi { it.copy(isLimitPlanOpen = true) } },
++        onCloseLimitPlan = { model.editUi { it.copy(isLimitPlanOpen = false) } },
++        onSaveLimitPlan = { ensureService(); model.saveLimitPlan(it) },
++        onContinueAtReset = { ensureService(); model.continueAtReset() },
++        onCancelLimitWait = model::cancelLimitWait,
++        onContinueNow = { ensureService(); model.continueAfterLimit() },
++        onSwitchAfterLimit = { ensureService(); model.switchAfterLimit(it) },
++        onDismissLimit = model::dismissLimit,
+         onTogglePlanMode = model::togglePlanMode,
+         onShowStatus = model::showStatus,
+         onDeleteSession = { model.delete(it) },
+diff --git a/app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt b/app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt
+index 237ea48f..7e6e7857 100644
+--- a/app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt
++++ b/app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt
+@@ -251,8 +251,34 @@ data class AgentUiState(
+     val defaultEngine: EngineKind = EngineKind.CODEX,
+     /** Claude subscription setup. [accountStatus] stays the Codex sign-in. */
+     val claude: ClaudeUiState = ClaudeUiState(),
++    /** The open chat's usage-limit plan, and its stop when it hit a limit. */
++    val limits: ChatLimits = ChatLimits(),
++    /** The sheet that sets what the open chat does at a usage limit. */
++    val isLimitPlanOpen: Boolean = false,
+ )
+ 
++/** An account or provider a chat can run as, offered when it hits a usage limit. */
++data class LimitOption(
++    val target: dev.androidagent.core.LimitTarget,
++    /** "Codex" or "Claude". */
++    val provider: String,
++    /** The account's email, or the computer whose Claude it is. */
++    val account: String?,
++    /** Epoch millis at which it has usage again; null when it has usage now. */
++    val freeAt: Long?,
++    /** What the chat runs as now. */
++    val current: Boolean,
++)
++
++/** What the open chat does at a usage limit, whether it stopped at one, and where it can go. */
++data class ChatLimits(
++    val plan: dev.androidagent.core.LimitPlan = dev.androidagent.core.LimitPlan(),
++    val stop: dev.androidagent.core.LimitStop? = null,
++    val options: List<LimitOption> = emptyList(),
++) {
++    fun option(target: dev.androidagent.core.LimitTarget): LimitOption? = options.firstOrNull { it.target.key == target.key }
++}
++
+ /** Claude subscription setup: the one-time download and the sign-in. */
+ data class ClaudeUiState(
+     val install: ClaudeInstallState = ClaudeInstallState(ClaudeInstallPhase.NOT_INSTALLED, totalBytes = ClaudeBinaryPin.CURRENT.size),
+@@ -362,6 +388,18 @@ data class AgentUiActions(
+     val onLongContextChanged: (Boolean) -> Unit = {},
+     val onRenameSession: (sessionId: String, title: String) -> Unit = { _, _ -> },
+     val onCompact: () -> Unit = {},
++    /** Open or close the sheet that sets what this chat does at a usage limit. */
++    val onOpenLimitPlan: () -> Unit = {},
++    val onCloseLimitPlan: () -> Unit = {},
++    val onSaveLimitPlan: (dev.androidagent.core.LimitPlan) -> Unit = {},
++    /** The stopped chat goes on by itself once its usage resets. */
++    val onContinueAtReset: () -> Unit = {},
++    val onCancelLimitWait: () -> Unit = {},
++    /** Try the stopped chat again now, on what it runs as. */
++    val onContinueNow: () -> Unit = {},
++    /** Move the stopped chat to another account or provider and go on there. */
++    val onSwitchAfterLimit: (dev.androidagent.core.LimitTarget) -> Unit = {},
++    val onDismissLimit: () -> Unit = {},
+     val onTogglePlanMode: () -> Unit = {},
+     val onShowStatus: () -> Unit = {},
+     val onDeleteSession: (String) -> Unit = {},
+diff --git a/app/src/main/java/dev/androidagent/app/ui/AndroidAgentScreen.kt b/app/src/main/java/dev/androidagent/app/ui/AndroidAgentScreen.kt
+index 884b7ac2..aed98292 100644
+--- a/app/src/main/java/dev/androidagent/app/ui/AndroidAgentScreen.kt
++++ b/app/src/main/java/dev/androidagent/app/ui/AndroidAgentScreen.kt
+@@ -158,6 +158,7 @@ import dev.androidagent.core.ChatMessage
+ import dev.androidagent.core.ConnectionPhase
+ import dev.androidagent.core.EngineEvent
+ import dev.androidagent.core.EngineKind
++import dev.androidagent.core.LimitPhase
+ import dev.androidagent.app.update.AppUpdateInfo
+ import dev.androidagent.app.update.UpdateStatus
+ import dev.androidagent.core.RunPhase
+@@ -761,6 +762,14 @@ private fun AgentChatContent(
+                     CompactingCard(startedAt, Modifier.animateItem())
+                 }
+             }
++            // A chat stopped by a usage limit says so, with what it can do next.
++            state.limits.stop
++                ?.takeIf { it.sessionId == state.activeSessionId && it.phase != LimitPhase.CONTINUING && !running }
++                ?.let { stop ->
++                    item(key = "limit-${stop.stoppedAt}", contentType = "limit") {
++                        LimitCard(stop, state.limits, actions, Modifier.animateItem())
++                    }
++                }
+             if (offersWorkflowSuggestion(state.messages, running)) {
+                 item(key = "suggest-workflows-${state.messages.last().id}") {
+                     AssistChip(
+diff --git a/app/src/main/java/dev/androidagent/app/ui/ChatComposer.kt b/app/src/main/java/dev/androidagent/app/ui/ChatComposer.kt
+index 5b3005ea..570c579a 100644
+--- a/app/src/main/java/dev/androidagent/app/ui/ChatComposer.kt
++++ b/app/src/main/java/dev/androidagent/app/ui/ChatComposer.kt
+@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.GraphicEq
+ import androidx.compose.material.icons.filled.Stop
+ import androidx.compose.material.icons.outlined.Add
+ import androidx.compose.material.icons.outlined.AddComment
++import androidx.compose.material.icons.outlined.Autorenew
+ import androidx.compose.material.icons.outlined.AttachFile
+ import androidx.compose.material.icons.outlined.AutoAwesome
+ import androidx.compose.material.icons.outlined.Check
+@@ -123,6 +124,7 @@ import dev.androidagent.app.ChatEngines
+ import dev.androidagent.core.AgentCommand
+ import dev.androidagent.core.AgentSkill
+ import dev.androidagent.core.EngineKind
++import dev.androidagent.core.LimitPhase
+ import dev.androidagent.core.RunPhase
+ import dev.androidagent.core.RunState
+ import dev.androidagent.core.VoicePhase
+@@ -222,6 +224,7 @@ internal fun AgentComposer(
+             ComposerCommand.MODEL -> if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
+             ComposerCommand.RENAME -> { skill = null; renaming = true }
+             ComposerCommand.STATUS -> actions.onShowStatus()
++            ComposerCommand.LIMITS -> actions.onOpenLimitPlan()
+         }
+     }
+     val runEngineCommand: (AgentCommand) -> Unit = { command ->
+@@ -242,6 +245,7 @@ internal fun AgentComposer(
+             ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting
+             ComposerCommand.MODEL -> !active && !voiceActive && !compacting
+             ComposerCommand.RENAME -> state.activeSessionId != null
++            ComposerCommand.LIMITS -> state.activeSessionId != null
+             else -> true
+         }
+     }
+@@ -380,6 +384,9 @@ internal fun AgentComposer(
+                 ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
+             }
+             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
++            if (state.limits.plan.active || state.limits.stop?.phase == LimitPhase.WAITING) {
++                LimitChip(state.limits, actions.onOpenLimitPlan)
++            }
+             contextFill(state.tokenUsage)?.let { fill ->
+                 Spacer(Modifier.weight(1f))
+                 // The details hang off the chip, as the model menu does.
+@@ -397,6 +404,7 @@ internal fun AgentComposer(
+             }
+         }
+     }
++    if (state.isLimitPlanOpen) LimitPlanSheet(state.limits, actions.onSaveLimitPlan, actions.onCloseLimitPlan)
+     if (browsing) {
+         SkillsSheet(
+             skills = state.availableSkills,
+@@ -812,6 +820,7 @@ private fun ComposerCommand.icon(): ImageVector = when (this) {
+     ComposerCommand.MODEL -> Icons.Outlined.Tune
+     ComposerCommand.RENAME -> Icons.Outlined.DriveFileRenameOutline
+     ComposerCommand.STATUS -> Icons.Outlined.Info
++    ComposerCommand.LIMITS -> Icons.Outlined.Autorenew
+ }
+ 
+ /** Every skill and command, with search; opened from the Skills chip. */
+diff --git a/app/src/main/java/dev/androidagent/app/ui/ComposerCommands.kt b/app/src/main/java/dev/androidagent/app/ui/ComposerCommands.kt
+index 0493f10c..c69381a2 100644
+--- a/app/src/main/java/dev/androidagent/app/ui/ComposerCommands.kt
++++ b/app/src/main/java/dev/androidagent/app/ui/ComposerCommands.kt
+@@ -37,6 +37,7 @@ internal enum class ComposerCommand(val id: String, val label: String, val descr
+     MODEL("model", "Model", "Choose model and reasoning"),
+     RENAME("rename", "Rename", "Give this chat a new name"),
+     STATUS("status", "Status", "Model, limits and phone connection"),
++    LIMITS("limits", "Usage limits", "What this chat does when it hits a usage limit"),
+ }
+ 
+ /** What a leading `/` (skills and commands) or `$` (skills only) is searching for. */
+diff --git a/app/src/main/java/dev/androidagent/app/ui/LimitRecoveryUi.kt b/app/src/main/java/dev/androidagent/app/ui/LimitRecoveryUi.kt
+new file mode 100644
+index 00000000..410496ff
+--- /dev/null
++++ b/app/src/main/java/dev/androidagent/app/ui/LimitRecoveryUi.kt
+@@ -0,0 +1,513 @@
++/*
++ * Hey Mike - an on-device Android AI agent.
++ * Copyright (C) 2025-2026 Yoni Raich
++ *
++ * SPDX-License-Identifier: AGPL-3.0-only
++ *
++ * This file is part of Hey Mike, which is dual-licensed. You may use it under
++ * the terms of the GNU Affero General Public License, version 3, as published
++ * by the Free Software Foundation, or under a commercial license from the
++ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package dev.androidagent.app.ui
++
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.horizontalScroll
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.foundation.layout.navigationBarsPadding
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.layout.widthIn
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Autorenew
++import androidx.compose.material.icons.outlined.Close
++import androidx.compose.material.icons.outlined.HourglassTop
++import androidx.compose.material.icons.outlined.KeyboardArrowDown
++import androidx.compose.material.icons.outlined.KeyboardArrowUp
++import androidx.compose.material.icons.outlined.SwapHoriz
++import androidx.compose.material.icons.outlined.Timer
++import androidx.compose.material3.Button
++import androidx.compose.material3.ButtonDefaults
++import androidx.compose.material3.Checkbox
++import androidx.compose.material3.CheckboxDefaults
++import androidx.compose.material3.ExperimentalMaterial3Api
++import androidx.compose.material3.FilledTonalButton
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.LinearProgressIndicator
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.ModalBottomSheet
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Switch
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.material3.rememberModalBottomSheetState
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableLongStateOf
++import androidx.compose.runtime.mutableStateListOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.vector.ImageVector
++import androidx.compose.ui.semantics.LiveRegionMode
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.liveRegion
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import dev.androidagent.core.LimitPhase
++import dev.androidagent.core.LimitPlan
++import dev.androidagent.core.LimitStop
++import dev.androidagent.core.LimitTarget
++import kotlinx.coroutines.delay
++import java.time.Instant
++import java.time.ZoneId
++import java.time.format.DateTimeFormatter
++import java.util.Locale
++
++// A chat that ran out of usage used to end on a red line and wait for the user
++// to notice, come back and type "continue". This card says what happened and
++// when it frees up, and puts the three ways on from there one tap away: wait
++// and go on by itself, move to an account or provider that has usage, or try
++// again now. The sheet sets the same thing in advance, per chat.
++
++private val LimitAmber = Color(0xFFF2B155)
++private val LimitSheetFill = Color(0xFF1B1B1B)
++private val LimitOptionFill = Color(0xFF252525)
++private val LimitMuted = Color(0xFF8F8F8F)
++private val LimitFree = Color(0xFF22C55E)
++
++/** `14:30` today, `Tue 09:00` within the week, else the date. */
++internal fun resetClock(atMillis: Long, nowMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String {
++    val at = Instant.ofEpochMilli(atMillis).atZone(zone)
++    val now = Instant.ofEpochMilli(nowMillis).atZone(zone)
++    val pattern = when {
++        at.toLocalDate() == now.toLocalDate() -> "HH:mm"
++        atMillis - nowMillis < 6 * 24 * 3_600_000L -> "EEE HH:mm"
++        else -> "d MMM, HH:mm"
++    }
++    return at.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))
++}
++
++/** `2h 14m`, `12m`, `under a minute`. */
++internal fun limitTimeLeft(millis: Long): String {
++    val minutes = (millis.coerceAtLeast(0) + 59_999) / 60_000
++    return when {
++        millis <= 60_000 -> "under a minute"
++        minutes < 60 -> "${minutes}m"
++        minutes < 48 * 60 -> "${minutes / 60}h ${(minutes % 60).toString().padStart(2, '0')}m"
++        else -> "${minutes / (24 * 60)}d ${(minutes % (24 * 60)) / 60}h"
++    }
++}
++
++/** Who a target is in one line: `Codex · dana@mail.com`. */
++internal fun LimitOption.title(): String = listOfNotNull(provider, account).joinToString(" · ")
++
++private fun ChatLimits.titleOf(target: LimitTarget): String =
++    option(target)?.title() ?: if (target.engine == dev.androidagent.core.EngineKind.CLAUDE) "Claude" else "Codex"
++
++/** Ticks once a second while shown, so countdowns move. */
++@Composable
++private fun rememberNow(): Long {
++    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
++    LaunchedEffect(Unit) {
++        while (true) {
++            delay(1_000)
++            now = System.currentTimeMillis()
++        }
++    }
++    return now
++}
++
++/**
++ * Under the last line of a chat that stopped at a usage limit. It stays until
++ * the chat goes on, by itself or by a message.
++ */
++@Composable
++internal fun LimitCard(stop: LimitStop, limits: ChatLimits, actions: AgentUiActions, modifier: Modifier = Modifier) {
++    val now = rememberNow()
++    val waiting = stop.phase == LimitPhase.WAITING
++    val switching = stop.phase == LimitPhase.SWITCHING
++    val accent = if (waiting || switching) MaterialTheme.colorScheme.secondary else LimitAmber
++    val resetsAt = stop.resetsAt?.takeIf { it > now }
++    val alternatives = limits.options.filter { it.target.key != stop.target.key && !it.current }
++    Surface(
++        modifier = modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
++        shape = RoundedCornerShape(16.dp),
++        color = MaterialTheme.colorScheme.surfaceVariant,
++        contentColor = MaterialTheme.colorScheme.onSurface,
++    ) {
++        Column {
++            when {
++                switching -> LinearProgressIndicator(
++                    modifier = Modifier.fillMaxWidth().height(3.dp),
++                    color = accent,
++                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
++                )
++                waiting && stop.continueAt != null -> {
++                    val span = (stop.continueAt!! - stop.stoppedAt).coerceAtLeast(1L)
++                    LinearProgressIndicator(
++                        progress = { ((now - stop.stoppedAt).toFloat() / span).coerceIn(0f, 1f) },
++                        modifier = Modifier.fillMaxWidth().height(3.dp),
++                        color = accent,
++                        trackColor = accent.copy(alpha = 0.16f),
++                        drawStopIndicator = {},
++                    )
++                }
++            }
++            Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
++                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                    Box(
++                        Modifier.size(34.dp).background(accent.copy(alpha = 0.14f), CircleShape),
++                        contentAlignment = Alignment.Center,
++                    ) {
++                        Icon(
++                            when {
++                                switching -> Icons.Outlined.SwapHoriz
++                                waiting -> Icons.Outlined.Timer
++                                else -> Icons.Outlined.HourglassTop
++                            },
++                            contentDescription = null,
++                            tint = accent,
++                            modifier = Modifier.size(18.dp),
++                        )
++                    }
++                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
++                        Text(
++                            when {
++                                switching -> "Moving to continue…"
++                                waiting -> stop.continueAt?.let { "Continues at ${resetClock(it, now)}" } ?: "Waiting for the reset"
++                                else -> "Usage limit reached"
++                            },
++                            fontSize = 14.sp,
++                            fontWeight = FontWeight.SemiBold,
++                        )
++                        Text(
++                            when {
++                                switching -> "The chat picks up where it stopped."
++                                waiting -> stop.continueAt?.let { "In ${limitTimeLeft(it - now)} · picks up where it stopped" } ?: "Picks up where it stopped"
++                                resetsAt != null -> "${limits.titleOf(stop.target)} · resets at ${resetClock(resetsAt, now)}, in ${limitTimeLeft(resetsAt - now)}"
++                                else -> "${limits.titleOf(stop.target)} · reset time not reported"
++                            },
++                            fontSize = 12.sp,
++                            lineHeight = 16.sp,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                    if (!switching) {
++                        IconButton(onClick = actions.onDismissLimit, modifier = Modifier.size(36.dp)) {
++                            Icon(Icons.Outlined.Close, contentDescription = "Dismiss", tint = LimitMuted, modifier = Modifier.size(18.dp))
++                        }
++                    }
++                }
++                stop.reason?.takeIf { !waiting && !switching }?.let {
++                    Text(it, fontSize = 12.sp, lineHeight = 16.sp, color = LimitAmber, modifier = Modifier.padding(end = 8.dp))
++                }
++                if (!switching) Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
++                    if (waiting) {
++                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                            OutlinedButton(onClick = actions.onContinueNow, modifier = Modifier.weight(1f)) { Text("Continue now") }
++                            TextButton(onClick = actions.onCancelLimitWait) { Text("Cancel") }
++                        }
++                    } else {
++                        FilledTonalButton(onClick = actions.onContinueAtReset, modifier = Modifier.fillMaxWidth()) {
++                            Icon(Icons.Outlined.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
++                            Spacer(Modifier.width(8.dp))
++                            Text(resetsAt?.let { "Continue at ${resetClock(it + 60_000, now)}" } ?: "Continue when it resets")
++                        }
++                        if (alternatives.isNotEmpty()) {
++                            Text("Or continue now with", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                                alternatives.forEach { option ->
++                                    TargetChip(option, now) { actions.onSwitchAfterLimit(option.target) }
++                                }
++                            }
++                        }
++                    }
++                    Row(verticalAlignment = Alignment.CenterVertically) {
++                        if (!waiting) TextButton(onClick = actions.onContinueNow) { Text("Try again now") }
++                        Spacer(Modifier.weight(1f))
++                        TextButton(onClick = actions.onOpenLimitPlan) {
++                            Icon(Icons.Outlined.Autorenew, contentDescription = null, modifier = Modifier.size(16.dp))
++                            Spacer(Modifier.width(6.dp))
++                            Text(if (limits.plan.active) "Edit plan" else "Set up for next time")
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++/** An account or provider to move to, with whether it has usage now. */
++@Composable
++private fun TargetChip(option: LimitOption, now: Long, onClick: () -> Unit) {
++    val freeAt = option.freeAt?.takeIf { it > now }
++    val ready = freeAt == null
++    Surface(
++        onClick = onClick,
++        enabled = ready,
++        shape = RoundedCornerShape(16.dp),
++        color = if (ready) MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f) else Color.Transparent,
++        border = BorderStroke(1.dp, if (ready) MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f) else LimitMuted.copy(alpha = 0.4f)),
++        modifier = Modifier.semantics {
++            contentDescription = if (ready) "Continue with ${option.title()}" else "${option.title()}, out of usage until ${resetClock(freeAt!!, now)}"
++        },
++    ) {
++        Row(
++            Modifier.heightIn(min = 34.dp).padding(horizontal = 12.dp),
++            verticalAlignment = Alignment.CenterVertically,
++            horizontalArrangement = Arrangement.spacedBy(6.dp),
++        ) {
++            ProviderDot(option.provider, ready)
++            Text(
++                option.title(),
++                fontSize = 12.5.sp,
++                fontWeight = FontWeight.Medium,
++                maxLines = 1,
++                overflow = TextOverflow.Ellipsis,
++                modifier = Modifier.widthIn(max = 200.dp),
++                color = if (ready) MaterialTheme.colorScheme.onSurface else LimitMuted,
++            )
++            if (!ready) Text("until ${resetClock(freeAt!!, now)}", fontSize = 11.sp, color = LimitMuted, maxLines = 1)
++        }
++    }
++}
++
++/** The provider's initial in a small round mark, green when it has usage now. */
++@Composable
++private fun ProviderDot(provider: String, ready: Boolean) {
++    val tint = if (ready) LimitFree else LimitMuted
++    Box(Modifier.size(18.dp).background(tint.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
++        Text(provider.take(1), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = tint)
++    }
++}
++
++/** Beside the model chip while the chat has a plan, or is waiting for a reset. */
++@Composable
++internal fun LimitChip(limits: ChatLimits, onClick: () -> Unit) {
++    val waitingUntil = limits.stop?.takeIf { it.phase == LimitPhase.WAITING }?.continueAt
++    val teal = MaterialTheme.colorScheme.secondary
++    val now = if (waitingUntil != null) rememberNow() else System.currentTimeMillis()
++    Surface(
++        onClick = onClick,
++        shape = RoundedCornerShape(16.dp),
++        color = teal.copy(alpha = 0.10f),
++        border = BorderStroke(1.dp, teal.copy(alpha = 0.45f)),
++        modifier = Modifier.semantics {
++            contentDescription = waitingUntil?.let { "Continues at ${resetClock(it, now)}. Edit the usage limit plan" }
++                ?: "Usage limit plan is on. Edit it"
++        },
++    ) {
++        Row(
++            Modifier.heightIn(min = 32.dp).padding(horizontal = 9.dp),
++            verticalAlignment = Alignment.CenterVertically,
++            horizontalArrangement = Arrangement.spacedBy(6.dp),
++        ) {
++            Icon(if (waitingUntil != null) Icons.Outlined.Timer else Icons.Outlined.Autorenew, contentDescription = null, modifier = Modifier.size(16.dp), tint = teal)
++            Text(waitingUntil?.let { resetClock(it, now) } ?: "Auto", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = teal)
++        }
++    }
++}
++
++/**
++ * What this chat does when it hits a usage limit: the accounts and providers
++ * to move to, in order, and whether to wait for the reset. Saved per chat.
++ */
++@OptIn(ExperimentalMaterial3Api::class)
++@Composable
++internal fun LimitPlanSheet(limits: ChatLimits, onSave: (LimitPlan) -> Unit, onDismiss: () -> Unit) {
++    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
++    val now = rememberNow()
++    val choices = limits.options.filter { !it.current }
++    // Picked targets in the plan's order, then the rest in the order offered.
++    val picked = remember(limits.plan, limits.options) {
++        mutableStateListOf<String>().apply { addAll(limits.plan.switchTo.map { it.key }.filter { key -> choices.any { it.target.key == key } }) }
++    }
++    var waitForReset by remember(limits.plan) { mutableStateOf(limits.plan.continueAtReset) }
++    val ordered = picked.mapNotNull { key -> choices.firstOrNull { it.target.key == key } } + choices.filter { it.target.key !in picked }
++    val current = limits.options.firstOrNull { it.current }
++    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = LimitSheetFill) {
++        Column(
++            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 16.dp),
++            verticalArrangement = Arrangement.spacedBy(14.dp),
++        ) {
++            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
++                Text("When this chat hits a usage limit", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
++                Text(
++                    "Mike picks the task up where it stopped. Nothing that already ran is run again.",
++                    fontSize = 13.sp,
++                    lineHeight = 18.sp,
++                    color = LimitMuted,
++                )
++            }
++            current?.let {
++                Text("Now on ${it.title()}", fontSize = 12.sp, color = LimitMuted)
++            }
++            SectionLabel("Move to, in this order")
++            if (choices.isEmpty()) {
++                Text(
++                    "Add another Codex account or set up Claude in Settings to have somewhere to move to.",
++                    fontSize = 13.sp,
++                    lineHeight = 18.sp,
++                    color = LimitMuted,
++                )
++            } else Surface(shape = RoundedCornerShape(16.dp), color = LimitOptionFill) {
++                Column {
++                    ordered.forEachIndexed { index, option ->
++                        val key = option.target.key
++                        val position = picked.indexOf(key)
++                        PlanRow(
++                            option = option,
++                            now = now,
++                            order = position.takeIf { it >= 0 }?.plus(1),
++                            canRaise = position > 0,
++                            canLower = position >= 0 && position < picked.size - 1,
++                            onToggle = { if (position >= 0) picked.remove(key) else picked.add(key) },
++                            onRaise = { picked.removeAt(position); picked.add(position - 1, key) },
++                            onLower = { picked.removeAt(position); picked.add(position + 1, key) },
++                        )
++                        if (index < ordered.lastIndex) Box(Modifier.fillMaxWidth().padding(start = 56.dp).height(1.dp).background(Color.White.copy(alpha = 0.06f)))
++                    }
++                }
++            }
++            Surface(shape = RoundedCornerShape(16.dp), color = LimitOptionFill) {
++                Row(
++                    Modifier.fillMaxWidth().clickable { waitForReset = !waitForReset }.padding(horizontal = 14.dp, vertical = 12.dp),
++                    verticalAlignment = Alignment.CenterVertically,
++                    horizontalArrangement = Arrangement.spacedBy(12.dp),
++                ) {
++                    Icon(Icons.Outlined.Timer, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
++                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
++                        Text("Continue when usage resets", fontSize = 14.sp, fontWeight = FontWeight.Medium)
++                        Text(
++                            if (picked.isEmpty()) "Waits for the reset, then goes on by itself, even with the app closed."
++                            else "If none of the above has usage, waits for the first reset and goes on by itself.",
++                            fontSize = 12.sp,
++                            lineHeight = 16.sp,
++                            color = LimitMuted,
++                        )
++                    }
++                    Switch(checked = waitForReset, onCheckedChange = { waitForReset = it })
++                }
++            }
++            if (picked.any { key -> choices.firstOrNull { it.target.key == key }?.target?.engine != current?.target?.engine }) {
++                Text(
++                    "Moving to another provider tells it what was said in this chat first.",
++                    fontSize = 12.sp,
++                    lineHeight = 16.sp,
++                    color = LimitMuted,
++                )
++            }
++            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
++                if (limits.plan.active) {
++                    TextButton(onClick = { onSave(LimitPlan()); onDismiss() }) { Text("Turn off") }
++                }
++                Spacer(Modifier.weight(1f))
++                Button(
++                    onClick = {
++                        val targets = picked.mapNotNull { key -> choices.firstOrNull { it.target.key == key }?.target }
++                        onSave(LimitPlan(continueAtReset = waitForReset, switchTo = targets))
++                        onDismiss()
++                    },
++                    colors = ButtonDefaults.buttonColors(),
++                ) { Text("Save") }
++            }
++        }
++    }
++}
++
++@Composable
++private fun SectionLabel(text: String) {
++    Text(text.uppercase(Locale.ROOT), fontSize = 11.sp, letterSpacing = 0.8.sp, fontWeight = FontWeight.SemiBold, color = LimitMuted)
++}
++
++@Composable
++private fun PlanRow(
++    option: LimitOption,
++    now: Long,
++    order: Int?,
++    canRaise: Boolean,
++    canLower: Boolean,
++    onToggle: () -> Unit,
++    onRaise: () -> Unit,
++    onLower: () -> Unit,
++) {
++    val freeAt = option.freeAt?.takeIf { it > now }
++    Row(
++        Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        Checkbox(
++            checked = order != null,
++            onCheckedChange = { onToggle() },
++            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.secondary),
++        )
++        Column(Modifier.weight(1f).padding(start = 2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
++            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                Text(option.provider, fontSize = 14.sp, fontWeight = FontWeight.Medium)
++                order?.let { OrderBadge(it) }
++            }
++            Text(
++                listOfNotNull(option.account, if (freeAt == null) "has usage" else "out until ${resetClock(freeAt, now)}").joinToString(" · "),
++                fontSize = 12.sp,
++                lineHeight = 16.sp,
++                color = if (freeAt == null) LimitMuted else LimitAmber,
++                maxLines = 1,
++                overflow = TextOverflow.Ellipsis,
++            )
++        }
++        if (order != null) {
++            ReorderButton(Icons.Outlined.KeyboardArrowUp, "Move ${option.title()} up", canRaise, onRaise)
++            ReorderButton(Icons.Outlined.KeyboardArrowDown, "Move ${option.title()} down", canLower, onLower)
++        }
++    }
++}
++
++@Composable
++private fun OrderBadge(order: Int) {
++    val teal = MaterialTheme.colorScheme.secondary
++    Box(
++        Modifier.clip(RoundedCornerShape(6.dp)).background(teal.copy(alpha = 0.14f)).padding(horizontal = 6.dp, vertical = 1.dp),
++    ) {
++        Text(if (order == 1) "1st" else if (order == 2) "2nd" else if (order == 3) "3rd" else "${order}th", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = teal)
++    }
++}
++
++@Composable
++private fun ReorderButton(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
++    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(36.dp)) {
++        Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp), tint = if (enabled) MaterialTheme.colorScheme.onSurface else LimitMuted.copy(alpha = 0.35f))
++    }
++}
+diff --git a/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt b/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt
+index e91bfa57..1bc589d3 100644
+--- a/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt
++++ b/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt
+@@ -526,6 +526,7 @@ class AgentCoordinator(
+                         mutableState.value = state.value.copy(
+                             phase = RunPhase.ERROR, status = error.message ?: "Run failed", controlling = false,
+                             outcomeUnknown = awaitingTurn || turn != null,
++                            limit = UsageLimitText.recognize(error.message)?.copy(engine = runEngine),
+                         )
+                     }
+                 }
+@@ -1395,7 +1396,10 @@ class AgentCoordinator(
+                         val error = event.error ?: "${runEngine.label} could not finish"
+                         synchronized(lifecycleLock) {
+                             assistantOutcome = "error"
+-                            mutableState.value = state.value.copy(phase = RunPhase.ERROR, status = error)
++                            mutableState.value = state.value.copy(
++                                phase = RunPhase.ERROR, status = error,
++                                limit = (event.limitReached ?: UsageLimitText.recognize(error))?.copy(engine = runEngine),
++                            )
+                         }
+                         state.value.sessionId?.let { sessions.append(message(it, "system", error)) }
+                     }
+@@ -1425,6 +1429,7 @@ class AgentCoordinator(
+                         assistantOutcome = "error"
+                         mutableState.value = state.value.copy(
+                             phase = RunPhase.ERROR, status = event.message, outcomeUnknown = event.uncertain,
++                            limit = (event.limitReached ?: UsageLimitText.recognize(event.message))?.copy(engine = runEngine),
+                         )
+                     }
+                     completion?.complete(Unit)
+diff --git a/core/src/main/kotlin/dev/androidagent/core/Contracts.kt b/core/src/main/kotlin/dev/androidagent/core/Contracts.kt
+index e693dcf9..7ab2407b 100644
+--- a/core/src/main/kotlin/dev/androidagent/core/Contracts.kt
++++ b/core/src/main/kotlin/dev/androidagent/core/Contracts.kt
+@@ -288,12 +288,16 @@ sealed interface EngineEvent {
+         val itemId: String, val title: String, val detail: String, val state: String,
+         val threadId: String, val turnId: String, val remote: Boolean = false,
+     ) : EngineEvent
+-    data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null) : EngineEvent
++    data class TurnFinished(val status: String, val error: String? = null, val threadId: String? = null, val turnId: String? = null,
++        /** The turn stopped because the account is out of usage, as the engine itself said. */
++        val limitReached: LimitReached? = null) : EngineEvent
+     data class AccountChanged(val status: AccountStatus) : EngineEvent
+     data object SkillsChanged : EngineEvent
+     data class Failure(val message: String, val threadId: String? = null, val turnId: String? = null,
+         /** The transport failed after work may have reached the computer. */
+-        val uncertain: Boolean = false) : EngineEvent
++        val uncertain: Boolean = false,
++        /** The turn stopped because the account is out of usage, as the engine itself said. */
++        val limitReached: LimitReached? = null) : EngineEvent
+ }
+ interface AgentEngine {
+     val events: Flow<EngineEvent>
+@@ -493,6 +497,8 @@ data class RunState(
+     val outcomeUnknown: Boolean = false,
+     /** Identifies this execution, so a previous turn's outcome cannot finish a new task. */
+     val runId: String? = null,
++    /** The run ended at a usage limit of [engine][LimitReached], not on an ordinary error. */
++    val limit: LimitReached? = null,
+ ) {
+     val active: Boolean get() = phase !in setOf(RunPhase.IDLE, RunPhase.ERROR)
+ 
+diff --git a/core/src/main/kotlin/dev/androidagent/core/UsageLimitRecovery.kt b/core/src/main/kotlin/dev/androidagent/core/UsageLimitRecovery.kt
+new file mode 100644
+index 00000000..96455aa4
+--- /dev/null
++++ b/core/src/main/kotlin/dev/androidagent/core/UsageLimitRecovery.kt
+@@ -0,0 +1,483 @@
++/*
++ * Hey Mike - an on-device Android AI agent.
++ * Copyright (C) 2025-2026 Yoni Raich
++ *
++ * SPDX-License-Identifier: AGPL-3.0-only
++ *
++ * This file is part of Hey Mike, which is dual-licensed. You may use it under
++ * the terms of the GNU Affero General Public License, version 3, as published
++ * by the Free Software Foundation, or under a commercial license from the
++ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package dev.androidagent.core
++
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.flow.Flow
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
++import kotlinx.serialization.Serializable
++import kotlinx.serialization.json.Json
++import java.io.File
++import java.nio.file.AtomicMoveNotSupportedException
++import java.nio.file.Files
++import java.nio.file.StandardCopyOption
++
++/** A turn stopped because the account it ran on is out of usage. */
++data class LimitReached(
++    /** Epoch seconds at which the engine said the limit resets; null when it did not say. */
++    val resetsAt: Long? = null,
++    /** The engine whose limit it is. The coordinator fills it in from the run. */
++    val engine: EngineKind? = null,
++)
++
++/**
++ * Recognizes a usage-limit stop in an engine's error text. The engines also
++ * say it structurally (Codex's `usageLimitExceeded`, Claude's rejected
++ * `rate_limit_event`); this is the fallback for the wordings that carry no
++ * structure, so it matches whole phrases only and never a bare "limit".
++ */
++object UsageLimitText {
++    private val PHRASE = Regex(
++        """(?i)(hit your (usage )?limit|usage limit (has been )?(reached|exceeded)|reached your [\w\s-]{0,40}usage limit|""" +
++            """usagelimitexceeded|usage_limit_(reached|exceeded)|(5-hour|five-hour|weekly|session|daily|opus|sonnet) limit reached)""",
++    )
++    private val EPOCH = Regex("""(?i)usage limit reached\|(\d{9,11})""")
++
++    fun recognize(text: String?): LimitReached? {
++        if (text.isNullOrBlank() || !PHRASE.containsMatchIn(text)) return null
++        return LimitReached(resetsAt = EPOCH.find(text)?.groupValues?.get(1)?.toLongOrNull())
++    }
++}
++
++/** Who a turn runs as: an engine, and for Codex one saved account (null: whichever is live). */
++@Serializable
++data class LimitTarget(val engine: EngineKind, val accountId: String? = null) {
++    val key: String get() = engine.name + (accountId?.let { ":$it" }.orEmpty())
++}
++
++/** What a chat does when it reaches a usage limit. Set from inside the chat. */
++@Serializable
++data class LimitPlan(
++    /** Wait for the usage to reset, then continue on its own. */
++    val continueAtReset: Boolean = false,
++    /** Tried in this order before waiting: another Codex account, or the other provider. */
++    val switchTo: List<LimitTarget> = emptyList(),
++) {
++    val active: Boolean get() = continueAtReset || switchTo.isNotEmpty()
++}
++
++enum class LimitPhase {
++    /** Stopped; nothing is planned. The chat offers what can be done. */
++    STOPPED,
++    /** Moving to another account or provider. */
++    SWITCHING,
++    /** Waiting for the usage to reset; [LimitStop.continueAt] says when. */
++    WAITING,
++    /** A turn that picks the work up again was sent. */
++    CONTINUING,
++}
++
++/** A chat that stopped at a usage limit, and what is being done about it. */
++@Serializable
++data class LimitStop(
++    val sessionId: String,
++    /** What the chat ran as when it stopped. */
++    val target: LimitTarget,
++    /** Epoch millis at which [target] frees up, or null when nobody said. */
++    val resetsAt: Long? = null,
++    val stoppedAt: Long,
++    val phase: LimitPhase = LimitPhase.STOPPED,
++    /** Epoch millis of the planned continuation while [phase] is WAITING. */
++    val continueAt: Long? = null,
++    /** Targets already used in this chain of stops, so it never goes round in a circle. */
++    val tried: List<String> = emptyList(),
++    /** Automatic continuations since the chat last finished a turn on its own. */
++    val attempts: Int = 0,
++    /** Set when the plan ran out of options, for the card to say why. */
++    val reason: String? = null,
++)
++
++/** What [UsageLimitRecovery] needs from the app: accounts, engines, the queue. */
++interface LimitRecoveryHost {
++    /** What this chat would run as now, or null when the chat is gone. */
++    suspend fun current(sessionId: String): LimitTarget?
++    /** [target] can run this chat at all: signed in, installed where the chat runs. */
++    suspend fun canRun(sessionId: String, target: LimitTarget): Boolean
++    /** The last usage reading of [target], to tell when it frees up. */
++    fun readings(target: LimitTarget): List<UsageLimit>
++    /** Make the chat run as [target]. Throws when it cannot. */
++    suspend fun switchTo(sessionId: String, target: LimitTarget)
++    /** Queue the turn that picks the work up again on [engine]. */
++    suspend fun continueChat(sessionId: String, engine: EngineKind)
++    /** A line in the chat that says what was done. */
++    suspend fun note(sessionId: String, text: String)
++    /** Wake the app at [atMillis] in case it is not running then; null cancels. */
++    fun wakeAt(atMillis: Long?)
++    fun label(target: LimitTarget): String
++}
++
++/**
++ * Picks a chat up again after it stopped at a usage limit.
++ *
++ * A chat's [LimitPlan] says what to do: first move to another account or
++ * provider, in the user's order, then (or instead) wait for the usage to reset
++ * and continue. A stop with no plan is kept for the chat's card, where the
++ * user can decide. Plans and stops are saved, so a wait survives the app
++ * being closed; [dispatchDue] is what the wake-up alarm calls.
++ *
++ * Every automatic continuation is a turn of its own, sent through the queue
++ * like any other: it never steers or replays a turn, and anything the stopped
++ * turn did stays done.
++ */
++class UsageLimitRecovery(
++    private val scope: CoroutineScope,
++    private val book: LimitBook,
++    private val host: LimitRecoveryHost,
++    private val clock: () -> Long = System::currentTimeMillis,
++) {
++    private val lock = Mutex()
++    private val plansState = MutableStateFlow<Map<String, LimitPlan>>(emptyMap())
++    private val stopsState = MutableStateFlow<Map<String, LimitStop>>(emptyMap())
++    /** When each target frees up, by [LimitTarget.key], in epoch millis. */
++    private var exhausted: Map<String, Long> = emptyMap()
++    private val timers = mutableMapOf<String, Job>()
++    private val handledRuns = mutableSetOf<String>()
++
++    val plans: StateFlow<Map<String, LimitPlan>> = plansState.asStateFlow()
++    val stops: StateFlow<Map<String, LimitStop>> = stopsState.asStateFlow()
++
++    private val loaded = scope.launch {
++        val saved = book.read()
++        lock.withLock {
++            plansState.value = saved.plans
++            exhausted = saved.exhausted
++            // A switch the app was killed in the middle of is decided again.
++            stopsState.value = saved.stops.mapValues { (_, stop) ->
++                if (stop.phase == LimitPhase.SWITCHING) stop.copy(phase = LimitPhase.STOPPED) else stop
++            }
++            stopsState.value.values.filter { it.phase == LimitPhase.WAITING }.forEach(::schedule)
++            wake()
++        }
++        saved.stops.values.filter { it.phase == LimitPhase.SWITCHING }.forEach { lock.withLock { proceed(it.sessionId) } }
++    }
++
++    /** Follow every chat's finished runs. */
++    fun watch(outcomes: Flow<Map<String, RunState>>) = scope.launch {
++        loaded.join()
++        outcomes.collect { all -> all.forEach { (sessionId, state) -> finished(sessionId, state) } }
++    }
++
++    suspend fun finished(sessionId: String, state: RunState) {
++        if (state.active) return
++        val runId = state.runId ?: return
++        loaded.join()
++        lock.withLock {
++            if (!handledRuns.add(runId)) return
++            val limit = state.limit
++            if (limit != null) stopped(sessionId, limit) else if (sessionId in stopsState.value) {
++                // The chat went on without us: a reply, Stop, or another error.
++                cancelTimer(sessionId)
++                update(sessionId, null)
++            }
++        }
++    }
++
++    fun planOf(sessionId: String): LimitPlan = plansState.value[sessionId] ?: LimitPlan()
++
++    /** Save the chat's plan; a chat stopped right now acts on it at once. */
++    suspend fun setPlan(sessionId: String, plan: LimitPlan) {
++        loaded.join()
++        lock.withLock {
++            plansState.value = if (plan.active) plansState.value + (sessionId to plan) else plansState.value - sessionId
++            persist()
++            val stop = stopsState.value[sessionId] ?: return
++            when {
++                stop.phase == LimitPhase.STOPPED && plan.active -> proceed(sessionId)
++                stop.phase == LimitPhase.WAITING && !plan.continueAtReset -> {
++                    cancelTimer(sessionId)
++                    update(sessionId, stop.copy(phase = LimitPhase.STOPPED, continueAt = null))
++                }
++            }
++        }
++    }
++
++    /** From the chat's card: continue this stop once the usage resets, without a standing plan. */
++    suspend fun continueAtReset(sessionId: String) {
++        loaded.join()
++        lock.withLock { stopsState.value[sessionId]?.takeIf { it.phase == LimitPhase.STOPPED }?.let { arm(it) } }
++    }
++
++    /** Stop waiting. The chat stays stopped and says so. */
++    suspend fun cancelWait(sessionId: String) {
++        loaded.join()
++        lock.withLock {
++            val stop = stopsState.value[sessionId]?.takeIf { it.phase == LimitPhase.WAITING } ?: return
++            cancelTimer(sessionId)
++            update(sessionId, stop.copy(phase = LimitPhase.STOPPED, continueAt = null))
++        }
++    }
++
++    /** Try again now on what the chat runs as, for when the user knows the usage is back. */
++    suspend fun continueNow(sessionId: String) {
++        loaded.join()
++        lock.withLock {
++            val stop = stopsState.value[sessionId] ?: return
++            if (stop.phase == LimitPhase.SWITCHING || stop.phase == LimitPhase.CONTINUING) return
++            cancelTimer(sessionId)
++            exhausted = exhausted - stop.target.key
++            // The user asked for it: the count of automatic tries starts over.
++            resume(stop.copy(attempts = 0), host.current(sessionId) ?: stop.target)
++        }
++    }
++
++    /** Move the stopped chat to [target] now and continue there. */
++    suspend fun switchNow(sessionId: String, target: LimitTarget) {
++        loaded.join()
++        lock.withLock {
++            val stop = stopsState.value[sessionId] ?: return
++            if (stop.phase == LimitPhase.SWITCHING || stop.phase == LimitPhase.CONTINUING) return
++            cancelTimer(sessionId)
++            if (!switchAndContinue(stop, target)) update(sessionId, stopsState.value[sessionId]?.copy(phase = LimitPhase.STOPPED))
++        }
++    }
++
++    suspend fun dismiss(sessionId: String) {
++        loaded.join()
++        lock.withLock { cancelTimer(sessionId); update(sessionId, null) }
++    }
++
++    /** A deleted chat leaves nothing behind. */
++    suspend fun forget(sessionId: String) {
++        loaded.join()
++        lock.withLock {
++            cancelTimer(sessionId)
++            plansState.value = plansState.value - sessionId
++            update(sessionId, null)
++        }
++    }
++
++    /** Continue every wait whose time has come. The wake-up alarm calls this. */
++    suspend fun dispatchDue() {
++        loaded.join()
++        val due = stopsState.value.values.filter { it.phase == LimitPhase.WAITING && (it.continueAt ?: 0L) <= clock() }
++        due.forEach { lock.withLock { due(it.sessionId) } }
++    }
++
++    /** When [target] frees up in epoch millis, or null when it is free now. */
++    fun freeAt(target: LimitTarget): Long? {
++        val now = clock()
++        val known = exhausted[target.key]?.takeIf { it > now }
++        val read = fullUntil(host.readings(target), now)
++        return listOfNotNull(known, read).maxOrNull()
++    }
++
++    private suspend fun stopped(sessionId: String, limit: LimitReached) {
++        val now = clock()
++        val current = host.current(sessionId) ?: return update(sessionId, null)
++        val resetsAt = limit.resetsAt?.takeIf { it > 0 }?.times(1000)?.takeIf { it > now } ?: fullUntil(host.readings(current), now)
++        exhausted = exhausted.filterValues { it > now } + (current.key to (resetsAt ?: (now + UNKNOWN_RESET_MS)))
++        val prior = stopsState.value[sessionId]?.takeIf { it.phase == LimitPhase.CONTINUING }
++        update(sessionId, LimitStop(
++            sessionId = sessionId,
++            target = current,
++            resetsAt = resetsAt,
++            stoppedAt = now,
++            tried = (prior?.tried.orEmpty() + current.key).distinct(),
++            attempts = prior?.attempts ?: 0,
++        ))
++        proceed(sessionId)
++    }
++
++    /** Act on the plan for a stopped chat: switch, then wait, else leave it to the user. */
++    private suspend fun proceed(sessionId: String) {
++        val stop = stopsState.value[sessionId] ?: return
++        val plan = planOf(sessionId)
++        if (!plan.active) return
++        if (stop.attempts >= MAX_ATTEMPTS) {
++            update(sessionId, stop.copy(phase = LimitPhase.STOPPED, reason = "Stopped after $MAX_ATTEMPTS automatic tries."))
++            host.note(sessionId, "Mike stopped trying on his own after $MAX_ATTEMPTS automatic tries. Send a message to go on.")
++            return
++        }
++        for (target in plan.switchTo) {
++            val latest = stopsState.value[sessionId] ?: return
++            if (target.key in latest.tried || freeAt(target) != null) continue
++            if (!runCatching { host.canRun(sessionId, target) }.getOrDefault(false)) continue
++            if (switchAndContinue(latest, target)) return
++        }
++        val latest = stopsState.value[sessionId] ?: return
++        if (plan.continueAtReset) arm(latest)
++        else if (plan.switchTo.isNotEmpty()) {
++            update(sessionId, latest.copy(phase = LimitPhase.STOPPED, reason = "Every account in the plan is out of usage."))
++        }
++    }
++
++    private suspend fun switchAndContinue(stop: LimitStop, target: LimitTarget): Boolean {
++        val sessionId = stop.sessionId
++        update(sessionId, stop.copy(phase = LimitPhase.SWITCHING, continueAt = null))
++        host.note(sessionId, "Usage limit reached on ${host.label(stop.target)}. Moving to ${host.label(target)} to continue.")
++        return try {
++            host.switchTo(sessionId, target)
++            send(stop.copy(tried = (stop.tried + target.key).distinct()), target)
++            true
++        } catch (e: kotlinx.coroutines.CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            host.note(sessionId, "Could not move to ${host.label(target)}: ${e.message ?: e.javaClass.simpleName}")
++            // Not tried again for a while, so a wait does not retry it every minute.
++            exhausted = exhausted + (target.key to (clock() + UNKNOWN_RESET_MS))
++            update(sessionId, stop.copy(phase = LimitPhase.STOPPED, tried = (stop.tried + target.key).distinct()))
++            false
++        }
++    }
++
++    /** Wait for the first target in the plan, or the one that stopped, to free up. */
++    private suspend fun arm(stop: LimitStop) {
++        val now = clock()
++        val candidates = candidates(stop)
++        val at = candidates.map { freeAt(it) ?: now }.minOrNull() ?: (now + UNKNOWN_RESET_MS)
++        val continueAt = maxOf(at + RESET_GRACE_MS, now + MIN_WAIT_MS)
++        val waiting = stop.copy(phase = LimitPhase.WAITING, continueAt = continueAt, reason = null)
++        update(stop.sessionId, waiting)
++        schedule(waiting)
++        wake()
++    }
++
++    private suspend fun due(sessionId: String) {
++        val stop = stopsState.value[sessionId]?.takeIf { it.phase == LimitPhase.WAITING } ?: return
++        timers.remove(sessionId)
++        val ready = candidates(stop).filter { freeAt(it) == null }
++        val pick = ready.firstOrNull { it == stop.target || runCatching { host.canRun(sessionId, it) }.getOrDefault(false) }
++        if (pick == null) {
++            // Still out, or the reset time was a guess: look again later.
++            arm(stop.copy(phase = LimitPhase.STOPPED))
++            return
++        }
++        // A new chain: what was out before may be back by now.
++        resume(stop.copy(tried = emptyList()), pick)
++    }
++
++    private suspend fun resume(stop: LimitStop, target: LimitTarget) {
++        val current = host.current(stop.sessionId) ?: return update(stop.sessionId, null)
++        if (target != current) {
++            if (!switchAndContinue(stop, target)) arm(stop)
++            return
++        }
++        send(stop.copy(tried = (stop.tried + target.key).distinct()), target)
++    }
++
++    private suspend fun send(stop: LimitStop, target: LimitTarget) {
++        update(stop.sessionId, stop.copy(phase = LimitPhase.CONTINUING, continueAt = null, attempts = stop.attempts + 1, reason = null))
++        wake()
++        try {
++            host.continueChat(stop.sessionId, target.engine)
++        } catch (e: kotlinx.coroutines.CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            host.note(stop.sessionId, "Could not continue the chat: ${e.message ?: e.javaClass.simpleName}")
++            update(stop.sessionId, stopsState.value[stop.sessionId]?.copy(phase = LimitPhase.STOPPED))
++        }
++    }
++
++    private fun candidates(stop: LimitStop): List<LimitTarget> =
++        (listOf(stop.target) + planOf(stop.sessionId).switchTo).distinctBy { it.key }
++
++    private fun schedule(stop: LimitStop) {
++        cancelTimer(stop.sessionId)
++        val at = stop.continueAt ?: return
++        timers[stop.sessionId] = scope.launch {
++            delay((at - clock()).coerceAtLeast(0L))
++            lock.withLock { due(stop.sessionId) }
++        }
++    }
++
++    private fun cancelTimer(sessionId: String) { timers.remove(sessionId)?.cancel() }
++
++    /** The alarm is set for the earliest wait, so a closed app still wakes for it. */
++    private fun wake() {
++        host.wakeAt(stopsState.value.values.filter { it.phase == LimitPhase.WAITING }.mapNotNull { it.continueAt }.minOrNull())
++    }
++
++    private suspend fun update(sessionId: String, stop: LimitStop?) {
++        stopsState.value = if (stop == null) stopsState.value - sessionId else stopsState.value + (sessionId to stop)
++        persist()
++        if (stop == null) wake()
++    }
++
++    private suspend fun persist() {
++        runCatching { book.write(LimitBook.Saved(plansState.value, stopsState.value, exhausted.filterValues { it > clock() })) }
++    }
++
++    companion object {
++        /** A guess when nobody said when the limit resets: look again after this long. */
++        const val UNKNOWN_RESET_MS = 30 * 60_000L
++        /** Continue a little after the reset, not on the second of it. */
++        const val RESET_GRACE_MS = 60_000L
++        const val MIN_WAIT_MS = 60_000L
++        const val MAX_ATTEMPTS = 12
++
++        /**
++         * Until when [limits] say the account is out: the latest reset among the
++         * windows that are full. Null when no window is full.
++         */
++        fun fullUntil(limits: List<UsageLimit>, nowMillis: Long): Long? = limits
++            .filter { (it.usedPercent ?: 0.0) >= 100.0 }
++            .mapNotNull { it.resetsAt?.times(1000) }
++            .filter { it > nowMillis }
++            .maxOrNull()
++
++        /** The prompt of an automatic continuation; the chat shows [CONTINUE_SHOWN] instead. */
++        const val CONTINUE_PROMPT =
++            "Your previous turn in this chat stopped because the usage limit was reached. Usage is available again. " +
++                "Continue the task from where it stopped. Do not repeat actions that already completed; " +
++                "check the current state first when you are not sure."
++        const val CONTINUE_SHOWN = "Continuing after the usage limit"
++    }
++}
++
++/** Plans, stops and known reset times, in one owner-only file. */
++class LimitBook(private val file: File) {
++    @Serializable
++    data class Saved(
++        val plans: Map<String, LimitPlan> = emptyMap(),
++        val stops: Map<String, LimitStop> = emptyMap(),
++        val exhausted: Map<String, Long> = emptyMap(),
++    )
++
++    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
++
++    fun read(): Saved = runCatching {
++        if (file.isFile) json.decodeFromString(Saved.serializer(), file.readText()) else Saved()
++    }.getOrDefault(Saved())
++
++    @Synchronized
++    fun write(saved: Saved) {
++        val parent = file.parentFile ?: return
++        if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) return
++        val temp = File.createTempFile(".${file.name}.", ".tmp", parent)
++        try {
++            temp.writeText(json.encodeToString(Saved.serializer(), saved))
++            try {
++                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
++            } catch (_: AtomicMoveNotSupportedException) {
++                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
++            }
++        } finally {
++            temp.delete()
++        }
++    }
++}
+diff --git a/core/src/test/kotlin/dev/androidagent/core/UsageLimitRecoveryTest.kt b/core/src/test/kotlin/dev/androidagent/core/UsageLimitRecoveryTest.kt
+new file mode 100644
+index 00000000..0e697929
+--- /dev/null
++++ b/core/src/test/kotlin/dev/androidagent/core/UsageLimitRecoveryTest.kt
+@@ -0,0 +1,241 @@
++/*
++ * Hey Mike - an on-device Android AI agent.
++ * Copyright (C) 2025-2026 Yoni Raich
++ *
++ * SPDX-License-Identifier: AGPL-3.0-only
++ *
++ * This file is part of Hey Mike, which is dual-licensed. You may use it under
++ * the terms of the GNU Affero General Public License, version 3, as published
++ * by the Free Software Foundation, or under a commercial license from the
++ * copyright holder. See LICENSE, LICENSE-COMMERCIAL.md and NOTICE.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package dev.androidagent.core
++
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.test.TestScope
++import kotlinx.coroutines.test.advanceTimeBy
++import kotlinx.coroutines.test.runCurrent
++import kotlinx.coroutines.test.runTest
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNotNull
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++
++@OptIn(ExperimentalCoroutinesApi::class)
++class UsageLimitRecoveryTest {
++    @get:Rule val temp = TemporaryFolder()
++
++    private val codexA = LimitTarget(EngineKind.CODEX, "a")
++    private val codexB = LimitTarget(EngineKind.CODEX, "b")
++    private val claude = LimitTarget(EngineKind.CLAUDE)
++    private val base = 1_800_000_000_000L
++
++    private class FakeHost(var current: LimitTarget) : LimitRecoveryHost {
++        val switches = mutableListOf<LimitTarget>()
++        val continued = mutableListOf<EngineKind>()
++        val notes = mutableListOf<String>()
++        val readings = mutableMapOf<String, List<UsageLimit>>()
++        val unavailable = mutableSetOf<String>()
++        var failSwitch = false
++        var wake: Long? = null
++        override suspend fun current(sessionId: String) = current
++        override suspend fun canRun(sessionId: String, target: LimitTarget) = target.key !in unavailable
++        override fun readings(target: LimitTarget) = readings[target.key].orEmpty()
++        override suspend fun switchTo(sessionId: String, target: LimitTarget) {
++            if (failSwitch) error("busy")
++            switches += target
++            current = target
++        }
++        override suspend fun continueChat(sessionId: String, engine: EngineKind) { continued += engine }
++        override suspend fun note(sessionId: String, text: String) { notes += text }
++        override fun wakeAt(atMillis: Long?) { wake = atMillis }
++        override fun label(target: LimitTarget) = target.key
++    }
++
++    private fun TestScope.recovery(host: FakeHost, scope: CoroutineScope = backgroundScope) =
++        UsageLimitRecovery(scope, LimitBook(temp.root.resolve("limits.json")), host) { base + testScheduler.currentTime }
++
++    private fun limited(run: String, resetsAt: Long? = null) =
++        RunState(phase = RunPhase.ERROR, runId = run, limit = LimitReached(resetsAt = resetsAt))
++
++    @Test
++    fun recognizesLimitTextButNotOrdinaryErrors() {
++        assertNotNull(UsageLimitText.recognize("You've hit your usage limit. Upgrade to Pro or try again later."))
++        assertNotNull(UsageLimitText.recognize("Codex error: usageLimitExceeded"))
++        assertNotNull(UsageLimitText.recognize("Weekly limit reached ∙ resets Nov 2"))
++        assertEquals(1_800_000_500L, UsageLimitText.recognize("Claude AI usage limit reached|1800000500")?.resetsAt)
++        assertNull(UsageLimitText.recognize("Context window limit exceeded"))
++        assertNull(UsageLimitText.recognize("Rate limited, retrying"))
++        assertNull(UsageLimitText.recognize(null))
++    }
++
++    @Test
++    fun withoutPlanTheStopWaitsForTheUser() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.finished("s", limited("r1"))
++        val stop = recovery.stops.value.getValue("s")
++        assertEquals(LimitPhase.STOPPED, stop.phase)
++        assertEquals(codexA, stop.target)
++        assertTrue(host.continued.isEmpty())
++    }
++
++    @Test
++    fun switchesToTheFirstFreeTargetInOrder() = runTest {
++        val host = FakeHost(codexA)
++        host.unavailable += codexB.key
++        val recovery = recovery(host)
++        recovery.setPlan("s", LimitPlan(switchTo = listOf(codexB, claude)))
++        recovery.finished("s", limited("r1"))
++        assertEquals(listOf(claude), host.switches)
++        assertEquals(listOf(EngineKind.CLAUDE), host.continued)
++        assertEquals(LimitPhase.CONTINUING, recovery.stops.value.getValue("s").phase)
++    }
++
++    @Test
++    fun doesNotGoBackToAnAccountThatIsStillOut() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.setPlan("s", LimitPlan(switchTo = listOf(codexA, codexB)))
++        recovery.finished("s", limited("r1", resetsAt = (base / 1000) + 3600))
++        assertEquals(listOf(codexB), host.switches)
++        // B runs out too: A is still out, nothing is left, no wait in the plan.
++        recovery.finished("s", limited("r2"))
++        assertEquals(listOf(codexB), host.switches)
++        val stop = recovery.stops.value.getValue("s")
++        assertEquals(LimitPhase.STOPPED, stop.phase)
++        assertNotNull(stop.reason)
++    }
++
++    @Test
++    fun waitsForTheResetThenContinues() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.setPlan("s", LimitPlan(continueAtReset = true))
++        val reset = base + 2 * 3_600_000L
++        recovery.finished("s", limited("r1", resetsAt = reset / 1000))
++        val waiting = recovery.stops.value.getValue("s")
++        assertEquals(LimitPhase.WAITING, waiting.phase)
++        assertEquals(reset + UsageLimitRecovery.RESET_GRACE_MS, waiting.continueAt)
++        assertEquals(waiting.continueAt, host.wake)
++        advanceTimeBy(2 * 3_600_000L)
++        runCurrent()
++        assertTrue(host.continued.isEmpty())
++        advanceTimeBy(UsageLimitRecovery.RESET_GRACE_MS + 1)
++        runCurrent()
++        assertEquals(listOf(EngineKind.CODEX), host.continued)
++        assertTrue(host.switches.isEmpty())
++        assertEquals(LimitPhase.CONTINUING, recovery.stops.value.getValue("s").phase)
++    }
++
++    @Test
++    fun aFinishedTurnClearsTheStop() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.setPlan("s", LimitPlan(continueAtReset = true))
++        recovery.finished("s", limited("r1"))
++        recovery.continueNow("s")
++        recovery.finished("s", RunState(phase = RunPhase.IDLE, runId = "r2"))
++        assertNull(recovery.stops.value["s"])
++        assertNull(host.wake)
++    }
++
++    @Test
++    fun theSameRunIsHandledOnce() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.setPlan("s", LimitPlan(switchTo = listOf(claude)))
++        recovery.finished("s", limited("r1"))
++        recovery.finished("s", limited("r1"))
++        assertEquals(1, host.continued.size)
++    }
++
++    @Test
++    fun aFailedSwitchFallsBackToWaiting() = runTest {
++        val host = FakeHost(codexA)
++        host.failSwitch = true
++        val recovery = recovery(host)
++        recovery.setPlan("s", LimitPlan(continueAtReset = true, switchTo = listOf(claude)))
++        recovery.finished("s", limited("r1"))
++        assertEquals(LimitPhase.WAITING, recovery.stops.value.getValue("s").phase)
++        assertTrue(host.notes.any { it.startsWith("Could not move") })
++    }
++
++    @Test
++    fun aPlanSetAfterTheStopActsAtOnce() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.finished("s", limited("r1"))
++        recovery.setPlan("s", LimitPlan(switchTo = listOf(claude)))
++        assertEquals(listOf(EngineKind.CLAUDE), host.continued)
++    }
++
++    @Test
++    fun cancelWaitLeavesTheChatStopped() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.finished("s", limited("r1"))
++        recovery.continueAtReset("s")
++        assertEquals(LimitPhase.WAITING, recovery.stops.value.getValue("s").phase)
++        recovery.cancelWait("s")
++        assertEquals(LimitPhase.STOPPED, recovery.stops.value.getValue("s").phase)
++        advanceTimeBy(UsageLimitRecovery.UNKNOWN_RESET_MS * 2)
++        runCurrent()
++        assertTrue(host.continued.isEmpty())
++    }
++
++    @Test
++    fun aWaitSurvivesARestart() = runTest {
++        val host = FakeHost(codexA)
++        val first = recovery(host)
++        first.setPlan("s", LimitPlan(continueAtReset = true))
++        first.finished("s", limited("r1"))
++        val continueAt = first.stops.value.getValue("s").continueAt!!
++        val second = recovery(FakeHost(codexA))
++        runCurrent()
++        assertEquals(LimitPhase.WAITING, second.stops.value.getValue("s").phase)
++        assertEquals(continueAt, second.stops.value.getValue("s").continueAt)
++        assertEquals(LimitPlan(continueAtReset = true), second.planOf("s"))
++    }
++
++    @Test
++    fun fullReadingTellsWhenTheAccountFreesUp() {
++        val now = 1_000_000L
++        val limits = listOf(
++            UsageLimit("5h", 100.0, resetsAt = 2_000L),
++            UsageLimit("weekly", 40.0, resetsAt = 9_000L),
++        )
++        assertEquals(2_000_000L, UsageLimitRecovery.fullUntil(limits, now))
++        assertNull(UsageLimitRecovery.fullUntil(listOf(UsageLimit("5h", 99.0, 2_000L)), now))
++    }
++
++    @Test
++    fun stopsAfterTooManyAutomaticTries() = runTest {
++        val host = FakeHost(codexA)
++        val recovery = recovery(host)
++        recovery.setPlan("s", LimitPlan(continueAtReset = true))
++        repeat(UsageLimitRecovery.MAX_ATTEMPTS + 1) { i ->
++            recovery.finished("s", limited("r$i"))
++            advanceTimeBy(UsageLimitRecovery.UNKNOWN_RESET_MS + UsageLimitRecovery.RESET_GRACE_MS + 1)
++            runCurrent()
++        }
++        assertEquals(UsageLimitRecovery.MAX_ATTEMPTS, host.continued.size)
++        assertEquals(LimitPhase.STOPPED, recovery.stops.value.getValue("s").phase)
++        // Continue now is the user's decision, and it starts the count again.
++        recovery.continueNow("s")
++        assertEquals(UsageLimitRecovery.MAX_ATTEMPTS + 1, host.continued.size)
++    }
++}
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 0c8cf2f1..1778ab3c 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -3224,3 +3224,43 @@ Decided 2026-10-01, on top of the section above.
+   skills are not listed in the composer. Mac Desktop handoff and real
+   phone→Desktop→phone model-turn validation remain unproven. Listing/fixture
+   evidence is in `docs/testing/claude-session-sync-20261010/RESULTS.md`.
++
++## A chat that hits a usage limit continues by itself
++
++A turn stopped by a usage limit used to end on a red error line, and the user
++had to come back and type "continue". Now the stop is a state of the chat,
++with a plan the user sets inside the chat.
++
++- **Detection.** The engine says so where it can: Claude's
++  `rate_limit_event` rejection carries `resetsAt`, and Codex's error carries
++  `codexErrorInfo: usageLimitExceeded`. Both reach `EngineEvent.TurnFinished`
++  and `Failure` as `limitReached`. The coordinator falls back to
++  `UsageLimitText.recognize` on the error text, then stamps the run's engine
++  into `RunState.limit`.
++- **Plan per chat.** `LimitPlan(continueAtReset, switchTo)`: an ordered list
++  of `LimitTarget`s (a Codex account, or Claude) to move to, and whether to
++  wait for the reset when none is free. It is set from the `/limits` command,
++  the composer chip, or the card's "Set up for next time".
++- **`UsageLimitRecovery` (`:core`)** watches `AgentRuns.outcomes` and handles
++  each `runId` once. With no plan the chat is `STOPPED` and the card offers
++  "Continue at HH:mm", the other accounts, and "Try again now". With a plan it
++  moves to the first target that can run and is not known to be out
++  (`SWITCHING`, then `CONTINUING`), or waits (`WAITING`) until the earliest of
++  the current account's reset and the targets' resets, plus 60s of grace. A
++  reset that is not reported is tried again after 30 minutes. A target that
++  failed to switch counts as out for 30 minutes, so a wait does not loop on
++  it. Automatic tries stop after 12 in a row; "Continue now" is the user's own
++  call and starts the count again.
++- **Continuing** is an ordinary queued turn (`QueuedTurn`, shown as an agent
++  note "Continuing after the usage limit"). A change of engine travels with
++  the turn, so the coordinator's `ChatHandoff` tells the new engine what was
++  said. A change of Codex account goes through `switchCodexAccount`, which
++  waits until no chat and no voice runs, pauses the queue, closes the engine,
++  activates the account and reads its usage; the open screen follows through
++  `accountSwitched`.
++- **Waiting with the app closed.** Plans, stops and the out-of-usage marks are
++  saved in `limit-recovery.json` under the runtime root. One alarm
++  (`LimitWakeReceiver`) is set for the earliest wait: exact when the user
++  allows exact alarms, otherwise `setAndAllowWhileIdle`. It starts
++  `AgentService` and runs `dispatchDue` in the app scope. A stop restored
++  while it was switching is decided again.
+diff --git a/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt b/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt
+index 555c12e5..177fb97c 100644
+--- a/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt
++++ b/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt
+@@ -567,8 +567,7 @@ internal object ClaudeProtocol {
+         val type = info.string("rateLimitType")
+         if (type == "overage") return null
+         val name = windowName(type.ifBlank { "five_hour" }).first
+-        val resetsAt = (info["resetsAt"] as? JsonPrimitive)?.longOrNull
+-            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull }
++        val resetsAt = rejectionReset(info)
+         val base = "You have reached your Claude $name usage limit."
+         if (resetsAt == null || resetsAt <= 0) return base
+         val reset = Instant.ofEpochSecond(resetsAt).atZone(zone)
+@@ -576,6 +575,14 @@ internal object ClaudeProtocol {
+         return "$base It resets at ${reset.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))}."
+     }
+ 
++    /** Epoch seconds at which a `rejected` limit resets, when the CLI said. */
++    fun rejectionReset(info: JsonObject): Long? {
++        val type = info.string("rateLimitType")
++        return ((info["resetsAt"] as? JsonPrimitive)?.longOrNull
++            ?: ((info["unifiedWindows"] as? JsonObject)?.get(type) as? JsonObject)?.let { (it["resetsAt"] as? JsonPrimitive)?.longOrNull })
++            ?.takeIf { it > 0 }
++    }
++
+     /** Token usage from a `result` frame. Input counts cache reads and writes, as the context does. */
+     fun parseUsage(result: JsonObject): TokenUsage? {
+         val usage = result["usage"] as? JsonObject ?: return null
+diff --git a/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapper.kt b/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapper.kt
+index 512e8c99..28ecb441 100644
+--- a/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapper.kt
++++ b/engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapper.kt
+@@ -22,6 +22,8 @@ package dev.androidagent.engineclaude
+ 
+ import dev.androidagent.core.CompactResult
+ import dev.androidagent.core.EngineEvent
++import dev.androidagent.core.EngineKind
++import dev.androidagent.core.LimitReached
+ import dev.androidagent.core.SecretRedactor
+ import dev.androidagent.core.TokenUsage
+ import dev.androidagent.engineclaude.ClaudeProtocol.string
+@@ -66,6 +68,8 @@ internal class ClaudeStreamMapper(
+         val frames: MutableSet<String> = mutableSetOf()
+         @Volatile var interruptRequested = false
+         var rejection: String? = null
++        /** Set with [rejection]: the account is out of usage, until this reset. */
++        var limit: LimitReached? = null
+         var syntheticError: String? = null
+         var workStarted = false
+         var authRetries = 0
+@@ -160,7 +164,8 @@ internal class ClaudeStreamMapper(
+         val signals = mutableListOf<Signal>()
+         if (!turn.internal) {
+             if (status == "completed") lastText?.let { signals += Signal.Emit(it.copy(phase = "final_answer")) }
+-            signals += Signal.Emit(EngineEvent.TurnFinished(status, error, threadId, turn.turnId))
++            val limit = turn.limit?.takeIf { status == "failed" && error == turn.rejection }
++            signals += Signal.Emit(EngineEvent.TurnFinished(status, error, threadId, turn.turnId, limitReached = limit))
+         }
+         signals += Signal.Ended(turn, status)
+         retire(turn)
+@@ -400,7 +405,12 @@ internal class ClaudeStreamMapper(
+ 
+     private fun rateLimit(message: JsonObject): List<Signal> {
+         val info = message["rate_limit_info"] as? JsonObject ?: return emptyList()
+-        cycleTurn()?.let { turn -> ClaudeProtocol.rejectionMessage(info, zone, clock())?.let { turn.rejection = it } }
++        cycleTurn()?.let { turn ->
++            ClaudeProtocol.rejectionMessage(info, zone, clock())?.let {
++                turn.rejection = it
++                turn.limit = LimitReached(ClaudeProtocol.rejectionReset(info), EngineKind.CLAUDE)
++            }
++        }
+         val limits = ClaudeProtocol.parseRateLimits(info)
+         return if (limits.isEmpty()) emptyList() else listOf(Signal.Emit(EngineEvent.UsageChanged(null, limits = limits)))
+     }
+diff --git a/engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapperTest.kt b/engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapperTest.kt
+index f32d6db9..982e773f 100644
+--- a/engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapperTest.kt
++++ b/engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapperTest.kt
+@@ -215,6 +215,18 @@ class ClaudeStreamMapperTest {
+             "You have reached your Claude 5-hour usage limit. It resets at 16:30.",
+             events.filterIsInstance<EngineEvent.TurnFinished>().single().error,
+         )
++        val limit = events.filterIsInstance<EngineEvent.TurnFinished>().single().limitReached
++        assertEquals(1790785800L, limit?.resetsAt)
++    }
++
++    @Test fun anOrdinaryFailureIsNotAUsageLimit() {
++        val mapper = ClaudeStreamMapper(thread)
++        mapper.begin("turn-1", "a")
++        val events = mapper.feed(listOf(
++            line("""{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1790785800,"rateLimitType":"five_hour"}}"""),
++            line("""{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Overloaded"}"""),
++        )).events()
++        assertEquals(null, events.filterIsInstance<EngineEvent.TurnFinished>().single().limitReached)
+     }
+ 
+     @Test fun mcpToolUseIsLeftToTheToolBridge() {
+diff --git a/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt b/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt
+index f45f6e09..2c722870 100644
+--- a/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt
++++ b/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt
+@@ -746,7 +746,8 @@ class CodexEngine(
+                 compactions[params.string("threadId")]?.let {
+                     if (it.turnId == turn.string("id")) it.finished.complete(TurnEnd(turn.string("status"), turnError))
+                 }
+-                stream.emit(EngineEvent.TurnFinished(turn.string("status"), turnError, params.string("threadId"), turn.string("id")))
++                stream.emit(EngineEvent.TurnFinished(turn.string("status"), turnError, params.string("threadId"), turn.string("id"),
++                    limitReached = usageLimitOf(turn["error"] as? JsonObject)))
+             }
+             method == "account/login/completed" -> {
+                 if (params["success"]?.jsonPrimitive?.booleanOrNull == false) stream.emit(EngineEvent.Failure(params.string("error").ifBlank { "Sign-in failed" }))
+@@ -771,6 +772,7 @@ class CodexEngine(
+                 } else {
+                     stream.emit(EngineEvent.Failure(
+                         error?.let(::rpcErrorMessage) ?: "Codex reported an error", threadId, turnId,
++                        limitReached = usageLimitOf(error),
+                     ))
+                 }
+             }
+@@ -806,6 +808,22 @@ class CodexEngine(
+     }
+ 
+     companion object {
++        /**
++         * The turn stopped because the ChatGPT account is out of usage, as
++         * Codex says it: `codexErrorInfo` is `usageLimitExceeded`, as a plain
++         * value or as the key of an object. When it resets is not in the
++         * error; the account's last rate-limit reading says.
++         */
++        internal fun usageLimitOf(error: JsonObject?): LimitReached? {
++            val info = error?.get("codexErrorInfo") ?: return null
++            val kind = when (info) {
++                is JsonPrimitive -> info.contentOrNull
++                is JsonObject -> info.keys.singleOrNull()
++                else -> null
++            }
++            return if (kind.equals("usageLimitExceeded", ignoreCase = true)) LimitReached(engine = EngineKind.CODEX) else null
++        }
++
+         /** How long a compaction may run before the caller stops waiting; Codex goes on without it. */
+         private const val COMPACT_WAIT_MS = 5 * 60_000L
+ 
+diff --git a/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexErrorNotificationTest.kt b/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexErrorNotificationTest.kt
+index 900b63e7..573f6bff 100644
+--- a/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexErrorNotificationTest.kt
++++ b/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexErrorNotificationTest.kt
+@@ -49,6 +49,17 @@ class CodexErrorNotificationTest {
+         }
+     }
+ 
++    @Test fun aUsageLimitSaysSoInTheFailureAndTheFinishedTurn() = runBlocking {
++        withServer { server, _, events ->
++            server.send("error", """{"threadId":"t","turnId":"u","willRetry":false,"error":{"message":"You've hit your usage limit.","codexErrorInfo":"usageLimitExceeded"}}""")
++            assertNotNull((events.next() as EngineEvent.Failure).limitReached)
++            server.send("turn/completed", """{"threadId":"t","turn":{"id":"u","status":"failed","error":{"message":"limit","codexErrorInfo":{"usageLimitExceeded":{}}}}}""")
++            assertNotNull((events.next() as EngineEvent.TurnFinished).limitReached)
++            server.send("turn/completed", """{"threadId":"t","turn":{"id":"v","status":"failed","error":{"message":"down","codexErrorInfo":"internalServerError"}}}""")
++            assertNull((events.next() as EngineEvent.TurnFinished).limitReached)
++        }
++    }
++
+     @Test fun unrelatedStderrIsLoggedSeparatelyFromRpcAndTurnFailures() = runBlocking {
+         val diagnostic = CompletableDeferred<String>()
+         withServer(stderr = "old account refresh failed; Bearer fake-token-12345678\n", diagnosticSink = { diagnostic.complete(it) }) { server, engine, events ->

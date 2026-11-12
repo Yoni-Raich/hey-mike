@@ -1,0 +1,4 @@
+gradle.beforeProject { project ->
+    def module = project.path == ':' ? '_root' : project.path.substring(1).replace(':', '/')
+    project.layout.buildDirectory.set(new File('C:/Users/SHIRA/AppData/Local/Temp/hey-mike/manager-recovery-20261102/build', module))
+}

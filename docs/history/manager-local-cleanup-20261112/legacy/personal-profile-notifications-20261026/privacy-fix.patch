@@ -1,0 +1,520 @@
+diff --git a/PROGRESS.md b/PROGRESS.md
+index b81b61a..a913a51 100644
+--- a/PROGRESS.md
++++ b/PROGRESS.md
+@@ -1,5 +1,40 @@
+ # Progress
+ 
++### Personal-profile notification capture — 2026-10-26
++
++Isolated branch `fix/personal-profile-notifications` uses a verified local
++tasks1170 source snapshot at `bd25170` above `origin/dev` (`053cc14a`). The
++original task-board checkout and main checkout were not edited. A shared
++fail-closed policy now rejects other Android users/profiles before payload
++access in live notification callbacks, active replay and the task message
++reader. Personal capture and existing collection settings remain downstream.
++No app setting previously offered profile filtering.
++
++Windows/JDK 21: `:automations:testDebugUnitTest` PASS (19 cases, API 30/35);
++`:core:test :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug`
++PASS with `--no-daemon --max-workers=2
++-Pkotlin.compiler.execution.strategy=in-process`. Core 839 + app 170 cases:
++zero failures/errors/skips. App lint: zero errors, 21 warnings, three
++informational findings. Extra `:automations:lintDebug` FAIL: three missing-
++permission errors at unchanged `AndroidAutomationActions.kt` (145/233) and
++`AutomationWifi.kt` (66); these permissions exist in the app manifest.
++No baseline, suppression or lint setting was added. `git diff --check` PASS.
++
++Dev Debug APK: `dev.androidagent.app.dev`, code 1171 /
++`0.14.0-dev.personal1171` via build overrides. SHA-256:
++`3ca184098d41b851f90b0e341ca6af2b47d7f8a12e149970820d2c7a71e09436`.
++Android Debug/v2 signature and 16 KiB ZIP alignment PASS; its certificate
++matches the existing task-worktree APK, not independently the phone.
++Kept APK/logs: `C:\Users\SHIRA\AppData\Local\Temp\hey-mike\personal-profile-notifications-20261026\`.
++Worktree retained for review at `C:\Users\SHIRA\.codex\worktrees\personal-profile-notifications-20261026`;
++central build bucket retained at `build/031650f34452e280`. Task-local storage
++reported `removed:[]`; no other build bucket was removed.
++
++No phone install, physical work-profile test, live notification-body read,
++push/merge or full release gate. The running tasks1170 app is unchanged.
++Previously saved signals/cards remain, and old queued work can still run.
++Details: [policy and evidence](docs/testing/personal-notification-profile-20261026.md).
++
+ ### Task board and background team — 2026-10-25
+ 
+ Continued the saved `feat/proactive-task-board` work in
+diff --git a/automations/build.gradle.kts b/automations/build.gradle.kts
+index c0063e4..a039575 100644
+--- a/automations/build.gradle.kts
++++ b/automations/build.gradle.kts
+@@ -5,6 +5,7 @@ android {
+     defaultConfig { minSdk = 30; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+     kotlinOptions { jvmTarget = "17" }
++    testOptions { unitTests.isIncludeAndroidResources = true }
+ }
+ dependencies {
+     api(project(":core"))
+@@ -13,4 +14,5 @@ dependencies {
+     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+     testImplementation("junit:junit:4.13.2")
+     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
++    testImplementation("org.robolectric:robolectric:4.14.1")
+ }
+diff --git a/automations/src/main/kotlin/dev/androidagent/automations/AutomationNotificationListener.kt b/automations/src/main/kotlin/dev/androidagent/automations/AutomationNotificationListener.kt
+index e8caed3..970ebe8 100644
+--- a/automations/src/main/kotlin/dev/androidagent/automations/AutomationNotificationListener.kt
++++ b/automations/src/main/kotlin/dev/androidagent/automations/AutomationNotificationListener.kt
+@@ -41,7 +41,10 @@ import kotlinx.coroutines.*
+  * than abandoned, and the narrowing is enforced here in the order the checks
+  * are written:
+  *
+- * 1. our own notifications are dropped first, so a rule's `notify` can never
++ * 0. only this app's personal Android user is accepted, before reading any
++ *    notification payload or consulting either consumer; other profiles and
++ *    unknown users never reach automations or the task board,
++ * 1. our own notifications are dropped, so a rule's `notify` can never
+  *    trigger the rule that posted it,
+  * 2. ongoing notifications (the foreground-service card, a media player) are
+  *    dropped: they are status, not events, and they repost constantly,
+@@ -73,9 +76,10 @@ class AutomationNotificationListener : NotificationListenerService() {
+                 if (board?.ready == true) {
+                     // Restore collection after process death. Never replay automation actions.
+                     runCatching { activeNotifications.orEmpty().forEach { posted ->
++                        if (!PersonalNotificationPolicy.allows(this@AutomationNotificationListener, posted)) return@forEach
+                         val notification = posted.notification
+                         if (posted.packageName != packageName && notification.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_GROUP_SUMMARY) == 0 && board.wants(posted.packageName)) {
+-                            TaskNotificationReader.messages(posted).forEach(board::onMessage)
++                            TaskNotificationReader.messages(this@AutomationNotificationListener, posted).forEach(board::onMessage)
+                         }
+                     } }
+                     return@launch
+@@ -89,6 +93,7 @@ class AutomationNotificationListener : NotificationListenerService() {
+ 
+     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+         val posted = sbn ?: return
++        if (!PersonalNotificationPolicy.allows(this, posted)) return
+         if (posted.packageName == packageName) return
+         val notification = posted.notification ?: return
+         if (notification.flags and Notification.FLAG_ONGOING_EVENT != 0) return
+@@ -115,7 +120,7 @@ class AutomationNotificationListener : NotificationListenerService() {
+                 ),
+             )
+         }
+-        if (boardWants) runCatching { TaskNotificationReader.messages(posted).forEach(board!!::onMessage) }
++        if (boardWants) runCatching { TaskNotificationReader.messages(this, posted).forEach(board!!::onMessage) }
+     }
+ 
+     /** Dismissals are not events any rule can name, so they are not delivered. */
+diff --git a/automations/src/main/kotlin/dev/androidagent/automations/PersonalNotificationPolicy.kt b/automations/src/main/kotlin/dev/androidagent/automations/PersonalNotificationPolicy.kt
+new file mode 100644
+index 0000000..f0169a5
+--- /dev/null
++++ b/automations/src/main/kotlin/dev/androidagent/automations/PersonalNotificationPolicy.kt
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: AGPL-3.0-only */
++package dev.androidagent.automations
++
++import android.content.Context
++import android.os.Build
++import android.os.Process
++import android.os.UserManager
++import android.service.notification.StatusBarNotification
++
++/** A content-free, fail-closed boundary shared by live delivery and replay. */
++internal object PersonalNotificationPolicy {
++    fun allows(context: Context, posted: StatusBarNotification?): Boolean = runCatching {
++        val user = posted?.user ?: return false
++        // Match the Android user, never the package, UID, notification key or a fixed user ID.
++        // This also rejects USER_ALL and other special/unknown handles.
++        if (user != Process.myUserHandle()) return false
++        val users = context.getSystemService(UserManager::class.java) ?: return false
++        // Android normally ignores work-profile listeners. Keep the boundary even if an
++        // OEM delivers callbacks there. API 33 also identifies private/clone profiles.
++        !users.isManagedProfile && (Build.VERSION.SDK_INT < 33 || !users.isProfile)
++    }.getOrDefault(false)
++}
+diff --git a/automations/src/main/kotlin/dev/androidagent/automations/TaskNotificationReader.kt b/automations/src/main/kotlin/dev/androidagent/automations/TaskNotificationReader.kt
+index 5cb953c..52828fc 100644
+--- a/automations/src/main/kotlin/dev/androidagent/automations/TaskNotificationReader.kt
++++ b/automations/src/main/kotlin/dev/androidagent/automations/TaskNotificationReader.kt
+@@ -21,6 +21,7 @@
+ package dev.androidagent.automations
+ 
+ import android.app.Notification
++import android.content.Context
+ import android.service.notification.StatusBarNotification
+ import androidx.core.app.NotificationCompat
+ import dev.androidagent.core.CapturedMessage
+@@ -35,7 +36,9 @@ import dev.androidagent.core.CapturedMessage
+  * the title is who or what it is from, the longest text is what it says.
+  */
+ internal object TaskNotificationReader {
+-    fun messages(posted: StatusBarNotification): List<CapturedMessage> {
++    fun messages(context: Context, posted: StatusBarNotification): List<CapturedMessage> {
++        // Keep direct/future snapshot callers behind the same boundary as the listener.
++        if (!PersonalNotificationPolicy.allows(context, posted)) return emptyList()
+         val notification = posted.notification ?: return emptyList()
+         val app = posted.packageName
+         val style = runCatching { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification) }.getOrNull()
+diff --git a/automations/src/test/kotlin/dev/androidagent/automations/PersonalNotificationPolicyTest.kt b/automations/src/test/kotlin/dev/androidagent/automations/PersonalNotificationPolicyTest.kt
+new file mode 100644
+index 0000000..99096df
+--- /dev/null
++++ b/automations/src/test/kotlin/dev/androidagent/automations/PersonalNotificationPolicyTest.kt
+@@ -0,0 +1,172 @@
++/* SPDX-License-Identifier: AGPL-3.0-only */
++package dev.androidagent.automations
++
++import android.app.Application
++import android.app.Notification
++import android.content.Context
++import android.content.ContextWrapper
++import android.os.Bundle
++import android.os.Parcel
++import android.os.Process
++import android.os.UserHandle
++import android.os.UserManager
++import android.service.notification.StatusBarNotification
++import dev.androidagent.core.CapturedMessage
++import dev.androidagent.core.TaskSignalSink
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.test.UnconfinedTestDispatcher
++import kotlinx.coroutines.test.resetMain
++import kotlinx.coroutines.test.setMain
++import org.junit.After
++import org.junit.Assert.*
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.Robolectric
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.Shadows.shadowOf
++import org.robolectric.annotation.Config
++
++@OptIn(ExperimentalCoroutinesApi::class)
++@RunWith(RobolectricTestRunner::class)
++@Config(application = PersonalNotificationPolicyTest.Host::class, sdk = [30, 35], manifest = Config.NONE)
++class PersonalNotificationPolicyTest {
++    class Host : Application(), AutomationHostOwner {
++        var hostLookups = 0
++        override val automationHost: AutomationHost? get() { hostLookups++; return null }
++        val captured = mutableListOf<CapturedMessage>()
++        var wantsCalls = 0
++        override val taskSignals = object : TaskSignalSink {
++            override fun wants(app: String): Boolean { wantsCalls++; return true }
++            override fun onMessage(message: CapturedMessage) { captured += message }
++        }
++    }
++
++    private val host get() = RuntimeEnvironment.getApplication() as Host
++    private val users get() = host.getSystemService(UserManager::class.java)
++
++    @Before fun setUp() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
++    @After fun tearDown() { Dispatchers.resetMain() }
++
++    @Test fun personalUserIsAcceptedWithoutReadingPayload() {
++        assertTrue(PersonalNotificationPolicy.allows(host, posted(Process.myUserHandle(), forbidPayload = true)))
++    }
++
++    @Test fun workPrivateOtherAndAllUsersAreRejectedEvenForTheSamePackage() {
++        for (id in listOf(10, 11, 12, -1, -2, -3, -10000)) {
++            assertFalse("user $id", PersonalNotificationPolicy.allows(host, posted(user(id), forbidPayload = true)))
++        }
++    }
++
++    @Test fun missingOrUnreadableUserIsRejectedBeforePayload() {
++        assertFalse(PersonalNotificationPolicy.allows(host, null))
++        assertFalse(PersonalNotificationPolicy.allows(host, posted(null, forbidPayload = true)))
++        val unreadable = object : StatusBarNotification(APP, APP, 1, null, 10000, 0, 0, Notification(), user(0), 1L) {
++            private var constructed = false
++            init { constructed = true }
++            override fun getUser(): UserHandle = throw SecurityException("synthetic unavailable metadata")
++            override fun getNotification(): Notification {
++                check(!constructed) { "Must not read notification" }
++                return super.getNotification()
++            }
++        }
++        assertFalse(PersonalNotificationPolicy.allows(host, unreadable))
++    }
++
++    @Test fun missingOrFailedUserServiceFailsClosed() {
++        for (fail in listOf(false, true)) {
++            val unavailable = object : ContextWrapper(host) {
++                override fun getSystemService(name: String): Any? {
++                    if (name == Context.USER_SERVICE) {
++                        if (fail) throw SecurityException("synthetic unavailable user service")
++                        return null
++                    }
++                    return super.getSystemService(name)
++                }
++            }
++            assertFalse(PersonalNotificationPolicy.allows(unavailable, posted(Process.myUserHandle(), forbidPayload = true)))
++        }
++    }
++
++    @Test fun listenerRunningInsideManagedProfileIsRejected() {
++        shadowOf(users).setManagedProfile(true)
++        assertFalse(PersonalNotificationPolicy.allows(host, posted(Process.myUserHandle(), forbidPayload = true)))
++    }
++
++    @Test @Config(sdk = [35]) fun listenerRunningInsideAnotherProfileIsRejected() {
++        shadowOf(users).addProfile(0, 0, "Synthetic profile", org.robolectric.shadows.ShadowUserManager.FLAG_PROFILE)
++        assertFalse(PersonalNotificationPolicy.allows(host, posted(Process.myUserHandle(), forbidPayload = true)))
++    }
++
++    @Test fun liveCallbackDropsOtherProfilesBeforeConsultingAnyConsumer() {
++        val controller = Robolectric.buildService(AutomationNotificationListener::class.java).create()
++        try {
++            for (id in listOf(10, 11, -1)) controller.get().onNotificationPosted(posted(user(id), forbidPayload = true))
++            assertEquals(0, host.hostLookups)
++            assertEquals(0, host.wantsCalls)
++            assertTrue(host.captured.isEmpty())
++            controller.get().onNotificationPosted(posted(Process.myUserHandle()))
++            assertEquals(1, host.captured.size)
++            assertEquals(APP, host.captured.single().app)
++        } finally { controller.destroy() }
++    }
++
++    @Test fun activeReplaySkipsOtherProfilesAndStillCapturesPersonalNotification() {
++        val controller = Robolectric.buildService(AutomationNotificationListener::class.java).create()
++        try {
++            val service = controller.get()
++            val shadow = shadowOf(service)
++            for (id in listOf(10, 11, -1)) shadow.addActiveNotification(posted(user(id), forbidPayload = true))
++            shadow.addActiveNotification(posted(Process.myUserHandle()))
++            service.onListenerConnected()
++            assertEquals(1, host.wantsCalls)
++            assertEquals(1, host.captured.size)
++            assertEquals(0, host.hostLookups) // Reconnect must never replay automation actions.
++        } finally { controller.destroy() }
++    }
++
++    @Test fun directReaderCannotBypassProfileBoundary() {
++        assertTrue(TaskNotificationReader.messages(host, posted(user(11), forbidPayload = true)).isEmpty())
++        assertEquals(1, TaskNotificationReader.messages(host, posted(Process.myUserHandle())).size)
++    }
++
++    @Test fun secondaryPersonalUserDoesNotRequireUserZero() {
++        val original = Process.myUid()
++        try {
++            org.robolectric.shadows.ShadowProcess.setUid(2_010_000)
++            assertTrue(PersonalNotificationPolicy.allows(host, posted(Process.myUserHandle(), forbidPayload = true)))
++            assertFalse(PersonalNotificationPolicy.allows(host, posted(user(0), forbidPayload = true)))
++        } finally { org.robolectric.shadows.ShadowProcess.setUid(original) }
++    }
++
++    private fun posted(origin: UserHandle?, forbidPayload: Boolean = false): StatusBarNotification =
++        object : StatusBarNotification(APP, APP, 1, null, 10000, 0, 0, Notification().apply {
++            extras = Bundle().apply {
++                putCharSequence(Notification.EXTRA_TITLE, "Synthetic sender")
++                putCharSequence(Notification.EXTRA_TEXT, "Synthetic message")
++            }
++        }, origin ?: user(0), 1L) {
++            // Android's constructor calls this virtual getter too. Arm the sentinel
++            // only once the synthetic object exists, before handing it to Mike.
++            private var payloadProtected = false
++            init { payloadProtected = forbidPayload }
++            override fun getUser(): UserHandle? = origin
++            override fun getNotification(): Notification {
++                check(!payloadProtected) { "Rejected notification payload was accessed" }
++                return super.getNotification()
++            }
++        }
++
++    private fun user(id: Int): UserHandle {
++        val parcel = Parcel.obtain()
++        return try {
++            parcel.writeInt(id)
++            parcel.setDataPosition(0)
++            UserHandle.CREATOR.createFromParcel(parcel)
++        } finally { parcel.recycle() }
++    }
++
++    private companion object { const val APP = "com.example.samepackage" }
++}
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index ce47f23..e01e0f4 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -2363,7 +2363,20 @@ land an hour late. `AutomationHost.canFireOnTime()` reports which, because
+ "19:00" arriving at 20:10 is a different action rather than a slow one.
+ 
+ **The notification listener enforces the privacy contract in the order its
+-checks are written.** Our own notifications are dropped first, so a rule's
++checks are written.** `PersonalNotificationPolicy` first requires the
++`StatusBarNotification.user` to equal `Process.myUserHandle()`. Work, private,
++other-user and all-user notifications are rejected before accessing the
++notification payload or consulting automation/task consumers. Missing handles,
++unavailable user metadata/services and exceptions fail closed. The app's own
++context must also be outside a managed profile (API 30+), and outside any
++profile on API 33+. The check uses public APIs and does not assume user 0 or
++globally exclude a package that can also be used personally. It runs for live
++callbacks, active-notification replay after reconnect, and direct calls to
++`TaskNotificationReader`. The task board's startup chat backfill does not read
++Android notifications. Existing signals/cards are not deleted or reclassified;
++old stored signals do not retain Android profile provenance.
++
++Our own notifications are then dropped, so a rule's
+ `notify` can never trigger the rule that posted it; ongoing and group-summary
+ notifications are dropped as status rather than events; then **the package is
+ checked before the title or body is touched**, against
+@@ -2372,7 +2385,11 @@ rules, with `"*"` included only by an enabled all-apps rule. An app outside that
+ scope is never read, and with no notification rule at all the service reads
+ nothing. Only then are title and text extracted, and they go
+ no further than the evaluator unless the rule's own actions interpolate them.
+-Nothing is stored: there is no notification log and no tool that can ask for one.
++Automation rules store no notification log. The task board's separate, bounded
++signal inbox keeps only messages admitted by this profile boundary and its
++existing collection settings. See
++[notification profile checks](testing/personal-notification-profile-20261026.md)
++for supported settings, API behavior, tests and deployment limits.
+ 
+ **A voice rule carries its context through startup and speaks first.**
+ `voice_call.opening` is the first utterance; optional `context` carries the
+diff --git a/docs/testing/personal-notification-profile-20261026.md b/docs/testing/personal-notification-profile-20261026.md
+new file mode 100644
+index 0000000..4e9d67d
+--- /dev/null
++++ b/docs/testing/personal-notification-profile-20261026.md
+@@ -0,0 +1,138 @@
++# Personal notification capture — 2026-10-26
++
++The reported work notification reached the task board on tasks1170. The
++existing task `rule` saves agent guidance; it does not filter notification
++ingestion. Source inspection found only package/conversation exclusions, no
++supported profile setting or tool API. Blocking Outlook/Teams packages would
++also block their personal instances.
++
++## Android boundary
++
++`StatusBarNotification.getUser()` (API 21) identifies the user for whom the
++notification is intended. The new policy accepts only equality with the
++process user, never a package/UID heuristic, notification-key parser, hardcoded
++owner/work user number or cross-user lookup. Thus a work/private profile is
++rejected even when its package is identical to a personal package. Special
++handles such as USER_ALL, missing handles and metadata/service failures are
++rejected. No rejected payload, title, extras, text or key is read or logged.
++
++On the project's minimum API 30, `UserManager.isManagedProfile` also refuses
++collection if Mike itself runs in a managed profile. API 33+ additionally
++checks `isProfile`, which covers other profile types. A normal secondary
++personal user is supported; it need not be user 0. The policy needs no new
++permission, hidden API or profile enumeration.
++
++Android can deliver work notifications to a personal-profile listener; an IT
++admin can control that delivery through
++`DevicePolicyManager.setPermittedCrossProfileNotificationListeners`. Mike is
++not the profile owner, so that API is not a usable self-service setting.
++Android's notification-type filters do not express this user boundary.
++The system still delivers notification objects; Mike rejects other users
++before inspecting their payloads or passing them to any consumer.
++
++Sources: [StatusBarNotification.getUser](https://developer.android.com/reference/android/service/notification/StatusBarNotification#getUser()),
++[notification listener behavior](https://developer.android.com/reference/android/service/notification/NotificationListenerService),
++[UserManager profile methods](https://developer.android.com/reference/android/os/UserManager#isManagedProfile()),
++[profile-owner notification policy](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setPermittedCrossProfileNotificationListeners(android.content.ComponentName,%20java.util.List%3Cjava.lang.String%3E)).
++
++## Coverage and limits
++
++The policy runs before the payload read in `onNotificationPosted` and before
++each active notification in `onListenerConnected`. Both the automation event
++path and task inbox are downstream. `TaskNotificationReader.messages` repeats
++the policy so direct/future snapshot callers cannot bypass it. Reconnect
++continues to collect only task signals, never replay automation actions.
++The separate startup backfill reads Mike chats, not Android notifications.
++
++Regression tests use synthetic StatusBarNotifications on Robolectric API 30
++and 35. Rejected notifications have a payload getter that throws if accessed.
++Tests exercise live callbacks, reconnect replay followed by a valid personal
++message, direct reader access, special/missing/unreadable users, unavailable
++UserManager, a listener in a managed/other profile and a secondary personal user.
++No personal notification content was read to investigate this change.
++
++This blocks new capture only. Previously captured signals/cards are retained
++as requested; stored signals have no profile field, so their profile cannot
++be safely inferred later. Pending pre-update work may still run. Physical
++Android delivery and real managed-profile smoke tests are separate evidence
++from Robolectric, compilation, packaging and installation.
++
++## Source and deployment
++
++The isolated branch `fix/personal-profile-notifications` starts from
++`origin/dev` at `053cc14a`. That branch lacks the installed task-board feature.
++Local baseline commit `bd25170` is a byte-verified snapshot of the existing 60
++changed/untracked source files from the tasks1170 worktree. The original
++checkout was not edited. The focused privacy commit is separate from that
++baseline; do not merge the snapshot as an independent feature implementation.
++
++Build/test results and the APK location are recorded in `PROGRESS.md`.
++No push, merge, phone install, data clearing or notification-access
++change is part of this source-only delivery. The current tasks1170 phone is
++not protected by a local source change; it needs the resulting update.
++
++## Validation result
++
++Windows/JDK 21; task-specific Gradle home and central-build config with cleanup
++of other buckets disabled (`removed:[]`). Commands used `--no-daemon
++--max-workers=2 -Pkotlin.compiler.execution.strategy=in-process`,
++`ANDROID_HOME=C:\Users\SHIRA\AppData\Local\Android\Sdk`, and the task's
++`storage.gradle` init script. No `local.properties` was created.
++
++| Check | Result |
++| --- | --- |
++| `:automations:testDebugUnitTest` | PASS, 19 cases on API 30/35, no failures/errors/skips |
++| `:core:test` | PASS, 839 cases, no failures/errors/skips |
++| `:app:testDevDebugUnitTest` | PASS, 170 cases, no failures/errors/skips |
++| `:app:assembleDevDebug` | PASS, cached runtime inputs verified against pins |
++| `:app:lintDevDebug` | PASS, 0 errors, 21 warnings, 3 informational findings |
++| Extra `:automations:lintDebug` | FAIL, 3 errors in unchanged code, described below |
++| `git diff --check` | PASS |
++
++The extra standalone library lint reports missing `POST_NOTIFICATIONS` at
++`AndroidAutomationActions.kt:145` and `:233`, and `ACCESS_NETWORK_STATE` at
++`AutomationWifi.kt:66`. Those files and the module manifest are unchanged
++from the snapshot. Both permissions are declared in the app manifest; the
++required app lint passes. The failure is retained explicitly; no lint
++baseline, suppression, abort-on-error change or permission change was made.
++The first test run exposed a synthetic-fixture constructor calling its
++overridden payload getter. The sentinel now arms after construction; final
++tests verify that Mike never calls it for rejected notifications.
++
++The final app/core build gate passed in 3m30s. Combined final test XML totals
++are 1,028 tests, zero failures/errors/skips. This is not a full release gate
++or physical-device evidence. No tests were installed on a phone.
++
++APK: `C:\Users\SHIRA\AppData\Local\Temp\hey-mike\personal-profile-notifications-20261026\app-dev-debug.apk`
++(339,760,022 bytes). Package `dev.androidagent.app.dev`, version code 1171,
++name `0.14.0-dev.personal1171`, minimum API 30, target 35; ARM64 and x86_64.
++The source `version.properties` remains tasks1170; the build used
++`-PversionCodeOverride=1171 -PversionNameOverride=0.14.0-dev.personal1171`.
++
++SHA-256: `3ca184098d41b851f90b0e341ca6af2b47d7f8a12e149970820d2c7a71e09436`.
++`apksigner verify --verbose --print-certs`: PASS, Android Debug certificate,
++v2 signature, not v3/release signing. Certificate SHA-256:
++`f65c3469483d5b059543c7a67d369578bf3627a02795d77fc76a244444dda1ee`.
++It matches the local task-worktree APK; the phone's installed certificate was
++not read. `zipalign -c -P 16 4`: PASS. Assembly exported the exact signed APK
++as `app-dev-debug.apk` to the existing delta-transfer host cache.
++
++For an authorized phone update, use `copy_file` followed by `install_apk`,
++then independently verify installed version/base-APK hash and synthetic
++personal/work notifications. Installation requires matching package/signing
++identity and a version code higher than the currently installed build; if
++1171 is already used, rebuild with a fresh higher code. Never uninstall or
++clear data to resolve a refusal. Transfer/installation alone would not prove
++the runtime privacy behavior.
++
++Kept for local review (no push authorized):
++
++- Worktree `C:\Users\SHIRA\.codex\worktrees\personal-profile-notifications-20261026`.
++- Branch `fix/personal-profile-notifications`, with local source snapshot
++  `bd25170` followed by the focused privacy fix.
++- Build bucket `C:\Users\SHIRA\Documents\AI\Android-agent-use\build\031650f34452e280`.
++- APK, logs, baseline source hashes, task Gradle home/config and focused patch
++  under `C:\Users\SHIRA\AppData\Local\Temp\hey-mike\personal-profile-notifications-20261026`.
++
++The 60 original task-worktree source files were rehashed after the build;
++all still match the captured baseline. Existing user data was not deleted.

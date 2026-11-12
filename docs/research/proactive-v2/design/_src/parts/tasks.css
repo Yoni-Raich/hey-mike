@@ -1,0 +1,52 @@
+/* Task board components, shared by the board, the detail, the card states, the Manager chat. */
+.mgr { display: flex; align-items: center; gap: 12px; padding: 10px 14px 10px 12px; min-height: 68px; border-radius: var(--r-card); border: 1px solid var(--card-line);
+  background: linear-gradient(to left, color-mix(in srgb, var(--blocked) 9%, transparent), transparent 70%), var(--card); }
+.mgr .t b { display: block; font-size: 15px; line-height: 20px; font-weight: 600; }
+.mgr .t span { display: block; font-size: 12.5px; line-height: 17px; color: var(--on-surface-variant); margin-top: 1px; }
+.mgr .t { flex: 1; min-width: 0; }
+.mgr .t span em { font-style: normal; color: var(--amber-ink); font-weight: 600; }
+
+.plan.flat { background: none; padding: 0; margin-top: 8px; display: flex; gap: 8px; align-items: flex-start; color: color-mix(in srgb, var(--on-surface) 80%, transparent); }
+.plan.flat .ic { margin-top: 2px; color: var(--teal-ink); width: 16px; height: 16px; }
+.plan.flat b { font-weight: 600; color: var(--on-surface); }
+
+.partial { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: var(--r-row); border: 1px dashed var(--outline-variant); }
+.partial .ic { color: var(--on-surface-variant); margin-top: 2px; }
+.partial p { flex: 1; font-size: 13px; line-height: 19px; color: var(--on-surface-variant); }
+.linkbtn { height: 40px; padding: 0 6px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px; color: var(--teal-ink); border-radius: 10px; }
+
+.run { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; line-height: 19px; color: color-mix(in srgb, var(--on-surface) 82%, transparent); }
+.run .status { font-size: 12px; }
+.ask { margin-top: 10px; font-size: 14px; line-height: 21px; color: var(--on-surface); }
+.ask .q { display: block; font-size: 11px; font-weight: 600; color: var(--amber-ink); line-height: 14px; margin-bottom: 2px; }
+.result { margin-top: 12px; padding: 12px 14px; border-radius: var(--r-row); background: color-mix(in srgb, var(--secondary-container) 38%, transparent); }
+.result .k { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--teal-ink); margin-bottom: 4px; line-height: 14px; }
+.result p { font-size: 14px; line-height: 21px; color: var(--on-surface); }
+
+.nightly { display: flex; gap: 12px; }
+.nightly .mark { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--secondary-container) 60%, transparent); color: var(--teal-ink); flex: none; }
+.nightly ul { list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.nightly li { font-size: 13.5px; line-height: 20px; color: color-mix(in srgb, var(--on-surface) 82%, transparent); padding-inline-start: 14px; position: relative; }
+.nightly li::before { content: ""; position: absolute; inset-inline-start: 0; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: var(--on-surface-variant); }
+.nightly li small { display: block; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+
+.todo { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 4px; }
+.todo + .todo { border-top: 1px solid var(--hair); }
+.todo .box { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--outline-variant); flex: none; margin-inline: 12px 0; }
+.todo .t { flex: 1; min-width: 0; }
+.todo .t b { display: block; font-size: 15px; line-height: 20px; font-weight: 500; }
+.todo .t span { display: block; font-size: 12.5px; line-height: 17px; color: var(--on-surface-variant); }
+
+.hrow { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 0; }
+.hrow + .hrow { border-top: 1px solid var(--hair); }
+.hrow .mk { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--inset); color: var(--on-surface-variant); flex: none; }
+.hrow .mk.ok { color: var(--teal-ink); }
+.hrow .t { flex: 1; min-width: 0; }
+.hrow .t b { display: block; font-size: 14px; line-height: 20px; font-weight: 500; color: color-mix(in srgb, var(--on-surface) 86%, transparent); }
+.hrow .t span { display: block; font-size: 12px; line-height: 17px; color: var(--on-surface-variant); }
+.more { display: flex; align-items: center; justify-content: center; gap: 6px; height: 44px; margin-top: 4px; color: var(--on-surface-variant); font-size: 13px; font-weight: 500; }
+
+/* dismiss reasons: they open inside the card, not in a dialog */
+.why-not { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.why-not .q { font-size: 12.5px; color: var(--on-surface-variant); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+.why-not .chips { gap: 8px; }

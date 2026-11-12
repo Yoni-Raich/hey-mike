@@ -1,0 +1,712 @@
+diff --git a/PROGRESS.md b/PROGRESS.md
+index 94798f41..25467615 100644
+--- a/PROGRESS.md
++++ b/PROGRESS.md
+@@ -1,5 +1,31 @@
+ # Progress
+ 
++### Computer Use confirmation routing — 2026-10-28/29
++
++Candidate 1181 preserves the 1180 source contents and fixes the missing
++`mcpServer/elicitation/request` route. Empty confirmation forms now use the
++existing per-chat Allow/Deny card and return MCP's explicit action/content.
++No persistent desktop app grant is added. Resolved requests revoke their
++card/token; duplicate replies are consumed once. Unsupported structured
++forms and verification/URL flows are refused explicitly.
++
++The new stdio regression failed before the fix, then passed. Scoped core,
++Codex, remote and app suites have 1,290 JVM cases, zero failures/errors and
++three existing remote skips. Runtime Python tests: 16 PASS. Dev Debug app
++and test APK assembly, app lint (zero errors, 21 warnings), signature,
++16 KiB alignment and unchanged 41 native/asset entries PASS. The direct
++emulator approval-card fixture PASS after a cold-start ANR and emulator
++package compilation; its screenshot was inspected. APK delivery to hosting
++phone Downloads completed. Android installation approval and the real
++hosting-phone/native approval flow were pending at delivery. On 2026-10-29,
++fresh phone metadata confirms 1181 installed, and the Chrome extension
++open/click/read/cleanup check passes. Native Chrome window access waited
++300 seconds and returned an app-approval timeout. Card visibility, a real
++user answer and native screenshot/input remain unverified; user clarification
++is pending. Source and
++task artifacts remain in the named isolated worktree/build bucket; no merge
++or publication. See [the check record](docs/testing/computer-use-approvals-20261028.md).
++
+ ### Assistant flow 1179 plus usage-limit recovery — 2026-10-28
+ 
+ Built a separate combined Dev Debug candidate, 1180 /
+diff --git a/app/src/androidTest/java/dev/androidagent/app/ui/McpApprovalUiTest.kt b/app/src/androidTest/java/dev/androidagent/app/ui/McpApprovalUiTest.kt
+new file mode 100644
+index 00000000..37491c1d
+--- /dev/null
++++ b/app/src/androidTest/java/dev/androidagent/app/ui/McpApprovalUiTest.kt
+@@ -0,0 +1,50 @@
++package dev.androidagent.app.ui
++
++import android.graphics.Bitmap
++import androidx.compose.foundation.layout.padding
++import androidx.compose.material3.Surface
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.asAndroidBitmap
++import androidx.compose.ui.test.*
++import androidx.compose.ui.test.junit4.createComposeRule
++import androidx.compose.ui.unit.dp
++import androidx.test.platform.app.InstrumentationRegistry
++import dev.androidagent.core.EngineEvent
++import java.io.File
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.put
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNull
++import org.junit.Rule
++import org.junit.Test
++
++class McpApprovalUiTest {
++    @get:Rule val compose = createComposeRule()
++
++    @Test fun computerUseCardNamesTheAppAndForwardsOnlyTheExplicitAnswer() {
++        var answer: Pair<String, Boolean>? = null
++        val approval = EngineEvent.Approval("remote|pc|confirmation", "mcpServer/elicitation/request", buildJsonObject {
++            put("serverName", "cua")
++            put("message", "Allow Codex to use Google Chrome?")
++        }, "thread", "turn")
++        compose.setContent {
++            AndroidAgentTheme {
++                Surface {
++                    ApprovalCard(approval, { id, allow -> answer = id to allow },
++                        { _, _ -> error("A plugin confirmation has no standing send grant") }, Modifier.padding(20.dp))
++                }
++            }
++        }
++        compose.onNodeWithText("Allow this plugin request?").assertIsDisplayed()
++        compose.onNodeWithText("Request: Allow Codex to use Google Chrome?").assertIsDisplayed()
++        compose.onNodeWithText("For: This request only").assertIsDisplayed()
++        compose.onNodeWithText("Always allow", substring = true).assertDoesNotExist()
++        compose.runOnIdle { assertNull(answer) }
++        val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null), "ui-review").apply { mkdirs() }
++        File(directory, "computer-use-approval.png").outputStream().use {
++            compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
++        }
++        compose.onNodeWithText("Allow", useUnmergedTree = true).performClick()
++        compose.runOnIdle { assertEquals("remote|pc|confirmation" to true, answer) }
++    }
++}
+diff --git a/app/src/main/java/dev/androidagent/app/ui/ApprovalSummary.kt b/app/src/main/java/dev/androidagent/app/ui/ApprovalSummary.kt
+index b3c810af..fae94c58 100644
+--- a/app/src/main/java/dev/androidagent/app/ui/ApprovalSummary.kt
++++ b/app/src/main/java/dev/androidagent/app/ui/ApprovalSummary.kt
+@@ -92,6 +92,14 @@ internal fun EngineEvent.Approval.summary(): ApprovalSummary {
+     // Codex on a computer asks through its own protocol; say what it wants
+     // to do there in words, with the command itself when there is one.
+     when (method) {
++        "mcpServer/elicitation/request" -> return ApprovalSummary(
++            headline = "Allow this plugin request?",
++            lines = buildList {
++                detail("serverName")?.let { add("Plugin" to it) }
++                detail("message")?.let { add("Request" to it) }
++                add("For" to "This request only")
++            },
++        )
+         "item/commandExecution/requestApproval", "execCommandApproval" -> return ApprovalSummary(
+             headline = "Run this on the computer?",
+             lines = buildList {
+diff --git a/app/src/test/java/dev/androidagent/app/ui/ApprovalSummaryTest.kt b/app/src/test/java/dev/androidagent/app/ui/ApprovalSummaryTest.kt
+index afeabaac..a4297991 100644
+--- a/app/src/test/java/dev/androidagent/app/ui/ApprovalSummaryTest.kt
++++ b/app/src/test/java/dev/androidagent/app/ui/ApprovalSummaryTest.kt
+@@ -30,6 +30,20 @@ import org.junit.Assert.assertTrue
+ import org.junit.Test
+ 
+ class ApprovalSummaryTest {
++    @Test fun computerUseConfirmationShowsThePluginAndExactRequestWithoutStandingGrants() {
++        val summary = EngineEvent.Approval(
++            requestId = "remote|pc|confirmation",
++            method = "mcpServer/elicitation/request",
++            details = buildJsonObject {
++                put("serverName", "cua")
++                put("message", "Allow Codex to use Google Chrome?")
++            },
++        ).summary()
++        assertEquals("Allow this plugin request?", summary.headline)
++        assertEquals(listOf("Plugin" to "cua", "Request" to "Allow Codex to use Google Chrome?", "For" to "This request only"), summary.lines)
++        assertEquals(null, summary.sendApp)
++    }
++
+ 
+     private fun approval(uri: String, pkg: String? = null, reason: String = "Open a prefilled message.") =
+         EngineEvent.Approval(
+diff --git a/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt b/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt
+index 3cbe18ad..bcd67eb3 100644
+--- a/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt
++++ b/core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt
+@@ -1389,6 +1389,13 @@ class AgentCoordinator(
+                     }
+                 }
+             }
++            is EngineEvent.ApprovalResolved -> synchronized(lifecycleLock) {
++                val approval = state.value.approval
++                if (approval?.requestId == event.requestId && approval.threadId == event.threadId && approval.turnId == event.turnId) {
++                    mutableState.value = state.value.copy(approval = null, status = "Working")
++                    overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Working"))
++                }
++            }
+             is EngineEvent.Approval -> {
+                 if (state.value.sessionId?.let(readOnlySession) == true) {
+                     engine.answerApproval(event.requestId, false)
+@@ -2004,6 +2011,7 @@ class AgentCoordinator(
+         is EngineEvent.ToolCall -> event.threadId
+         is EngineEvent.TurnFinished -> event.threadId
+         is EngineEvent.Approval -> event.threadId
++        is EngineEvent.ApprovalResolved -> event.threadId
+         is EngineEvent.Failure -> event.threadId
+         is EngineEvent.MessageCompleted -> event.threadId
+         is EngineEvent.GeneratedImage -> event.threadId
+@@ -2018,6 +2026,7 @@ class AgentCoordinator(
+         is EngineEvent.ToolCall -> event.turnId
+         is EngineEvent.TurnFinished -> event.turnId
+         is EngineEvent.Approval -> event.turnId
++        is EngineEvent.ApprovalResolved -> event.turnId
+         is EngineEvent.Failure -> event.turnId
+         is EngineEvent.MessageCompleted -> event.turnId
+         is EngineEvent.GeneratedImage -> event.turnId
+diff --git a/core/src/main/kotlin/dev/androidagent/core/AgentRuns.kt b/core/src/main/kotlin/dev/androidagent/core/AgentRuns.kt
+index ff07e5de..cd5a0a76 100644
+--- a/core/src/main/kotlin/dev/androidagent/core/AgentRuns.kt
++++ b/core/src/main/kotlin/dev/androidagent/core/AgentRuns.kt
+@@ -366,6 +366,7 @@ internal fun EngineEvent.threadIdOrNull(): String? = when (this) {
+     is EngineEvent.ToolCall -> threadId
+     is EngineEvent.TurnFinished -> threadId
+     is EngineEvent.Approval -> threadId
++    is EngineEvent.ApprovalResolved -> threadId
+     is EngineEvent.Failure -> threadId
+     is EngineEvent.MessageCompleted -> threadId
+     is EngineEvent.GeneratedImage -> threadId
+diff --git a/core/src/main/kotlin/dev/androidagent/core/Contracts.kt b/core/src/main/kotlin/dev/androidagent/core/Contracts.kt
+index 5cfda734..ac1910c5 100644
+--- a/core/src/main/kotlin/dev/androidagent/core/Contracts.kt
++++ b/core/src/main/kotlin/dev/androidagent/core/Contracts.kt
+@@ -297,6 +297,8 @@ sealed interface EngineEvent {
+     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
+     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
++    /** The server cancelled or otherwise settled this exact pending request. */
++    data class ApprovalResolved(val requestId: String, val threadId: String?, val turnId: String?) : EngineEvent
+     data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null,
+         /** Transport progress may span turns, but must be scoped to its own threads. */
+         val connectionStatus: Boolean = false) : EngineEvent
+diff --git a/core/src/test/kotlin/dev/androidagent/core/AgentRunsTest.kt b/core/src/test/kotlin/dev/androidagent/core/AgentRunsTest.kt
+index b6aaf7f3..56427763 100644
+--- a/core/src/test/kotlin/dev/androidagent/core/AgentRunsTest.kt
++++ b/core/src/test/kotlin/dev/androidagent/core/AgentRunsTest.kt
+@@ -364,6 +364,28 @@ class AgentRunsTest {
+         rig.close()
+     }
+ 
++    @Test fun resolvedPluginApprovalClearsOnlyItsOwnCardAndCannotBeAnsweredLater() = runTest {
++        val rig = Rig(this)
++        rig.runs.send("one", "Computer test")
++        rig.runs.send("two", "Other test")
++        runCurrent()
++        for (id in listOf("one", "two")) {
++            rig.engine.emit(EngineEvent.Approval(id, "mcpServer/elicitation/request", buildJsonObject {}, "thread-$id", "turn-thread-$id"))
++        }
++        runCurrent()
++        rig.engine.emit(EngineEvent.ApprovalResolved("one", "thread-two", "turn-thread-two"))
++        runCurrent()
++        assertNotNull(rig.runs.stateOf("one")!!.approval)
++        assertNotNull(rig.runs.stateOf("two")!!.approval)
++        rig.engine.emit(EngineEvent.ApprovalResolved("one", "thread-one", "turn-thread-one"))
++        runCurrent()
++        assertNull(rig.runs.stateOf("one")!!.approval)
++        assertNotNull(rig.runs.stateOf("two")!!.approval)
++        assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "one"))
++        assertTrue(rig.engine.approvals.isEmpty())
++        rig.close()
++    }
++
+     @Test fun childApprovalCanBeAnsweredFromTheSourceWithoutAutoApproval() = runTest {
+         val rig = Rig(this)
+         rig.runs.linkChild("two", "one")
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index c34866b4..97d15c61 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -2860,6 +2860,22 @@ child. Everything Codex does there is native to that computer: its shell,
+ MCP servers, and skills from `~/.agents/skills` and the repo's
+ `.agents/skills`, which also appear in the composer's skill picker.
+ 
++Computer Use app confirmations arrive as `mcpServer/elicitation/request`, not
++as command or filesystem `requestApproval` messages. `CodexEngine` accepts
++only an empty object form with a named server, message, thread and turn. It
++publishes the original request to the same coordinator approval card; the
++card names the plugin, shows its exact message, and offers one-request Allow
++or Deny. Replies use MCP's `action: accept` with `content: {}` or
++`action: decline` with `content: null`. They do not save an app allow-list or
++grant an "always allow". Requests are consumed atomically, so duplicate taps
++cannot send a second answer. Remote request IDs keep their computer prefix.
++`serverRequest/resolved` revokes the exact pending card and its reply token.
++Unscoped requests, forms needing values, URL flows, verification challenges
++and unknown schema constraints are declined explicitly. They must never be
++answered with invented fields or an empty success result. General structured
++elicitation remains unsupported; the client does not advertise extended-form
++support. See the bounded checks in `docs/testing/computer-use-approvals-20261028.md`.
++
+ Why not a `remote_shell` tool for the phone's Codex: file edits, reads,
+ skills and project instructions would all stay on the phone, and every step
+ would be a mobile round trip wrapped in `cat` and heredocs.
+diff --git a/docs/testing/computer-use-approvals-20261028.md b/docs/testing/computer-use-approvals-20261028.md
+new file mode 100644
+index 00000000..bf99a97d
+--- /dev/null
++++ b/docs/testing/computer-use-approvals-20261028.md
+@@ -0,0 +1,131 @@
++# Computer Use confirmations from Mike
++
++## Source and diagnosis
++
++The candidate preserves the installed 1180 source contents. A new worktree
++at `C:/Users/SHIRA/.codex/worktrees/computer-use-approvals-20261028` starts
++from fetched `origin/dev` (`b9ea1510`) and carries the exact 1180 source
++snapshot from the existing assistant-flow-limits worktree. All 723 tracked
++file contents matched before edits; eight files differ only in line endings.
++The original worktrees and their uncommitted changes were not changed.
++
++The native calls in this conversation returned `Computer Use was not approved`
++for File Explorer and Chrome. The local Codex log has matching
++`ResolveElicitation` decisions of `Decline` at 21:36:42 and 21:37:22 UTC
++(rows 86193266 and 86193377 in `logs_2.sqlite`). Chrome browser-extension
++navigation and page reading worked separately.
++
++The 1180 engine routes only methods ending in `requestApproval`; an MCP
++`mcpServer/elicitation/request` falls through to a response with `{}`. That
++is not a valid MCP confirmation answer. Before the fix, the new stdio
++regression `computerUseConfirmationWaitsForTheUserAndRepliesWithMcpContent`
++failed waiting for an approval event (one test, one failure). It received no
++approval card. The protocol bundle generated by local Codex
++`0.164.0-alpha.11.1` and the official app-server documentation both specify
++an explicit `action` and confirmation `content`. The running computer
++app-server is 0.165.0; phone runtime binaries stay pinned to 0.163.0.
++
++## Change
++
++- Route empty MCP confirmation forms to the existing per-chat approval card.
++- Return `accept`/`decline` with the correct content only after a real user
++  answer. No persistent app grant or configuration change.
++- Show the plugin and original request, with request-only consent.
++- Consume answers atomically; revoke the matching card and token when the
++  server resolves it. Keep request IDs scoped to the owning computer/chat.
++- Decline forms needing values, URL flows, verification challenges, unknown
++  schema constraints or missing thread/turn scope. Full form UI is out of scope.
++
++## Validation
++
++Checks on Windows, with Android SDK 35 and the existing task-local Gradle
++dependency cache:
++
++| Suite | Cases | Failures/errors | Skipped |
++|---|---:|---:|---:|
++| Core | 895 | 0 | 0 |
++| Codex debug | 69 | 0 | 0 |
++| Remote debug | 154 | 0 | 3 existing |
++| App dev debug | 172 | 0 | 0 |
++| Runtime preparation, Python | 16 | 0 | 0 |
++
++The JVM total is 1,290 cases. Tests include explicit allow/deny, numeric and
++string IDs, simultaneous duplicate replies, unsupported form/verification
++refusal, server cancellation, cross-chat routing and Stop. They exercise the
++real coordinator/router/Codex stdio path against a simulated app-server;
++they do not establish SSH, model or native desktop success.
++
++`assembleDevDebug`, `assembleDevDebugAndroidTest` and `lintDevDebug` passed;
++lint has zero errors, 21 existing warnings and three information findings.
++`git diff --check` and the carried index check passed. An initial fresh build
++could not fetch the pinned Alpine archive (HTTP 404). It was rerun using the
++existing pinned cached archives; runtime hashes were checked and no runtime
++pin was changed. Task-local storage had no automatic deletions.
++
++## APK and live checks
++
++- Package: `dev.androidagent.app.dev`, 1181 /
++  `0.14.0-dev.computer-use-approvals1181`.
++- Size: 340,728,290 bytes. SHA-256:
++  `b08e513ff1f9a289d2d48b26eca459f15b9b60ecc2ddcf941172f3b87193a93e`.
++- APK v2 signature and 16 KiB ZIP alignment passed. The debug certificate
++  matches 1180. This is a test APK, with no v3 release signature.
++- All 41 native/asset entries have the same names and bytes as 1180.
++- Direct emulator runner: `McpApprovalUiTest` PASS (one test, 19.844 seconds).
++  It verifies the exact app request, absence of standing grants, no answer
++  before a tap, and forwarding of the explicit answer. The captured card was
++  inspected. The first cold run had a startup ANR before tests; a package
++  speed compilation on the emulator succeeded, then the same test passed.
++  This is a Compose fixture, not a real desktop permission request.
++- `copy_file` completed delivery to the hosting phone's Downloads as
++  `hey-mike-computer-use-approvals1181.apk`. Media metadata confirms the APK
++  MIME type and 340,728,290 bytes. That is reconstructed file size, not measured
++  wire bytes. No fallback full-APK sender or phone ADB install was used.
++- Hosting-phone installation/native Computer Use are still pending. The USB
++  physical test phone is a different device (Mike 1163), so it was not updated.
++  Do not call the fix installed or verified on the hosting phone until the
++  version and actual approval/tool flow pass. The installed base-APK hash has
++  not been measured. The update needs the user's Android installer approval.
++  A file-open request was issued, but the current screen is the Android lock
++  screen; installer visibility was not verified. Fresh app metadata still
++  reports 1180. The user must unlock, install the delivered APK, reopen Mike,
++  and return to this chat before the real desktop test can continue.
++
++After installation, verify the hosting phone reports 1181. Then use native
++Computer Use on the Chrome window: let the user answer the real approval,
++observe its screenshot, and test input in a disposable new tab. Close that
++tab and separately confirm the browser extension still opens/reads/clicks.
++Do not approve Mike's own card with an agent device tool, change an app
++allow-list, or substitute a shell for the pending native approval.
++
++## Post-install hosting-phone check — 2026-10-29
++
++Fresh `apps_settings(app_info)` confirms installed version code 1181 and
++`0.14.0-dev.computer-use-approvals1181`. This confirms installed metadata;
++the installed base-APK hash is still unmeasured.
++
++Native `cua.getApp({windowId:133744})` on the returned Chrome window waited
++300 seconds, then returned `Computer Use app approval timed out`. It did
++not obtain a native window screenshot or perform native input. This differs
++from the earlier immediate not-approved result, but does not prove the
++approval card was displayed or that user replies reach the tool. Asked the
++user whether the Allow/Deny card appeared; that fact is still pending.
++Do not describe native Computer Use as working until the actual approval,
++screenshot and input sequence succeeds.
++
++Chrome extension navigation passed again after installation: created one
++temporary tab, opened `https://example.com/`, clicked Learn more, and read
++the `Example Domains` page at `https://www.iana.org/help/example-domains`.
++Closed the temporary tab and verified the two original tabs remain.
++
++## Retained task paths
++
++- Worktree: `C:/Users/SHIRA/.codex/worktrees/computer-use-approvals-20261028`.
++- Build bucket: `C:/Users/SHIRA/Documents/AI/Android-agent-use/build/d82585fd47d7fbe5`.
++- APK, logs, schemas, source manifest and patch:
++  `C:/Users/SHIRA/AppData/Local/Temp/hey-mike/computer-use-approvals-20261028`.
++
++The source stays open for the installation/live check; inherited source
++changes and the focused fix have not been committed or published together.
++
++No public release, merge or publication is part of this candidate.
+diff --git a/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt b/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt
+index 52e442de..22354619 100644
+--- a/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt
++++ b/engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt
+@@ -521,7 +521,13 @@ class CodexEngine(
+     }
+ 
+     override suspend fun answerApproval(requestId: String, allow: Boolean) {
+-        val approval = approvals[requestId] ?: return
++        // Consume first: two taps, or a late reply after cancellation, must
++        // never answer the same server request twice.
++        val approval = approvals.remove(requestId) ?: return
++        if (approval.method == "mcpServer/elicitation/request") {
++            respond(requestId, mcpConfirmationResult(allow))
++            return
++        }
+         val result = buildJsonObject {
+             if (approval.method == "item/permissions/requestApproval") {
+                 // Grant only the requested profile, for this turn. A rejection
+@@ -533,7 +539,6 @@ class CodexEngine(
+             }
+         }
+         respond(requestId, result)
+-        approvals.remove(requestId, approval)
+     }
+ 
+     /** Use Mike's current ChatGPT account in a remote app-server, without saving it on the PC. */
+@@ -657,12 +662,31 @@ class CodexEngine(
+                 val value = when (args) { is JsonObject -> args; is JsonPrimitive -> runCatching { json.parseToJsonElement(args.content).jsonObject }.getOrDefault(buildJsonObject {}); else -> buildJsonObject {} }
+                 stream.emit(EngineEvent.ToolCall(id, params.string("tool"), value, params.string("threadId"), params.string("turnId")))
+             }
++            method == "mcpServer/elicitation/request" && id != null -> {
++                if (isMcpConfirmation(params)) {
++                    val approval = EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId"))
++                    approvals[id] = approval
++                    stream.emit(approval)
++                } else {
++                    // URL flows, structured forms and device-verification
++                    // proofs need a different UI. Do not turn Allow into
++                    // invented answers or silently grant persistent access.
++                    respond(id, mcpConfirmationResult(false))
++                    runCatching { diagnosticSink("MCP elicitation declined: unsupported form or missing turn scope") }
++                    stream.emit(EngineEvent.Activity("This plugin request needs an approval form Mike cannot show yet.",
++                        params.string("threadId"), params.string("turnId")))
++                }
++            }
+             id != null && method.endsWith("requestApproval") -> {
+                 val approval = EngineEvent.Approval(id, method, params, params.string("threadId"), params.string("turnId"))
+                 approvals[id] = approval
+                 stream.emit(approval)
+             }
+-            method == "serverRequest/resolved" -> params["requestId"]?.toString()?.let { approvals.remove(it) }
++            method == "serverRequest/resolved" -> params["requestId"]?.toString()?.let { requestId ->
++                approvals.remove(requestId)?.let { approval ->
++                    stream.emit(EngineEvent.ApprovalResolved(requestId, approval.threadId, approval.turnId))
++                }
++            }
+             method == "thread/realtime/started" -> {
+                 val threadId = params.string("threadId")
+                 val sessionId = params.string("realtimeSessionId").ifBlank { null }
+diff --git a/engine-codex/src/main/java/dev/androidagent/enginecodex/McpConfirmation.kt b/engine-codex/src/main/java/dev/androidagent/enginecodex/McpConfirmation.kt
+new file mode 100644
+index 00000000..424d5cf6
+--- /dev/null
++++ b/engine-codex/src/main/java/dev/androidagent/enginecodex/McpConfirmation.kt
+@@ -0,0 +1,26 @@
++package dev.androidagent.enginecodex
++
++import kotlinx.serialization.json.*
++
++/** A yes/no card can answer a confirmation, but must never invent form values or proofs. */
++internal fun isMcpConfirmation(params: JsonObject): Boolean {
++    val mode = (params["mode"] as? JsonPrimitive)?.contentOrNull
++    if (mode !in setOf("form", "openai/form", "openaiForm")) return false
++    if (listOf("serverName", "threadId", "turnId", "message").any {
++        (params[it] as? JsonPrimitive)?.contentOrNull.isNullOrBlank()
++    }) return false
++    val schema = params["requestedSchema"] as? JsonObject ?: return false
++    if ((schema["type"] as? JsonPrimitive)?.contentOrNull != "object") return false
++    val properties = schema["properties"] as? JsonObject ?: return false
++    if (properties.isNotEmpty()) return false
++    val required = schema["required"]
++    if (required != null && required != JsonNull && (required !is JsonArray || required.isNotEmpty())) return false
++    // An empty response must also satisfy every constraint. Unknown schema
++    // keywords could require data our card cannot collect, so refuse them.
++    return schema.keys.all { it in setOf("type", "properties", "required", "\$schema", "additionalProperties", "title", "description") }
++}
++
++internal fun mcpConfirmationResult(allow: Boolean) = buildJsonObject {
++    put("action", if (allow) "accept" else "decline")
++    put("content", if (allow) buildJsonObject {} else JsonNull)
++}
+diff --git a/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexApprovalTest.kt b/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexApprovalTest.kt
+index 1d4b588b..32f78889 100644
+--- a/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexApprovalTest.kt
++++ b/engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexApprovalTest.kt
+@@ -17,6 +17,118 @@ import org.junit.Assert.*
+ import org.junit.Test
+ 
+ class CodexApprovalTest {
++    @Test fun simultaneousTapsCanAnswerAnMcpRequestOnlyOnce() = runBlocking {
++        val server = Server()
++        try {
++            server.engine.connect()
++            val pending = async(start = CoroutineStart.UNDISPATCHED) {
++                server.engine.events.filterIsInstance<EngineEvent.Approval>().first()
++            }
++            server.send(buildJsonObject {
++                put("id", 8); put("method", "mcpServer/elicitation/request")
++                put("params", Json.parseToJsonElement("""{
++                    "threadId":"thread","turnId":"turn","serverName":"cua","mode":"form",
++                    "message":"Allow Codex to use Google Chrome?",
++                    "requestedSchema":{"type":"object","properties":{}}
++                }"""))
++            })
++            val approval = withTimeout(5_000) { pending.await() }
++            (1..10).map { async(Dispatchers.Default) { server.engine.answerApproval(approval.requestId, true) } }.awaitAll()
++            assertEquals(JsonPrimitive(8), withTimeout(5_000) { server.responses.receive() }["id"])
++            assertTrue(server.responses.tryReceive().isFailure)
++        } finally { server.close() }
++    }
++
++    @Test fun unsupportedFormsAndUnscopedRequestsAreDeclinedWithoutInventingAnswers() = runBlocking {
++        val server = Server()
++        try {
++            server.engine.connect()
++            val confirmation = Json.parseToJsonElement("""{
++                "threadId":"thread","turnId":"turn","serverName":"cua","mode":"form",
++                "message":"Allow Codex to use Google Chrome?",
++                "requestedSchema":{"type":"object","properties":{}}
++            }""").jsonObject
++            val variants = listOf(
++                confirmation + ("mode" to JsonPrimitive("url")),
++                confirmation + ("mode" to JsonPrimitive("openai/userVerification")),
++                confirmation + ("turnId" to JsonNull),
++                confirmation + ("threadId" to JsonPrimitive("")),
++                confirmation + ("requestedSchema" to Json.parseToJsonElement("""{"type":"object","properties":{"secret":{"type":"string"}},"required":["secret"]}""")),
++                confirmation + ("requestedSchema" to Json.parseToJsonElement("""{"type":"object","properties":{},"minProperties":1}""")),
++            )
++            for ((index, params) in variants.withIndex()) {
++                server.send(buildJsonObject {
++                    put("id", index); put("method", "mcpServer/elicitation/request"); put("params", JsonObject(params))
++                })
++                val response = withTimeout(5_000) { server.responses.receive() }
++                assertEquals(JsonPrimitive(index), response["id"])
++                assertEquals(buildJsonObject { put("action", "decline"); put("content", JsonNull) }, response["result"])
++            }
++        } finally { server.close() }
++    }
++
++    @Test fun serverCancellationRevokesThePendingApprovalAndLateAnswersDoNothing() = runBlocking {
++        val server = Server()
++        try {
++            server.engine.connect()
++            val pending = async(start = CoroutineStart.UNDISPATCHED) {
++                server.engine.events.filterIsInstance<EngineEvent.Approval>().first()
++            }
++            server.send(buildJsonObject {
++                put("id", "cancelled"); put("method", "mcpServer/elicitation/request")
++                put("params", Json.parseToJsonElement("""{
++                    "threadId":"thread","turnId":"turn","serverName":"cua","mode":"form",
++                    "message":"Allow Codex to use Google Chrome?",
++                    "requestedSchema":{"type":"object","properties":{}}
++                }"""))
++            })
++            val approval = withTimeout(5_000) { pending.await() }
++            val resolved = async(start = CoroutineStart.UNDISPATCHED) {
++                server.engine.events.filterIsInstance<EngineEvent.ApprovalResolved>().first()
++            }
++            server.send(buildJsonObject {
++                put("method", "serverRequest/resolved")
++                put("params", buildJsonObject { put("requestId", "cancelled"); put("threadId", "thread") })
++            })
++            assertEquals(EngineEvent.ApprovalResolved(approval.requestId, "thread", "turn"), withTimeout(5_000) { resolved.await() })
++            server.engine.answerApproval(approval.requestId, true)
++            assertTrue(server.responses.tryReceive().isFailure)
++        } finally { server.close() }
++    }
++
++    @Test fun computerUseConfirmationWaitsForTheUserAndRepliesWithMcpContent() = runBlocking {
++        val server = Server()
++        try {
++            server.engine.connect()
++            for (allow in listOf(true, false)) {
++                val request = async(start = CoroutineStart.UNDISPATCHED) {
++                    server.engine.events.filterIsInstance<EngineEvent.Approval>().first()
++                }
++                server.send(buildJsonObject {
++                    put("id", "computer-$allow")
++                    put("method", "mcpServer/elicitation/request")
++                    put("params", Json.parseToJsonElement("""{
++                        "threadId":"thread","turnId":"turn","serverName":"cua",
++                        "mode":"form","message":"Allow Codex to use Google Chrome?",
++                        "requestedSchema":{"type":"object","properties":{}}
++                    }"""))
++                })
++                val approval = withTimeout(5_000) { request.await() }
++                assertEquals("mcpServer/elicitation/request", approval.method)
++                assertTrue("No answer before the person decides", server.responses.tryReceive().isFailure)
++                server.engine.answerApproval(approval.requestId, allow)
++                val reply = withTimeout(5_000) { server.responses.receive() }
++                assertEquals(JsonPrimitive("computer-$allow"), reply["id"])
++                assertEquals(buildJsonObject {
++                    put("action", if (allow) "accept" else "decline")
++                    put("content", if (allow) buildJsonObject {} else JsonNull)
++                }, reply["result"])
++                server.engine.answerApproval(approval.requestId, !allow)
++                assertTrue("An approval is consumed once", server.responses.tryReceive().isFailure)
++            }
++        } finally { server.close() }
++    }
++
+     @Test fun permissionAnswersUseTheRequestedProfileAndTurnScope() = runBlocking {
+         val server = Server()
+         try {
+diff --git a/remote/src/main/kotlin/dev/androidagent/remote/RoutingAgentEngine.kt b/remote/src/main/kotlin/dev/androidagent/remote/RoutingAgentEngine.kt
+index eac8f541..153af60f 100644
+--- a/remote/src/main/kotlin/dev/androidagent/remote/RoutingAgentEngine.kt
++++ b/remote/src/main/kotlin/dev/androidagent/remote/RoutingAgentEngine.kt
+@@ -342,6 +342,7 @@ class RoutingAgentEngine(
+     private fun fromClaude(event: EngineEvent): EngineEvent = when (event) {
+         is EngineEvent.ToolCall -> event.copy(requestId = CLAUDE_TAG + event.requestId)
+         is EngineEvent.Approval -> event.copy(requestId = CLAUDE_TAG + event.requestId)
++        is EngineEvent.ApprovalResolved -> event.copy(requestId = CLAUDE_TAG + event.requestId)
+         else -> event
+     }
+ 
+@@ -386,6 +387,7 @@ class RoutingAgentEngine(
+         val translated = when (event) {
+             is EngineEvent.ToolCall -> event.copy(requestId = tag(computer, event.requestId, prefix))
+             is EngineEvent.Approval -> event.copy(requestId = tag(computer, event.requestId, prefix))
++            is EngineEvent.ApprovalResolved -> event.copy(requestId = tag(computer, event.requestId, prefix))
+             // The computer's own sign-in and quota are not the phone's.
+             is EngineEvent.AccountChanged -> null
+             is EngineEvent.UsageChanged -> event.takeIf { it.threadId != null }
+diff --git a/remote/src/test/kotlin/dev/androidagent/remote/ComputerSubagentIntegrationTest.kt b/remote/src/test/kotlin/dev/androidagent/remote/ComputerSubagentIntegrationTest.kt
+index 3fdef4d0..ea2c322d 100644
+--- a/remote/src/test/kotlin/dev/androidagent/remote/ComputerSubagentIntegrationTest.kt
++++ b/remote/src/test/kotlin/dev/androidagent/remote/ComputerSubagentIntegrationTest.kt
+@@ -105,6 +105,55 @@ class ComputerSubagentIntegrationTest {
+         }
+     }
+ 
++    @Test fun computerUseConfirmationReturnsTheUserAnswerToItsOwnRemotePeer() = runBlocking<Unit> {
++        for (allow in listOf(true, false)) {
++            val rig = Rig(File(temp.root, "mcp-$allow").apply { mkdirs() }, RemoteAccess.FULL)
++            try {
++                val task = rig.start()
++                rig.remote.awaitRequest("thread/name/set")
++                rig.remote.mcpConfirmation(7)
++                rig.awaitTask(task.id, "waiting_for_user")
++                assertEquals("remote|pc|7", rig.manager.sourceState("source", rig.runs.sessionStates.value).approval!!.requestId)
++                assertTrue(rig.remote.responses.value.isEmpty())
++                assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "other"))
++                assertTrue(rig.runs.answerApprovalByReply(if (allow) "yes" else "no", sessionId = "source"))
++                val answers = withTimeout(5_000) { rig.remote.responses.first { it.isNotEmpty() } }
++                assertEquals(buildJsonObject {
++                    put("action", if (allow) "accept" else "decline")
++                    put("content", if (allow) buildJsonObject {} else JsonNull)
++                }, answers.single()["result"])
++                assertTrue(rig.local.responses.value.isEmpty())
++                assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "source"))
++            } finally { rig.close() }
++        }
++    }
++
++    @Test fun computerUseCancellationAndStopRevokeThePendingRemoteCard() = runBlocking<Unit> {
++        for (stop in listOf(true, false)) {
++            val rig = Rig(File(temp.root, "mcp-cancel-$stop").apply { mkdirs() }, RemoteAccess.FULL)
++            try {
++                val task = rig.start()
++                rig.remote.awaitRequest("thread/name/set")
++                rig.remote.mcpConfirmation(7)
++                rig.awaitTask(task.id, "waiting_for_user")
++                if (stop) {
++                    rig.runs.stop("source")
++                    rig.remote.awaitRequest("turn/interrupt")
++                    rig.awaitTask(task.id, "cancelled")
++                } else {
++                    rig.remote.notification("serverRequest/resolved", buildJsonObject {
++                        put("requestId", 7); put("threadId", "computer-thread-1")
++                    })
++                    withTimeout(5_000) { rig.runs.sessionStates.first {
++                        rig.manager.sourceState("source", it).approval == null
++                    } }
++                }
++                assertFalse(rig.runs.answerApprovalByReply("yes", sessionId = "source"))
++                assertFalse(rig.remote.responses.value.any { it["result"]?.jsonObject?.get("action") == JsonPrimitive("accept") })
++            } finally { rig.close() }
++        }
++    }
++
+     @Test fun stoppingFullAccessWhileApprovalIsPendingCannotApproveTheCommandLater() = runBlocking<Unit> {
+         val rig = Rig(temp.root, RemoteAccess.FULL)
+         try {
+@@ -419,6 +468,15 @@ class ComputerSubagentIntegrationTest {
+             put("id", id); put("method", "item/commandExecution/requestApproval")
+             put("params", buildJsonObject { put("threadId", thread); put("turnId", turn); put("command", "write outside project") })
+         })
++        fun mcpConfirmation(id: Int) = write(buildJsonObject {
++            put("id", id); put("method", "mcpServer/elicitation/request")
++            put("params", buildJsonObject {
++                put("threadId", "computer-thread-1"); put("turnId", "computer-turn-1")
++                put("serverName", "cua"); put("mode", "form")
++                put("message", "Allow Codex to use Google Chrome?")
++                put("requestedSchema", buildJsonObject { put("type", "object"); put("properties", buildJsonObject {}) })
++            })
++        })
+         fun complete(thread: String, turn: String, text: String) {
+             notification("item/completed", buildJsonObject {
+                 put("threadId", thread); put("turnId", turn)
+diff --git a/version.properties b/version.properties
+index 02bdc965..8a27d158 100644
+--- a/version.properties
++++ b/version.properties
+@@ -1,2 +1,2 @@
+-versionCode=1180
+-versionName=0.14.0-dev.assistant-flow-limits1180
++versionCode=1181
++versionName=0.14.0-dev.computer-use-approvals1181

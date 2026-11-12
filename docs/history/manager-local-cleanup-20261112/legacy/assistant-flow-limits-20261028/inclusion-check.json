@@ -1,0 +1,36 @@
+{
+  "base": "c65fe575ab56710e8948de3126a8cee967e01c9a",
+  "baseApkSha256": "1c5e58b96b64506ab4978d2c0fe1703fb9c1cd9eb6681a6d858172c1d1e5eb24",
+  "limitFeature": "8c899bcc9c3754b21f143ec83b563026bb2c24f1",
+  "baseSourceFilesChecked": 718,
+  "filesChangedByIntegration": [
+    "PROGRESS.md",
+    "app/src/main/AndroidManifest.xml",
+    "app/src/main/java/dev/androidagent/app/AgentApplication.kt",
+    "app/src/main/java/dev/androidagent/app/AgentViewModel.kt",
+    "app/src/main/java/dev/androidagent/app/MainActivity.kt",
+    "app/src/main/java/dev/androidagent/app/ui/AgentUiModels.kt",
+    "app/src/main/java/dev/androidagent/app/ui/AndroidAgentScreen.kt",
+    "app/src/main/java/dev/androidagent/app/ui/ChatComposer.kt",
+    "app/src/main/java/dev/androidagent/app/ui/ComposerCommands.kt",
+    "core/src/main/kotlin/dev/androidagent/core/AgentCoordinator.kt",
+    "core/src/main/kotlin/dev/androidagent/core/Contracts.kt",
+    "docs/ARCHITECTURE.md",
+    "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeProtocol.kt",
+    "engine-claude/src/main/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapper.kt",
+    "engine-claude/src/test/kotlin/dev/androidagent/engineclaude/ClaudeStreamMapperTest.kt",
+    "engine-codex/src/main/java/dev/androidagent/enginecodex/CodexEngine.kt",
+    "engine-codex/src/test/kotlin/dev/androidagent/enginecodex/CodexErrorNotificationTest.kt",
+    "version.properties"
+  ],
+  "bundledNativeAndAssetFilesMatched": 41,
+  "apkSha256": "56079ae70084878f2f62b929234dc6f4aaab6b481f21ec785a2994dd4bf8d086",
+  "apkBytes": 340722242,
+  "versionCode": 1180,
+  "versionName": "0.14.0-dev.assistant-flow-limits1180",
+  "packagedFeatures": [
+    "UsageLimitRecovery",
+    "TaskFollowThrough",
+    "TaskBriefingNotifier"
+  ]
+}
