@@ -142,7 +142,11 @@ class SituationCalendarAdapterTest {
         now += 120_000
         val stale = snapshot()
         assertTrue(stale["calendar"] == null || stale["calendar"] == JsonNull)
-        assertTrue(stale.getValue("unknown").jsonArray.any { it.jsonPrimitive.content == "calendar_plan" })
-        assertTrue(stale.getValue("unknown").jsonArray.any { it.jsonPrimitive.content == "saved_place_home" })
+        // An unknown list equal to the default is not encoded.
+        val unknown = stale["unknown"]?.jsonArray?.map { it.jsonPrimitive.content } ?: SharedSituation().unknown
+        assertTrue("calendar_plan" in unknown)
+        // A saved home is a lasting preference: it stays known after the refresh tick expires.
+        assertFalse("saved_place_home" in unknown)
+        assertTrue(stale.getValue("claims").jsonArray.any { it.jsonObject["value"]?.jsonPrimitive?.content == "Home fixture" })
     }
 }
