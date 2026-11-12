@@ -148,6 +148,18 @@ class SituationLocationReaderTest {
         assertNull(result.asFix())
     }
 
+    @Test fun anOlderLiveFixIsKeptOnlyAsLastKnown() = runTest {
+        val phone = phone().apply { behavior["network"] = null }
+        val readAt = phone.now()
+        phone.behavior["fused"] = phone.fix(6 * 60_000, "fused")
+        val result = SituationLocationReader(phone).read()
+        assertEquals("no fix", result.status)
+        assertNull(result.latitude)
+        assertEquals(listOf("cache:none", "fused:stale 6m", "network:no fix"), result.tried)
+        assertEquals(readAt - 6 * 60_000, result.lastKnown!!.fixAt)
+        assertEquals("fused", result.lastKnown!!.provider)
+    }
+
     @Test fun aCacheOlderThanHalfAnHourIsNotKept() = runTest {
         val phone = phone().apply { behavior["fused"] = null; behavior["network"] = null }
         phone.cache["network"] = phone.fix(31 * 60_000)

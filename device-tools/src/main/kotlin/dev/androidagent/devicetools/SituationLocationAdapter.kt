@@ -38,7 +38,7 @@ internal object SituationLocationAdapter {
  * provider, fused first where Android has it, then network, then GPS only with the fine permission. The
  * whole read shares [budgetMs]; each provider gets an equal share of what is left, so a provider that
  * fails fast leaves its time to the next. Every request is cancelled when its share ends or the caller is
- * cancelled. A failure never becomes a fresh fix: an older cached fix is returned only as [SituationLocation.lastKnown].
+ * cancelled. A failure never becomes a fresh fix: an older cached or live fix is returned only as [SituationLocation.lastKnown].
  */
 internal class SituationLocationReader(private val backend: Backend, private val budgetMs: Long = BUDGET_MS) {
     interface Backend {
@@ -114,15 +114,20 @@ internal class SituationLocationReader(private val backend: Backend, private val
                         }
                     }?.let { attempt ->
                         val elapsed = backend.elapsed()
-                        val fix = attempt.fix?.takeIf { SituationLocationAdapter.valid(it, elapsed) && elapsed - it.elapsedMs < LocationFreshness.CURRENT_MS }
-                        if (fix != null) {
+                        val fix = attempt.fix?.takeIf { SituationLocationAdapter.valid(it, elapsed) } ?: return@let "no fix"
+                        val age = elapsed - fix.elapsedMs
+                        if (age < LocationFreshness.CURRENT_MS) {
                             tried += "$provider:fix"
                             // The permission or the location switch may have changed while waiting.
                             if (backend.permission() == null) return fail("permission denied")
                             if (!backend.locationEnabled()) return fail("location disabled")
                             return fresh(fix, "live", elapsed)
                         }
-                        "no fix"
+                        // A coarse provider may answer with an older fix: keep it apart, never as current.
+                        if (age < LocationFreshness.LAST_KNOWN_MS && (lastKnown?.elapsedRealtimeMs ?: 0) < fix.elapsedMs)
+                            lastKnown = SituationFix(fix.latitude, fix.longitude, fix.accuracyMeters!!, fix.provider?.take(80),
+                                backend.now() - age, fix.elapsedMs, boot!!, profile)
+                        "stale ${age / 60_000}m"
                     } ?: "timeout"
                 } catch (e: SecurityException) { throw e }
                   catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -135,7 +140,7 @@ internal class SituationLocationReader(private val backend: Backend, private val
             if (!backend.locationEnabled()) return fail("location disabled")
             return fail(when {
                 "timeout" in outcomes -> "timeout"
-                "no fix" in outcomes -> "no fix"
+                outcomes.any { it == "no fix" || it.startsWith("stale") } -> "no fix"
                 outcomes.all { it == "unavailable" } -> "provider unavailable"
                 else -> "provider error"
             })

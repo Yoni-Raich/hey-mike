@@ -28,6 +28,10 @@ switch / provider failures, revoked mid-read), `LastKnownLocationTest` (10: age 
 original time, injection has no `location`/`lastFix`, need stays open, no renewal,
 boot/profile/policy/age gates, old file loads, forget clears it, next-step texts),
 and one `MissingSituationInfoTest` case for the tool result. `git diff --check` clean.
+Follow-up: a live answer older than 2 minutes (possible with a coarse provider) is
+now `tried: <provider>:stale Nm` and kept only as `lastKnown`, not dropped as no fix.
+`:core:test :device-tools:testDebugUnitTest --no-daemon`, exit 0: core 1120,
+device-tools 127 (one new reader case), 0 failures.
 
 Gaps: not run on a phone. Real fused/network behaviour, the time a coarse fix
 takes, and whether a 30 s budget is enough on the test phone are unverified.
