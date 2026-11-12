@@ -1,5 +1,16 @@
 # Progress
 
+### Dev Debug 1212 for the phone — 2026-11-12
+
+Built from `e361c7d9` (both fixes plus the version bump) with
+`:app:assembleDevDebug --no-daemon`, exit 0. aapt2: `dev.androidagent.app.dev`
+1212 `0.14.0-dev.manager1212`. APK Signature Scheme v2, signer SHA-256
+`f65c3469...dda1ee`, the same debug key as earlier dev builds from this PC.
+APK SHA-256 `e0a96774c0f86b06be8dc6a492f4359bc545e2ac83b7f344e33f7156c674a3b1`,
+342,373,376 bytes, copied to `artifacts/hey-mike-0.14.0-dev.manager1212.apk`.
+Tests: the `android.yml` gate above, on the same code. Install and phone checks
+are done from the chat phone, not recorded here.
+
 ### Team updates no longer post notifications — 2026-11-12
 
 Same branch and worktree as the missing-information fix. The root cause and
