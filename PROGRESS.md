@@ -1,5 +1,31 @@
 # Progress
 
+### Computer Use confirmation routing — 2026-10-28/29
+
+Candidate 1181 preserves the 1180 source contents and fixes the missing
+`mcpServer/elicitation/request` route. Empty confirmation forms now use the
+existing per-chat Allow/Deny card and return MCP's explicit action/content.
+No persistent desktop app grant is added. Resolved requests revoke their
+card/token; duplicate replies are consumed once. Unsupported structured
+forms and verification/URL flows are refused explicitly.
+
+The new stdio regression failed before the fix, then passed. Scoped core,
+Codex, remote and app suites have 1,290 JVM cases, zero failures/errors and
+three existing remote skips. Runtime Python tests: 16 PASS. Dev Debug app
+and test APK assembly, app lint (zero errors, 21 warnings), signature,
+16 KiB alignment and unchanged 41 native/asset entries PASS. The direct
+emulator approval-card fixture PASS after a cold-start ANR and emulator
+package compilation; its screenshot was inspected. APK delivery to hosting
+phone Downloads completed. Android installation approval and the real
+hosting-phone/native approval flow were pending at delivery. On 2026-10-29,
+fresh phone metadata confirms 1181 installed, and the Chrome extension
+open/click/read/cleanup check passes. Native Chrome window access waited
+300 seconds and returned an app-approval timeout. Card visibility, a real
+user answer and native screenshot/input remain unverified; user clarification
+is pending. Source and
+task artifacts remain in the named isolated worktree/build bucket; no merge
+or publication. See [the check record](docs/testing/computer-use-approvals-20261028.md).
+
 ### Assistant flow 1179 plus usage-limit recovery — 2026-10-28
 
 Built a separate combined Dev Debug candidate, 1180 /

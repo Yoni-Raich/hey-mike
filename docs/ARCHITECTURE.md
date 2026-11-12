@@ -2860,6 +2860,22 @@ child. Everything Codex does there is native to that computer: its shell,
 MCP servers, and skills from `~/.agents/skills` and the repo's
 `.agents/skills`, which also appear in the composer's skill picker.
 
+Computer Use app confirmations arrive as `mcpServer/elicitation/request`, not
+as command or filesystem `requestApproval` messages. `CodexEngine` accepts
+only an empty object form with a named server, message, thread and turn. It
+publishes the original request to the same coordinator approval card; the
+card names the plugin, shows its exact message, and offers one-request Allow
+or Deny. Replies use MCP's `action: accept` with `content: {}` or
+`action: decline` with `content: null`. They do not save an app allow-list or
+grant an "always allow". Requests are consumed atomically, so duplicate taps
+cannot send a second answer. Remote request IDs keep their computer prefix.
+`serverRequest/resolved` revokes the exact pending card and its reply token.
+Unscoped requests, forms needing values, URL flows, verification challenges
+and unknown schema constraints are declined explicitly. They must never be
+answered with invented fields or an empty success result. General structured
+elicitation remains unsupported; the client does not advertise extended-form
+support. See the bounded checks in `docs/testing/computer-use-approvals-20261028.md`.
+
 Why not a `remote_shell` tool for the phone's Codex: file edits, reads,
 skills and project instructions would all stay on the phone, and every step
 would be a mobile round trip wrapped in `cat` and heredocs.

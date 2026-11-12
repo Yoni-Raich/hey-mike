@@ -1389,6 +1389,13 @@ class AgentCoordinator(
                     }
                 }
             }
+            is EngineEvent.ApprovalResolved -> synchronized(lifecycleLock) {
+                val approval = state.value.approval
+                if (approval?.requestId == event.requestId && approval.threadId == event.threadId && approval.turnId == event.turnId) {
+                    mutableState.value = state.value.copy(approval = null, status = "Working")
+                    overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Working"))
+                }
+            }
             is EngineEvent.Approval -> {
                 if (state.value.sessionId?.let(readOnlySession) == true) {
                     engine.answerApproval(event.requestId, false)
@@ -2004,6 +2011,7 @@ class AgentCoordinator(
         is EngineEvent.ToolCall -> event.threadId
         is EngineEvent.TurnFinished -> event.threadId
         is EngineEvent.Approval -> event.threadId
+        is EngineEvent.ApprovalResolved -> event.threadId
         is EngineEvent.Failure -> event.threadId
         is EngineEvent.MessageCompleted -> event.threadId
         is EngineEvent.GeneratedImage -> event.threadId
@@ -2018,6 +2026,7 @@ class AgentCoordinator(
         is EngineEvent.ToolCall -> event.turnId
         is EngineEvent.TurnFinished -> event.turnId
         is EngineEvent.Approval -> event.turnId
+        is EngineEvent.ApprovalResolved -> event.turnId
         is EngineEvent.Failure -> event.turnId
         is EngineEvent.MessageCompleted -> event.turnId
         is EngineEvent.GeneratedImage -> event.turnId

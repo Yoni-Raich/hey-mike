@@ -17,6 +17,118 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CodexApprovalTest {
+    @Test fun simultaneousTapsCanAnswerAnMcpRequestOnlyOnce() = runBlocking {
+        val server = Server()
+        try {
+            server.engine.connect()
+            val pending = async(start = CoroutineStart.UNDISPATCHED) {
+                server.engine.events.filterIsInstance<EngineEvent.Approval>().first()
+            }
+            server.send(buildJsonObject {
+                put("id", 8); put("method", "mcpServer/elicitation/request")
+                put("params", Json.parseToJsonElement("""{
+                    "threadId":"thread","turnId":"turn","serverName":"cua","mode":"form",
+                    "message":"Allow Codex to use Google Chrome?",
+                    "requestedSchema":{"type":"object","properties":{}}
+                }"""))
+            })
+            val approval = withTimeout(5_000) { pending.await() }
+            (1..10).map { async(Dispatchers.Default) { server.engine.answerApproval(approval.requestId, true) } }.awaitAll()
+            assertEquals(JsonPrimitive(8), withTimeout(5_000) { server.responses.receive() }["id"])
+            assertTrue(server.responses.tryReceive().isFailure)
+        } finally { server.close() }
+    }
+
+    @Test fun unsupportedFormsAndUnscopedRequestsAreDeclinedWithoutInventingAnswers() = runBlocking {
+        val server = Server()
+        try {
+            server.engine.connect()
+            val confirmation = Json.parseToJsonElement("""{
+                "threadId":"thread","turnId":"turn","serverName":"cua","mode":"form",
+                "message":"Allow Codex to use Google Chrome?",
+                "requestedSchema":{"type":"object","properties":{}}
+            }""").jsonObject
+            val variants = listOf(
+                confirmation + ("mode" to JsonPrimitive("url")),
+                confirmation + ("mode" to JsonPrimitive("openai/userVerification")),
+                confirmation + ("turnId" to JsonNull),
+                confirmation + ("threadId" to JsonPrimitive("")),
+                confirmation + ("requestedSchema" to Json.parseToJsonElement("""{"type":"object","properties":{"secret":{"type":"string"}},"required":["secret"]}""")),
+                confirmation + ("requestedSchema" to Json.parseToJsonElement("""{"type":"object","properties":{},"minProperties":1}""")),
+            )
+            for ((index, params) in variants.withIndex()) {
+                server.send(buildJsonObject {
+                    put("id", index); put("method", "mcpServer/elicitation/request"); put("params", JsonObject(params))
+                })
+                val response = withTimeout(5_000) { server.responses.receive() }
+                assertEquals(JsonPrimitive(index), response["id"])
+                assertEquals(buildJsonObject { put("action", "decline"); put("content", JsonNull) }, response["result"])
+            }
+        } finally { server.close() }
+    }
+
+    @Test fun serverCancellationRevokesThePendingApprovalAndLateAnswersDoNothing() = runBlocking {
+        val server = Server()
+        try {
+            server.engine.connect()
+            val pending = async(start = CoroutineStart.UNDISPATCHED) {
+                server.engine.events.filterIsInstance<EngineEvent.Approval>().first()
+            }
+            server.send(buildJsonObject {
+                put("id", "cancelled"); put("method", "mcpServer/elicitation/request")
+                put("params", Json.parseToJsonElement("""{
+                    "threadId":"thread","turnId":"turn","serverName":"cua","mode":"form",
+                    "message":"Allow Codex to use Google Chrome?",
+                    "requestedSchema":{"type":"object","properties":{}}
+                }"""))
+            })
+            val approval = withTimeout(5_000) { pending.await() }
+            val resolved = async(start = CoroutineStart.UNDISPATCHED) {
+                server.engine.events.filterIsInstance<EngineEvent.ApprovalResolved>().first()
+            }
+            server.send(buildJsonObject {
+                put("method", "serverRequest/resolved")
+                put("params", buildJsonObject { put("requestId", "cancelled"); put("threadId", "thread") })
+            })
+            assertEquals(EngineEvent.ApprovalResolved(approval.requestId, "thread", "turn"), withTimeout(5_000) { resolved.await() })
+            server.engine.answerApproval(approval.requestId, true)
+            assertTrue(server.responses.tryReceive().isFailure)
+        } finally { server.close() }
+    }
+
+    @Test fun computerUseConfirmationWaitsForTheUserAndRepliesWithMcpContent() = runBlocking {
+        val server = Server()
+        try {
+            server.engine.connect()
+            for (allow in listOf(true, false)) {
+                val request = async(start = CoroutineStart.UNDISPATCHED) {
+                    server.engine.events.filterIsInstance<EngineEvent.Approval>().first()
+                }
+                server.send(buildJsonObject {
+                    put("id", "computer-$allow")
+                    put("method", "mcpServer/elicitation/request")
+                    put("params", Json.parseToJsonElement("""{
+                        "threadId":"thread","turnId":"turn","serverName":"cua",
+                        "mode":"form","message":"Allow Codex to use Google Chrome?",
+                        "requestedSchema":{"type":"object","properties":{}}
+                    }"""))
+                })
+                val approval = withTimeout(5_000) { request.await() }
+                assertEquals("mcpServer/elicitation/request", approval.method)
+                assertTrue("No answer before the person decides", server.responses.tryReceive().isFailure)
+                server.engine.answerApproval(approval.requestId, allow)
+                val reply = withTimeout(5_000) { server.responses.receive() }
+                assertEquals(JsonPrimitive("computer-$allow"), reply["id"])
+                assertEquals(buildJsonObject {
+                    put("action", if (allow) "accept" else "decline")
+                    put("content", if (allow) buildJsonObject {} else JsonNull)
+                }, reply["result"])
+                server.engine.answerApproval(approval.requestId, !allow)
+                assertTrue("An approval is consumed once", server.responses.tryReceive().isFailure)
+            }
+        } finally { server.close() }
+    }
+
     @Test fun permissionAnswersUseTheRequestedProfileAndTurnScope() = runBlocking {
         val server = Server()
         try {

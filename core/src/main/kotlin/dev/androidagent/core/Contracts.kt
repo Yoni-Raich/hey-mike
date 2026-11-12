@@ -297,6 +297,8 @@ sealed interface EngineEvent {
     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
+    /** The server cancelled or otherwise settled this exact pending request. */
+    data class ApprovalResolved(val requestId: String, val threadId: String?, val turnId: String?) : EngineEvent
     data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null,
         /** Transport progress may span turns, but must be scoped to its own threads. */
         val connectionStatus: Boolean = false) : EngineEvent

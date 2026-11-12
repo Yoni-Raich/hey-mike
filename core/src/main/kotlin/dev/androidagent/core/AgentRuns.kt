@@ -366,6 +366,7 @@ internal fun EngineEvent.threadIdOrNull(): String? = when (this) {
     is EngineEvent.ToolCall -> threadId
     is EngineEvent.TurnFinished -> threadId
     is EngineEvent.Approval -> threadId
+    is EngineEvent.ApprovalResolved -> threadId
     is EngineEvent.Failure -> threadId
     is EngineEvent.MessageCompleted -> threadId
     is EngineEvent.GeneratedImage -> threadId
