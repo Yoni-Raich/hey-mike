@@ -1,5 +1,28 @@
 # Progress
 
+### One Manager branch: feat/manager-20261112 (1211) — 2026-11-12
+
+All Manager work now lives on `feat/manager-20261112`: `refactor/manager-core`
+(which contains `feat/proactive-manager-20261106`, `integrate/all-phone-20261109`
+and the Claude background-cycle fixes) merged with current `dev` (session
+notifications #159), plus the playbook-origins fix (read saved playbook files
+with `ignoreUnknownKeys`; the phone on 1209 failed every background pass on an
+`eventId` key written by a Manager build).
+
+Older Manager branches were checked by content, not patch id (the line was
+squashed): 68-98% of each commit's added code lines are present verbatim, the
+rest was refactored later. Not included: `refactor/explicit-run-state-20261108`
+(local only). Its `f0311417` is an earlier form of
+`refactor/state-machines-20261110` (dev-based, separate), and `cd54f5a2`
+(UserRequestNotifier) depends on it.
+
+Evidence: `gradlew test --continue` passed in every module (0 failures);
+`:app:assembleDevDebug :app:lintDevDebug` passed, 0 lint errors; aapt2:
+`dev.androidagent.app.dev` 1211 `0.14.0-dev.manager1211`, SHA-256
+`2cce0d4440ae7cdbd91668a1476357b6580e14285312b8ad6e3b4078697b8da5`.
+Opened in the phone's installer. Untested: install result, Connections screen
+and the task board banner on the phone.
+
 ### Combined Manager and current dev phone build — 2026-11-09
 
 Built `integrate/all-phone-20261109`: dev `e2c44025` plus proactive Manager
