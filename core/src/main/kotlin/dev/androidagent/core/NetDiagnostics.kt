@@ -63,7 +63,9 @@ object NetDiagnostics {
         "api.anthropic.com",
         "claude.ai",
         "claude.com",
-        "platform.claude.com"
+        "platform.claude.com",
+        // Anthropic's proxy serves only the account connectors enabled by the phone engine.
+        "mcp-proxy.anthropic.com"
     )
 
     /** Only TLS is tunnelled. Plain HTTP through the proxy is never allowed. */

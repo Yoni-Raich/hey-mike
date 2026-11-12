@@ -21,6 +21,9 @@
 package dev.androidagent.engineclaude
 
 import dev.androidagent.core.AccountStatus
+import dev.androidagent.core.EngineKind
+import dev.androidagent.core.connections.AccountConnector
+import dev.androidagent.core.connections.AccountConnectorSource
 import dev.androidagent.core.AdbStatus
 import dev.androidagent.core.AgentEngine
 import dev.androidagent.core.AgentModel
@@ -108,7 +111,7 @@ class ClaudeCodeEngine(
     private val computer: ClaudeComputer? = null,
     private val authRetryDelayMs: Long = 2_000,
     private val catalogClock: () -> Long = System::nanoTime,
-) : AgentEngine {
+) : AgentEngine, AccountConnectorSource {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 256)
     override val events: Flow<EngineEvent> = stream.asSharedFlow()
@@ -132,6 +135,67 @@ class ClaudeCodeEngine(
     @Volatile private var loginProcess: Process? = null
     @Volatile private var accountCache: Pair<Long, AccountStatus>? = null
     @Volatile private var longContext = true
+    @Volatile private var allowedAccountTools: List<String> = emptyList()
+    private val accountPermissions = Any()
+    override val engine: EngineKind get() = EngineKind.CLAUDE
+
+    override fun allowAccountTools(tools: List<String>) = synchronized(accountPermissions) {
+        val next = tools.distinct().sorted()
+        val removed = allowedAccountTools.toSet() - next.toSet()
+        allowedAccountTools = next
+        // A live CLI process keeps its old whitelist. Stop precisely those phone processes
+        // whose grants were removed, instead of letting them keep using an old setting.
+        if (computer == null && removed.isNotEmpty()) chats.values.forEach { it.revokeAccountTools(removed) }
+    }
+
+    /** Read connector metadata from the signed-in phone account, without a model turn. */
+    override suspend fun accountConnectors(): List<AccountConnector> {
+        if (computer != null || !installed()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val process = host.start(ClaudeProtocol.accountProbeArgs(), home(), ClaudeProtocol.ACCOUNT_ENV)
+            try {
+                launch { drain(process.errorStream) }
+                val answers = kotlinx.coroutines.channels.Channel<Pair<String, JsonObject?>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                launch {
+                    try {
+                        process.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                            for (line in lines) {
+                                val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
+                                val response = message["response"] as? JsonObject ?: continue
+                                if (message.string("type") != "control_response") continue
+                                val body = if (response.string("subtype") == "success") response["response"] as? JsonObject else null
+                                answers.trySend(response.string("request_id") to body)
+                            }
+                        }
+                    } catch (stopped: CancellationException) {
+                        throw stopped
+                    } catch (_: java.io.IOException) {
+                        // The metadata-only process is destroyed when the probe ends.
+                    } finally { answers.close() }
+                }
+                val writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
+                suspend fun ask(id: String, subtype: String): JsonObject? {
+                    writer.write(ClaudeProtocol.controlRequest(id, subtype).toString()); writer.newLine(); writer.flush()
+                    return withTimeoutOrNull(PROBE_TIMEOUT_MS) {
+                        for ((answered, body) in answers) if (answered == id) return@withTimeoutOrNull body
+                        null
+                    }
+                }
+                check(ask(PROBE_ID, "initialize") != null) { "Claude account metadata is unavailable." }
+                var found = emptyList<AccountConnector>()
+                repeat(ACCOUNT_STATUS_TRIES) { attempt ->
+                    val status = ask("$ACCOUNT_STATUS_ID-$attempt", "mcp_status")
+                        ?: error("Claude account metadata is unavailable.")
+                    found = ClaudeProtocol.parseAccountServers(status)
+                    if (found.isNotEmpty() && found.none { it.state == "pending" }) return@withContext found
+                    if (attempt + 1 < ACCOUNT_STATUS_TRIES) delay(ACCOUNT_STATUS_WAIT_MS)
+                }
+                found
+            } finally {
+                process.destroyForcibly()
+            }
+        }
+    }
     /** Records native transcript IDs owned by a Mike turn before its UI events are delivered. */
     var onNativeMessage: suspend (threadId: String, messageId: String) -> Unit = { _, _ -> }
 
@@ -703,6 +767,7 @@ class ClaudeCodeEngine(
         val toolNames: List<String>,
         val runtime: String,
         val longContext: Boolean,
+        val accountTools: List<String>,
     )
 
     private class ChatStartException(message: String, val notFound: Boolean) : IllegalStateException(message)
@@ -750,31 +815,43 @@ class ClaudeCodeEngine(
 
         private fun dir(): File = File(host.homeDirectory, "mike-chats/$threadId")
 
+        private fun accountTools(): List<String> = if (computer == null) allowedAccountTools else emptyList()
+
+        fun revokeAccountTools(removed: Set<String>) {
+            if (running?.accountTools?.any { it in removed } == true) kill()
+        }
+
         /** Start or restart the process when it is gone or its model, effort, tools or window changed. Caller holds [lock]. */
         suspend fun ensureRunning() {
-            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, longContext)
+            val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, longContext, accountTools())
             if (alive && running == wanted) return
             check(idle()) { "A turn is already running in this chat." }
             stopProcess()
             trimLive(this)
             if (resumable) {
                 try {
-                    start(resume = true, wanted.longContext)
+                    start(resume = true, wanted.longContext, wanted.accountTools)
                 } catch (error: ChatStartException) {
                     // A session that never got a message has no file to resume.
                     // Starting it under the same id keeps the chat's id stable.
                     if (!error.notFound || requireExisting) throw error
-                    start(resume = false, wanted.longContext)
+                    start(resume = false, wanted.longContext, wanted.accountTools)
                 }
             } else {
-                start(resume = false, wanted.longContext)
+                start(resume = false, wanted.longContext, wanted.accountTools)
             }
             resumable = true
-            running = wanted
+            synchronized(accountPermissions) {
+                if (wanted.accountTools.any { it !in allowedAccountTools }) {
+                    kill()
+                    error("Account connection permissions changed while Claude was starting. Try again.")
+                }
+                running = wanted
+            }
         }
 
-        private suspend fun start(resume: Boolean, long: Boolean) =
-            if (computer != null) startOnComputer(computer, resume, long) else startOnPhone(resume, long)
+        private suspend fun start(resume: Boolean, long: Boolean, accountTools: List<String>) =
+            if (computer != null) startOnComputer(computer, resume, long) else startOnPhone(resume, long, accountTools)
 
         /**
          * The computer's own Claude Code, in the chat's project folder. The
@@ -820,7 +897,7 @@ class ClaudeCodeEngine(
             )
         }
 
-        private suspend fun startOnPhone(resume: Boolean, long: Boolean) = withContext(Dispatchers.IO) {
+        private suspend fun startOnPhone(resume: Boolean, long: Boolean, accountTools: List<String>) = withContext(Dispatchers.IO) {
             val dir = dir().apply { mkdirs() }
             val promptFile = File(dir, PROMPT_FILE)
             promptFile.writeText(ClaudeInstructions.systemPrompt(readAgentsMd()))
@@ -833,8 +910,10 @@ class ClaudeCodeEngine(
                 writePrivate(mcpFile, toolServer.start())
                 val args = ClaudeProtocol.chatArgs(
                     threadId, resume, ClaudeProtocol.windowModel(model, long), effort, mcpFile.absolutePath, promptFile.absolutePath,
+                    accountTools,
                 )
-                attach(host.start(args, File(cwd).apply { mkdirs() }, ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, long)))
+                val env = ClaudeProtocol.windowEnv(ClaudeProtocol.CHAT_ENV, long)
+                attach(host.start(args, File(cwd).apply { mkdirs() }, if (accountTools.isEmpty()) env else env + ClaudeProtocol.ACCOUNT_ENV))
                 val reply = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { control("initialize") }
                     ?: error("Claude did not start in time")
                 ClaudeProtocol.parseModels(reply).takeIf { it.isNotEmpty() }?.let { models = it }
@@ -1267,6 +1346,9 @@ class ClaudeCodeEngine(
         private const val HANDSHAKE_TIMEOUT_MS = 60_000L
         private const val COMMAND_TIMEOUT_MS = 30_000L
         private const val PROBE_TIMEOUT_MS = 20_000L
+        private const val ACCOUNT_STATUS_ID = "account-status"
+        private const val ACCOUNT_STATUS_TRIES = 15
+        private const val ACCOUNT_STATUS_WAIT_MS = 1_500L
         private const val COMPACT_TIMEOUT_MS = 10 * 60_000L
         private const val LOGIN_URL_TIMEOUT_MS = 60_000L
         private const val LOGIN_EXIT_TIMEOUT_MS = 120_000L

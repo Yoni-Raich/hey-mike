@@ -1,5 +1,47 @@
 # Architecture
 
+## Account connections for regular chats - 2026-11-12
+
+Settings > Account connections exposes Gmail and other account connectors for
+ordinary Mike chats. It reuses the signed-in ChatGPT and Claude accounts; Mike
+does not store a Gmail token or add a separate OAuth flow. This is independent
+of the archived Manager, task board, notification capture and background passes.
+
+`core.connections` owns the provider-neutral catalog, settings state and
+`AccountReadGateway`. Each connection starts off. User grants live separately in
+the app's `account_connections` preferences. Saved grants cannot enable a tool
+until its provider reports a fresh connected catalog. Missing providers retain
+an unavailable row so the user can still turn their saved grant off. Refresh
+fetches metadata only; it does not read messages or send a model prompt.
+
+- The phone's `CodexEngine` implements `AccountConnectorSource`. Its app-server
+  starts with apps available for catalog discovery, while ordinary chat threads
+  explicitly set `features.apps=false`. `account_read` exposes only the enabled
+  tools marked read-only, non-destructive and non-open-world by `codex_apps`.
+  Each dispatch rechecks the service annotations, current grants and run token.
+  Calls use an ephemeral read-only account thread. Stop or a revoked grant also
+  suppresses the result of an in-flight read; completed service actions are not undone.
+- `CodexToolCatalog` records the tools used at `thread/start`. The pinned runtime
+  retains its original catalog on resume, so a missing or changed marker rolls
+  a phone-owned chat onto a fresh native thread. The existing coordinator carries
+  its conversation forward and retains visible local history. Imported computer
+  sessions keep their existing resume behavior.
+- The phone's `ClaudeCodeEngine` discovers `claudeai`-scoped connectors with
+  `mcp_status` on a disposable process. The runtime allows Anthropic's exact
+  `mcp-proxy.anthropic.com` host and enables account servers only when the engine
+  explicitly requests them. Normal phone chats admit only the selected service-
+  marked read tools under `dontAsk`; writes and unknown tools are not granted.
+  Turning a grant off kills phone chat processes holding the old whitelist.
+  Startup checks the same permission lock before accepting a model turn, so a
+  grant removed during the handshake cannot leak into that turn. Computer Claude
+  continues using that computer's own setup.
+
+Every ordinary per-run tool composite includes `account_read`, including its
+existing computer relay and voice routes. Claude account tools remain local to
+phone Claude chats. There is no automatic mail polling, task discovery or team
+workflow in this feature. Source and UI fixture checks are recorded in
+[`account-connections-20261112/README.md`](testing/account-connections-20261112/README.md).
+
 ## Shared tool helpers in core — 2026-11-08
 
 Text the model sees from more than one backend or engine has one owner in

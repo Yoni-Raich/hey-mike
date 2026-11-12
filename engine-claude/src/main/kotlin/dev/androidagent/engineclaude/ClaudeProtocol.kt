@@ -106,6 +106,9 @@ internal object ClaudeProtocol {
     /** Keep the computer's own tool-search setting and Claude Code's default deferral. */
     val COMPUTER_CHAT_ENV: Map<String, String> = CHAT_ENV - "ENABLE_TOOL_SEARCH"
 
+    /** Account connectors load only for metadata probes or explicitly enabled phone chats. */
+    val ACCOUNT_ENV: Map<String, String> = mapOf("ENABLE_CLAUDEAI_MCP_SERVERS" to "true")
+
     /** Claude Code's switch for the 1M window; while set, the CLI keeps models at their standard window. */
     const val DISABLE_LONG_CONTEXT = "CLAUDE_CODE_DISABLE_1M_CONTEXT"
 
@@ -128,6 +131,7 @@ internal object ClaudeProtocol {
         effort: String?,
         mcpConfig: String,
         systemPromptFile: String,
+        accountTools: List<String> = emptyList(),
     ): List<String> = buildList {
         add("-p")
         add("--input-format"); add("stream-json")
@@ -139,9 +143,9 @@ internal object ClaudeProtocol {
         add("--model"); add(model)
         if (effort != null) { add("--effort"); add(effort) }
         add("--tools"); add(BUILTIN_TOOLS.joinToString(","))
-        add("--strict-mcp-config")
+        if (accountTools.isEmpty()) add("--strict-mcp-config")
         add("--mcp-config"); add(mcpConfig)
-        add("--allowedTools"); add(ALLOWED_TOOLS.joinToString(","))
+        add("--allowedTools"); add((ALLOWED_TOOLS + accountTools).distinct().joinToString(","))
         add("--permission-mode"); add("dontAsk")
         // Only the app-owned user settings under the private HOME: that is
         // where the on-device skills are installed. Project and local
@@ -220,6 +224,33 @@ internal object ClaudeProtocol {
         "--model", WINDOW_MODEL,
         "--system-prompt", "This is an automatic message from Hey Mike that starts the usage window. Reply with one word.",
     )
+
+    /** No user message, model request, transcript or project settings are needed to list account metadata. */
+    fun accountProbeArgs(): List<String> = listOf(
+        "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--tools", "", "--setting-sources", "", "--no-session-persistence",
+    )
+
+    fun parseAccountServers(answer: JsonObject): List<dev.androidagent.core.connections.AccountConnector> =
+        (answer["mcpServers"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val server = item as? JsonObject ?: return@mapNotNull null
+            val scope = server.string("scope").ifEmpty { server.string("source") }
+            if (scope != "claudeai") return@mapNotNull null
+            val name = server.string("name").ifEmpty { return@mapNotNull null }
+            val tools = (server["tools"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            val reads = tools.filter { tool ->
+                val annotation = tool["annotations"] as? JsonObject
+                fun flag(key: String) = (annotation?.get(key) as? JsonPrimitive)?.booleanOrNull
+                flag("readOnly") == true && flag("readOnlyHint") != false &&
+                    flag("destructive") != true && flag("destructiveHint") != true
+            }.map { it.string("name") }.filter { it.isNotBlank() }
+            dev.androidagent.core.connections.AccountConnector(
+                dev.androidagent.core.EngineKind.CLAUDE, name, server.string("status").ifEmpty { "unknown" },
+                reads.map { "mcp__${toolServerName(name)}__$it" }, tools.size - reads.size,
+            )
+        }
+
+    fun toolServerName(server: String): String = server.replace(Regex("[^A-Za-z0-9_-]"), "_")
 
     val AUTH_STATUS_ARGS = listOf("auth", "status", "--json")
     val AUTH_LOGIN_ARGS = listOf("auth", "login", "--claudeai")

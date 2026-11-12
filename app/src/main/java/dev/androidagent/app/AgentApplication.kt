@@ -95,7 +95,7 @@ class AgentGraph(private val app: Application) {
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
     /** The phone's own Codex. */
-    val phoneEngine = CodexEngine(runtime)
+    val phoneEngine = CodexEngine(runtime, accountReadBridge = true)
     /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
     val computers = dev.androidagent.remote.RemoteStore(
         java.io.File(app.filesDir, "remote/computers.bin"),
@@ -143,6 +143,16 @@ class AgentGraph(private val app: Application) {
             }
         },
     )
+    private val accountConnectionPreferences = app.getSharedPreferences("account_connections", 0)
+    /** User-chosen account abilities for normal chats, independent of the archived Manager. */
+    val accountConnections = dev.androidagent.core.connections.AccountConnections(
+        sources = listOf(phoneEngine, claudeEngine),
+        initialEnabled = accountConnectionPreferences.getStringSet("enabled", emptySet()).orEmpty().toSet(),
+        saveEnabled = { accountConnectionPreferences.edit().putStringSet("enabled", it).apply() },
+    )
+    init {
+        if (accountConnections.state.value.enabled.isNotEmpty()) scope.launch(Dispatchers.IO) { accountConnections.refresh() }
+    }
     /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
     val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
     private val windowPreferences = app.getSharedPreferences("ui", 0)
@@ -420,7 +430,12 @@ class AgentGraph(private val app: Application) {
     }
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
         listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
-            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), connectedTools(), capabilityTools, a11yTools, adbTools),
+            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), connectedTools(),
+            dev.androidagent.core.connections.AccountReadGateway(phoneEngine) {
+                val active = accountConnections.state.value.active
+                "Account connections (read only): ${active.count { it.engine == dev.androidagent.core.EngineKind.CODEX }} ChatGPT, " +
+                    "${active.count { it.engine == dev.androidagent.core.EngineKind.CLAUDE }} Claude (Claude chats on this phone)"
+            }, capabilityTools, a11yTools, adbTools),
         runtimeVersions = {
             val claude = claudeHost.updates.activePin.version.takeIf {
                 claudeHost.installState.value.phase == dev.androidagent.runtime.ClaudeInstallPhase.INSTALLED
