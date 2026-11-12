@@ -28,28 +28,39 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
-/** What the Manager's face shows. Teal is alive and well; amber is "something waits for you". */
+/** What the Manager's eye shows. Teal is alive and well; amber is "something waits for you". */
 internal enum class EyeMood(val label: String) {
     IDLE("resting"),
     THINKING("reading new messages"),
@@ -62,28 +73,25 @@ internal enum class EyeMood(val label: String) {
 internal val EyeTeal = Color(0xFF83D9CA)
 internal val EyeAmber = Color(0xFFF6B86A)
 private val EyePaused = Color(0xFF4D998F)
-private val EyeLavender = Color(0xFFB9A2FF)
-private val EyeGreen = Color(0xFF7DE08A)
-
-private val HeadColor = Color(0xFFECEAE4)
-private val PadColor = Color(0xFFCFCCC4)
-private val VisorColor = Color(0xFF14161B)
 
 /** A member's colour, from its hue: same lightness and calm, so the team reads as one family. */
 internal fun memberColor(hue: Float): Color = Color.hsv(((hue % 360f) + 360f) % 360f, 0.34f, 0.86f)
 
 /**
- * Mike's face: a smooth ceramic robot head with a dark visor and two glowing eyes.
+ * Mike's face: a sphere of dots with two eyes.
  *
- * Flat shapes only. The head floats and breathes; the eyes blink and glance. The eyes take
- * the mood's colour. Thinking tilts the head, lifts the gaze and narrows the eyes; working
- * is a quick bouncing stride with pulsing eyes and one light on the chin per running task;
- * waiting turns amber with wide eyes, a hop and an outline that pulses outward; done
- * squints into happy lines with a hop; paused shows sleepy slits and holds still. Reduced
- * motion draws one still frame.
+ * The sphere never spins. Its dots sit on an even lattice and only breathe.
+ * Each eye is a fixed ring of dots on the surface that moves with the gaze;
+ * the eyes push nearby sphere dots outward through a soft spring, so the dots
+ * crowd around them and settle back, and a dot under an eye fades instead of
+ * racing across it. Moods: thinking ripples the surface and scans, working
+ * narrows the eyes and sends one moon per running task, waiting turns amber
+ * with wide eyes, a hop and a pulse ring, done bends the eyes into happy
+ * arches, paused shows sleepy slits and holds still. Reduced motion draws one
+ * still frame.
  *
- * @param tint a team member's own colour for the eyes; the Manager uses the mood's.
- * @param satellites running tasks, one chin light each while working (at most four).
+ * @param tint a team member's own colour; the Manager uses the mood's.
+ * @param satellites running tasks, drawn as moons while working (at most four).
  */
 @Composable
 internal fun MikeEye(
@@ -97,193 +105,291 @@ internal fun MikeEye(
     val base = when (mood) {
         EyeMood.NEEDS -> EyeAmber
         EyeMood.PAUSED -> EyePaused
-        EyeMood.THINKING -> tint ?: EyeLavender
-        EyeMood.DONE -> tint ?: EyeGreen
         else -> tint ?: EyeTeal
     }
     val color by animateColorAsState(base, tween(500), label = "mike-eye-color")
-    val face = remember { MikeFace() }
-    val frame = remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val sizePx = remember { mutableIntStateOf(0) }
+    val count = latticeSize(with(density) { (sizePx.intValue / 2).toDp() })
+    val first = remember(count) { lattices[count] ?: fibonacci(count) }
+    val lattice = remember(count) { mutableStateOf(first) }
+    LaunchedEffect(count) {
+        val relaxed = withContext(Dispatchers.Default) { relaxedLattice(count) }
+        lattice.value = relaxed
+    }
+    val orb = remember(lattice.value) { Orb(lattice.value) }
+    val time = remember { mutableFloatStateOf(0f) }
     val currentMood by rememberUpdatedState(mood)
     val moving = animate && animationsEnabled() && mood != EyeMood.PAUSED
-    LaunchedEffect(moving, face) {
+    LaunchedEffect(moving, orb) {
         if (!moving) return@LaunchedEffect
         var previous = 0L
         while (true) {
             withInfiniteAnimationFrameNanos { now ->
                 val dt = if (previous == 0L) 0.016f else (now - previous).coerceIn(0L, 50_000_000L) / 1_000_000_000f
                 previous = now
-                face.step(dt, currentMood, snap = false)
-                frame.floatValue = face.time
+                orb.step(time.floatValue + dt, dt, currentMood, snap = false)
+                time.floatValue += dt
             }
         }
     }
-    Canvas(modifier.semantics { contentDescription = description ?: "Mike, ${mood.label}" }) {
-        frame.floatValue
-        if (!moving) face.step(0f, mood, snap = true)
-        face.draw(this, color, chinLights(mood, satellites))
+    Canvas(modifier.onSizeChanged { sizePx.intValue = min(it.width, it.height) }
+        .semantics { contentDescription = description ?: "Mike, ${mood.label}" }) {
+        val t = time.floatValue
+        if (!moving) orb.step(t, 0f, mood, snap = true)
+        orb.draw(this, t, color, mood, satellites.coerceIn(1, 4))
     }
 }
 
-/** One chin light per running task while working, at most four. Other moods show none. */
-internal fun chinLights(mood: EyeMood, satellites: Int): Int =
-    if (mood == EyeMood.WORKING) satellites.coerceIn(1, MAX_CHIN_LIGHTS) else 0
-
-private const val MAX_CHIN_LIGHTS = 4
-
-// The eyes' centres and their two soft halos, in design units.
-private val EYE_X = floatArrayOf(82f, 118f)
-private val HALO_GROW = floatArrayOf(12f, 6f)
-private val HALO_ALPHA = floatArrayOf(0.07f, 0.14f)
-
-/** Smooth 0..1 ramp between two phases of a cycle. */
-internal fun smoothStep(from: Float, to: Float, x: Float): Float {
-    val s = ((x - from) / (to - from)).coerceIn(0f, 1f)
-    return s * s * (3f - 2f * s)
+/** Fewer, larger dots for a small avatar so the eyes still read. */
+private fun latticeSize(radius: Dp): Int = when {
+    radius < 22.dp -> 200
+    radius < 45.dp -> 520
+    else -> 1100
 }
 
-/** How far the head leaps at [phase] (0..1 of the 2.6 s cycle): a big hop, then a small one, in design units. */
-internal fun hopLift(phase: Float): Float = when {
-    phase < 0.6f -> 0f
-    phase < 0.84f -> 14f * sin((phase - 0.6f) / 0.24f * PI.toFloat())
-    else -> 4f * sin((phase - 0.84f) / 0.16f * PI.toFloat())
+private fun fibonacci(count: Int) = FloatArray(count * 3).also { points ->
+    for (index in 0 until count) {
+        val y = 1f - 2f * (index + 0.5f) / count
+        val r = sqrt(1f - y * y)
+        val angle = index * 2.399963f
+        points[index * 3] = cos(angle) * r + sin(index * 12.9898f) * 0.02f
+        points[index * 3 + 1] = y
+        points[index * 3 + 2] = sin(angle) * r
+    }
 }
 
-/** The idle glance at [phase] of the 7 s cycle: right, then left, then back to centre. */
-internal fun glanceX(phase: Float): Float =
-    6f * smoothStep(0.22f, 0.28f, phase) - 12f * smoothStep(0.44f, 0.5f, phase) + 6f * smoothStep(0.7f, 0.76f, phase)
+private val lattices = ConcurrentHashMap<Int, FloatArray>()
 
-internal fun glanceY(phase: Float): Float =
-    -smoothStep(0.22f, 0.28f, phase) + 2f * smoothStep(0.44f, 0.5f, phase) - smoothStep(0.7f, 0.76f, phase)
+/** An even lattice, relaxed once per size and kept for the process: no spiral seams. */
+private fun relaxedLattice(count: Int): FloatArray = lattices.getOrPut(count) {
+    val p = fibonacci(count)
+    val s0 = 1.12f * sqrt(4f * PI.toFloat() / count)
+    val f = FloatArray(count * 3)
+    repeat(60) {
+        f.fill(0f)
+        for (i in 0 until count) for (j in i + 1 until count) {
+            val dx = p[i * 3] - p[j * 3]; if (dx > s0 || dx < -s0) continue
+            val dy = p[i * 3 + 1] - p[j * 3 + 1]; if (dy > s0 || dy < -s0) continue
+            val dz = p[i * 3 + 2] - p[j * 3 + 2]; if (dz > s0 || dz < -s0) continue
+            val d2 = dx * dx + dy * dy + dz * dz
+            if (d2 >= s0 * s0 || d2 < 1e-9f) continue
+            val d = sqrt(d2); val push = (s0 - d) / d * 0.5f
+            f[i * 3] += dx * push; f[i * 3 + 1] += dy * push; f[i * 3 + 2] += dz * push
+            f[j * 3] -= dx * push; f[j * 3 + 1] -= dy * push; f[j * 3 + 2] -= dz * push
+        }
+        for (i in 0 until count) {
+            val x = p[i * 3] + f[i * 3] * 0.3f; val y = p[i * 3 + 1] + f[i * 3 + 1] * 0.3f; val z = p[i * 3 + 2] + f[i * 3 + 2] * 0.3f
+            val l = sqrt(x * x + y * y + z * z)
+            p[i * 3] = x / l; p[i * 3 + 1] = y / l; p[i * 3 + 2] = z / l
+        }
+    }
+    p
+}
 
 // Mood parameters, eased toward each mood's targets.
-private const val OPEN = 0; private const val WIDE = 1; private const val GLANCE = 2; private const val LOOKUP = 3
-private const val TILT = 4; private const val WORK = 5; private const val HOP = 6; private const val RING = 7
-private const val DIM = 8; private const val GLOW = 9
+private const val WOB = 0; private const val AMP = 1; private const val PITCH = 2; private const val OPEN = 3
+private const val SMILE = 4; private const val SCAN = 5; private const val SAT = 6; private const val HOP = 7
+private const val RING = 8; private const val DIM = 9; private const val SHIMMER = 10; private const val GLOW = 11
 
 private fun targets(mood: EyeMood): FloatArray = when (mood) {
-    EyeMood.IDLE -> floatArrayOf(1f, 1f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0.5f)
-    EyeMood.THINKING -> floatArrayOf(0.6f, 1f, 0f, 1f, 1f, 0f, 0f, 0f, 1f, 0.55f)
-    EyeMood.WORKING -> floatArrayOf(1f, 1f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0.6f)
-    EyeMood.NEEDS -> floatArrayOf(1.15f, 1.1f, 0f, 0f, 0f, 0f, 1f, 1f, 1f, 0.85f)
-    EyeMood.DONE -> floatArrayOf(0.2f, 1.5f, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 0.65f)
-    EyeMood.PAUSED -> floatArrayOf(0.1f, 1.3f, 0f, 0f, 0f, 0f, 0f, 0f, 0.45f, 0.1f)
+    EyeMood.IDLE -> floatArrayOf(0.45f, 0.3f, 0.06f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0.5f)
+    EyeMood.THINKING -> floatArrayOf(1f, 0.08f, 0.16f, 0.9f, 0f, 1f, 0f, 0f, 0f, 1f, 1f, 0.55f)
+    EyeMood.WORKING -> floatArrayOf(0.6f, 0.05f, -0.12f, 0.62f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 0.6f)
+    EyeMood.NEEDS -> floatArrayOf(0.8f, 0.03f, 0.05f, 1.12f, 0f, 0f, 0f, 1f, 1f, 1f, 0f, 0.85f)
+    EyeMood.DONE -> floatArrayOf(0.6f, 0.08f, 0.03f, 1f, 1f, 0f, 0f, 0f, 1f, 1f, 0f, 0.65f)
+    EyeMood.PAUSED -> floatArrayOf(0.12f, 0f, -0.08f, 0.3f, 0f, 0f, 0f, 0f, 0f, 0.5f, 0f, 0.15f)
 }
 
-/**
- * The robot head on a 200-unit design square: head (36,40)-(164,146), visor inside it, eyes on
- * the visor's centre line. Everything is drawn in those units and scaled to the canvas.
- */
-private class MikeFace {
-    private val p = targets(EyeMood.IDLE)
-    private var primed = false
-    var time = 0f
-        private set
-    private var bobPhase = 0f
-    private var runPhase = 0f
-    private var pulsePhase = 0f
-    private val highlight = Path().apply { moveTo(64f, 75f); quadraticTo(80f, 67f, 100f, 67f) }
+/** One eye on the unit sphere: its centre, a tangent frame, and its half width and height (radians). */
+private class Eye {
+    val c = FloatArray(3); val e = FloatArray(3); val nn = FloatArray(3)
+    var w = 0f; var h = 0f
 
-    fun step(dt: Float, mood: EyeMood, snap: Boolean) {
+    /** The edge's distance from the centre toward (cs, sn), in bent space: a pill shape. */
+    fun edge(cs: Float, sn: Float): Float = ((abs(cs) / w).pow(2.4f) + (abs(sn) / h).pow(2.4f)).pow(-1f / 2.4f)
+}
+
+private class Orb(private val lattice: FloatArray) {
+    private val n = lattice.size / 3
+    private val off = FloatArray(n * 3)
+    private val vel = FloatArray(n * 3)
+    private val pos = FloatArray(n * 3)
+    private val alpha = FloatArray(n) { 1f }
+    private val p = targets(EyeMood.IDLE)
+    private val eyes = arrayOf(Eye(), Eye())
+    private val rim = max(12, (30f * sqrt(n / 1300f)).roundToInt())
+    private val rings = arrayOf(FloatArray(rim * 4), FloatArray(rim * 4))
+    private val contour = FloatArray(73 * 2)
+    private val length = FloatArray(73)
+    private var primed = false
+    /** Dots and rings are drawn larger on a coarse lattice, so every size keeps the same look. */
+    private val dotScale = sqrt(1300f / n)
+
+    fun step(t: Float, dt: Float, mood: EyeMood, snap: Boolean) {
         val target = targets(mood)
-        val k = if (snap || !primed) 1f else 1f - exp(-dt * 5f)
+        val k = if (snap || !primed) 1f else 1f - exp(-dt * 4f)
         for (i in p.indices) p[i] += (target[i] - p[i]) * k
-        time += dt
-        // Phases accumulate, so changing speed between moods never makes the motion jump.
-        val bobHz = 1f / 4.2f + p[WORK] * (1f / 0.7f - 1f / 4.2f) + p[LOOKUP] * (1f / 3.4f - 1f / 4.2f)
-        bobPhase += dt * bobHz * 2f * PI.toFloat()
-        runPhase += dt * 2f * PI.toFloat() / 0.7f
-        pulsePhase += dt * 2f * PI.toFloat() / 1f
+        placeEyes(t)
+        val bend = 4.2f * p[SMILE]; val lift = 0.07f * p[SMILE]
+        val fade = if (snap || !primed) 1f else 1f - exp(-dt * 12f)
+        val h = min(dt, 0.033f)
+        for (i in 0 until n) {
+            val x = lattice[i * 3]; val y = lattice[i * 3 + 1]; val z = lattice[i * 3 + 2]
+            var a = 1f; var tx = 0f; var ty = 0f; var tz = 0f
+            for (eye in eyes) {
+                if (x * eye.c[0] + y * eye.c[1] + z * eye.c[2] < 0.6f) continue
+                val du = x * eye.e[0] + z * eye.e[2]
+                val dv = x * eye.nn[0] + y * eye.nn[1] + z * eye.nn[2]
+                val dvb = dv + bend * du * du - lift
+                val rho = sqrt(du * du + dvb * dvb)
+                val cs = if (rho > 1e-5f) du / rho else 1f
+                val sn = if (rho > 1e-5f) dvb / rho else 0f
+                val rb = eye.edge(cs, sn)
+                // Under the eye a dot fades; it never races across to the other side.
+                val s = ((rho - rb + 0.012f) / 0.03f).coerceIn(0f, 1f)
+                a = min(a, s * s * (3f - 2f * s))
+                if (rho < rb * 0.7f) continue
+                // Around the eye a dot is pushed outward, strongest at the ring.
+                val push = 0.1f * exp(-max(0f, rho - rb) / 0.11f) * min(1f, (rho - rb * 0.7f) / (rb * 0.3f))
+                val du2 = du + push * cs
+                val dv2 = dvb + push * sn - bend * du2 * du2 + lift
+                val ga = du2 - du; val gb = dv2 - dv
+                tx += ga * eye.e[0] + gb * eye.nn[0]; ty += gb * eye.nn[1]; tz += ga * eye.e[2] + gb * eye.nn[2]
+            }
+            val o = i * 3
+            if (snap || !primed) {
+                off[o] = tx; off[o + 1] = ty; off[o + 2] = tz
+                vel[o] = 0f; vel[o + 1] = 0f; vel[o + 2] = 0f
+            } else {
+                // A soft spring: dots lag the eye a little and settle back.
+                vel[o] += ((tx - off[o]) * 55f - vel[o] * 9f) * h; off[o] += vel[o] * h
+                vel[o + 1] += ((ty - off[o + 1]) * 55f - vel[o + 1] * 9f) * h; off[o + 1] += vel[o + 1] * h
+                vel[o + 2] += ((tz - off[o + 2]) * 55f - vel[o + 2] * 9f) * h; off[o + 2] += vel[o + 2] * h
+            }
+            val px = x + off[o]; val py = y + off[o + 1]; val pz = z + off[o + 2]
+            val l = sqrt(px * px + py * py + pz * pz)
+            pos[o] = px / l; pos[o + 1] = py / l; pos[o + 2] = pz / l
+            alpha[i] += (a - alpha[i]) * fade
+        }
+        for (index in eyes.indices) placeRing(eyes[index], rings[index], bend, lift)
         primed = true
     }
 
-    fun draw(scope: DrawScope, color: Color, lights: Int) = with(scope) {
-        val t = time
-        val s = min(size.width, size.height) / 200f * 1.1f
-        val ox = size.width / 2f - 100f * s
-        val oy = size.height / 2f - 112f * s
-        val lift = 0.5f - 0.5f * cos(bobPhase)
-        val hop = hopLift((t % 2.6f) / 2.6f) * p[HOP]
-        val dim = p[DIM]
-        val bodyAlpha = 0.55f + 0.45f * dim
-
-        withTransform({ translate(ox, oy); scale(s, s, Offset.Zero) }) {
-            // Shadow shrinks as the head rises.
-            val shrink = 1f - 0.16f * lift - 0.012f * hop
-            drawOval(
-                Color.Black.copy(alpha = 0.4f * (1f - 0.35f * lift)),
-                Offset(100f - 46f * shrink, 177f), Size(92f * shrink, 10f),
-            )
-
-            val breathe = 0.5f - 0.5f * cos(t * 2f * PI.toFloat() / 5f)
-            val run = sin(runPhase) * p[WORK]
-            val scaleX = 1f + 0.015f * breathe + 0.05f * run
-            val scaleY = 1f + 0.03f * breathe - 0.055f * run
-            val tilt = p[TILT] * (-1f + 5f * sin(t * 2f * PI.toFloat() / 3.2f))
-            val pivot = Offset(100f, 146f)
-            withTransform({ translate(0f, -5f * lift - hop); scale(scaleX, scaleY, pivot); rotate(tilt, pivot) }) {
-                drawRing(color)
-                drawRoundRect(PadColor.copy(alpha = bodyAlpha), Offset(26f, 84f), Size(16f, 30f), CornerRadius(8f))
-                drawRoundRect(PadColor.copy(alpha = bodyAlpha), Offset(158f, 84f), Size(16f, 30f), CornerRadius(8f))
-                drawRoundRect(HeadColor.copy(alpha = bodyAlpha), Offset(36f, 40f), Size(128f, 106f), CornerRadius(42f))
-                drawRoundRect(VisorColor, Offset(50f, 60f), Size(100f, 62f), CornerRadius(28f))
-                drawPath(highlight, Color.White.copy(alpha = 0.14f), style = Stroke(4f, cap = StrokeCap.Round))
-                drawEyes(color, t)
-                drawLights(color, lights, t)
-            }
+    private fun placeEyes(t: Float) {
+        val bp = t % 4.6f
+        var blink = if (bp > 4.15f && bp < 4.6f) 1f - sin((bp - 4.15f) / 0.45f * PI.toFloat()).pow(2) * 0.92f else 1f
+        blink = 1f - (1f - blink) * max(0f, 1f - p[SMILE])
+        val yaw = p[AMP] * sin(t * 0.45f) * cos(t * 0.17f + 1f) + p[SCAN] * 0.26f * sin(t * 1.7f) + p[SMILE] * 0.06f * sin(t * 4.4f)
+        val pitch = p[PITCH] + p[SCAN] * 0.05f * sin(t * 3.1f) + 0.025f * sin(t * 0.6f)
+        var height = max(0.02f, 0.39f * p[OPEN] * blink)
+        height += (0.04f - height) * p[SMILE]
+        val width = 0.175f + 0.075f * p[SMILE]
+        val cp = cos(pitch); val sp = sin(pitch)
+        for ((index, eye) in eyes.withIndex()) {
+            val yw = yaw + (if (index == 0) -0.32f else 0.32f)
+            eye.c[0] = sin(yw) * cp; eye.c[1] = sp; eye.c[2] = cos(yw) * cp
+            eye.e[0] = cos(yw); eye.e[1] = 0f; eye.e[2] = -sin(yw)
+            eye.nn[0] = -sin(yw) * sp; eye.nn[1] = cp; eye.nn[2] = -cos(yw) * sp
+            eye.w = width; eye.h = height
         }
     }
 
-    /** The head's outline pulsing outward: "something waits for you". */
-    private fun DrawScope.drawRing(color: Color) {
-        if (p[RING] <= 0.02f) return
-        val phase = (time % 1.8f) / 1.8f
-        val e = 30f * phase
-        drawRoundRect(
-            color.copy(alpha = 0.5f * (1f - phase) * p[RING]),
-            Offset(36f - e, 40f - e), Size(128f + 2f * e, 106f + 2f * e), CornerRadius(42f + e),
-            style = Stroke(2.5f),
+    /** A fixed number of dots spaced evenly along the eye's edge. They move only with the eye. */
+    private fun placeRing(eye: Eye, out: FloatArray, bend: Float, lift: Float) {
+        val m = 72
+        for (k in 0..m) {
+            val th = k / m.toFloat() * 2f * PI.toFloat()
+            val cs = cos(th); val sn = sin(th)
+            val rb = eye.edge(cs, sn) + 0.012f
+            val du = rb * cs
+            contour[k * 2] = du; contour[k * 2 + 1] = rb * sn - bend * du * du + lift
+            length[k] = if (k == 0) 0f else length[k - 1] +
+                hypot(contour[k * 2] - contour[k * 2 - 2], contour[k * 2 + 1] - contour[k * 2 - 1])
+        }
+        val total = length[m]
+        // When the ring squeezes shut, crowded dots dim so the lid reads as one soft line.
+        val crowd = min(1f, total / rim / 0.05f)
+        var seg = 0
+        for (j in 0 until rim) {
+            val want = (j + 0.5f) / rim * total
+            while (seg < m - 1 && length[seg + 1] < want) seg++
+            val f = (want - length[seg]) / max(1e-6f, length[seg + 1] - length[seg])
+            val u = contour[seg * 2] + (contour[seg * 2 + 2] - contour[seg * 2]) * f
+            val v = contour[seg * 2 + 1] + (contour[seg * 2 + 3] - contour[seg * 2 + 1]) * f
+            val x = eye.c[0] + u * eye.e[0] + v * eye.nn[0]
+            val y = eye.c[1] + v * eye.nn[1]
+            val z = eye.c[2] + u * eye.e[2] + v * eye.nn[2]
+            val l = sqrt(x * x + y * y + z * z)
+            out[j * 4] = x / l; out[j * 4 + 1] = y / l; out[j * 4 + 2] = z / l; out[j * 4 + 3] = crowd
+        }
+    }
+
+    /** Breath and a slow organic wobble, like the voice sphere: radius only, never rotation. */
+    private fun breath(x: Float, y: Float, z: Float, t: Float): Float =
+        1f + 0.02f * sin(t * 1.3f) +
+            p[WOB] * (0.028f * sin(2.7f * x + t * 1.7f) * cos(2.1f * y - t * 1.3f) + 0.018f * sin(3.3f * z + 1.9f * y + t * 2.2f))
+
+    fun draw(scope: DrawScope, t: Float, color: Color, mood: EyeMood, moons: Int) = with(scope) {
+        val half = min(size.width, size.height) / 2f
+        val r = half * 0.8f
+        val unit = r / 118f
+        var hop = 0f
+        if (p[HOP] > 0.02f) {
+            val phase = (t % 2.8f) / 2.8f
+            if (phase < 0.25f) hop = -10f * unit * sin(phase / 0.25f * PI.toFloat()) * p[HOP]
+        }
+        val cx = size.width / 2f; val cy = size.height / 2f + hop
+        val center = Offset(cx, cy)
+        drawCircle(
+            Brush.radialGradient(listOf(color.copy(alpha = 0.2f * p[GLOW] + 0.04f), color.copy(alpha = 0.05f * p[GLOW]), Color.Transparent),
+                center, half),
+            half, center,
         )
-    }
-
-    private fun DrawScope.drawEyes(color: Color, t: Float) {
-        val blinkPhase = t % 4.6f
-        var blink = if (blinkPhase > 4.15f) 1f - sin((blinkPhase - 4.15f) / 0.45f * PI.toFloat()).let { it * it } * 0.92f else 1f
-        blink = 1f - (1f - blink) * (1f - p[WORK])
-        val glance = (t % 7f) / 7f
-        val sway = cos(t * 2f * PI.toFloat() / 3.2f)
-        val lx = p[GLANCE] * glanceX(glance) + p[LOOKUP] * (0.5f + 5.5f * sway)
-        val ly = p[GLANCE] * glanceY(glance) + p[LOOKUP] * -7.5f + 2f * p[WORK]
-        val pulse = 0.5f + 0.5f * sin(pulsePhase)
-        val alpha = (p[DIM] * (1f - 0.45f * p[WORK] * (1f - pulse))).coerceIn(0f, 1f)
-        val w = 12f * p[WIDE] * (1f + p[WORK] * (0.1f - 0.15f * pulse))
-        val h = max(2.8f, 28f * p[OPEN] * blink * (1f + p[WORK] * (-0.2f + 0.3f * pulse)))
-        val glow = p[GLOW] * p[DIM]
-        for (cx in EYE_X) {
-            val x = cx + lx; val y = 91f + ly
-            for (halo in HALO_GROW.indices) {
-                val grow = HALO_GROW[halo]
-                drawRoundRect(
-                    color.copy(alpha = HALO_ALPHA[halo] * glow), Offset(x - w / 2f - grow / 2f, y - h / 2f - grow / 2f),
-                    Size(w + grow, h + grow), CornerRadius(min(w, h) / 2f + grow / 2f),
-                )
+        if (p[RING] > 0.02f) {
+            val period = if (mood == EyeMood.DONE) 2.4f else 1.8f
+            val phase = (t % period) / period
+            drawCircle(color.copy(alpha = 0.5f * (1f - phase) * p[RING]), r * (0.95f + 0.3f * phase), center, style = Stroke(width = 2f * unit))
+        }
+        fun moon(front: Boolean) {
+            if (p[SAT] <= 0.02f) return
+            for (m in 0 until moons) {
+                val ph = t * 1.4f + m * 2f * PI.toFloat() / moons
+                val depth = sin(ph)
+                if ((depth >= 0f) != front) continue
+                drawCircle(color.copy(alpha = p[SAT] * (0.5f + 0.45f * depth)), (5f + 1.5f * depth) * unit,
+                    Offset(cx + r * 1.16f * cos(ph), cy + r * 1.16f * depth * 0.28f + 10f * unit))
             }
-            drawRoundRect(color.copy(alpha = alpha), Offset(x - w / 2f, y - h / 2f), Size(w, h), CornerRadius(min(w, h) / 2f))
         }
-    }
-
-    /** One short light per running task along the chin, pulsing out of step with its neighbours. */
-    private fun DrawScope.drawLights(color: Color, count: Int, t: Float) {
-        if (count == 0 || p[WORK] <= 0.02f) return
-        val span = count * 14f + (count - 1) * 6f
-        val left = 100f - span / 2f
-        for (i in 0 until count) {
-            val glowing = 0.5f + 0.5f * sin(t * 2f * PI.toFloat() * 1.2f - i * 1.4f)
-            drawRoundRect(
-                color.copy(alpha = (0.35f + 0.65f * glowing) * p[WORK]),
-                Offset(left + i * 20f, 131f), Size(14f, 5f), CornerRadius(2.5f),
-            )
+        moon(front = false)
+        val dim = p[DIM]
+        val back = color.copy(alpha = 0.12f * dim)
+        for (i in 0 until n) {
+            val z = pos[i * 3 + 2]
+            if (z >= 0f) continue
+            val x = pos[i * 3]; val y = pos[i * 3 + 1]; val b = breath(x, y, z, t)
+            drawCircle(back, 0.8f * unit * dotScale, Offset(cx + r * b * x, cy - r * b * y))
         }
+        for (i in 0 until n) {
+            val z = pos[i * 3 + 2]; val a = alpha[i]
+            if (z < 0f || a < 0.02f) continue
+            var o = (0.32f + 0.6f * z) * a
+            if (p[SHIMMER] > 0.01f) o *= 1f + p[SHIMMER] * 0.6f * sin(t * 3.2f + i * 0.7f)
+            val x = pos[i * 3]; val y = pos[i * 3 + 1]; val b = breath(x, y, z, t)
+            drawCircle(color.copy(alpha = (o * dim).coerceIn(0f, 1f)), (0.75f + 1.25f * z) * (0.5f + 0.5f * a) * unit * dotScale,
+                Offset(cx + r * b * x, cy - r * b * y))
+        }
+        for (ring in rings) for (j in 0 until rim) {
+            val z = ring[j * 4 + 2]
+            if (z <= 0f) continue
+            val crowd = ring[j * 4 + 3]
+            var o = (0.55f + 0.45f * z) * (0.45f + 0.55f * crowd)
+            if (p[SHIMMER] > 0.01f) o *= 1f + p[SHIMMER] * 0.4f * sin(t * 3.2f + j * 1.3f)
+            val x = ring[j * 4]; val y = ring[j * 4 + 1]; val b = breath(x, y, z, t)
+            drawCircle(color.copy(alpha = (o * dim).coerceIn(0f, 1f)), (0.95f + 1.35f * z) * (0.7f + 0.3f * crowd) * unit * dotScale,
+                Offset(cx + r * b * x, cy - r * b * y))
+        }
+        moon(front = true)
     }
 }
 
@@ -294,7 +400,7 @@ internal fun DrawScope.statusArc(color: Color, sweep: Float, stroke: Float) {
         size = Size(size.width - stroke, size.height - stroke), style = Stroke(width = stroke))
 }
 
-/** The face's mood from the board's state, for the Manager. */
+/** The eye's mood from the board's state, for the Manager. */
 internal fun managerMood(desk: dev.androidagent.app.TaskDeskState, scoutBusy: Boolean): EyeMood {
     val tasks = desk.tasks
     return when {
