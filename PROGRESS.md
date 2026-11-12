@@ -1,5 +1,54 @@
 # Progress
 
+### Manager face carried onto 1177 — 2026-10-27
+
+The user-supplied face APK was tasks1170, below installed context-window1177.
+The user accepted building a forward update. A new isolated worktree at
+`C:/Users/SHIRA/.codex/worktrees/manager-eye-on-1177-20261027` preserves the
+712-file 1177 source snapshot and replaces only the shared `MikeEye.kt`
+renderer with Claude's `8d0f088` version. Version is 1178 /
+`0.14.0-dev.manager-eye1178`; runtime pins and all data-handling code stay.
+The saved 1177 APK hash matches the phone's installed base APK exactly.
+
+App unit tests (171), eight direct UI fixtures, app assembly/test assembly
+and app lint (zero errors, 21 warnings) pass. Signature and 16 KiB alignment
+pass; all bundled native/skill assets match installed 1177 byte for byte.
+Phone installation is pending. Evidence and remaining gaps:
+[manager-eye update](docs/testing/manager-eye-1178-20261027.md). No other
+worktree was changed, and the local build-storage config removed no buckets.
+
+### Task board visual refresh — 2026-10-26
+
+In the same isolated task-board worktree, the Manager and team now use a
+two-eyed teal particle face with a still frame for reduced motion. The board
+and task details have a quieter hierarchy, earlier decision controls, compact
+discovery status and content-aware direction for mixed Hebrew/English. Simple
+bold markup is rendered in task text. Final dev build 1174, app unit tests
+(170 cases) and app lint passed; eight direct Compose tests passed on an
+isolated emulator, including edited-instruction dispatch and a large-font case.
+Fixture screenshots and logs are in `%TEMP%/hey-mike/task-board-v2/validation/`.
+The APK was copied to the phone; `apps_settings app_info` later confirmed
+installed version 1174 / `0.14.0-dev.task-design1174`. The installed-file
+hash and real-phone UI have not been checked. The worktree and build artifacts
+are retained for review.
+
+### Task-board reliability implementation — 2026-10-26
+
+The user approved the deep implementation plan. Work continues from `6bf1f35`
+in `C:/Users/SHIRA/.codex/worktrees/task-board-v2-20261026`, branch
+`feat/task-board-reliability`, preserving the source used for 1172 and other
+dirty checkouts. Capture/feed, event history, source policy, staged commits,
+safe note undo, job-reference queueing and restricted Manager reviews are
+implemented. Two broad Gradle gates passed; a late prompt regression caught
+a stale in-build snapshot and was fixed in a frozen-source scoped gate.
+Final scoped core/workspace/app: 1,094 cases, no failures/errors, 14 skips;
+11 direct emulator tests passed. App lint, runtime-preparation tests and
+diff whitespace checks passed. Exact dev build 1173 was verified and copied
+to Downloads. The user confirmed installation; phone app_info then verified
+1173 / 0.14.0-dev.task-board1173. Installed-file hash and the full real-device
+journey remain unverified. No personal data was cleared. See
+[current evidence and remaining checks](docs/testing/task-board-v2-20261026.md).
+
 ### Personal-profile notification capture — 2026-10-26
 
 Isolated branch `fix/personal-profile-notifications` uses a verified local

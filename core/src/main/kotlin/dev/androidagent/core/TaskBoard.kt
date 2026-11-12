@@ -51,6 +51,7 @@ data class TaskProposal(
     val partialContext: Boolean = false,
     val category: TaskCategory = TaskCategory.TASK,
     val action: TaskAction? = null,
+    val sourceRefs: List<TaskSourceRef> = emptyList(),
 )
 
 sealed class ProposeOutcome {
@@ -94,6 +95,8 @@ class TaskBoard(
     private val lock = Mutex()
     private val mutableTasks = MutableStateFlow<List<MikeTask>>(emptyList())
     val tasks: StateFlow<List<MikeTask>> = mutableTasks.asStateFlow()
+    private val mutableEvents = MutableStateFlow<List<TaskEvent>>(emptyList())
+    val events: StateFlow<List<TaskEvent>> = mutableEvents.asStateFlow()
     private val mutableSettings = MutableStateFlow(TaskBoardSettings())
     val settings: StateFlow<TaskBoardSettings> = mutableSettings.asStateFlow()
     @Volatile var executor: TaskExecutor? = null
@@ -102,6 +105,7 @@ class TaskBoard(
     suspend fun load() = lock.withLock {
         if (loaded) return@withLock
         mutableSettings.value = store.loadSettings()
+        mutableEvents.value = store.loadEvents()
         val restored = store.loadTasks().map { task ->
             // A decision that never reached its child chat cannot be trusted as
             // started or as not started; the card says so instead of retrying.
@@ -113,11 +117,18 @@ class TaskBoard(
         mutableTasks.value = restored.sortedByDescending { it.createdAt }
         loaded = true
     }
+    suspend fun refresh() = lock.withLock {
+        mutableTasks.value = store.loadTasks().sortedByDescending { it.createdAt }
+        mutableEvents.value = store.loadEvents()
+        mutableSettings.value = store.loadSettings()
+    }
 
     fun task(id: String): MikeTask? = mutableTasks.value.firstOrNull { it.id == id }
 
     suspend fun editSettings(change: (TaskBoardSettings) -> TaskBoardSettings): TaskBoardSettings = lock.withLock {
-        val next = change(mutableSettings.value)
+        val before = mutableSettings.value
+        val changed = change(before)
+        val next = changed.copy(policyRevision = before.policyRevision + if (TaskSourcePolicy.changed(before, changed)) 1 else 0)
         store.saveSettings(next)
         mutableSettings.value = next
         next
@@ -141,7 +152,8 @@ class TaskBoard(
                 return@withLock refused("bad_action", "A report card's only action is undo_snapshot.")
             }
         }
-        val topic = topicKey(proposal.topicKey?.takeIf { it.isNotBlank() } ?: title)
+        val topic = if (proposal.category == TaskCategory.REPORT && action?.type == TaskAction.UNDO_SNAPSHOT)
+            "report-${action.value}" else topicKey(proposal.topicKey?.takeIf { it.isNotBlank() } ?: title)
         val kind = proposal.kind?.let(::topicKey)?.takeIf { it.isNotEmpty() }
         val clock = now()
         val settings = mutableSettings.value
@@ -183,6 +195,7 @@ class TaskBoard(
             updatedAt = clock,
             usefulUntil = until,
             partialContext = proposal.partialContext,
+            sourceRefs = proposal.sourceRefs,
         )
         put(task)
         ProposeOutcome.Created(task)
@@ -199,6 +212,7 @@ class TaskBoard(
         usefulUntil: Long? = null,
         partialContext: Boolean? = null,
         looksResolved: String? = null,
+        sourceRefs: List<TaskSourceRef> = emptyList(),
     ): MikeTask = lock.withLock {
         val task = required(id)
         check(task.status.undecided) { "Only a card the user has not decided can be updated. This one is ${task.status.wire}." }
@@ -210,6 +224,7 @@ class TaskBoard(
             usefulUntil = usefulUntil?.coerceAtMost(clock + MAX_LIFETIME_MS) ?: task.usefulUntil,
             partialContext = partialContext ?: task.partialContext,
             updatedAt = clock,
+            sourceRefs = (task.sourceRefs + sourceRefs).distinct(),
         )
         if (!looksResolved.isNullOrBlank()) {
             next = next.copy(status = TaskStatus.LOOKS_RESOLVED, resolvedEvidence = looksResolved.trim().take(MAX_DETAIL), closedAt = clock)
@@ -284,6 +299,10 @@ class TaskBoard(
                     task.copy(status = TaskStatus.PROPOSED, decision = decision, dismissReason = null, closedAt = null,
                         resolvedEvidence = null, snoozedUntil = null)
                 }
+                "wake" -> {
+                    check(task.status == TaskStatus.SNOOZED) { "Only a postponed task can return now." }
+                    task.copy(status = TaskStatus.PROPOSED, decision = decision, snoozedUntil = null, dismissReason = null)
+                }
                 else -> error("Choose do, mine, dismiss, snooze, done, continue, stop or restore.")
             }.copy(updatedAt = clock)
             put(next)
@@ -304,7 +323,10 @@ class TaskBoard(
             val attempt = (task.execution?.rounds ?: 0) + 1
             val next = task.copy(status = TaskStatus.APPROVED, decision = decision, note = decision.note ?: task.note,
                 updatedAt = decision.at, progress = "Starting", snoozedUntil = null, dismissReason = null,
-                execution = TaskExecution("${task.id}#$attempt", rounds = attempt, startedAt = decision.at), result = null, resultAt = null)
+                execution = TaskExecution("${task.id}#$attempt", rounds = attempt, startedAt = decision.at,
+                    approvedPlan = ApprovedTaskPlan(task.revision, SignalInbox.idOf(task.plan, task.computer, task.project,
+                        decision.note ?: task.note, task.sideEffects), task.title, task.plan, task.deliverable,
+                        task.computer, task.project, decision.note ?: task.note, task.sideEffects)), result = null, resultAt = null)
             put(next)
             next to attempt
         }
@@ -319,7 +341,8 @@ class TaskBoard(
         }
         return try {
             val receipt = runner.start(approved, attempt)
-            val execution = receipt.copy(requestId = approved.execution!!.requestId, rounds = attempt)
+            val execution = receipt.copy(requestId = approved.execution!!.requestId, rounds = attempt,
+                approvedPlan = approved.execution.approvedPlan)
             val current = finish(id) { current ->
                 // A child that already reported is newer than this answer.
                 if (current.execution?.requestId != execution.requestId) current
@@ -465,9 +488,26 @@ class TaskBoard(
     private fun required(id: String): MikeTask = mutableTasks.value.firstOrNull { it.id == id } ?: error("No card has id $id. Use list.")
 
     private suspend fun put(task: MikeTask) {
-        store.saveTask(task)
+        val old = task(task.id)
+        val next = task.copy(revision = (old?.revision ?: 0) + 1)
+        val userDecision = next.decision != old?.decision && next.decision != null
+        val kind = when {
+            old == null -> "created"
+            userDecision -> "decision"
+            next.note != old.note -> "note"
+            next.assignee != old.assignee -> "assigned"
+            next.status != old.status || next.result != old.result -> "outcome"
+            else -> "evidence"
+        }
+        val event = TaskEvent("${next.id}:${next.revision}", next.id, next.revision, kind,
+            if (userDecision || kind == "note") "user" else "app", now(),
+            decision = next.decision.takeIf { userDecision }, note = next.note.takeIf { userDecision || kind == "note" },
+            reason = next.dismissReason.takeIf { userDecision }, outcome = next.status.wire,
+            result = next.result.takeIf { kind == "outcome" }?.take(MAX_RESULT))
+        store.saveTaskWithEvent(next, event)
+        mutableEvents.value = mutableEvents.value + event
         val others = mutableTasks.value.filterNot { it.id == task.id }
-        mutableTasks.value = (others + task).sortedByDescending { it.createdAt }
+        mutableTasks.value = (others + next).sortedByDescending { it.createdAt }
     }
 
     private fun refused(reason: String, message: String) = ProposeOutcome.Refused(reason, message)

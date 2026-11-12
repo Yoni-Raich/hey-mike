@@ -150,6 +150,11 @@ class RoutingAgentEngine(
         return status
     }
     override suspend fun refreshUsage() = local.refreshUsage()
+    override fun setLongContext(enabled: Boolean) {
+        local.setLongContext(enabled)
+        claude?.setLongContext(enabled)
+        hub.setLongContext(enabled)
+    }
     override suspend fun login(): AccountStatus = local.login()
     override suspend fun logout() = local.logout()
     override suspend fun models(): List<String> = local.models()

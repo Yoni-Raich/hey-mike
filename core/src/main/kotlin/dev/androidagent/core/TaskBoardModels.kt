@@ -104,6 +104,7 @@ data class TaskExecution(
     val sessionId: String? = null,
     val rounds: Int = 1,
     val startedAt: Long,
+    val approvedPlan: ApprovedTaskPlan? = null,
 )
 
 /**
@@ -159,6 +160,8 @@ data class MikeTask(
     val closedAt: Long? = null,
     /** Shown on the board; a later message may make it obsolete. */
     val progress: String? = null,
+    val revision: Long = 0,
+    val sourceRefs: List<TaskSourceRef> = emptyList(),
 )
 
 /** A topic or kind the user said never to suggest again. */
@@ -199,6 +202,7 @@ data class MemoryNote(
     val retiredAt: Long? = null,
     val retiredReason: String? = null,
     val provenance: List<MemoryProvenance> = emptyList(),
+    val sourceRefs: List<TaskSourceRef> = emptyList(),
 )
 
 /**
@@ -221,6 +225,9 @@ data class TaskSignal(
     /** The chat a chat signal came from, for its cursor. */
     val sessionId: String? = null,
     val attempts: Int = 0,
+    val notBefore: Long = 0,
+    /** Set by the current personal-profile capture path; old external input stays unverified. */
+    val sourceVerified: Boolean = false,
 )
 
 @Serializable
@@ -250,6 +257,7 @@ data class TeamMember(
     val journal: String = "",
     val createdAt: Long,
     val createdBy: String = "app",
+    val sourceRefs: List<TaskSourceRef> = emptyList(),
 )
 
 /** The user's choices for the board. Off until the user turns discovery on. */
@@ -280,18 +288,36 @@ data class TaskBoardSettings(
     /** Chat id to the newest message time a pass has seen. */
     val chatCursors: Map<String, Long> = emptyMap(),
     val suppressed: List<TaskSuppression> = emptyList(),
+    val policyRevision: Long = 0,
+    val memoryForgetRevision: Long = 0,
+    val lastSuccessfulPassAt: Long? = null,
+    val lastReviewAttemptAt: Long? = null,
+    val lastUpkeepAttemptAt: Long? = null,
+    val upkeepCursor: Int = 0,
+    val captureGaps: Int = 0,
+    val lastCaptureGapAt: Long? = null,
+    val managerReviewedEvents: List<String> = emptyList(),
+    val coachReviewedEvents: List<String> = emptyList(),
+    val lastManagerReviewAt: Long? = null,
+    val managerReviewDay: String? = null,
+    val managerReviewsToday: Int = 0,
+    val managerReviewSessionId: String? = null,
 )
 
 /** What the board, memory, signals and team read and write. One store, one transaction each. */
 interface TaskBoardStore {
     suspend fun loadTasks(): List<MikeTask>
     suspend fun saveTask(task: MikeTask)
+    suspend fun loadEvents(): List<TaskEvent> = emptyList()
+    suspend fun saveTaskWithEvent(task: MikeTask, event: TaskEvent) { saveTask(task) }
     suspend fun deleteTasks(ids: Collection<String>)
     suspend fun loadNotes(): List<MemoryNote>
     suspend fun saveNotes(notes: List<MemoryNote>)
     /** Atomic replacement, so a failed undo cannot leave memory empty. */
     suspend fun replaceNotes(notes: List<MemoryNote>)
     suspend fun deleteNotes(ids: Collection<String>)
+    suspend fun forgetNotes(ids: Collection<String>) { deleteNotes(ids) }
+    suspend fun forgottenNoteIds(): Set<String> = emptySet()
     suspend fun loadSignals(): List<TaskSignal>
     /** False when a signal with this id is already stored. */
     suspend fun insertSignal(signal: TaskSignal): Boolean
@@ -302,18 +328,45 @@ interface TaskBoardStore {
     suspend fun deleteMember(id: String)
     suspend fun loadSettings(): TaskBoardSettings
     suspend fun saveSettings(settings: TaskBoardSettings)
+    suspend fun loadSourceRefs(): Map<String, TaskSourceRef> = emptyMap()
+    suspend fun saveRun(run: TaskRun) {}
+    suspend fun loadRuns(): List<TaskRun> = emptyList()
+    suspend fun activeGeneration(): String? = null
+    suspend fun initializeGeneration(id: String): String = id
+    suspend fun commitChanges(changes: TaskChangeSet, run: TaskRun) { error("Atomic board commits are not supported.") }
+    suspend fun undoChanges(id: String): TaskUndoResult { error("Undo is not supported.") }
+    suspend fun changes(id: String): TaskChangeSet? = null
+    suspend fun sourceCursor(source: String): Long = 0
+    suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>): List<TaskSignal> {
+        error("Atomic source capture is not supported by this store.")
+    }
 }
 
 /** For tests and hosts without storage. */
 class InMemoryTaskBoardStore : TaskBoardStore {
     private val tasks = linkedMapOf<String, MikeTask>()
+    private val events = linkedMapOf<String, TaskEvent>()
     private val notes = linkedMapOf<String, MemoryNote>()
     private val signals = linkedMapOf<String, TaskSignal>()
     private val seenSignals = linkedMapOf<String, Long>()
     private val members = linkedMapOf<String, TeamMember>()
     private var settings = TaskBoardSettings()
+    private val cursors = mutableMapOf<String, Long>()
+    override suspend fun sourceCursor(source: String) = synchronized(this) { cursors[source] ?: 0 }
+    override suspend fun capturePage(source: String, expected: Long, through: Long, signals: List<TaskSignal>) = synchronized(this) {
+        check((cursors[source] ?: 0) == expected) { "The source cursor changed." }
+        val fresh = signals.filter { it.id !in this.signals && it.id !in seenSignals }
+        check(this.signals.size + fresh.size <= SignalInbox.MAX_PENDING) { "Capture is waiting: the inbox is full." }
+        fresh.forEach { this.signals[it.id] = it; seenSignals[it.id] = it.capturedAt }
+        cursors[source] = through
+        fresh
+    }
     override suspend fun loadTasks() = synchronized(this) { tasks.values.toList() }
     override suspend fun saveTask(task: MikeTask) = synchronized(this) { tasks[task.id] = task }
+    override suspend fun loadEvents() = synchronized(this) { events.values.toList() }
+    override suspend fun saveTaskWithEvent(task: MikeTask, event: TaskEvent) = synchronized(this) {
+        tasks[task.id] = task; events[event.id] = event
+    }
     override suspend fun deleteTasks(ids: Collection<String>) = synchronized(this) { ids.forEach { tasks.remove(it) } }
     override suspend fun loadNotes() = synchronized(this) { notes.values.toList() }
     override suspend fun saveNotes(notes: List<MemoryNote>) = synchronized(this) { notes.forEach { this.notes[it.id] = it } }
@@ -325,6 +378,7 @@ class InMemoryTaskBoardStore : TaskBoardStore {
     override suspend fun insertSignal(signal: TaskSignal) = synchronized(this) {
         seenSignals.entries.removeAll { signal.capturedAt - it.value > SignalInbox.DEDUPE_MS }
         if (signal.id in signals || signal.id in seenSignals) false else {
+            check(signals.size < SignalInbox.MAX_PENDING) { "Capture inbox full. New input could not be saved." }
             signals[signal.id] = signal; seenSignals[signal.id] = signal.capturedAt
             while (seenSignals.size > SignalInbox.MAX_RECEIPTS) seenSignals.remove(seenSignals.keys.first())
             true
