@@ -228,7 +228,11 @@ object LocationRefresh {
     suspend fun run(store: SharedSituationStore, namer: PlaceNamer?, now: () -> Long, read: suspend () -> SituationLocation): SituationLocation {
         val location = read()
         store.recordLocation(location, now())
-        val target = store.newestFix()?.takeIf { it.place?.resolved != true && now() - it.fixAt in 0 until LocationFreshness.LAST_KNOWN_MS }
+        // No lookup once the user took the permission back or turned location off, nor for a fix of another boot or profile.
+        val blocked = location.status == "permission denied" || location.status == "location disabled"
+        val target = store.newestFix()?.takeIf { !blocked && it.place?.resolved != true &&
+            now() - it.fixAt in 0 until LocationFreshness.LAST_KNOWN_MS &&
+            (location.bootCount == null || location.bootCount == it.bootCount) && (location.profile == null || location.profile == it.profile) }
             ?: return withPlace(location, store.newestFix())
         namer ?: return location
         val place = namer.name(target)

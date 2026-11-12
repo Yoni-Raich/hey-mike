@@ -147,7 +147,7 @@ location and a personal profile before provider access. Exposure requires the sa
 boot/profile, current permission and enabled location, and age below two minutes by
 both clocks. Missing permission points to the existing Android permission-request
 tool; no permission is granted by this path. No location subscription, background
-permission, reverse geocoding, route, ETA or departure inference is added.
+permission, route, ETA or departure inference is added; reverse geocoding only as described under "Written place" below.
 
 Location read (2026-11-12). `SituationLocationReader` replaces the network-only,
 ten-second read. Providers are chosen by permission and SDK: `fused` (API 31+, when

@@ -5,12 +5,13 @@
 Branch `feat/location-place-20261112` on 1213 (`ab3e80fc`). The model now sees a
 written place at the precision the fix supports; see the "Written place" decision in
 `docs/ARCHITECTURE.md`. Checks, all with `--no-daemon`: `:core:test` 1136 tests,
-0 failed (16 new in `LocationPlaceTest`: coarse 2000 m shows only the city although the
+0 failed (17 new in `LocationPlaceTest`: coarse 2000 m shows only the city although the
 geocoder returned a street and house; fine 12-15 m shows the address; fallback to region;
 unavailable name never invented; slow geocoder cut at 6 s on virtual time and not cached;
 IOException, error, no geocoder, no address; cache per area, language (`iw` = `he`),
 expiry and clear; times kept; stale fix stays last known after naming; forget during
-naming attaches nothing; reload and a 1213 file; a recursive check that no
+naming attaches nothing; no lookup after permission denied, location off or
+another boot; reload and a 1213 file; a recursive check that no
 refresh/read/need/correct/decline/save_place output or injected snapshot has latitude,
 longitude, elapsed clock, lastFix or street keys or the coordinate values);
 `:device-tools:testDebugUnitTest` 127, 0 failed; `:app:testDevDebugUnitTest` 187,

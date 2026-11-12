@@ -228,6 +228,21 @@ class LocationPlaceTest {
         assertTrue(geo.calls.isEmpty())
     }
 
+    @Test fun noLookupAfterThePermissionWasTakenBackOrLocationTurnedOff() = runTest {
+        LocationRefresh.run(store, null, { t0 }) { fresh() } // a stored, unnamed fix
+        val geo = Geo { PlaceLookup(listOf(nearIntel)) }
+        for (status in listOf("permission denied", "location disabled")) {
+            val result = LocationRefresh.run(store, namer(geo), { t0 + minute }) {
+                SituationLocation(status, t0 + minute, t0 + minute, attemptedAt = t0 + minute)
+            }
+            assertEquals(status, result.status)
+        }
+        // A fix of an earlier boot is not looked up either.
+        LocationRefresh.run(store, namer(geo), { t0 + minute }) { failed(t0 + minute, null).copy(bootCount = boot + 1) }
+        assertTrue(geo.calls.isEmpty())
+        assertNull(store.newestFix()!!.place)
+    }
+
     @Test fun forgettingWhileNamingAttachesNothing() = runTest {
         val geo = Geo { store.forgetObserved(); PlaceLookup(listOf(nearIntel)) }
         LocationRefresh.run(store, namer(geo), { t0 }) { fresh() }
