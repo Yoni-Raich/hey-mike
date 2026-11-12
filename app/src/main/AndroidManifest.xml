@@ -102,6 +102,7 @@
         <receiver android:name=".MikeAlertReceiver" android:exported="false" />
         <activity android:name=".WhatsAppLinkActivity" android:exported="false" android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize" />
+        <receiver android:name=".SessionActionReceiver" android:exported="false" />
         <receiver android:name=".LimitWakeReceiver" android:exported="false" />
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />

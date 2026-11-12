@@ -420,6 +420,7 @@ class MainActivity : ComponentActivity() {
         onRefreshModels = model::refreshModels,
         onReasoningEffortSelected = model::reasoningEffort,
         onLongContextChanged = model::longContext,
+        onFullAccessChanged = model::fullAccess,
         onRenameSession = { id, title -> model.rename(id, title) },
         onCompact = { ensureService(); model.compact() },
         onOpenLimitPlan = { model.editUi { it.copy(isLimitPlanOpen = true) } },

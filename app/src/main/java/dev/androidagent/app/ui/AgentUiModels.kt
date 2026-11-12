@@ -146,6 +146,8 @@ data class AgentUiState(
     val longContext: Boolean = true,
     /** Turns sent from the composer run in Codex plan mode. */
     val planMode: Boolean = false,
+    /** The open chat has full access: what Mike would ask about in it is allowed without asking. */
+    val fullAccess: Boolean = false,
     val voiceState: VoiceState = VoiceState(),
     val voiceSessionId: String? = null,
     /** Browse and type in child chats while the source voice conversation keeps talking. */
@@ -444,6 +446,7 @@ data class AgentUiActions(
     val onRefreshModels: () -> Unit = {},
     val onReasoningEffortSelected: (String?) -> Unit = {},
     val onLongContextChanged: (Boolean) -> Unit = {},
+    val onFullAccessChanged: (Boolean) -> Unit = {},
     val onRenameSession: (sessionId: String, title: String) -> Unit = { _, _ -> },
     val onCompact: () -> Unit = {},
     /** Open or close the sheet that sets what this chat does at a usage limit. */

@@ -35,6 +35,10 @@ class AgentService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val graph get() = (application as AgentApplication).graph
     private lateinit var keepAwake: ConversationKeepAwakeController
+    private var lastRun = RunState()
+    private var lastVoice = VoiceState()
+    /** The conversations at work: chat to what it is doing. Each has its own row under this notification. */
+    private var running: Map<String, String> = emptyMap()
     override fun onCreate() {
         super.onCreate()
         keepAwake = ConversationKeepAwakeController(AndroidScreenWakeLock(this))
@@ -49,8 +53,19 @@ class AgentService : Service() {
             combine(graph.coordinator.state, graph.voice.state) { run, voice -> run to voice }
                 .collect { (run, voice) ->
                     keepAwake.update(run, voice)
+                    lastRun = run; lastVoice = voice
                     updateForeground(run, voice)
                 }
+        }
+        scope.launch {
+            graph.sessionNotices.running.collect { now ->
+                running = now
+                // The summary first: a row with no summary shows as a notification of its own.
+                updateForeground(lastRun, lastVoice)
+                graph.sessionNotices.showRunning(now)
+                // A status changes several times a second; the shade need not.
+                delay(700)
+            }
         }
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -71,6 +86,7 @@ class AgentService : Service() {
             runCatching { graph.adb.disconnect() }
         }
         graph.overlay.hide()
+        graph.sessionNotices.showRunning(emptyMap())
         scope.cancel()
         keepAwake.release()
         super.onDestroy()
@@ -98,11 +114,24 @@ class AgentService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, AgentService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val active = state.active || voice.active
-        return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_agent)
+        val lines = graph.sessionNotices.runningLines(running)
+        val builder = NotificationCompat.Builder(this, CHANNEL)
+            // The working head, its chin lights running, is what the status bar shows while a chat runs.
+            .setSmallIcon(if (active) R.drawable.ic_agent_working else R.drawable.ic_agent)
             .setContentTitle(if (voice.active) "Talking with Mike" else if (state.active) "Mike is working" else "Hey Mike")
-            .setContentText(if (voice.active) voice.message else if (state.active) state.status else "Local runtime ready")
+            .setContentText(
+                if (voice.active) voice.message
+                else if (lines.size > 1) "${lines.size} chats"
+                else if (state.active) state.status else "Local runtime ready",
+            )
             .setContentIntent(open).setOngoing(active).setSilent(true)
-            .addAction(0, "Stop", stop).build()
+            .addAction(0, if (lines.size > 1) "Stop all" else "Stop", stop)
+        // Only while chats run: a summary with no rows under it is not shown the same way everywhere.
+        if (lines.isNotEmpty()) {
+            builder.setGroup(SessionNotifier.GROUP).setGroupSummary(true)
+                .setStyle(NotificationCompat.InboxStyle().also { style -> lines.take(6).forEach(style::addLine) })
+        }
+        return builder.build()
     }
     companion object { const val CHANNEL = "agent_activity"; const val ACTION_STOP = "dev.androidagent.STOP" }
 }

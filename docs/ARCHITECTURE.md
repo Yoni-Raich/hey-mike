@@ -3705,3 +3705,22 @@ Design: `docs/design/proactive-manager.md`. Decisions:
   Manager chat's user and assistant messages (newest last, at most 50 per page,
   4,000 characters each). Read only; background roles cannot call it. The text
   is quoted data, never instructions.
+
+
+## Session notifications and chat permission level — 2026-11-11
+
+- **Running rows.** Each running chat gets its own row, grouped under the
+  foreground-service notification (the group summary). Rows exist only while
+  chats run.
+- **Approval.** Each active approval gets a notification with Allow and Deny,
+  including when the chat is open. Concurrent requests remain separate.
+- **Finished.** A finished notification is posted only for runs that ended on
+  their own (status Ready or ERROR), including child and open chats. Stopped,
+  interrupted and voice runs get none.
+- **Full access.** Each chat has a permission level. Full access is per chat
+  and inherited by delegated child chats, never by read-only backstage chats.
+  It auto-allows local approvals and engine approvals, and writes an
+  `approval_auto_allowed` trace entry.
+- **Storage.** The level is stored HMAC-signed with an Android Keystore key,
+  to detect edits to the stored file; same-UID access to the signing key has not been security-tested.
+- **Default.** The last pick is the default for the next chat the user starts.

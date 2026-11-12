@@ -110,7 +110,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     val saved = preferences.getString("session", null)
                     current.value = list.firstOrNull { it.id == saved }?.id ?: list.firstOrNull()?.id
                 }
-                if (list.isEmpty()) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
+                if (list.isEmpty()) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id.also(graph.permissions::startChat)
                 // Chats nobody wrote in last run are not history: drop them once, at start.
                 if (!purgedUnstarted) {
                     purgedUnstarted = true
@@ -414,6 +414,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 availableModels = offered.map { it.id },
                 selectedModel = choice.model,
                 selectedReasoningEffort = choice.effort,
+                fullAccess = current.value?.let(graph.permissions::isFull) == true,
                 usageLimits = engines.limits(kind).let { limits ->
                     // Claude's limits can be a saved reading: a window past its reset is not shown as current.
                     if (kind == EngineKind.CLAUDE) LastUsageStore.current(limits, System.currentTimeMillis() / 1000L) else limits
@@ -464,7 +465,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun newChat() = task {
         val id = current.value
         val blank = id != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.let(::isBlank) == true
-        if (!blank) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
+        if (!blank) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id.also(graph.permissions::startChat)
     }
 
     /**
@@ -1802,6 +1803,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         project()
     }
     /** The long context window on or off for every chat, from its next turn. */
+    /** The open chat's permission level; the next chat the user starts begins with it too. */
+    fun fullAccess(enabled: Boolean) {
+        val chat = current.value ?: return
+        graph.permissions.choose(chat, if (enabled) PermissionLevel.FULL else PermissionLevel.ASK)
+        project()
+    }
     fun longContext(enabled: Boolean) {
         graph.longContext = enabled
         mutable.update { it.copy(longContext = enabled) }

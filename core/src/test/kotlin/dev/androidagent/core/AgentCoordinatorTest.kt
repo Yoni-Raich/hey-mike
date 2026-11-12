@@ -840,6 +840,75 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun fullAccessAnswersEveryApprovalWithoutACard() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        var sends = 0
+
+        val sent = rig.coordinator.authorizeSend(SendRequest("com.whatsapp", "WhatsApp", "My Wife", "hi")) { sends++; ToolResult("sent") }
+        assertTrue(sent.success)
+        assertEquals(1, sends)
+        val opened = rig.coordinator.authorizeLocalIntent(
+            LocalIntentRequest(action = "android.intent.action.VIEW", uri = null, packageName = null, reason = "Open the map"),
+        ) { ToolResult("opened") }
+        assertTrue(opened.success)
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        assertEquals(listOf("engine-1" to true), rig.engine.approvalAnswers)
+        assertNull(rig.coordinator.state.value.approval)
+        // Nothing was shown, so the app was never raised over the one in use.
+        assertEquals(0, rig.foregroundRequests)
+        rig.close()
+    }
+
+    @Test fun fullAccessNeverReachesAReadOnlyChat() = runTest {
+        val rig = Rig(this, readOnly = true, fullAccess = true)
+        rig.coordinator.send("one", "Look around")
+        runCurrent()
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertEquals(listOf("engine-1" to false), rig.engine.approvalAnswers)
+        rig.close()
+    }
+
+    @Test fun stopDuringAutoApprovalTracePreventsLocalDispatch() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Open a page")
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        rig.store.approvalTraceGate = gate
+        var dispatched = false
+        val result = async {
+            rig.coordinator.authorizeLocalIntent(
+                LocalIntentRequest("android.intent.action.VIEW", null, null, "Open page"),
+            ) { dispatched = true; ToolResult("opened") }
+        }
+        runCurrent()
+        rig.coordinator.stop()
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(result.isCancelled)
+        assertFalse(dispatched)
+        rig.close()
+    }
+
+    @Test fun stopDuringAutoApprovalTraceDoesNotAnswerEngine() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Run a command")
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        rig.store.approvalTraceGate = gate
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+        rig.coordinator.stop()
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(rig.engine.approvalAnswers.none { it == ("engine-1" to true) })
+        rig.close()
+    }
+
     @Test fun aSpokenYesNeverGrantsAStandingPermission() = runTest {
         val grants = InMemorySendGrantStore()
         val rig = Rig(this, grants)
@@ -1122,6 +1191,7 @@ class AgentCoordinatorTest {
         policy: ((String, String, JsonObject) -> String?)? = null,
         tasks: TaskToolHandler? = null,
         readOnly: Boolean = false,
+        fullAccess: Boolean = false,
     ) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
@@ -1149,6 +1219,7 @@ class AgentCoordinatorTest {
             taskTools = tasks?.let { handler -> { handler } },
             toolPolicy = policy,
             readOnlySession = { readOnly },
+            fullAccess = { fullAccess },
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }
@@ -1243,6 +1314,7 @@ class AgentCoordinatorTest {
         override suspend fun close() { closed = true }
     }
     private class FakeStore : SessionStore {
+        var approvalTraceGate: CompletableDeferred<Unit>? = null
         var queued = emptyList<QueuedTurn>()
         override suspend fun loadQueuedTurns() = queued
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
@@ -1255,7 +1327,10 @@ class AgentCoordinatorTest {
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }
-        override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
+        override suspend fun appendTrace(sessionId: String, entry: JsonObject) {
+            if (entry["type"]?.jsonPrimitive?.content == "approval_auto_allowed") approvalTraceGate?.await()
+            traces.add(entry)
+        }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
         override suspend fun setMessagePhase(id: String, phase: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(phase = phase) }
         private fun change(sessionId: String, change: (ChatSession) -> ChatSession) {
