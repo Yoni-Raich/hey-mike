@@ -1,5 +1,20 @@
 # Progress
 
+### Mike Manager taken out of dev — 2026-11-12
+
+At the owner's request, everything that belongs to the Manager implementation
+was reverted on `dev` and kept on a side branch instead:
+
+- Reverted PR #157 (Mike's robot face in the chat top bar) and PR #149 (task
+  board, Manager, team roles, follow-through, `tasks` tool and its skills).
+  The later changes from #155, #156 and #159 stay; their links into the board
+  (tool policy, read-only backstage chats, `tasks` dispatch) were removed.
+- Side branch `side/mike-manager` (= `feat/manager-20261112`, `a7bf6666`) holds
+  current dev before this revert plus all 20 Manager commits.
+- **Re-integration note:** git treats #149 and #157 as already merged. To bring
+  the Manager back, first revert this branch's revert commits, then merge
+  `side/mike-manager`; a plain merge will not restore the reverted code.
+
 ### Notifications APK 1209 installation attempt — 2026-11-11
 
 At the owner's explicit request, built commit `8c2521d9` with

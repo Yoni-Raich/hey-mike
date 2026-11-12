@@ -84,19 +84,10 @@ class AgentCoordinator(
     private val chatMedia: (suspend (address: String, workspace: File) -> String)? = null,
     private val chatTitles: ChatTitleManager = ChatTitleManager(sessions, engine),
     private val sessionAgents: (() -> SessionAgents)? = null,
-    /** The task board's `tasks` tool; null on a host without a board. */
-    private val taskTools: (() -> TaskToolHandler?)? = null,
-    /**
-     * Why [name] may not run in this chat, or null. The board's backstage
-     * chats read and propose only; this is checked before any dispatch.
-     */
-    private val toolPolicy: ((sessionId: String, name: String, arguments: JsonObject) -> String?)? = null,
-    private val readOnlySession: (String) -> Boolean = { false },
     /**
      * Whether the user gave this chat full access: every approval it would
      * have asked for is answered Allow without a card. The host decides, and
-     * must keep the answer where the agent cannot write it. A read-only chat
-     * never has it.
+     * must keep the answer where the agent cannot write it.
      */
     private val fullAccess: (String) -> Boolean = { false },
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
@@ -180,12 +171,6 @@ class AgentCoordinator(
      * needs the screen it was planned on.
      */
     private var screenSticky = false
-    /**
-     * The newest input to the current turn is the user's own words. A turn
-     * started or steered by agent context (a child's result, a discovery
-     * batch) is not, so a board decision cannot ride on quoted data.
-     */
-    @Volatile private var lastInputFromUser = false
 
     init { if (!share.routed) scope.launch { engine.events.collect { deliver(it) } } }
 
@@ -284,8 +269,6 @@ class AgentCoordinator(
             runWorkspace = workspace
             screenSticky = false
             voiceMode = true
-            // Delegated voice turns carry what the user just said.
-            lastInputFromUser = true
             thread = threadId
             turn = null
             assistantId = null
@@ -538,13 +521,11 @@ class AgentCoordinator(
             overlay.updateState(OverlayState(OverlayPhase.STARTING))
             // The turn names its engine, and the chat moves to it first.
             val before = sessions.getSession(sessionId) ?: error("Chat no longer exists")
-            val restricted = readOnlySession(sessionId)
             if (engineKind != null && before.engine != engineKind) sessions.setEngine(sessionId, engineKind)
-            synchronized(lifecycleLock) { if (isCurrentLocked(token)) lastInputFromUser = !agentContext }
             val sent = message(sessionId, if (agentContext) "note" else "user", displayPrompt ?: prompt, attachments = images.map { it.absolutePath })
             sessions.append(sent)
             trace(sessionId, if (agentContext) "child_update" else "user", buildJsonObject {
-                put("text", if (restricted && agentContext) displayPrompt ?: "Background task" else prompt)
+                put("text", prompt)
                 displayPrompt?.let { put("displayText", it) }
                 put("attachments", buildJsonArray { images.forEach { add(it.absolutePath) } })
             })
@@ -559,8 +540,7 @@ class AgentCoordinator(
             engine.connect(kind, work)
             check(engine.account(kind, work).signedIn) { "Sign in to ${kind.label} in Settings first." }
             ensureCurrent(token)
-            val openedThread = if (restricted) engine.openReadOnlySession(work, model, tools.definitions.filter { TaskRolePolicy.exposed(it.name) })
-                else engine.openSession(work, session.engineThreadId, model, tools.definitions)
+            val openedThread = engine.openSession(work, session.engineThreadId, model, tools.definitions)
             synchronized(lifecycleLock) {
                 ensureCurrentLocked(token)
                 thread = openedThread
@@ -572,7 +552,7 @@ class AgentCoordinator(
             // new although the chat is not (first time on this engine, or a
             // thread the engine lost).
             val lostThread = session.engineThreadId != null && session.engineThreadId != openedThread
-            val missedSince = if (restricted) null else if (lostThread) 0L else session.catchUpFrom
+            val missedSince = if (lostThread) 0L else session.catchUpFrom
             val handoff = missedSince?.let { since ->
                 val missed = sessions.messages(sessionId).first().filter { it.createdAt > since && it.id != sent.id }
                 // Into the engine's own history where it can take it, as a
@@ -591,15 +571,9 @@ class AgentCoordinator(
             }
             overlay.updateState(OverlayState(OverlayPhase.THINKING))
             beginTurn(token)
-            val capabilities = DeviceCapabilities.of(tools, adbStatus()).let { live ->
-                if (!restricted) live else live.copy(
-                    ready = live.ready.filter(TaskRolePolicy::exposed).toSet(), blocked = emptySet(),
-                    backendStatus = "Task discovery: allowed read tools only", deviceBackendLive = false,
-                )
-            }
             val startedTurn = engine.startTurn(
                 openedThread, handoff.orEmpty() + prompt, images, reasoningEffort, skill,
-                capabilities,
+                DeviceCapabilities.of(tools, adbStatus()),
                 planModel = if (planMode) model else null,
             )
             if (!activateTurn(token, startedTurn)) {
@@ -709,7 +683,6 @@ class AgentCoordinator(
             if (!current.active || current.phase == RunPhase.STOPPING || currentThread.isNullOrBlank() || currentTurn.isNullOrBlank()) {
                 null
             } else {
-                lastInputFromUser = userReply
                 SteerRequest(epoch.get(), current.sessionId, currentThread, currentTurn, prompt)
             }
         } ?: return
@@ -741,7 +714,7 @@ class AgentCoordinator(
             val current = state.value
             if (!allowed() || voiceMode || !current.active || current.phase in setOf(RunPhase.STARTING, RunPhase.STOPPING) ||
                 current.approval != null || current.question != null || thread == null || turn == null) null
-            else { lastInputFromUser = false; SteerRequest(epoch.get(), current.sessionId, thread!!, turn!!, prompt) }
+            else SteerRequest(epoch.get(), current.sessionId, thread!!, turn!!, prompt)
         } ?: return false
         val delivered = CompletableDeferred<Boolean>()
         val job = launchControl {
@@ -1049,7 +1022,6 @@ class AgentCoordinator(
     /** The chat this coordinator runs has full access, and it may use it. */
     private fun hasFullAccess(): Boolean {
         val sessionId = state.value.sessionId ?: return false
-        if (readOnlySession(sessionId)) return false
         return runCatching { fullAccess(sessionId) }.getOrDefault(false)
     }
 
@@ -1333,15 +1305,6 @@ class AgentCoordinator(
                 launchTool {
                     toolLock.withLock {
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
-                        toolPolicy?.invoke(sessionId, event.name, event.arguments)?.let { reason ->
-                            val refused = toolRefusal("not_allowed_here", reason)
-                            withContext(NonCancellable) { trace(sessionId, "tool_result", buildJsonObject {
-                                put("requestId", event.requestId); put("name", event.name); put("success", false); put("text", refused.text)
-                            }) }
-                            sessions.append(message(sessionId, "tool", "${event.name}: ${refused.text.take(4_000)}"))
-                            engine.answerTool(event.requestId, refused)
-                            return@withLock
-                        }
                         // The chat's own tools leave the phone alone, so they do not wait for it.
                         if (event.name in ChatTools.NAMES) {
                             serveChatTool(token, sessionId, event, receivedAt)
@@ -1494,10 +1457,6 @@ class AgentCoordinator(
                 }
             }
             is EngineEvent.Approval -> {
-                if (state.value.sessionId?.let(readOnlySession) == true) {
-                    engine.answerApproval(event.requestId, false)
-                    return
-                }
                 if (synchronized(lifecycleLock) { approvalMatchesLocked(event) } && autoApproved(event.method, event.requestId)) {
                     // Trace writing can suspend while Stop revokes the run.
                     if (synchronized(lifecycleLock) { approvalMatchesLocked(event) }) {
@@ -1625,8 +1584,6 @@ class AgentCoordinator(
                 SessionAgentTools.NAME -> sessionAgents?.invoke()?.invoke(sessionId, event.arguments) {
                     isCurrentTurn(token, threadId, turnId)
                 } ?: toolRefusal("not_available", "Session agents are not configured.")
-                TaskTools.NAME -> taskTools?.invoke()?.invoke(sessionId, event.arguments, lastInputFromUser)
-                    ?: toolRefusal("not_available", "The task board is not set up on this phone.")
                 else -> showMedia(token, sessionId, threadId, turnId, event.arguments)
             }
         } catch (cancelled: CancellationException) {
