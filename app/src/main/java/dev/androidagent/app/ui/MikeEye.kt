@@ -34,9 +34,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -56,28 +56,21 @@ internal enum class EyeMood(val label: String) {
     PAUSED("collection is off"),
 }
 
-internal val EyeTeal = Color(0xFF83D9CA)
+internal val EyeTeal = Color(0xFF4EEEDC)
 internal val EyeAmber = Color(0xFFF6B86A)
-private val EyeRest = Color(0xFF7FA9A1)
-private val EyePaused = Color(0xFF5E5C57)
+private val EyeRest = Color(0xFF55E8D7)
+private val EyePaused = Color(0xFF4D998F)
 
 /** A member's colour, from its hue: same lightness and calm, so the team reads as one family. */
 internal fun memberColor(hue: Float): Color = Color.hsv(((hue % 360f) + 360f) % 360f, 0.34f, 0.86f)
 
-private const val SPHERE_POINTS = 170
-private const val SMALL_POINTS = 64
-private const val DISK_PARTICLES = 64
+private const val SPHERE_POINTS = 620
+private const val SMALL_POINTS = 120
 private const val TILT = 0.36f
 
 /**
- * Mike's face: the dot sphere of [AgentOrb] with a black hole for an eye.
- *
- * An event horizon with a thin photon ring sits in the middle; an accretion
- * disk of the sphere's own dots turns around it. Each mood changes one thing:
- * thinking widens and speeds the disk, working sends a satellite around the
- * sphere per running task, waiting turns it amber with a second breathing
- * ring, done settles the disk into one ring and a single wave, paused closes
- * the eye and stops all motion. Reduced motion draws one still frame.
+ * A living sphere of light with two luminous eyes. Motion is quiet and the
+ * face stays legible at avatar sizes. Reduced motion draws a still frame.
  *
  * @param tint a team member's own colour; the Manager uses the mood's.
  * @param satellites running tasks, drawn while working (at most four).
@@ -92,7 +85,6 @@ internal fun MikeEye(
     description: String? = null,
 ) {
     val base = when (mood) {
-        EyeMood.NEEDS -> EyeAmber
         EyeMood.PAUSED -> EyePaused
         EyeMood.IDLE -> tint ?: EyeRest
         else -> tint ?: EyeTeal
@@ -117,10 +109,10 @@ internal fun MikeEye(
         val t = time.floatValue
         val radius = min(size.width, size.height) / 2f
         val center = Offset(size.width / 2f, size.height / 2f)
-        val tiny = radius < 26f * density
+        val tiny = radius < 38f * density
         drawGlow(center, radius, color, mood)
         drawSphere(if (tiny) small else sphere, center, radius, color, t, mood, tiny)
-        drawEye(center, radius, color, t, mood, tiny)
+        drawFace(center, radius, color, t, mood, tiny)
         if (mood == EyeMood.WORKING && !tiny) drawSatellites(center, radius, color, t, satellites.coerceIn(1, 4))
         if (mood == EyeMood.DONE && !tiny) drawWave(center, radius, color, t)
     }
@@ -150,8 +142,7 @@ private fun DrawScope.drawSphere(points: FloatArray, center: Offset, radius: Flo
     val spin = t * when (mood) { EyeMood.THINKING -> 0.32f; EyeMood.WORKING -> 0.24f; EyeMood.PAUSED -> 0f; else -> 0.1f }
     val cs = cos(spin); val sn = sin(spin)
     val ct = cos(TILT); val st = sin(TILT)
-    val clear = radius * 0.36f
-    val dot = radius * if (tiny) 0.05f else 0.022f
+    val dot = radius * if (tiny) 0.032f else 0.012f
     val dim = if (mood == EyeMood.PAUSED) 0.45f else 1f
     for (i in points.indices step 3) {
         val x0 = points[i]; val y0 = points[i + 1]; val z0 = points[i + 2]
@@ -162,65 +153,48 @@ private fun DrawScope.drawSphere(points: FloatArray, center: Offset, radius: Flo
         val px = center.x + x * radius * 0.86f
         val py = center.y + y * radius * 0.86f
         val depth = (z + 1f) / 2f
-        // The front face leaves room for the eye.
-        val dx = px - center.x; val dy = py - center.y
-        if (z > 0f && dx * dx + dy * dy < clear * clear) continue
-        val alpha = (0.12f + 0.78f * depth) * dim
-        drawCircle(color.copy(alpha = alpha), dot * (0.55f + 0.75f * depth), Offset(px, py))
+        val alpha = (0.14f + 0.86f * depth) * dim
+        val pointColor = lerp(color, Color.White, depth * depth * 0.5f)
+        drawCircle(pointColor.copy(alpha = alpha), dot * (0.55f + 1.0f * depth), Offset(px, py))
     }
 }
 
-private fun DrawScope.drawEye(center: Offset, radius: Float, color: Color, t: Float, mood: EyeMood, tiny: Boolean) {
-    val horizon = radius * when (mood) { EyeMood.NEEDS -> 0.17f; EyeMood.THINKING -> 0.15f; else -> 0.14f }
-    if (mood == EyeMood.PAUSED) {
-        // The eye is closed: a lid line, no light.
-        drawLine(color.copy(alpha = 0.8f), Offset(center.x - horizon * 1.25f, center.y), Offset(center.x + horizon * 1.25f, center.y),
-            strokeWidth = radius * 0.03f)
-        return
-    }
-    // A rare blink while resting: a quick squash of the whole eye.
-    val blinkPhase = (t % 7.3f)
-    val blink = if (mood == EyeMood.IDLE && blinkPhase < 0.18f) 1f - sin(blinkPhase / 0.18f * PI.toFloat()) * 0.9f else 1f
-    scale(1f, blink, center) {
-        if (!tiny) drawDisk(center, radius, horizon, color, t, mood, front = false)
-        drawCircle(Color.Black, horizon, center)
-        drawCircle(color.copy(alpha = 0.95f), horizon * 1.08f, center, style = Stroke(width = radius * if (tiny) 0.05f else 0.022f))
-        if (mood == EyeMood.NEEDS) {
-            val breath = 0.5f + 0.5f * sin(t * 2.2f)
-            drawCircle(color.copy(alpha = 0.25f + 0.35f * breath), horizon * (1.45f + 0.18f * breath), center,
-                style = Stroke(width = radius * 0.014f))
-        }
-        if (!tiny) drawDisk(center, radius, horizon, color, t, mood, front = true)
-    }
-}
-
-/** The accretion disk, in two halves so the horizon hides the far side. */
-private fun DrawScope.drawDisk(center: Offset, radius: Float, horizon: Float, color: Color, t: Float, mood: EyeMood, front: Boolean) {
-    val flat = when (mood) { EyeMood.THINKING -> 0.42f; EyeMood.DONE -> 0.12f; EyeMood.NEEDS -> 0.3f; else -> 0.24f }
-    val speed = when (mood) { EyeMood.THINKING -> 1.6f; EyeMood.WORKING -> 0.9f; EyeMood.DONE -> 0.25f; else -> 0.45f }
-    val inner = horizon * 1.35f
-    val outer = radius * if (mood == EyeMood.THINKING) 0.5f else 0.4f
-    rotate(-12f, center) {
-        for (index in 0 until DISK_PARTICLES) {
-            val lane = (index * 7 % DISK_PARTICLES) / DISK_PARTICLES.toFloat()
-            val r = inner + (outer - inner) * if (mood == EyeMood.DONE) 0.35f else lane
-            val angle = index * (2f * PI.toFloat() / DISK_PARTICLES) + t * speed * (1.3f - lane * 0.6f)
-            val behind = sin(angle) < 0f
-            if (behind == front) continue
-            val x = center.x + cos(angle) * r
-            val y = center.y + sin(angle) * r * flat
-            val dx = x - center.x; val dy = y - center.y
-            if (behind && dx * dx + dy * dy < horizon * horizon * 1.1f) continue
-            val glow = 1f - lane * 0.7f
-            val alpha = (if (behind) 0.35f else 0.9f) * glow
-            drawCircle(color.copy(alpha = alpha), radius * (0.012f + 0.014f * glow), Offset(x, y))
-        }
-    }
-    if (front && mood != EyeMood.DONE) {
-        // A faint streak where the disk crosses in front of the horizon.
-        rotate(-12f, center) {
-            drawLine(color.copy(alpha = 0.55f), Offset(center.x - outer * 0.95f, center.y), Offset(center.x + outer * 0.95f, center.y),
-                strokeWidth = radius * 0.012f)
+private fun DrawScope.drawFace(center: Offset, radius: Float, color: Color, t: Float, mood: EyeMood, tiny: Boolean) {
+    val blinkPhase = t % 7.3f
+    // Do not start a still frame with closed eyes.
+    val blink = if (mood == EyeMood.IDLE && blinkPhase in 3.8f..3.98f)
+        1f - sin((blinkPhase - 3.8f) / 0.18f * PI.toFloat()) * 0.88f else 1f
+    val eyeWidth = radius * 0.42f
+    val eyeHeight = radius * 0.69f
+    val eyeY = center.y + radius * 0.06f
+    for (side in listOf(-1f, 1f)) {
+        val eye = Offset(center.x + side * radius * 0.265f, eyeY)
+        scale(1f, blink, eye) {
+            if (!tiny) {
+                drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.7f), color.copy(alpha = 0.17f), Color.Transparent), eye, radius * 0.48f), radius * 0.48f, eye)
+            }
+            val topLeft = Offset(eye.x - eyeWidth / 2f, eye.y - eyeHeight / 2f)
+            val eyeSize = Size(eyeWidth, eyeHeight)
+            drawOval(Brush.verticalGradient(listOf(Color(0xFF073D38), Color(0xFF000907), Color(0xFF032D28)),
+                startY = topLeft.y, endY = topLeft.y + eyeHeight), topLeft, eyeSize)
+            drawOval(color.copy(alpha = if (mood == EyeMood.PAUSED) 0.7f else 0.95f), topLeft, eyeSize,
+                style = Stroke(width = radius * if (tiny) 0.035f else 0.017f))
+            if (!tiny) {
+                // Light beads follow the inner rim, leaving a dark, glossy pupil.
+                for (i in 0 until 26) {
+                    val angle = i * 2f * PI.toFloat() / 26f
+                    val p = Offset(eye.x + cos(angle) * eyeWidth * 0.38f, eye.y + sin(angle) * eyeHeight * 0.40f)
+                    drawCircle(color.copy(alpha = 0.4f + 0.45f * ((sin(angle) + 1f) / 2f)), radius * 0.014f, p)
+                }
+                for (i in 0 until 22) {
+                    val angle = i * PI.toFloat() / 21f
+                    val p = Offset(eye.x + cos(angle) * eyeWidth * 0.27f, eye.y + sin(angle) * eyeHeight * 0.29f)
+                    drawCircle(color.copy(alpha = 0.6f), radius * 0.010f, p)
+                }
+            }
+            val glint = Offset(eye.x + eyeWidth * 0.08f, eye.y - eyeHeight * 0.22f)
+            if (!tiny) drawCircle(color.copy(alpha = 0.35f), radius * 0.075f, glint)
+            drawCircle(Color.White.copy(alpha = if (mood == EyeMood.PAUSED) 0.7f else 1f), radius * if (tiny) 0.035f else 0.042f, glint)
         }
     }
 }

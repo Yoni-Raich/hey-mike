@@ -370,6 +370,11 @@ data class AgentUiActions(
     /** The user's decision on a card. Only a tap or the user's own words decide. */
     val onTaskDecide: (id: String, choice: String, note: String?, reason: dev.androidagent.core.DismissReason?) -> Unit = { _, _, _, _ -> },
     val onTaskNote: (id: String, note: String?) -> Unit = { _, _ -> },
+    val onTaskRenameMember: (id: String, name: String, role: String) -> Unit = { _, _, _ -> },
+    val onTaskRemoveMember: (id: String) -> Unit = {},
+    val onTaskMergeMember: (id: String, into: String) -> Unit = { _, _ -> },
+    val onTaskAssign: (id: String, member: String?) -> Unit = { _, _ -> },
+    val onTaskContext: (id: String) -> Unit = {},
     /** Open one of the board's chats: the Manager's, a member's, or a task's own. */
     val onOpenBoardChat: (sessionId: String) -> Unit = {},
     val onTaskDiscovery: (on: Boolean) -> Unit = {},

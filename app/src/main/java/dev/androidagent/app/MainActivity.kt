@@ -318,6 +318,20 @@ class MainActivity : ComponentActivity() {
             model.graph.taskDesk.decide(id, choice, note, reason)
         },
         onTaskNote = { id, note -> model.graph.taskDesk.setNote(id, note) },
+        onTaskRenameMember = { id, name, role -> model.graph.taskDesk.renameMember(id, name, role) },
+        onTaskRemoveMember = { id -> model.graph.taskDesk.removeMember(id) },
+        onTaskMergeMember = { id, into -> model.graph.taskDesk.mergeMember(id, into) },
+        onTaskAssign = { id, member -> model.graph.taskDesk.assign(id, member) },
+        onTaskContext = { id ->
+            model.graph.taskDesk.state.value.managerSessionId?.let { chat ->
+                model.editUi { it.copy(isTaskBoardOpen = false, taskBoardPage = null, isDrawerOpen = false,
+                    composerSeeds = it.composerSeeds + (chat to dev.androidagent.app.ui.taskText(
+                        "Read the missing context for task $id. Explain what you need to open first. Do not execute the task yet.",
+                        "קרא את ההקשר החסר למשימה $id. הסבר קודם מה צריך לפתוח. אל תבצע את המשימה עדיין.")),
+                    composerDraftVersions = it.composerDraftVersions + (chat to ((it.composerDraftVersions[chat] ?: 0L) + 1))) }
+                model.select(chat)
+            }
+        },
         onOpenBoardChat = { id ->
             model.editUi { it.copy(isTaskBoardOpen = false, taskBoardPage = null, isDrawerOpen = false) }
             model.select(id)

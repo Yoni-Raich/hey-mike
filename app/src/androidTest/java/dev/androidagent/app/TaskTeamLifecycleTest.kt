@@ -13,6 +13,37 @@ import org.junit.Test
 
 /** Run on the fixture emulator: checks the real ViewModel's empty-chat cleanup. */
 class TaskTeamLifecycleTest {
+    @Test(timeout = 15_000) fun missingCalendarPermissionDoesNotStartAnUnfinishablePass() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        org.junit.Assume.assumeTrue(androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALENDAR) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+        val graph = (context.applicationContext as AgentApplication).graph
+        withTimeout(10_000) { while (!graph.taskDesk.state.value.ready) delay(50) }
+        val original = graph.taskDesk.board.settings.value
+        try {
+            graph.taskDesk.board.editSettings { it.copy(discoveryOn = true, readChats = false, readCalendar = true) }
+            graph.taskDesk.pulse()
+            assertFalse(graph.taskDesk.signals.pending.value.any { it.source == "calendar" })
+            assertFalse(graph.taskDesk.hasBackgroundWork())
+        } finally {
+            graph.taskDesk.board.editSettings { original }
+            graph.taskDesk.stopBackgroundTurns()
+        }
+    }
+
+    @Test(timeout = 15_000) fun backstageVoiceIsRefusedBeforeAnAccountOrRuntimeIsOpened() = runBlocking {
+        val graph = (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as AgentApplication).graph
+        withTimeout(10_000) { while (!graph.taskDesk.state.value.ready) delay(50) }
+        for(member in graph.taskDesk.team.members.value.filter { it.kind.backstage }) {
+            val id = member.sessionId!!
+            val before = graph.sessions.getSession(id)!!.engineThreadId
+            val error = runCatching { graph.voiceConversation.begin(id, null) }.exceptionOrNull()
+            assertNotNull(error)
+            assertTrue(error!!.message.orEmpty().contains("read-only typed chat"))
+            assertNull(graph.voiceConversation.sessionId.value)
+            assertEquals(before, graph.sessions.getSession(id)!!.engineThreadId)
+        }
+    }
+
     @Test(timeout = 25_000) fun teamChatsSurviveOpeningLeavingAndActivityRecreationBeforeTheFirstUserMessage() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

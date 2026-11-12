@@ -98,6 +98,7 @@ data class ChatSession(
 data class ParkedThread(val threadId: String, val seenUntil: Long)
 @Serializable
 data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
+data class SessionMessageChange(val sequence: Long, val message: ChatMessage)
 interface SessionStore {
     val sessions: StateFlow<List<ChatSession>>
     /** A new chat that starts on [engine]. */
@@ -120,6 +121,9 @@ interface SessionStore {
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
+    val hasMessageFeed: Boolean get() = false
+    suspend fun messageChanges(after: Long, limit: Int = 40): List<SessionMessageChange> = emptyList()
+    suspend fun acknowledgeMessageChanges(through: Long) {}
     suspend fun setThread(sessionId: String, threadId: String)
     /**
      * Start the chat's next turn on a new engine thread, keeping its visible
