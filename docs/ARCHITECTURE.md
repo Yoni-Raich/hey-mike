@@ -1,5 +1,9 @@
 # Architecture
 
+Dev launcher resources reuse the release foreground and monochrome artwork,
+with a small DEV badge in the lower-right corner. The override lives only in
+`app/src/dev/res`; Prod keeps the release icon.
+
 ## Account connections for regular chats - 2026-11-12
 
 Settings > Account connections exposes Gmail and other account connectors for

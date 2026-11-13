@@ -1,5 +1,25 @@
 # Progress
 
+### Dev launcher badge rebuilt from current dev - 2026-11-13
+
+Base: origin/dev 2d08bd89, which includes Manager removal PR #160 and regular
+account connections PR #161. Dev uses the release icon plus the approved small
+DEV badge; Prod icon resources are unchanged. Version is 0.17.0-dev.icon1217
+(1217), above the reported installed icon build 1216.
+
+Checks: `gradlew.bat :app:assembleDevDebug :app:lintDevDebug
+-PversionCodeOverride=1217 -PversionNameOverride=0.17.0-dev.icon1217 --no-daemon`
+passed (2m32s); lint: 0 errors, 23 warnings. `git diff --check` passed.
+`aapt dump badging` confirms dev.androidagent.app.dev / 1217 /
+0.17.0-dev.icon1217. apksigner verification and zipalign -c 4 passed (debug
+APK, v2 signature). SHA-256:
+9354227df2850e31523170a9016b063148dc9dec480d8e8456b699cae2af5188.
+APK kept outside the checkout at
+`%TEMP%/hey-mike/dev-icon-20261113/app-dev-debug.apk`.
+
+Not tested: phone installation, launcher appearance, live startup or the
+reported crash. This rebuild does not establish the crash cause or its fix.
+
 ### Account connections in regular Settings - 2026-11-12
 
 Extracted account connectors from the parked Manager into `core.connections`
