@@ -145,7 +145,8 @@ class MainActivity : ComponentActivity() {
         // Not on recreation: a rotation must not reopen a conversation the
         // user already ended.
         val fromAssistant = savedInstanceState == null && handleAssistantPress(intent)
-        if (savedInstanceState == null) openAskedChat(intent)
+        if (savedInstanceState == null) { openAskedChat(intent); handleEntry(intent) }
+        dev.androidagent.app.entry.LauncherShortcuts.publish(applicationContext)
         val fromCapabilityRequest = intent.getBooleanExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST, false)
         intent.removeExtra(RuntimePermissionBroker.EXTRA_CAPABILITY_PERMISSION_REQUEST)
         // First launch asks for this on its own screen, with a reason; asking
@@ -161,6 +162,27 @@ class MainActivity : ComponentActivity() {
         if (intent.hasExtra(UiLatencyProbe.EXTRA)) latencyProbe?.enabled = BuildConfig.DEBUG && intent.getBooleanExtra(UiLatencyProbe.EXTRA, false)
         handleAssistantPress(intent)
         openAskedChat(intent)
+        handleEntry(intent)
+    }
+
+    /** A share from another app, or the New chat launcher shortcut. */
+    private fun handleEntry(intent: Intent?) {
+        intent ?: return
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        when (intent.action) {
+            dev.androidagent.app.entry.EntryActions.ACTION_NEW_CHAT -> {
+                model.editUi { it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false, isComputersOpen = false, isAutomationsOpen = false) }
+                model.newChat()
+            }
+            dev.androidagent.app.entry.EntryActions.ACTION_SHARE -> {
+                val text = intent.getStringExtra(dev.androidagent.app.entry.EntryActions.EXTRA_SHARE_TEXT)
+                val uris = androidx.core.content.IntentCompat.getParcelableArrayListExtra(intent, dev.androidagent.app.entry.EntryActions.EXTRA_SHARE_URIS, android.net.Uri::class.java).orEmpty()
+                model.receiveShare(text, uris)
+            }
+            else -> return
+        }
+        // Handled once: a rotation or a return from Recents must not repeat it.
+        intent.action = null
     }
 
     /**

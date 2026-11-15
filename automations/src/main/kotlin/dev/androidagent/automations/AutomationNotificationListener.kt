@@ -51,11 +51,29 @@ import java.time.ZonedDateTime
  * 4. only then are the title and text extracted, and they travel no further
  *    than the evaluator unless a rule's own actions interpolate them.
  *
- * Nothing is stored. There is no notification log and no tool that can ask for
- * one: a record of everything that arrived on the phone would quietly become
- * the most sensitive file on it.
+ * Nothing is stored. There is no notification log: a record of everything that
+ * arrived on the phone would quietly become the most sensitive file on it.
+ *
+ * Since 2026-11-15, at the user's request, the agent can also read the
+ * notifications that are on the phone *right now* and act on them
+ * ([AndroidNotificationAccess]): reply, press a button, dismiss. That read is
+ * live from the system on each call, goes through the same personal-profile
+ * fence, drops our own notifications, and keeps nothing afterwards.
  */
 class AutomationNotificationListener : NotificationListenerService() {
+
+    override fun onListenerConnected() {
+        live = this
+    }
+
+    override fun onListenerDisconnected() {
+        if (live === this) live = null
+    }
+
+    override fun onDestroy() {
+        if (live === this) live = null
+        super.onDestroy()
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val posted = sbn ?: return
@@ -89,6 +107,9 @@ class AutomationNotificationListener : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) = Unit
 
     companion object {
+        /** The bound listener, while the system keeps it connected. */
+        @Volatile internal var live: AutomationNotificationListener? = null
+
         /**
          * Whether the user has granted this listener in Settings.
          *

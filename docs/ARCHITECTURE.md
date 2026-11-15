@@ -1297,15 +1297,57 @@ these capabilities. `RuntimePermissionBroker` asks only for grants that are
 still missing and makes one Android `RequestMultiplePermissions` request. The
 system dialog is the approval: Hey Mike does not put a second confirmation card
 in front of it. Other special access operations only open a setup screen and do
-not report the access as granted. Notification support is deliberately status
-and setup only — there is no `NotificationListenerService`, so the gateway
-cannot read notification content.
+not report the access as granted. Notification content is now readable: see
+"Deep device control" below.
 
 The gateway shares the normal run revoke boundary and the visible control
 state. Its Android calls live behind `CapabilityPlatform`, while policy and
 dispatch are JVM-testable without a phone. Provider behavior, OEM intent
 handlers and the permission dialog still need physical-device proof.
 
+## Deep device control — 2026-11-15
+
+The user asked on 2026-11-15 for Mike to have as much device control as
+possible. This reverses two earlier limits: the gateway now reads notification
+content, and it can send SMS, place calls and reply to notifications directly.
+
+- `NotificationAccess` and `MediaSessionAccess` are contracts in `:core`,
+  implemented in `:automations` over the existing listener and injected by
+  `AgentApplication`. `:device-tools` stays free of `:automations`.
+- `communications` adds `list_notifications`, `notification_reply`,
+  `notification_press`, `notification_dismiss`, `read_sms`, `read_call_log`,
+  `send_sms` and `place_call`. Contacts add `create`; calendar adds `create`,
+  `delete` and `calendars`.
+- New tool `system_controls` (`SystemControlDispatcher` over `SystemPlatform`):
+  torch, volume, ringer, DND, brightness, screen timeout, auto-rotate,
+  clipboard, last known location, media sessions, usage stats and
+  `get_setting`/`put_setting`.
+- Approval: anything that leaves the phone (`notification_reply`, `send_sms`,
+  `place_call`) goes through `authorizeSend`, the same gate as a chat-app send.
+  Notification action buttons, `calendar delete` and `put_setting` go through
+  `authorizeLocalIntent`. Reads and reversible toggles do not ask.
+- Background ops (no screen lease) are listed in `needsControl`; every new op
+  is also in `WorkflowCallMetadata.readOnlyOperations` when it only reads.
+- Special access (`write_settings`, `notification_policy`, `usage_access`) is
+  never claimed: a missing grant returns `grant_missing` with the
+  `open_special_access` kind to open.
+
+Entry points and folder access (same date, same request):
+
+- Share target. `ShareEntryActivity` (no UI) takes `SEND`/`SEND_MULTIPLE`
+  and forwards to `MainActivity` with the URIs in `ClipData` plus a read
+  grant, so the grant follows the intent into Mike's task. The view model
+  reuses a blank chat or makes one, puts the text in the composer and copies
+  up to 10 `content://` files into the session as attachments. Nothing is
+  sent: the user still presses Send.
+- Quick Settings tile `MikeTileService` opens voice mode (`AssistLaunch`);
+  dynamic launcher shortcuts "New chat" and "Voice" are published on start.
+- Folders through SAF, not `MANAGE_EXTERNAL_STORAGE`. `pick_folder` opens
+  `ACTION_OPEN_DOCUMENT_TREE`; the grant is persisted. `folder_list`,
+  `folder_import` and `folder_export` walk the tree by display name and refuse
+  `.`/`..`. Files move through the workspace (50 MB cap), so the agent never
+  holds a raw document handle. Replacing an existing file needs
+  `overwrite:true` and `authorizeLocalIntent`.
 ## Parallel chats, one phone
 
 Chats run at once, with no cap, as Codex does on a computer: `AgentRuns`
@@ -2488,7 +2530,8 @@ Bluetooth identity uses Nearby devices (`BLUETOOTH_CONNECT`) on Android 12+;
 Android 11 uses the normal Bluetooth permission. The capability gateway can
 request the new runtime permissions visibly. Missing signal permissions are
 reported dormant by the tool and blocked by the rules summary. The Location
-permissions support Wi-Fi identity here, not a geofence or coordinates source.
+permissions support Wi-Fi identity here; place triggers use them separately
+(see "Deep device control").
 
 The runner carries device conditions in `AutomationVoiceRequest`. They are
 checked again before activity launch, during startup, before context and speech,
@@ -2553,13 +2596,19 @@ refusing rather than silently doing nothing.
 
 `AutomationToolGateway` carries `supportedTriggers`, which this host answers
 with what it can actually serve: `schedule`, `device_state` and `manual`
-always, `notification` once the user has granted the listener by hand. **`place`
-is served by nothing yet**, so a geofence rule is saved and reported **dormant**
-rather than accepted as live. That is a dependency decision, not an oversight:
-`GeofencingClient` means adding Google Play Services to a project that
-deliberately ships outside Play, and the AOSP alternative
-(`LocationManager.addProximityAlert`) is unreliable enough that shipping it
-quietly would be worse than reporting the gap.
+always, `notification` once the user has granted the listener by hand, and
+`place` once location plus background location are granted.
+
+Superseded 2026-11-15 at the user's request: `place` was dormant (no Play
+Services, and `addProximityAlert` is unreliable). It is now served by
+`AutomationPlaceSource`: `LocationManager` updates from the network and
+passive providers (3 min / 50 m), fed to `PlaceTracker` in core. The first fix
+only sets the baseline; a fix coarser than max(radius, 100 m) changes nothing;
+leaving needs radius + max(30 m, accuracy), so the edge does not flap. Places
+live in `automation-places.json` (`AutomationPlaces`, max 50) and are managed
+through `automation_rule` modes `places`, `save_place`, `delete_place`. Still
+no Play Services dependency. Cost: enter/exit can lag minutes, precision is
+network-grade.
 
 Settings > Standing rules is where the feature says whether it actually works:
 how many rules are on, how many are **dormant**, when the next one is due, and

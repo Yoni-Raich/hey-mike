@@ -90,6 +90,8 @@ class AutomationHost(
     private val agentAvailable: () -> Boolean = { false },
     /** Told about every run, for a log line or a settings screen. */
     private val onReport: (AutomationRunReport) -> Unit = {},
+    /** Named places for place triggers; null serves none. */
+    private val places: dev.androidagent.core.AutomationPlaces? = null,
 ) {
 
     private val evaluator = AutomationEvaluator(history)
@@ -98,6 +100,8 @@ class AutomationHost(
     private val headphones = dev.androidagent.voice.BluetoothHeadphones(context)
     private val wifi = AutomationWifi(context)
     private val bluetooth = AutomationBluetooth(context)
+    private val placeSource = AutomationPlaceSource(context)
+    private val placeTracker = dev.androidagent.core.PlaceTracker()
     private val runLock = Mutex()
 
     @Volatile private var started = false
@@ -115,6 +119,7 @@ class AutomationHost(
         headphones.start { connectionChanged(dev.androidagent.core.AutomationDeviceStates.BLUETOOTH_HEADPHONES) }
         wifi.start { connectionChanged("wifi") }
         bluetooth.start { connectionChanged("bluetooth_device") }
+        startPlaces()
         catchUp()
     }
 
@@ -125,6 +130,7 @@ class AutomationHost(
         headphones.stop()
         wifi.stop()
         bluetooth.stop()
+        placeSource.stop()
         alarms.cancel()
     }
 
@@ -133,14 +139,32 @@ class AutomationHost(
      *
      * Handed to `AutomationToolGateway`, which saves a rule it cannot serve and
      * reports it **dormant** rather than pretending it is live. `place` is
-     * absent because no geofence source is built yet — see the architecture
-     * notes on why that needs a dependency decision first.
+     * served once location access all the time is granted (see
+     * [AutomationPlaceSource]).
      */
     fun supportedTriggers(): Set<AutomationTriggerKind> = buildSet {
         add(AutomationTriggerKind.SCHEDULE)
         add(AutomationTriggerKind.DEVICE_STATE)
         add(AutomationTriggerKind.MANUAL)
         if (AutomationNotificationListener.isEnabled(context)) add(AutomationTriggerKind.NOTIFICATION)
+        if (places != null && placeSource.permitted()) add(AutomationTriggerKind.PLACE)
+    }
+
+    /** Places the phone is inside now. Empty before the first usable fix. */
+    fun insidePlaces(): Set<String> = placeTracker.current
+
+    /** Last known (latitude, longitude), for saving the current place. */
+    fun currentLocation(): Pair<Double, Double>? = placeSource.lastKnown()?.let { it.latitude to it.longitude }
+
+    /** Starts location updates once places exist and location access all the time is granted. */
+    private fun startPlaces() {
+        val store = places ?: return
+        if (store.all().isEmpty()) { placeSource.stop(); return }
+        placeSource.start { fix ->
+            val changes = placeTracker.onFix(store.all(), fix.latitude, fix.longitude, if (fix.hasAccuracy()) fix.accuracy else Float.MAX_VALUE)
+            val now = ZonedDateTime.now(zone())
+            changes.forEach { (name, transition) -> onEvent(AutomationEvent.Place(name, transition, now)) }
+        }
     }
 
     /** True when the clock can be trusted to the minute rather than to the hour. */
@@ -208,15 +232,17 @@ class AutomationHost(
     fun rearm() {
         val next = AutomationWakeups.nextRunAt(library.all(), ZonedDateTime.now(zone()), history)
         if (next == null) alarms.cancel() else alarms.armFor(next)
+        // A new place or a new grant takes effect here, not at the next restart.
+        if (started) runCatching { startPlaces() }
     }
 
     private fun snapshot(now: ZonedDateTime): AutomationContext {
         val devices = deviceSnapshot()
         return AutomationContext(
         now = now,
-        // No geofence source yet, so nothing is ever inside a place and an
+        // Before the first usable fix nothing is inside a place, so an
         // `at_place` condition is false rather than quietly true.
-        places = emptySet(),
+        places = placeTracker.current,
         deviceState = devices.states,
         userReachable = userReachable(),
         agentAvailable = agentAvailable(),

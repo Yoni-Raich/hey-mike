@@ -274,9 +274,18 @@ class AgentGraph(private val app: Application) {
     val knowledge = KnowledgeStore(KnowledgeStore.directoryIn(runtime.homeDirectory))
     val knowledgeTools = KnowledgeToolGateway(knowledge)
     val runtimePermissions = RuntimePermissionBroker(app)
-    val capabilityTools = AndroidCapabilityTools(app) { requested ->
-        runtimePermissions.request(requested)
-    }
+    /** Live notifications and media sessions, read through the automations listener. */
+    private val notificationAccess = dev.androidagent.automations.AndroidNotificationAccess(app)
+    val capabilityTools = AndroidCapabilityTools(
+        app,
+        requestRuntimePermissions = { requested -> runtimePermissions.request(requested) },
+        notifications = notificationAccess,
+        media = notificationAccess,
+        // SMS, calls and notification replies leave the phone: same approval as a chat-app send.
+        authorizeSend = { request, dispatch -> runCoordinator.authorizeSend(request, dispatch) },
+        // Settings writes, event deletes and notification action buttons.
+        authorizeChange = { request, dispatch -> runCoordinator.authorizeLocalIntent(request, dispatch) },
+    )
     private val workflowCalls = WorkflowCallRegistry(
         listOf(
             WorkflowCallMetadata(
@@ -285,17 +294,24 @@ class AgentGraph(private val app: Application) {
             ),
             WorkflowCallMetadata(
                 name = "calendar",
-                readOnlyOperations = setOf("permission_status", "list", "get"),
+                readOnlyOperations = setOf("permission_status", "list", "get", "calendars"),
+            ),
+            WorkflowCallMetadata(
+                name = dev.androidagent.devicetools.SystemPolicy.TOOL,
+                readOnlyOperations = dev.androidagent.devicetools.SystemPolicy.READ_ONLY,
             ),
             WorkflowCallMetadata(
                 name = "files_media",
                 readOnlyOperations = setOf(
                     "permission_status", "list", "search", "info", "ws_list", "ws_read_text",
+                    "folders", "folder_list",
                 ),
             ),
             WorkflowCallMetadata(
                 name = "communications",
-                readOnlyOperations = setOf("notification_access_status"),
+                readOnlyOperations = setOf(
+                    "notification_access_status", "list_notifications", "read_sms", "read_call_log",
+                ),
             ),
             WorkflowCallMetadata(
                 name = "apps_settings",
@@ -331,6 +347,8 @@ class AgentGraph(private val app: Application) {
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
     /** Read by the panel to say when each rule last ran; written only by the host. */
     val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
+    /** Named places for place triggers. */
+    val automationPlaces = dev.androidagent.core.AutomationPlaces(dev.androidagent.core.AutomationPlaces.fileIn(runtime.homeDirectory))
     private val automationActions = AndroidAutomationActions(
         context = app,
         coordinator = { runCoordinator },
@@ -361,6 +379,9 @@ class AgentGraph(private val app: Application) {
         deviceState = { if (::automationHost.isInitialized) automationHost.readDeviceState() else emptyMap() },
         supportedDeviceStates = { if (::automationHost.isInitialized) automationHost.supportedDeviceStates() else emptySet() },
         liveDeviceSnapshot = { if (::automationHost.isInitialized) automationHost.deviceSnapshot() else dev.androidagent.core.AutomationDeviceSnapshot() },
+        places = automationPlaces,
+        currentLocation = { if (::automationHost.isInitialized) automationHost.currentLocation() else null },
+        insidePlaces = { if (::automationHost.isInitialized) automationHost.insidePlaces() else emptySet() },
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
@@ -587,6 +608,7 @@ class AgentGraph(private val app: Application) {
             actions = automationActions,
             scope = scope,
             agentAvailable = { runCoordinator.available.value },
+            places = automationPlaces,
         )
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.

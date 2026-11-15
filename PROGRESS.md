@@ -1,5 +1,38 @@
 # Progress
 
+### Deep device control - 2026-11-15
+
+Base: origin/dev 6c3a3482. Adds notification reading, reply, press and
+dismiss; SMS and call-log reading; direct SMS and calls; contact and calendar
+writes; and the new `system_controls` tool (see ARCHITECTURE "Deep device
+control").
+
+Checks: `:device-tools:test :core:test :automations:test` passed, including 12
+new `DeepControlTest` cases (approval gates, denied sends, permission and
+grant_missing paths). `:app:assembleDevDebug :app:lintDevDebug` and the app
+unit tests passed. `git diff --check` passed.
+
+Not tested: nothing ran on a phone. The requested Xiaomi test could not start:
+`adb devices -l` listed no device. Unproven on hardware: a real notification
+reply, SMS send and call, provider writes, DND and write-settings grants,
+background clipboard and location, media session control, and HyperOS
+behaviour.
+
+Second part, same branch: share-to-Mike, a Quick Settings tile, launcher
+shortcuts, SAF folder access (`folders`, `pick_folder`, `folder_list`,
+`folder_import`, `folder_export`) and place triggers with background location
+(`automation_rule` modes `places`, `save_place`, `delete_place`).
+
+Checks: `gradlew.bat :core:test :device-tools:test
+:automations:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon` passed. New tests: `FolderAccessTest` 4,
+`AutomationPlacesTest` 4, `SharedContentTest` 1, all passing. `git diff
+--check` passed.
+
+Not tested: none of it on a phone (no ADB device). Unproven: share grants
+across tasks from real apps, the tile and shortcuts on a launcher, SAF trees
+on HyperOS, real location fixes and their battery cost, and the "Allow all the
+time" grant flow.
 ### Dev launcher badge rebuilt from current dev - 2026-11-13
 
 Base: origin/dev 2d08bd89, which includes Manager removal PR #160 and regular
