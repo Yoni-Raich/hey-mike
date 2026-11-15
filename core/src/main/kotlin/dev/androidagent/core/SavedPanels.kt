@@ -218,8 +218,12 @@ class PanelHost(
     /** Why a tool call may not be bound right now (an unknown tool), or null. */
     private val checkCall: (String, JsonObject) -> String? = { _, _ -> null },
     private val clock: () -> Long = System::currentTimeMillis,
-    /** True while any run is in visible control; approval waits until it ends. */
-    private val controlling: () -> Boolean = { false },
+    /**
+     * True while any run on the phone is active. Approval waits until none is,
+     * so Mike can never be the one who taps Approve: he is told to end his
+     * turn after proposing, and nothing of his runs while the user approves.
+     */
+    private val runActive: () -> Boolean = { false },
     /** False while the screen is off: live values are not read then. */
     private val screenOn: () -> Boolean = { true },
     private val io: CoroutineDispatcher = Dispatchers.IO,
@@ -308,7 +312,7 @@ class PanelHost(
     suspend fun approve(id: String): String? {
         val saved = get(id) ?: return "This panel is gone."
         if (saved.status != SavedPanel.Status.PENDING) return "This panel is not waiting for approval."
-        if (controlling()) return "Mike is controlling the screen. Approve when he is done."
+        if (runActive()) return "Mike is still working. Approve when his run has ended."
         val panel = parse(id, saved.arguments).getOrElse { error ->
             val reason = "It no longer passes the checks: ${error.message}"
             update(id) { it.copy(panel = null, blocked = reason) }

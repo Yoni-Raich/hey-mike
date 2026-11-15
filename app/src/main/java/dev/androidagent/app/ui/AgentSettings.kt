@@ -348,6 +348,13 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
             summary = if (state.sendGrants.isEmpty()) "Every message asks first" else "${state.sendGrants.size} always allowed",
             onClick = { onOpen(SettingsRoute.SEND_APPROVALS) },
         )
+        val context = androidx.compose.ui.platform.LocalContext.current
+        SettingsHubRow(
+            icon = Icons.Outlined.PictureInPictureAlt,
+            title = "Saved panels",
+            summary = "Floating cards, notifications and widgets Mike made",
+            onClick = { context.startActivity(dev.androidagent.app.panels.SavedPanelsActivity.intent(context, null)) },
+        )
         SettingsHubRow(
             icon = SettingsRoute.MODEL.icon(),
             title = SettingsRoute.MODEL.title(),

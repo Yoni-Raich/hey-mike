@@ -71,7 +71,7 @@ class PanelHostTest {
         val calls = mutableListOf<Pair<String, JsonObject>>()
         var now = 1_000_000L
         var refuse: String? = null
-        var controlling = false
+        var runActive = false
         var reply: (JsonObject) -> String = { """{"ok":true,"done":true}""" }
         private val dispatcher = StandardTestDispatcher(test.testScheduler)
         fun host() = PanelHost(
@@ -79,7 +79,7 @@ class PanelHostTest {
             invoke = { tool, args -> calls += tool to args; ToolResult(reply(args)) },
             checkCall = { _, _ -> refuse },
             clock = { now },
-            controlling = { controlling },
+            runActive = { runActive },
             io = dispatcher,
         )
     }
@@ -125,14 +125,14 @@ class PanelHostTest {
         assertTrue(rig.store.messages.single().text.startsWith("system_controls:"))
     }
 
-    @Test fun approvalWaitsWhileMikeControlsTheScreen() = runTest {
+    @Test fun approvalWaitsWhileAnyRunIsActive() = runTest {
         val rig = Rig(this)
         val host = rig.host()
         val panelId = id(host.propose("one", torch { put("surface", "notification") }))
-        rig.controlling = true
+        rig.runActive = true
         assertNotNull(host.approve(panelId))
         assertEquals(SavedPanel.Status.PENDING, host.get(panelId)!!.status)
-        rig.controlling = false
+        rig.runActive = false
         assertNull(host.approve(panelId))
         assertNotNull("approving twice is refused", host.approve(panelId))
     }
@@ -322,5 +322,81 @@ class PanelHostTest {
         assertEquals(1, rig.calls.size)
         assertTrue(rig.store.traces.isEmpty())
         assertTrue(rig.store.messages.isEmpty())
+    }
+
+    @Test fun theMusicBannerInTheSkillPassesTheChecksAndWaitsForApproval() = runTest {
+        val skill = File("../app/src/main/assets/agent_stack/skills/agent-ui/SKILL.md").readText()
+        val after = skill.substringAfter("### Music banner")
+        val json = after.substringAfter("```json").substringBefore("```")
+        val rig = Rig(this)
+        rig.reply = { args ->
+            if (args["operation"]?.jsonPrimitive?.content == "media_status") """{"ok":true,"current":{"title":"Blue","state":"playing"}}"""
+            else """{"ok":true,"done":true}"""
+        }
+        val host = rig.host()
+        val result = host.propose("one", Json.parseToJsonElement(json).jsonObject)
+        assertTrue(result.text, result.success)
+        assertEquals("awaiting_approval", status(result))
+        val panelId = id(result)
+        assertNull(host.approve(panelId))
+        host.setShown(panelId, true)
+        host.tick()
+        val face = PanelFace.of(host.get(panelId)!!, host.live.value[panelId])!!
+        assertEquals(PanelSurface.NOTIFICATION, face.surface)
+        assertEquals("Playing: Blue", face.summary)
+        assertEquals(listOf("back", "play", "ahead"), face.tiles.map { it.actionId })
+        assertTrue(host.runAction(panelId, "ahead"))
+        runCurrent()
+        // A tap is followed by a fresh read of the live values, so find the tap itself.
+        val seek = rig.calls.map { it.second }.single { it["operation"]!!.jsonPrimitive.content == "media_control" }
+        assertEquals("seek_by", seek["command"]!!.jsonPrimitive.content)
+        assertEquals("10000", seek["offset_ms"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aFaceShowsOnlyActiveShownPanelsWithTheirLiveState() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        val panelId = id(host.propose("one", buildJsonObject {
+            put("title", "Room"); put("surface", "widget")
+            put("blocks", buildJsonArray {
+                add(buildJsonObject { put("type", "text"); put("text", "Evening") })
+                add(buildJsonObject {
+                    put("type", "status"); put("label", "Torch")
+                    put("bind", buildJsonObject { put("tool", "system_controls"); put("arguments", system("status")); put("path", "torch") })
+                })
+                add(buildJsonObject {
+                    put("type", "action"); put("id", "torch"); put("label", "Torch"); put("tool", "system_controls")
+                    put("arguments", system("torch") { put("on", true) }); put("off_arguments", system("torch") { put("on", false) })
+                })
+            })
+        }))
+        assertNull("pending has no face", PanelFace.of(host.get(panelId)!!, null))
+        assertTrue(PanelFace.on(PanelSurface.WIDGET, host.panels.value, host.live.value).isEmpty())
+        assertNull(host.approve(panelId))
+        val face = PanelFace.of(host.get(panelId)!!, null)!!
+        assertEquals(PanelFace.Row.Note("Evening", Tone.NEUTRAL), face.rows[0])
+        assertEquals("a bound status with nothing read yet", "-", face.readings.single().value)
+        assertEquals(false, face.tiles.single().on)
+        assertEquals(1, PanelFace.on(PanelSurface.WIDGET, host.panels.value, host.live.value).size)
+        assertTrue(PanelFace.on(PanelSurface.NOTIFICATION, host.panels.value, host.live.value).isEmpty())
+
+        rig.reply = { """{"ok":false,"message":"No torch here."}""" }
+        assertTrue(host.runAction(panelId, "torch"))
+        runCurrent()
+        val tile = PanelFace.of(host.get(panelId)!!, host.live.value[panelId])!!.tiles.single()
+        assertFalse(tile.running)
+        assertNotNull("a failed tap says why", tile.problem)
+
+        host.setHidden(panelId, true)
+        assertTrue("hidden panels are skipped", PanelFace.on(PanelSurface.WIDGET, host.panels.value, host.live.value).isEmpty())
+    }
+
+    @Test fun aTrackSnapsToItsSteps() {
+        val track = PanelFace.Row.Track("v", "Volume", 0.0, 100.0, 5.0, 42.0, "42")
+        assertEquals(20, track.intervals)
+        assertEquals(8, track.progress)
+        assertEquals(40.0, track.valueAt(8), 0.0)
+        assertEquals(100.0, track.valueAt(99), 0.0)
+        assertEquals(0.0, track.valueAt(-3), 0.0)
     }
 }

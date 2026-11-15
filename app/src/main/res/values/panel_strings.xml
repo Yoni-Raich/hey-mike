@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="panel_widget_name">Mike · Panel</string>
+    <string name="panel_widget_description">A panel you saved from Mike, with its buttons</string>
+    <string name="panel_widget_unbound">Add a widget panel from Hey Mike, Settings, Saved panels. You can remove this one.</string>
+    <string name="panel_widget_removed">This panel was removed. Remove the widget from the home screen.</string>
+    <string name="panel_widget_hidden">This panel is hidden. Show it again in Hey Mike, Saved panels.</string>
+    <string name="panel_widget_unsupported">Part of this panel cannot be drawn on a widget.</string>
+</resources>
