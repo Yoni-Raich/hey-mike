@@ -513,6 +513,8 @@ data class RunState(
     val phase: RunPhase = RunPhase.IDLE, val sessionId: String? = null, val status: String = "Ready", val controlling: Boolean = false, val approval: EngineEvent.Approval? = null, val toolName: String? = null,
     /** What the agent asked with `ask_user` and is waiting on. */
     val question: UserQuestion? = null,
+    /** The panel Mike showed with `show_ui` and is waiting on. */
+    val panel: AgentPanel? = null,
     /** This source screen shows a child run; its own composer can start a new turn. */
     val delegated: Boolean = false,
     /** False when local Stop could not confirm remote interruption or connection shutdown. */

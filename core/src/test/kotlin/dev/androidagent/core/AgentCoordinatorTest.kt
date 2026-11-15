@@ -1060,6 +1060,78 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    private fun loginPanel() = buildJsonObject {
+        put("title", "Sign in to the shop")
+        put("blocks", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject { put("type", "field"); put("id", "email"); put("label", "Email"); put("kind", "email"); put("required", true) })
+            add(buildJsonObject { put("type", "field"); put("id", "pw"); put("label", "Password"); put("kind", "secret") })
+            add(buildJsonObject { put("type", "control"); put("control", "wireless_adb") })
+        })
+        put("buttons", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject { put("id", "go"); put("label", "Sign in") })
+            add(buildJsonObject { put("id", "no"); put("label", "Not now"); put("style", "cancel") })
+        })
+    }
+
+    @Test fun aPanelReturnsItsValuesAndKeepsSecretsOutOfHistoryAndTrace() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Order my usual")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertEquals("Sign in to the shop", panel.title)
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        // A required field left empty is not a submission.
+        assertFalse(rig.coordinator.answerPanel(panel.id, "go", mapOf("pw" to "hunter2")))
+        assertFalse(rig.coordinator.answerPanel(panel.id, "nope", mapOf("email" to "a@b.c")))
+        assertTrue(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "hunter2", "extra" to "x")))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("go", result["button"]!!.jsonPrimitive.content)
+        val values = result["values"]!!.jsonObject
+        assertEquals("hunter2", values["pw"]!!.jsonPrimitive.content)
+        assertNull(values["extra"])
+        assertEquals(listOf("wireless_adb"), result["controls"]!!.let { it as kotlinx.serialization.json.JsonArray }.map { it.jsonPrimitive.content })
+        assertFalse(rig.store.messages.any { it.text.contains("hunter2") })
+        assertTrue(rig.store.messages.last().text.contains("Email: a@b.c"))
+        assertFalse(rig.store.traces.any { it.toString().contains("hunter2") })
+        rig.close()
+    }
+
+    @Test fun typingWhileAPanelWaitsSetsItAside() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Order")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        assertNotNull(rig.coordinator.state.value.panel)
+        rig.coordinator.steer("use my other account")
+        runCurrent()
+        assertTrue(rig.engine.steers.isEmpty())
+        assertNull(rig.coordinator.state.value.panel)
+        val dismissed = Json.parseToJsonElement(rig.engine.answers.last().text).jsonObject
+        assertEquals("dismissed", dismissed["errorType"]!!.jsonPrimitive.content)
+        assertEquals("use my other account", dismissed["typed"]!!.jsonPrimitive.content)
+        rig.close()
+    }
+
+    @Test fun aBadPanelIsRefusedWithAReason() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "x")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", buildJsonObject {
+            put("title", "T")
+            put("blocks", kotlinx.serialization.json.buildJsonArray { add(buildJsonObject { put("type", "control"); put("control", "root_shell") }) })
+        }, "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertTrue(rig.engine.answers.single().text.contains("bad_panel"))
+        rig.close()
+    }
+
     @Test fun stoppingARunTakesItsQuestionDown() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Plan")

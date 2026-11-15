@@ -447,6 +447,8 @@ data class AgentUiActions(
     val onApproval: (requestId: String, allow: Boolean) -> Unit = { _, _ -> },
     /** The user's answer to an `ask_user` question; null when they skip it. */
     val onAnswerQuestion: (questionId: String, answer: String?) -> Unit = { _, _ -> },
+    /** A `show_ui` panel's answer: the button tapped (null when closed) and what was filled in. */
+    val onAnswerPanel: (panelId: String, button: String?, values: Map<String, String>) -> Unit = { _, _, _ -> },
     /** Allow a send and remember it for this contact or this whole app. */
     val onApproveAlways: (requestId: String, scope: dev.androidagent.core.ApprovalScope) -> Unit = { _, _ -> },
     val onRemoveSendGrant: (dev.androidagent.core.SendGrant) -> Unit = {},

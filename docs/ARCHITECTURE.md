@@ -4,6 +4,33 @@ Dev launcher resources reuse the release foreground and monochrome artwork,
 with a small DEV badge in the lower-right corner. The override lives only in
 `app/src/dev/res`; Prod keeps the release icon.
 
+## Agent UI panels (`show_ui`) - 2026-11-15
+
+Mike can put a small interactive panel in the chat with the chat tool
+`show_ui` when the user has to step in: fields for a website (email, name, a
+code), a readout with new values to apply, or one of the app's own settings.
+
+- Blocks are a closed set the app draws (`AgentPanel.kt`): text, status,
+  field (text, email, secret, number, url, phone, multiline), toggle, choice,
+  control. Parsing refuses anything else with a reason the model can fix.
+- `control` blocks are app-owned live settings, a closed enum
+  (`PanelControl`). The card renders the same composables as Settings, so a
+  control changes the real setting directly. The model never supplies tool
+  calls for buttons. Phone settings outside the app go the other way: values
+  come back to Mike, and Mike calls the gated tool (`system_controls` etc.).
+- `add_computer` is a compact form that saves the computer on the phone. The
+  password never goes to the engine.
+- Secret field values reach the engine but are masked (`••••`) in chat history
+  and traces. The engine's own rollout file may still hold them; that is
+  outside the app's history and is a known gap.
+- One panel or question waits at a time (tool calls are serialized per run;
+  `ask_user` also refuses with `busy`). Typing in the composer while a panel
+  waits dismisses it and returns `dismissed` with the typed text. Closing
+  returns `closed`. The 8-minute ask timeout applies.
+- A notification that opens the chat is posted when the panel is not on screen;
+  a panel cannot be answered from the notification.
+- Child chats and computer tasks report a waiting panel as `waiting_for_user`.
+
 ## Account connections for regular chats - 2026-11-12
 
 Settings > Account connections exposes Gmail and other account connectors for

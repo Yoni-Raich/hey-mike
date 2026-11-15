@@ -1226,7 +1226,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Words for the open chat's run, which may not be the only one running. */
     private fun answerRunGate(id: String, text: String): Boolean {
         val own = graph.coordinator.stateOf(id)
-        val delegatedGate = own?.approval == null && own?.question == null
+        val delegatedGate = own?.approval == null && own?.question == null && own?.panel == null
         val handled = graph.coordinator.answerApprovalByReply(text, sessionId = id) ||
             graph.coordinator.answerQuestionByReply(text, sessionId = id)
         if (handled && delegatedGate) task {

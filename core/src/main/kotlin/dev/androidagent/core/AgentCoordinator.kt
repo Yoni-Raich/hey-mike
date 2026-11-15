@@ -161,6 +161,7 @@ class AgentCoordinator(
     private var pendingLocalApproval: PendingLocalApproval? = null
     /** The `ask_user` call waiting for the user. Changed only under [lifecycleLock]. */
     private var pendingQuestion: PendingQuestion? = null
+    private var pendingPanel: PendingPanel? = null
     /** Where this run's tool calls work; the gateway is armed with it when the phone is taken. */
     private var runWorkspace: File? = null
     /** This run holds [PhoneShare.lease] and armed the gateway. Changed only under [lifecycleLock]. */
@@ -656,10 +657,36 @@ class AgentCoordinator(
         }
     }
 
-    /** Take [reply] as the answer to the waiting question, if one waits. */
+    /** Take [reply] as the answer to the waiting question, if one waits; or as words that set an open panel aside. */
     fun answerQuestionByReply(reply: String): Boolean {
-        val id = synchronized(lifecycleLock) { pendingQuestion?.question?.id } ?: return false
+        val id = synchronized(lifecycleLock) { pendingQuestion?.question?.id }
+            ?: return dismissPanelByReply(reply)
         return answerQuestion(id, reply)
+    }
+
+    /**
+     * What the user did with the `show_ui` panel waiting in this chat.
+     *
+     * @param button the pressed button's id, or null when the user closed it.
+     * @return false when [panelId] is not the panel waiting, or the values do
+     *   not fit it (a required field empty, an unknown option).
+     */
+    fun answerPanel(panelId: String, button: String?, values: Map<String, String>): Boolean {
+        synchronized(lifecycleLock) {
+            val pending = pendingPanel ?: return false
+            if (pending.panel.id != panelId || state.value.phase == RunPhase.STOPPING) return false
+            val reply = pending.panel.accept(button, values) ?: return false
+            return pending.reply.complete(reply)
+        }
+    }
+
+    private fun dismissPanelByReply(reply: String): Boolean {
+        val text = reply.trim().takeIf(String::isNotEmpty) ?: return false
+        synchronized(lifecycleLock) {
+            val pending = pendingPanel ?: return false
+            if (state.value.phase == RunPhase.STOPPING) return false
+            return pending.reply.complete(PanelReply(null, pending.panel.accept(null, emptyMap())?.values.orEmpty(), typed = text))
+        }
     }
 
     fun steer(prompt: String) = steer(prompt, userReply = true)
@@ -711,7 +738,7 @@ class AgentCoordinator(
         val request = synchronized(lifecycleLock) {
             val current = state.value
             if (!allowed() || voiceMode || !current.active || current.phase in setOf(RunPhase.STARTING, RunPhase.STOPPING) ||
-                current.approval != null || current.question != null || thread == null || turn == null) null
+                current.approval != null || current.question != null || current.panel != null || thread == null || turn == null) null
             else SteerRequest(epoch.get(), current.sessionId, thread!!, turn!!, prompt)
         } ?: return false
         val delivered = CompletableDeferred<Boolean>()
@@ -1569,10 +1596,16 @@ class AgentCoordinator(
         toolCalls++
         val started = nowNanos()
         val waitedBefore = approvalNanos.get()
+        // A panel's secret values go to the engine but never into the trace.
+        var traceText: String? = null
         val result = try {
             ensureCurrentTurn(token, threadId, turnId)
             when (event.name) {
                 ChatTools.ASK -> askUser(token, sessionId, threadId, turnId, event.arguments)
+                AgentPanels.NAME -> showPanel(token, sessionId, threadId, turnId, event.arguments).let { (real, masked) ->
+                    traceText = masked
+                    real
+                }
                 ChatTools.TITLE -> {
                     ensureCurrentTurn(token, threadId, turnId)
                     val title = event.arguments["title"]?.let { it as? kotlinx.serialization.json.JsonPrimitive }
@@ -1607,7 +1640,7 @@ class AgentCoordinator(
             put("requestId", event.requestId)
             put("name", event.name)
             put("success", result.success)
-            put("text", result.text)
+            put("text", traceText ?: result.text)
             put("elapsedMs", (nowNanos() - started).coerceAtLeast(0) / 1_000_000)
         }) }
         if (!isCurrentTurn(token, threadId, turnId)) return
@@ -1658,6 +1691,9 @@ class AgentCoordinator(
         }
         val pending = synchronized(lifecycleLock) {
             if (!isCurrentTurnLocked(token, threadId, turnId)) throw CancellationException("Run stopped")
+            if (pendingPanel != null) {
+                return toolRefusal("busy", "A panel already waits for the user. One question or panel at a time.")
+            }
             PendingQuestion(question, CompletableDeferred()).also {
                 pendingQuestion = it
                 mutableState.value = state.value.copy(
@@ -1697,6 +1733,61 @@ class AgentCoordinator(
                 ChatTools.answered(answer)
             }
         }
+    }
+
+    /**
+     * Show a `show_ui` panel and wait, as [askUser] waits. Returns the
+     * engine's result and the same result with secrets masked, for the trace.
+     */
+    private suspend fun showPanel(
+        token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject,
+    ): Pair<ToolResult, String> {
+        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments).getOrElse {
+            val refusal = toolRefusal("bad_panel", it.message ?: "The panel could not be read.")
+            return refusal to refusal.text
+        }
+        val pending = synchronized(lifecycleLock) {
+            if (!isCurrentTurnLocked(token, threadId, turnId)) throw CancellationException("Run stopped")
+            if (pendingPanel != null || pendingQuestion != null) {
+                val busy = toolRefusal("busy", "Something already waits for the user. One question or panel at a time.")
+                return busy to busy.text
+            }
+            PendingPanel(panel, CompletableDeferred()).also {
+                pendingPanel = it
+                mutableState.value = state.value.copy(
+                    phase = RunPhase.TOOL, controlling = false, status = "Waiting for you",
+                    toolName = AgentPanels.NAME, panel = panel,
+                )
+                overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Waiting for you"))
+            }
+        }
+        val askedAt = nowNanos()
+        val reply = try {
+            sessions.append(message(sessionId, "assistant", panel.title))
+            withTimeoutOrNull(ChatTools.ASK_TIMEOUT_MS) { pending.reply.await() }
+        } finally {
+            approvalNanos.addAndGet(nowNanos() - askedAt)
+            synchronized(lifecycleLock) {
+                if (pendingPanel === pending) pendingPanel = null
+                if (state.value.panel?.id == panel.id) mutableState.value = state.value.copy(panel = null)
+            }
+        }
+        ensureCurrentTurn(token, threadId, turnId)
+        if (reply == null) {
+            val none = toolRefusal(
+                "no_answer",
+                "Nobody used the panel within ${ChatTools.ASK_TIMEOUT_MS / 60_000} minutes and it is closed. Do not show it " +
+                    "again now: say what you need and end your turn.",
+            )
+            return none to none.text
+        }
+        val said = reply.typed ?: AgentPanels.summary(panel, reply)
+        if (said.isNotBlank()) {
+            sessions.append(message(sessionId, "user", said))
+            trace(sessionId, "user", buildJsonObject { put("text", said); put("source", "panel_reply") })
+        }
+        val real = AgentPanels.result(panel, reply, mask = false)
+        return ToolResult(real, success = reply.typed == null && reply.button != null) to AgentPanels.result(panel, reply, mask = true)
     }
 
     /** Bring each file into the chat's folder and show them as one message from Mike. */
@@ -2117,6 +2208,7 @@ class AgentCoordinator(
     /** [answer] is null when the user chose not to answer. */
     private class QuestionReply(val answer: String?)
     private class PendingQuestion(val question: UserQuestion, val reply: CompletableDeferred<QuestionReply>)
+    private class PendingPanel(val panel: AgentPanel, val reply: CompletableDeferred<PanelReply>)
     private data class AssistantTextSnapshot(val revision: Long, val text: String)
     private data class AssistantFinal(val id: String?, val text: String, val outcome: String, val flush: Job?, val device: Boolean)
     private data class StopContext(

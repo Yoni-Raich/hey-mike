@@ -272,6 +272,14 @@ internal fun VoiceModeLayer(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
+            state.runState.panel?.let { panel ->
+                AgentPanelCard(
+                    panel = panel,
+                    state = state,
+                    actions = actions,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             VoiceStatus(voice, state.voiceMuted, Modifier.voiceStage(motion.status, lift = 10.dp))
             if (motion.shown) {
                 VoiceChildAgents(state, actions)

@@ -68,7 +68,7 @@ internal object SessionNotices {
 
     private fun line(state: RunState): String = when {
         state.approval != null -> "Waiting for your approval"
-        state.question != null -> "Waiting for your answer"
+        state.question != null || state.panel != null -> "Waiting for your answer"
         else -> state.status.ifBlank { "Working" }
     }
 
