@@ -87,11 +87,141 @@ value filled in. Live sliders count toward the 12-action limit, and at most
 1000 steps are allowed. A failed call leaves the applied value unchanged and
 the thumb moves back.
 
-Saving a panel for later is not built. A panel's calls only run inside the
-turn that showed it (current-turn check, device lease, the run's workspace).
-A saved panel would need a model-free run context, its own approval and
-storage rules, and a fresh tool check on every reopen. The closest existing
-path is a saved workflow (`workflow_runner`) that opens the panel.
+### Panels outside the chat: surfaces, lifetimes, saved panels - 2026-11-15
+
+`show_ui` takes two optional fields. `surface` is `chat` (the default),
+`floating` (a card over any app), `widget` (the Mike home-screen widget) or
+`notification` (an ongoing notification). `lifetime` is `turn` (chat only,
+its default), `ttl` with `ttl_seconds` (5 to 86400), or `pinned` (the default
+for widget and notification). A floating card without a lifetime gets a ttl
+of 60 s. A panel without these fields parses
+and runs exactly as before.
+
+| surface | lifetime | runs through | approval |
+| --- | --- | --- | --- |
+| chat | turn only | the turn (`runPanelAction`) | none, as before |
+| floating | ttl up to 60 s | `PanelHost`, model-free | none |
+| floating | ttl over 60 s, or pinned | `PanelHost`, model-free | the user, at save time |
+| widget, notification | ttl or pinned | `PanelHost`, model-free | the user, at save time, always |
+
+A chat panel refuses `ttl` and `pinned`; the other surfaces refuse `turn`.
+A floating panel refuses typed inputs
+(field, toggle, choice, a slider without a tool) and controls: there is
+nowhere to send their values. A panel that outlives the turn (a "detached"
+panel) also refuses buttons, because nobody is waiting for an answer.
+`show_ui` returns at once with its `panelId` and `shown` or
+`awaiting_approval`. A detached panel holds at most 8 blocks. A widget takes
+only text, status and action blocks. A notification takes text and status
+lines and at most 3 actions. Only a floating card takes a live slider.
+
+Security model. A detached panel's taps run with no model turn. Nothing reads
+them before they act, so the defaults are strict:
+
+- **Allowlist.** `PanelAllowlist` in core is the only gate for a model-free
+  call. It allows `system_controls` with `torch`, `volume`, `ringer`, `dnd`,
+  `brightness`, `auto_rotate` and `media_control`. It allows `status` and
+  `media_status` for reads (bindings). Anything else is refused: no screen
+  control, no shell, no input, no sends, no clipboard, location, usage or
+  settings writes. A `{value}` mark is refused in `operation` and `command`,
+  so a slider cannot choose which operation runs. The check runs at parse time
+  on the filled call, again on every load, and again on every tap, on the
+  arguments as they are really sent.
+- **Approval by the user, drawn by the app.** A lasting panel is held in
+  memory as pending and is never live until the user approves it in Saved
+  panels (`SavedPanelsActivity`). The app draws the approval screen from the
+  parsed panel. It lists every call the panel can make, in plain words
+  (`PanelCallWords`) and as the raw JSON. This approval has its own path. It is
+  not an engine approval (`approve(requestId)`), typing in the chat does not
+  answer it, and full access never approves it. Approve is refused while any
+  run or voice session is active, because ADB `input tap` could reach it then
+  (the a11y tools already refuse taps on the app's own windows). Saved panels
+  also sets `filterTouchesWhenObscured`, and floating cards hide while it is
+  open. A pending panel
+  that is not approved is lost when the process dies; Mike can ask again.
+- **Signed store.** Approved panels are saved as one list, signed with an HMAC
+  key in AndroidKeyStore (`KeystoreSavedPanelVault`), as
+  `KeystorePermissionStore` does. The agent's shell runs as the app's uid and
+  can write the file, but it cannot sign. Every removal and expiry rotates the
+  key and re-signs what remains, so an old copy of the file cannot bring back
+  a removed panel. A list that does not verify loads as empty and says so.
+- **Re-check on load and on run.** Each saved panel is stored as its raw
+  `show_ui` arguments and re-parsed on load with the allowlist. A panel that
+  no longer passes is shown in the list as blocked with the reason, and its
+  surface is not drawn. A tap re-reads the verified panel by id and checks the
+  call again.
+- **Intents carry ids only.** Widget and notification taps send a panel id and
+  an action id. The agent can `am broadcast` to the app's own receivers, so
+  arguments are never read from an intent.
+- **A separate gateway.** Model-free calls go through a dedicated
+  `AndroidCapabilityTools` with no send or change approval (`DENY_SEND`,
+  `DENY_CHANGE`). It is armed once and never part of a run's gateway, so a run
+  never arms or revokes it, and it takes no device lease. One active run per
+  phone stays true: a panel tap is not a run.
+- **Logging.** A tap is logged like a panel call: a `tool_call` and
+  `tool_result` trace with `source: saved_panel`, and a `tool` message in the
+  chat that made the panel. A binding read goes to the trace only, on the first
+  read and when the value changes, so a 5 s poll does not fill the chat. If the
+  origin chat is gone, nothing is logged there.
+- **Stop.** Run Stop and the floating Stop keep their meaning. They stop runs
+  and do not touch saved panels. Saved panels are removed in Saved panels (one
+  at a time or Remove all) or with the panel's own close button.
+- **Removal.** Removing a panel closes its floating card and cancels its
+  notification. Android has no API for an app to remove a pinned widget, so
+  the widget is unbound from the panel and redrawn as "Removed". Its taps are
+  refused, and the user deletes it from the home screen.
+
+Live state. A status or action block may carry `bind`: `tool`,
+`arguments`, `path` (dot path into the result, `current.state`) and optional
+`equals` (an action is on when the value equals it) and `format` (`text` or
+`time` for milliseconds). Binds pass the same allowlist as reads. `PanelHost`
+refreshes each distinct read once per interval (`every`, 2 to 300 s, default
+5 s). It refreshes only while a surface shows the panel and the screen is on.
+A notification refreshes at most every 15 s and a widget every 30 s; every
+surface refreshes after a tap. Binding works only on
+detached panels: a turn panel should read the state first.
+
+Media. `media_status` adds `current`, the session `media_control` would act on
+(playing first), and reports a live position extrapolated from the playback
+clock and speed. `media_control` adds `seek_by` with a signed `offset_ms`, at
+most 10 minutes, clamped to the track. This lives in `SystemControlDispatcher`
+on top of the existing session access; no app-specific code is involved.
+
+Surfaces. The floating card is `FloatingPanelOverlay` in `:overlay`, a View
+window that uses the same window type rule as the Stop card. It is hidden
+while a run is in visible control, so it never sits under the agent's taps.
+The widget is one generic RemoteViews widget (`SavedPanelWidgetProvider`).
+It is pinned with `requestPinAppWidget` (one system confirmation) and each
+widget id is bound to one panel id. The notification is an ongoing, silent
+notification with up to 3 action buttons. On the lock screen its buttons work
+without unlocking, but its values are hidden (a public version with the title
+and buttons only). Android 14+ lets the
+user swipe it away; a swipe hides it until it is shown again from Saved
+panels. Approved panels are restored from the verified store when the process
+starts. Quick Settings tiles are not built.
+
+Decisions made while building this (2026-11-15):
+
+- **RemoteViews, not Glance, for the widget.** Glance is not in the Gradle
+  cache, pulls in WorkManager and DataStore, and the usage widget already uses
+  RemoteViews. A panel widget only needs text and tappable tiles.
+- **A widget that cannot be removed says so.** Android cannot remove a pinned
+  widget. A removed panel's widget says "removed"; a widget added from the
+  launcher's picker, not from Saved panels, says how to bind it. The widget-id
+  map is not signed: it can only point at an approved widget panel, and every
+  render and bind checks that again.
+- **Floating cards step aside.** They hide while any run is in visible
+  control, while the app is in front and while Saved panels is open, so they
+  never cover Approve or the agent's own targets.
+- **Lock screen.** Notification buttons run from the lock screen (only
+  allowlisted calls exist); values are private.
+- **Read floors.** Notifications read at most every 15 s and widgets every
+  30 s, so a 2 s `every` cannot keep the radio and CPU busy behind the lock.
+- **Stop does not cancel a panel tap.** A tap is the user's own act, outside
+  any run, through its own gateway. Stop keeps stopping runs only.
+- **Logging.** Every tap is logged. A binding read is logged on the first read
+  and when its value changes, not on every poll.
+- **Close.** The close button on a short floating card removes it; on a lasting
+  one it hides it until it is shown again from Saved panels.
 
 ## Account connections for regular chats - 2026-11-12
 

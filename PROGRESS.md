@@ -1,5 +1,33 @@
 # Progress
 
+### Panels outside the chat - 2026-11-15
+
+Base: feat/agent-panel-native b65e2136, branch feat/agent-panel-surfaces.
+`show_ui` takes `surface` (chat, floating, notification, widget) and
+`lifetime` (turn, ttl, pinned). Panels that outlive the turn run their taps
+with no model turn, through an allowlist, and need the user's approval on an
+app-drawn screen (Settings, Saved panels) unless they are a floating card of
+60 s or less. Live values with `bind`. `media_control seek_by` and
+`media_status current`. A RemoteViews widget, an ongoing notification and a
+floating card in `:overlay` (see ARCHITECTURE "Panels outside the chat").
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug :automations:testDebugUnitTest
+:overlay:testDebugUnitTest --no-daemon` passed (lint 0 errors, no warning in
+the new files); `git diff --check` passed. New tests: `PanelHostTest` 17
+(approval gating, approval refused while a run is active, short floating card
+shown at once and expiring, ttl from approval, expired panels dropped on
+load, re-check on load and on every tap, tampered and rolled-back store,
+remove all, pending cap, a refused shell action, live reads only while shown
+and logged only on change, the skill's music banner parsed from SKILL.md, the
+panel face, slider steps) and `DeepControlTest` seek_by cases.
+
+Not tested: nothing ran on a phone or emulator. The floating card, the
+notification (including lock screen and swipe-away), the widget (pinning,
+binding, the removed state), the Saved panels screen, Keystore signing,
+real media seek and the live reads are all unverified. No screenshot.
+Quick Settings tiles are not built.
+
 ### Native panel style and sliders - 2026-11-15
 
 Base: origin/dev e95a63fa, branch feat/agent-panel-native. `show_ui` panels
