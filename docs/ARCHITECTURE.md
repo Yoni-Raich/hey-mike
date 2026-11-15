@@ -1297,15 +1297,40 @@ these capabilities. `RuntimePermissionBroker` asks only for grants that are
 still missing and makes one Android `RequestMultiplePermissions` request. The
 system dialog is the approval: Hey Mike does not put a second confirmation card
 in front of it. Other special access operations only open a setup screen and do
-not report the access as granted. Notification support is deliberately status
-and setup only — there is no `NotificationListenerService`, so the gateway
-cannot read notification content.
+not report the access as granted. Notification content is now readable: see
+"Deep device control" below.
 
 The gateway shares the normal run revoke boundary and the visible control
 state. Its Android calls live behind `CapabilityPlatform`, while policy and
 dispatch are JVM-testable without a phone. Provider behavior, OEM intent
 handlers and the permission dialog still need physical-device proof.
 
+## Deep device control — 2026-11-15
+
+The user asked on 2026-11-15 for Mike to have as much device control as
+possible. This reverses two earlier limits: the gateway now reads notification
+content, and it can send SMS, place calls and reply to notifications directly.
+
+- `NotificationAccess` and `MediaSessionAccess` are contracts in `:core`,
+  implemented in `:automations` over the existing listener and injected by
+  `AgentApplication`. `:device-tools` stays free of `:automations`.
+- `communications` adds `list_notifications`, `notification_reply`,
+  `notification_press`, `notification_dismiss`, `read_sms`, `read_call_log`,
+  `send_sms` and `place_call`. Contacts add `create`; calendar adds `create`,
+  `delete` and `calendars`.
+- New tool `system_controls` (`SystemControlDispatcher` over `SystemPlatform`):
+  torch, volume, ringer, DND, brightness, screen timeout, auto-rotate,
+  clipboard, last known location, media sessions, usage stats and
+  `get_setting`/`put_setting`.
+- Approval: anything that leaves the phone (`notification_reply`, `send_sms`,
+  `place_call`) goes through `authorizeSend`, the same gate as a chat-app send.
+  Notification action buttons, `calendar delete` and `put_setting` go through
+  `authorizeLocalIntent`. Reads and reversible toggles do not ask.
+- Background ops (no screen lease) are listed in `needsControl`; every new op
+  is also in `WorkflowCallMetadata.readOnlyOperations` when it only reads.
+- Special access (`write_settings`, `notification_policy`, `usage_access`) is
+  never claimed: a missing grant returns `grant_missing` with the
+  `open_special_access` kind to open.
 ## Parallel chats, one phone
 
 Chats run at once, with no cap, as Codex does on a computer: `AgentRuns`

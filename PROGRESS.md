@@ -1,5 +1,22 @@
 # Progress
 
+### Deep device control - 2026-11-15
+
+Base: origin/dev 6c3a3482. Adds notification reading, reply, press and
+dismiss; SMS and call-log reading; direct SMS and calls; contact and calendar
+writes; and the new `system_controls` tool (see ARCHITECTURE "Deep device
+control").
+
+Checks: `:device-tools:test :core:test :automations:test` passed, including 12
+new `DeepControlTest` cases (approval gates, denied sends, permission and
+grant_missing paths). `:app:assembleDevDebug :app:lintDevDebug` and the app
+unit tests passed. `git diff --check` passed.
+
+Not tested: nothing ran on a phone. The requested Xiaomi test could not start:
+`adb devices -l` listed no device. Unproven on hardware: a real notification
+reply, SMS send and call, provider writes, DND and write-settings grants,
+background clipboard and location, media session control, and HyperOS
+behaviour.
 ### Dev launcher badge rebuilt from current dev - 2026-11-13
 
 Base: origin/dev 2d08bd89, which includes Manager removal PR #160 and regular
