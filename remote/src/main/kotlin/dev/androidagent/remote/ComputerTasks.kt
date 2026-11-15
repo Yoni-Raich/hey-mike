@@ -241,7 +241,7 @@ class ComputerTasks(
                         ended && run?.phase == RunPhase.ERROR -> "failed"
                         ended -> "completed"
                         current.status == "cancelling" || id in stopRequested -> "cancelling"
-                        run?.approval != null || run?.question != null -> "waiting_for_user"
+                        run?.approval != null || run?.question != null || run?.panel != null -> "waiting_for_user"
                         else -> "running"
                     }
                     val next = current.copy(threadId = store.binding(sessionId)?.threadId,
@@ -300,10 +300,10 @@ class ComputerTasks(
         val linked = runner().childrenOf(origin)
         val runs = children.sortedBy { task -> linked.indexOf(task.sessionId).takeIf { it >= 0 } ?: Int.MAX_VALUE }
             .mapNotNull { it.sessionId?.let(states::get) }.filter { it.active }
-        val waiting = runs.firstOrNull { it.approval != null || it.question != null }
-        if (waiting != null && own.approval == null && own.question == null) return own.copy(
+        val waiting = runs.firstOrNull { it.approval != null || it.question != null || it.panel != null }
+        if (waiting != null && own.approval == null && own.question == null && own.panel == null) return own.copy(
             phase = if (own.active) own.phase else RunPhase.THINKING,
-            status = waiting.status, approval = waiting.approval, question = waiting.question, delegated = !own.active)
+            status = waiting.status, approval = waiting.approval, question = waiting.question, panel = waiting.panel, delegated = !own.active)
         if (own.active || children.isEmpty()) return own
         return own.copy(phase = RunPhase.THINKING, status = children.first().progress, delegated = true)
     }

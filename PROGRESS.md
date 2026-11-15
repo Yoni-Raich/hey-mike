@@ -1,5 +1,20 @@
 # Progress
 
+### Agent UI panels - 2026-11-15
+
+Base: origin/dev 8820b70a, branch feat/agent-ui. Adds the `show_ui` chat tool,
+the `AgentPanelCard` above the composer (chat and voice mode), live settings
+controls inside a panel, an inline add-computer form, the `agent-ui` skill
+and notices for a waiting panel (see ARCHITECTURE "Agent UI panels").
+
+Checks: `gradlew.bat :core:test :workspace:test :device-tools:test :automations:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug --no-daemon` passed; `git diff --check` passed. New tests: `AgentPanelsTest` 4 and three
+`AgentCoordinatorTest` panel cases (values returned, secrets masked in history
+and trace, typing dismisses, a bad panel is refused).
+
+Not tested: nothing ran on a phone. The card's look, the keyboard flow, the
+live controls inside a panel and the add-computer form are unproven on
+hardware; there are no UI screenshots yet. Not proven with Claude or a
+computer chat, only through the coordinator tests.
 ### Deep device control - 2026-11-15
 
 Base: origin/dev 6c3a3482. Adds notification reading, reply, press and

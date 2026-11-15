@@ -316,7 +316,7 @@ class SessionAgents(
                 else {
                     val live = runner().state(child)
                     if (task.runId != run) fences[task.id] = deliveryFence(child)
-                    task.copy(runId = run, status = if (live?.question != null || live?.approval != null) "waiting_for_user" else "running",
+                    task.copy(runId = run, status = if (live?.question != null || live?.panel != null || live?.approval != null) "waiting_for_user" else "running",
                         progress = live?.status ?: "Update accepted", result = null,
                         question = live?.question?.question, questionOptions = live?.question?.options.orEmpty(),
                         approvalPending = live?.approval != null,
@@ -339,7 +339,7 @@ class SessionAgents(
             // A stale outcome cannot settle a lost update reply on the same run.
             if (task.status == "unknown" && task.runId == run.runId) return@forEach
             val status = when {
-                run.active && (run.approval != null || run.question != null) -> "waiting_for_user"
+                run.active && (run.approval != null || run.question != null || run.panel != null) -> "waiting_for_user"
                 run.active && run.phase == RunPhase.STOPPING -> "stopping"
                 run.active -> "running"
                 run.outcomeUnknown || run.stopConfirmed == false -> "unknown"
@@ -363,7 +363,7 @@ class SessionAgents(
             }
             val latest = history.lastOrNull { it.role in setOf("assistant", "remote_activity", "system") }?.text
             val next = task.copy(runId = run.runId, status = status, progress = run.status,
-                question = run.question?.question, questionOptions = run.question?.options.orEmpty(),
+                question = run.question?.question ?: run.panel?.title, questionOptions = run.question?.options.orEmpty(),
                 approvalPending = run.approval != null,
                 activity = latest?.take(2_000) ?: task.activity,
                 result = if (status != "completed") null else history.drop(history.indexOfLast { it.role == "user" } + 1)

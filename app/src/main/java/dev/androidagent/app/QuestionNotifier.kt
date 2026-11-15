@@ -46,10 +46,16 @@ internal object QuestionNotices {
     fun waiting(states: Map<String, RunState>, owner: (String) -> String, order: (String) -> Int): Map<String, UserQuestion> {
         val waiting = linkedMapOf<String, UserQuestion>()
         states.entries.sortedWith(compareBy({ owner(it.key) != it.key }, { order(it.key) })).forEach { (chat, run) ->
-            run.question?.let { waiting.putIfAbsent(owner(chat), it) }
+            (run.question ?: run.panel?.let(::panelNotice))?.let { waiting.putIfAbsent(owner(chat), it) }
         }
         return waiting
     }
+    /** A `show_ui` panel as a notice: it can only be filled in the chat, so it has no options and no reply field. */
+    fun panelNotice(panel: dev.androidagent.core.AgentPanel): UserQuestion =
+        UserQuestion(panel.id, panel.title + "\nOpen the chat to fill it in.")
+
+    fun isPanel(question: UserQuestion): Boolean = question.id.startsWith("panel-")
+
     /** @return chat id to question, for the questions the user cannot see in the app right now. */
     fun due(waiting: Map<String, UserQuestion>, appInFront: Boolean, openChat: String?): Map<String, UserQuestion> =
         waiting.filterKeys { chat -> !(appInFront && chat == openChat) }
@@ -87,7 +93,7 @@ class QuestionNotifier(
         scope.launch {
             combine(runs.sessionStates, appInFront, openChat) { states, front, open ->
                 val waiting = QuestionNotices.waiting(states, conversationOwner, conversationOrder)
-                val visible = if (front && open != null) runs.sourceState(open).question?.id else null
+                val visible = if (front && open != null) runs.sourceState(open).let { it.question?.id ?: it.panel?.id } else null
                 QuestionNotices.due(waiting, front, open).filterValues { it.id != visible }
             }.distinctUntilChanged().collect { due -> show(due) }
         }
@@ -136,6 +142,7 @@ class QuestionNotifier(
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 ),
             )
+        if (QuestionNotices.isPanel(question)) return builder.build()
         // Android shows three actions at most; the reply field covers every option.
         if (question.options.size <= MAX_OPTION_BUTTONS) {
             question.options.forEachIndexed { index, option ->

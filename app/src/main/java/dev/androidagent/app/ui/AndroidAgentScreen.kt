@@ -389,6 +389,14 @@ fun AndroidAgentScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
+                        state.runState.panel?.let { panel ->
+                            AgentPanelCard(
+                                panel = panel,
+                                state = state,
+                                actions = actions,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
                         Box(Modifier.voiceStage(voiceMode.composer, lift = 56.dp)) {
                             AgentComposer(
                                 state = state,

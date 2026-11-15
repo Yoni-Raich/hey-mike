@@ -120,16 +120,16 @@ class AgentRuns(
     fun sourceState(sessionId: String): RunState {
         val own = stateOf(sessionId) ?: RunState(sessionId = sessionId)
         val children = family(sessionId).drop(1).mapNotNull(::stateOf)
-        val waiting = children.firstOrNull { it.approval != null || it.question != null }
-        if (waiting != null && own.approval == null && own.question == null) return own.copy(
+        val waiting = children.firstOrNull { it.approval != null || it.question != null || it.panel != null }
+        if (waiting != null && own.approval == null && own.question == null && own.panel == null) return own.copy(
             phase = if (own.active) own.phase else RunPhase.THINKING, status = waiting.status,
-            approval = waiting.approval, question = waiting.question, delegated = !own.active)
+            approval = waiting.approval, question = waiting.question, panel = waiting.panel, delegated = !own.active)
         return if (!own.active && children.isNotEmpty()) own.copy(phase = RunPhase.THINKING, status = children.first().status, delegated = true) else own
     }
 
     /** The gate shown in the source chat: its own first, then its oldest waiting child. */
     private fun waitingSlot(sessionId: String): AgentCoordinator? = family(sessionId).firstNotNullOfOrNull { id ->
-        slotFor(id)?.takeIf { it.state.value.approval != null || it.state.value.question != null }
+        slotFor(id)?.takeIf { it.state.value.approval != null || it.state.value.question != null || it.state.value.panel != null }
     }
 
     init { slotList.value = listOf(newSlot()) }
@@ -317,8 +317,12 @@ class AgentRuns(
 
     /** What the user typed in [sessionId] while a question waits there is its answer. */
     fun answerQuestionByReply(reply: String, sessionId: String): Boolean =
-        waitingSlot(sessionId)?.takeIf { it.state.value.question != null }
+        waitingSlot(sessionId)?.takeIf { it.state.value.question != null || it.state.value.panel != null }
             ?.answerQuestionByReply(reply) ?: false
+
+    /** What the user did with a `show_ui` panel; null [button] closes it. */
+    fun answerPanel(panelId: String, button: String?, values: Map<String, String>): Boolean =
+        slots.firstOrNull { it.state.value.panel?.id == panelId }?.answerPanel(panelId, button, values) ?: false
 
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {
         val slot = freeSlot()
