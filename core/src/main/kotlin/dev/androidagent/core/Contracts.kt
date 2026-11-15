@@ -515,6 +515,8 @@ data class RunState(
     val question: UserQuestion? = null,
     /** The panel Mike showed with `show_ui` and is waiting on. */
     val panel: AgentPanel? = null,
+    /** Live state of [panel]'s action tiles, by action id. */
+    val panelActions: Map<String, PanelActionState> = emptyMap(),
     /** This source screen shows a child run; its own composer can start a new turn. */
     val delegated: Boolean = false,
     /** False when local Stop could not confirm remote interruption or connection shutdown. */

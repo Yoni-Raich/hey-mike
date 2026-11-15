@@ -1,5 +1,26 @@
 # Progress
 
+### Live panel actions - 2026-11-15
+
+Branch feat/live-panel-actions. `show_ui` gets `action` tiles that run a
+non-screen tool directly when tapped (a real flashlight switch), plus a new
+panel look: rotating light frame, staggered entry, glowing tiles with
+spin, shake and bounce states (see ARCHITECTURE "Live panel actions").
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:lintDevDebug :app:assembleDevDebug :workspace:test :engine-codex:testDebugUnitTest
+:remote:testDebugUnitTest :engine-claude:test :mcp-loopback:test --no-daemon` passed. New tests: four
+`AgentCoordinatorTest` action cases (runs at once and the panel stays open; a
+failed switch does not move; refused while one runs and after Stop; screen,
+unknown and chat tools refused) and `AgentPanelsTest` for switch parsing.
+
+`system_controls` torch and media are not approval-gated (only `put_setting`
+is), so a flashlight tile runs with no approval card.
+
+Not tested yet: a real tap on a phone (flashlight on and off), the look and
+animations on hardware, RTL with Hebrew labels, an approval prompt while a
+panel is open.
+
 ### Agent UI panels - 2026-11-15
 
 Base: origin/dev 8820b70a, branch feat/agent-ui. Adds the `show_ui` chat tool,

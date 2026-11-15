@@ -22,6 +22,7 @@ package dev.androidagent.core
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
@@ -37,6 +38,9 @@ import kotlinx.serialization.json.put
  * his ordinary, gated tools. [PanelControl] blocks are the exception: they are
  * the app's own live settings controls, drawn and run by the app, so a panel
  * can put a real switch in front of the user without Mike touching it.
+ * [PanelBlock.Action] blocks go one step further: each is bound to a real
+ * device tool call, and a tap runs that call at once, through the same
+ * gateway and approvals as Mike's own calls, with no model turn in between.
  */
 data class AgentPanel(
     val id: String,
@@ -45,6 +49,7 @@ data class AgentPanel(
     val buttons: List<PanelButton>,
 ) {
     val inputs: List<PanelBlock.Input> get() = blocks.filterIsInstance<PanelBlock.Input>()
+    val actions: List<PanelBlock.Action> get() = blocks.filterIsInstance<PanelBlock.Action>()
 
     /** Values the user may submit: known ids only, each trimmed to its cap. */
     fun accept(button: String?, values: Map<String, String>): PanelReply? {
@@ -100,7 +105,39 @@ sealed interface PanelBlock {
 
     /** One of the app's own settings controls, live. */
     data class Control(val control: PanelControl) : PanelBlock
+
+    /**
+     * A tile bound to a real tool call. With [offCall] it is a switch: [call]
+     * turns it on, [offCall] turns it off, [on] is where it starts. Without,
+     * it is a button that runs [call] on each tap. The app runs the call itself.
+     */
+    data class Action(
+        val id: String, val label: String, val detail: String, val icon: String, val accent: PanelAccent,
+        val call: PanelCall, val offCall: PanelCall?, val on: Boolean,
+    ) : PanelBlock {
+        val switch: Boolean get() = offCall != null
+        fun callFor(turnOn: Boolean): PanelCall = if (!turnOn) offCall ?: call else call
+    }
 }
+
+/** A tool call a panel action makes: a device tool's name and its arguments, as Mike would send them. */
+data class PanelCall(val tool: String, val arguments: JsonObject) {
+    /** What the tile shows under its label, so a label cannot hide what a tap does. */
+    val caption: String
+        get() = listOfNotNull(
+            tool,
+            ((arguments["operation"] ?: arguments["action"] ?: arguments["mode"]) as? JsonPrimitive)?.contentOrNull,
+        ).joinToString(" · ")
+}
+
+/** A tile's colour. A closed set, so every panel stays in the app's look. */
+enum class PanelAccent { TEAL, AMBER, VIOLET, ROSE, SKY, LIME }
+
+/** Where one action tile stands. [on] is the switch's state after its last call that worked. */
+data class PanelActionState(val running: Boolean = false, val on: Boolean? = null, val ok: Boolean? = null, val message: String = "", val runs: Int = 0)
+
+/** One tap's outcome, for Mike's tool result. */
+data class PanelActionLog(val id: String, val label: String, val tool: String, val on: Boolean?, val ok: Boolean, val text: String)
 
 /**
  * Mike's own settings that a panel can embed. Each is the same control the
@@ -138,6 +175,14 @@ object AgentPanels {
     const val MAX_LABEL = 120
     const val MAX_VALUE = 2_000
     const val MAX_CHOICES = 12
+    const val MAX_ACTIONS = 12
+    const val MAX_ARGUMENTS = 4_000
+    /** Icon names the app draws on an action tile; anything else gets a bolt. */
+    val ICONS = listOf(
+        "flashlight", "bolt", "wifi", "bluetooth", "volume", "mute", "brightness", "moon", "music", "play", "pause",
+        "next", "alarm", "timer", "phone", "message", "location", "camera", "home", "lock", "power", "star", "heart",
+        "light", "fan", "tv", "car", "rotate", "airplane", "battery", "bell", "sparkle",
+    )
     const val MASK = "••••"
     private val ID = Regex("[A-Za-z][A-Za-z0-9_.-]{0,39}")
 
@@ -148,8 +193,15 @@ object AgentPanels {
             "settings, or to put one of Mike's own settings in front of them (block type control). Blocks: text, " +
             "status (a readout: label, value, tone), field (id, label, kind text|email|secret|number|url|phone|multiline, " +
             "placeholder, value, required), toggle (id, label, value), choice (id, label, options, value), control " +
-            "(control: ${PanelControl.entries.joinToString(", ") { "${it.key} = ${it.about}" }}). A control is live: the " +
-            "user changes the real setting there; check the result afterwards. Buttons (up to $MAX_BUTTONS: id, label, " +
+            "(control: ${PanelControl.entries.joinToString(", ") { "${it.key} = ${it.about}" }}), action (id, label, tool, " +
+            "arguments, optional off_arguments, value, detail, icon, accent). A control is live: the " +
+            "user changes the real setting there; check the result afterwards. An action is a live tile bound to one of " +
+            "your device tools: a tap runs tool with arguments at once, without you, under the same approvals as your own " +
+            "calls. With off_arguments it is a switch: arguments turn it on, off_arguments turn it off, value " +
+            "\"true\"/\"false\" is where it starts (read the real state first). Use actions for remote controls: torch, " +
+            "volume, brightness, do-not-disturb, media keys. Not for tools that read or touch the screen. icon: ${ICONS.joinToString("|")}; " +
+            "accent: ${PanelAccent.entries.joinToString("|") { it.name.lowercase() }}. The panel stays open while the user " +
+            "taps; the result lists every action they ran in actions: do not run those again. Buttons (up to $MAX_BUTTONS: id, label, " +
             "style primary|secondary|danger|cancel) end the panel; without buttons there is one Done. Returns the button " +
             "pressed and every input's value; you then act with your normal tools. A secret field's value reaches you " +
             "but is masked in the chat history. Not for yes/no confirmations: approvals and ask_user do that. One " +
@@ -165,9 +217,23 @@ object AgentPanels {
                         put("properties", buildJsonObject {
                             put("type", buildJsonObject {
                                 put("type", "string")
-                                put("enum", JsonArray(listOf("text", "status", "field", "toggle", "choice", "control").map(::JsonPrimitive)))
+                                put("enum", JsonArray(listOf("text", "status", "field", "toggle", "choice", "control", "action").map(::JsonPrimitive)))
                             })
                             listOf("id", "label", "text", "placeholder", "detail").forEach { put(it, buildJsonObject { put("type", "string") }) }
+                            put("tool", buildJsonObject { put("type", "string"); put("description", "An action's device tool, e.g. system_controls.") })
+                            put("arguments", buildJsonObject {
+                                put("type", "object"); put("additionalProperties", true)
+                                put("description", "An action's tool arguments, exactly as you would call it. For a switch, the ones that turn it on.")
+                            })
+                            put("off_arguments", buildJsonObject {
+                                put("type", "object"); put("additionalProperties", true)
+                                put("description", "Makes the action a switch: the arguments that turn it off.")
+                            })
+                            put("icon", buildJsonObject { put("type", "string"); put("enum", JsonArray(ICONS.map(::JsonPrimitive))) })
+                            put("accent", buildJsonObject {
+                                put("type", "string")
+                                put("enum", JsonArray(PanelAccent.entries.map { JsonPrimitive(it.name.lowercase()) }))
+                            })
                             put("value", buildJsonObject { put("type", "string"); put("description", "Starting value: text, \"true\"/\"false\" for a toggle, or one of a choice's options.") })
                             put("kind", buildJsonObject {
                                 put("type", "string")
@@ -215,8 +281,14 @@ object AgentPanels {
             ?: throw IllegalArgumentException("$what \"$raw\" is not one of ${values.joinToString("|") { it.name.lowercase() }}.")
     }
 
-    /** The panel in [arguments], or a reason the model can fix. */
-    fun parse(id: String, arguments: JsonObject): Result<AgentPanel> = runCatching {
+    /**
+     * The panel in [arguments], or a reason the model can fix. [checkCall]
+     * says why an action's tool call may not be bound, or null when it may.
+     */
+    fun parse(
+        id: String, arguments: JsonObject,
+        checkCall: (String, JsonObject) -> String? = { _, _ -> null },
+    ): Result<AgentPanel> = runCatching {
         val title = arguments.str("title").orEmpty()
         require(title.isNotEmpty()) { "title is empty. Say what the panel is for." }
         val rawBlocks = (arguments["blocks"] as? JsonArray).orEmpty()
@@ -235,6 +307,15 @@ object AgentPanels {
             return value.take(MAX_LABEL)
         }
         val controls = mutableSetOf<PanelControl>()
+        fun call(o: JsonObject, aid: String, key: String): PanelCall? {
+            val raw = o[key] ?: return null
+            val args = raw as? JsonObject ?: throw IllegalArgumentException("Action \"$aid\": $key must be an object.")
+            require(args.toString().length <= MAX_ARGUMENTS) { "Action \"$aid\": $key is too long." }
+            val tool = o.str("tool").orEmpty()
+            require(tool.isNotEmpty()) { "Action \"$aid\" needs a tool." }
+            checkCall(tool, args)?.let { throw IllegalArgumentException("Action \"$aid\": $it") }
+            return PanelCall(tool, args)
+        }
         val blocks = rawBlocks.mapIndexed { index, element ->
             val o = element as? JsonObject ?: throw IllegalArgumentException("Block ${index + 1} is not an object.")
             when (val type = o.str("type")?.lowercase()) {
@@ -271,9 +352,21 @@ object AgentPanels {
                     require(controls.add(control)) { "control \"$key\" is shown twice." }
                     PanelBlock.Control(control)
                 }
-                else -> throw IllegalArgumentException("Block ${index + 1} has type \"$type\"; use text, status, field, toggle, choice or control.")
+                "action" -> {
+                    val aid = inputId(o)
+                    val on = call(o, aid, "arguments") ?: throw IllegalArgumentException("Action \"$aid\" needs arguments.")
+                    PanelBlock.Action(
+                        aid, label(o), o.str("detail").orEmpty().take(MAX_LABEL),
+                        o.str("icon")?.lowercase()?.takeIf { it in ICONS } ?: "bolt",
+                        PanelAccent.entries.firstOrNull { it.name.equals(o.str("accent"), ignoreCase = true) } ?: PanelAccent.TEAL,
+                        on, call(o, aid, "off_arguments"),
+                        (o["value"] as? JsonPrimitive)?.let { it.booleanOrNull ?: it.contentOrNull.toBoolean() } ?: false,
+                    )
+                }
+                else -> throw IllegalArgumentException("Block ${index + 1} has type \"$type\"; use text, status, field, toggle, choice, control or action.")
             }
         }
+        require(blocks.count { it is PanelBlock.Action } <= MAX_ACTIONS) { "At most $MAX_ACTIONS actions." }
         val rawButtons = (arguments["buttons"] as? JsonArray).orEmpty()
         require(rawButtons.size <= MAX_BUTTONS) { "At most $MAX_BUTTONS buttons." }
         val buttonIds = mutableSetOf<String>()
@@ -293,7 +386,7 @@ object AgentPanels {
     fun masked(panel: AgentPanel, values: Map<String, String>): Map<String, String> =
         values.mapValues { (key, value) -> if (key in panel.secretIds && value.isNotEmpty()) MASK else value }
 
-    fun result(panel: AgentPanel, reply: PanelReply, mask: Boolean): String = buildJsonObject {
+    fun result(panel: AgentPanel, reply: PanelReply, mask: Boolean, log: List<PanelActionLog> = emptyList()): String = buildJsonObject {
         val values = if (mask) masked(panel, reply.values) else reply.values
         if (reply.typed != null) {
             put("ok", false)
@@ -303,18 +396,42 @@ object AgentPanels {
         } else if (reply.button == null) {
             put("ok", false)
             put("errorType", "closed")
-            put("message", "The user closed the panel without choosing. Do not act on its values; ask in plain words if you still need something.")
+            put("message", "The user closed the panel without choosing. Do not act on its values; ask in plain words if you still need something." +
+                if (log.isNotEmpty()) " The actions they ran did happen: see actions." else "")
         } else {
             put("ok", true)
             put("button", reply.button)
             reply.button?.let { b -> panel.buttons.firstOrNull { it.id == b }?.let { put("buttonLabel", it.label) } }
         }
         put("values", buildJsonObject { values.forEach { (k, v) -> put(k, v) } })
+        putActions(log)
         val shown = panel.blocks.filterIsInstance<PanelBlock.Control>().map { it.control.key }
         if (shown.isNotEmpty()) {
             put("controls", buildJsonArray { shown.forEach { add(JsonPrimitive(it)) } })
             put("note", "Controls change real settings directly. Check their state now (device_status, the runtime snapshot or a tool) before you say what changed.")
         }
+    }.toString()
+
+    private fun JsonObjectBuilder.putActions(log: List<PanelActionLog>) {
+        if (log.isEmpty()) return
+        put("actions", buildJsonArray {
+            log.forEach { entry ->
+                add(buildJsonObject {
+                    put("id", entry.id); put("label", entry.label); put("tool", entry.tool)
+                    entry.on?.let { put("on", it) }
+                    put("ok", entry.ok); put("result", entry.text.take(600))
+                })
+            }
+        })
+    }
+
+    /** Nobody answered in time; what the user's taps did still happened. */
+    fun timedOut(log: List<PanelActionLog>, minutes: Long): String = buildJsonObject {
+        put("ok", false)
+        put("errorType", "no_answer")
+        put("message", "Nobody used the panel within $minutes minutes and it is closed. Do not show it again now: say what " +
+            "you need and end your turn." + if (log.isNotEmpty()) " The actions the user ran did happen: see actions." else "")
+        putActions(log)
     }.toString()
 
     /** One line for the chat history, as the user's side of the exchange. */

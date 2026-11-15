@@ -1,6 +1,6 @@
 ---
 name: agent-ui
-description: Build a small interactive panel in the chat with show_ui when the user has to step in — fields to fill (an email or name for a website, a code, an address), a choice with a few settings, a readout of current values with an apply button, or one of Mike's own settings right in the chat (turn on Wireless ADB, screen control, the floating Stop button, add a computer). Read it before the first show_ui call in a chat.
+description: Build a small interactive panel in the chat with show_ui when the user has to step in — fields to fill (an email or name for a website, a code, an address), a choice with a few settings, live buttons that really do it on tap (a flashlight switch, Do not disturb, media keys), a readout of current values with an apply button, or one of Mike's own settings right in the chat (turn on Wireless ADB, screen control, the floating Stop button, add a computer). Read it before the first show_ui call in a chat.
 ---
 
 # Agent UI: panels in the chat
@@ -9,6 +9,7 @@ description: Build a small interactive panel in the chat with show_ui when the u
 
 ## When to use it
 
+- The user wants **buttons that do something** (turn the flashlight on and off, play or skip music, set the volume): use `action` tiles. A tap runs the tool at once. Never build a toggle plus Apply for this, and never wait for the panel's answer to act.
 - You need **two or more facts** only the user has (sign-in email and name for a site, a delivery address, a one-time code). One plain question: use `ask_user`.
 - The user should **see current values and pick new ones** (ringer mode, brightness, Do not disturb). Read them first, show them as `status` blocks and inputs prefilled with `value`, then apply what comes back with your normal tool (`system_controls`, `device-capabilities`, ...).
 - One of **Mike's own settings** is the next step: show it as a `control` block instead of sending the user to Settings.
@@ -24,6 +25,17 @@ description: Build a small interactive panel in the chat with show_ui when the u
 | `toggle` | `id`, `label`, `value` ("true"/"false"), `detail` | Returns "true" or "false". |
 | `choice` | `id`, `label`, `options` (2–12), `value`, `required` | Returns the option text. |
 | `control` | `control` | The app's live setting. See below. |
+| `action` | `id`, `label`, `detail`, `tool`, `arguments`, `off_arguments`, `value`, `icon`, `accent` | A live button that runs your tool itself. See below. |
+
+## Live actions: buttons that really do it
+
+An `action` tile runs `tool` with `arguments` **the moment the user taps it**, with no round trip to you. The panel stays open, so the user can tap again (a remote control). Give `off_arguments` too and the tile becomes an on/off switch: on runs `arguments`, off runs `off_arguments`; `value` ("true"/"false") is where it starts, so read the real state first.
+
+Only tools that do not read or touch the screen are allowed: `system_controls` (torch, volume, brightness, ringer, dnd, media keys), and similar. Screen tools, chat tools and unknown tools are refused when the panel is shown. The tile shows the real call under its label, and the normal approvals still apply.
+
+`icon`: flashlight, bolt, wifi, bluetooth, volume, mute, brightness, moon, music, play, pause, next, alarm, timer, phone, message, location, camera, home, lock, power, star, heart, light, fan, tv, car, rotate, airplane, battery, bell, sparkle. `accent`: teal, amber, violet, rose, sky, lime. Up to 12 actions.
+
+The result has an `actions` list of what the user ran (`id`, `on`, `ok`, `result`), on every exit. Those calls did happen: never run them again, and report them truthfully.
 
 Buttons: up to 4, each `id`, `label`, `style` (primary, secondary, danger, cancel). No buttons gives one **Done**. A non-cancel button stays disabled until every `required` input is filled.
 
@@ -86,6 +98,21 @@ A readout with apply:
 ```
 
 Then apply the values with `system_controls`, and say what changed.
+
+A flashlight switch and two media keys (call `system_controls` `status` first and use its torch state as `value`):
+
+```json
+{"title": "Quick controls", "blocks": [
+  {"type": "action", "id": "torch", "label": "Flashlight", "icon": "flashlight", "accent": "amber",
+   "tool": "system_controls", "arguments": {"operation": "torch", "on": true},
+   "off_arguments": {"operation": "torch", "on": false}, "value": "false"},
+  {"type": "action", "id": "play", "label": "Play / pause", "icon": "play", "accent": "violet",
+   "tool": "system_controls", "arguments": {"operation": "media_control", "command": "toggle"}},
+  {"type": "action", "id": "next", "label": "Next track", "icon": "next", "accent": "sky",
+   "tool": "system_controls", "arguments": {"operation": "media_control", "command": "next"}}]}
+```
+
+A one-shot tile has no `off_arguments`; each tap runs it once.
 
 ## Style
 
