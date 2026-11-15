@@ -1205,6 +1205,68 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    private fun volumePanel(tool: String = "system_controls") = buildJsonObject {
+        put("title", "Volume")
+        put("blocks", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject {
+                put("type", "slider"); put("id", "vol"); put("label", "Media"); put("tool", tool)
+                put("min", 0); put("max", 100); put("step", 10); put("value", 30)
+                put("arguments", buildJsonObject { put("operation", "volume"); put("stream", "media"); put("percent", "{value}") })
+            })
+        })
+    }
+
+    @Test fun aLiveSliderRunsItsCallWithAJsonNumberOnRelease() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "volume")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", volumePanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertEquals("30", rig.coordinator.state.value.panelActions["vol"]!!.value)
+        assertFalse(rig.coordinator.runPanelSlider(panel.id, "nope", 50.0))
+        assertFalse(rig.coordinator.runPanelSlider(panel.id, "vol", Double.NaN))
+        assertTrue(rig.coordinator.runPanelSlider(panel.id, "vol", 57.0))
+        runCurrent()
+        assertEquals(
+            "system_controls" to buildJsonObject { put("operation", "volume"); put("stream", "media"); put("percent", 60) },
+            rig.tools.calls.single(),
+        )
+        assertEquals("60", rig.coordinator.state.value.panelActions["vol"]!!.value)
+        assertTrue(rig.engine.answers.isEmpty())
+        // A failed call leaves the applied value where it was.
+        rig.tools.nextResult = ToolResult("""{"ok":false,"errorType":"volume_failed","message":"Stream is fixed"}""")
+        assertTrue(rig.coordinator.runPanelSlider(panel.id, "vol", 90.0))
+        runCurrent()
+        val state = rig.coordinator.state.value.panelActions["vol"]!!
+        assertEquals("60", state.value)
+        assertEquals(false, state.ok)
+        assertEquals("Stream is fixed", state.message)
+        assertTrue(rig.coordinator.answerPanel(panel.id, "done", mapOf("vol" to "60")))
+        runCurrent()
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("60", result["values"]!!.jsonObject["vol"]!!.jsonPrimitive.content)
+        val actions = result["actions"] as kotlinx.serialization.json.JsonArray
+        assertEquals(listOf("60", "90"), actions.map { it.jsonObject["value"]!!.jsonPrimitive.content })
+        assertEquals(listOf(true, false), actions.map { it.jsonObject["ok"]!!.jsonPrimitive.content.toBoolean() })
+        assertFalse(rig.coordinator.runPanelSlider(panel.id, "vol", 10.0))
+        rig.close()
+    }
+
+    @Test fun aLiveSliderCannotBindAScreenTool() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls", "tap")
+        rig.coordinator.send("one", "x")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", volumePanel("tap"), "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertTrue(rig.engine.answers.last().text, rig.engine.answers.last().text.contains("bad_panel"))
+        assertTrue(rig.tools.calls.isEmpty())
+        rig.close()
+    }
+
     @Test fun anActionCannotBindAScreenOrUnknownOrChatTool() = runTest {
         val rig = Rig(this)
         rig.defineTools("system_controls", "tap")

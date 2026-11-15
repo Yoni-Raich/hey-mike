@@ -21,6 +21,7 @@
 package dev.androidagent.core
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
@@ -28,7 +29,12 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
+import java.math.BigDecimal
+import java.math.RoundingMode
+import kotlin.math.abs
+import kotlin.math.roundToLong
 
 /**
  * Agent UI: a small panel Mike builds in the chat when he needs the user.
@@ -41,6 +47,8 @@ import kotlinx.serialization.json.put
  * [PanelBlock.Action] blocks go one step further: each is bound to a real
  * device tool call, and a tap runs that call at once, through the same
  * gateway and approvals as Mike's own calls, with no model turn in between.
+ * A [PanelBlock.Slider] with a tool is live the same way: letting go of it
+ * runs its call with the chosen number.
  */
 data class AgentPanel(
     val id: String,
@@ -50,6 +58,7 @@ data class AgentPanel(
 ) {
     val inputs: List<PanelBlock.Input> get() = blocks.filterIsInstance<PanelBlock.Input>()
     val actions: List<PanelBlock.Action> get() = blocks.filterIsInstance<PanelBlock.Action>()
+    val liveSliders: List<PanelBlock.Slider> get() = blocks.filterIsInstance<PanelBlock.Slider>().filter { it.live }
 
     /** Values the user may submit: known ids only, each trimmed to its cap. */
     fun accept(button: String?, values: Map<String, String>): PanelReply? {
@@ -61,6 +70,9 @@ data class AgentPanel(
             inputs.filterIsInstance<PanelBlock.Choice>().forEach { choice ->
                 val value = clean[choice.id].orEmpty()
                 if (value.isNotEmpty() && value !in choice.options) return null
+            }
+            inputs.filterIsInstance<PanelBlock.Slider>().forEach { slider ->
+                if (!slider.holds(clean[slider.id].orEmpty())) return null
             }
         }
         return PanelReply(button, clean)
@@ -103,6 +115,51 @@ sealed interface PanelBlock {
         override val initial: String = "", override val required: Boolean = false,
     ) : Input
 
+    /**
+     * A number picked on a track from [min] to [max] in steps of [step],
+     * starting at [start]. Its value comes back with the panel. With [call]
+     * it is live too: letting go runs the call with the number put in at
+     * each [AgentPanels.VALUE] mark.
+     */
+    data class Slider(
+        override val id: String, override val label: String,
+        val min: Double, val max: Double, val step: Double, val start: Double,
+        val detail: String = "", val call: PanelCall? = null,
+    ) : Input {
+        override val required: Boolean get() = false
+        override val initial: String get() = format(start)
+        val live: Boolean get() = call != null
+
+        /** True when min, max and step are whole, so every value is an integer. */
+        val whole: Boolean get() = listOf(min, max, step).all { it == Math.rint(it) }
+
+        /** Steps from [min] to [max]. */
+        val intervals: Int get() = ((max - min) / step).roundToLong().toInt()
+
+        /** The nearest value on the track. */
+        fun snap(value: Double): Double {
+            if (!value.isFinite()) return start
+            val steps = ((value.coerceIn(min, max) - min) / step).roundToLong()
+            return (min + steps * step).coerceIn(min, max)
+        }
+
+        /** [value] as the user and Mike see it: no trailing zeros, no more decimals than [step] has. */
+        fun format(value: Double): String = AgentPanels.number(value, if (whole) 0 else AgentPanels.decimals(step))
+
+        /** True when [text] is a value this slider can take. */
+        fun holds(text: String): Boolean {
+            val value = text.trim().toDoubleOrNull() ?: return false
+            return value.isFinite() && value >= min && value <= max && abs(snap(value) - value) <= step * 1e-6
+        }
+
+        /** The call letting go at [value] makes, or null for a slider that is not live. */
+        fun callAt(value: Double): PanelCall? = call?.let { PanelCall(it.tool, AgentPanels.fill(it.arguments, json(snap(value)))) }
+
+        // A whole slider sends a JSON integer: device tools refuse 40.0 where they want 40.
+        private fun json(value: Double): JsonPrimitive =
+            if (whole) JsonPrimitive(value.roundToLong()) else JsonPrimitive(format(value).toDouble())
+    }
+
     /** One of the app's own settings controls, live. */
     data class Control(val control: PanelControl) : PanelBlock
 
@@ -133,11 +190,20 @@ data class PanelCall(val tool: String, val arguments: JsonObject) {
 /** A tile's colour. A closed set, so every panel stays in the app's look. */
 enum class PanelAccent { TEAL, AMBER, VIOLET, ROSE, SKY, LIME }
 
-/** Where one action tile stands. [on] is the switch's state after its last call that worked. */
-data class PanelActionState(val running: Boolean = false, val on: Boolean? = null, val ok: Boolean? = null, val message: String = "", val runs: Int = 0)
+/**
+ * Where one action tile or live slider stands. [on] is a switch's state and
+ * [value] a slider's number after its last call that worked.
+ */
+data class PanelActionState(
+    val running: Boolean = false, val on: Boolean? = null, val ok: Boolean? = null, val message: String = "", val runs: Int = 0,
+    val value: String? = null,
+)
 
-/** One tap's outcome, for Mike's tool result. */
-data class PanelActionLog(val id: String, val label: String, val tool: String, val on: Boolean?, val ok: Boolean, val text: String)
+/** One tap's or one slide's outcome, for Mike's tool result. [value] is the number a live slider sent. */
+data class PanelActionLog(
+    val id: String, val label: String, val tool: String, val on: Boolean?, val ok: Boolean, val text: String,
+    val value: String? = null,
+)
 
 /**
  * Mike's own settings that a panel can embed. Each is the same control the
@@ -177,6 +243,12 @@ object AgentPanels {
     const val MAX_CHOICES = 12
     const val MAX_ACTIONS = 12
     const val MAX_ARGUMENTS = 4_000
+    /** Most steps a slider may have, so each one is still a usable distance on the track. */
+    const val MAX_SLIDER_STEPS = 1_000
+    /** Largest size of a slider's min, max, step or value. */
+    const val MAX_SLIDER_NUMBER = 1_000_000_000.0
+    /** In a live slider's arguments, the string that is replaced by the chosen number. */
+    const val VALUE = "{value}"
     /** Icon names the app draws on an action tile; anything else gets a bolt. */
     val ICONS = listOf(
         "flashlight", "bolt", "wifi", "bluetooth", "volume", "mute", "brightness", "moon", "music", "play", "pause",
@@ -194,12 +266,16 @@ object AgentPanels {
             "status (a readout: label, value, tone), field (id, label, kind text|email|secret|number|url|phone|multiline, " +
             "placeholder, value, required), toggle (id, label, value), choice (id, label, options, value), control " +
             "(control: ${PanelControl.entries.joinToString(", ") { "${it.key} = ${it.about}" }}), action (id, label, tool, " +
-            "arguments, optional off_arguments, value, detail, icon, accent). A control is live: the " +
+            "arguments, optional off_arguments, value, detail, icon, accent), slider (id, label, min, max, step, value, " +
+            "detail, optional tool and arguments). A control is live: the " +
             "user changes the real setting there; check the result afterwards. An action is a live tile bound to one of " +
             "your device tools: a tap runs tool with arguments at once, without you, under the same approvals as your own " +
             "calls. With off_arguments it is a switch: arguments turn it on, off_arguments turn it off, value " +
             "\"true\"/\"false\" is where it starts (read the real state first). Use actions for remote controls: torch, " +
-            "volume, brightness, do-not-disturb, media keys. Not for tools that read or touch the screen. icon: ${ICONS.joinToString("|")}; " +
+            "volume, brightness, do-not-disturb, media keys. Not for tools that read or touch the screen. A slider's " +
+            "number comes back in values. With tool and arguments it is live too: letting go runs tool with arguments, each " +
+            "\"$VALUE\" string replaced by the number, e.g. {\"operation\":\"volume\",\"percent\":\"$VALUE\"}. " +
+            "icon: ${ICONS.joinToString("|")}; " +
             "accent: ${PanelAccent.entries.joinToString("|") { it.name.lowercase() }}. The panel stays open while the user " +
             "taps; the result lists every action they ran in actions: do not run those again. Buttons (up to $MAX_BUTTONS: id, label, " +
             "style primary|secondary|danger|cancel) end the panel; without buttons there is one Done. Returns the button " +
@@ -217,13 +293,17 @@ object AgentPanels {
                         put("properties", buildJsonObject {
                             put("type", buildJsonObject {
                                 put("type", "string")
-                                put("enum", JsonArray(listOf("text", "status", "field", "toggle", "choice", "control", "action").map(::JsonPrimitive)))
+                                put("enum", JsonArray(listOf("text", "status", "field", "toggle", "choice", "control", "action", "slider").map(::JsonPrimitive)))
                             })
                             listOf("id", "label", "text", "placeholder", "detail").forEach { put(it, buildJsonObject { put("type", "string") }) }
-                            put("tool", buildJsonObject { put("type", "string"); put("description", "An action's device tool, e.g. system_controls.") })
+                            put("tool", buildJsonObject { put("type", "string"); put("description", "An action's or live slider's device tool, e.g. system_controls.") })
+                            listOf("min", "max", "step").forEach { key ->
+                                put(key, buildJsonObject { put("type", "number"); put("description", "A slider's $key. step defaults to 1.") })
+                            }
                             put("arguments", buildJsonObject {
                                 put("type", "object"); put("additionalProperties", true)
-                                put("description", "An action's tool arguments, exactly as you would call it. For a switch, the ones that turn it on.")
+                                put("description", "An action's tool arguments, exactly as you would call it. For a switch, the ones that turn it on. " +
+                                    "For a live slider, \"$VALUE\" marks where the number goes.")
                             })
                             put("off_arguments", buildJsonObject {
                                 put("type", "object"); put("additionalProperties", true)
@@ -234,7 +314,7 @@ object AgentPanels {
                                 put("type", "string")
                                 put("enum", JsonArray(PanelAccent.entries.map { JsonPrimitive(it.name.lowercase()) }))
                             })
-                            put("value", buildJsonObject { put("type", "string"); put("description", "Starting value: text, \"true\"/\"false\" for a toggle, or one of a choice's options.") })
+                            put("value", buildJsonObject { put("type", "string"); put("description", "Starting value: text, \"true\"/\"false\" for a toggle, one of a choice's options, or a slider's number.") })
                             put("kind", buildJsonObject {
                                 put("type", "string")
                                 put("enum", JsonArray(FieldKind.entries.map { JsonPrimitive(it.name.lowercase()) }))
@@ -316,6 +396,40 @@ object AgentPanels {
             checkCall(tool, args)?.let { throw IllegalArgumentException("Action \"$aid\": $it") }
             return PanelCall(tool, args)
         }
+        fun number(o: JsonObject, key: String, sid: String): Double? {
+            val raw = o[key] ?: return null
+            val value = (raw as? JsonPrimitive)?.let { it.doubleOrNull ?: it.contentOrNull?.trim()?.toDoubleOrNull() }
+                ?: throw IllegalArgumentException("Slider \"$sid\": $key must be a number.")
+            require(value.isFinite() && abs(value) <= MAX_SLIDER_NUMBER) { "Slider \"$sid\": $key is out of range." }
+            return value
+        }
+        fun slider(o: JsonObject): PanelBlock.Slider {
+            val sid = inputId(o)
+            val name = label(o)
+            val min = number(o, "min", sid) ?: throw IllegalArgumentException("Slider \"$sid\" needs min.")
+            val max = number(o, "max", sid) ?: throw IllegalArgumentException("Slider \"$sid\" needs max.")
+            val step = number(o, "step", sid) ?: 1.0
+            require(min < max) { "Slider \"$sid\": min must be below max." }
+            require(step > 0) { "Slider \"$sid\": step must be above 0." }
+            val span = (max - min) / step
+            require(span <= MAX_SLIDER_STEPS + 1e-6) { "Slider \"$sid\": at most $MAX_SLIDER_STEPS steps from min to max; use a bigger step." }
+            require(abs(span - Math.rint(span)) < 1e-6) { "Slider \"$sid\": step must go evenly from min to max." }
+            val start = number(o, "value", sid) ?: min
+            require(start >= min && start <= max) { "Slider \"$sid\": value must be between min and max." }
+            val plain = PanelBlock.Slider(sid, name, min, max, step, start, o.str("detail").orEmpty().take(MAX_LABEL))
+                .let { it.copy(start = it.snap(start)) }
+            if (o["tool"] == null && o["arguments"] == null) return plain
+            val tool = o.str("tool").orEmpty()
+            require(tool.isNotEmpty()) { "Slider \"$sid\" has arguments but no tool." }
+            val args = o["arguments"] as? JsonObject ?: throw IllegalArgumentException("Slider \"$sid\": arguments must be an object.")
+            require(args.toString().length <= MAX_ARGUMENTS) { "Slider \"$sid\": arguments is too long." }
+            require(holdsValue(args)) { "Slider \"$sid\": put \"$VALUE\" in arguments where the number goes." }
+            val live = plain.copy(call = PanelCall(tool, args))
+            // Check the call as it is really made, with a number where the mark is.
+            val sample = live.callAt(live.start)!!
+            checkCall(sample.tool, sample.arguments)?.let { throw IllegalArgumentException("Slider \"$sid\": $it") }
+            return live
+        }
         val blocks = rawBlocks.mapIndexed { index, element ->
             val o = element as? JsonObject ?: throw IllegalArgumentException("Block ${index + 1} is not an object.")
             when (val type = o.str("type")?.lowercase()) {
@@ -363,10 +477,15 @@ object AgentPanels {
                         (o["value"] as? JsonPrimitive)?.let { it.booleanOrNull ?: it.contentOrNull.toBoolean() } ?: false,
                     )
                 }
-                else -> throw IllegalArgumentException("Block ${index + 1} has type \"$type\"; use text, status, field, toggle, choice, control or action.")
+                "slider" -> slider(o)
+                else -> throw IllegalArgumentException(
+                    "Block ${index + 1} has type \"$type\"; use text, status, field, toggle, choice, control, action or slider.",
+                )
             }
         }
-        require(blocks.count { it is PanelBlock.Action } <= MAX_ACTIONS) { "At most $MAX_ACTIONS actions." }
+        require(blocks.count { it is PanelBlock.Action || (it is PanelBlock.Slider && it.live) } <= MAX_ACTIONS) {
+            "At most $MAX_ACTIONS actions and live sliders together."
+        }
         val rawButtons = (arguments["buttons"] as? JsonArray).orEmpty()
         require(rawButtons.size <= MAX_BUTTONS) { "At most $MAX_BUTTONS buttons." }
         val buttonIds = mutableSetOf<String>()
@@ -381,6 +500,31 @@ object AgentPanels {
         }.ifEmpty { listOf(PanelButton("done", "Done")) }
         AgentPanel(id, title.take(MAX_LABEL), blocks, buttons)
     }
+
+    /** True when [element] holds the [VALUE] mark somewhere. */
+    internal fun holdsValue(element: JsonElement): Boolean = when (element) {
+        is JsonObject -> element.values.any(::holdsValue)
+        is JsonArray -> element.any(::holdsValue)
+        is JsonPrimitive -> element.isString && element.content == VALUE
+    }
+
+    /** [arguments] with every [VALUE] mark replaced by [value]. */
+    internal fun fill(arguments: JsonObject, value: JsonPrimitive): JsonObject {
+        fun walk(element: JsonElement): JsonElement = when (element) {
+            is JsonObject -> JsonObject(element.mapValues { walk(it.value) })
+            is JsonArray -> JsonArray(element.map(::walk))
+            is JsonPrimitive -> if (element.isString && element.content == VALUE) value else element
+        }
+        return walk(arguments) as JsonObject
+    }
+
+    /** Decimal places [step] needs, at most 4. */
+    internal fun decimals(step: Double): Int = BigDecimal.valueOf(step).stripTrailingZeros().scale().coerceIn(0, 4)
+
+    /** [value] as plain text with at most [places] decimals and no trailing zeros. */
+    internal fun number(value: Double, places: Int): String =
+        BigDecimal.valueOf(value).setScale(places, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+            .let { if (it == "-0") "0" else it }
 
     /** Values as history and traces may show them: secrets masked. */
     fun masked(panel: AgentPanel, values: Map<String, String>): Map<String, String> =
@@ -419,6 +563,7 @@ object AgentPanels {
                 add(buildJsonObject {
                     put("id", entry.id); put("label", entry.label); put("tool", entry.tool)
                     entry.on?.let { put("on", it) }
+                    entry.value?.let { put("value", it) }
                     put("ok", entry.ok); put("result", entry.text.take(600))
                 })
             }

@@ -79,6 +79,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -87,6 +89,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,6 +108,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -115,6 +119,7 @@ import androidx.compose.ui.unit.sp
 import dev.androidagent.core.AgentPanel
 import dev.androidagent.core.ButtonStyle
 import dev.androidagent.core.FieldKind
+import dev.androidagent.core.PanelActionState
 import dev.androidagent.core.PanelBlock
 import dev.androidagent.core.PanelButton
 import dev.androidagent.core.PanelControl
@@ -174,7 +179,10 @@ internal fun AgentPanelCard(
 ) {
     val motion = animationsEnabled()
     val values = remember(panel.id) {
-        mutableStateMapOf<String, String>().apply { panel.inputs.forEach { put(it.id, it.initial) } }
+        // A live slider's value is the one the phone has now, so a redrawn card does not jump back to the start.
+        mutableStateMapOf<String, String>().apply {
+            panel.inputs.forEach { put(it.id, state.runState.panelActions[it.id]?.value ?: it.initial) }
+        }
     }
     val missing = panel.inputs.filter { it.required && values[it.id].isNullOrBlank() }
     fun answer(button: String?) = actions.onAnswerPanel(panel.id, button, values.toMap())
@@ -228,6 +236,12 @@ internal fun AgentPanelCard(
                                 is PanelBlock.Toggle -> PanelToggle(block, values[block.id] == "true") { values[block.id] = it.toString() }
                                 is PanelBlock.Choice -> PanelChoice(block, values[block.id].orEmpty(), motion) { values[block.id] = it }
                                 is PanelBlock.Control -> PanelControlBlock(block.control, state, actions)
+                                is PanelBlock.Slider -> PanelSlider(
+                                    block,
+                                    applied = state.runState.panelActions[block.id],
+                                    busy = state.runState.panelActions.values.any { it.running },
+                                    onSet = { values[block.id] = it },
+                                ) { value -> actions.onPanelSlider(panel.id, block.id, value) }
                             }
                         }
                     }
@@ -504,6 +518,91 @@ private fun PanelChoice(block: PanelBlock.Choice, value: String, motion: Boolean
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * A number on a track. Its value goes back with the form; a live slider also
+ * runs its call when the user lets go, and springs back to the last value
+ * that worked if the call fails. It holds still while any panel call runs,
+ * so one release is one call.
+ */
+@Composable
+private fun PanelSlider(
+    block: PanelBlock.Slider,
+    applied: PanelActionState?,
+    busy: Boolean,
+    onSet: (String) -> Unit,
+    onRelease: (Double) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    var position by remember(block) { mutableFloatStateOf((applied?.value?.toDoubleOrNull() ?: block.start).toFloat()) }
+    val running = applied?.running == true
+    // A failed live call leaves the device where it was, so the thumb goes back there too.
+    LaunchedEffect(applied?.runs) {
+        if (block.live && applied?.ok == false) {
+            val back = applied.value?.toDoubleOrNull() ?: block.start
+            position = back.toFloat()
+            onSet(block.format(back))
+        }
+    }
+    val shown = block.format(block.snap(position.toDouble()))
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { FieldLabel(block.label, required = false) }
+            if (running) {
+                RunningRing(scheme.secondary, spin = true, size = 18.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(shown, style = MaterialTheme.typography.titleMedium, color = scheme.onSurface)
+        }
+        Slider(
+            value = position,
+            onValueChange = { position = it },
+            onValueChangeFinished = {
+                val snapped = block.snap(position.toDouble())
+                position = snapped.toFloat()
+                onSet(block.format(snapped))
+                if (block.live) onRelease(snapped)
+            },
+            valueRange = block.min.toFloat()..block.max.toFloat(),
+            // Ticks only where they can be told apart; a fine track snaps on release instead.
+            steps = if (block.intervals in 2..20) block.intervals - 1 else 0,
+            enabled = !busy,
+            colors = SliderDefaults.colors(
+                thumbColor = scheme.secondary,
+                activeTrackColor = scheme.secondary,
+                inactiveTrackColor = scheme.outlineVariant,
+                activeTickColor = Color.Transparent,
+                inactiveTickColor = Color.Transparent,
+                disabledThumbColor = scheme.onSurface.copy(alpha = 0.38f),
+                disabledActiveTrackColor = scheme.onSurface.copy(alpha = 0.24f),
+                disabledInactiveTrackColor = scheme.outlineVariant.copy(alpha = 0.5f),
+                disabledActiveTickColor = Color.Transparent,
+                disabledInactiveTickColor = Color.Transparent,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .semantics {
+                    contentDescription = block.label
+                    stateDescription = if (running) "$shown, working" else shown
+                },
+        )
+        if (block.detail.isNotBlank()) {
+            Text(block.detail, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+        }
+        block.callAt(block.snap(position.toDouble()))?.let { call ->
+            PanelCallCaption("${call.caption} · $shown", scheme.onSurfaceVariant, Modifier.fillMaxWidth())
+        }
+        if (block.live && applied?.ok == false && applied.message.isNotBlank()) {
+            Text(
+                applied.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.error,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
         }
     }
 }

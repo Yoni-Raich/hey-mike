@@ -692,21 +692,47 @@ class AgentCoordinator(
      * @return false when the panel or action is not the one waiting, the run
      *   is stopping, or another action still runs.
      */
-    fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean {
+    fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean =
+        startPanelCall(panelId) { panel ->
+            val action = panel.actions.firstOrNull { it.id == actionId } ?: return@startPanelCall null
+            val on = !action.switch || turnOn
+            PanelRun(action.id, action.label, action.callFor(on), on = if (action.switch) on else null, value = null)
+        }
+
+    /**
+     * The user let go of a live slider on the waiting panel: run its call with
+     * [value], snapped to the slider's steps, like an action tile.
+     *
+     * @return false for the same reasons as [runPanelAction], or when [value]
+     *   is not a number.
+     */
+    fun runPanelSlider(panelId: String, sliderId: String, value: Double): Boolean {
+        if (!value.isFinite()) return false
+        return startPanelCall(panelId) { panel ->
+            val slider = panel.liveSliders.firstOrNull { it.id == sliderId } ?: return@startPanelCall null
+            val snapped = slider.snap(value)
+            PanelRun(slider.id, slider.label, slider.callAt(snapped) ?: return@startPanelCall null, on = null, value = slider.format(snapped))
+        }
+    }
+
+    /** One call a panel makes for the user: a tile's tap or a slider's release. */
+    private class PanelRun(val id: String, val label: String, val call: PanelCall, val on: Boolean?, val value: String?)
+
+    private fun startPanelCall(panelId: String, resolve: (AgentPanel) -> PanelRun?): Boolean {
         val pending: PendingPanel
-        val action: PanelBlock.Action
+        val run: PanelRun
         synchronized(lifecycleLock) {
             pending = pendingPanel ?: return false
             if (pending.panel.id != panelId || pending.reply.isCompleted || state.value.phase == RunPhase.STOPPING) return false
             if (!isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)) return false
-            action = pending.panel.actions.firstOrNull { it.id == actionId } ?: return false
+            run = resolve(pending.panel) ?: return false
             if (!pending.actionLock.tryLock()) return false
             pending.touched.incrementAndGet()
-            setPanelAction(pending, actionId) { it.copy(running = true, message = "") }
+            setPanelAction(pending, run.id) { it.copy(running = true, message = "") }
         }
         scope.launch {
             try {
-                runPanelCall(pending, action, turnOn = !action.switch || turnOn)
+                runPanelCall(pending, run)
             } finally {
                 pending.touched.incrementAndGet()
                 pending.actionLock.unlock()
@@ -722,8 +748,8 @@ class AgentCoordinator(
         mutableState.value = state.value.copy(panelActions = now + (actionId to change(now[actionId] ?: PanelActionState())))
     }
 
-    private suspend fun runPanelCall(pending: PendingPanel, action: PanelBlock.Action, turnOn: Boolean) {
-        val call = action.callFor(turnOn)
+    private suspend fun runPanelCall(pending: PendingPanel, run: PanelRun) {
+        val call = run.call
         val requestId = "panel-${UUID.randomUUID()}"
         val threadId = pending.threadId
         val turnId = pending.turnId
@@ -734,7 +760,7 @@ class AgentCoordinator(
         withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
             put("threadId", threadId); put("turnId", turnId); put("requestId", requestId)
             put("name", call.tool); put("arguments", call.arguments)
-            put("source", "panel_action"); put("panelId", pending.panel.id); put("actionId", action.id)
+            put("source", "panel_action"); put("panelId", pending.panel.id); put("actionId", run.id)
         }) }
         val result = try {
             ensureCurrentTurn(epochToken, threadId, turnId)
@@ -767,9 +793,13 @@ class AgentCoordinator(
         }
         val shown = if (ok) "" else panelMessage(result.text)
         synchronized(lifecycleLock) {
-            pending.log += PanelActionLog(action.id, action.label, call.tool, if (action.switch) turnOn else null, ok, result.text)
-            setPanelAction(pending, action.id) {
-                it.copy(running = false, ok = ok, message = shown, runs = it.runs + 1, on = if (action.switch && ok) turnOn else it.on)
+            pending.log += PanelActionLog(run.id, run.label, call.tool, run.on, ok, result.text, run.value)
+            setPanelAction(pending, run.id) {
+                it.copy(
+                    running = false, ok = ok, message = shown, runs = it.runs + 1,
+                    on = if (run.on != null && ok) run.on else it.on,
+                    value = if (run.value != null && ok) run.value else it.value,
+                )
             }
         }
     }
@@ -1870,7 +1900,8 @@ class AgentCoordinator(
                 mutableState.value = state.value.copy(
                     phase = RunPhase.TOOL, controlling = false, status = "Waiting for you",
                     toolName = AgentPanels.NAME, panel = panel,
-                    panelActions = panel.actions.associate { action -> action.id to PanelActionState(on = if (action.switch) action.on else null) },
+                    panelActions = panel.actions.associate { action -> action.id to PanelActionState(on = if (action.switch) action.on else null) } +
+                        panel.liveSliders.associate { slider -> slider.id to PanelActionState(value = slider.initial) },
                 )
                 overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Waiting for you"))
             }

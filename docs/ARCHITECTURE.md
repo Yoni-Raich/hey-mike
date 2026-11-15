@@ -57,6 +57,42 @@ panel stays open.
   exit (answer, close, dismiss, timeout), so the model knows what happened.
   Using an action restarts the 8-minute wait.
 
+### Native panel style and sliders - 2026-11-15
+
+The panel is drawn in the app's own theme (`AgentDarkColors`), not a style of
+its own. This replaces the "rotating light frame and glowing tiles" look.
+
+- Card: `surface`, 28dp corners, no glow, orb or halo. The only looping
+  animation is the ring on a tile or slider whose call is running. All motion
+  snaps when the animator duration scale is 0 (`animationsEnabled()`).
+- Tiles: two columns, a tonal container per accent when a switch is on, corners
+  20 to 32dp on a spring, colors on a 280ms tween, a check after a one-shot
+  run, a 360ms shake and the message on failure. Each tile keeps its real call
+  as a monospace caption, always left-to-right, even in RTL.
+- Form: labels above fields, an eye button on secret fields, chips for
+  choices, and a primary button that stays disabled with a hint naming the
+  missing fields.
+- `AgentDarkColors` leaves `surfaceContainer*`, `tertiary` and `inverse*`
+  unset, so the panel never reads them and gives switches, sliders, chips and
+  fields explicit colors.
+
+A `slider` block (`min`, `max`, `step`, `value`) is a form input; its value
+comes back as text. With `tool` and `arguments` it is live: on release
+`AgentCoordinator.runPanelSlider` runs the call through the same path as an
+action tile (same lock, checks, trace and log). The `"{value}"` mark in
+`arguments` is replaced by the snapped number. When min, max and step are all
+whole the number is a JSON integer, because device-tools integer arguments
+refuse `40.0`. The check at `show_ui` time runs on the call with the start
+value filled in. Live sliders count toward the 12-action limit, and at most
+1000 steps are allowed. A failed call leaves the applied value unchanged and
+the thumb moves back.
+
+Saving a panel for later is not built. A panel's calls only run inside the
+turn that showed it (current-turn check, device lease, the run's workspace).
+A saved panel would need a model-free run context, its own approval and
+storage rules, and a fresh tool check on every reopen. The closest existing
+path is a saved workflow (`workflow_runner`) that opens the panel.
+
 ## Account connections for regular chats - 2026-11-12
 
 Settings > Account connections exposes Gmail and other account connectors for

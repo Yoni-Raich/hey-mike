@@ -106,6 +106,102 @@ class AgentPanelsTest {
         assertEquals(mapOf("name" to "Dana", "c" to "y"), parsed.accept("ok", mapOf("name" to "Dana", "c" to "y"))!!.values)
     }
 
+    private fun volume(body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit = {}) = block("slider") {
+        put("id", "vol"); put("label", "Volume"); put("min", 0); put("max", 100); put("step", 5); put("value", 40)
+        put("tool", "system_controls")
+        put("arguments", buildJsonObject { put("operation", "volume"); put("stream", "media"); put("percent", AgentPanels.VALUE) })
+        body()
+    }
+
+    @Test fun aPlainSliderIsAFormInputWithDefaults() {
+        val parsed = AgentPanels.parse("p", panel(block("slider") { put("id", "s"); put("label", "S"); put("min", 1); put("max", 10) })).getOrThrow()
+        val slider = parsed.blocks.single() as PanelBlock.Slider
+        assertEquals(1.0, slider.step, 0.0)
+        assertEquals("1", slider.initial)
+        assertTrue(!slider.live)
+        assertTrue(parsed.liveSliders.isEmpty())
+        assertEquals(mapOf("s" to "1"), parsed.accept("done", emptyMap())!!.values)
+        assertEquals(mapOf("s" to "7"), parsed.accept("done", mapOf("s" to "7"))!!.values)
+    }
+
+    @Test fun aWholeLiveSliderSendsAJsonIntegerWhereTheMarkIs() {
+        val parsed = AgentPanels.parse("p", panel(volume())).getOrThrow()
+        val slider = parsed.liveSliders.single()
+        assertTrue(slider.whole)
+        assertEquals(20, slider.intervals)
+        assertEquals("40", slider.initial)
+        val call = slider.callAt(63.0)!!
+        assertEquals("system_controls", call.tool)
+        // 63 snaps to 65; a JSON integer, not "65" and not 65.0.
+        assertEquals(JsonPrimitive(65L), call.arguments["percent"])
+        assertEquals("{\"operation\":\"volume\",\"stream\":\"media\",\"percent\":65}", call.arguments.toString())
+        assertEquals("system_controls · volume", call.caption)
+    }
+
+    @Test fun aDecimalSliderKeepsTheStepsDecimals() {
+        val parsed = AgentPanels.parse("p", panel(block("slider") {
+            put("id", "z"); put("label", "Zoom"); put("min", 0.5); put("max", 2); put("step", 0.25); put("value", "1.1")
+        })).getOrThrow()
+        val slider = parsed.blocks.single() as PanelBlock.Slider
+        assertTrue(!slider.whole)
+        assertEquals("1", slider.initial)
+        assertEquals("1.75", slider.format(slider.snap(1.8)))
+        assertEquals("0.5", slider.format(slider.snap(-4.0)))
+        assertTrue(slider.holds("1.25"))
+        assertTrue(!slider.holds("1.3"))
+        assertTrue(!slider.holds("3"))
+        assertTrue(!slider.holds("loud"))
+    }
+
+    @Test fun acceptRefusesASliderValueOffTheTrack() {
+        val parsed = AgentPanels.parse("p", panel(block("slider") { put("id", "s"); put("label", "S"); put("min", 0); put("max", 10); put("step", 2) },
+            buttons = listOf(buildJsonObject { put("id", "ok"); put("label", "OK") }, buildJsonObject { put("id", "no"); put("label", "No"); put("style", "cancel") }),
+        )).getOrThrow()
+        assertNull(parsed.accept("ok", mapOf("s" to "3")))
+        assertNull(parsed.accept("ok", mapOf("s" to "12")))
+        assertNull(parsed.accept("ok", mapOf("s" to "NaN")))
+        assertNotNull(parsed.accept("no", mapOf("s" to "3")))
+        assertEquals(mapOf("s" to "4"), parsed.accept("ok", mapOf("s" to "4"))!!.values)
+    }
+
+    @Test fun refusesSlidersThatCannotWork() {
+        fun s(body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = panel(block("slider") { put("id", "s"); put("label", "S"); body() })
+        listOf(
+            s { put("max", 10) },
+            s { put("min", 0) },
+            s { put("min", 5); put("max", 5) },
+            s { put("min", 0); put("max", 10); put("step", 0) },
+            s { put("min", 0); put("max", 10); put("step", 3) },
+            s { put("min", 0); put("max", 10_000) },
+            s { put("min", 0); put("max", 10); put("value", 11) },
+            s { put("min", "low"); put("max", 10) },
+            s { put("min", 0); put("max", 2e9) },
+            s { put("min", 0); put("max", 10); put("tool", "system_controls") },
+            s { put("min", 0); put("max", 10); put("arguments", buildJsonObject { put("level", AgentPanels.VALUE) }) },
+            s { put("min", 0); put("max", 10); put("tool", "system_controls"); put("arguments", buildJsonObject { put("level", 4) }) },
+        ).forEach { assertTrue(it.toString(), AgentPanels.parse("p", it).isFailure) }
+    }
+
+    @Test fun theCallCheckSeesTheRealNumberAndLiveSlidersCountAsActions() {
+        var seen: JsonObject? = null
+        val refused = AgentPanels.parse("p", panel(volume())) { _, args -> seen = args; "no volume here" }
+        assertTrue(refused.exceptionOrNull()!!.message!!.contains("Slider \"vol\": no volume here"))
+        assertEquals(JsonPrimitive(40L), seen!!["percent"])
+        val tiles = (1..AgentPanels.MAX_ACTIONS).map { i ->
+            block("action") { put("id", "a$i"); put("label", "A"); put("tool", "system_controls"); put("arguments", buildJsonObject { put("operation", "status") }) }
+        }
+        assertTrue(AgentPanels.parse("p", panel(*tiles.toTypedArray())).isSuccess)
+        assertTrue(AgentPanels.parse("p", panel(*(tiles + volume()).toTypedArray())).isFailure)
+    }
+
+    @Test fun aSlidersRunIsReportedWithItsValue() {
+        val parsed = AgentPanels.parse("p", panel(volume())).getOrThrow()
+        val reply = parsed.accept(null, emptyMap())!!
+        val result = AgentPanels.result(parsed, reply, mask = true, log = listOf(PanelActionLog("vol", "Volume", "system_controls", null, true, "ok", "65")))
+        assertTrue(result, result.contains("\"id\":\"vol\",\"label\":\"Volume\",\"tool\":\"system_controls\",\"value\":\"65\",\"ok\":true"))
+        assertTrue(result, !result.contains("\"on\""))
+    }
+
     @Test fun closingIsNotASubmit() {
         val parsed = AgentPanels.parse("p", panel(block("field") { put("id", "name"); put("label", "Name"); put("required", true) })).getOrThrow()
         val closed = parsed.accept(null, emptyMap())!!

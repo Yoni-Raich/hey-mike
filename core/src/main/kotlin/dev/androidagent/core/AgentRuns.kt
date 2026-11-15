@@ -329,6 +329,9 @@ class AgentRuns(
     fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean =
         slots.firstOrNull { it.state.value.panel?.id == panelId }?.runPanelAction(panelId, actionId, turnOn) ?: false
 
+    fun runPanelSlider(panelId: String, sliderId: String, value: Double): Boolean =
+        slots.firstOrNull { it.state.value.panel?.id == panelId }?.runPanelSlider(panelId, sliderId, value) ?: false
+
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {
         val slot = freeSlot()
         slot.beginVoice(sessionId, threadId, workspace)

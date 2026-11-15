@@ -1,5 +1,25 @@
 # Progress
 
+### Native panel style and sliders - 2026-11-15
+
+Base: origin/dev e95a63fa, branch feat/agent-panel-native. `show_ui` panels
+are redrawn in the app's own theme (see ARCHITECTURE "Native panel style and
+sliders"). Adds a `slider` block that is a form input or, with a tool, a live
+control that runs on release.
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon` passed (lint 0 errors,
+no new warning in the panel files); `git diff --check` passed.
+New tests: `AgentPanelsTest` 7 slider cases (defaults, a JSON integer in the
+call, decimal steps, `accept` refusing off-track values, parse refusals, the
+call check and action limit, the logged value) and two `AgentCoordinatorTest`
+cases (a live slider sends a JSON number on release and keeps its value when
+the call fails; a screen tool is refused).
+
+Not tested: nothing ran on a phone or emulator. The new look, the animations,
+reduced motion, RTL mirroring, TalkBack and a real volume slider are
+unverified. No screenshot was taken.
+
 ### Live panel actions - 2026-11-15
 
 Branch feat/live-panel-actions. `show_ui` gets `action` tiles that run a
