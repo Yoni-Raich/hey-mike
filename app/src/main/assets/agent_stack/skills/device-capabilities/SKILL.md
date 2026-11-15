@@ -15,7 +15,14 @@ a chat starts, so start a fresh chat after an app update if these names are miss
 - `calendar`: `permission_status`, `list`, `get`, `create_draft`, `create`,
   `delete`, `calendars`.
 - `files_media`: `permission_status`, `list`, `search`, `info`, `open`, `share`,
-  `ws_list`, `ws_read_text`, `ws_write_text`.
+  `ws_list`, `ws_read_text`, `ws_write_text`, and folders the user granted:
+  `folders`, `pick_folder` (the user picks a folder once; it stays granted),
+  `folder_list` (`folder`, `path`), `folder_import` (`folder`, `path`, `to` in
+  the workspace, default `imports/<name>`), `folder_export` (`folder`, `path`,
+  `from` in the workspace; replacing a file needs `overwrite:true` and the
+  user's approval). Files up to 50 MB.
+- Shared into Mike: when the user shares text or files from another app, they
+  arrive as a new chat with the text in the composer and the files attached.
 - `communications`: `list_notifications`, `notification_reply`,
   `notification_press`, `notification_dismiss`, `read_sms`, `read_call_log`,
   `send_sms`, `place_call`, `draft_sms`, `draft_email`, `dial`,

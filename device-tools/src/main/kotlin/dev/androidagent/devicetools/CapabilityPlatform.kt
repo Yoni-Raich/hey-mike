@@ -157,7 +157,26 @@ interface CapabilityPlatform {
 
     /** Calendars the app can write to. */
     suspend fun writableCalendars(): List<CalendarRow> = emptyList()
-}
+
+    // ---- folders the user granted (Storage Access Framework) ----
+
+    /** Folder trees the user picked, with a lasting grant. */
+    suspend fun grantedFolders(): List<FolderRow> = emptyList()
+
+    /** Opens the system folder picker. The user's pick is kept for later runs. */
+    suspend fun openFolderPicker(): Boolean = false
+
+    /** Children of [path] ("" = the folder itself) in tree [folder]; null when the path does not exist. */
+    suspend fun listFolder(folder: String, path: String, limit: Int): List<DocumentRow>? = null
+
+    /** Copies document [path] into [target]. Returns bytes, or null when it does not exist. */
+    suspend fun importDocument(folder: String, path: String, target: java.io.File, maxBytes: Long): Long? = null
+
+    /** Writes [source] to [path]. Returns false when the parent folder does not exist. */
+    suspend fun exportDocument(folder: String, path: String, source: java.io.File, mimeType: String): Boolean = false
+
+    /** True when [path] names an existing document. */
+    suspend fun documentExists(folder: String, path: String): Boolean = false}
 
 /** One SMS. [type] is inbox, sent, draft, outbox or other. */
 data class SmsRow(
@@ -180,3 +199,9 @@ data class CallRow(
 )
 
 data class CalendarRow(val id: String, val name: String, val account: String?, val primary: Boolean)
+
+/** A granted folder tree. [uri] is what folder arguments name. */
+data class FolderRow(val uri: String, val name: String, val writable: Boolean)
+
+/** One entry inside a granted folder. */
+data class DocumentRow(val name: String, val dir: Boolean, val mimeType: String?, val size: Long?, val modifiedMs: Long?)

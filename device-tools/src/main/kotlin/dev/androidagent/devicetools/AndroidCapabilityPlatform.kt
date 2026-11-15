@@ -670,6 +670,18 @@ class AndroidCapabilityPlatform(
         rows.sortedByDescending { it.primary }
     }
 
+    private val folders = AndroidFolders(context)
+    override suspend fun grantedFolders(): List<FolderRow> = withContext(Dispatchers.IO) { folders.granted() }
+    override suspend fun openFolderPicker(): Boolean = folders.openPicker()
+    override suspend fun listFolder(folder: String, path: String, limit: Int): List<DocumentRow>? =
+        withContext(Dispatchers.IO) { folders.list(folder, path, limit) }
+    override suspend fun importDocument(folder: String, path: String, target: java.io.File, maxBytes: Long): Long? =
+        withContext(Dispatchers.IO) { folders.import(folder, path, target, maxBytes) }
+    override suspend fun exportDocument(folder: String, path: String, source: java.io.File, mimeType: String): Boolean =
+        withContext(Dispatchers.IO) { folders.export(folder, path, source, mimeType) }
+    override suspend fun documentExists(folder: String, path: String): Boolean =
+        withContext(Dispatchers.IO) { folders.exists(folder, path) }
+
     override suspend fun insertEvent(
         title: String,
         description: String?,

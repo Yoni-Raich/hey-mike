@@ -120,7 +120,7 @@ class AndroidCapabilityTools private constructor(
         return operation !in when (name) {
             "contacts" -> setOf("permission_status", "search", "list", "get", "create")
             "calendar" -> setOf("permission_status", "list", "get", "create", "delete", "calendars")
-            "files_media" -> setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text")
+            "files_media" -> setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text", "folders", "folder_list", "folder_import", "folder_export")
             // Background ops never take the screen. place_call and
             // notification_press can start an activity, so they stay visible.
             "communications" -> setOf(
@@ -225,13 +225,17 @@ class AndroidCapabilityTools private constructor(
                 "files_media",
                 "Media and run-workspace files. operation: permission_status, list/search (kind?, name?, limit), " +
                     "info/open/share (uri, content://media/... only), ws_list/ws_read_text/ws_write_text (path, inside the " +
-                    "run workspace only). Media reads need a media permission. No file://, no absolute paths, " +
+                    "run workspace only). folders lists folders the user picked; pick_folder opens the system picker; " +
+                    "folder_list (folder, path?), folder_import (folder, path, to?) copies into the workspace, " +
+                    "folder_export (folder, path, from, overwrite?) writes a workspace file there; replacing asks the user. " +
+                    "Media reads need a media permission. No file://, no absolute paths, " +
                     "no .. escape, no recursive delete.",
                 CapabilityPolicy.FILES_OPS,
                 mapOf(
                     "kind" to str(), "name" to str(),
                     "limit" to int(), "uri" to str(), "path" to str(),
                     "text" to str(), "append" to bool(),
+                    "folder" to str(), "to" to str(), "from" to str(), "overwrite" to bool(),
                 ),
             ),
             tool(
@@ -749,6 +753,97 @@ internal class CapabilityDispatcher(
                     },
                 )
             }
+            "folders", "pick_folder", "folder_list", "folder_import", "folder_export" -> try {
+                folderOperation(tool, operation, args, ws)
+            } catch (denied: PolicyException) {
+                failure(tool, operation, denied.errorType, denied.message)
+            } catch (io: java.io.IOException) {
+                failure(tool, operation, "io_error", io.message ?: "The folder could not be read or written.")
+            } catch (denied: SecurityException) {
+                failure(tool, operation, "not_granted", "The grant on that folder is gone. Ask the user to pick it again.")
+            }
+            else -> failure(tool, operation, "unknown_operation", "Unknown operation \"$operation\".")
+        }
+    }
+
+    // ---- folders the user picked (Storage Access Framework) ----
+
+    private suspend fun folderOperation(tool: String, operation: String, args: JsonObject, ws: File): ToolResult {
+        if (operation == "folders") {
+            checkActive()
+            val rows = platform.grantedFolders()
+            return ToolResult(
+                CapabilityPolicy.ok(tool, operation) {
+                    put("count", rows.size)
+                    put("folders", JsonArray(rows.map { buildJsonObject { put("folder", it.uri); put("name", CapabilityPolicy.bound(it.name)); put("writable", it.writable) } }))
+                    if (rows.isEmpty()) put("note", "No folder is picked yet. pick_folder opens the system picker for the user.")
+                },
+            )
+        }
+        if (operation == "pick_folder") {
+            checkActive()
+            if (!platform.openFolderPicker()) return noHandler(tool, operation, "The folder picker could not open.")
+            return ToolResult(
+                CapabilityPolicy.ok(tool, operation) {
+                    put("opened", true)
+                    put("note", "The user picks a folder in the system picker. Call folders afterwards to see it.")
+                },
+            )
+        }
+        val folder = CapabilityPolicy.parseBounded(args, "folder", required = true)!!
+        val path = CapabilityPolicy.parseBounded(args, "path", required = operation != "folder_list") ?: ""
+        checkActive()
+        return when (operation) {
+            "folder_list" -> {
+                val limit = CapabilityPolicy.parseLimit(args)
+                val rows = platform.listFolder(folder, path, limit)
+                    ?: return failure(tool, operation, "not_found", "No folder at \"$path\".")
+                listResult(
+                    tool, operation, limit,
+                    rows.map {
+                        buildJsonObject {
+                            put("name", CapabilityPolicy.bound(it.name))
+                            put("dir", it.dir)
+                            it.mimeType?.let { m -> put("mimeType", m) }
+                            it.size?.let { s -> put("size", s) }
+                            it.modifiedMs?.let { m -> put("modifiedMs", m) }
+                        }
+                    },
+                )
+            }
+            "folder_import" -> {
+                val name = path.substringAfterLast('/')
+                val to = CapabilityPolicy.parseBounded(args, "to", required = false) ?: "imports/$name"
+                val target = CapabilityPolicy.resolveWorkspaceFile(ws, to)
+                val bytes = platform.importDocument(folder, path, target, MAX_FOLDER_FILE_BYTES)
+                    ?: return failure(tool, operation, "not_found", "No file at \"$path\".")
+                ToolResult(CapabilityPolicy.ok(tool, operation) { put("path", to); put("bytes", bytes) })
+            }
+            "folder_export" -> {
+                val from = CapabilityPolicy.parseBounded(args, "from", required = true)!!
+                val source = CapabilityPolicy.resolveWorkspaceFile(ws, from)
+                if (!source.isFile) return failure(tool, operation, "not_found", "No workspace file at \"$from\".")
+                if (source.length() > MAX_FOLDER_FILE_BYTES) return failure(tool, operation, "too_large", "The file is over 50 MB.")
+                if (platform.documentExists(folder, path)) {
+                    if (!CapabilityPolicy.parseBoolean(args, "overwrite")) {
+                        return failure(tool, operation, "exists", "\"$path\" already exists. Pass overwrite=true to replace it (the user is asked).")
+                    }
+                    approveLocal(
+                        LocalIntentRequest(
+                            action = "replace file $path",
+                            uri = null,
+                            packageName = null,
+                            reason = "Replace \"" + CapabilityPolicy.bound(path) + "\" in a folder you picked.",
+                        ),
+                    )?.let { return it }
+                    checkActive()
+                }
+                val mime = java.net.URLConnection.guessContentTypeFromName(source.name) ?: "application/octet-stream"
+                if (!platform.exportDocument(folder, path, source, mime)) {
+                    return failure(tool, operation, "not_found", "The parent folder of \"$path\" does not exist.")
+                }
+                ToolResult(CapabilityPolicy.ok(tool, operation) { put("path", path); put("bytes", source.length()) })
+            }
             else -> failure(tool, operation, "unknown_operation", "Unknown operation \"$operation\".")
         }
     }
@@ -1119,6 +1214,7 @@ internal class CapabilityDispatcher(
 
     private companion object {
         const val MAX_MESSAGE_CHARS = 4_000
+        const val MAX_FOLDER_FILE_BYTES = 50L * 1024 * 1024
         val SMS_BOXES = setOf("all", "inbox", "sent")
         /** Pseudo packages for send grants: SMS and calls are not tied to one app here. */
         const val SMS_PACKAGE = "android.telephony.sms"

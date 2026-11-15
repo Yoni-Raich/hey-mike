@@ -17,6 +17,22 @@ Not tested: nothing ran on a phone. The requested Xiaomi test could not start:
 reply, SMS send and call, provider writes, DND and write-settings grants,
 background clipboard and location, media session control, and HyperOS
 behaviour.
+
+Second part, same branch: share-to-Mike, a Quick Settings tile, launcher
+shortcuts, SAF folder access (`folders`, `pick_folder`, `folder_list`,
+`folder_import`, `folder_export`) and place triggers with background location
+(`automation_rule` modes `places`, `save_place`, `delete_place`).
+
+Checks: `gradlew.bat :core:test :device-tools:test
+:automations:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon` passed. New tests: `FolderAccessTest` 4,
+`AutomationPlacesTest` 4, `SharedContentTest` 1, all passing. `git diff
+--check` passed.
+
+Not tested: none of it on a phone (no ADB device). Unproven: share grants
+across tasks from real apps, the tile and shortcuts on a launcher, SAF trees
+on HyperOS, real location fixes and their battery cost, and the "Allow all the
+time" grant flow.
 ### Dev launcher badge rebuilt from current dev - 2026-11-13
 
 Base: origin/dev 2d08bd89, which includes Manager removal PR #160 and regular

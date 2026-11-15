@@ -223,8 +223,20 @@ say so rather than reporting it as stuck.
 - **Dormant.** If `create` comes back `dormant:true`, the rule is saved but this
   phone cannot serve its trigger yet — the permission is missing. Say so, and
   send the user to **Settings > Standing rules**, which has the buttons for
-  notification access and exact alarms. Do not report it as live. `place` is
-  dormant on every phone today: no geofence source is built.
+  notification access and exact alarms. Do not report it as live. `place`
+  needs a saved place and location access "Allow all the time"; without the
+  background grant it stays dormant.
+- **Places.** `automation_rule(mode="places")` lists saved places and which
+  one the phone is inside now. `mode="save_place"` with `place:{name,
+  latitude, longitude, radiusMeters}` saves one; leave out the coordinates to
+  save where the phone is now. `mode="delete_place"` with `name` removes it.
+  Radius is 50–50000 m (default 150). Fixes come from the network every few
+  minutes, so an enter or exit can lag a few minutes and is never precise to
+  a door. If the result says background location is missing, ask with
+  `apps_settings(operation="request_permissions",
+  permissions=["android.permission.ACCESS_BACKGROUND_LOCATION"])` after
+  fine or coarse location is granted; on Android 11+ the user picks "Allow
+  all the time" in Settings.
 - **A rule cannot run away.** Each has a cooldown (default 1 minute) and a daily
   limit (default 20). For a busy app set them deliberately.
 - **A rule's moment can pass.** A queued turn expires after `validForMinutes`

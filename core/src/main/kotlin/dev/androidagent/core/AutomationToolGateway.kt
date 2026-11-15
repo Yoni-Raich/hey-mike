@@ -82,6 +82,12 @@ class AutomationToolGateway(
     private val deviceState: () -> Map<String, String> = { emptyMap() },
     private val supportedDeviceStates: () -> Set<String> = { AutomationDeviceStates.values.keys },
     private val liveDeviceSnapshot: (() -> AutomationDeviceSnapshot)? = null,
+    /** Named places for `place` triggers. Null: the modes say places are not available here. */
+    private val places: AutomationPlaces? = null,
+    /** The phone's last known fix (latitude, longitude), for saving the current place. */
+    private val currentLocation: (() -> Pair<Double, Double>?)? = null,
+    /** Names the phone is inside now, from the host's tracker. */
+    private val insidePlaces: () -> Set<String> = { emptySet() },
 ) : DeviceToolGateway {
 
     @Volatile private var revoked = true
@@ -140,6 +146,9 @@ class AutomationToolGateway(
                 "test" -> test(arguments)
                 "run" -> run(arguments)
                 "signals" -> signals()
+                "places" -> listPlaces()
+                "save_place" -> savePlace(arguments)
+                "delete_place" -> deletePlace(arguments)
                 else -> toolRefusal("unknown_mode", "\"$mode\" is not a mode.")
             }
         } catch (invalid: AutomationFormatException) {
@@ -149,6 +158,59 @@ class AutomationToolGateway(
 
     override suspend fun cancel() {
         // Every mode is a bounded file read, a file write, or an in-memory decision.
+    }
+
+    private fun listPlaces(): ToolResult {
+        val store = places ?: return toolRefusal("places_unavailable", "Places are not available on this host.")
+        val inside = insidePlaces()
+        return ToolResult(buildJsonObject {
+            put("ok", true)
+            put("places", JsonArray(store.all().map { place ->
+                JsonObject(place.toJson() + ("inside" to JsonPrimitive(inside.any { it.equals(place.name, ignoreCase = true) })))
+            }))
+            put("placeTriggersLive", AutomationTriggerKind.PLACE in supportedTriggers())
+        }.toString())
+    }
+
+    private fun savePlace(arguments: JsonObject): ToolResult {
+        val store = places ?: return toolRefusal("places_unavailable", "Places are not available on this host.")
+        val spec = arguments["place"] as? JsonObject
+            ?: return toolRefusal("place_invalid", "save_place needs place: {name, latitude?, longitude?, radiusMeters?}. Without coordinates the phone's current location is used.")
+        val name = spec.str("name")?.trim()?.takeIf { it.isNotEmpty() } ?: return toolRefusal("place_invalid", "A place needs a name.")
+        val withCoordinates = if (spec["latitude"] != null || spec["longitude"] != null) spec else {
+            val here = currentLocation?.invoke()
+                ?: return toolRefusal("location_unavailable", "No current location. Pass latitude and longitude, or turn on location and grant Mike location access.")
+            JsonObject(spec + mapOf("latitude" to JsonPrimitive(here.first), "longitude" to JsonPrimitive(here.second)))
+        }
+        val place = try {
+            AutomationPlace.fromJson(JsonObject(withCoordinates + ("name" to JsonPrimitive(name))))
+        } catch (invalid: IllegalArgumentException) {
+            return toolRefusal("place_invalid", invalid.message ?: "That place is not valid.")
+        }
+        try { store.save(place) } catch (full: IllegalStateException) { return toolRefusal("places_full", full.message ?: "Too many places.") }
+        onChanged()
+        val live = AutomationTriggerKind.PLACE in supportedTriggers()
+        return ToolResult(buildJsonObject {
+            put("ok", true)
+            put("place", place.toJson())
+            put("placeTriggersLive", live)
+            if (!live) {
+                put(
+                    "note",
+                    "Saved. Place triggers need location access all the time: grant fine location, then " +
+                        "apps_settings(operation=\"request_permissions\", permissions=[\"android.permission.ACCESS_BACKGROUND_LOCATION\"]).",
+                )
+            }
+        }.toString())
+    }
+
+    private fun deletePlace(arguments: JsonObject): ToolResult {
+        val store = places ?: return toolRefusal("places_unavailable", "Places are not available on this host.")
+        val name = arguments.str("name") ?: (arguments["place"] as? JsonObject)?.str("name")
+            ?: return toolRefusal("place_invalid", "delete_place needs name.")
+        if (!store.delete(name)) return toolRefusal("place_not_found", "There is no place called \"$name\".")
+        onChanged()
+        return ToolResult(buildJsonObject { put("ok", true); put("deleted", name) }.toString())
     }
 
     private fun devices() = liveDeviceSnapshot?.invoke() ?: AutomationDeviceSnapshot(deviceState())
@@ -496,7 +558,7 @@ class AutomationToolGateway(
     }
 
     private companion object {
-        val MODES = listOf("create", "update", "list", "describe", "enable", "disable", "delete", "test", "run", "signals")
+        val MODES = listOf("create", "update", "list", "describe", "enable", "disable", "delete", "test", "run", "signals", "places", "save_place", "delete_place")
 
         private fun enumOf(values: List<String>): JsonArray = JsonArray(values.map { JsonPrimitive(it) })
 
@@ -620,11 +682,25 @@ class AutomationToolGateway(
                                         "description",
                                         "create, update (change part of a rule), list, describe, enable, disable, " +
                                             "delete, test (decide without doing) or run (fire it now for real). " +
+                                            "places, save_place and delete_place manage the named places a place trigger uses. " +
                                             "Defaults to list.",
                                     )
                                 },
                             )
                             put("rule", RULE_SCHEMA)
+                            put(
+                                "place",
+                                buildJsonObject {
+                                    put("type", "object")
+                                    put(
+                                        "description",
+                                        "save_place: {name, latitude?, longitude?, radiusMeters? (50-50000, default 150)}. " +
+                                            "No coordinates: the phone's current location.",
+                                    )
+                                    put("additionalProperties", true)
+                                },
+                            )
+                            put("name", buildJsonObject { put("type", "string"); put("description", "delete_place: the place's name.") })
                             put(
                                 "changes",
                                 buildJsonObject {

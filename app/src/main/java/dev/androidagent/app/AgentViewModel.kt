@@ -979,6 +979,31 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.coordinator.stop(id)
         if (id == graph.voiceConversation.sessionId.value) stopVoice()
     }
+    /**
+     * Another app shared [text] and/or [uris] to Mike: open a new chat with
+     * the text in the composer and the files attached. Nothing is sent: the
+     * user says what to do with it.
+     */
+    fun receiveShare(text: String?, uris: List<Uri>) = task {
+        val open = current.value
+        val blank = open != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(open)?.let(::isBlank) == true
+        val id = if (blank) open!! else graph.sessions.createSession(mutable.value.defaultEngine).id.also(graph.permissions::startChat)
+        current.value = id
+        mutable.update {
+            it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false, isComputersOpen = false, isAutomationsOpen = false)
+        }
+        if (!text.isNullOrBlank()) {
+            mutable.update {
+                it.copy(
+                    composerSeeds = it.composerSeeds + (id to text),
+                    composerDraftVersions = it.composerDraftVersions + (id to ((it.composerDraftVersions[id] ?: 0L) + 1L)),
+                )
+            }
+            draftWrites.trySend(id to text)
+        }
+        uris.take(MAX_SHARED_FILES).forEach { uri -> copyAttachment(uri, null) }
+    }
+
     fun composerDraftChanged(id: String, text: String) {
         mutable.update { it.copy(composerSeeds = it.composerSeeds + (id to text)) }
         draftWrites.trySend(id to text)
@@ -2038,6 +2063,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
+/** A share of more files than this keeps the first ones. */
+private const val MAX_SHARED_FILES = 10
 private const val KEY_WELCOMED = "onboardingWelcomed"
 private const val KEY_CONSENT_VERSION = "consentVersion"
 private const val KEY_CONSENT_AT = "consentAt"

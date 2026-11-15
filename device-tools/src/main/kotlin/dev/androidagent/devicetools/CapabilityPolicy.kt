@@ -68,6 +68,7 @@ object CapabilityPolicy {
     val FILES_OPS: Set<String> = setOf(
         "permission_status", "list", "search", "info", "open", "share",
         "ws_list", "ws_read_text", "ws_write_text",
+        "folders", "pick_folder", "folder_list", "folder_import", "folder_export",
     )
     val COMM_OPS: Set<String> = setOf(
         "draft_sms", "draft_email", "dial",
@@ -123,6 +124,11 @@ object CapabilityPolicy {
             "ws_list" to setOf("path", "limit"),
             "ws_read_text" to setOf("path"),
             "ws_write_text" to setOf("path", "text", "append"),
+            "folders" to emptySet(),
+            "pick_folder" to emptySet(),
+            "folder_list" to setOf("folder", "path", "limit"),
+            "folder_import" to setOf("folder", "path", "to"),
+            "folder_export" to setOf("folder", "path", "from", "overwrite"),
         ),
         TOOL_COMMUNICATIONS to mapOf(
             "draft_sms" to setOf("to", "body"),
@@ -189,6 +195,8 @@ object CapabilityPolicy {
     const val PERM_CALL_PHONE = "android.permission.CALL_PHONE"
     const val PERM_WRITE_CONTACTS = "android.permission.WRITE_CONTACTS"
     const val PERM_WRITE_CALENDAR = "android.permission.WRITE_CALENDAR"
+    /** Place triggers. Android only grants it after fine or coarse location, and on its own Settings page. */
+    const val PERM_BACKGROUND_LOCATION = "android.permission.ACCESS_BACKGROUND_LOCATION"
 
     /** Runtime permissions this gateway may ever ask about. Nothing else is requested or reported. */
     val REQUESTABLE_PERMISSIONS: Set<String> = setOf(
@@ -208,6 +216,7 @@ object CapabilityPolicy {
         PERM_CALL_PHONE,
         PERM_WRITE_CONTACTS,
         PERM_WRITE_CALENDAR,
+        PERM_BACKGROUND_LOCATION,
     )
 
     /**

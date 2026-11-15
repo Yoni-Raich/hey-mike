@@ -46,7 +46,8 @@ class CapabilityToolsTest {
         val background = mapOf(
             "contacts" to setOf("permission_status", "search", "list", "get", "create"),
             "calendar" to setOf("permission_status", "list", "get", "create", "delete", "calendars"),
-            "files_media" to setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text"),
+            "files_media" to setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text",
+                "folders", "folder_list", "folder_import", "folder_export"),
             "communications" to setOf(
                 "notification_access_status", "list_notifications", "notification_reply",
                 "notification_dismiss", "read_sms", "read_call_log", "send_sms",

@@ -304,6 +304,7 @@ class AgentGraph(private val app: Application) {
                 name = "files_media",
                 readOnlyOperations = setOf(
                     "permission_status", "list", "search", "info", "ws_list", "ws_read_text",
+                    "folders", "folder_list",
                 ),
             ),
             WorkflowCallMetadata(
@@ -346,6 +347,8 @@ class AgentGraph(private val app: Application) {
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
     /** Read by the panel to say when each rule last ran; written only by the host. */
     val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
+    /** Named places for place triggers. */
+    val automationPlaces = dev.androidagent.core.AutomationPlaces(dev.androidagent.core.AutomationPlaces.fileIn(runtime.homeDirectory))
     private val automationActions = AndroidAutomationActions(
         context = app,
         coordinator = { runCoordinator },
@@ -376,6 +379,9 @@ class AgentGraph(private val app: Application) {
         deviceState = { if (::automationHost.isInitialized) automationHost.readDeviceState() else emptyMap() },
         supportedDeviceStates = { if (::automationHost.isInitialized) automationHost.supportedDeviceStates() else emptySet() },
         liveDeviceSnapshot = { if (::automationHost.isInitialized) automationHost.deviceSnapshot() else dev.androidagent.core.AutomationDeviceSnapshot() },
+        places = automationPlaces,
+        currentLocation = { if (::automationHost.isInitialized) automationHost.currentLocation() else null },
+        insidePlaces = { if (::automationHost.isInitialized) automationHost.insidePlaces() else emptySet() },
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
@@ -602,6 +608,7 @@ class AgentGraph(private val app: Application) {
             actions = automationActions,
             scope = scope,
             agentAvailable = { runCoordinator.available.value },
+            places = automationPlaces,
         )
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.
