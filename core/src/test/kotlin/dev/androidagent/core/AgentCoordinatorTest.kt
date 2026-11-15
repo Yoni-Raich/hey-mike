@@ -1133,6 +1133,48 @@ class AgentCoordinatorTest {
         tools.definitions = names.map { ToolDefinition(it, it, buildJsonObject { put("type", "object") }) }
     }
 
+    private fun widgetPanel() = buildJsonObject {
+        torchPanel().forEach { (key, value) -> put(key, value) }
+        put("surface", "widget")
+    }
+
+    @Test fun aPanelThatOutlivesTheTurnWaitsForTheAppsOwnApprovalNotTheChat() = runTest {
+        val rig = Rig(this, fullAccess = true, hostFor = { scope, store ->
+            PanelHost(scope, InMemorySavedPanelVault(), store, invoke = { _, _ -> ToolResult("{}") }, io = StandardTestDispatcher(testScheduler))
+        })
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Put a torch on my home screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", widgetPanel(), "thread", "turn"))
+        runCurrent()
+        // Answered at once: nobody waits in the chat, and nothing is drawn there.
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("awaiting_approval", result["status"]!!.jsonPrimitive.content)
+        assertNull(rig.coordinator.state.value.panel)
+        val saved = rig.host!!.panels.value.single()
+        assertEquals(SavedPanel.Status.PENDING, saved.status)
+        // A reply in the chat, a tool approval and full access cannot approve it.
+        rig.coordinator.steer("yes, approve it")
+        rig.coordinator.approve("p", true, ApprovalScope.ONCE)
+        runCurrent()
+        assertEquals(SavedPanel.Status.PENDING, rig.host.get(saved.id)!!.status)
+        assertTrue(rig.tools.calls.isEmpty())
+        rig.close()
+    }
+
+    @Test fun withoutAHostAPanelThatOutlivesTheTurnIsRefused() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Put a torch on my home screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", widgetPanel(), "thread", "turn"))
+        runCurrent()
+        val answer = rig.engine.answers.single()
+        assertTrue(answer.text, answer.text.contains("unsupported"))
+        assertNull(rig.coordinator.state.value.panel)
+        rig.close()
+    }
+
     @Test fun aPanelActionRunsItsToolAtOnceAndThePanelStaysOpen() = runTest {
         val rig = Rig(this)
         rig.defineTools("system_controls")
@@ -1345,12 +1387,15 @@ class AgentCoordinatorTest {
         test: TestScope,
         grants: SendGrantStore = InMemorySendGrantStore(),
         fullAccess: Boolean = false,
+        /** Builds the saved-panel host on the rig's own store, or none. */
+        hostFor: ((CoroutineScope, SessionStore) -> PanelHost)? = null,
     ) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
         val store = FakeStore()
         val overlay = FakeOverlay()
         val tools = FakeTools(overlay)
+        val host = hostFor?.invoke(scope, store)
         val adbStatus = MutableStateFlow(AdbStatus())
         var foregroundRequests = 0
         /** Addresses show_media asked for, in order. */
@@ -1370,6 +1415,7 @@ class AgentCoordinatorTest {
                 else File(workspace, address.substringAfterLast(':').substringAfterLast('/')).path
             },
             fullAccess = { fullAccess },
+            panelHost = host,
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }

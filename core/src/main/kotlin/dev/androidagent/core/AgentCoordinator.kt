@@ -90,6 +90,8 @@ class AgentCoordinator(
      * must keep the answer where the agent cannot write it.
      */
     private val fullAccess: (String) -> Boolean = { false },
+    /** Runs panels that outlive their turn; without it, show_ui refuses them. */
+    private val panelHost: PanelHost? = null,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -1888,6 +1890,12 @@ class AgentCoordinator(
         }.getOrElse {
             val refusal = toolRefusal("bad_panel", it.message ?: "The panel could not be read.")
             return refusal to refusal.text
+        }
+        if (panel.placement.detached) {
+            // It outlives the turn: the host keeps it, and the user approves it there, not here.
+            val result = panelHost?.propose(sessionId, arguments)
+                ?: toolRefusal("unsupported", "This build cannot keep panels outside the chat. Use the chat, lifetime turn.")
+            return result to result.text
         }
         val pending = synchronized(lifecycleLock) {
             if (!isCurrentTurnLocked(token, threadId, turnId)) throw CancellationException("Run stopped")

@@ -55,10 +55,36 @@ data class AgentPanel(
     val title: String,
     val blocks: List<PanelBlock>,
     val buttons: List<PanelButton>,
+    /** Where it is drawn and how long it lives. Chat for the turn unless `show_ui` asked for more. */
+    val placement: PanelPlacement = PanelPlacement.CHAT,
 ) {
     val inputs: List<PanelBlock.Input> get() = blocks.filterIsInstance<PanelBlock.Input>()
     val actions: List<PanelBlock.Action> get() = blocks.filterIsInstance<PanelBlock.Action>()
     val liveSliders: List<PanelBlock.Slider> get() = blocks.filterIsInstance<PanelBlock.Slider>().filter { it.live }
+
+    /** Each block index that shows a live value, with the read that fills it. */
+    val binds: Map<Int, PanelBind>
+        get() = blocks.withIndex().mapNotNull { (index, block) ->
+            when (block) {
+                is PanelBlock.Status -> block.bind
+                is PanelBlock.Action -> block.bind
+                else -> null
+            }?.let { index to it }
+        }.toMap()
+
+    /**
+     * Every call this panel can make, as written: what a tap, a switch, a
+     * slider (with its [AgentPanels.VALUE] mark) or a live value runs. The
+     * approval screen lists all of them.
+     */
+    val allCalls: List<PanelCall>
+        get() = blocks.flatMap { block ->
+            when (block) {
+                is PanelBlock.Action -> listOfNotNull(block.call, block.offCall)
+                is PanelBlock.Slider -> listOfNotNull(block.call)
+                else -> emptyList()
+            }
+        } + binds.values.map { it.call }
 
     /** Values the user may submit: known ids only, each trimmed to its cap. */
     fun accept(button: String?, values: Map<String, String>): PanelReply? {
@@ -90,7 +116,8 @@ data class PanelButton(val id: String, val label: String, val style: ButtonStyle
 
 sealed interface PanelBlock {
     data class Text(val text: String, val tone: Tone = Tone.NEUTRAL) : PanelBlock
-    data class Status(val label: String, val value: String, val tone: Tone = Tone.NEUTRAL) : PanelBlock
+    /** A readout. With [bind], on a panel that outlives the turn, [value] is read live from a tool. */
+    data class Status(val label: String, val value: String, val tone: Tone = Tone.NEUTRAL, val bind: PanelBind? = null) : PanelBlock
 
     /** A block whose value comes back to Mike. */
     sealed interface Input : PanelBlock {
@@ -167,10 +194,11 @@ sealed interface PanelBlock {
      * A tile bound to a real tool call. With [offCall] it is a switch: [call]
      * turns it on, [offCall] turns it off, [on] is where it starts. Without,
      * it is a button that runs [call] on each tap. The app runs the call itself.
+     * A switch with [bind] reads whether it is on from a tool, live.
      */
     data class Action(
         val id: String, val label: String, val detail: String, val icon: String, val accent: PanelAccent,
-        val call: PanelCall, val offCall: PanelCall?, val on: Boolean,
+        val call: PanelCall, val offCall: PanelCall?, val on: Boolean, val bind: PanelBind? = null,
     ) : PanelBlock {
         val switch: Boolean get() = offCall != null
         fun callFor(turnOn: Boolean): PanelCall = if (!turnOn) offCall ?: call else call
@@ -243,6 +271,10 @@ object AgentPanels {
     const val MAX_CHOICES = 12
     const val MAX_ACTIONS = 12
     const val MAX_ARGUMENTS = 4_000
+    /** Blocks on a panel outside the chat: a card, a widget or a notification is small. */
+    const val MAX_DETACHED_BLOCKS = 8
+    /** Android shows at most three action buttons on a notification. */
+    const val MAX_NOTIFICATION_ACTIONS = 3
     /** Most steps a slider may have, so each one is still a usable distance on the track. */
     const val MAX_SLIDER_STEPS = 1_000
     /** Largest size of a slider's min, max, step or value. */
@@ -281,7 +313,15 @@ object AgentPanels {
             "style primary|secondary|danger|cancel) end the panel; without buttons there is one Done. Returns the button " +
             "pressed and every input's value; you then act with your normal tools. A secret field's value reaches you " +
             "but is masked in the chat history. Not for yes/no confirmations: approvals and ask_user do that. One " +
-            "panel or question at a time.",
+            "panel or question at a time. Outside the chat: surface floating (a card over any app), widget (the home " +
+            "screen) or notification (ongoing, lock screen too), with lifetime ttl (ttl_seconds " +
+            "${PanelPlacement.MIN_TTL_SECONDS}-${PanelPlacement.MAX_TTL_SECONDS}) or pinned (until the user removes it). " +
+            "A panel that outlives the turn returns at once with a panelId and runs its taps without you; it may only " +
+            "use ${PanelAllowlist.TOOL} ${PanelAllowlist.ACTIONS.joinToString("/")} for actions and sliders and " +
+            "${PanelAllowlist.READS.joinToString("/")} for bind (a live value: tool, arguments, path into the result, " +
+            "optional equals for a switch, format text|time, every seconds); it has no buttons or typed inputs. Every " +
+            "one except a floating card of ${PanelPlacement.SHORT_TTL_SECONDS} s or less waits for the user to approve " +
+            "it in Hey Mike: you cannot approve it, so tell them.",
         inputSchema = buildJsonObject {
             put("type", "object")
             put("properties", buildJsonObject {
@@ -329,6 +369,29 @@ object AgentPanels {
                                 put("type", "string")
                                 put("enum", JsonArray(PanelControl.entries.map { JsonPrimitive(it.key) }))
                             })
+                            put("bind", buildJsonObject {
+                                put("type", "object")
+                                put("description", "A status's value or a switch's on state, read live from a tool. Only on a " +
+                                    "panel that outlives the turn.")
+                                put("properties", buildJsonObject {
+                                    put("tool", buildJsonObject { put("type", "string") })
+                                    put("arguments", buildJsonObject { put("type", "object"); put("additionalProperties", true) })
+                                    put("path", buildJsonObject {
+                                        put("type", "string")
+                                        put("description", "Dot path into the tool's JSON result, e.g. current.title or sessions.0.state.")
+                                    })
+                                    put("equals", buildJsonObject { put("type", "string"); put("description", "A switch is on while the value equals this.") })
+                                    put("format", buildJsonObject {
+                                        put("type", "string"); put("enum", JsonArray(PanelBind.Format.entries.map { JsonPrimitive(it.name.lowercase()) }))
+                                        put("description", "time shows milliseconds as m:ss.")
+                                    })
+                                    put("every", buildJsonObject {
+                                        put("type", "integer")
+                                        put("description", "Seconds between reads, ${PanelBind.MIN_EVERY}-${PanelBind.MAX_EVERY}; default ${PanelBind.DEFAULT_EVERY}.")
+                                    })
+                                })
+                                put("required", JsonArray(listOf(JsonPrimitive("tool"), JsonPrimitive("path"))))
+                            })
                         })
                         put("required", JsonArray(listOf(JsonPrimitive("type"))))
                     })
@@ -347,6 +410,18 @@ object AgentPanels {
                         })
                         put("required", JsonArray(listOf(JsonPrimitive("id"), JsonPrimitive("label"))))
                     })
+                })
+                put("surface", buildJsonObject {
+                    put("type", "string"); put("enum", JsonArray(PanelSurface.entries.map { JsonPrimitive(it.key) }))
+                    put("description", "Where the panel is drawn. Default chat.")
+                })
+                put("lifetime", buildJsonObject {
+                    put("type", "string"); put("enum", JsonArray(listOf("turn", "ttl", "pinned").map(::JsonPrimitive)))
+                    put("description", "How long it lives. Default: turn in the chat, ttl ${PanelPlacement.SHORT_TTL_SECONDS} s floating, pinned for widget and notification. Only the chat takes turn.")
+                })
+                put("ttl_seconds", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "With lifetime ttl: seconds until it removes itself.")
                 })
             })
             put("required", JsonArray(listOf(JsonPrimitive("title"), JsonPrimitive("blocks"))))
@@ -369,11 +444,18 @@ object AgentPanels {
         id: String, arguments: JsonObject,
         checkCall: (String, JsonObject) -> String? = { _, _ -> null },
     ): Result<AgentPanel> = runCatching {
+        val placement = PanelPlacement.parse(arguments)
+        val surface = placement.surface
+        val detached = placement.detached
         val title = arguments.str("title").orEmpty()
         require(title.isNotEmpty()) { "title is empty. Say what the panel is for." }
         val rawBlocks = (arguments["blocks"] as? JsonArray).orEmpty()
         require(rawBlocks.isNotEmpty()) { "blocks is empty. Add at least one block." }
         require(rawBlocks.size <= MAX_BLOCKS) { "At most $MAX_BLOCKS blocks. Split it, or ask for less." }
+        if (detached) require(rawBlocks.size <= MAX_DETACHED_BLOCKS) { "A panel that outlives the turn holds at most $MAX_DETACHED_BLOCKS blocks." }
+        // A detached panel's taps run without Mike: the allowlist decides, on top of the usual check.
+        fun checkBound(call: PanelCall): String? = checkCall(call.tool, call.arguments)
+            ?: if (detached) PanelAllowlist.checkAction(call) else null
         val ids = mutableSetOf<String>()
         fun inputId(o: JsonObject): String {
             val value = o.str("id").orEmpty()
@@ -393,8 +475,26 @@ object AgentPanels {
             require(args.toString().length <= MAX_ARGUMENTS) { "Action \"$aid\": $key is too long." }
             val tool = o.str("tool").orEmpty()
             require(tool.isNotEmpty()) { "Action \"$aid\" needs a tool." }
-            checkCall(tool, args)?.let { throw IllegalArgumentException("Action \"$aid\": $it") }
+            checkBound(PanelCall(tool, args))?.let { throw IllegalArgumentException("Action \"$aid\": $it") }
             return PanelCall(tool, args)
+        }
+        fun bind(o: JsonObject, what: String): PanelBind? {
+            val raw = o["bind"] ?: return null
+            require(detached) { "$what: bind needs a panel that outlives the turn (surface and lifetime)." }
+            val spec = raw as? JsonObject ?: throw IllegalArgumentException("$what: bind must be an object.")
+            val live = PanelBind.parse(spec).getOrElse { throw IllegalArgumentException("$what: bind ${it.message}") }
+            (checkCall(live.call.tool, live.call.arguments) ?: PanelAllowlist.checkRead(live.call))
+                ?.let { throw IllegalArgumentException("$what: bind $it") }
+            return live
+        }
+        fun allowed(type: String) {
+            if (surface == PanelSurface.CHAT) return
+            require(type !in setOf("field", "toggle", "choice", "control")) {
+                "A ${surface.key} panel cannot hold a $type block: nothing can be typed or chosen there. Use the chat for that."
+            }
+            if (type == "slider") {
+                require(surface == PanelSurface.FLOATING) { "A ${surface.key} cannot hold a slider; use actions with set values." }
+            }
         }
         fun number(o: JsonObject, key: String, sid: String): Double? {
             val raw = o[key] ?: return null
@@ -418,28 +518,44 @@ object AgentPanels {
             require(start >= min && start <= max) { "Slider \"$sid\": value must be between min and max." }
             val plain = PanelBlock.Slider(sid, name, min, max, step, start, o.str("detail").orEmpty().take(MAX_LABEL))
                 .let { it.copy(start = it.snap(start)) }
-            if (o["tool"] == null && o["arguments"] == null) return plain
+            if (o["tool"] == null && o["arguments"] == null) {
+                require(surface == PanelSurface.CHAT) {
+                    "Slider \"$sid\": off the chat a slider must be live (tool and arguments); nobody reads its value."
+                }
+                return plain
+            }
             val tool = o.str("tool").orEmpty()
             require(tool.isNotEmpty()) { "Slider \"$sid\" has arguments but no tool." }
             val args = o["arguments"] as? JsonObject ?: throw IllegalArgumentException("Slider \"$sid\": arguments must be an object.")
             require(args.toString().length <= MAX_ARGUMENTS) { "Slider \"$sid\": arguments is too long." }
             require(holdsValue(args)) { "Slider \"$sid\": put \"$VALUE\" in arguments where the number goes." }
             val live = plain.copy(call = PanelCall(tool, args))
+            // The mark may never choose what the call does.
+            if (detached) PanelAllowlist.checkAction(live.call!!)?.let { throw IllegalArgumentException("Slider \"$sid\": $it") }
             // Check the call as it is really made, with a number where the mark is.
             val sample = live.callAt(live.start)!!
-            checkCall(sample.tool, sample.arguments)?.let { throw IllegalArgumentException("Slider \"$sid\": $it") }
+            checkBound(sample)?.let { throw IllegalArgumentException("Slider \"$sid\": $it") }
             return live
         }
         val blocks = rawBlocks.mapIndexed { index, element ->
             val o = element as? JsonObject ?: throw IllegalArgumentException("Block ${index + 1} is not an object.")
-            when (val type = o.str("type")?.lowercase()) {
+            val type = o.str("type")?.lowercase()
+            type?.let(::allowed)
+            if (type != "status" && type != "action" && o["bind"] != null) {
+                throw IllegalArgumentException("Block ${index + 1}: only a status or an action can have bind.")
+            }
+            when (type) {
                 "text" -> PanelBlock.Text(
                     o.str("text")?.takeIf(String::isNotEmpty)?.take(MAX_TEXT) ?: throw IllegalArgumentException("A text block needs text."),
                     pick(o.str("tone"), Tone.entries.toTypedArray(), Tone.NEUTRAL, "tone"),
                 )
-                "status" -> PanelBlock.Status(
-                    label(o), o.str("value").orEmpty().take(MAX_LABEL), pick(o.str("tone"), Tone.entries.toTypedArray(), Tone.NEUTRAL, "tone"),
-                )
+                "status" -> {
+                    val name = label(o)
+                    PanelBlock.Status(
+                        name, o.str("value").orEmpty().take(MAX_LABEL), pick(o.str("tone"), Tone.entries.toTypedArray(), Tone.NEUTRAL, "tone"),
+                        bind(o, "Status \"$name\""),
+                    )
+                }
                 "field" -> PanelBlock.Field(
                     inputId(o), label(o), pick(o.str("kind"), FieldKind.entries.toTypedArray(), FieldKind.TEXT, "kind"),
                     o.str("placeholder").orEmpty().take(MAX_LABEL), o.str("value").orEmpty().take(MAX_VALUE),
@@ -475,6 +591,7 @@ object AgentPanels {
                         PanelAccent.entries.firstOrNull { it.name.equals(o.str("accent"), ignoreCase = true) } ?: PanelAccent.TEAL,
                         on, call(o, aid, "off_arguments"),
                         (o["value"] as? JsonPrimitive)?.let { it.booleanOrNull ?: it.contentOrNull.toBoolean() } ?: false,
+                        bind(o, "Action \"$aid\""),
                     )
                 }
                 "slider" -> slider(o)
@@ -486,8 +603,22 @@ object AgentPanels {
         require(blocks.count { it is PanelBlock.Action || (it is PanelBlock.Slider && it.live) } <= MAX_ACTIONS) {
             "At most $MAX_ACTIONS actions and live sliders together."
         }
+        if (surface == PanelSurface.NOTIFICATION) {
+            require(blocks.count { it is PanelBlock.Action } <= MAX_NOTIFICATION_ACTIONS) {
+                "A notification shows at most $MAX_NOTIFICATION_ACTIONS action buttons."
+            }
+        }
         val rawButtons = (arguments["buttons"] as? JsonArray).orEmpty()
         require(rawButtons.size <= MAX_BUTTONS) { "At most $MAX_BUTTONS buttons." }
+        if (detached) {
+            require(rawButtons.isEmpty()) {
+                "A panel that outlives the turn has no buttons: nobody waits for its answer. Use action blocks."
+            }
+            require(blocks.any { it is PanelBlock.Action || it is PanelBlock.Slider || it is PanelBlock.Status }) {
+                "A panel that outlives the turn needs at least one action, live slider or status."
+            }
+            return@runCatching AgentPanel(id, title.take(MAX_LABEL), blocks, emptyList(), placement)
+        }
         val buttonIds = mutableSetOf<String>()
         val buttons = rawButtons.mapIndexed { index, element ->
             val o = element as? JsonObject ?: throw IllegalArgumentException("Button ${index + 1} is not an object.")
@@ -498,7 +629,7 @@ object AgentPanels {
             require(text.isNotEmpty()) { "Each button needs a label." }
             PanelButton(bid, text.take(MAX_LABEL), pick(o.str("style"), ButtonStyle.entries.toTypedArray(), ButtonStyle.PRIMARY, "style"))
         }.ifEmpty { listOf(PanelButton("done", "Done")) }
-        AgentPanel(id, title.take(MAX_LABEL), blocks, buttons)
+        AgentPanel(id, title.take(MAX_LABEL), blocks, buttons, placement)
     }
 
     /** True when [element] holds the [VALUE] mark somewhere. */
