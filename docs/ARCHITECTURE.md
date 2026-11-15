@@ -159,9 +159,11 @@ them before they act, so the defaults are strict:
   phone stays true: a panel tap is not a run.
 - **Logging.** A tap is logged like a panel call: a `tool_call` and
   `tool_result` trace with `source: saved_panel`, and a `tool` message in the
-  chat that made the panel. A binding read goes to the trace only, on the first
-  read and when the value changes, so a 5 s poll does not fill the chat. If the
-  origin chat is gone, nothing is logged there.
+  chat that made the panel. Every binding read goes to the trace only, with
+  `source: saved_panel_bind`; it carries the result text only on the first
+  read and when the value changes (otherwise `unchanged: true`, or `refused`
+  with the reason), so a 5 s poll neither fills the chat nor bloats the trace.
+  If the origin chat is gone, nothing is logged there.
 - **Stop.** Run Stop and the floating Stop keep their meaning. They stop runs
   and do not touch saved panels. Saved panels are removed in Saved panels (one
   at a time or Remove all) or with the panel's own close button.
@@ -218,8 +220,8 @@ Decisions made while building this (2026-11-15):
   30 s, so a 2 s `every` cannot keep the radio and CPU busy behind the lock.
 - **Stop does not cancel a panel tap.** A tap is the user's own act, outside
   any run, through its own gateway. Stop keeps stopping runs only.
-- **Logging.** Every tap is logged. A binding read is logged on the first read
-  and when its value changes, not on every poll.
+- **Logging.** Every tap and every binding read is logged. A read's result
+  text is kept only when the value changed.
 - **Close.** The close button on a short floating card removes it; on a lasting
   one it hides it until it is shown again from Saved panels.
 

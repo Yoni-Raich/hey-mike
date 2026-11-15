@@ -417,12 +417,18 @@ class PanelHost(
                 .getOrNull()?.takeIf { it.success && !refused(it.text) }?.text
             val text = results[call]
             val key = "$panelId|$call"
-            if (text != null && lastValues.put(key, text) != text) {
-                trace(saved.sessionId, "tool_result", buildJsonObject {
-                    put("name", call.tool); put("arguments", call.arguments); put("success", true)
-                    put("text", text.take(2_000)); put("source", "saved_panel_bind"); put("panelId", panelId)
-                })
-            }
+            val changed = text != null && lastValues.put(key, text) != text
+            // Every model-free read is logged; the result text only when it changed, so a poll stays small.
+            trace(saved.sessionId, "tool_result", buildJsonObject {
+                put("name", call.tool); put("arguments", call.arguments); put("success", text != null)
+                put("source", "saved_panel_bind"); put("panelId", panelId)
+                when {
+                    refusal != null -> put("refused", refusal.take(300))
+                    text == null -> put("text", "The read failed.")
+                    changed -> put("text", text.take(2_000))
+                    else -> put("unchanged", true)
+                }
+            })
         }
         val values = binds.mapValues { (_, bind) -> results[bind.call]?.let(bind::read) ?: "" }
         val actionsOn = panel.actions.mapNotNull { action ->

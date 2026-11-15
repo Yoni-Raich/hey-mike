@@ -267,7 +267,7 @@ class PanelHostTest {
         assertTrue(host.panels.value.isEmpty())
     }
 
-    @Test fun liveValuesAreReadWhileShownAndTracedOnlyWhenTheyChange() = runTest {
+    @Test fun liveValuesAreReadWhileShownAndEveryReadIsLogged() = runTest {
         val rig = Rig(this)
         var title = "One"
         rig.reply = { args ->
@@ -302,12 +302,18 @@ class PanelHostTest {
         rig.now += 5_000
         host.tick()
         assertEquals(2, rig.calls.size)
-        assertEquals(1, rig.store.traced("tool_result", "saved_panel_bind").size)
+        val reads = rig.store.traced("tool_result", "saved_panel_bind")
+        assertEquals("every read is logged", 2, reads.size)
+        assertTrue("the first read carries its text", reads[0]["text"]!!.jsonPrimitive.content.contains("One"))
+        assertNull("an unchanged read carries no text", reads[1]["text"])
+        assertEquals("true", reads[1]["unchanged"]!!.jsonPrimitive.content)
         title = "Two"
         rig.now += 5_000
         host.tick()
         assertEquals("Two", host.live.value[panelId]!!.values[0])
-        assertEquals(2, rig.store.traced("tool_result", "saved_panel_bind").size)
+        val third = rig.store.traced("tool_result", "saved_panel_bind")
+        assertEquals(3, third.size)
+        assertTrue(third[2]["text"]!!.jsonPrimitive.content.contains("Two"))
     }
 
     @Test fun nothingIsLoggedWhenTheChatIsGone() = runTest {

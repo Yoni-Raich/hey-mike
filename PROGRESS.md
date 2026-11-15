@@ -19,7 +19,7 @@ the new files); `git diff --check` passed. New tests: `PanelHostTest` 17
 shown at once and expiring, ttl from approval, expired panels dropped on
 load, re-check on load and on every tap, tampered and rolled-back store,
 remove all, pending cap, a refused shell action, live reads only while shown
-and logged only on change, the skill's music banner parsed from SKILL.md, the
+and every read logged (text only on change), the skill's music banner parsed from SKILL.md, the
 panel face, slider steps) and `DeepControlTest` seek_by cases.
 
 Not tested: nothing ran on a phone or emulator. The floating card, the
