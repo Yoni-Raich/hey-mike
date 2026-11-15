@@ -336,7 +336,7 @@ internal fun LimitChip(limits: ChatLimits, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(if (waitingUntil != null) Icons.Outlined.Timer else Icons.Outlined.Autorenew, contentDescription = null, modifier = Modifier.size(16.dp), tint = teal)
-            Text(waitingUntil?.let { resetClock(it, now) } ?: "Auto", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = teal)
+            Text(waitingUntil?.let { resetClock(it, now) } ?: "Auto", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = teal, maxLines = 1)
         }
     }
 }

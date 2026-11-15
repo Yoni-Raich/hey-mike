@@ -1,5 +1,19 @@
 # Progress
 
+### Composer chips wrap as whole controls - 2026-11-15
+
+The composer settings now use FlowRow, so Auto, Plan and context move to the
+next row when there is no room. Skills, Plan and Auto labels stay on one line.
+Menus keep their chip anchors. No run or permission logic changed.
+
+Checks: `gradlew.bat :app:assembleDevDebug :app:lintDevDebug
+:app:compileDevDebugAndroidTestKotlin --no-daemon` passed (2m 25s), and
+`git diff --check` passed. `ComposerLayoutUiTest` adds narrow 320dp, 360dp
+with 1.5 font scale, and RTL fixtures checking label overflow, chip bounds,
+overlap and the Auto click callback. Those fixtures compiled but were not run:
+`adb devices -l` had no connected device and no local AVD was available.
+No new screenshot, phone install or physical UI result is claimed.
+
 ### Live panel actions - 2026-11-15
 
 Branch feat/live-panel-actions. `show_ui` gets `action` tiles that run a
