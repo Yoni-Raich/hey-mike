@@ -281,7 +281,9 @@ class AndroidCapabilityTools private constructor(
                     "normal|vibrate|silent); dnd (mode off|priority|alarms|total); brightness (level 0-255 or " +
                     "percent, auto?); screen_timeout (seconds); auto_rotate (on); clipboard_get; clipboard_set " +
                     "(text); location (precise?, timeout_ms?); media_status; media_control (command " +
-                    "play|pause|toggle|next|previous|stop|seek, package?, position_ms?); usage (hours?, limit) " +
+                    "play|pause|toggle|next|previous|stop|seek|seek_by, package?, position_ms? for seek, offset_ms " +
+                    "for seek_by: signed, at most 600000, e.g. -10000 skips back 10 s; media_status names the session " +
+                    "commands act on as current); usage (hours?, limit) " +
                     "app screen time; get_setting/put_setting (namespace system|secure|global, key, value; put " +
                     "asks approval). A grant_missing error names the apps_settings open_special_access kind to open.",
                 SystemPolicy.OPS,
@@ -289,7 +291,7 @@ class AndroidCapabilityTools private constructor(
                     "on" to bool(), "stream" to str(), "level" to int(), "percent" to int(),
                     "show_ui" to bool(), "mode" to str(), "auto" to bool(), "seconds" to int(),
                     "text" to str(), "precise" to bool(), "timeout_ms" to int(),
-                    "command" to str(), "package" to str(), "position_ms" to int(),
+                    "command" to str(), "package" to str(), "position_ms" to int(), "offset_ms" to int(),
                     "hours" to int(), "limit" to int(),
                     "namespace" to str(), "key" to str(), "value" to str(),
                 ),
