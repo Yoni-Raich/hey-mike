@@ -17,9 +17,15 @@ unknown and chat tools refused) and `AgentPanelsTest` for switch parsing.
 `system_controls` torch and media are not approval-gated (only `put_setting`
 is), so a flashlight tile runs with no approval card.
 
-Not tested yet: a real tap on a phone (flashlight on and off), the look and
-animations on hardware, RTL with Hebrew labels, an approval prompt while a
-panel is open.
+Phone (chat phone, 0.17.0-dev.liveactions1219, versionCode 1219): a Hebrew
+panel from a computer (Claude Code) chat with torch and DND switches and two
+media keys. The user tapped torch on, torch off, DND on, DND off and
+play/pause twice; the panel result listed all six with ok true and the real
+tool results, and the panel stayed open until Done.
+
+Not tested yet: a screenshot of the new look (no UI evidence captured), the
+switch knob direction in RTL, an approval prompt while a panel is open, a
+Codex chat on the phone choosing action tiles by itself.
 
 ### Agent UI panels - 2026-11-15
 
