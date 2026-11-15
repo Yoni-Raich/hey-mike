@@ -44,10 +44,14 @@ class CapabilityToolsTest {
     @Test fun providerAndWorkspaceOperationsDoNotTakeTheScreen() {
         val tools = AndroidCapabilityTools(FakePlatform())
         val background = mapOf(
-            "contacts" to setOf("permission_status", "search", "list", "get"),
-            "calendar" to setOf("permission_status", "list", "get"),
+            "contacts" to setOf("permission_status", "search", "list", "get", "create"),
+            "calendar" to setOf("permission_status", "list", "get", "create", "delete", "calendars"),
             "files_media" to setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text"),
-            "communications" to setOf("notification_access_status"),
+            "communications" to setOf(
+                "notification_access_status", "list_notifications", "notification_reply",
+                "notification_dismiss", "read_sms", "read_call_log", "send_sms",
+            ),
+            SystemPolicy.TOOL to SystemPolicy.OPS,
             "apps_settings" to setOf("list_apps", "app_info", "permission_status"),
         )
         for (name in CapabilityPolicy.TOOLS) {
@@ -61,10 +65,10 @@ class CapabilityToolsTest {
         assertTrue(tools.needsControl("contacts", buildJsonObject { put("operation", "future_operation") }))
     }
 
-    @Test fun exactlyFiveOperationBasedTools() {
+    @Test fun sixOperationBasedTools() {
         val tools = AndroidCapabilityTools(FakePlatform())
         assertEquals(
-            listOf("contacts", "calendar", "files_media", "communications", "apps_settings"),
+            listOf("contacts", "calendar", "files_media", "communications", "apps_settings", "system_controls"),
             tools.definitions.map { it.name },
         )
         assertEquals(tools.definitions.map { it.name }.toSet(), tools.readyTools())
@@ -240,14 +244,14 @@ class CapabilityToolsTest {
     @Test fun requestPermissionsRejectsOutsideAllowlistWithoutCallback() {
         val fake = FakePlatform()
         var callbackCalls = 0
-        val tools = AndroidCapabilityTools(fake) { callbackCalls++; it }
+        val tools = AndroidCapabilityTools(fake, requestRuntimePermissions = { callbackCalls++; it })
         tools.beginRun("r1", Files.createTempDirectory("ws").toFile())
         val result = runBlocking {
             tools.invoke(
                 "apps_settings",
                 buildJsonObject {
                     put("operation", "request_permissions")
-                    put("permissions", buildJsonArrayOf("android.permission.SEND_SMS"))
+                    put("permissions", buildJsonArrayOf("android.permission.READ_PHONE_NUMBERS"))
                 },
             )
         }
@@ -261,12 +265,15 @@ class CapabilityToolsTest {
         fake.granted += CapabilityPolicy.PERM_CONTACTS
         var callbackCalls = 0
         var seen: Set<String> = emptySet()
-        val tools = AndroidCapabilityTools(fake) { perms ->
-            callbackCalls++
-            seen = perms
-            // Grant only contacts: calendar must come back denied.
-            setOf(CapabilityPolicy.PERM_CONTACTS)
-        }
+        val tools = AndroidCapabilityTools(
+            fake,
+            requestRuntimePermissions = { perms ->
+                callbackCalls++
+                seen = perms
+                // Grant only contacts: calendar must come back denied.
+                setOf(CapabilityPolicy.PERM_CONTACTS)
+            },
+        )
         tools.beginRun("r1", Files.createTempDirectory("ws").toFile())
         val result = runBlocking {
             tools.invoke(
@@ -298,7 +305,7 @@ class CapabilityToolsTest {
     @Test fun requestPermissionsEmptyIsRejected() {
         val fake = FakePlatform()
         var callbackCalls = 0
-        val tools = AndroidCapabilityTools(fake) { callbackCalls++; it }
+        val tools = AndroidCapabilityTools(fake, requestRuntimePermissions = { callbackCalls++; it })
         tools.beginRun("r1", Files.createTempDirectory("ws").toFile())
         val result = runBlocking {
             tools.invoke(
@@ -914,7 +921,7 @@ class CapabilityToolsTest {
         fake.granted += CapabilityPolicy.PERM_CONTACTS
         fake.granted += CapabilityPolicy.PERM_CALENDAR
         var callbackCalls = 0
-        val tools = AndroidCapabilityTools(fake) { callbackCalls++; it }
+        val tools = AndroidCapabilityTools(fake, requestRuntimePermissions = { callbackCalls++; it })
         tools.beginRun("r1", Files.createTempDirectory("ws").toFile())
         val result = runBlocking {
             tools.invoke(
@@ -942,6 +949,7 @@ class CapabilityToolsTest {
             "files_media" to CapabilityPolicy.FILES_OPS,
             "communications" to CapabilityPolicy.COMM_OPS,
             "apps_settings" to CapabilityPolicy.APPS_OPS,
+            SystemPolicy.TOOL to SystemPolicy.OPS,
         )
         val tools = AndroidCapabilityTools(FakePlatform())
         assertEquals(expected.keys, tools.definitions.map { it.name }.toSet())
@@ -969,7 +977,7 @@ class CapabilityToolsTest {
         assertTrue(special.text.contains("setup", ignoreCase = true))
         val status = invoke("communications", buildJsonObject { put("operation", "notification_access_status") })
         assertTrue(status.success)
-        assertTrue(status.text.contains("cannot read", ignoreCase = true))
+        assertTrue(status.text.contains("connected"))
     }
 
     @Test fun largeReadFitsEnvelope() {
@@ -1062,7 +1070,7 @@ class CapabilityToolsTest {
     @Test fun requestPermissionsAcceptsSingularKey() {
         val fake = FakePlatform()
         var seen: Set<String> = emptySet()
-        val tools = AndroidCapabilityTools(fake) { perms -> seen = perms; perms }
+        val tools = AndroidCapabilityTools(fake, requestRuntimePermissions = { perms -> seen = perms; perms })
         tools.beginRun("r1", Files.createTempDirectory("ws").toFile())
         val result = runBlocking {
             tools.invoke(
@@ -1103,7 +1111,7 @@ class CapabilityToolsTest {
     private fun buildJsonArrayOf(vararg values: String): kotlinx.serialization.json.JsonArray =
         kotlinx.serialization.json.JsonArray(values.map { kotlinx.serialization.json.JsonPrimitive(it) })
 
-    private class FakePlatform : CapabilityPlatform {
+    internal class FakePlatform : CapabilityPlatform {
         val granted = mutableSetOf<String>()
         var mediaGranted = false
         var mediaMissing: List<String> = emptyList()
@@ -1269,5 +1277,53 @@ class CapabilityToolsTest {
             calls += "SYSTEM:$action"
             return handlerOk
         }
+
+        var sms: List<SmsRow> = listOf(SmsRow("5", "+15550001", "Hi there", 10L, "inbox", false, "1"))
+        var callLog: List<CallRow> = listOf(CallRow("+15550002", "Alan", "missed", 20L, 0L))
+
+        override suspend fun querySms(box: String, address: String?, query: String?, limit: Int): List<SmsRow> {
+            calls += "querySms:$box:$address:$query:$limit"
+            return sms.take(limit)
+        }
+
+        override suspend fun queryCalls(number: String?, limit: Int): List<CallRow> {
+            calls += "queryCalls:$number:$limit"
+            return callLog.take(limit)
+        }
+
+        override suspend fun sendSms(to: String, body: String): Int {
+            calls += "SEND_SMS:$to:$body"
+            return 1
+        }
+
+        override suspend fun placeCall(number: String): Boolean {
+            calls += "CALL:$number"
+            return handlerOk
+        }
+
+        override suspend fun insertContact(name: String, phone: String?, email: String?): String? {
+            calls += "CONTACT:$name:$phone:$email"
+            return "42"
+        }
+
+        override suspend fun insertEvent(
+            title: String,
+            description: String?,
+            location: String?,
+            beginMs: Long,
+            endMs: Long,
+            allDay: Boolean,
+            calendarId: String?,
+        ): String? {
+            calls += "EVENT:$title:$beginMs:$endMs:$calendarId"
+            return "77"
+        }
+
+        override suspend fun deleteEvent(id: String): Boolean {
+            calls += "DELETE_EVENT:$id"
+            return true
+        }
+
+        override suspend fun writableCalendars(): List<CalendarRow> = listOf(CalendarRow("3", "Personal", "me@example.com", true))
     }
 }

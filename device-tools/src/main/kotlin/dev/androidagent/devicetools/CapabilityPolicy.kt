@@ -60,10 +60,11 @@ object CapabilityPolicy {
         TOOL_FILES_MEDIA,
         TOOL_COMMUNICATIONS,
         TOOL_APPS_SETTINGS,
+        SystemPolicy.TOOL,
     )
 
-    val CONTACT_OPS: Set<String> = setOf("permission_status", "search", "list", "get", "create_draft")
-    val CALENDAR_OPS: Set<String> = setOf("permission_status", "list", "get", "create_draft")
+    val CONTACT_OPS: Set<String> = setOf("permission_status", "search", "list", "get", "create_draft", "create")
+    val CALENDAR_OPS: Set<String> = setOf("permission_status", "list", "get", "create_draft", "create", "delete", "calendars")
     val FILES_OPS: Set<String> = setOf(
         "permission_status", "list", "search", "info", "open", "share",
         "ws_list", "ws_read_text", "ws_write_text",
@@ -71,6 +72,8 @@ object CapabilityPolicy {
     val COMM_OPS: Set<String> = setOf(
         "draft_sms", "draft_email", "dial",
         "notification_access_status", "open_notification_access_settings",
+        "list_notifications", "notification_reply", "notification_press", "notification_dismiss",
+        "read_sms", "read_call_log", "send_sms", "place_call",
     )
     val APPS_OPS: Set<String> = setOf(
         "list_apps", "app_info", "open_app", "open_app_settings",
@@ -84,6 +87,7 @@ object CapabilityPolicy {
         TOOL_FILES_MEDIA -> FILES_OPS
         TOOL_COMMUNICATIONS -> COMM_OPS
         TOOL_APPS_SETTINGS -> APPS_OPS
+        SystemPolicy.TOOL -> SystemPolicy.OPS
         else -> emptySet()
     }
 
@@ -98,12 +102,16 @@ object CapabilityPolicy {
             "list" to setOf("query", "limit"),
             "get" to setOf("id"),
             "create_draft" to setOf("name", "phone", "email"),
+            "create" to setOf("name", "phone", "email"),
         ),
         TOOL_CALENDAR to mapOf(
             "permission_status" to emptySet(),
             "list" to setOf("startMs", "endMs", "limit"),
             "get" to setOf("id"),
             "create_draft" to setOf("title", "description", "location", "beginMs", "endMs", "allDay"),
+            "create" to setOf("title", "description", "location", "beginMs", "endMs", "allDay", "calendarId"),
+            "delete" to setOf("id"),
+            "calendars" to emptySet(),
         ),
         TOOL_FILES_MEDIA to mapOf(
             "permission_status" to emptySet(),
@@ -122,6 +130,14 @@ object CapabilityPolicy {
             "dial" to setOf("number"),
             "notification_access_status" to emptySet(),
             "open_notification_access_settings" to emptySet(),
+            "list_notifications" to setOf("package", "limit"),
+            "notification_reply" to setOf("key", "text", "button"),
+            "notification_press" to setOf("key", "button"),
+            "notification_dismiss" to setOf("key"),
+            "read_sms" to setOf("box", "address", "query", "limit"),
+            "read_call_log" to setOf("number", "limit"),
+            "send_sms" to setOf("to", "body"),
+            "place_call" to setOf("number"),
         ),
         TOOL_APPS_SETTINGS to mapOf(
             "list_apps" to setOf("query", "limit", "include_system"),
@@ -133,6 +149,7 @@ object CapabilityPolicy {
             "open_special_access" to setOf("kind", "package"),
             "open_system_setting" to setOf("setting"),
         ),
+        SystemPolicy.TOOL to SystemPolicy.ARGS,
     )
 
     const val DEFAULT_LIMIT = 20
@@ -166,6 +183,12 @@ object CapabilityPolicy {
     const val PERM_BLUETOOTH_CONNECT = "android.permission.BLUETOOTH_CONNECT"
     const val PERM_FINE_LOCATION = "android.permission.ACCESS_FINE_LOCATION"
     const val PERM_COARSE_LOCATION = "android.permission.ACCESS_COARSE_LOCATION"
+    const val PERM_READ_SMS = "android.permission.READ_SMS"
+    const val PERM_SEND_SMS = "android.permission.SEND_SMS"
+    const val PERM_READ_CALL_LOG = "android.permission.READ_CALL_LOG"
+    const val PERM_CALL_PHONE = "android.permission.CALL_PHONE"
+    const val PERM_WRITE_CONTACTS = "android.permission.WRITE_CONTACTS"
+    const val PERM_WRITE_CALENDAR = "android.permission.WRITE_CALENDAR"
 
     /** Runtime permissions this gateway may ever ask about. Nothing else is requested or reported. */
     val REQUESTABLE_PERMISSIONS: Set<String> = setOf(
@@ -179,6 +202,12 @@ object CapabilityPolicy {
         PERM_BLUETOOTH_CONNECT,
         PERM_FINE_LOCATION,
         PERM_COARSE_LOCATION,
+        PERM_READ_SMS,
+        PERM_SEND_SMS,
+        PERM_READ_CALL_LOG,
+        PERM_CALL_PHONE,
+        PERM_WRITE_CONTACTS,
+        PERM_WRITE_CALENDAR,
     )
 
     /**
@@ -221,6 +250,7 @@ object CapabilityPolicy {
 
     val SPECIAL_ACCESS: Set<String> = setOf(
         "overlay", "install_unknown", "all_files", "notification_listener", "write_settings",
+        "notification_policy", "usage_access", "exact_alarms", "battery_optimization", "app_details",
     )
 
     /**

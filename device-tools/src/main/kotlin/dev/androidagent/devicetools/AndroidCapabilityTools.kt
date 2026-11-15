@@ -21,7 +21,14 @@
 package dev.androidagent.devicetools
 
 import android.content.Context
+import dev.androidagent.core.ActiveNotification
 import dev.androidagent.core.DeviceToolGateway
+import dev.androidagent.core.LocalIntentRequest
+import dev.androidagent.core.MediaSessionAccess
+import dev.androidagent.core.NoNotificationAccess
+import dev.androidagent.core.NotificationAccess
+import dev.androidagent.core.NotificationOutcome
+import dev.androidagent.core.SendRequest
 import dev.androidagent.core.ToolDefinition
 import dev.androidagent.core.ToolNotServiceable
 import dev.androidagent.core.ToolResult
@@ -58,13 +65,29 @@ class AndroidCapabilityTools private constructor(
     private val dispatcher: CapabilityDispatcher,
 ) : DeviceToolGateway {
 
+    /**
+     * [authorizeSend] gates anything that leaves the phone (SMS, calls,
+     * notification replies); [authorizeChange] gates destructive or raw local
+     * changes (settings writes, event deletes, notification action buttons).
+     * Both default to refusing, so an unwired gateway can never send or
+     * change something without an approval path.
+     */
     constructor(
         appContext: Context,
         requestRuntimePermissions: suspend (Set<String>) -> Set<String> = { emptySet() },
+        notifications: NotificationAccess = NoNotificationAccess,
+        media: MediaSessionAccess = NoNotificationAccess,
+        authorizeSend: suspend (SendRequest, suspend () -> ToolResult) -> ToolResult = DENY_SEND,
+        authorizeChange: suspend (LocalIntentRequest, () -> ToolResult) -> ToolResult = DENY_CHANGE,
     ) : this(
         CapabilityDispatcher(
             AndroidCapabilityPlatform(appContext.applicationContext ?: appContext),
             requestRuntimePermissions,
+            notifications,
+            media,
+            AndroidSystemPlatform(appContext.applicationContext ?: appContext),
+            authorizeSend,
+            authorizeChange,
         ),
     )
 
@@ -72,7 +95,14 @@ class AndroidCapabilityTools private constructor(
     internal constructor(
         platform: CapabilityPlatform,
         requestRuntimePermissions: suspend (Set<String>) -> Set<String> = { emptySet() },
-    ) : this(CapabilityDispatcher(platform, requestRuntimePermissions))
+        notifications: NotificationAccess = NoNotificationAccess,
+        media: MediaSessionAccess = NoNotificationAccess,
+        system: SystemPlatform? = null,
+        authorizeSend: suspend (SendRequest, suspend () -> ToolResult) -> ToolResult = DENY_SEND,
+        authorizeChange: suspend (LocalIntentRequest, () -> ToolResult) -> ToolResult = DENY_CHANGE,
+    ) : this(
+        CapabilityDispatcher(platform, requestRuntimePermissions, notifications, media, system, authorizeSend, authorizeChange),
+    )
 
     override val definitions: List<ToolDefinition> = TOOL_DEFINITIONS
 
@@ -88,17 +118,23 @@ class AndroidCapabilityTools private constructor(
         // Keep unknown operations visible until their behavior is classified.
         if (operation !in CapabilityPolicy.operationsFor(name)) return true
         return operation !in when (name) {
-            "contacts" -> setOf("permission_status", "search", "list", "get")
-            "calendar" -> setOf("permission_status", "list", "get")
+            "contacts" -> setOf("permission_status", "search", "list", "get", "create")
+            "calendar" -> setOf("permission_status", "list", "get", "create", "delete", "calendars")
             "files_media" -> setOf("permission_status", "list", "search", "info", "ws_list", "ws_read_text", "ws_write_text")
-            "communications" -> setOf("notification_access_status")
+            // Background ops never take the screen. place_call and
+            // notification_press can start an activity, so they stay visible.
+            "communications" -> setOf(
+                "notification_access_status", "list_notifications", "notification_reply",
+                "notification_dismiss", "read_sms", "read_call_log", "send_sms",
+            )
+            SystemPolicy.TOOL -> SystemPolicy.OPS
             "apps_settings" -> setOf("list_apps", "app_info", "permission_status")
             else -> emptySet()
         }
     }
 
     override fun statusLine(): String =
-        "Capabilities: contacts, calendar, media, messaging drafts, apps and settings (on-device, no ADB needed)"
+        "Capabilities: contacts, calendar, media, notifications, SMS, calls, system controls, apps and settings (on-device, no ADB needed)"
 
     /** A local gateway: always ready, but it cannot operate the screen. */
     override fun deviceBackendLive(): Boolean = false
@@ -111,6 +147,25 @@ class AndroidCapabilityTools private constructor(
     }
 
     companion object {
+        internal val DENY_SEND: suspend (SendRequest, suspend () -> ToolResult) -> ToolResult = { request, _ ->
+            ToolResult(
+                CapabilityPolicy.fail(
+                    "communications", "send", "approval_unavailable",
+                    "No approval path is wired for sends to " + CapabilityPolicy.bound(request.appLabel) + ". Nothing was sent.",
+                ),
+                success = false,
+            )
+        }
+        internal val DENY_CHANGE: suspend (LocalIntentRequest, () -> ToolResult) -> ToolResult = { request, _ ->
+            ToolResult(
+                CapabilityPolicy.fail(
+                    "system_controls", "change", "approval_unavailable",
+                    "No approval path is wired for: " + CapabilityPolicy.bound(request.action) + ". Nothing was changed.",
+                ),
+                success = false,
+            )
+        }
+
         private fun str(): JsonObject = buildJsonObject { put("type", "string") }
         private fun int(): JsonObject = buildJsonObject { put("type", "integer") }
         private fun bool(): JsonObject = buildJsonObject { put("type", "boolean") }
@@ -142,8 +197,9 @@ class AndroidCapabilityTools private constructor(
             tool(
                 "contacts",
                 "Phone contacts. operation: permission_status, search (query, limit), list (query?, limit), " +
-                    "get (id), create_draft (name?, phone?, email?) which opens the contact editor. " +
-                    "Reads need READ_CONTACTS. Nothing is written or deleted directly.",
+                    "get (id), create_draft (name?, phone?, email?) which opens the contact editor, " +
+                    "create (name, phone?, email?) which saves directly in the background. " +
+                    "Reads need READ_CONTACTS, create needs WRITE_CONTACTS.",
                 CapabilityPolicy.CONTACT_OPS,
                 mapOf(
                     "query" to str(), "limit" to int(),
@@ -154,13 +210,15 @@ class AndroidCapabilityTools private constructor(
                 "calendar",
                 "Calendar events. operation: permission_status, list (startMs?, endMs?, limit), get (id), " +
                     "create_draft (title, description?, location?, beginMs?, endMs?, allDay?) which opens " +
-                    "the event editor. Reads need READ_CALENDAR. Nothing is written or deleted directly.",
+                    "the event editor, create (title, beginMs, endMs?, description?, location?, allDay?, " +
+                    "calendarId?) which saves directly, delete (id, asks approval), calendars (writable " +
+                    "calendars). Reads need READ_CALENDAR, writes also WRITE_CALENDAR.",
                 CapabilityPolicy.CALENDAR_OPS,
                 mapOf(
                     "startMs" to int(), "endMs" to int(),
                     "limit" to int(), "id" to str(), "title" to str(),
                     "description" to str(), "location" to str(),
-                    "beginMs" to int(), "allDay" to bool(),
+                    "beginMs" to int(), "allDay" to bool(), "calendarId" to str(),
                 ),
             ),
             tool(
@@ -178,14 +236,22 @@ class AndroidCapabilityTools private constructor(
             ),
             tool(
                 "communications",
-                "Messaging drafts and dialer. operation: draft_sms (to?, body?), draft_email (to?, subject?, body?), " +
-                    "dial (number?, opens the dialer, never calls), notification_access_status (reports only " +
-                    "whether the listener component is enabled; this app cannot read notifications), " +
-                    "open_notification_access_settings. Drafts open a visible editor; nothing is sent directly.",
+                "Notifications, SMS, calls and drafts, all without the screen unless noted. operation: " +
+                    "list_notifications (package?, limit) reads live notifications with key, text and buttons; " +
+                    "notification_reply (key, text, button?) answers through the app's own reply action; " +
+                    "notification_press (key, button?; no button = open it, visible); notification_dismiss (key); " +
+                    "notification_access_status; open_notification_access_settings; " +
+                    "read_sms (box all|inbox|sent, address?, query?, limit); read_call_log (number?, limit); " +
+                    "send_sms (to, body) sends directly; place_call (number) calls directly, visible; " +
+                    "draft_sms/draft_email (open an editor); dial (opens the dialer). Replies, SMS and calls " +
+                    "go through the user's send approval.",
                 CapabilityPolicy.COMM_OPS,
                 mapOf(
                     "to" to str(), "body" to str(),
                     "subject" to str(), "number" to str(),
+                    "package" to str(), "limit" to int(),
+                    "key" to str(), "text" to str(), "button" to int(),
+                    "box" to str(), "address" to str(), "query" to str(),
                 ),
             ),
             tool(
@@ -193,14 +259,35 @@ class AndroidCapabilityTools private constructor(
                 "Apps and settings. operation: list_apps (query?, limit, include_system?), app_info/open_app/" +
                     "open_app_settings (package), permission_status/request_permissions (permissions, strict " +
                     "capability allowlist), open_special_access (kind, package?; opens the setup screen only, " +
-                    "grants nothing), open_system_setting (setting, " +
-                    "strict allowlist). Never runs an arbitrary intent or writes a setting directly.",
+                    "grants nothing; kinds: " + CapabilityPolicy.SPECIAL_ACCESS.sorted().joinToString(", ") +
+                    "), open_system_setting (setting, strict allowlist). Settings writes live in system_controls.",
                 CapabilityPolicy.APPS_OPS,
                 mapOf(
                     "query" to str(), "limit" to int(),
                     "include_system" to bool(), "package" to str(),
                     "permissions" to strList(), "permission" to str(),
                     "kind" to str(), "setting" to str(),
+                ),
+            ),
+            tool(
+                SystemPolicy.TOOL,
+                "Direct phone controls, in the background. operation: status (volumes, ringer, dnd, " +
+                    "brightness, timeout, rotation, torch, grants); torch (on); volume (stream " +
+                    "media|ring|notification|alarm|call|system, level? or percent?, show_ui?); ringer (mode " +
+                    "normal|vibrate|silent); dnd (mode off|priority|alarms|total); brightness (level 0-255 or " +
+                    "percent, auto?); screen_timeout (seconds); auto_rotate (on); clipboard_get; clipboard_set " +
+                    "(text); location (precise?, timeout_ms?); media_status; media_control (command " +
+                    "play|pause|toggle|next|previous|stop|seek, package?, position_ms?); usage (hours?, limit) " +
+                    "app screen time; get_setting/put_setting (namespace system|secure|global, key, value; put " +
+                    "asks approval). A grant_missing error names the apps_settings open_special_access kind to open.",
+                SystemPolicy.OPS,
+                mapOf(
+                    "on" to bool(), "stream" to str(), "level" to int(), "percent" to int(),
+                    "show_ui" to bool(), "mode" to str(), "auto" to bool(), "seconds" to int(),
+                    "text" to str(), "precise" to bool(), "timeout_ms" to int(),
+                    "command" to str(), "package" to str(), "position_ms" to int(),
+                    "hours" to int(), "limit" to int(),
+                    "namespace" to str(), "key" to str(), "value" to str(),
                 ),
             ),
         )
@@ -214,7 +301,16 @@ class AndroidCapabilityTools private constructor(
 internal class CapabilityDispatcher(
     private val platform: CapabilityPlatform,
     private val requestRuntimePermissions: suspend (Set<String>) -> Set<String> = { emptySet() },
+    private val notifications: NotificationAccess = NoNotificationAccess,
+    media: MediaSessionAccess = NoNotificationAccess,
+    systemPlatform: SystemPlatform? = null,
+    private val authorizeSend: suspend (SendRequest, suspend () -> ToolResult) -> ToolResult = AndroidCapabilityTools.DENY_SEND,
+    private val authorizeChange: suspend (LocalIntentRequest, () -> ToolResult) -> ToolResult = AndroidCapabilityTools.DENY_CHANGE,
 ) {
+    private val system: SystemControlDispatcher? = systemPlatform?.let {
+        SystemControlDispatcher(it, media, { checkActive() }, authorizeChange)
+    }
+
     @Volatile private var revoked = true
     @Volatile private var workspace: File? = null
 
@@ -263,6 +359,8 @@ internal class CapabilityDispatcher(
                 CapabilityPolicy.TOOL_FILES_MEDIA -> filesMedia(tool, operation, arguments, ws)
                 CapabilityPolicy.TOOL_COMMUNICATIONS -> communications(tool, operation, arguments)
                 CapabilityPolicy.TOOL_APPS_SETTINGS -> appsSettings(tool, operation, arguments)
+                SystemPolicy.TOOL -> system?.invoke(operation, arguments)
+                    ?: failure(tool, operation, "capability_unsupported", "System controls are not available here.")
                 else -> throw ToolNotServiceable("capability_unsupported", "Unknown capability tool \"$tool\".")
             }
             checkActive()
@@ -346,6 +444,23 @@ internal class CapabilityDispatcher(
                     },
                 )
             }
+            "create" -> {
+                val name = CapabilityPolicy.parseBounded(args, "name", required = true)!!
+                val phone = CapabilityPolicy.parsePhone(args, "phone", required = false)
+                val email = CapabilityPolicy.parseBounded(args, "email", required = false)
+                checkActive()
+                if (!platform.hasPermission(CapabilityPolicy.PERM_WRITE_CONTACTS)) {
+                    return permissionFailure(tool, operation, listOf(CapabilityPolicy.PERM_WRITE_CONTACTS), args)
+                }
+                val id = platform.insertContact(name, phone, email)
+                    ?: return failure(tool, operation, "write_failed", "The contacts provider did not save the contact.")
+                ToolResult(
+                    CapabilityPolicy.ok(tool, operation) {
+                        put("created", true)
+                        put("rawContactId", CapabilityPolicy.bound(id))
+                    },
+                )
+            }
             else -> failure(tool, operation, "unknown_operation", "Unknown operation \"$operation\".")
         }
     }
@@ -412,6 +527,82 @@ internal class CapabilityDispatcher(
                     CapabilityPolicy.ok(tool, operation) {
                         put("draft", true)
                         put("note", "The event editor is open. Saving stays with the user.")
+                    },
+                )
+            }
+            "calendars" -> {
+                checkActive()
+                if (!platform.hasPermission(CapabilityPolicy.PERM_CALENDAR)) {
+                    return permissionFailure(tool, operation, listOf(CapabilityPolicy.PERM_CALENDAR), args)
+                }
+                val rows = platform.writableCalendars()
+                listResult(
+                    tool, operation, CapabilityPolicy.MAX_LIMIT,
+                    rows.take(CapabilityPolicy.MAX_LIMIT).map {
+                        buildJsonObject {
+                            put("id", CapabilityPolicy.bound(it.id))
+                            put("name", CapabilityPolicy.bound(it.name))
+                            it.account?.let { a -> put("account", CapabilityPolicy.bound(a)) }
+                            put("primary", it.primary)
+                        }
+                    },
+                )
+            }
+            "create" -> {
+                val title = CapabilityPolicy.parseBounded(args, "title", required = true)!!
+                val description = CapabilityPolicy.parseBounded(args, "description", required = false)
+                val location = CapabilityPolicy.parseBounded(args, "location", required = false)
+                val begin = CapabilityPolicy.parseMillis(args, "beginMs")
+                    ?: return failure(tool, operation, "invalid_argument", "\"beginMs\" is required.")
+                val allDay = CapabilityPolicy.parseBoolean(args, "allDay")
+                val end = CapabilityPolicy.parseMillis(args, "endMs")
+                    ?: (begin + if (allDay) 24L * 60 * 60 * 1000 else 60L * 60 * 1000)
+                if (begin < 0 || end < begin) {
+                    return failure(tool, operation, "invalid_argument", "Need 0 <= beginMs <= endMs.")
+                }
+                val calendarId = CapabilityPolicy.parseBounded(args, "calendarId", required = false, max = CapabilityPolicy.MAX_ID_CHARS)
+                if (calendarId != null && calendarId.toLongOrNull() == null) {
+                    return failure(tool, operation, "invalid_argument", "\"calendarId\" must be an id from operation=calendars.")
+                }
+                checkActive()
+                val missing = listOf(CapabilityPolicy.PERM_CALENDAR, CapabilityPolicy.PERM_WRITE_CALENDAR)
+                    .filter { !platform.hasPermission(it) }
+                if (missing.isNotEmpty()) return permissionFailure(tool, operation, missing, args)
+                val id = platform.insertEvent(title, description, location, begin, end, allDay, calendarId)
+                    ?: return failure(tool, operation, "write_failed", "No writable calendar accepted the event.")
+                ToolResult(
+                    CapabilityPolicy.ok(tool, operation) {
+                        put("created", true)
+                        put("id", CapabilityPolicy.bound(id))
+                        put("beginMs", begin)
+                        put("endMs", end)
+                    },
+                )
+            }
+            "delete" -> {
+                val id = CapabilityPolicy.parseId(args)
+                checkActive()
+                val missing = listOf(CapabilityPolicy.PERM_CALENDAR, CapabilityPolicy.PERM_WRITE_CALENDAR)
+                    .filter { !platform.hasPermission(it) }
+                if (missing.isNotEmpty()) return permissionFailure(tool, operation, missing, args)
+                val event = platform.getEvent(id)
+                    ?: return failure(tool, operation, "not_found", "No event with id \"$id\".")
+                approveLocal(
+                    LocalIntentRequest(
+                        action = "calendar delete event $id",
+                        uri = null,
+                        packageName = null,
+                        reason = "Delete the calendar event \"" + CapabilityPolicy.bound(event.title) + "\".",
+                    ),
+                )?.let { return it }
+                checkActive()
+                if (!platform.deleteEvent(id)) {
+                    return failure(tool, operation, "write_failed", "The calendar provider did not delete the event.")
+                }
+                ToolResult(
+                    CapabilityPolicy.ok(tool, operation) {
+                        put("deleted", true)
+                        put("id", CapabilityPolicy.bound(id))
                     },
                 )
             }
@@ -618,14 +809,170 @@ internal class CapabilityDispatcher(
             "notification_access_status" -> ToolResult(
                 CapabilityPolicy.ok(tool, operation) {
                     put("enabled", platform.isNotificationListenerEnabled())
+                    put("connected", notifications.connected())
                     put(
                         "note",
-                        "Reports only whether the listener component is enabled. Standing " +
-                            "rules match notifications through it on the phone; this tool " +
-                            "cannot read one, and no tool here can.",
+                        "When enabled and connected, list_notifications reads the live " +
+                            "notifications and notification_reply/press/dismiss act on them.",
                     )
                 },
             )
+            "list_notifications" -> {
+                val pkg = CapabilityPolicy.parsePackage(args, required = false)
+                val limit = CapabilityPolicy.parseLimit(args)
+                notificationGate(tool, operation)?.let { return it }
+                checkActive()
+                val rows = notifications.active(pkg, limit)
+                listResult(tool, operation, limit, rows.map { notificationJson(it) })
+            }
+            "notification_reply" -> {
+                val key = parseNotificationKey(args)
+                val text = CapabilityPolicy.parseBounded(args, "text", required = true, max = MAX_MESSAGE_CHARS)!!
+                val button = parseButton(args)
+                notificationGate(tool, operation)?.let { return it }
+                val target = notifications.find(key)
+                    ?: return failure(tool, operation, "not_found", "No live notification with that key. List again.")
+                if (target.replyButton == null) {
+                    return failure(tool, operation, "no_reply_action", "That notification has no reply action. Open the app instead.")
+                }
+                checkActive()
+                authorizeSend(
+                    SendRequest(
+                        packageName = target.packageName,
+                        appLabel = appLabel(target.packageName),
+                        recipient = target.title,
+                        message = text,
+                    ),
+                ) {
+                    checkActive()
+                    outcome(tool, operation, notifications.reply(key, button, text)) {
+                        put("sent", true)
+                        put("note", "The reply was handed to the app. Its own delivery state is not visible here.")
+                    }
+                }
+            }
+            "notification_press" -> {
+                val key = parseNotificationKey(args)
+                val button = parseButton(args)
+                notificationGate(tool, operation)?.let { return it }
+                val target = notifications.find(key)
+                    ?: return failure(tool, operation, "not_found", "No live notification with that key. List again.")
+                if (button != null) {
+                    val action = target.buttons.firstOrNull { it.index == button }
+                        ?: return failure(tool, operation, "invalid_argument", "No button $button on that notification.")
+                    // An action button can do anything the app wired to it
+                    // (delete, pay, mark read), so it goes through approval.
+                    approveLocal(
+                        LocalIntentRequest(
+                            action = "notification action \"" + CapabilityPolicy.bound(action.title, 80) + "\"",
+                            uri = null,
+                            packageName = target.packageName,
+                            reason = "Press \"" + CapabilityPolicy.bound(action.title, 80) + "\" on a " +
+                                appLabel(target.packageName) + " notification.",
+                        ),
+                    )?.let { return it }
+                }
+                checkActive()
+                outcome(tool, operation, notifications.press(key, button)) {
+                    put("pressed", true)
+                }
+            }
+            "notification_dismiss" -> {
+                val key = parseNotificationKey(args)
+                notificationGate(tool, operation)?.let { return it }
+                checkActive()
+                outcome(tool, operation, notifications.dismiss(key)) {
+                    put("dismissed", true)
+                }
+            }
+            "read_sms" -> {
+                val box = (CapabilityPolicy.parseBounded(args, "box", required = false) ?: "all").lowercase()
+                if (box !in SMS_BOXES) {
+                    return failure(tool, operation, "invalid_argument", "Unknown box \"$box\". Use: all, inbox, sent.")
+                }
+                val address = CapabilityPolicy.parseQuery(args, key = "address")
+                val query = CapabilityPolicy.parseQuery(args)
+                val limit = CapabilityPolicy.parseLimit(args)
+                checkActive()
+                if (!platform.hasPermission(CapabilityPolicy.PERM_READ_SMS)) {
+                    return permissionFailure(tool, operation, listOf(CapabilityPolicy.PERM_READ_SMS), args)
+                }
+                val rows = platform.querySms(box, address, query, limit)
+                listResult(
+                    tool, operation, limit,
+                    rows.map {
+                        buildJsonObject {
+                            put("id", CapabilityPolicy.bound(it.id))
+                            it.address?.let { a -> put("address", CapabilityPolicy.bound(a)) }
+                            put("body", CapabilityPolicy.bound(it.body, MAX_MESSAGE_CHARS))
+                            put("dateMs", it.dateMs)
+                            put("type", it.type)
+                            put("read", it.read)
+                            it.threadId?.let { t -> put("threadId", CapabilityPolicy.bound(t)) }
+                        }
+                    },
+                )
+            }
+            "read_call_log" -> {
+                val number = CapabilityPolicy.parseQuery(args, key = "number")
+                val limit = CapabilityPolicy.parseLimit(args)
+                checkActive()
+                if (!platform.hasPermission(CapabilityPolicy.PERM_READ_CALL_LOG)) {
+                    return permissionFailure(tool, operation, listOf(CapabilityPolicy.PERM_READ_CALL_LOG), args)
+                }
+                val rows = platform.queryCalls(number, limit)
+                listResult(
+                    tool, operation, limit,
+                    rows.map {
+                        buildJsonObject {
+                            it.number?.let { n -> put("number", CapabilityPolicy.bound(n)) }
+                            it.name?.let { n -> put("name", CapabilityPolicy.bound(n)) }
+                            put("type", it.type)
+                            put("dateMs", it.dateMs)
+                            put("durationSec", it.durationSec)
+                        }
+                    },
+                )
+            }
+            "send_sms" -> {
+                val to = CapabilityPolicy.parsePhone(args, "to", required = true)!!
+                val body = CapabilityPolicy.parseBounded(args, "body", required = true, max = MAX_MESSAGE_CHARS)!!
+                checkActive()
+                if (!platform.hasPermission(CapabilityPolicy.PERM_SEND_SMS)) {
+                    return permissionFailure(tool, operation, listOf(CapabilityPolicy.PERM_SEND_SMS), args)
+                }
+                authorizeSend(SendRequest(SMS_PACKAGE, "SMS", to, body)) {
+                    checkActive()
+                    val parts = platform.sendSms(to, body)
+                    ToolResult(
+                        CapabilityPolicy.ok(tool, operation) {
+                            put("sent", true)
+                            put("parts", parts)
+                            put("note", "Handed to the phone's SMS service. Carrier delivery is not confirmed here.")
+                        },
+                    )
+                }
+            }
+            "place_call" -> {
+                val number = CapabilityPolicy.parsePhone(args, "number", required = true)!!
+                checkActive()
+                if (!platform.hasPermission(CapabilityPolicy.PERM_CALL_PHONE)) {
+                    return permissionFailure(tool, operation, listOf(CapabilityPolicy.PERM_CALL_PHONE), args)
+                }
+                authorizeSend(SendRequest(CALL_PACKAGE, "Phone call", number, null)) {
+                    checkActive()
+                    if (!platform.placeCall(number)) {
+                        noHandler(tool, operation, "No app can place the call.")
+                    } else {
+                        ToolResult(
+                            CapabilityPolicy.ok(tool, operation) {
+                                put("calling", true)
+                                put("note", "The call was started. Use the screen tools to hang up.")
+                            },
+                        )
+                    }
+                }
+            }
             "open_notification_access_settings" -> {
                 checkActive()
                 if (!platform.openNotificationAccessSettings()) {
@@ -765,6 +1112,95 @@ internal class CapabilityDispatcher(
                 )
             }
             else -> failure(tool, operation, "unknown_operation", "Unknown operation \"$operation\".")
+        }
+    }
+
+    // ---- notification and approval helpers ----
+
+    private companion object {
+        const val MAX_MESSAGE_CHARS = 4_000
+        val SMS_BOXES = setOf("all", "inbox", "sent")
+        /** Pseudo packages for send grants: SMS and calls are not tied to one app here. */
+        const val SMS_PACKAGE = "android.telephony.sms"
+        const val CALL_PACKAGE = "android.telephony.call"
+    }
+
+    private fun notificationGate(tool: String, operation: String): ToolResult? = when {
+        !notifications.granted() -> ToolResult(
+            CapabilityPolicy.fail(
+                tool, operation, "notification_access_missing",
+                "Notification access is off. Run communications operation=open_notification_access_settings " +
+                    "and ask the user to enable Hey Mike.",
+            ),
+            success = false,
+        )
+        !notifications.connected() -> failure(
+            tool, operation, "listener_unavailable",
+            "Notification access is on but the listener is not connected yet. Try again in a few seconds.",
+        )
+        else -> null
+    }
+
+    private fun parseNotificationKey(args: JsonObject): String =
+        CapabilityPolicy.parseBounded(args, "key", required = true, max = CapabilityPolicy.MAX_STRING_CHARS)!!
+
+    private fun parseButton(args: JsonObject): Int? {
+        val raw = args["button"] ?: return null
+        val value = (raw as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toIntOrNull()
+            ?: throw PolicyException("invalid_argument", "\"button\" must be an integer index.")
+        if (value !in 0..15) throw PolicyException("invalid_argument", "\"button\" must be in 0..15.")
+        return value
+    }
+
+    private suspend fun appLabel(packageName: String): String =
+        runCatching { platform.appInfo(packageName)?.label }.getOrNull() ?: packageName
+
+    /**
+     * Runs [authorizeChange] and returns null only when it approved. The
+     * gate's dispatch is not suspending, so the real work happens after.
+     */
+    private suspend fun approveLocal(request: LocalIntentRequest): ToolResult? {
+        var approved = false
+        val gate = authorizeChange(request) {
+            approved = true
+            ToolResult("{\"ok\":true}")
+        }
+        return if (approved) null else gate
+    }
+
+    private fun outcome(
+        tool: String,
+        operation: String,
+        result: NotificationOutcome,
+        body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit,
+    ): ToolResult = when (result) {
+        NotificationOutcome.Done -> ToolResult(CapabilityPolicy.ok(tool, operation, body))
+        is NotificationOutcome.Failed -> failure(tool, operation, result.errorType, result.message)
+    }
+
+    private fun notificationJson(row: ActiveNotification): JsonObject = buildJsonObject {
+        put("key", CapabilityPolicy.bound(row.key))
+        put("package", CapabilityPolicy.bound(row.packageName))
+        if (row.title.isNotEmpty()) put("title", CapabilityPolicy.bound(row.title))
+        if (row.text.isNotEmpty()) put("text", CapabilityPolicy.bound(row.text, MAX_MESSAGE_CHARS))
+        row.subText?.let { put("subText", CapabilityPolicy.bound(it)) }
+        put("postedAtMs", row.postedAtMs)
+        row.category?.let { put("category", CapabilityPolicy.bound(it)) }
+        put("ongoing", row.ongoing)
+        put("clearable", row.clearable)
+        if (row.buttons.isNotEmpty()) {
+            put(
+                "buttons",
+                JsonArray(
+                    row.buttons.map {
+                        buildJsonObject {
+                            put("index", it.index)
+                            put("title", CapabilityPolicy.bound(it.title, 80))
+                            if (it.acceptsText) put("reply", true)
+                        }
+                    },
+                ),
+            )
         }
     }
 

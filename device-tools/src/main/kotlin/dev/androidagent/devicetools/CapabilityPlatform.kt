@@ -124,4 +124,59 @@ interface CapabilityPlatform {
     suspend fun openAppSettings(packageName: String): Boolean
     suspend fun openSpecialAccess(kind: String, packageName: String?): Boolean
     suspend fun openSystemSetting(action: String): Boolean
+
+    // ---- direct reads and writes (added 2026-11-15; defaults keep fakes small) ----
+
+    /** SMS rows from [box] (inbox, sent, all), newest first. Needs READ_SMS. */
+    suspend fun querySms(box: String, address: String?, query: String?, limit: Int): List<SmsRow> = emptyList()
+
+    /** Call log rows, newest first. Needs READ_CALL_LOG. */
+    suspend fun queryCalls(number: String?, limit: Int): List<CallRow> = emptyList()
+
+    /** Sends a text through the default SIM. Needs SEND_SMS. Returns the part count. */
+    suspend fun sendSms(to: String, body: String): Int = throw UnsupportedOperationException("SMS is not available.")
+
+    /** Places a call. Needs CALL_PHONE. False when nothing handles it. */
+    suspend fun placeCall(number: String): Boolean = false
+
+    /** Inserts a contact without an editor. Needs WRITE_CONTACTS. Returns the new raw contact id. */
+    suspend fun insertContact(name: String, phone: String?, email: String?): String? = null
+
+    /** Inserts an event into the primary writable calendar. Needs WRITE_CALENDAR. Returns the event id. */
+    suspend fun insertEvent(
+        title: String,
+        description: String?,
+        location: String?,
+        beginMs: Long,
+        endMs: Long,
+        allDay: Boolean,
+        calendarId: String?,
+    ): String? = null
+
+    suspend fun deleteEvent(id: String): Boolean = false
+
+    /** Calendars the app can write to. */
+    suspend fun writableCalendars(): List<CalendarRow> = emptyList()
 }
+
+/** One SMS. [type] is inbox, sent, draft, outbox or other. */
+data class SmsRow(
+    val id: String,
+    val address: String?,
+    val body: String,
+    val dateMs: Long,
+    val type: String,
+    val read: Boolean,
+    val threadId: String?,
+)
+
+/** One call log entry. [type] is incoming, outgoing, missed, rejected, blocked, voicemail or other. */
+data class CallRow(
+    val number: String?,
+    val name: String?,
+    val type: String,
+    val dateMs: Long,
+    val durationSec: Long,
+)
+
+data class CalendarRow(val id: String, val name: String, val account: String?, val primary: Boolean)

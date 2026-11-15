@@ -274,9 +274,18 @@ class AgentGraph(private val app: Application) {
     val knowledge = KnowledgeStore(KnowledgeStore.directoryIn(runtime.homeDirectory))
     val knowledgeTools = KnowledgeToolGateway(knowledge)
     val runtimePermissions = RuntimePermissionBroker(app)
-    val capabilityTools = AndroidCapabilityTools(app) { requested ->
-        runtimePermissions.request(requested)
-    }
+    /** Live notifications and media sessions, read through the automations listener. */
+    private val notificationAccess = dev.androidagent.automations.AndroidNotificationAccess(app)
+    val capabilityTools = AndroidCapabilityTools(
+        app,
+        requestRuntimePermissions = { requested -> runtimePermissions.request(requested) },
+        notifications = notificationAccess,
+        media = notificationAccess,
+        // SMS, calls and notification replies leave the phone: same approval as a chat-app send.
+        authorizeSend = { request, dispatch -> runCoordinator.authorizeSend(request, dispatch) },
+        // Settings writes, event deletes and notification action buttons.
+        authorizeChange = { request, dispatch -> runCoordinator.authorizeLocalIntent(request, dispatch) },
+    )
     private val workflowCalls = WorkflowCallRegistry(
         listOf(
             WorkflowCallMetadata(
@@ -285,7 +294,11 @@ class AgentGraph(private val app: Application) {
             ),
             WorkflowCallMetadata(
                 name = "calendar",
-                readOnlyOperations = setOf("permission_status", "list", "get"),
+                readOnlyOperations = setOf("permission_status", "list", "get", "calendars"),
+            ),
+            WorkflowCallMetadata(
+                name = dev.androidagent.devicetools.SystemPolicy.TOOL,
+                readOnlyOperations = dev.androidagent.devicetools.SystemPolicy.READ_ONLY,
             ),
             WorkflowCallMetadata(
                 name = "files_media",
@@ -295,7 +308,9 @@ class AgentGraph(private val app: Application) {
             ),
             WorkflowCallMetadata(
                 name = "communications",
-                readOnlyOperations = setOf("notification_access_status"),
+                readOnlyOperations = setOf(
+                    "notification_access_status", "list_notifications", "read_sms", "read_call_log",
+                ),
             ),
             WorkflowCallMetadata(
                 name = "apps_settings",
