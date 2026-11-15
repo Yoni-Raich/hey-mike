@@ -15,9 +15,10 @@ code), a readout with new values to apply, or one of the app's own settings.
   control. Parsing refuses anything else with a reason the model can fix.
 - `control` blocks are app-owned live settings, a closed enum
   (`PanelControl`). The card renders the same composables as Settings, so a
-  control changes the real setting directly. The model never supplies tool
-  calls for buttons. Phone settings outside the app go the other way: values
-  come back to Mike, and Mike calls the gated tool (`system_controls` etc.).
+  control changes the real setting directly. Inputs (fields, toggles,
+  choices) still go the other way: values come back to Mike, and Mike calls
+  the tool. Buttons that act at once are `action` blocks (see "Live panel
+  actions" below).
 - `add_computer` is a compact form that saves the computer on the phone. The
   password never goes to the engine.
 - Secret field values reach the engine but are masked (`••••`) in chat history
@@ -30,6 +31,31 @@ code), a readout with new values to apply, or one of the app's own settings.
 - A notification that opens the chat is posted when the panel is not on screen;
   a panel cannot be answered from the notification.
 - Child chats and computer tasks report a waiting panel as `waiting_for_user`.
+
+### Live panel actions - 2026-11-15
+
+An `action` block binds a tile to one tool call (`tool`, `arguments`, optional
+`off_arguments` for an on/off switch). A tap runs it at once through
+`AgentCoordinator.runPanelAction`, with no round trip to the model, and the
+panel stays open.
+
+- This replaces the earlier rule "the model never supplies tool calls for
+  buttons", but only for tools that cannot read or touch the screen. At
+  `show_ui` time the coordinator refuses chat tools, session agents, unknown
+  tools and any tool where `usesScreen` holds, so a tile cannot tap, type or
+  run a shell.
+- The call goes through the same path as a model call: current-turn check,
+  device lease (`claimDevice` or `beginIndependentTool`), the tool's own
+  approvals, trace (`source: panel_action`) and a `tool` message in history.
+- It does not take the run's tool lock (the panel's own call holds it while it
+  waits). One action at a time per panel (`actionLock.tryLock`); refused while
+  stopping or after the turn changed. Closing waits up to 10 s for a running
+  action.
+- Each tile shows its real call (`system_controls · torch`). The switch moves
+  only on success.
+- The panel's result lists every action run, with ok and result text, on every
+  exit (answer, close, dismiss, timeout), so the model knows what happened.
+  Using an action restarts the 8-minute wait.
 
 ## Account connections for regular chats - 2026-11-12
 

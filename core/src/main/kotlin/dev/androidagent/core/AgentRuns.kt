@@ -123,7 +123,8 @@ class AgentRuns(
         val waiting = children.firstOrNull { it.approval != null || it.question != null || it.panel != null }
         if (waiting != null && own.approval == null && own.question == null && own.panel == null) return own.copy(
             phase = if (own.active) own.phase else RunPhase.THINKING, status = waiting.status,
-            approval = waiting.approval, question = waiting.question, panel = waiting.panel, delegated = !own.active)
+            approval = waiting.approval, question = waiting.question, panel = waiting.panel,
+            panelActions = waiting.panelActions, delegated = !own.active)
         return if (!own.active && children.isNotEmpty()) own.copy(phase = RunPhase.THINKING, status = children.first().status, delegated = true) else own
     }
 
@@ -323,6 +324,10 @@ class AgentRuns(
     /** What the user did with a `show_ui` panel; null [button] closes it. */
     fun answerPanel(panelId: String, button: String?, values: Map<String, String>): Boolean =
         slots.firstOrNull { it.state.value.panel?.id == panelId }?.answerPanel(panelId, button, values) ?: false
+
+    /** The user tapped an action tile on a `show_ui` panel; [turnOn] is a switch's new position. */
+    fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean =
+        slots.firstOrNull { it.state.value.panel?.id == panelId }?.runPanelAction(panelId, actionId, turnOn) ?: false
 
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {
         val slot = freeSlot()

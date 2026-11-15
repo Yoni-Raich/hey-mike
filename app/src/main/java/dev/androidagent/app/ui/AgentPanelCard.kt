@@ -21,6 +21,24 @@
 package dev.androidagent.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.scaleIn
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
@@ -108,7 +126,7 @@ import dev.androidagent.core.PanelButton
 import dev.androidagent.core.PanelControl
 import dev.androidagent.core.Tone
 
-private object PanelInk {
+internal object PanelInk {
     val Fill = Color(0xFF161A19)
     val FillTop = Color(0xFF1B2B28)
     val Edge = Color(0xFF2C4A44)
@@ -161,42 +179,56 @@ internal fun AgentPanelCard(
     val missing = panel.inputs.filter { it.required && values[it.id].isNullOrBlank() }
     fun answer(button: String?) = actions.onAnswerPanel(panel.id, button, values.toMap())
     val shown = remember(panel.id) { MutableTransitionState(false).apply { targetState = true } }
+    val live = panel.actions.isNotEmpty()
+    // Runs of action blocks become one grid of tiles; everything else stays a row of its own.
+    val segments = remember(panel.id) {
+        buildList<List<PanelBlock>> {
+            panel.blocks.forEach { block ->
+                val last = lastOrNull()
+                if (block is PanelBlock.Action && last?.firstOrNull() is PanelBlock.Action) set(size - 1, last + block)
+                else add(listOf(block))
+            }
+        }
+    }
 
     AnimatedVisibility(
         visibleState = shown,
-        enter = fadeIn(tween(220)) + expandVertically(tween(260), expandFrom = Alignment.Bottom),
+        enter = fadeIn(tween(260)) +
+            scaleIn(spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.9f, transformOrigin = TransformOrigin(0.5f, 1f)) +
+            expandVertically(tween(280), expandFrom = Alignment.Bottom),
         modifier = modifier,
     ) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.Transparent,
-            border = BorderStroke(1.dp, PanelInk.Edge),
-            shadowElevation = 6.dp,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+        GlowFrame(shape = RoundedCornerShape(26.dp), lively = live) {
             Column(
                 Modifier
                     .background(Brush.verticalGradient(listOf(PanelInk.FillTop, PanelInk.Fill, PanelInk.Fill)))
-                    .animateContentSize(),
+                    .animateContentSize(spring(stiffness = Spring.StiffnessMediumLow)),
             ) {
-                PanelHeader(panel.title, onClose = { answer(null) })
+                PanelHeader(panel.title, live = live, onClose = { answer(null) })
                 Column(
                     modifier = Modifier
-                        .heightIn(max = 400.dp)
+                        .heightIn(max = 440.dp)
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 18.dp)
-                        .padding(bottom = 6.dp),
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     val lastInput = panel.inputs.lastOrNull { it is PanelBlock.Field }?.id
-                    panel.blocks.forEach { block ->
-                        when (block) {
-                            is PanelBlock.Text -> PanelText(block)
-                            is PanelBlock.Status -> PanelStatus(block)
-                            is PanelBlock.Field -> PanelField(block, values[block.id].orEmpty(), last = block.id == lastInput) { values[block.id] = it }
-                            is PanelBlock.Toggle -> PanelToggle(block, values[block.id] == "true") { values[block.id] = it.toString() }
-                            is PanelBlock.Choice -> PanelChoice(block, values[block.id].orEmpty()) { values[block.id] = it }
-                            is PanelBlock.Control -> PanelControlBlock(block.control, state, actions)
+                    segments.forEachIndexed { index, segment ->
+                        StaggerIn(panel.id, index) {
+                            val block = segment.first()
+                            when (block) {
+                                is PanelBlock.Action -> PanelActionGrid(
+                                    actions = segment.filterIsInstance<PanelBlock.Action>(),
+                                    states = state.runState.panelActions,
+                                ) { action, turnOn -> actions.onPanelAction(panel.id, action.id, turnOn) }
+                                is PanelBlock.Text -> PanelText(block)
+                                is PanelBlock.Status -> PanelStatus(block)
+                                is PanelBlock.Field -> PanelField(block, values[block.id].orEmpty(), last = block.id == lastInput) { values[block.id] = it }
+                                is PanelBlock.Toggle -> PanelToggle(block, values[block.id] == "true") { values[block.id] = it.toString() }
+                                is PanelBlock.Choice -> PanelChoice(block, values[block.id].orEmpty()) { values[block.id] = it }
+                                is PanelBlock.Control -> PanelControlBlock(block.control, state, actions)
+                            }
                         }
                     }
                 }
@@ -207,28 +239,84 @@ internal fun AgentPanelCard(
     }
 }
 
+/**
+ * A card whose edge is a slow ring of light turning around it, the sign that
+ * Mike is waiting on this panel. A panel of live controls turns a little
+ * faster and brighter.
+ */
 @Composable
-private fun PanelHeader(title: String, onClose: () -> Unit) {
+private fun GlowFrame(shape: RoundedCornerShape, lively: Boolean, content: @Composable () -> Unit) {
+    val turn = rememberInfiniteTransition(label = "frame")
+    val angle by turn.animateFloat(
+        initialValue = 0f, targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(if (lively) 4_200 else 7_000, easing = LinearEasing)),
+        label = "angle",
+    )
+    val ring = remember(lively) {
+        Brush.sweepGradient(
+            listOf(
+                PanelInk.Edge, PanelInk.Teal.copy(alpha = if (lively) 0.95f else 0.7f), Color(0xFFB59CFF).copy(alpha = 0.8f),
+                PanelInk.Edge, PanelInk.Edge, PanelInk.Teal.copy(alpha = 0.5f), PanelInk.Edge,
+            ),
+        )
+    }
+    Surface(shape = shape, color = Color.Transparent, shadowElevation = 10.dp, modifier = Modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .clip(shape)
+                .drawBehind {
+                    rotate(angle) {
+                        drawCircle(ring, radius = size.maxDimension, center = center)
+                    }
+                }
+                .padding(1.6.dp)
+                .clip(RoundedCornerShape(25.dp))
+                .background(PanelInk.Fill),
+        ) { content() }
+    }
+}
+
+/** Each part of the panel rises into place a beat after the one above it. */
+@Composable
+private fun StaggerIn(key: String, index: Int, content: @Composable () -> Unit) {
+    val appear = remember(key) { Animatable(0f) }
+    LaunchedEffect(key) {
+        delay(70L + 55L * index.coerceAtMost(8))
+        appear.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow))
+    }
+    Box(
+        Modifier.graphicsLayer {
+            alpha = appear.value.coerceIn(0f, 1f)
+            translationY = (1f - appear.value) * 18.dp.toPx()
+        },
+    ) { content() }
+}
+
+@Composable
+private fun PanelHeader(title: String, live: Boolean, onClose: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 12.dp, bottom = 8.dp),
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 14.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 Modifier
                     .clip(CircleShape)
-                    .background(PanelInk.TealSoft)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .background(Brush.horizontalGradient(listOf(PanelInk.TealSoft, Color(0xFF2A2350))))
+                    .padding(start = 6.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = PanelInk.Teal, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Mike needs you", style = MaterialTheme.typography.labelMedium, color = PanelInk.Teal)
+                BreathingOrb()
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    if (live) "Live controls" else "Mike needs you",
+                    style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium, color = PanelInk.Teal,
+                )
             }
             // It holds up the run, so a screen reader hears it at once, as for a question.
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = PanelInk.Ink,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
@@ -236,6 +324,26 @@ private fun PanelHeader(title: String, onClose: () -> Unit) {
         }
         IconButton(onClick = onClose, modifier = Modifier.align(Alignment.Top)) {
             Icon(Icons.Outlined.Close, contentDescription = "Close without answering", tint = PanelInk.Muted)
+        }
+    }
+}
+
+/** Mike's small light: it breathes while he waits. */
+@Composable
+private fun BreathingOrb() {
+    val breath = rememberInfiniteTransition(label = "orb")
+    val grow by breath.animateFloat(
+        initialValue = 0.6f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1_300, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "grow",
+    )
+    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawCircle(PanelInk.Teal.copy(alpha = 0.25f * grow), radius = size.minDimension / 2f * grow)
+            drawCircle(
+                Brush.radialGradient(listOf(Color.White, PanelInk.Teal), radius = size.minDimension / 3f),
+                radius = size.minDimension / 4.2f,
+            )
         }
     }
 }

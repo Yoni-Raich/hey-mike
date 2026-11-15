@@ -56,6 +56,32 @@ class AgentPanelsTest {
         assertEquals(listOf(PanelButton("done", "Done")), parsed.buttons)
     }
 
+    @Test fun anActionWithOffArgumentsIsASwitch() {
+        val parsed = AgentPanels.parse("p", panel(
+            block("action") {
+                put("id", "torch"); put("label", "Torch"); put("tool", "system_controls"); put("icon", "nope"); put("accent", "amber")
+                put("arguments", buildJsonObject { put("operation", "torch"); put("on", true) })
+                put("off_arguments", buildJsonObject { put("operation", "torch"); put("on", false) })
+                put("value", "true")
+            },
+            block("action") { put("id", "next"); put("label", "Next"); put("tool", "system_controls"); put("arguments", buildJsonObject { put("operation", "media") }) },
+        )).getOrThrow()
+        val torch = parsed.actions[0]
+        assertTrue(torch.switch)
+        assertTrue(torch.on)
+        assertEquals("bolt", torch.icon)
+        assertEquals(PanelAccent.AMBER, torch.accent)
+        assertEquals("system_controls · torch", torch.call.caption)
+        assertEquals("false", torch.callFor(false).arguments["on"].toString())
+        assertTrue(!parsed.actions[1].switch)
+        // A refusal from the coordinator's check reaches the model with the action's id.
+        val refused = AgentPanels.parse("p", panel(
+            block("action") { put("id", "t"); put("label", "T"); put("tool", "tap"); put("arguments", buildJsonObject { }) },
+        )) { tool, _ -> if (tool == "tap") "uses the screen" else null }
+        assertTrue(refused.exceptionOrNull()!!.message!!.contains("\"t\": uses the screen"))
+        assertTrue(AgentPanels.parse("p", panel(block("action") { put("id", "t"); put("label", "T"); put("tool", "x") })).isFailure)
+    }
+
     @Test fun refusesWhatTheAppCannotDraw() {
         listOf(
             panel(block("slider")),

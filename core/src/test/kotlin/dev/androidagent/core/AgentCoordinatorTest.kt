@@ -1118,6 +1118,108 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    private fun torchPanel(tool: String = "system_controls") = buildJsonObject {
+        put("title", "Remote")
+        put("blocks", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject {
+                put("type", "action"); put("id", "torch"); put("label", "Flashlight"); put("tool", tool); put("icon", "flashlight")
+                put("arguments", buildJsonObject { put("operation", "torch"); put("on", true) })
+                put("off_arguments", buildJsonObject { put("operation", "torch"); put("on", false) })
+            })
+        })
+    }
+
+    private fun Rig.defineTools(vararg names: String) {
+        tools.definitions = names.map { ToolDefinition(it, it, buildJsonObject { put("type", "object") }) }
+    }
+
+    @Test fun aPanelActionRunsItsToolAtOnceAndThePanelStaysOpen() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Give me a torch switch")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", torchPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertEquals(false, rig.coordinator.state.value.panelActions["torch"]!!.on)
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "nope", true))
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        runCurrent()
+        assertEquals("system_controls" to buildJsonObject { put("operation", "torch"); put("on", true) }, rig.tools.calls.single())
+        // No answer yet: Mike is not involved, and the panel is still there.
+        assertTrue(rig.engine.answers.isEmpty())
+        assertEquals(panel.id, rig.coordinator.state.value.panel?.id)
+        assertEquals(true, rig.coordinator.state.value.panelActions["torch"]!!.on)
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", false))
+        runCurrent()
+        assertEquals(false, rig.tools.calls.last().second["on"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(false, rig.coordinator.state.value.panelActions["torch"]!!.on)
+        // Closing tells Mike what the taps did, so he does not undo or repeat them.
+        assertTrue(rig.coordinator.answerPanel(panel.id, null, emptyMap()))
+        runCurrent()
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("closed", result["errorType"]!!.jsonPrimitive.content)
+        val actions = result["actions"] as kotlinx.serialization.json.JsonArray
+        assertEquals(listOf("true", "false"), actions.map { it.jsonObject["on"]!!.jsonPrimitive.content })
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        rig.close()
+    }
+
+    @Test fun aFailedActionLeavesTheSwitchWhereItWas() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "torch")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", torchPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        rig.tools.nextResult = ToolResult("""{"ok":false,"errorType":"torch_failed","message":"The flash is busy"}""")
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        runCurrent()
+        val tile = rig.coordinator.state.value.panelActions["torch"]!!
+        assertEquals(false, tile.on)
+        assertEquals(false, tile.ok)
+        assertEquals("The flash is busy", tile.message)
+        rig.close()
+    }
+
+    @Test fun anActionIsRefusedWhileOneRunsAndAfterStop() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "torch")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", torchPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        rig.tools.workMs = 1_000
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        runCurrent()
+        assertTrue(rig.coordinator.state.value.panelActions["torch"]!!.running)
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "torch", false))
+        advanceTimeBy(1_500)
+        runCurrent()
+        rig.coordinator.stop()
+        runCurrent()
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "torch", false))
+        assertEquals(1, rig.tools.calls.size)
+        rig.close()
+    }
+
+    @Test fun anActionCannotBindAScreenOrUnknownOrChatTool() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls", "tap")
+        rig.coordinator.send("one", "x")
+        runCurrent()
+        listOf("tap", "rm_rf", "ask_user").forEachIndexed { index, tool ->
+            rig.engine.emit(EngineEvent.ToolCall("p$index", "show_ui", torchPanel(tool), "thread", "turn"))
+            runCurrent()
+            assertNull(rig.coordinator.state.value.panel)
+            assertTrue(rig.engine.answers.last().text, rig.engine.answers.last().text.contains("bad_panel"))
+        }
+        assertTrue(rig.tools.calls.isEmpty())
+        rig.close()
+    }
+
     @Test fun aBadPanelIsRefusedWithAReason() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "x")
@@ -1335,7 +1437,8 @@ class AgentCoordinatorTest {
         override fun workspace(sessionId: String) = File("session-$sessionId")
     }
     private class FakeTools(private val overlay: FakeOverlay) : DeviceToolGateway {
-        override val definitions = emptyList<ToolDefinition>()
+        override var definitions = emptyList<ToolDefinition>()
+        val calls = mutableListOf<Pair<String, JsonObject>>()
         var revoked = true
         var executions = 0
         var controlWasVisible = false
@@ -1353,7 +1456,7 @@ class AgentCoordinatorTest {
         override suspend fun invoke(name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
             check(!revoked)
             if (needsControl(name, arguments)) controlWasVisible = overlay.visible
-            executions++; names.add(name)
+            executions++; names.add(name); calls.add(name to arguments)
             if (fail) error("Capture failed")
             if (workMs > 0) delay(workMs)
             return nextResult

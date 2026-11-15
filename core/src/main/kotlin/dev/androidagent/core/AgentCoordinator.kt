@@ -680,6 +680,110 @@ class AgentCoordinator(
         }
     }
 
+    /**
+     * The user tapped an action tile on the waiting panel: run its tool call
+     * now, as Mike would, and keep the panel open.
+     *
+     * The call does not take [toolLock]: the `show_ui` call that waits for
+     * this panel holds it, and no other call of this run can start meanwhile.
+     * One action runs at a time; a tap while one runs is refused.
+     *
+     * @param turnOn a switch's new position; ignored for a button.
+     * @return false when the panel or action is not the one waiting, the run
+     *   is stopping, or another action still runs.
+     */
+    fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean {
+        val pending: PendingPanel
+        val action: PanelBlock.Action
+        synchronized(lifecycleLock) {
+            pending = pendingPanel ?: return false
+            if (pending.panel.id != panelId || pending.reply.isCompleted || state.value.phase == RunPhase.STOPPING) return false
+            if (!isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)) return false
+            action = pending.panel.actions.firstOrNull { it.id == actionId } ?: return false
+            if (!pending.actionLock.tryLock()) return false
+            pending.touched.incrementAndGet()
+            setPanelAction(pending, actionId) { it.copy(running = true, message = "") }
+        }
+        scope.launch {
+            try {
+                runPanelCall(pending, action, turnOn = !action.switch || turnOn)
+            } finally {
+                pending.touched.incrementAndGet()
+                pending.actionLock.unlock()
+            }
+        }
+        return true
+    }
+
+    /** Call under [lifecycleLock]. Changes only the live panel's tile. */
+    private fun setPanelAction(pending: PendingPanel, actionId: String, change: (PanelActionState) -> PanelActionState) {
+        if (pendingPanel !== pending || state.value.panel?.id != pending.panel.id) return
+        val now = state.value.panelActions
+        mutableState.value = state.value.copy(panelActions = now + (actionId to change(now[actionId] ?: PanelActionState())))
+    }
+
+    private suspend fun runPanelCall(pending: PendingPanel, action: PanelBlock.Action, turnOn: Boolean) {
+        val call = action.callFor(turnOn)
+        val requestId = "panel-${UUID.randomUUID()}"
+        val threadId = pending.threadId
+        val turnId = pending.turnId
+        val sessionId = pending.sessionId
+        val epochToken = pending.token
+        var held = false
+        val started = nowNanos()
+        withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
+            put("threadId", threadId); put("turnId", turnId); put("requestId", requestId)
+            put("name", call.tool); put("arguments", call.arguments)
+            put("source", "panel_action"); put("panelId", pending.panel.id); put("actionId", action.id)
+        }) }
+        val result = try {
+            ensureCurrentTurn(epochToken, threadId, turnId)
+            if (tools.requiresDeviceLease(call.tool)) {
+                if (!claimDevice(epochToken, threadId, turnId)) throw CancellationException("Run stopped")
+                held = true
+            } else synchronized(lifecycleLock) {
+                val work = runWorkspace
+                if (!isCurrentTurnLocked(epochToken, threadId, turnId) || work == null) throw CancellationException("Run stopped")
+                tools.beginIndependentTool(call.tool, epochToken.toString(), work)
+            }
+            toolCalls++
+            tools.invoke(call.tool, call.arguments)
+        } catch (cancelled: CancellationException) {
+            ToolResult("Run stopped. The action did not run.", success = false)
+        } catch (error: Exception) {
+            ToolResult(error.message ?: "${call.tool} failed", success = false)
+        } finally {
+            if (held) handBackUnlessOnScreen()
+        }
+        val ok = result.success && !refused(result.text)
+        withContext(NonCancellable) {
+            trace(sessionId, "tool_result", buildJsonObject {
+                put("threadId", threadId); put("turnId", turnId); put("requestId", requestId)
+                put("name", call.tool); put("success", ok); put("text", result.text)
+                put("elapsedMs", (nowNanos() - started).coerceAtLeast(0) / 1_000_000)
+                put("source", "panel_action")
+            })
+            sessions.append(message(sessionId, "tool", "${call.tool}: ${result.text.take(4_000)}"))
+        }
+        val shown = if (ok) "" else panelMessage(result.text)
+        synchronized(lifecycleLock) {
+            pending.log += PanelActionLog(action.id, action.label, call.tool, if (action.switch) turnOn else null, ok, result.text)
+            setPanelAction(pending, action.id) {
+                it.copy(running = false, ok = ok, message = shown, runs = it.runs + 1, on = if (action.switch && ok) turnOn else it.on)
+            }
+        }
+    }
+
+    /** A gateway can answer with success but an `{"ok":false}` body. */
+    private fun refused(text: String): Boolean = runCatching {
+        (Json.parseToJsonElement(text).jsonObject["ok"] as? JsonPrimitive)?.contentOrNull == "false"
+    }.getOrDefault(false)
+
+    /** The short reason a tile shows when its call failed. */
+    private fun panelMessage(text: String): String = runCatching {
+        Json.parseToJsonElement(text).jsonObject["message"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()?.takeIf(String::isNotBlank)?.take(160) ?: text.take(160)
+
     private fun dismissPanelByReply(reply: String): Boolean {
         val text = reply.trim().takeIf(String::isNotEmpty) ?: return false
         synchronized(lifecycleLock) {
@@ -1742,7 +1846,16 @@ class AgentCoordinator(
     private suspend fun showPanel(
         token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject,
     ): Pair<ToolResult, String> {
-        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments).getOrElse {
+        val known = tools.definitions.map { it.name }.toSet()
+        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments) { tool, args ->
+            when {
+                tool in ChatTools.NAMES || tool == SessionAgentTools.NAME -> "$tool is a chat tool, not a device action."
+                tool !in known -> "$tool is not one of your device tools."
+                // The panel sits in Mike's own window: a tap or a screen read would land on it.
+                usesScreen(tool, args) -> "$tool uses the screen, and the panel is on it. Bind only tools that leave the screen alone."
+                else -> null
+            }
+        }.getOrElse {
             val refusal = toolRefusal("bad_panel", it.message ?: "The panel could not be read.")
             return refusal to refusal.text
         }
@@ -1752,11 +1865,12 @@ class AgentCoordinator(
                 val busy = toolRefusal("busy", "Something already waits for the user. One question or panel at a time.")
                 return busy to busy.text
             }
-            PendingPanel(panel, CompletableDeferred()).also {
+            PendingPanel(panel, CompletableDeferred(), token, threadId, turnId, sessionId).also {
                 pendingPanel = it
                 mutableState.value = state.value.copy(
                     phase = RunPhase.TOOL, controlling = false, status = "Waiting for you",
                     toolName = AgentPanels.NAME, panel = panel,
+                    panelActions = panel.actions.associate { action -> action.id to PanelActionState(on = if (action.switch) action.on else null) },
                 )
                 overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Waiting for you"))
             }
@@ -1764,21 +1878,29 @@ class AgentCoordinator(
         val askedAt = nowNanos()
         val reply = try {
             sessions.append(message(sessionId, "assistant", panel.title))
-            withTimeoutOrNull(ChatTools.ASK_TIMEOUT_MS) { pending.reply.await() }
+            // A tap on an action counts as use: the wait starts over while the user works the panel.
+            var answer: PanelReply? = null
+            while (answer == null) {
+                val seen = pending.touched.get()
+                answer = withTimeoutOrNull(ChatTools.ASK_TIMEOUT_MS) { pending.reply.await() }
+                if (answer == null && pending.touched.get() == seen && !pending.actionLock.isLocked) break
+            }
+            answer
         } finally {
-            approvalNanos.addAndGet(nowNanos() - askedAt)
             synchronized(lifecycleLock) {
                 if (pendingPanel === pending) pendingPanel = null
-                if (state.value.panel?.id == panel.id) mutableState.value = state.value.copy(panel = null)
+            }
+            // An action still running finishes before Mike hears back, so his next call cannot race it.
+            withContext(NonCancellable) { withTimeoutOrNull(PANEL_ACTION_DRAIN_MS) { pending.actionLock.withLock { } } }
+            approvalNanos.addAndGet(nowNanos() - askedAt)
+            synchronized(lifecycleLock) {
+                if (state.value.panel?.id == panel.id) mutableState.value = state.value.copy(panel = null, panelActions = emptyMap())
             }
         }
         ensureCurrentTurn(token, threadId, turnId)
+        val log = synchronized(lifecycleLock) { pending.log.toList() }
         if (reply == null) {
-            val none = toolRefusal(
-                "no_answer",
-                "Nobody used the panel within ${ChatTools.ASK_TIMEOUT_MS / 60_000} minutes and it is closed. Do not show it " +
-                    "again now: say what you need and end your turn.",
-            )
+            val none = ToolResult(AgentPanels.timedOut(log, ChatTools.ASK_TIMEOUT_MS / 60_000), success = false)
             return none to none.text
         }
         val said = reply.typed ?: AgentPanels.summary(panel, reply)
@@ -1786,8 +1908,8 @@ class AgentCoordinator(
             sessions.append(message(sessionId, "user", said))
             trace(sessionId, "user", buildJsonObject { put("text", said); put("source", "panel_reply") })
         }
-        val real = AgentPanels.result(panel, reply, mask = false)
-        return ToolResult(real, success = reply.typed == null && reply.button != null) to AgentPanels.result(panel, reply, mask = true)
+        val real = AgentPanels.result(panel, reply, mask = false, log = log)
+        return ToolResult(real, success = reply.typed == null && reply.button != null) to AgentPanels.result(panel, reply, mask = true, log = log)
     }
 
     /** Bring each file into the chat's folder and show them as one message from Mike. */
@@ -2208,7 +2330,21 @@ class AgentCoordinator(
     /** [answer] is null when the user chose not to answer. */
     private class QuestionReply(val answer: String?)
     private class PendingQuestion(val question: UserQuestion, val reply: CompletableDeferred<QuestionReply>)
-    private class PendingPanel(val panel: AgentPanel, val reply: CompletableDeferred<PanelReply>)
+    private class PendingPanel(
+        val panel: AgentPanel,
+        val reply: CompletableDeferred<PanelReply>,
+        val token: Long,
+        val threadId: String,
+        val turnId: String,
+        val sessionId: String,
+    ) {
+        /** Held while one of the panel's actions runs. */
+        val actionLock = Mutex()
+        /** Counts taps, so the wait starts over while the user works the panel. */
+        val touched = AtomicLong()
+        /** What the taps did, for Mike. Guarded by the coordinator's lifecycle lock. */
+        val log = mutableListOf<PanelActionLog>()
+    }
     private data class AssistantTextSnapshot(val revision: Long, val text: String)
     private data class AssistantFinal(val id: String?, val text: String, val outcome: String, val flush: Job?, val device: Boolean)
     private data class StopContext(
@@ -2242,6 +2378,9 @@ class AgentCoordinator(
 
         /** Reads of the screen that do not count as control, but whose handles the next tap uses. */
         private val SCREEN_READS = setOf("read_ui", "screenshot")
+
+        /** How long a closed panel waits for its running action before Mike hears back. */
+        private const val PANEL_ACTION_DRAIN_MS = 10_000L
 
         /**
          * How long a firing rule waits for the phone before giving up.
