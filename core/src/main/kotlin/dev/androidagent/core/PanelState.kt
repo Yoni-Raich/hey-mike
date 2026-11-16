@@ -141,6 +141,17 @@ sealed interface PanelEffect {
     data class AskMike(val prompt: String) : PanelEffect
     /** Opens an app or one safe intent shape. */
     data class Open(val target: PanelOpen) : PanelEffect
+    /**
+     * Runs [steps] in order, each checked like a one-step action, and stops
+     * at the first that fails. What the earlier steps did stays done.
+     */
+    data class Steps(val steps: List<PanelStep>) : PanelEffect
+}
+
+/** One step of a [PanelEffect.Steps] action: an allowlisted device call, or a change to this panel's own state. */
+sealed interface PanelStep {
+    data class Device(val call: PanelCall) : PanelStep
+    data class Local(val op: PanelOp) : PanelStep
 }
 
 /**
@@ -729,6 +740,10 @@ data class PanelCapabilities(val entries: Set<String>) {
                 when (val effect = action.effect) {
                     is PanelEffect.AskMike -> set += "ask:${effect.prompt}"
                     is PanelEffect.Open -> set += "open:${effect.target.toJson()}"
+                    // A new routine of approved calls is still new: one tap now does them together, in this order.
+                    is PanelEffect.Steps -> if (action.stepCalls.isNotEmpty()) {
+                        set += "steps:" + action.stepCalls.joinToString(";") { "${it.tool}:${it.arguments}" }
+                    }
                     else -> Unit
                 }
             }

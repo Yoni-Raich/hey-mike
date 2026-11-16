@@ -116,6 +116,7 @@ data class PanelFace(
                         // Plain words for what the next tap does ("Turn the flashlight off"), never a raw call.
                         val next = block.callFor(on != true)?.let(PanelCallWords::describe)
                             ?: (block.effect as? PanelEffect.Local)?.let { PanelOpWords.describe(panel, it.op) }
+                            ?: (block.effect as? PanelEffect.Steps)?.let { PanelOpWords.steps(panel, it) }
                         Row.Tile(
                             block.id, block.label, block.detail.ifBlank { next ?: block.caption },
                             on = on,

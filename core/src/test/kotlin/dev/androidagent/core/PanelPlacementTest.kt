@@ -24,6 +24,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -238,6 +240,29 @@ class PanelPlacementTest {
         val saved = SavedPanel("p", "s", household, 0, 0, null, panel = parsed)
         val tiles = PanelFace.of(saved, null)!!.rows.filterIsInstance<PanelFace.Row.Tile>().associate { it.actionId to it.caption }
         assertEquals("Add 1 to “Glasses”", tiles["plus"])
+    }
+
+    @Test fun everyStepOfAStepsTileIsOnTheApprovalScreen() {
+        val raw = kotlinx.serialization.json.Json.parseToJsonElement("""{"title":"Bedtime","surface":"widget","blocks":[
+            {"type":"timer","id":"wind","label":"Lights out","seconds":1200},
+            {"type":"action","id":"go","label":"Start bedtime","steps":[
+                {"tool":"system_controls","arguments":{"operation":"dnd","mode":"priority"}},
+                {"tool":"system_controls","arguments":{"operation":"brightness","percent":20}},
+                {"op":"start","target":"wind"}]}]}""").jsonObject
+        val parsed = AgentPanels.parse("p", raw).getOrThrow()
+        val line = PanelApprovalLines.of(parsed).single { it.label == "Start bedtime" }
+        assertEquals(
+            "Does these in order and stops at the first that fails:\n" +
+                "1. Set Do Not Disturb to priority\n2. Set the screen brightness to 20%\n3. Start the “Lights out” timer",
+            line.words,
+        )
+        // Details lists the device calls exactly as they are sent, and only those.
+        assertEquals(listOf("dnd", "brightness"), line.calls.map { it.arguments["operation"]!!.jsonPrimitive.content })
+        // The allowlist and re-approval see every step's call.
+        assertEquals(2, parsed.allCalls.size)
+        val saved = SavedPanel("p", "s", raw, 0, 0, null, panel = parsed)
+        val tile = PanelFace.of(saved, null)!!.tiles.single()
+        assertEquals("Set Do Not Disturb to priority, then 2 more", tile.caption)
     }
 
     @Test fun theLockScreenLineIsShortAndTheRuleIsWhole() {

@@ -299,6 +299,12 @@ object PanelApprovalLines {
                     block.label, "Starts a Mike chat: \u201c${effect.prompt}\u201d. Mike reads this panel's contents as your data.", emptyList(),
                 )
                 is PanelEffect.Open -> Line(block.label, effect.target.words + ", when you tap it", emptyList())
+                is PanelEffect.Steps -> Line(
+                    block.label,
+                    "Does these in order and stops at the first that fails:\n" +
+                        effect.steps.mapIndexed { index, step -> "${index + 1}. ${PanelOpWords.step(panel, step)}" }.joinToString("\n"),
+                    block.stepCalls,
+                )
             }
             is PanelBlock.Slider -> block.call?.let { Line(block.label, PanelCallWords.describe(it), listOf(it)) }
             else -> null
@@ -314,6 +320,16 @@ object PanelApprovalLines {
  * for the approval screen and a tile's caption, so no one reads an op name.
  */
 object PanelOpWords {
+    /** One step of a steps action: a device call's words or a local op's. */
+    fun step(panel: AgentPanel, step: PanelStep): String = when (step) {
+        is PanelStep.Device -> PanelCallWords.describe(step.call)
+        is PanelStep.Local -> describe(panel, step.op)
+    }
+
+    /** A steps tile's caption: its first step, then how many follow. */
+    fun steps(panel: AgentPanel, effect: PanelEffect.Steps): String =
+        step(panel, effect.steps.first()) + if (effect.steps.size > 1) ", then ${effect.steps.size - 1} more" else ""
+
     fun describe(panel: AgentPanel, op: PanelOp): String {
         val block = panel.stateful.firstOrNull { it.id == op.target }
         val name = quote(block?.label?.takeIf(String::isNotBlank) ?: op.target)

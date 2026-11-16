@@ -73,6 +73,16 @@ run on a phone:
   shows full content). Buttons work after unlock.", with the full rule under
   Details. `PanelPlacementTest` checks the words, the tile caption and the
   rule; the card was not looked at on a phone.
+- Multi-step tiles: a `steps` action runs 2 to 6 allowlisted device calls and
+  local ops in order, without the model, and stops at the first failure with
+  "Step 3 of 4 (...) failed: ... The steps before it did run." The bedtime
+  template's "Start bedtime" uses it (Do Not Disturb, brightness 30%, the
+  lights-out timer). `PanelAppsHostTest` covers the order, a device and a
+  local failure, a refusal at the tap that runs nothing, the creation checks
+  and the re-approval of a new routine; `PanelPlacementTest` the numbered
+  approval words and the tile caption. Not tapped on a phone: the real
+  Do Not Disturb and brightness steps, and how the numbered list reads on the
+  approval card.
 
 ### Panels outside the chat - 2026-11-15
 

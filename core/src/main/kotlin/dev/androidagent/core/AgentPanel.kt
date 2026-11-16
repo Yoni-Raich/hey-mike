@@ -92,7 +92,7 @@ data class AgentPanel(
     val allCalls: List<PanelCall>
         get() = blocks.flatMap { block ->
             when (block) {
-                is PanelBlock.Action -> listOfNotNull(block.call, block.offCall)
+                is PanelBlock.Action -> listOfNotNull(block.call, block.offCall) + block.stepCalls
                 is PanelBlock.Slider -> listOfNotNull(block.call)
                 else -> emptyList()
             }
@@ -217,14 +217,19 @@ sealed interface PanelBlock {
         val switch: Boolean get() = offCall != null
         fun callFor(turnOn: Boolean): PanelCall? = if (!turnOn) offCall ?: call else call
 
-        /** device, local, ask_mike or open. */
+        /** device, local, ask_mike, open or steps. */
         val kind: String
             get() = when (effect) {
                 null -> "device"
                 is PanelEffect.Local -> "local"
                 is PanelEffect.AskMike -> "ask_mike"
                 is PanelEffect.Open -> "open"
+                is PanelEffect.Steps -> "steps"
             }
+
+        /** The device calls of a steps action, in order; empty for any other kind. */
+        val stepCalls: List<PanelCall>
+            get() = (effect as? PanelEffect.Steps)?.steps.orEmpty().mapNotNull { (it as? PanelStep.Device)?.call }
 
         /** What the tile shows under its label, so a label cannot hide what a tap does. */
         val caption: String
@@ -232,6 +237,7 @@ sealed interface PanelBlock {
                 is PanelEffect.Local -> listOfNotNull(e.op.op.replace('_', ' '), e.op.target).joinToString(" · ")
                 is PanelEffect.AskMike -> "Ask Mike"
                 is PanelEffect.Open -> e.target.words
+                is PanelEffect.Steps -> "${e.steps.size} steps"
                 null -> ""
             }
     }
@@ -364,7 +370,9 @@ object AgentPanels {
     const val MAX_PROMPT = 1_000
     /** Block types that hold state; only a panel that outlives the turn can keep it. */
     val STATE_TYPES = setOf("checklist", "counter", "timer", "countdown", "progress", "note")
-    val ACTION_KINDS = listOf("device", "local", "ask_mike", "open")
+    val ACTION_KINDS = listOf("device", "local", "ask_mike", "open", "steps")
+    /** The most steps one steps action runs. */
+    const val MAX_STEPS = 6
     /** Blocks on a panel outside the chat: a card, a widget or a notification is small. */
     const val MAX_DETACHED_BLOCKS = 8
     /** Android shows at most three action buttons on a notification. */
@@ -428,7 +436,9 @@ object AgentPanels {
             "for the next item's seconds), ask_mike (prompt, up to $MAX_PROMPT characters: a tap starts a new turn of " +
             "yours with the prompt and the panel's state) or open (open: one of {app: package}, {map: place}, " +
             "{directions: place, mode walking|driving|transit|bicycling}, {dial: number}, {url: https link}, " +
-            "{camera: true}; a place is a search text or {lat, lng, label}; nothing that calls, sends or pays). An open " +
+            "{camera: true}; a place is a search text or {lat, lng, label}; nothing that calls, sends or pays) or steps " +
+            "(steps: 2 to $MAX_STEPS steps run in order, each {tool, arguments} for an allowed device call or {op, target, " +
+            "...} for this panel; the first that fails stops the rest; use it for a routine instead of ask_mike). An open " +
             "or ask_mike action always needs the user's approval. keep_screen_on true keeps the screen on while a " +
             "floating card shows. To work with a saved panel later, from any chat, pass panel_id: \"*\" lists them, an " +
             "id alone returns its definition and state, ops (a list of {op, target, ...}) or state ({blockId: " +
@@ -478,6 +488,10 @@ object AgentPanels {
                             put("amount", buildJsonObject { put("type", "integer"); put("description", "A local action's number: by how much, seconds, or a position.") })
                             put("timer", buildJsonObject { put("type", "string"); put("description", "With op next: the timer to start for the next item's seconds.") })
                             put("prompt", buildJsonObject { put("type", "string"); put("description", "An ask_mike action's prompt.") })
+                            put("steps", buildJsonObject {
+                                put("type", "array"); put("items", buildJsonObject { put("type", "object"); put("additionalProperties", true) })
+                                put("description", "A steps action's steps, in order: {tool, arguments} or {op, target, item, text, amount, checked, timer}.")
+                            })
                             put("open", buildJsonObject {
                                 put("type", "object"); put("additionalProperties", true)
                                 put("description", "An open action's target: {app}, {map}, {directions, mode}, {dial}, {url} or {camera: true}.")
@@ -721,11 +735,46 @@ object AgentPanels {
         }
         fun reset(o: JsonObject, what: String): PanelReset? = o["reset"]?.let { PanelReset.parse(it, what) }
         fun stateLabel(o: JsonObject): String = o.str("label").orEmpty().take(MAX_LABEL)
+        // Each step is checked as a one-step action would be: a device step against the allowlist, a local op by checkState.
+        fun steps(o: JsonObject, what: String): List<PanelStep> {
+            listOf("op", "prompt", "open").firstOrNull { o[it] != null }?.let {
+                throw IllegalArgumentException("$what: a steps action has no $it of its own; put each thing it does in steps.")
+            }
+            val raw = o["steps"] as? JsonArray ?: throw IllegalArgumentException("$what: steps must be a list of steps.")
+            require(raw.size in 2..MAX_STEPS) {
+                "$what: steps takes 2 to $MAX_STEPS steps. For one, use a device or local action."
+            }
+            return raw.mapIndexed { index, element ->
+                val where = "$what, step ${index + 1}"
+                val step = element as? JsonObject ?: throw IllegalArgumentException("$where is not an object.")
+                when {
+                    step["prompt"] != null -> throw IllegalArgumentException("$where: a step cannot ask Mike. Use an ask_mike action for that.")
+                    step["open"] != null -> throw IllegalArgumentException("$where: a step cannot open anything. Use an open action for that.")
+                    step["steps"] != null -> throw IllegalArgumentException("$where: a step cannot hold steps.")
+                    step["tool"] != null || step["arguments"] != null -> {
+                        step.keys.firstOrNull { it != "tool" && it != "arguments" }?.let {
+                            throw IllegalArgumentException("$where: a device step takes only tool and arguments, not $it.")
+                        }
+                        val tool = step.str("tool").orEmpty()
+                        require(tool.isNotEmpty()) { "$where needs a tool." }
+                        val args = step["arguments"] as? JsonObject ?: throw IllegalArgumentException("$where: arguments must be an object.")
+                        require(args.toString().length <= MAX_ARGUMENTS) { "$where: arguments is too long." }
+                        require(!holdsValue(args)) { "$where: \"$VALUE\" belongs only in a live slider's arguments." }
+                        val call = PanelCall(tool, args)
+                        checkBound(call)?.let { throw IllegalArgumentException("$where: $it") }
+                        PanelStep.Device(call)
+                    }
+                    step["op"] != null -> PanelStep.Local(PanelOp.parse(step, where))
+                    else -> throw IllegalArgumentException("$where needs tool and arguments (a device call) or op and target (a change to this panel).")
+                }
+            }
+        }
         fun action(o: JsonObject): PanelBlock.Action {
             val aid = inputId(o)
             val name = label(o)
             val what = "Action \"$aid\""
             val kind = o.str("kind")?.lowercase()?.takeIf(String::isNotEmpty) ?: when {
+                o["steps"] != null -> "steps"
                 o["tool"] != null || o["arguments"] != null -> "device"
                 o["op"] != null -> "local"
                 o["open"] != null -> "open"
@@ -736,6 +785,7 @@ object AgentPanels {
             val icon = o.str("icon")?.lowercase()?.takeIf { it in ICONS } ?: if (kind == "ask_mike") "sparkle" else "bolt"
             val accent = PanelAccent.entries.firstOrNull { it.name.equals(o.str("accent"), ignoreCase = true) } ?: PanelAccent.TEAL
             val detail = o.str("detail").orEmpty().take(MAX_LABEL)
+            if (kind != "steps") require(o["steps"] == null) { "$what: only a steps action has steps." }
             if (kind == "device") {
                 val on = call(o, aid, "arguments") ?: throw IllegalArgumentException("$what needs arguments.")
                 return PanelBlock.Action(
@@ -756,6 +806,7 @@ object AgentPanels {
                     require(prompt.length <= MAX_PROMPT) { "$what: prompt is longer than $MAX_PROMPT characters." }
                     PanelEffect.AskMike(prompt)
                 }
+                "steps" -> PanelEffect.Steps(steps(o, what))
                 else -> PanelEffect.Open(PanelOpen.parse(o["open"], what))
             }
             return PanelBlock.Action(aid, name, detail, icon, accent, null, null, false, null, effect)
@@ -913,29 +964,13 @@ object AgentPanels {
             require(stateful.count { it is PanelBlock.Checklist } <= 1) { "A widget shows one checklist." }
         }
         blocks.filterIsInstance<PanelBlock.Action>().forEach { action ->
-            val op = (action.effect as? PanelEffect.Local)?.op ?: return@forEach
             val what = "Action \"${action.id}\""
-            val target = named(op.target)
-                ?: throw IllegalArgumentException("$what: target \"${op.target}\" is not a checklist, counter, timer or note on this panel.")
-            val ops = when (target) {
-                is PanelBlock.Checklist -> PanelOp.LIST_OPS
-                is PanelBlock.Counter -> PanelOp.COUNTER_OPS
-                is PanelBlock.Timer -> PanelOp.TIMER_OPS
-                is PanelBlock.Note -> PanelOp.NOTE_OPS
-            }
-            require(op.op in ops) { "$what: \"${op.target}\" takes ${ops.joinToString(", ")}, not ${op.op}." }
-            if (target is PanelBlock.Checklist) {
-                if (op.op in setOf("check", "uncheck", "toggle", "remove", "move")) {
-                    val item = op.item ?: throw IllegalArgumentException("$what: ${op.op} needs item, an item id such as i1.")
-                    require(target.items.any { it.id == item }) { "$what: \"${op.target}\" has no item \"$item\"." }
+            when (val effect = action.effect) {
+                is PanelEffect.Local -> checkOp(effect.op, what, ::named)
+                is PanelEffect.Steps -> effect.steps.forEachIndexed { index, step ->
+                    if (step is PanelStep.Local) checkOp(step.op, "$what, step ${index + 1}", ::named)
                 }
-                if (op.op == "add") require(!op.text.isNullOrBlank()) { "$what: add needs text." }
-            }
-            if ((target is PanelBlock.Counter && op.op == "set")) require(op.amount != null) { "$what: set needs amount." }
-            if (target is PanelBlock.Note && op.op == "set") require(op.text != null) { "$what: set needs text." }
-            op.timer?.let { timer ->
-                require(op.op == "next") { "$what: timer goes only with op next." }
-                require(named(timer) is PanelBlock.Timer) { "$what: \"$timer\" is not a timer on this panel." }
+                else -> Unit
             }
         }
         stateful.filterIsInstance<PanelBlock.Counter>().forEach { counter ->
@@ -949,6 +984,32 @@ object AgentPanels {
                 is PanelBlock.Counter -> require(source.goal != null) { "Progress \"${bar.label}\": counter \"$of\" needs a goal." }
                 else -> throw IllegalArgumentException("Progress \"${bar.label}\": of \"$of\" is not a checklist or counter on this panel.")
             }
+        }
+    }
+
+    /** Checks that [op], from a local action or one step, fits the block it targets on this panel. */
+    private fun checkOp(op: PanelOp, what: String, named: (String) -> PanelBlock.Stateful?) {
+        val target = named(op.target)
+            ?: throw IllegalArgumentException("$what: target \"${op.target}\" is not a checklist, counter, timer or note on this panel.")
+        val ops = when (target) {
+            is PanelBlock.Checklist -> PanelOp.LIST_OPS
+            is PanelBlock.Counter -> PanelOp.COUNTER_OPS
+            is PanelBlock.Timer -> PanelOp.TIMER_OPS
+            is PanelBlock.Note -> PanelOp.NOTE_OPS
+        }
+        require(op.op in ops) { "$what: \"${op.target}\" takes ${ops.joinToString(", ")}, not ${op.op}." }
+        if (target is PanelBlock.Checklist) {
+            if (op.op in setOf("check", "uncheck", "toggle", "remove", "move")) {
+                val item = op.item ?: throw IllegalArgumentException("$what: ${op.op} needs item, an item id such as i1.")
+                require(target.items.any { it.id == item }) { "$what: \"${op.target}\" has no item \"$item\"." }
+            }
+            if (op.op == "add") require(!op.text.isNullOrBlank()) { "$what: add needs text." }
+        }
+        if ((target is PanelBlock.Counter && op.op == "set")) require(op.amount != null) { "$what: set needs amount." }
+        if (target is PanelBlock.Note && op.op == "set") require(op.text != null) { "$what: set needs text." }
+        op.timer?.let { timer ->
+            require(op.op == "next") { "$what: timer goes only with op next." }
+            require(named(timer) is PanelBlock.Timer) { "$what: \"$timer\" is not a timer on this panel." }
         }
     }
 

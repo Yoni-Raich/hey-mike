@@ -76,13 +76,20 @@ class PanelAppsHostTest {
         val store: Store = Store(),
     ) {
         val calls = mutableListOf<String>()
+        /** Each device call's operation, in order. */
+        val operations = mutableListOf<String>()
+        var answer: (JsonObject) -> ToolResult = { ToolResult("""{"ok":true}""") }
+        var refuse: (JsonObject) -> String? = { null }
         val turns = mutableListOf<Turn>()
         var now = 1_000_000L
         var runActive = false
         private val dispatcher = StandardTestDispatcher(test.testScheduler)
         fun host() = PanelHost(
             test.backgroundScope, vault, store,
-            invoke = { tool, _ -> calls += tool; ToolResult("""{"ok":true}""") },
+            invoke = { tool, arguments ->
+                calls += tool; operations += arguments["operation"]?.jsonPrimitive?.content.orEmpty(); answer(arguments)
+            },
+            checkCall = { _, arguments -> refuse(arguments) },
             clock = { now },
             runActive = { runActive },
             io = dispatcher,
@@ -111,7 +118,7 @@ class PanelAppsHostTest {
         return id
     }
 
-    private fun items(host: PanelHost, id: String) = (host.panelState(id)!!.blocks["list"] as BlockState.Items).items
+    private fun items(host: PanelHost, id: String, block: String = "list") = (host.panelState(id)!!.blocks[block] as BlockState.Items).items
 
     @Test fun aShoppingWidgetKeepsItsTicksAcrossARestart() = runTest {
         val rig = Rig(this)
@@ -394,6 +401,138 @@ class PanelAppsHostTest {
         host.tick()
         assertEquals(1, rig.store.traced("panel_reset").size)
         assertEquals(at("2026-11-17T07:00"), host.nextDueAtMs())
+    }
+
+    private val dnd = """{"tool":"system_controls","arguments":{"operation":"dnd","mode":"priority"}}"""
+    private val dim = """{"tool":"system_controls","arguments":{"operation":"brightness","percent":20}}"""
+    private fun bedtime(vararg steps: String, surface: String = "widget") = json("""{"title":"Bedtime","surface":"$surface","blocks":[
+        {"type":"checklist","id":"night","label":"Before bed","add":false,"items":["Pajamas","Story"]},
+        {"type":"timer","id":"wind","label":"Lights out","seconds":1200},
+        {"type":"action","id":"go","label":"Start bedtime","steps":[${steps.joinToString(",")}]}]}""")
+    private val tick = """{"op":"check","target":"night","item":"i1"}"""
+    private val wind = """{"op":"start","target":"wind"}"""
+    private fun running(host: PanelHost, id: String) = (host.panelState(id)!!.blocks["wind"] as BlockState.Clock).endsAtMs != null
+
+    @Test fun aStepsTileRunsEveryStepInOrderWithoutMike() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        val id = approved(host, bedtime(dnd, tick, dim, wind))
+        assertTrue(host.runAction(id, "go"))
+        assertTrue("one tap at a time", host.state(id, "go").running)
+        runCurrent()
+        assertEquals(listOf("dnd", "brightness"), rig.operations)
+        assertTrue(items(host, id, "night").first().checked)
+        assertTrue(running(host, id))
+        val tap = host.state(id, "go")
+        assertFalse(tap.running)
+        assertEquals(true, tap.ok)
+        assertEquals(1, tap.runs)
+        assertTrue(rig.turns.isEmpty())
+        // Every step is logged as its own model-free call or state change, then the whole tap.
+        assertEquals(listOf("1", "3"), rig.store.traced("tool_call").map { it["step"]!!.jsonPrimitive.content })
+        assertEquals(2, rig.store.traced("panel_state").count { it["source"]!!.jsonPrimitive.content == "action:go" })
+        assertEquals("true", rig.store.traced("panel_steps").single()["ok"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aStepsTileStopsAtTheFirstFailureAndSaysWhichStep() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        val id = approved(host, bedtime(dnd, tick, dim, wind))
+        rig.answer = { arguments ->
+            if (arguments["operation"]!!.jsonPrimitive.content == "brightness") ToolResult("""{"ok":false,"message":"No permission for brightness."}""")
+            else ToolResult("""{"ok":true}""")
+        }
+        assertTrue(host.runAction(id, "go"))
+        runCurrent()
+        assertEquals(listOf("dnd", "brightness"), rig.operations)
+        assertFalse("the step after the failure never runs", running(host, id))
+        assertTrue("earlier steps stay done", items(host, id, "night").first().checked)
+        val tap = host.state(id, "go")
+        assertEquals(false, tap.ok)
+        assertFalse(tap.running)
+        assertTrue(tap.message, tap.message.startsWith("Step 3 of 4 (Set the screen brightness to 20%) failed: No permission for brightness."))
+        assertTrue(tap.message, tap.message.contains("The steps before it did run."))
+        assertFalse(tap.message.contains("undo", ignoreCase = true))
+        val logged = rig.store.traced("panel_steps").single()
+        assertEquals("3", logged["failedStep"]!!.jsonPrimitive.content)
+
+        // A local step that cannot be done stops the steps after it too.
+        rig.answer = { ToolResult("""{"ok":true}""") }
+        rig.operations.clear()
+        val again = approved(host, bedtime(tick, dnd), session = "two")
+        assertNull(host.edit(again, PanelOp("remove", "night", "i1"), source = "mike"))
+        assertTrue(host.runAction(again, "go"))
+        runCurrent()
+        assertTrue("the device step after it never runs", rig.operations.isEmpty())
+        val second = host.state(again, "go")
+        assertEquals(false, second.ok)
+        assertTrue(second.message, second.message.startsWith("Step 1 of 2 ("))
+        assertFalse(second.message, second.message.contains("before it"))
+    }
+
+    @Test fun aRefusedStepStopsTheWholeTapBeforeAnythingRuns() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        val id = approved(host, bedtime(dnd, tick, dim, wind))
+        // The allowlist and the tool check run again at the tap, on every device step, before the first one.
+        rig.refuse = { arguments -> if (arguments["operation"]!!.jsonPrimitive.content == "brightness") "brightness is off limits now." else null }
+        assertFalse(host.runAction(id, "go"))
+        runCurrent()
+        assertTrue(rig.calls.isEmpty())
+        assertFalse(items(host, id, "night").first().checked)
+        assertFalse(running(host, id))
+        val tap = host.state(id, "go")
+        assertEquals(false, tap.ok)
+        assertTrue(tap.message, tap.message.startsWith("Nothing ran: step 3 of 4 is not allowed."))
+        assertEquals("3", rig.store.traced("tool_refused").single()["step"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aNewRoutineOfApprovedCallsStillWaitsForTheUser() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        val id = approved(host, json("""{"title":"Bedtime","surface":"widget","blocks":[
+            {"type":"timer","id":"wind","label":"Lights out","seconds":1200},
+            {"type":"action","id":"quiet","label":"Quiet","tool":"system_controls","arguments":{"operation":"dnd","mode":"priority"}},
+            {"type":"action","id":"dim","label":"Dim","tool":"system_controls","arguments":{"operation":"brightness","percent":20}}]}"""))
+        // The same two approved calls, now in one tap: one tap does more than before, so the user approves it.
+        val routine = host.manage("one", json("""{"panel_id":"$id","title":"Bedtime","surface":"widget","blocks":[
+            {"type":"timer","id":"wind","label":"Lights out","seconds":1200},
+            {"type":"action","id":"go","label":"Start bedtime","steps":[$dnd,$dim,$wind]}]}"""))
+        assertEquals(routine.text, "awaiting_approval", status(routine))
+        assertNull(host.approveRevision(id))
+        // Only its local steps change: that applies at once, as any local change does.
+        val local = host.manage("one", json("""{"panel_id":"$id","title":"Bedtime","surface":"widget","blocks":[
+            {"type":"timer","id":"wind","label":"Lights out","seconds":1200},
+            {"type":"action","id":"go","label":"Start bedtime","steps":[$dnd,$dim,{"op":"reset","target":"wind"},$wind]}]}"""))
+        assertEquals(local.text, "applied", status(local))
+    }
+
+    @Test fun aStepsActionIsCheckedStepByStepWhenShown() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        suspend fun refused(arguments: JsonObject): String {
+            val r = host.propose("one", arguments)
+            assertEquals(r.text, "invalid_panel", error(r))
+            return r.text
+        }
+        assertTrue(refused(bedtime(dnd, """{"tool":"run_shell","arguments":{"command":"reboot"}}""")).contains("step 2"))
+        assertTrue(refused(bedtime(dnd, """{"tool":"system_controls","arguments":{"operation":"lock_screen"}}""")).contains("step 2"))
+        assertTrue(refused(bedtime(dnd, """{"op":"inc","target":"night"}""")).contains("step 2"))
+        assertTrue(refused(bedtime(dnd, """{"op":"start","target":"nowhere"}""")).contains("step 2"))
+        assertTrue(refused(bedtime(dnd, """{"prompt":"Tell me a story."}""")).contains("cannot ask Mike"))
+        assertTrue(refused(bedtime(dnd, """{"open":{"app":"com.whatsapp"}}""")).contains("cannot open"))
+        assertTrue(refused(bedtime(dnd, """{"steps":[]}""")).contains("cannot hold steps"))
+        assertTrue(refused(bedtime(dnd, """{"tool":"system_controls","arguments":{"operation":"brightness","percent":"${AgentPanels.VALUE}"}}""")).contains("step 2"))
+        assertTrue(refused(bedtime(dnd, """{"tool":"system_controls","arguments":{"operation":"dnd","mode":"off"},"off_arguments":{}}""")).contains("only tool and arguments"))
+        assertTrue(refused(bedtime(dnd)).contains("2 to ${AgentPanels.MAX_STEPS} steps"))
+        assertTrue(refused(bedtime(*Array(AgentPanels.MAX_STEPS + 1) { dnd })).contains("2 to ${AgentPanels.MAX_STEPS} steps"))
+        assertTrue(refused(json("""{"title":"Now","blocks":[{"type":"action","id":"go","label":"Go","steps":[$dnd,$dim]}]}"""))
+            .contains("a steps action needs a panel that outlives the turn"))
+        assertTrue(rig.calls.isEmpty())
+        // A steps tile is gated like a device tile: a short floating card of allowed calls shows at once,
+        // a widget waits for the user's approval (above).
+        val card = host.propose("one", bedtime(dnd, wind, surface = "floating"))
+        assertEquals(card.text, "shown", status(card))
     }
 
     /** Every template the agent-ui skill teaches is a panel the app accepts, approves and can change. */

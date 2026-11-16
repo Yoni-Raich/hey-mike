@@ -145,7 +145,7 @@ What you get back:
 A panel outside the chat is a remote control, not a form. Nobody waits for its answer and you are not called when it is tapped:
 
 - Only `text`, `status`, `action`, the mini-app blocks below and, on a floating card only, live `slider` blocks. No fields, toggles, choices, controls or buttons. At most 8 blocks, and a notification shows at most 3 buttons (an Add box counts as one).
-- Its device calls run **without you**, so they are limited to `system_controls` operations `torch`, `volume`, `ringer`, `dnd`, `brightness`, `auto_rotate` and `media_control`. Anything else, and anything that reads or touches the screen, is refused. Every call is checked again each time the panel loads and each time it is tapped; a call that no longer passes blocks the panel and the user sees why. The other action kinds (below) never run a tool.
+- Its device calls run **without you**, so they are limited to `system_controls` operations `torch`, `volume`, `ringer`, `dnd`, `brightness`, `auto_rotate` and `media_control`. Anything else, and anything that reads or touches the screen, is refused. Every call is checked again each time the panel loads and each time it is tapped; a call that no longer passes blocks the panel and the user sees why. A `steps` action (below) runs only these calls too; the other kinds never run a tool.
 - What each surface offers:
   - A **floating card** shows everything: lists to tick, counters, timers, a note to type in. It hides while you control the screen and while Hey Mike is open.
   - A **notification** shows the open items as text, an Add box for a list, a +1 for a counter and Start or Pause for a timer, and a running timer counts down by itself. Its items cannot be ticked one by one. On the lock screen: title only (all of it if the phone shows full content there). Its buttons work only after unlock.
@@ -201,7 +201,7 @@ A saved panel can be a small app: a list the user ticks off, a counter, a timer,
 
 When a timer ends, the phone pops up a short, silent "time is up" notification. It makes no sound and no vibration unless the user turns them on for "Panel timers" in Android settings, so never promise a sound or an alarm.
 
-### Four kinds of action
+### Five kinds of action
 
 An `action` has a `kind`. Without one it is read from its keys.
 
@@ -211,8 +211,11 @@ An `action` has a `kind`. Without one it is read from its keys.
 | `local` | `op`, `target`, `item`, `text`, `amount`, `timer` | Changes this panel's own state. Nothing else. | Only as part of the panel |
 | `ask_mike` | `prompt` | Starts a chat turn with you: your `prompt`, and the panel's current state as data. | Yes |
 | `open` | `open` | Opens one thing the user then uses themselves. | Yes |
+| `steps` | `steps` | Runs 2 to 6 steps in order, each a device call `{tool, arguments}` or a local op `{op, target, ...}`. The first that fails stops the rest. | Yes, each step shown |
 
 `local` ops: a checklist takes `check`, `uncheck`, `toggle`, `add`, `remove`, `move`, `uncheck_all`, `clear_checked`, `next`, `reset`; a counter `inc`, `dec`, `set`, `reset`; a timer `start`, `pause`, `resume`, `reset`, `add` (seconds in `amount`); a note `set`, `reset`. `next` checks the first open item; with `timer` it also starts that timer for the next item's `seconds` (a recipe step).
+
+A `steps` action is a routine without you: "Start bedtime" turns on Do Not Disturb, dims the screen and starts a timer in one tap. Each device step is limited exactly as a `device` action, and all of them are checked again before the first one runs, so a refused step means nothing ran. A step cannot ask you, open anything or hold steps. When a step fails, the tile says which one; the steps before it stay done, nothing is undone. Use `steps` whenever the tap needs no thinking. Keep `ask_mike` for a tap that really needs you: reading the list, choosing, writing, ordering.
 
 `open` takes exactly one of:
 
@@ -234,7 +237,7 @@ When the user taps an `ask_mike` button, you get a new turn. The panel's state i
 - `{"panel_id": "*"}` lists the saved panels with their ids.
 - `{"panel_id": "<id>"}` reads one: its definition and its state.
 - `{"panel_id": "<id>", "ops": [...]}` changes its state at once, no approval: `ops` is a list of `{op, target, item, text, amount, checked, timer}`, as in a `local` action. Or `"state"`: whole blocks by id.
-- `{"panel_id": "<id>", "title": ..., "surface": ..., "lifetime": ..., "blocks": [...]}` replaces its definition: send all of it again, with the same `surface`. When the new one can do nothing the old one could not, it applies at once (`"status": "applied"`). When it adds or changes a `device`, `open` or `ask_mike` action, it waits for the user (`"status": "awaiting_approval"`); the approved panel keeps running as it was until then. A panel cannot move to another surface.
+- `{"panel_id": "<id>", "title": ..., "surface": ..., "lifetime": ..., "blocks": [...]}` replaces its definition: send all of it again, with the same `surface`. When the new one can do nothing the old one could not, it applies at once (`"status": "applied"`). When it adds or changes a `device`, `open` or `ask_mike` action, or the device steps of a `steps` action, it waits for the user (`"status": "awaiting_approval"`); the approved panel keeps running as it was until then. A panel cannot move to another surface.
 
 Add items with ops; do not resend the whole panel for that.
 
@@ -288,13 +291,18 @@ The notification counts down by itself and pops up silently when the time is up.
 
 ### Bedtime
 
-A widget the kids tick off each evening; it starts again at 18:00:
+A widget the kids tick off each evening; it starts again at 18:00. "Start bedtime" quiets and dims the phone and starts the lights-out timer in one tap, without you:
 
 ```json
 {"title": "Bedtime", "surface": "widget", "lifetime": "pinned", "blocks": [
   {"type": "checklist", "id": "night", "label": "Before bed", "add": false, "reset": {"at": "18:00"},
    "items": ["Pajamas", "Brush teeth", "Pack the school bag", "Story"]},
-  {"type": "progress", "label": "Done", "of": "night"}]}
+  {"type": "progress", "label": "Done", "of": "night"},
+  {"type": "timer", "id": "wind", "label": "Lights out", "seconds": 1200},
+  {"type": "action", "id": "start", "label": "Start bedtime", "kind": "steps", "icon": "moon", "steps": [
+    {"tool": "system_controls", "arguments": {"operation": "dnd", "mode": "priority"}},
+    {"tool": "system_controls", "arguments": {"operation": "brightness", "percent": 30}},
+    {"op": "start", "target": "wind"}]}]}
 ```
 
 ### More

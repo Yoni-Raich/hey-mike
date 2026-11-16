@@ -335,6 +335,35 @@ block whose id and type stay the same.
 - `ask_mike`: `prompt` (up to 1000 characters). A tap starts a new Mike turn
   in the chat that made the panel, or a new chat when that one is gone.
 - `open`: `open` is one intent shape from the allowlist below.
+- `steps` (added 2026-11-16 after round 3): 2 to 6 steps run in order, each a
+  device call `{tool, arguments}` or a local op `{op, target, ...}`. See
+  Multi-step actions below.
+
+**Multi-step actions (2026-11-16).** Mike built "Start bedtime" as an
+`ask_mike` tile with a long prompt because one tile ran one thing. A `steps`
+action runs a routine without the model:
+
+- Each device step passes the same allowlist and bound checks as a `device`
+  action at parse and load, and each local step the same target checks as a
+  `local` action, with the error naming the step ("step 2").
+- A step cannot ask Mike, open anything, hold steps, carry `{value}` or take
+  keys other than `tool` and `arguments`. `ask_mike` stays for taps that need
+  the model.
+- At the tap every device step is checked again before the first runs; a
+  refusal means nothing ran ("Nothing ran: step 3 of 4 is not allowed").
+- The steps run one at a time under the panel's lock. The first failure stops
+  the rest and the tile says which step failed and that the steps before it
+  did run. Nothing is undone and nothing claims to be.
+- Every device step is logged as its own `tool_call` and `tool_result` with a
+  `step` field, every local step as `panel_state`, and the tap as
+  `panel_steps` (ok, failed step, reason).
+- The approval screen lists every step in plain words, numbered, with the
+  device calls under Details. `allCalls` includes the step calls, so
+  re-approval and the load check see them. A `panel_id` change that makes a
+  new sequence of device steps waits for approval even when each call was
+  approved alone, because one tap now does them together.
+- A cancelled run (any tap) no longer leaves its tile spinning: the launch's
+  `finally` clears `running`.
 
 **ask_mike.** It needs a tap; nothing starts it on a schedule. It is refused
 with a clear message when any run is active (`canStart()` is checked right

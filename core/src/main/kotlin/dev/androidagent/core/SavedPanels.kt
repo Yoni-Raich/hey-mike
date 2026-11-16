@@ -410,6 +410,7 @@ class PanelHost(
             }
             // A surface starts an open itself, through [openTarget], so it comes from the user's tap.
             is PanelEffect.Open -> return false
+            is PanelEffect.Steps -> return startSteps(saved, action, effect.steps)
             null -> Unit
         }
         val on = if (action.switch) turnOn ?: !(state(panelId, actionId).on ?: action.on) else null
@@ -621,18 +622,112 @@ class PanelHost(
             try {
                 run(saved, actionId, label, call, on, value)
             } finally {
+                settle(saved.id, actionId)
                 lock.unlock()
             }
         }
         return true
     }
 
+    /** A run that was cancelled midway never leaves its tile spinning. */
+    private fun settle(panelId: String, actionId: String) {
+        if (state(panelId, actionId).running) setAction(panelId, actionId) { it.copy(running = false) }
+    }
+
+    /**
+     * A tap on a steps action. Every device step is checked against the
+     * allowlist first, so a refused step stops the tap before anything runs.
+     * Then the steps run one at a time, in order, under the panel's lock, and
+     * the first that fails stops the rest; earlier steps stay done.
+     */
+    private fun startSteps(saved: SavedPanel, action: PanelBlock.Action, steps: List<PanelStep>): Boolean {
+        steps.forEachIndexed { index, step ->
+            val call = (step as? PanelStep.Device)?.call ?: return@forEachIndexed
+            val refusal = PanelAllowlist.checkAction(call) ?: checkCall(call.tool, call.arguments) ?: return@forEachIndexed
+            val text = "Nothing ran: step ${index + 1} of ${steps.size} is not allowed. $refusal"
+            setAction(saved.id, action.id) { it.copy(running = false, ok = false, message = text.take(160)) }
+            scope.launch {
+                trace(saved.sessionId, "tool_refused", buildJsonObject {
+                    put("name", call.tool); put("arguments", call.arguments); put("source", "saved_panel")
+                    put("panelId", saved.id); put("actionId", action.id); put("step", index + 1); put("reason", refusal)
+                })
+            }
+            return false
+        }
+        val lock = busy.getOrPut(saved.id) { Mutex() }
+        if (!lock.tryLock()) return false
+        setAction(saved.id, action.id) { it.copy(running = true, message = "") }
+        scope.launch {
+            try {
+                runSteps(saved, action, steps)
+            } finally {
+                settle(saved.id, action.id)
+                lock.unlock()
+            }
+        }
+        return true
+    }
+
+    private suspend fun runSteps(saved: SavedPanel, action: PanelBlock.Action, steps: List<PanelStep>) {
+        val panel = saved.panel!!
+        var failed: Int? = null
+        var reason: String? = null
+        for ((index, step) in steps.withIndex()) {
+            reason = if (active(saved.id) == null) {
+                "the panel is gone"
+            } else when (step) {
+                is PanelStep.Device -> {
+                    val (ok, text) = invokeLogged(saved, action.id, "${action.label}, step ${index + 1} of ${steps.size}", step.call, index + 1)
+                    if (ok) null else short(text)
+                }
+                is PanelStep.Local -> edit(saved.id, step.op, "action:${action.id}")
+            }
+            if (reason != null) {
+                failed = index
+                break
+            }
+        }
+        // Never claims an earlier step was undone: it was not. The reason is cut, never the step or the tail.
+        val message = failed?.let { index ->
+            val head = "Step ${index + 1} of ${steps.size} (${PanelOpWords.step(panel, steps[index]).take(48)}) failed: "
+            val tail = if (index > 0) ". The steps before it did run." else "."
+            head + reason.orEmpty().trimEnd('.', ' ').take((160 - head.length - tail.length).coerceAtLeast(0)) + tail
+        }
+        setAction(saved.id, action.id) {
+            it.copy(running = false, ok = failed == null, message = message?.take(160).orEmpty(), runs = it.runs + 1)
+        }
+        trace(saved.sessionId, "panel_steps", buildJsonObject {
+            put("panelId", saved.id); put("actionId", action.id); put("steps", steps.size); put("ok", failed == null)
+            failed?.let { put("failedStep", it + 1) }
+            message?.let { put("reason", it.take(300)) }
+        })
+        if (failed == null) refresh(saved.id)
+    }
+
     private suspend fun run(saved: SavedPanel, actionId: String, label: String, call: PanelCall, on: Boolean?, value: String?) {
+        val (ok, text) = invokeLogged(saved, actionId, label, call, null)
+        setAction(saved.id, actionId) {
+            it.copy(
+                running = false, ok = ok, message = if (ok) "" else short(text), runs = it.runs + 1,
+                on = if (on != null && ok) on else it.on,
+                value = if (value != null && ok) value else it.value,
+            )
+        }
+        if (ok) refresh(saved.id)
+    }
+
+    /**
+     * One model-free device call from a panel, logged like every other: its
+     * call, its result and a line in the panel's chat. [step] is its place in
+     * a steps action. Returns whether it worked, and its result text.
+     */
+    private suspend fun invokeLogged(saved: SavedPanel, actionId: String, label: String, call: PanelCall, step: Int?): Pair<Boolean, String> {
         val requestId = "saved-panel-${UUID.randomUUID()}"
         val started = clock()
         trace(saved.sessionId, "tool_call", buildJsonObject {
             put("requestId", requestId); put("name", call.tool); put("arguments", call.arguments)
             put("source", "saved_panel"); put("panelId", saved.id); put("actionId", actionId)
+            step?.let { put("step", it) }
         })
         val result = try {
             invoke(call.tool, call.arguments)
@@ -647,14 +742,7 @@ class PanelHost(
             put("elapsedMs", (clock() - started).coerceAtLeast(0)); put("source", "saved_panel")
         })
         message(saved.sessionId, "${call.tool}: ${result.text.take(4_000)}  [from the panel \"${saved.title}\": $label]")
-        setAction(saved.id, actionId) {
-            it.copy(
-                running = false, ok = ok, message = if (ok) "" else short(result.text), runs = it.runs + 1,
-                on = if (on != null && ok) on else it.on,
-                value = if (value != null && ok) value else it.value,
-            )
-        }
-        if (ok) refresh(saved.id)
+        return ok to result.text
     }
 
     /**
