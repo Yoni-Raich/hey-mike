@@ -79,8 +79,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderColors
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -524,12 +527,19 @@ private fun PanelChoice(block: PanelBlock.Choice, value: String, motion: Boolean
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SliderTrack(state: SliderState, colors: SliderColors, enabled: Boolean) {
+    SliderDefaults.Track(sliderState = state, colors = colors, enabled = enabled, drawStopIndicator = null)
+}
+
 /**
  * A number on a track. Its value goes back with the form; a live slider also
  * runs its call when the user lets go, and springs back to the last value
  * that worked if the call fails. It holds still while any panel call runs,
  * so one release is one call.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PanelSlider(
     block: PanelBlock.Slider,
@@ -559,6 +569,18 @@ private fun PanelSlider(
             }
             Text(shown, style = MaterialTheme.typography.titleMedium, color = scheme.onSurface)
         }
+        val colors = SliderDefaults.colors(
+            thumbColor = scheme.secondary,
+            activeTrackColor = scheme.secondary,
+            inactiveTrackColor = scheme.outlineVariant,
+            activeTickColor = Color.Transparent,
+            inactiveTickColor = Color.Transparent,
+            disabledThumbColor = scheme.onSurface.copy(alpha = 0.38f),
+            disabledActiveTrackColor = scheme.onSurface.copy(alpha = 0.24f),
+            disabledInactiveTrackColor = scheme.outlineVariant.copy(alpha = 0.5f),
+            disabledActiveTickColor = Color.Transparent,
+            disabledInactiveTickColor = Color.Transparent,
+        )
         Slider(
             value = position,
             onValueChange = { position = it },
@@ -572,18 +594,9 @@ private fun PanelSlider(
             // Ticks only where they can be told apart; a fine track snaps on release instead.
             steps = if (block.intervals in 2..20) block.intervals - 1 else 0,
             enabled = !busy,
-            colors = SliderDefaults.colors(
-                thumbColor = scheme.secondary,
-                activeTrackColor = scheme.secondary,
-                inactiveTrackColor = scheme.outlineVariant,
-                activeTickColor = Color.Transparent,
-                inactiveTickColor = Color.Transparent,
-                disabledThumbColor = scheme.onSurface.copy(alpha = 0.38f),
-                disabledActiveTrackColor = scheme.onSurface.copy(alpha = 0.24f),
-                disabledInactiveTrackColor = scheme.outlineVariant.copy(alpha = 0.5f),
-                disabledActiveTickColor = Color.Transparent,
-                disabledInactiveTickColor = Color.Transparent,
-            ),
+            colors = colors,
+            // No stop dot at the track's end: it read as a stray mark, not as the maximum.
+            track = { sliderState -> SliderTrack(sliderState, colors, enabled = !busy) },
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
@@ -596,7 +609,8 @@ private fun PanelSlider(
             Text(block.detail, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
         }
         block.callAt(block.snap(position.toDouble()))?.let { call ->
-            PanelCallCaption("${call.caption} · $shown", scheme.onSurfaceVariant, Modifier.fillMaxWidth())
+            // The number is already in the call's arguments.
+            PanelCallCaption(call.caption, scheme.onSurfaceVariant, Modifier.fillMaxWidth())
         }
         if (block.live && applied?.ok == false && applied.message.isNotBlank()) {
             Text(

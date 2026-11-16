@@ -193,7 +193,8 @@ internal fun PanelCallCaption(caption: String, color: Color, modifier: Modifier 
             textAlign = if (rtl) TextAlign.Right else TextAlign.Left,
         ),
         color = color,
-        maxLines = 1,
+        // Two lines: a tile is half the card wide, and the arguments are the point.
+        maxLines = 2,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier.fillMaxWidth(),
     )

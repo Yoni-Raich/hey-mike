@@ -207,12 +207,25 @@ sealed interface PanelBlock {
 
 /** A tool call a panel action makes: a device tool's name and its arguments, as Mike would send them. */
 data class PanelCall(val tool: String, val arguments: JsonObject) {
-    /** What the tile shows under its label, so a label cannot hide what a tap does. */
+    /**
+     * What the tile shows under its label, so a label cannot hide what a tap does:
+     * the operation, then each other argument as key=value ("torch on=true").
+     * The tool's name leads only when no argument names the operation; it was the
+     * same word on every tile and pushed the part that differs out of sight.
+     */
     val caption: String
-        get() = listOfNotNull(
-            tool,
-            ((arguments["operation"] ?: arguments["action"] ?: arguments["mode"]) as? JsonPrimitive)?.contentOrNull,
-        ).joinToString(" · ")
+        get() {
+            val opKey = OP_KEYS.firstOrNull { (arguments[it] as? JsonPrimitive)?.contentOrNull?.isNotBlank() == true }
+            val head = opKey?.let { (arguments[it] as JsonPrimitive).content } ?: tool
+            val rest = arguments.filterKeys { it != opKey }.map { (key, value) ->
+                "$key=" + ((value as? JsonPrimitive)?.contentOrNull ?: if (value is JsonPrimitive) "null" else "…")
+            }
+            return (listOf(head) + rest).joinToString(" ")
+        }
+
+    private companion object {
+        val OP_KEYS = listOf("operation", "action", "mode")
+    }
 }
 
 /** A tile's colour. A closed set, so every panel stays in the app's look. */
