@@ -95,6 +95,12 @@ run on a phone:
   card was already fine: its timer is a Chronometer, nothing rebinds it each
   second. Not measured again on a phone: the frame numbers after this change
   are unknown.
+- "Add to home screen" on a panel that already has a widget now says "This
+  panel is already on your home screen." instead of pinning a second one: a
+  widget id the launcher still holds and that maps to this panel counts, a
+  tie left by a removed widget does not (`SavedPanelWidgetPinTest`). Not tried
+  on a launcher. A pin still waiting in the launcher's dialog is not tracked,
+  so two fast taps can still ask twice.
 
 ### Panels outside the chat - 2026-11-15
 
