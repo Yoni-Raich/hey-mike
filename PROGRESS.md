@@ -188,6 +188,13 @@ none run on a phone:
   the same. `AgentPanelsTest` 3 new (refused without decimals, 75.4 with
   `decimals: 1`, 75 with no step, a saved panel loads, bad `decimals` refused,
   a live call sends 0.3, the floating track matches); `:core:test` 1013.
+- Hebrew receipt: the expired form receipt with a Hebrew title kept its icon
+  on the left and its title left-aligned (r5-84). A receipt whose title holds
+  a Hebrew or Arabic letter now lays out right to left: icon on the right,
+  title and note right-aligned. "Expired, not sent." stays English: the app
+  ships no Hebrew strings (no `values-iw` or `values-he`; all UI text is
+  hard-coded English), so there is nothing to add a translation to.
+  `ExpiredPanelNoteTest.aHebrewTitleMirrorsTheReceipt`. Not seen on a phone.
 
 ### Panels outside the chat - 2026-11-15
 

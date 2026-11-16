@@ -362,3 +362,6 @@ internal fun expiredPanelNote(message: ChatMessage): String? {
         else -> null
     }
 }
+
+/** True when an expired panel's receipt mirrors: its title holds a Hebrew or Arabic letter. */
+internal fun expiredReceiptRtl(title: String): Boolean = containsRtl(title)

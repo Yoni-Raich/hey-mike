@@ -59,7 +59,12 @@ panel "awaits approval" that was never created.
   sent from it. The receipt replaces the "The panel closed" line. The trace
   still records `tool_closed` with the reason. Decided 2026-11-16 after a
   phone test: a form left open vanished at turn end with no visible note
-  (the old line sat collapsed under "Run details").
+  (the old line sat collapsed under "Run details"). A receipt whose title
+  holds a Hebrew or Arabic letter is mirrored (icon on the right, both lines
+  right-aligned), going by content as chat bubbles do. The note stays
+  English: the app ships no translated strings (no `values-iw`/`values-he`;
+  UI text is in code), so nothing is translated until the app has a string
+  catalogue.
 - A call whose job ends with no answer while its turn still runs gets a
   failure answer, so the model never waits on it. After Stop nothing is
   answered, as before.
