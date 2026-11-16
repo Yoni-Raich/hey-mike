@@ -76,9 +76,7 @@ data class PanelPlacement(
                 PanelSurface.CHAT -> "In the chat"
                 PanelSurface.FLOATING -> "Floating card over other apps"
                 PanelSurface.WIDGET -> "Home-screen widget"
-                PanelSurface.NOTIFICATION -> "Ongoing notification. If your phone shows notifications on the lock screen, " +
-                    "only its title shows there (all of it if you let the lock screen show notification content), " +
-                    "and its buttons work only after you unlock"
+                PanelSurface.NOTIFICATION -> "Ongoing notification"
             }
             val long = when (val life = lifetime) {
                 PanelLifetime.Turn -> "while Mike's turn lasts"
@@ -88,12 +86,28 @@ data class PanelPlacement(
             return "$where, $long" + if (keepScreenOn) ", keeps the screen on" else ""
         }
 
+    /** What the lock screen shows, short enough for a card. Null off a notification; [LOCK_SCREEN_RULE] has it in full. */
+    val lockScreen: String? get() = if (surface == PanelSurface.NOTIFICATION) LOCK_SCREEN else null
+
     companion object {
         /** The longest floating card that is shown without an approval, and a floating card's default. */
         const val SHORT_TTL_SECONDS = 60L
         const val MIN_TTL_SECONDS = 5L
         const val MAX_TTL_SECONDS = 86_400L
         val CHAT = PanelPlacement(PanelSurface.CHAT, PanelLifetime.Turn)
+
+        /**
+         * A notification on the lock screen, for the approval card. True on
+         * every lock-screen setting: hidden shows nothing, the default shows
+         * the title only, "show all content" shows all of it.
+         */
+        const val LOCK_SCREEN = "On the lock screen: title only (all of it if your phone shows full content). Buttons work after unlock."
+
+        /** The whole rule behind [LOCK_SCREEN], under Details. */
+        const val LOCK_SCREEN_RULE = "If your phone hides notifications on the lock screen, nothing of this panel shows there. " +
+            "If it shows them, only the title shows, with \u201cUnlock to use this panel\u201d. " +
+            "If you let the lock screen show all notification content, the whole panel shows. " +
+            "Either way its buttons do nothing until you unlock."
 
         /** The placement in `show_ui` [arguments], or a reason the model can fix. */
         fun parse(arguments: JsonObject): PanelPlacement {
@@ -280,7 +294,7 @@ object PanelApprovalLines {
                     if (calls.isEmpty()) null
                     else Line(block.label, calls.map(PanelCallWords::describe).distinct().let(::either), calls)
                 }
-                is PanelEffect.Local -> Line(block.label, "Changes only this panel: ${effect.op.op.replace('_', ' ')} ${what(panel, effect.op.target)}", emptyList())
+                is PanelEffect.Local -> Line(block.label, PanelOpWords.describe(panel, effect.op) + ". Changes only this panel.", emptyList())
                 is PanelEffect.AskMike -> Line(
                     block.label, "Starts a Mike chat: \u201c${effect.prompt}\u201d. Mike reads this panel's contents as your data.", emptyList(),
                 )
@@ -293,7 +307,65 @@ object PanelApprovalLines {
 
     private fun either(words: List<String>): String =
         words.first() + words.drop(1).joinToString("") { " or " + it.replaceFirstChar(Char::lowercase) }
+}
 
-    private fun what(panel: AgentPanel, target: String): String =
-        panel.stateful.firstOrNull { it.id == target }?.label?.takeIf(String::isNotBlank)?.let { "\u201c$it\u201d" } ?: target
+/**
+ * Plain words for a change to a panel's own state ("Add 1 to \u201cGlasses\u201d"),
+ * for the approval screen and a tile's caption, so no one reads an op name.
+ */
+object PanelOpWords {
+    fun describe(panel: AgentPanel, op: PanelOp): String {
+        val block = panel.stateful.firstOrNull { it.id == op.target }
+        val name = quote(block?.label?.takeIf(String::isNotBlank) ?: op.target)
+        return when (block) {
+            is PanelBlock.Checklist -> {
+                val item = block.items.firstOrNull { it.id == op.item }?.text?.let(::quote) ?: "an item"
+                when (op.op) {
+                    "check" -> if (op.checked == false) "Untick $item in $name" else "Tick $item in $name"
+                    "uncheck" -> "Untick $item in $name"
+                    "toggle" -> "Tick or untick $item in $name"
+                    "add" -> op.text?.trim()?.takeIf(String::isNotEmpty)?.let { "Add ${quote(clip(it))} to $name" } ?: "Add an item to $name"
+                    "remove" -> "Remove $item from $name"
+                    "move" -> "Move $item in $name to place ${(op.amount ?: 0) + 1}"
+                    "uncheck_all" -> "Untick everything in $name"
+                    "clear_checked" -> "Remove the ticked items from $name"
+                    "next" -> "Tick the next item in $name" +
+                        (op.timer?.let { id -> ", then start ${timerName(panel, id)} for its time" } ?: "")
+                    "reset" -> "Put $name back as it started"
+                    else -> "Change $name"
+                }
+            }
+            is PanelBlock.Counter -> {
+                val by = op.amount ?: block.step
+                when (op.op) {
+                    "inc" -> "Add $by to $name"
+                    "dec" -> "Take $by off $name"
+                    "set" -> "Set $name to ${op.amount ?: "a number"}"
+                    "reset" -> "Set $name back to ${block.start}"
+                    else -> "Change $name"
+                }
+            }
+            is PanelBlock.Timer -> when (op.op) {
+                "start" -> "Start the $name timer" + (op.amount?.let { " for ${PanelPlacement.duration(it)}" } ?: "")
+                "pause" -> "Pause the $name timer"
+                "resume" -> "Resume the $name timer"
+                "reset" -> "Stop the $name timer and set it back to ${PanelPlacement.duration(block.seconds)}"
+                "add" -> "Add ${op.amount?.let(PanelPlacement::duration) ?: "time"} to the $name timer"
+                else -> "Change the $name timer"
+            }
+            is PanelBlock.Note -> when (op.op) {
+                "set" -> op.text?.let { "Write ${quote(clip(it))} in $name" } ?: "Write in $name"
+                "reset" -> "Put $name back as it started"
+                else -> "Change $name"
+            }
+            null -> "Change $name"
+        }
+    }
+
+    private fun timerName(panel: AgentPanel, id: String): String =
+        "the " + quote(panel.stateful.firstOrNull { it.id == id }?.label?.takeIf(String::isNotBlank) ?: id) + " timer"
+
+    private fun quote(text: String) = "\u201c$text\u201d"
+
+    private fun clip(text: String) = if (text.length <= 40) text else text.take(39) + "\u2026"
 }

@@ -203,4 +203,51 @@ class PanelPlacementTest {
         assertEquals("Set the media volume to the slider's percent",
             PanelCallWords.describe(PanelCall("system_controls", system("volume") { put("percent", AgentPanels.VALUE) })))
     }
+
+    private fun local(id: String, op: String, target: String, body: JsonObjectBuilder.() -> Unit = {}) = block("action") {
+        put("id", id); put("label", id); put("kind", "local"); put("op", op); put("target", target); body()
+    }
+
+    private val household = panel(
+        block("counter") { put("id", "glasses"); put("label", "Glasses") },
+        block("checklist") { put("id", "night"); put("label", "Before bed"); put("items", buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive("Pajamas")) }) },
+        block("timer") { put("id", "wind"); put("label", "Wind down"); put("seconds", 600) },
+        local("plus", "inc", "glasses"),
+        local("zero", "reset", "glasses"),
+        local("fresh", "uncheck_all", "night"),
+        local("go", "start", "wind"),
+        local("more", "add", "wind") { put("amount", 120) },
+    ) { put("surface", "widget") }
+
+    @Test fun localOpsReadAsPlainWordsNotOpNames() {
+        val parsed = AgentPanels.parse("p", household).getOrThrow()
+        val lines = PanelApprovalLines.of(parsed).associate { it.label to it.words }
+        assertEquals("Add 1 to “Glasses”. Changes only this panel.", lines["plus"])
+        assertEquals("Set “Glasses” back to 0. Changes only this panel.", lines["zero"])
+        assertEquals("Untick everything in “Before bed”. Changes only this panel.", lines["fresh"])
+        assertEquals("Start the “Wind down” timer. Changes only this panel.", lines["go"])
+        assertEquals("Add 2 minutes to the “Wind down” timer. Changes only this panel.", lines["more"])
+        val item = (parsed.stateful.first { it.id == "night" } as PanelBlock.Checklist).items.single()
+        assertEquals("Tick “Pajamas” in “Before bed”", PanelOpWords.describe(parsed, PanelOp("check", "night", item = item.id)))
+        // No op name leaks into a line.
+        lines.values.forEach { words -> listOf("inc", "reset", "uncheck_all").forEach { assertFalse(words, Regex("\\b$it\\b").containsMatchIn(words)) } }
+    }
+
+    @Test fun aLocalTileSaysWhatItDoes() {
+        val parsed = AgentPanels.parse("p", household).getOrThrow()
+        val saved = SavedPanel("p", "s", household, 0, 0, null, panel = parsed)
+        val tiles = PanelFace.of(saved, null)!!.rows.filterIsInstance<PanelFace.Row.Tile>().associate { it.actionId to it.caption }
+        assertEquals("Add 1 to “Glasses”", tiles["plus"])
+    }
+
+    @Test fun theLockScreenLineIsShortAndTheRuleIsWhole() {
+        val notification = PanelPlacement.parse(args("surface" to "notification"))
+        assertEquals("Ongoing notification, until you remove it", notification.words)
+        assertEquals(PanelPlacement.LOCK_SCREEN, notification.lockScreen)
+        assertTrue(PanelPlacement.LOCK_SCREEN.length <= 110)
+        assertNull(PanelPlacement.parse(args("surface" to "widget")).lockScreen)
+        listOf("hides notifications", "only the title", "all notification content", "until you unlock").forEach {
+            assertTrue(it, PanelPlacement.LOCK_SCREEN_RULE.contains(it))
+        }
+    }
 }

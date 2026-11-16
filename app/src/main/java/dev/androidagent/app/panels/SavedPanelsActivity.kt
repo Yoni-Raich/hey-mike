@@ -75,6 +75,7 @@ import dev.androidagent.core.PanelApprovalLines
 import dev.androidagent.core.PanelCall
 import dev.androidagent.core.PanelCallWords
 import dev.androidagent.core.PanelHost
+import dev.androidagent.core.PanelPlacement
 import dev.androidagent.core.PanelRevision
 import dev.androidagent.core.PanelSurface
 import dev.androidagent.core.SavedPanel
@@ -268,6 +269,7 @@ private fun PanelCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = if (saved.status == SavedPanel.Status.BLOCKED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            placement?.lockScreen?.let { LockScreenLine(it) }
             saved.blocked?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
             if (placement?.surface == PanelSurface.FLOATING && !canFloat) {
                 Text(
@@ -303,6 +305,19 @@ private fun PanelCard(
                     OutlinedButton(onClick = onRemove) { Text("Remove") }
                 }
             }
+        }
+    }
+}
+
+/** A notification's lock-screen view in one short line; the whole rule waits under Details. */
+@Composable
+private fun LockScreenLine(short: String) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Text(short, style = MaterialTheme.typography.bodyMedium)
+        TextButton(onClick = { open = !open }) { Text(if (open) "Hide details" else "Details") }
+        if (open) {
+            Text(PanelPlacement.LOCK_SCREEN_RULE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

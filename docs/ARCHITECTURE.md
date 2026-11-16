@@ -279,12 +279,18 @@ Decisions made while building this (2026-11-15):
   lock screen gets the public version only: title and "Unlock to use this
   panel". Buttons need unlock: a list or a counter on the lock screen would let
   anyone holding the phone change it, and `open` and `ask_mike` must never run
-  locked. The approval screen says exactly this: "Ongoing notification. If
-  your phone shows notifications on the lock screen, only its title shows
-  there (all of it if you let the lock screen show notification content), and
-  its buttons work only after you unlock". The claim is conditional because
-  the user can hide notifications from the lock screen; a default-importance
+  locked. The approval card says it in one short line (shortened 2026-11-16
+  after round 3: the long sentence did not fit a card): "On the lock screen:
+  title only (all of it if your phone shows full content). Buttons work after
+  unlock." Details opens the full rule: hidden notifications show nothing,
+  the default shows the title with "Unlock to use this panel", "show all
+  content" shows the whole panel, and the buttons do nothing until unlock in
+  every case. "Title only" is a ceiling, not a promise: a default-importance
   channel shows there only when the phone allows it.
+- **Plain words for local ops (2026-11-16).** The approval card and a tile's
+  caption describe a local op in words (`Add 1 to "Glasses"`, `Untick
+  everything in "Before bed"`) from `PanelOpWords`, never the op name (`inc`,
+  `reset`). The words name the block by its label and an item by its text.
 - **Read floors.** Notifications read at most every 15 s and widgets every
   30 s, so a 2 s `every` cannot keep the radio and CPU busy behind the lock.
 - **Stop does not cancel a panel tap.** A tap is the user's own act, outside

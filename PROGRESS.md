@@ -66,6 +66,13 @@ run on a phone:
   engine give-up, the 8-minute timeout (a late answer is refused) and an
   answered panel staying "complete"; `ExpiredPanelNoteTest` covers the line.
   The receipt card itself is not drawn in any test.
+- Approval card words: a local op reads as plain words from `PanelOpWords`
+  ("Add 1 to "Glasses". Changes only this panel.", not `inc "Glasses"`), and
+  so does a local tile's caption on every surface. A notification's lock-screen
+  note is one line, "On the lock screen: title only (all of it if your phone
+  shows full content). Buttons work after unlock.", with the full rule under
+  Details. `PanelPlacementTest` checks the words, the tile caption and the
+  rule; the card was not looked at on a phone.
 
 ### Panels outside the chat - 2026-11-15
 
