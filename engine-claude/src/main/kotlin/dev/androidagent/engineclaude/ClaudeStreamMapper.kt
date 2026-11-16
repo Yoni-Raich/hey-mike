@@ -114,6 +114,10 @@ internal class ClaudeStreamMapper(
     private val retired = LinkedHashSet<String>()
     private var messageId: String? = null
     private var textIndex: Int? = null
+    /** The start of the streaming text block, held back while it may still be [NO_RESPONSE]. */
+    private var heldText: StringBuilder? = null
+    /** Whether the streaming text block has shown anything yet; until then its leading blanks are dropped. */
+    private var textShown = false
     private var generatedText = 0
     private var lastText: EngineEvent.MessageCompleted? = null
     private val builtinTools = mutableMapOf<String, Pair<String, String>>()
@@ -363,7 +367,7 @@ internal class ClaudeStreamMapper(
                 val block = event["content_block"] as? JsonObject
                 val index = (event["index"] as? JsonPrimitive)?.longOrNull?.toInt()
                 when (block?.string("type")) {
-                    "text" -> { textIndex = index; emptyList() }
+                    "text" -> { textIndex = index; heldText = StringBuilder(); textShown = false; emptyList() }
                     "thinking", "redacted_thinking", "tool_use" -> {
                         turn.workStarted = true
                         listOf(Signal.Emit(EngineEvent.Activity("Working", threadId, turn.turnId)))
@@ -374,18 +378,43 @@ internal class ClaudeStreamMapper(
             "content_block_delta" -> {
                 val delta = event["delta"] as? JsonObject
                 if (delta?.string("type") != "text_delta") return emptyList()
-                val text = delta.string("text").ifEmpty { return emptyList() }
+                val raw = delta.string("text").ifEmpty { return emptyList() }
                 turn.workStarted = true
                 val index = (event["index"] as? JsonPrimitive)?.longOrNull?.toInt() ?: textIndex
+                val text = (if (index == textIndex) shownPart(raw) else raw).ifEmpty { return emptyList() }
                 listOf(Signal.Emit(EngineEvent.TextDelta(text, threadId, turn.turnId, itemId(index))))
             }
             "content_block_stop" -> {
                 val index = (event["index"] as? JsonPrimitive)?.longOrNull?.toInt()
-                if (index != null && index == textIndex) textIndex = null
+                if (index != null && index == textIndex) {
+                    // A block that only began like the stand-in is Mike's words after all.
+                    val rest = heldText?.toString()?.trimStart().orEmpty()
+                    heldText = null
+                    textIndex = null
+                    if (rest.isNotEmpty()) return listOf(Signal.Emit(EngineEvent.TextDelta(rest, threadId, turn.turnId, itemId(index))))
+                }
                 emptyList()
             }
             else -> emptyList()
         }
+    }
+
+    /**
+     * What of [raw], the next piece of the streaming text block, the chat may
+     * show. The block's start is held back while it still reads like
+     * [NO_RESPONSE]; once it is the stand-in, the stand-in is dropped.
+     */
+    private fun shownPart(raw: String): String {
+        val held = heldText
+        if (held != null) {
+            held.append(raw)
+            val start = held.toString().trimStart()
+            if (start.isEmpty() || start.length < NO_RESPONSE.length && NO_RESPONSE.startsWith(start)) return ""
+            heldText = null
+            return withoutNoResponse(start).also { if (it.isNotEmpty()) textShown = true }
+        }
+        if (textShown) return raw
+        return raw.trimStart().also { if (it.isNotEmpty()) textShown = true }
     }
 
     private fun itemId(index: Int?): String? {
@@ -400,8 +429,10 @@ internal class ClaudeStreamMapper(
         // API failures come back as a made-up assistant message ("Invalid API
         // key · Please run /login"). It is the turn's error, not Mike's words.
         if (body.string("model") == "<synthetic>" || message.string("error").isNotBlank()) {
+            // Its "No response requested." is neither an error nor an answer.
             blocks.filter { it.string("type") == "text" }.joinToString("\n") { it.string("text") }
-                .trim().takeIf { it.isNotEmpty() }?.let { turn.syntheticError = SecretRedactor.redactUiText(it) }
+                .let(::withoutNoResponse).trim()
+                .takeIf { it.isNotEmpty() }?.let { turn.syntheticError = SecretRedactor.redactUiText(it) }
             return emptyList()
         }
         if (blocks.any { it.string("type") in setOf("tool_use", "thinking", "redacted_thinking") ||
@@ -413,7 +444,7 @@ internal class ClaudeStreamMapper(
         for (block in blocks) {
             when (block.string("type")) {
                 "text" -> {
-                    val text = block.string("text")
+                    val text = withoutNoResponse(block.string("text"))
                     if (text.isBlank()) continue
                     val itemId = itemId(textIndex) ?: "${bodyId ?: "message"}:t${generatedText++}"
                     val completed = EngineEvent.MessageCompleted(text, threadId, turn.turnId, itemId, "commentary")
@@ -494,7 +525,7 @@ internal class ClaudeStreamMapper(
         // the model: its answer is a made-up assistant message and the result's
         // text, with no turn of Mike's own words around it.
         if (status == "completed" && !turn.internal && !turn.workStarted && lastText == null) {
-            val answer = SecretRedactor.redactUiText(message.string("result").trim()).ifEmpty { turn.syntheticError.orEmpty() }
+            val answer = SecretRedactor.redactUiText(withoutNoResponse(message.string("result")).trim()).ifEmpty { turn.syntheticError.orEmpty() }
             if (answer.isNotEmpty()) {
                 val completed = EngineEvent.MessageCompleted(answer, threadId, turn.turnId, "command:${turn.turnId}", "commentary")
                 lastText = completed
@@ -540,5 +571,19 @@ internal class ClaudeStreamMapper(
         const val MAX_COMMAND_SHOWN = 400
         /** Why a cycle runs after its turn ended: a message that came as the reply was finishing. */
         const val LATE_MESSAGE = "Continuing with a message that arrived as the last reply ended"
+
+        /**
+         * Claude Code's stand-in for "the model had nothing to say": its own
+         * made-up reply to a cycle that needs no answer, and the words the
+         * model itself writes for a message that is only a status update (a
+         * child chat's update, a finished background task). Never Mike's words.
+         */
+        const val NO_RESPONSE = "No response requested."
+
+        /** [text] without a leading [NO_RESPONSE] and the blank space after it. */
+        fun withoutNoResponse(text: String): String {
+            val start = text.trimStart()
+            return if (start.startsWith(NO_RESPONSE)) start.removePrefix(NO_RESPONSE).trimStart() else text
+        }
     }
 }
