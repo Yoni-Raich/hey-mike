@@ -207,7 +207,7 @@ internal class SavedPanelNotifications(private val context: Context) {
         posted.keys.toSet()
     }
 
-    /** A countdown on a panel ended: one short, normal notification, as a kitchen timer would ring. */
+    /** A countdown on a panel ended: one notification that pops up, silent unless the user gave its channel a sound. */
     fun alert(alert: dev.androidagent.core.PanelAlert) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
@@ -362,36 +362,64 @@ internal class SavedPanelNotifications(private val context: Context) {
     private fun ensureChannels() {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         runCatching {
-            // The first channel was low importance, which phones hide from the lock screen.
-            runCatching { manager.deleteNotificationChannel(OLD_PANELS) }
-            manager.createNotificationChannel(
-                // Default importance, so the title shows on the lock screen; no sound, no
-                // vibration, and no heads-up (that needs high importance).
-                NotificationChannel(PANELS, "Saved panels", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Panels you kept from Mike. The lock screen shows only the title; buttons work after unlock."
-                    setSound(null, null)
-                    enableVibration(false)
-                    setShowBadge(false)
-                },
-            )
-            manager.createNotificationChannel(
-                NotificationChannel(ALERTS, "Panel timers", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "A timer on a saved panel ended."
-                },
-            )
-            manager.createNotificationChannel(
-                NotificationChannel(APPROVALS, "Panels to approve", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "A panel Mike made that waits for your approval."
-                },
-            )
+            // Android keeps a channel's first sound and importance, so a change needs a new id.
+            RETIRED_CHANNELS.forEach { id -> runCatching { manager.deleteNotificationChannel(id) } }
+            CHANNELS.forEach { spec ->
+                manager.createNotificationChannel(
+                    NotificationChannel(spec.id, spec.name, spec.importance).apply {
+                        description = spec.description
+                        if (!spec.sound) setSound(null, null)
+                        if (!spec.vibration) enableVibration(false)
+                        if (!spec.badge) setShowBadge(false)
+                    },
+                )
+            }
         }
     }
+
+    /** One notification channel as it is created. [sound] false means silent; true keeps the phone's default. */
+    internal data class ChannelSpec(
+        val id: String,
+        val name: String,
+        val importance: Int,
+        val description: String,
+        val sound: Boolean,
+        val vibration: Boolean,
+        val badge: Boolean = true,
+    )
 
     companion object {
         const val PANELS = "saved_panels_v2"
         const val OLD_PANELS = "saved_panels"
         const val APPROVALS = "saved_panel_approvals"
-        const val ALERTS = "saved_panel_alerts"
+        /** v2: silent. The first timer channel used the phone's default sound. */
+        const val ALERTS = "saved_panel_alerts_v2"
+        const val OLD_ALERTS = "saved_panel_alerts"
+
+        /** Channels from earlier builds, deleted on start. */
+        internal val RETIRED_CHANNELS = listOf(OLD_PANELS, OLD_ALERTS)
+
+        internal val CHANNELS = listOf(
+            // Default importance, so the title shows on the lock screen; no sound, no
+            // vibration, and no heads-up (that needs high importance).
+            ChannelSpec(
+                PANELS, "Saved panels", NotificationManager.IMPORTANCE_DEFAULT,
+                "Panels you kept from Mike. The lock screen shows only the title; buttons work after unlock.",
+                sound = false, vibration = false, badge = false,
+            ),
+            // High importance so it pops up, but never a sound or a buzz unless the
+            // user turns one on for this channel in Android's settings.
+            ChannelSpec(
+                ALERTS, "Panel timers", NotificationManager.IMPORTANCE_HIGH,
+                "A timer on a saved panel ended. Silent; you can turn on a sound here.",
+                sound = false, vibration = false,
+            ),
+            ChannelSpec(
+                APPROVALS, "Panels to approve", NotificationManager.IMPORTANCE_DEFAULT,
+                "A panel Mike made that waits for your approval.",
+                sound = true, vibration = true,
+            ),
+        )
         /** One per panel; the panel's id is the tag. */
         const val PANEL_ID = 7_401
         const val APPROVAL_ID = 7_402

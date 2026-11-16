@@ -199,7 +199,7 @@ A saved panel can be a small app: a list the user ticks off, a counter, a timer,
 
 `reset`: `{"at": "07:00"}` every day, or `{"at": "18:00", "days": ["sun", "mon"]}` on those days. A list goes back to its start: the items you gave it, unchecked.
 
-When a timer ends, the phone shows a short "time is up" notification.
+When a timer ends, the phone pops up a short, silent "time is up" notification. It makes no sound and no vibration unless the user turns them on for "Panel timers" in Android settings, so never promise a sound or an alarm.
 
 ### Four kinds of action
 
@@ -284,7 +284,7 @@ A notification that counts down and walks the user back to the car (use the spot
    "open": {"directions": {"lat": 32.0741, "lng": 34.7922}, "mode": "walking"}}]}
 ```
 
-The notification counts down by itself and rings when the time is up.
+The notification counts down by itself and pops up silently when the time is up.
 
 ### Bedtime
 

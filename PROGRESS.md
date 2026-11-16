@@ -38,7 +38,7 @@ version; the widget list (RemoteCollectionItems) and its fallback rows; the
 Add dialog activity and its keyboard; typing a note on the floating card
 (window focus for the keyboard); starting an `open` target from a floating
 card, notification and widget; inexact alarms for timers and resets while the
-phone dozes; the timer alert sound. The "Working" row after a detached
+phone dozes; the silent timer pop-up (no sound, no vibration). The "Working" row after a detached
 panel's turn (retest fix 2) is covered by a unit test only: the retested
 build b1f054f3 did not have 48f718f5. Fix 2 is not reproduced and not
 confirmed: with both 48f718f5 closes (turn end and engine cancel) removed

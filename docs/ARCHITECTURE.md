@@ -387,8 +387,12 @@ A counter with `tally: "<checklist>"` adds that list's unchecked count at its
 reset (missed doses). `PanelHost.nextDueAtMs()` gives the next timer end or
 reset; `PanelAlarms` in the app arms one alarm for it, as `AutomationAlarms`
 does, and re-arms after boot. A timer that ends posts a notification on the
-"Panel timers" channel, created with no sound and no vibration; the user can
-add one in Android's settings.
+"Panel timers" channel (`saved_panel_alerts_v2`, high importance so it pops
+up) with no sound and no vibration; the user can turn a sound on for that
+channel in Android's settings. The app never makes a sound the user did not
+set. The first build's `saved_panel_alerts` channel used the phone's default
+sound; Android keeps a channel's first sound, so it is deleted and replaced
+by the new id.
 
 **Surface input.**
 
