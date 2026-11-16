@@ -395,4 +395,29 @@ class PanelAppsHostTest {
         assertEquals(1, rig.store.traced("panel_reset").size)
         assertEquals(at("2026-11-17T07:00"), host.nextDueAtMs())
     }
+
+    /** Every template the agent-ui skill teaches is a panel the app accepts, approves and can change. */
+    @Test fun everyMiniAppInTheSkillIsAcceptedAndItsOpsApply() = runTest {
+        val skill = File("../app/src/main/assets/agent_stack/skills/agent-ui/SKILL.md").readText()
+        val section = skill.substringAfter("## Mini-apps").substringBefore("\n## ")
+        val examples = Regex("```json\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL).findAll(section).map { it.groupValues[1] }.toList()
+        val (edits, panels) = examples.partition { "\"panel_id\"" in it }
+        assertEquals(9, panels.size)
+        assertEquals(1, edits.size)
+        val rig = Rig(this)
+        val host = rig.host()
+        val ids = panels.map { text ->
+            val title = json(text)["title"]!!.jsonPrimitive.content
+            val proposed = host.propose("one", json(text))
+            assertEquals("$title: ${proposed.text}", "awaiting_approval", status(proposed))
+            val id = result(proposed)["panelId"]!!.jsonPrimitive.content
+            assertNull(title, host.approve(id))
+            title to id
+        }.toMap()
+        val shopping = ids.getValue("Shopping")
+        val changed = host.manage("two", json(edits.single().replace("<id>", shopping)))
+        assertEquals(changed.text, "state_changed", status(changed))
+        assertEquals(listOf("Milk", "Eggs", "Apples", "Bread"), items(host, shopping).map { it.text })
+        assertEquals(9, host.panels.value.size)
+    }
 }
