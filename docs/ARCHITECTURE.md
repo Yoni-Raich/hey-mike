@@ -32,6 +32,37 @@ code), a readout with new values to apply, or one of the app's own settings.
   a panel cannot be answered from the notification.
 - Child chats and computer tasks report a waiting panel as `waiting_for_user`.
 
+### When a chat panel's call ends without the user - 2026-11-16
+
+Seen on a phone (PR #166 test): the engine cancelled a chat `show_ui` while
+it waited ("dynamic tool call was cancelled before receiving a response"), and
+the turn ended. The app never heard of the cancel and kept waiting, holding the
+run's tool lock and the one-panel slot for up to 8 minutes. Every later call in
+that chat queued behind it and was cancelled in turn. Mike then claimed a saved
+panel "awaits approval" that was never created.
+
+- The Codex engine tracks unanswered `item/tool/call` ids. A
+  `serverRequest/resolved` for one emits `ApprovalResolved` with its thread and
+  turn (the same event approvals use).
+- The coordinator tracks every tool call it runs (`InFlightCall`) and answers
+  each at most once. `ApprovalResolved` for a call of the same thread and turn
+  cancels it. Turn end (`finalizeRun`) cancels every call still open.
+- A chat panel or question closed that way leaves a chat line: "The panel
+  closed: Mike stopped waiting for it" or "...: Mike's turn ended", and that
+  taps already made stay done. It is not answered: nobody reads the answer.
+  This is also the rule for an open panel when its turn ends (it closes; the
+  chat says so).
+- A call whose job ends with no answer while its turn still runs gets a
+  failure answer, so the model never waits on it. After Stop nothing is
+  answered, as before.
+- Within one turn, a waiting chat panel still holds the tool lock: a parallel
+  call must not act on the screen under it. Panel actions do not take the lock.
+- A saved panel's `show_ui` result says `"stored": false`. A pending panel
+  lives only in memory until the user approves it. The agent-ui skill tells
+  Mike to claim a panel exists only when the result said so.
+- Not known: why the engine cancelled the first call. It may be an engine-side
+  limit on how long a dynamic tool call may wait.
+
 ### Live panel actions - 2026-11-15
 
 An `action` block binds a tile to one tool call (`tool`, `arguments`, optional

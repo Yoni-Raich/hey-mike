@@ -76,6 +76,8 @@ class CodexEngine(
     private val writeLock = Mutex()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
     private val approvals = ConcurrentHashMap<String, EngineEvent.Approval>()
+    /** Dynamic tool calls not yet answered, with their thread and turn, so a server cancel reaches the app. */
+    private val pendingToolCalls = ConcurrentHashMap<String, Pair<String, String>>()
     private val selectedModels = ConcurrentHashMap<String, String>()
     private val compactions = ConcurrentHashMap<String, Compaction>()
     private val ids = AtomicLong()
@@ -540,6 +542,7 @@ class CodexEngine(
     override suspend fun interrupt(threadId: String, turnId: String) { request("turn/interrupt", buildJsonObject { put("threadId", threadId); put("turnId", turnId) }) }
 
     override suspend fun answerTool(requestId: String, result: ToolResult) {
+        pendingToolCalls.remove(requestId)
         respond(requestId, buildJsonObject {
             put("success", result.success)
             put("contentItems", buildJsonArray {
@@ -611,6 +614,7 @@ class CodexEngine(
         compactions.values.forEach { it.finished.completeExceptionally(IllegalStateException("Codex process stopped during compaction. Completion was not confirmed.")) }
         compactions.clear()
         approvals.clear()
+        pendingToolCalls.clear()
         val closedVoiceThreadId = voiceThreadId
         voiceThreadId = null
         voiceClosedSignal?.cancel()
@@ -689,6 +693,7 @@ class CodexEngine(
             method == "item/tool/call" && id != null -> {
                 val args = params["arguments"]
                 val value = when (args) { is JsonObject -> args; is JsonPrimitive -> runCatching { json.parseToJsonElement(args.content).jsonObject }.getOrDefault(buildJsonObject {}); else -> buildJsonObject {} }
+                pendingToolCalls[id] = params.string("threadId") to params.string("turnId")
                 stream.emit(EngineEvent.ToolCall(id, params.string("tool"), value, params.string("threadId"), params.string("turnId")))
             }
             method == "mcpServer/elicitation/request" && id != null -> {
@@ -714,6 +719,10 @@ class CodexEngine(
             method == "serverRequest/resolved" -> params["requestId"]?.toString()?.let { requestId ->
                 approvals.remove(requestId)?.let { approval ->
                     stream.emit(EngineEvent.ApprovalResolved(requestId, approval.threadId, approval.turnId))
+                } ?: pendingToolCalls.remove(requestId)?.let { (threadId, turnId) ->
+                    // The server gave up on a tool call the app has not answered.
+                    // The app must stop waiting on it, or the call holds the chat.
+                    stream.emit(EngineEvent.ApprovalResolved(requestId, threadId, turnId))
                 }
             }
             method == "thread/realtime/started" -> {

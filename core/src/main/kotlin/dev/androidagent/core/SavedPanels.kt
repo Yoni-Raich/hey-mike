@@ -296,10 +296,13 @@ class PanelHost(
             put("panelId", id)
             if (approved == null) {
                 put("status", "awaiting_approval")
+                put("stored", false)
                 put("message", "The panel waits for the user to approve it in Hey Mike (Saved panels). You cannot approve it. " +
+                    "It is not saved until they approve it: if Hey Mike closes first, it is gone. " +
                     "Tell them in one short line, then end your turn; its taps run without you once approved.")
             } else {
                 put("status", "shown")
+                put("stored", false)
                 put("message", "The card is shown for ${PanelPlacement.duration(placement.ttlSeconds ?: 0)}. Its taps run without you.")
             }
         }.toString())

@@ -140,6 +140,7 @@ What you get back:
 
 - A **floating card with a ttl of 60 seconds or less** is shown at once: `{"ok": true, "panelId": "...", "status": "shown"}`.
 - **Everything else** (a longer floating card, any notification or widget, anything pinned) waits for the user: `"status": "awaiting_approval"`. The app, not you, shows every call the panel can make, in words and as the raw call. You cannot approve it, and approval is refused while you are working. Tell the user in one short line that it waits in Hey Mike, Saved panels, and end your turn.
+- Say a panel is shown or waits for approval **only** when `show_ui` returned that `status`. A refusal, a failure or a cancelled call means no panel exists: say it was not created, and do not claim it waits anywhere.
 
 A panel outside the chat is a remote control, not a form. Nobody waits for its answer and you are not called when it is tapped:
 

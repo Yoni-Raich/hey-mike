@@ -1150,6 +1150,9 @@ class AgentCoordinatorTest {
         // Answered at once: nobody waits in the chat, and nothing is drawn there.
         val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
         assertEquals("awaiting_approval", result["status"]!!.jsonPrimitive.content)
+        // Honest about where it lives: nothing is saved before the user's OK.
+        assertEquals("false", result["stored"]!!.jsonPrimitive.content)
+        assertTrue(result["message"]!!.jsonPrimitive.content.contains("not saved until they approve it"))
         assertNull(rig.coordinator.state.value.panel)
         val saved = rig.host!!.panels.value.single()
         assertEquals(SavedPanel.Status.PENDING, saved.status)
@@ -1335,6 +1338,75 @@ class AgentCoordinatorTest {
         runCurrent()
         assertNull(rig.coordinator.state.value.panel)
         assertTrue(rig.engine.answers.single().text.contains("bad_panel"))
+        rig.close()
+    }
+
+    @Test fun aChatPanelLeftOpenWhenItsTurnEndsClosesAndDoesNotHoldTheNextTurnsCalls() = runTest {
+        // Seen on a phone: the turn ended with a panel still waiting. The panel
+        // kept the tool lock, so every later call in that chat went unanswered.
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        assertNotNull(rig.coordinator.state.value.panel)
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        // Nobody waits for that call now, so it is not answered.
+        assertTrue(rig.engine.answers.isEmpty())
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text.startsWith("The panel closed: Mike's turn ended") })
+
+        rig.coordinator.send("one", "Read the screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertEquals(listOf("Done"), rig.engine.answers.map { it.text })
+        rig.close()
+    }
+
+    @Test fun aChatPanelTheEngineGaveUpOnClosesAndFreesTheCallsBehindIt() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        rig.engine.emit(EngineEvent.ToolCall("r", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        // The second call waits behind the open panel.
+        assertTrue(rig.engine.answers.isEmpty())
+
+        // Another turn's settlement of the same id is not this call's.
+        rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "other-turn"))
+        runCurrent()
+        assertNotNull(rig.coordinator.state.value.panel)
+
+        rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertFalse(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "x")))
+        // Only the call behind it is answered: the engine no longer reads the panel's.
+        assertEquals(listOf("Done"), rig.engine.answers.map { it.text })
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text.startsWith("The panel closed: Mike stopped waiting for it") })
+        val panelTrace = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "p" }.map { it["type"]!!.jsonPrimitive.content }
+        assertEquals(listOf("tool_call", "tool_cancelled", "tool_closed"), panelTrace)
+        rig.close()
+    }
+
+    @Test fun aQuestionTheEngineGaveUpOnClosesWithANote() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Plan")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject { put("question", "Go on?") }, "thread", "turn"))
+        runCurrent()
+        val id = rig.coordinator.state.value.question!!.id
+        rig.engine.emit(EngineEvent.ApprovalResolved("q", "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.question)
+        assertFalse(rig.coordinator.answerQuestion(id, "yes"))
+        assertTrue(rig.engine.answers.isEmpty())
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text.startsWith("The question closed: Mike stopped waiting for it") })
         rig.close()
     }
 
