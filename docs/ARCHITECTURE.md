@@ -63,6 +63,21 @@ panel "awaits approval" that was never created.
 - Not known: why the engine cancelled the first call. It may be an engine-side
   limit on how long a dynamic tool call may wait.
 
+### Chat panel layout - 2026-11-16
+
+Seen on the same phone: a tall panel with the keyboard up drew under the
+status bar (title and close X over the clock).
+
+- The chat's bottom bar (banners, panel, composer) is never taller than the
+  screen minus the status bar and the top bar. The panel is measured last
+  (`weight(1f, fill = false)`): the composer keeps its room, the panel's body
+  shrinks and scrolls, and its header and buttons stay.
+- A panel that opens hides the keyboard the composer had. A field in the panel
+  brings it back.
+- At turn end an open chat panel closes and the chat says so (section above).
+  A tap already on its way at that instant lands on the chat below; this is not
+  guarded.
+
 ### Live panel actions - 2026-11-15
 
 An `action` block binds a tile to one tool call (`tool`, `arguments`, optional

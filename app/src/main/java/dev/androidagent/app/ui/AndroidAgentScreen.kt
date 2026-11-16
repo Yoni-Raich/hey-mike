@@ -28,6 +28,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -279,6 +282,14 @@ fun AndroidAgentScreen(
                 keyboard?.hide()
             }
         }
+        // A panel opens over the composer: the keyboard the composer had would
+        // only push it up. A field in the panel brings the keyboard back.
+        LaunchedEffect(state.runState.panel?.id) {
+            if (state.runState.panel != null) {
+                focusManager.clearFocus()
+                keyboard?.hide()
+            }
+        }
         val drawerPush = rememberDrawerPush(drawerState)
         val layoutDirection = LocalLayoutDirection.current
 
@@ -333,7 +344,11 @@ fun AndroidAgentScreen(
                     }
                 },
                 bottomBar = {
-                    Column {
+                    // Never taller than the space under the top bar: a tall panel with
+                    // the keyboard up used to slide under the status bar and the clock.
+                    BoxWithConstraints {
+                    val topReserved = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp
+                    Column(Modifier.heightIn(max = (maxHeight - topReserved).coerceAtLeast(0.dp))) {
                         state.activeSessionId?.let { id ->
                             val binding = state.remoteBindings[id]
                             if (binding?.engine == EngineKind.CLAUDE && binding.threadId != null &&
@@ -394,7 +409,8 @@ fun AndroidAgentScreen(
                                 panel = panel,
                                 state = state,
                                 actions = actions,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                // Measured last, so the composer keeps its room and the panel scrolls.
+                                modifier = Modifier.weight(1f, fill = false).padding(horizontal = 12.dp, vertical = 8.dp),
                             )
                         }
                         Box(Modifier.voiceStage(voiceMode.composer, lift = 56.dp)) {
@@ -404,6 +420,7 @@ fun AndroidAgentScreen(
                                 onVoiceButtonPlaced = { voiceMode.dock.value = it },
                             )
                         }
+                    }
                     }
                 },
             ) { padding ->

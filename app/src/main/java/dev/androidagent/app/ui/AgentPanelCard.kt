@@ -216,6 +216,8 @@ internal fun AgentPanelCard(
                 PanelHeader(panel.title, live = live, onClose = { answer(null) })
                 Column(
                     modifier = Modifier
+                        // Header and buttons stay; the body gives up height when the screen is short.
+                        .weight(1f, fill = false)
                         .heightIn(max = 440.dp)
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 16.dp)
