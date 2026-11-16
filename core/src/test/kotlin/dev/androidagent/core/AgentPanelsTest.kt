@@ -72,11 +72,11 @@ class AgentPanelsTest {
         assertEquals("bolt", torch.icon)
         assertEquals(PanelAccent.AMBER, torch.accent)
         // The operation and its arguments, not the tool name every tile shares.
-        assertEquals("torch on=true", torch.call.caption)
-        assertEquals("torch on=false", torch.callFor(false).caption)
+        assertEquals("torch on=true", torch.caption)
+        assertEquals("torch on=false", torch.callFor(false)!!.caption)
         assertEquals("system_controls", PanelCall("system_controls", buildJsonObject { }).caption)
         assertEquals("open_app package=com.x", PanelCall("open_app", buildJsonObject { put("package", "com.x") }).caption)
-        assertEquals("false", torch.callFor(false).arguments["on"].toString())
+        assertEquals("false", torch.callFor(false)!!.arguments["on"].toString())
         assertTrue(!parsed.actions[1].switch)
         // A refusal from the coordinator's check reaches the model with the action's id.
         val refused = AgentPanels.parse("p", panel(

@@ -24,6 +24,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 
@@ -55,7 +56,11 @@ sealed interface PanelLifetime {
  * may be bound, and every one but a short floating card needs the user's
  * approval before it is live.
  */
-data class PanelPlacement(val surface: PanelSurface, val lifetime: PanelLifetime) {
+data class PanelPlacement(
+    val surface: PanelSurface, val lifetime: PanelLifetime,
+    /** A floating card that keeps the screen on while it shows (cooking steps). */
+    val keepScreenOn: Boolean = false,
+) {
     val detached: Boolean get() = lifetime != PanelLifetime.Turn
 
     /** True unless this is a floating card that lives [SHORT_TTL_SECONDS] or less. */
@@ -71,14 +76,15 @@ data class PanelPlacement(val surface: PanelSurface, val lifetime: PanelLifetime
                 PanelSurface.CHAT -> "In the chat"
                 PanelSurface.FLOATING -> "Floating card over other apps"
                 PanelSurface.WIDGET -> "Home-screen widget"
-                PanelSurface.NOTIFICATION -> "Ongoing notification, also on the lock screen"
+                PanelSurface.NOTIFICATION -> "Ongoing notification. On the lock screen it shows only its title " +
+                    "(all of it if your phone shows notification content there), and its buttons work only after you unlock"
             }
             val long = when (val life = lifetime) {
                 PanelLifetime.Turn -> "while Mike's turn lasts"
                 PanelLifetime.Pinned -> "until you remove it"
                 is PanelLifetime.Ttl -> "for ${duration(life.seconds)}"
             }
-            return "$where, $long"
+            return "$where, $long" + if (keepScreenOn) ", keeps the screen on" else ""
         }
 
     companion object {
@@ -127,7 +133,11 @@ data class PanelPlacement(val surface: PanelSurface, val lifetime: PanelLifetime
             if (surface != PanelSurface.CHAT) {
                 require(lifetime != PanelLifetime.Turn) { "A ${surface.key} outlives the turn: use lifetime ttl or pinned." }
             }
-            return PanelPlacement(surface, lifetime)
+            val keepOn = arguments["keep_screen_on"]?.let { raw ->
+                (raw as? JsonPrimitive)?.booleanOrNull ?: throw IllegalArgumentException("keep_screen_on must be true or false.")
+            } ?: false
+            if (keepOn) require(surface == PanelSurface.FLOATING) { "keep_screen_on works only on a floating card." }
+            return PanelPlacement(surface, lifetime, keepOn)
         }
 
         internal fun duration(seconds: Long): String = when {
@@ -251,4 +261,38 @@ object PanelCallWords {
     }
 
     private fun seconds(ms: Long): String = AgentPanels.number(ms / 1_000.0, 1) + " s"
+}
+
+/**
+ * What each button of a panel does, for the approval screen: the user's own
+ * label first, then plain words, then the raw calls behind them (shown under
+ * Details). Every call the panel can make is in exactly one line.
+ */
+object PanelApprovalLines {
+    data class Line(val label: String, val words: String, val calls: List<PanelCall>)
+
+    fun of(panel: AgentPanel): List<Line> = panel.blocks.mapNotNull { block ->
+        when (block) {
+            is PanelBlock.Action -> when (val effect = block.effect) {
+                null -> {
+                    val calls = listOfNotNull(block.call, block.offCall).distinct()
+                    if (calls.isEmpty()) null
+                    else Line(block.label, calls.map(PanelCallWords::describe).distinct().let(::either), calls)
+                }
+                is PanelEffect.Local -> Line(block.label, "Changes only this panel: ${effect.op.op.replace('_', ' ')} ${what(panel, effect.op.target)}", emptyList())
+                is PanelEffect.AskMike -> Line(
+                    block.label, "Starts a Mike chat: \u201c${effect.prompt}\u201d. Mike reads this panel's contents as your data.", emptyList(),
+                )
+                is PanelEffect.Open -> Line(block.label, effect.target.words + ", when you tap it", emptyList())
+            }
+            is PanelBlock.Slider -> block.call?.let { Line(block.label, PanelCallWords.describe(it), listOf(it)) }
+            else -> null
+        }
+    }
+
+    private fun either(words: List<String>): String =
+        words.first() + words.drop(1).joinToString("") { " or " + it.replaceFirstChar(Char::lowercase) }
+
+    private fun what(panel: AgentPanel, target: String): String =
+        panel.stateful.firstOrNull { it.id == target }?.label?.takeIf(String::isNotBlank)?.let { "\u201c$it\u201d" } ?: target
 }

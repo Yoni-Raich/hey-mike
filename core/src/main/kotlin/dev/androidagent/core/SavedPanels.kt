@@ -49,6 +49,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.security.MessageDigest
+import java.time.ZoneId
 import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -156,8 +157,18 @@ data class SavedPanel(
     val title: String get() = panel?.title ?: (arguments["title"] as? JsonPrimitive)?.contentOrNull?.take(AgentPanels.MAX_LABEL).orEmpty()
 
     /** Kept on disk: only an approved panel that needed approval. A short card lives in memory. */
-    internal val persisted: Boolean get() = approvedAtMs != null && placement?.needsApproval == true
+    internal val persisted: Boolean get() = approvedAtMs != null && (panel?.needsApproval ?: (placement?.needsApproval == true))
 }
+
+/** A timer on a saved panel ran out. */
+data class PanelAlert(val panelId: String, val title: String, val label: String)
+
+/**
+ * A `panel_id` definition change that can do more than the approved panel.
+ * It waits for the user while the approved version keeps running. Kept in
+ * memory only, like a pending panel.
+ */
+data class PanelRevision(val panelId: String, val sessionId: String, val arguments: JsonObject, val panel: AgentPanel, val proposedAtMs: Long)
 
 /** What a shown saved panel displays right now: tile states and live values by block index. */
 data class PanelLive(val actions: Map<String, PanelActionState> = emptyMap(), val values: Map<Int, String> = emptyMap())
@@ -227,6 +238,17 @@ class PanelHost(
     /** False while the screen is off: live values are not read then. */
     private val screenOn: () -> Boolean = { true },
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Where each kept panel's state is stored, signed like [vault]. Null keeps state in memory. */
+    private val stateVault: SavedPanelVault? = null,
+    /** The phone's time zone, for daily and weekly resets. */
+    private val zone: () -> ZoneId = ZoneId::systemDefault,
+    /**
+     * Starts one Mike turn for an `ask_mike` tap: in chat [sessionId], or a
+     * new chat when it is null. [prompt] goes to the model, [displayPrompt]
+     * is the user's line in the chat. Returns null when it started, else why not.
+     */
+    private val startTurn: suspend (sessionId: String?, prompt: String, displayPrompt: String) -> String? =
+        { _, _, _ -> "This build cannot ask Mike from a panel." },
 ) {
     private val _panels = MutableStateFlow<List<SavedPanel>>(emptyList())
     /** Every saved panel: pending, active and blocked. The one list the user removes them from. */
@@ -250,8 +272,25 @@ class PanelHost(
     private val writeLock = Any()
     private var ticker: Job? = null
 
+    private val _states = MutableStateFlow<Map<String, PanelState>>(emptyMap())
+    /** Each panel's own state by panel id: its lists, counters, timers and notes. */
+    val states: StateFlow<Map<String, PanelState>> = _states.asStateFlow()
+
+    private val _revisions = MutableStateFlow<Map<String, PanelRevision>>(emptyMap())
+    /** Changes Mike made through `panel_id` that wait for the user, by panel id. */
+    val revisions: StateFlow<Map<String, PanelRevision>> = _revisions.asStateFlow()
+
+    private val _alerts = MutableSharedFlow<PanelAlert>(extraBufferCapacity = 8)
+    /** A timer on an active panel ran out. */
+    val alerts: SharedFlow<PanelAlert> = _alerts.asSharedFlow()
+
+    private val stateLock = Any()
+    private val stateWriteLock = Any()
+    private var saveJob: Job? = null
+
     init {
         load()
+        loadStates()
     }
 
     fun dismissNotice() { _notice.value = null }
@@ -270,7 +309,7 @@ class PanelHost(
         val placement = panel.placement
         val now = clock()
         val list = _panels.value
-        if (placement.needsApproval) {
+        if (panel.needsApproval) {
             if (list.count { it.status == SavedPanel.Status.PENDING } >= MAX_PENDING) {
                 return toolRefusal("too_many_pending", "$MAX_PENDING panels already wait for the user's approval. Ask them to approve or remove those first.")
             }
@@ -280,13 +319,14 @@ class PanelHost(
         } else if (list.count { it.status == SavedPanel.Status.ACTIVE && !it.persisted } >= MAX_SHORT) {
             return toolRefusal("too_many_cards", "$MAX_SHORT floating cards are already shown.")
         }
-        val approved = if (placement.needsApproval) null else now
+        val approved = if (panel.needsApproval) null else now
         val saved = SavedPanel(
             id, sessionId, arguments, now, approved,
             expiresAtMs = if (approved != null) placement.ttlSeconds?.let { approved + it * 1_000 } else null,
             panel = panel,
         )
         _panels.update { it + saved }
+        if (approved != null && panel.stateful.isNotEmpty()) _states.update { it + (id to PanelStates.initial(panel, now)) }
         trace(sessionId, "saved_panel", buildJsonObject {
             put("panelId", id); put("surface", placement.surface.key); put("status", if (approved == null) "awaiting_approval" else "shown")
         })
@@ -325,6 +365,8 @@ class PanelHost(
         update(id) {
             it.copy(panel = panel, approvedAtMs = now, expiresAtMs = panel.placement.ttlSeconds?.let { s -> now + s * 1_000 })
         }
+        // A countdown starts when the panel goes live, so state starts here.
+        if (panel.stateful.isNotEmpty()) synchronized(stateLock) { _states.update { it + (id to PanelStates.initial(panel, now)) } }
         persist()
         trace(saved.sessionId, "saved_panel_approved", buildJsonObject { put("panelId", id) })
         return null
@@ -358,8 +400,116 @@ class PanelHost(
     fun runAction(panelId: String, actionId: String, turnOn: Boolean? = null): Boolean {
         val saved = active(panelId) ?: return false
         val action = saved.panel!!.actions.firstOrNull { it.id == actionId } ?: return false
+        when (val effect = action.effect) {
+            is PanelEffect.Local -> return edit(panelId, effect.op, "action:$actionId") == null
+            is PanelEffect.AskMike -> {
+                if (state(panelId, actionId).running) return false
+                setAction(panelId, actionId) { it.copy(running = true, message = "") }
+                scope.launch { ask(panelId, actionId) }
+                return true
+            }
+            // A surface starts an open itself, through [openTarget], so it comes from the user's tap.
+            is PanelEffect.Open -> return false
+            null -> Unit
+        }
         val on = if (action.switch) turnOn ?: !(state(panelId, actionId).on ?: action.on) else null
-        return start(saved, actionId, action.label, action.callFor(on ?: true), on, null)
+        val call = action.callFor(on ?: true) ?: return false
+        return start(saved, actionId, action.label, call, on, null)
+    }
+
+    /** [panelId]'s state now: what was stored or changed, else its start. Null when it has no panel. */
+    fun panelState(panelId: String): PanelState? =
+        _states.value[panelId] ?: get(panelId)?.panel?.let { PanelStates.initial(it, clock()) }
+
+    /**
+     * A change to [panelId]'s own state, from a surface ([source] "surface")
+     * or a local action. It touches nothing but that panel's state: no device
+     * call, no model. Logged like every other model-free tap. Returns why it
+     * was not done, or null.
+     */
+    fun edit(panelId: String, op: PanelOp, source: String = "surface"): String? {
+        val saved = active(panelId) ?: return "This panel is gone."
+        val panel = saved.panel!!
+        val now = clock()
+        val result = if (source == "surface" && !PanelStates.surfaceAllows(panel, op)) {
+            Result.failure(IllegalArgumentException("This panel does not offer that here."))
+        } else synchronized(stateLock) {
+            val current = _states.value[panelId] ?: PanelStates.initial(panel, now)
+            PanelStates.apply(panel, current, op, now).onSuccess { next -> _states.update { it + (panelId to next) } }
+        }
+        val reason = result.exceptionOrNull()?.let { it.message ?: "That cannot be done." }
+        scope.launch {
+            trace(saved.sessionId, "panel_state", buildJsonObject {
+                put("panelId", panelId); put("source", source); put("op", op.toJson()); put("ok", reason == null)
+                reason?.let { put("reason", it.take(300)) }
+            })
+        }
+        if (reason == null && saved.persisted) saveStates()
+        return reason
+    }
+
+    /**
+     * A tap on `ask_mike` action [actionId]: one new Mike turn, with the
+     * panel's state marked as the user's data. Refused while any run is
+     * active, so it never steers a running chat; it does not queue. Returns
+     * why it did not start, or null.
+     */
+    suspend fun ask(panelId: String, actionId: String): String? {
+        val saved = active(panelId) ?: return "This panel is gone."
+        val panel = saved.panel!!
+        val action = panel.actions.firstOrNull { it.id == actionId } ?: return "This button is gone."
+        val effect = action.effect as? PanelEffect.AskMike ?: return "This button does not ask Mike."
+        val refusal = if (runActive()) {
+            "Mike is busy with another task. Tap again when he is done."
+        } else {
+            val now = clock()
+            val state = _states.value[panelId] ?: PanelStates.initial(panel, now)
+            val prompt = askPrompt(saved, effect.prompt, PanelStates.view(panel, state, now))
+            val origin = saved.sessionId.takeIf { id -> id.isNotEmpty() && runCatching { sessions.getSession(id) }.getOrNull() != null }
+            try {
+                startTurn(origin, prompt, effect.prompt)
+            } catch (cancelled: kotlin.coroutines.cancellation.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                error.message ?: "Mike could not be asked."
+            }
+        }
+        setAction(panelId, actionId) {
+            it.copy(running = false, ok = refusal == null, message = refusal?.take(160).orEmpty(), runs = it.runs + if (refusal == null) 1 else 0)
+        }
+        trace(saved.sessionId, "panel_ask", buildJsonObject {
+            put("panelId", panelId); put("actionId", actionId); put("ok", refusal == null)
+            refusal?.let { put("reason", it.take(300)) }
+        })
+        return refusal
+    }
+
+    /**
+     * Where `open` action [actionId] goes, checked against the allowlist again
+     * at the tap. The app starts it from its own activity.
+     */
+    fun openTarget(panelId: String, actionId: String): Result<PanelOpen> = runCatching {
+        val saved = active(panelId) ?: throw IllegalStateException("This panel is gone.")
+        val action = saved.panel!!.actions.firstOrNull { it.id == actionId } ?: throw IllegalStateException("This button is gone.")
+        val effect = action.effect as? PanelEffect.Open ?: throw IllegalStateException("This button does not open anything.")
+        val target = PanelOpen.parse(effect.target.toJson(), "open")
+        scope.launch {
+            trace(saved.sessionId, "panel_open", buildJsonObject {
+                put("panelId", panelId); put("actionId", actionId); put("open", target.toJson()); put("words", target.words)
+            })
+        }
+        target
+    }
+
+    /** The next moment a timer ends or a reset is owed on any active panel, for one alarm. Null when none. */
+    fun nextDueAtMs(): Long? {
+        val now = clock()
+        val zone = zone()
+        return _panels.value.filter { it.status == SavedPanel.Status.ACTIVE && !expired(it) }.mapNotNull { saved ->
+            val panel = saved.panel ?: return@mapNotNull null
+            val state = _states.value[saved.id] ?: return@mapNotNull null
+            PanelStates.nextDueAtMs(panel, state, now, zone)
+        }.minOrNull()
     }
 
     /** Letting go of live slider [sliderId] at [value]. */
@@ -394,6 +544,7 @@ class PanelHost(
             if (saved.persisted) persist()
             trace(saved.sessionId, "saved_panel_expired", buildJsonObject { put("panelId", saved.id) })
         }
+        tickStates()
         if (!screenOn()) return
         val now = clock()
         shown.forEach { (id, floor) ->
@@ -506,6 +657,286 @@ class PanelHost(
         if (ok) refresh(saved.id)
     }
 
+    /**
+     * `show_ui` with `panel_id`, from any chat. `"*"` lists the saved panels;
+     * an id alone reads one; `ops` or `state` change its state with no
+     * approval; anything else replaces its definition, which applies at once
+     * only when it can do nothing the approved panel could not.
+     */
+    suspend fun manage(sessionId: String, arguments: JsonObject): ToolResult {
+        val target = (arguments["panel_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim().orEmpty()
+        if (target.isEmpty()) return toolRefusal("invalid_panel", "panel_id must be a saved panel's id, or \"*\" to list them.")
+        val rest = JsonObject(arguments.filterKeys { it != "panel_id" })
+        if (target == "*") {
+            if (rest.isNotEmpty()) return toolRefusal("invalid_panel", "panel_id \"*\" only lists. Pass one panel's id to change it.")
+            return ToolResult(buildJsonObject {
+                put("ok", true)
+                put("panels", buildJsonArray {
+                    _panels.value.forEach { saved ->
+                        add(buildJsonObject {
+                            put("panelId", saved.id); put("title", saved.title)
+                            saved.placement?.let { put("surface", it.surface.key) }
+                            put("status", if (expired(saved)) "expired" else saved.status.name.lowercase())
+                            put("hasState", saved.panel?.stateful?.isNotEmpty() == true)
+                            if (_revisions.value.containsKey(saved.id)) put("revision", "awaiting_approval")
+                        })
+                    }
+                })
+            }.toString())
+        }
+        val saved = get(target) ?: return toolRefusal("unknown_panel", "There is no saved panel \"$target\". Pass panel_id \"*\" to list them.")
+        if (rest.isEmpty()) return ToolResult(describe(saved).toString())
+        val changesState = rest.keys.any { it in STATE_KEYS }
+        if (changesState && rest.keys.any { it !in STATE_KEYS }) {
+            return toolRefusal("invalid_panel", "Change a panel's state (ops, state) or its definition in one call, not both.")
+        }
+        return if (changesState) changeState(sessionId, saved, rest) else revise(sessionId, saved, rest)
+    }
+
+    /** Approves Mike's waiting change to [id]. Returns why it could not be approved, or null. */
+    suspend fun approveRevision(id: String): String? {
+        val revision = _revisions.value[id] ?: return "This change is gone."
+        val saved = get(id) ?: return "This panel is gone.".also { _revisions.update { it - id } }
+        if (runActive()) return "Mike is still working. Approve when his run has ended."
+        val panel = parse(id, revision.arguments).getOrElse { error ->
+            _revisions.update { it - id }
+            return "The change no longer passes the checks: ${error.message}"
+        }
+        if (saved.placement?.surface?.let { it != panel.placement.surface } == true) {
+            _revisions.update { it - id }
+            return "The change moves the panel to another surface."
+        }
+        if (!saved.persisted && panel.needsApproval && _panels.value.count { it.persisted } >= MAX_SAVED) {
+            return "You already keep $MAX_SAVED panels. Remove one first."
+        }
+        applyDefinition(saved, revision.arguments, panel, approvedNow = true)
+        trace(saved.sessionId, "saved_panel_revision_approved", buildJsonObject { put("panelId", id) })
+        return null
+    }
+
+    /** Drops Mike's waiting change to [id]; the approved panel stays as it is. */
+    suspend fun rejectRevision(id: String) {
+        _revisions.value[id] ?: return
+        _revisions.update { it - id }
+        get(id)?.let { trace(it.sessionId, "saved_panel_revision_rejected", buildJsonObject { put("panelId", id) }) }
+    }
+
+    private fun describe(saved: SavedPanel): JsonObject = buildJsonObject {
+        put("ok", true); put("panelId", saved.id); put("title", saved.title)
+        put("status", if (expired(saved)) "expired" else saved.status.name.lowercase())
+        saved.blocked?.let { put("blocked", it) }
+        put("definition", saved.arguments)
+        if (_revisions.value.containsKey(saved.id)) put("revision", "awaiting_approval")
+        val panel = saved.panel ?: return@buildJsonObject
+        if (panel.stateful.isEmpty()) return@buildJsonObject
+        val now = clock()
+        put("stateNote", PanelUserData.NOTE)
+        put("state", PanelUserData.wrap(saved.id, PanelStates.view(panel, _states.value[saved.id] ?: PanelStates.initial(panel, now), now)))
+    }
+
+    private suspend fun changeState(sessionId: String, saved: SavedPanel, rest: JsonObject): ToolResult {
+        if (saved.status != SavedPanel.Status.ACTIVE || expired(saved)) {
+            val why = when {
+                saved.status == SavedPanel.Status.PENDING -> "waits for the user's approval"
+                expired(saved) -> "has ended"
+                else -> "is blocked"
+            }
+            return toolRefusal("panel_not_active", "The panel \"${saved.title}\" $why, so its state cannot change now.")
+        }
+        val panel = saved.panel!!
+        if (panel.stateful.isEmpty()) return toolRefusal("invalid_state", "This panel has no list, counter, timer or note.")
+        val now = clock()
+        val next = runCatching {
+            val ops = rest["ops"]?.let { raw ->
+                val array = raw as? JsonArray ?: throw IllegalArgumentException("ops must be a list.")
+                require(array.size in 1..MAX_OPS) { "ops takes 1 to $MAX_OPS changes." }
+                array.mapIndexed { index, element ->
+                    PanelOp.parse(element as? JsonObject ?: throw IllegalArgumentException("ops[${index + 1}] must be an object."), "ops[${index + 1}]")
+                }
+            }.orEmpty()
+            val whole = rest["state"]?.let { it as? JsonObject ?: throw IllegalArgumentException("state must be an object keyed by block id.") }
+            synchronized(stateLock) {
+                var state = _states.value[saved.id] ?: PanelStates.initial(panel, now)
+                whole?.let { state = PanelStates.set(panel, state, it, now).getOrThrow() }
+                ops.forEach { state = PanelStates.apply(panel, state, it, now).getOrThrow() }
+                _states.update { it + (saved.id to state) }
+                state
+            }
+        }.getOrElse { return toolRefusal("invalid_state", "The state did not change: ${it.message}") }
+        val details = buildJsonObject {
+            put("panelId", saved.id); put("source", "mike")
+            rest["ops"]?.let { put("ops", it) }
+            rest["state"]?.let { put("state", it) }
+        }
+        trace(sessionId, "panel_state", details)
+        if (saved.sessionId != sessionId) trace(saved.sessionId, "panel_state", details)
+        if (saved.persisted) saveStates()
+        return ToolResult(buildJsonObject {
+            put("ok", true); put("panelId", saved.id); put("status", "state_changed")
+            put("stateNote", PanelUserData.NOTE)
+            put("state", PanelUserData.wrap(saved.id, PanelStates.view(panel, next, now)))
+        }.toString())
+    }
+
+    private suspend fun revise(sessionId: String, saved: SavedPanel, definition: JsonObject): ToolResult {
+        val panel = parse(saved.id, definition).getOrElse {
+            return toolRefusal("invalid_panel", "The panel did not change: ${it.message}")
+        }
+        val surface = saved.placement?.surface
+        if (surface != null && panel.placement.surface != surface) {
+            return toolRefusal(
+                "surface_change",
+                "A panel cannot move from ${surface.key} to ${panel.placement.surface.key}. Make a new panel with show_ui, " +
+                    "and ask the user to remove this one if they no longer want it.",
+            )
+        }
+        val old = saved.panel
+        val status = when {
+            saved.status == SavedPanel.Status.PENDING -> {
+                update(saved.id) { it.copy(arguments = definition, panel = panel, blocked = null) }
+                "replaced_pending"
+            }
+            old != null && saved.status == SavedPanel.Status.ACTIVE && !expired(saved) &&
+                PanelCapabilities.of(panel).within(PanelCapabilities.of(old)) -> {
+                applyDefinition(saved, definition, panel, approvedNow = false)
+                "applied"
+            }
+            else -> {
+                _revisions.update { it + (saved.id to PanelRevision(saved.id, sessionId, definition, panel, clock())) }
+                _approvals.tryEmit(saved.id)
+                "awaiting_approval"
+            }
+        }
+        val details = buildJsonObject { put("panelId", saved.id); put("source", "mike"); put("status", status) }
+        trace(sessionId, "saved_panel_revised", details)
+        if (saved.sessionId != sessionId) trace(saved.sessionId, "saved_panel_revised", details)
+        return ToolResult(buildJsonObject {
+            put("ok", true); put("panelId", saved.id); put("status", status)
+            put("message", when (status) {
+                "replaced_pending" -> "The panel still waits for the user's approval, now with this definition."
+                "applied" -> "The panel changed at once: it can do nothing it could not do before. Its state was kept for every block whose id and type stayed the same."
+                else -> "The approved panel keeps running as it was. This change can do more, so it waits for the user to approve it in " +
+                    "Hey Mike (Saved panels). You cannot approve it. Tell them in one short line, then end your turn."
+            })
+        }.toString())
+    }
+
+    private suspend fun applyDefinition(saved: SavedPanel, definition: JsonObject, panel: AgentPanel, approvedNow: Boolean) {
+        val now = clock()
+        update(saved.id) {
+            it.copy(
+                arguments = definition, panel = panel, blocked = null,
+                approvedAtMs = if (approvedNow) now else it.approvedAtMs,
+                expiresAtMs = if (approvedNow) panel.placement.ttlSeconds?.let { s -> now + s * 1_000 } else it.expiresAtMs,
+            )
+        }
+        synchronized(stateLock) {
+            _states.update { all ->
+                if (panel.stateful.isEmpty()) all - saved.id else all + (saved.id to PanelStates.fit(panel, all[saved.id], now))
+            }
+        }
+        // Tiles and live values are by id and index: read them again for the new definition.
+        _live.update { it - saved.id }
+        lastRead.remove(saved.id)
+        lastValues.keys.removeAll { it.startsWith("${saved.id}|") }
+        _revisions.update { it - saved.id }
+        persist()
+    }
+
+    /** Timers that ran out and resets that are owed, on every active panel with state. */
+    private suspend fun tickStates() {
+        val now = clock()
+        val zone = zone()
+        _panels.value.forEach { saved ->
+            if (saved.status != SavedPanel.Status.ACTIVE || expired(saved)) return@forEach
+            val panel = saved.panel ?: return@forEach
+            if (panel.stateful.isEmpty()) return@forEach
+            val tick = synchronized(stateLock) {
+                val current = _states.value[saved.id] ?: PanelStates.initial(panel, now)
+                PanelStates.tick(panel, current, now, zone).also { if (it.changed) _states.update { all -> all + (saved.id to it.state) } }
+            }
+            if (!tick.changed) return@forEach
+            if (saved.persisted) saveStates()
+            tick.finished.forEach { timer ->
+                _alerts.tryEmit(PanelAlert(saved.id, saved.title, timer.label))
+                trace(saved.sessionId, "panel_timer_done", buildJsonObject { put("panelId", saved.id); put("blockId", timer.id) })
+            }
+            if (tick.reset.isNotEmpty()) {
+                trace(saved.sessionId, "panel_reset", buildJsonObject {
+                    put("panelId", saved.id); put("blocks", buildJsonArray { tick.reset.forEach { add(JsonPrimitive(it)) } })
+                })
+            }
+        }
+    }
+
+    private fun askPrompt(saved: SavedPanel, prompt: String, view: JsonObject): String = buildString {
+        append(prompt)
+        append("\n\n(Sent by a tap on the saved panel \"").append(saved.title).append("\", panel_id ").append(saved.id).append(". ")
+        append(PanelUserData.NOTE).append(")\n")
+        append(PanelUserData.wrap(saved.id, view))
+    }
+
+    private fun loadStates() {
+        val now = clock()
+        var stored: JsonObject? = null
+        val vault = stateVault
+        if (vault != null) {
+            when (val read = runCatching { vault.read() }.getOrElse { SavedPanelVault.Read.Invalid(it.message ?: "unreadable") }) {
+                SavedPanelVault.Read.Empty -> Unit
+                is SavedPanelVault.Read.Invalid -> {
+                    addNotice("Panel lists, counters and notes failed their check (${read.reason}) and started over.")
+                    runCatching { vault.write(encodeStates(emptyMap())) }
+                }
+                is SavedPanelVault.Read.Valid -> {
+                    stored = runCatching { Json.parseToJsonElement(read.body).jsonObject["states"] as JsonObject }.getOrNull()
+                    if (stored == null) {
+                        addNotice("Panel lists, counters and notes could not be read and started over.")
+                        runCatching { vault.write(encodeStates(emptyMap())) }
+                    }
+                }
+            }
+        }
+        _states.value = _panels.value.mapNotNull { saved ->
+            val panel = saved.panel ?: return@mapNotNull null
+            if (panel.stateful.isEmpty()) return@mapNotNull null
+            saved.id to PanelStates.decode(panel, stored?.get(saved.id) as? JsonObject, now)
+        }.toMap()
+    }
+
+    private fun addNotice(text: String) {
+        _notice.value = listOfNotNull(_notice.value, text).joinToString(" ")
+    }
+
+    /** Writes state after a short pause, so a run of taps is one write. Never per tick of a running timer. */
+    private fun saveStates() {
+        stateVault ?: return
+        synchronized(stateWriteLock) {
+            saveJob?.cancel()
+            saveJob = scope.launch {
+                delay(STATE_WRITE_DELAY_MS)
+                writeStates()
+            }
+        }
+    }
+
+    /** Writes every kept panel's state now, for a test or before the app goes. */
+    suspend fun flushStates() {
+        synchronized(stateWriteLock) { saveJob?.cancel(); saveJob = null }
+        writeStates()
+    }
+
+    private suspend fun writeStates() {
+        val vault = stateVault ?: return
+        val kept = _panels.value.filter { it.persisted }.map { it.id }.toSet()
+        val body = encodeStates(_states.value.filterKeys { it in kept })
+        withContext(io) { synchronized(stateWriteLock) { vault.write(body) } }
+    }
+
+    private fun encodeStates(states: Map<String, PanelState>): String = buildJsonObject {
+        put("v", 1)
+        put("states", buildJsonObject { states.forEach { (id, state) -> put(id, PanelStates.encode(state)) } })
+    }.toString()
+
     private fun setAction(panelId: String, actionId: String, change: (PanelActionState) -> PanelActionState) {
         _live.update { all ->
             val current = all[panelId] ?: PanelLive()
@@ -526,6 +957,8 @@ class PanelHost(
     }
 
     private fun forget(id: String) {
+        synchronized(stateLock) { _states.update { it - id } }
+        _revisions.update { it - id }
         _live.update { it - id }
         shown.remove(id)
         lastRead.remove(id)
@@ -575,6 +1008,8 @@ class PanelHost(
     private suspend fun persist() {
         val body = encode(_panels.value.filter { it.persisted })
         withContext(io) { synchronized(writeLock) { vault.write(body) } }
+        // The state store follows the list: a removed panel's state goes with it.
+        saveStates()
     }
 
     private fun encode(list: List<SavedPanel>): String = buildJsonObject {
@@ -624,5 +1059,9 @@ class PanelHost(
         const val MAX_PENDING = 4
         const val MAX_SAVED = 12
         const val MAX_SHORT = 3
+        /** The most state changes one `panel_id` call may make. */
+        const val MAX_OPS = 50
+        const val STATE_WRITE_DELAY_MS = 400L
+        private val STATE_KEYS = setOf("ops", "state")
     }
 }

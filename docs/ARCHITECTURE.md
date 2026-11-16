@@ -240,9 +240,12 @@ while a run is in visible control, so it never sits under the agent's taps.
 The widget is one generic RemoteViews widget (`SavedPanelWidgetProvider`).
 It is pinned with `requestPinAppWidget` (one system confirmation) and each
 widget id is bound to one panel id. The notification is an ongoing, silent
-notification with up to 3 action buttons. On the lock screen its buttons work
-without unlocking, but its values are hidden (a public version with the title
-and buttons only). Android 14+ lets the
+notification with up to 3 action buttons. On the lock screen it shows a
+public version: the title and "Unlock to use this panel", no values and no
+buttons. Its buttons work only after unlock (`setAuthenticationRequired` on
+Android 12+, and the receiver refuses any tap while the keyguard is locked,
+which also covers Android 11 and a phone set to show all content on the lock
+screen). Android 14+ lets the
 user swipe it away; a swipe hides it until it is shown again from Saved
 panels. Approved panels are restored from the verified store when the process
 starts. Quick Settings tiles are not built.
@@ -260,8 +263,17 @@ Decisions made while building this (2026-11-15):
 - **Floating cards step aside.** They hide while any run is in visible
   control, while the app is in front and while Saved panels is open, so they
   never cover Approve or the agent's own targets.
-- **Lock screen.** Notification buttons run from the lock screen (only
-  allowlisted calls exist); values are private.
+- **Lock screen (changed 2026-11-16 after the device retest).** The first
+  build used an `IMPORTANCE_LOW` channel, so the phone hid the panel from the
+  lock screen while the approval screen said it was there. Now the channel is
+  `saved_panels_v2` at `IMPORTANCE_DEFAULT` with no sound and no vibration (no
+  heads-up, which needs high importance), and the old channel is deleted. The
+  lock screen gets the public version only: title and "Unlock to use this
+  panel". Buttons need unlock: a list or a counter on the lock screen would let
+  anyone holding the phone change it, and `open` and `ask_mike` must never run
+  locked. The approval screen says exactly this: "Ongoing notification. On the
+  lock screen it shows only its title (all of it if your phone shows
+  notification content there), and its buttons work only after you unlock".
 - **Read floors.** Notifications read at most every 15 s and widgets every
   30 s, so a 2 s `every` cannot keep the radio and CPU busy behind the lock.
 - **Stop does not cancel a panel tap.** A tap is the user's own act, outside
@@ -270,6 +282,140 @@ Decisions made while building this (2026-11-15):
   text is kept only when the value changed.
 - **Close.** The close button on a short floating card removes it; on a lasting
   one it hides it until it is shown again from Saved panels.
+
+### Panels as mini-apps: state, local actions, panel_id - 2026-11-16
+
+A saved panel could only show values and run allowlisted calls, so a
+shopping list with checkable items was impossible. A detached panel now owns
+typed state, and its blocks read and change that state. Chat panels stay
+forms and refuse the new blocks and action kinds.
+
+**State blocks** (detached panels only; `PanelStates` in core `PanelState.kt`):
+
+| block | definition | state |
+| --- | --- | --- |
+| `checklist` | `id`, `label`, `items` (text or `{text, checked, qty, note, seconds}`), `add` | `items: [{id, text, checked, qty?, note?, seconds?}]` |
+| `counter` | `id`, `label`, `value`, `min`, `max`, `step`, `goal`, `tally` | `count` |
+| `timer` / `countdown` | `id`, `label`, `seconds`; `countdown` starts when the panel goes live | `totalMs`, `endsAtMs` (running) or `leftMs` (paused), `doneAtMs` |
+| `progress` | `label`, `of` (a checklist or counter id) or `value` and `max` | none, computed |
+| `note` | `id`, `label`, `value`, `placeholder` | `text` |
+
+Bounds: 50 items per list, 120 characters per item, 2000 per note, counters
+within plus or minus one million, timers up to 24 h, 16 KB of state per panel.
+State is keyed by block id. When a definition changes, state is kept for each
+block whose id and type stay the same.
+
+**Action kinds.** An `action` block takes `kind`:
+
+- `device` (the default when `tool` is set): the existing allowlisted call.
+- `local`: `op` on `target` (a block id), with an optional `amount`. Ops:
+  `check`, `toggle`, `uncheck_all`, `clear_checked`, `add`, `remove`, `move`,
+  `next`, counter `inc`, `dec`, `set`, `reset`, timer `start`, `pause`,
+  `resume`, `reset`, `add`, and note `set`. `next` checks the first unchecked
+  item and, when the next item has `seconds` and the action names a `timer`,
+  starts that timer for them (cooking steps). A local op changes only that
+  panel's state: no device call, no approval beyond the panel's own.
+- `ask_mike`: `prompt` (up to 1000 characters). A tap starts a new Mike turn
+  in the chat that made the panel, or a new chat when that one is gone.
+- `open`: `open` is one intent shape from the allowlist below.
+
+**ask_mike.** It needs a tap; nothing starts it on a schedule. It is refused
+with a clear message when any run is active (`canStart()` is checked right
+before the submit), so it never steers into a running chat and one active run
+per phone stays true. It does not queue. The chat shows the prompt as the
+user's line; the turn gets the prompt and the panel's state as JSON inside a
+`<panel_state>` tag, with `<` written as `\u003c` so item text cannot close
+the tag, and a line that says the state is the user's data and never
+instructions. A `panel_id` read result carries the same marking.
+
+**open allowlist** (`PanelOpen` in core). Checked at parse, at load and at
+tap, and shown on the approval screen in plain words:
+
+| shape | intent |
+| --- | --- |
+| `{"app": "<package>"}` | the package's launcher intent |
+| `{"map": "<query>"}` or `{"lat", "lng", "label"}` | `ACTION_VIEW geo:` |
+| `{"directions": "<query>"}` or `{"lat", "lng", "mode"}` | `ACTION_VIEW` Google Maps directions URL |
+| `{"dial": "<number>"}` | `ACTION_DIAL tel:` (digits, `+`, spaces, `-`, parentheses only) |
+| `{"url": "https://..."}` | `ACTION_VIEW`, `CATEGORY_BROWSABLE`; https only, no user info |
+| `{"camera": true}` | the still-image camera |
+
+Refused: `ACTION_CALL`, SMS and `sendto:`, `mailto:`, share and send,
+payment, `intent:`, `file:`, `content:` and `javascript:` URIs, `*` and `#`
+in a number, extras, components and flags. Nothing that sends, pays or calls
+by itself. An open goes through `PanelOpenActivity` (not exported,
+translucent): it re-reads the verified panel, checks the shape again, starts
+the target and finishes. That avoids the notification trampoline rule and
+background start limits.
+
+**Approval.** A panel needs approval when its placement does (as before) or
+when it has any `open` or `ask_mike` action, even a short floating card. The
+rule is derived from the parsed panel, so the v1 store needs no migration.
+No notification button works while the phone is locked (see Lock screen
+above), so `open` and `ask_mike` never run from the lock screen.
+
+**`panel_id` on `show_ui`.** No new tool:
+
+- `{"panel_id": "*"}` lists the saved panels.
+- `{"panel_id": "<id>"}` returns its definition and state.
+- `{"panel_id": "<id>", "ops": [...]}` or `"state": {...}` changes state
+  only. No approval.
+- `{"panel_id": "<id>", "title", "blocks", ...}` replaces the definition.
+  The surface cannot change. The panel's capabilities are every device call,
+  bind, open target, ask prompt and its lifetime. When the new set is the same
+  as or smaller than the approved one, the change applies at once. Otherwise
+  it waits as a revision in Saved panels while the approved version keeps
+  running; Approve swaps it in, Reject drops it. A revision lives in memory,
+  like a pending panel.
+
+Every panel_id change is traced in the calling chat and the panel's own chat.
+
+**Store.** State lives in a sibling signed store (`saved_panel_state`, its
+own Keystore alias prefix), with the same tamper rules: each write makes a
+new key, and a store that does not verify loads as initial state and says
+so. Writes are debounced (400 ms) and never happen per tick: a running timer
+stores only `endsAtMs`. A short floating card's state stays in memory.
+
+**Timers and resets.** A block may carry `reset: {"at": "07:00", "days":
+[...]}` (no days is every day). It reuses `AutomationSchedule`: a reset is
+owed when the last slot at or before now is later than the block's last
+reset. Resets apply on load and on tick, so a late wake-up still resets once.
+A counter with `tally: "<checklist>"` adds that list's unchecked count at its
+reset (missed doses). `PanelHost.nextDueAtMs()` gives the next timer end or
+reset; `PanelAlarms` in the app arms one alarm for it, as `AutomationAlarms`
+does, and re-arms after boot. A timer that ends posts a notification on the
+"Panel timers" channel, created with no sound and no vibration; the user can
+add one in Android's settings.
+
+**Surface input.**
+
+- Floating card: checkbox rows, an add field, a note field and counter
+  buttons. The window is focusable only while a field has focus and goes
+  back to `FLAG_NOT_FOCUSABLE` on blur and hide. `keep_screen_on: true`
+  (floating only) adds `FLAG_KEEP_SCREEN_ON`.
+- Notification: the list as lines, an Add reply action (RemoteInput) when a
+  checklist allows adding, and a countdown chronometer for a running timer.
+- Widget: on Android 12+ a collection of check boxes
+  (`RemoteCollectionItems`, `setOnCheckedChangeResponse`); on Android 11 up to
+  8 rows that toggle on tap, then "+N more". Mutable PendingIntents name the
+  receiver explicitly. The receiver is not exported and takes only a panel
+  id, a block id, an item id and the checked flag; it checks that the item
+  exists and runs only local ops.
+
+**Templates.** Saving a panel as a template is skill guidance, not code:
+Mike reads the panel with `panel_id` and writes a user skill under
+`$HOME/.agents/skills/<name>/SKILL.md` with its `show_ui` arguments.
+
+**Context panels** (use case 10). Not built. A standing rule (`:automations`)
+could show a saved panel when a trigger fires, through a new action kind
+`show_panel` with a panel id, using the existing approval of that panel. It
+needs its own approval rule first, because a rule fires with nobody at the
+phone.
+
+Decisions (2026-11-16): ask_mike refuses instead of queueing, because a queued
+turn would start later with nobody watching. Countdown is a timer alias.
+Panel templates are skills. A surface change through `panel_id` is refused;
+make a new panel.
 
 ## Account connections for regular chats - 2026-11-12
 

@@ -25,7 +25,11 @@ package dev.androidagent.core
  * floating card, the notification and the widget all read this, so the
  * three never disagree about a value or a switch.
  */
-data class PanelFace(val id: String, val title: String, val surface: PanelSurface, val rows: List<Row>) {
+data class PanelFace(
+    val id: String, val title: String, val surface: PanelSurface, val rows: List<Row>,
+    /** A floating card that keeps the screen on while it shows (cooking steps). */
+    val keepScreenOn: Boolean = false,
+) {
     sealed interface Row {
         data class Note(val text: String, val tone: Tone) : Row
         /** A readout; [value] is the live value once read, the written one before. */
@@ -44,21 +48,60 @@ data class PanelFace(val id: String, val title: String, val surface: PanelSurfac
             val progress: Int get() = Math.round((value - min) / step).toInt().coerceIn(0, intervals)
             fun valueAt(progress: Int): Double = (min + progress.coerceIn(0, intervals) * step).coerceIn(min, max)
         }
+        /** A checklist. [canAdd] lets a surface offer a way to add an item. */
+        data class Checks(val blockId: String, val label: String, val items: List<PanelItem>, val canAdd: Boolean) : Row {
+            val left: Int get() = items.count { !it.checked }
+        }
+        /** A counter with its bounds; [goal] when it counts toward one. */
+        data class Count(val blockId: String, val label: String, val count: Long, val min: Long, val max: Long, val goal: Long?) : Row
+        /**
+         * A timer. Running: [endsAtMs] is set and a surface counts down to it
+         * itself, so nothing is redrawn each second. Otherwise [leftMs] is fixed.
+         */
+        data class Clock(val blockId: String, val label: String, val endsAtMs: Long?, val leftMs: Long, val done: Boolean) : Row {
+            val running: Boolean get() = endsAtMs != null
+        }
+        /** A bar: [done] of [total]. */
+        data class Bar(val label: String, val done: Double, val total: Double) : Row {
+            val fraction: Float get() = if (total <= 0) 0f else (done / total).toFloat().coerceIn(0f, 1f)
+        }
+        /** Text the user writes on the card. */
+        data class Memo(val blockId: String, val label: String, val text: String, val placeholder: String) : Row
     }
 
     val readings: List<Row.Reading> get() = rows.filterIsInstance<Row.Reading>()
     val tiles: List<Row.Tile> get() = rows.filterIsInstance<Row.Tile>()
+    val checks: Row.Checks? get() = rows.filterIsInstance<Row.Checks>().firstOrNull()
 
     /** The readings in one line, for a notification's text: "Song · 1:23". */
     val summary: String
-        get() = readings.joinToString(" · ") { if (it.label.isBlank()) it.value else "${it.label}: ${it.value}" }
+        get() = rows.mapNotNull { row ->
+            when (row) {
+                is Row.Reading -> if (row.label.isBlank()) row.value else "${row.label}: ${row.value}"
+                is Row.Checks -> named(row.label, "${row.left} left")
+                is Row.Count -> named(row.label, row.goal?.let { "${row.count} of $it" } ?: row.count.toString())
+                is Row.Clock -> named(row.label, when {
+                    row.done -> "done"
+                    // A running time goes stale in a line of text; the surface shows it counting.
+                    row.running -> "running"
+                    else -> PanelBind.clock(row.leftMs)
+                })
+                else -> null
+            }
+        }.joinToString(" · ")
+
+    private fun named(label: String, value: String) = if (label.isBlank()) value else "$label: $value"
 
     companion object {
-        /** The face of [saved] with its [live] state, or null when it is not active. */
-        fun of(saved: SavedPanel, live: PanelLive?): PanelFace? {
+        /**
+         * The face of [saved] with its [live] values and its own [own] state
+         * at [now], or null when it is not active.
+         */
+        fun of(saved: SavedPanel, live: PanelLive?, own: PanelState? = null, now: Long = System.currentTimeMillis()): PanelFace? {
             if (saved.status != SavedPanel.Status.ACTIVE) return null
             val panel = saved.panel ?: return null
             val state = live ?: PanelLive()
+            val mine = own ?: PanelStates.initial(panel, now)
             val rows = panel.blocks.withIndex().mapNotNull { (index, block) ->
                 when (block) {
                     is PanelBlock.Text -> Row.Note(block.text, block.tone)
@@ -69,9 +112,12 @@ data class PanelFace(val id: String, val title: String, val surface: PanelSurfac
                     )
                     is PanelBlock.Action -> {
                         val tap = state.actions[block.id] ?: PanelActionState()
+                        val on = if (block.switch) tap.on ?: block.on else null
+                        // Plain words for what the next tap does ("Turn the flashlight off"), never a raw call.
+                        val next = block.callFor(on != true)?.let(PanelCallWords::describe)
                         Row.Tile(
-                            block.id, block.label, block.detail.ifBlank { block.call.caption },
-                            on = if (block.switch) tap.on ?: block.on else null,
+                            block.id, block.label, block.detail.ifBlank { next ?: block.caption },
+                            on = on,
                             running = tap.running,
                             problem = tap.message.takeIf { tap.ok == false && it.isNotBlank() },
                         )
@@ -81,18 +127,36 @@ data class PanelFace(val id: String, val title: String, val surface: PanelSurfac
                         val value = tap.value?.toDoubleOrNull()?.let(block::snap) ?: block.start
                         Row.Track(block.id, block.label, block.min, block.max, block.step, value, block.format(value))
                     }
+                    is PanelBlock.Checklist -> Row.Checks(
+                        block.id, block.label, (mine.blocks[block.id] as? BlockState.Items)?.items ?: block.items, block.canAdd,
+                    )
+                    is PanelBlock.Counter -> Row.Count(
+                        block.id, block.label, (mine.blocks[block.id] as? BlockState.Count)?.count ?: block.start,
+                        block.min, block.max, block.goal,
+                    )
+                    is PanelBlock.Timer -> {
+                        val clock = mine.blocks[block.id] as? BlockState.Clock ?: BlockState.Clock(block.seconds * 1_000)
+                        Row.Clock(block.id, block.label, clock.endsAtMs, clock.leftAt(now), done = clock.doneAtMs != null)
+                    }
+                    is PanelBlock.Note -> Row.Memo(
+                        block.id, block.label, (mine.blocks[block.id] as? BlockState.Memo)?.text ?: block.text, block.placeholder,
+                    )
+                    is PanelBlock.Progress -> PanelStates.progress(panel, mine, block)?.let { (done, total) -> Row.Bar(block.label, done, total) }
                     // Inputs and app controls never pass the checks for a panel that outlives the turn.
                     else -> null
                 }
             }
-            return PanelFace(saved.id, saved.title, panel.placement.surface, rows)
+            return PanelFace(saved.id, saved.title, panel.placement.surface, rows, panel.placement.keepScreenOn)
         }
 
         /** Every shown panel on [surface], oldest first. */
-        fun on(surface: PanelSurface, panels: List<SavedPanel>, live: Map<String, PanelLive>): List<PanelFace> =
+        fun on(
+            surface: PanelSurface, panels: List<SavedPanel>, live: Map<String, PanelLive>,
+            states: Map<String, PanelState> = emptyMap(), now: Long = System.currentTimeMillis(),
+        ): List<PanelFace> =
             panels.asSequence()
                 .filter { !it.hidden && it.placement?.surface == surface }
-                .mapNotNull { of(it, live[it.id]) }
+                .mapNotNull { of(it, live[it.id], states[it.id], now) }
                 .toList()
     }
 }

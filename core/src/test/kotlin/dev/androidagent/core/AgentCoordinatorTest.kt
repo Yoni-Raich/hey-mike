@@ -1165,6 +1165,40 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aPinnedPanelsTurnEndsReadyWithItsCallClosed() = runTest {
+        // Seen on a phone: after a turn that pinned a notification panel the
+        // chat kept "Working" and the call's row stayed open for over a minute.
+        val rig = Rig(this, fullAccess = true, hostFor = { scope, store ->
+            PanelHost(scope, InMemorySavedPanelVault(), store, invoke = { _, _ -> ToolResult("{}") }, io = StandardTestDispatcher(testScheduler))
+        })
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Pin a torch to my notifications")
+        runCurrent()
+        val pinned = buildJsonObject { torchPanel().forEach { (key, value) -> put(key, value) }; put("surface", "notification") }
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", pinned, "thread", "turn"))
+        runCurrent()
+        assertEquals(1, rig.engine.answers.size)
+        // The engine settles the answered call; that must not reopen or cancel anything.
+        rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "turn"))
+        rig.engine.emit(EngineEvent.MessageCompleted("It waits for your approval.", "thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        advanceUntilIdle()
+        assertEquals(RunPhase.IDLE, rig.coordinator.state.value.phase)
+        assertNull(rig.coordinator.state.value.panel)
+        assertEquals(1, rig.engine.answers.size)
+        val trace = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "p" }.map { it["type"]!!.jsonPrimitive.content }
+        assertFalse(trace.toString(), "tool_cancelled" in trace)
+        assertEquals(trace.toString(), "tool_call", trace.first())
+        assertTrue(trace.toString(), trace.size >= 2)
+        // The chat is free: the next turn's call is answered at once.
+        rig.coordinator.send("one", "Read the screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertEquals("Done", rig.engine.answers.last().text)
+        rig.close()
+    }
+
     @Test fun withoutAHostAPanelThatOutlivesTheTurnIsRefused() = runTest {
         val rig = Rig(this)
         rig.defineTools("system_controls")

@@ -700,7 +700,7 @@ class AgentCoordinator(
         startPanelCall(panelId) { panel ->
             val action = panel.actions.firstOrNull { it.id == actionId } ?: return@startPanelCall null
             val on = !action.switch || turnOn
-            PanelRun(action.id, action.label, action.callFor(on), on = if (action.switch) on else null, value = null)
+            PanelRun(action.id, action.label, action.callFor(on) ?: return@startPanelCall null, on = if (action.switch) on else null, value = null)
         }
 
     /**
@@ -1935,7 +1935,7 @@ class AgentCoordinator(
         token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject, onShown: () -> Unit = {},
     ): Pair<ToolResult, String> {
         val known = tools.definitions.map { it.name }.toSet()
-        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments) { tool, args ->
+        val check: (String, JsonObject) -> String? = { tool, args ->
             when {
                 tool in ChatTools.NAMES || tool == SessionAgentTools.NAME -> "$tool is a chat tool, not a device action."
                 tool !in known -> "$tool is not one of your device tools."
@@ -1943,7 +1943,21 @@ class AgentCoordinator(
                 usesScreen(tool, args) -> "$tool uses the screen, and the panel is on it. Bind only tools that leave the screen alone."
                 else -> null
             }
-        }.getOrElse {
+        }
+        if (arguments.containsKey("panel_id")) {
+            // A saved panel, read or changed from any chat. A new definition passes this turn's checks first.
+            val definition = JsonObject(arguments.filterKeys { it != "panel_id" && it != "ops" && it != "state" })
+            if (definition.isNotEmpty()) {
+                AgentPanels.parse("panel-${UUID.randomUUID()}", definition, check).exceptionOrNull()?.let {
+                    val refusal = toolRefusal("bad_panel", "The panel did not change: ${it.message ?: "it could not be read."}")
+                    return refusal to refusal.text
+                }
+            }
+            val result = panelHost?.manage(sessionId, arguments)
+                ?: toolRefusal("unsupported", "This build keeps no saved panels.")
+            return result to result.text
+        }
+        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments, check).getOrElse {
             val refusal = toolRefusal("bad_panel", it.message ?: "The panel could not be read.")
             return refusal to refusal.text
         }
