@@ -752,21 +752,13 @@ private fun AgentChatContent(
         } else {
             // Back-to-back device actions fold into one row, and so do a
             // computer's steps: seven identical rows hid the answer.
-            val running = state.runState.active && state.runState.sessionId == state.activeSessionId
+            // While this chat's own run works, one status line sits under the
+            // last line, always; the composer shows Stop on the same answer.
+            val view = chatRunView(state)
+            val running = view.busy
             val computerLabel = state.activeSessionId?.let(state.remoteBindings::get)
                 ?.let { binding -> state.computers.firstOrNull { it.id == binding.computerId }?.label }
-            // While this chat's own run works, one status line sits under the
-            // last line, always. A reply still empty used to show its own
-            // "Working" instead and the line came back once it had text, so
-            // the orb vanished for a moment at every new block: the empty
-            // reply is not drawn while the status line stands in for it.
-            val showStatus = running && !state.voiceState.active
-            val shown = if (showStatus) {
-                state.messages.filterNot {
-                    it.role.equals("assistant", true) && it.text.isBlank() && it.state.equals("streaming", true)
-                }
-            } else state.messages
-            items(chatRows(shown, running), key = { it.key }) { row ->
+            items(chatListRows(state.messages, view), key = { it.key }) { row ->
                 when (row) {
                     is MessageRow -> {
                         val child = state.childAgents.firstOrNull { it.id == row.message.id }
@@ -777,9 +769,11 @@ private fun AgentChatContent(
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }
             }
-            if (showStatus) {
+            if (view.statusLine) {
                 item(key = "run-status", contentType = "run-status") {
-                    RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem())
+                    // Fades in, but leaves at once: a line that fades out is
+                    // drawn on after the run has ended.
+                    RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem(fadeOutSpec = null))
                 }
             }
             // A compaction takes a while and sends nothing meanwhile: this card is the proof it is alive.
@@ -1156,14 +1150,8 @@ internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showC
                         }
                     }
                 } else if (message.state.equals("streaming", ignoreCase = true)) {
-                    Row(
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        AgentOrb(modifier = Modifier.size(28.dp))
-                        Text("Working…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    // An empty reply still streaming is not drawn (see chatListRows):
+                    // the Working line under the chat is the only "working".
                 } else if (message.attachmentPaths.none(::isMediaPath)) {
                     // Media shown without a caption speaks for itself.
                     Text("No text returned.", color = MaterialTheme.colorScheme.onSurfaceVariant)

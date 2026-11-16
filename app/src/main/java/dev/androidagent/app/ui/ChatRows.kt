@@ -306,3 +306,44 @@ internal fun bindNumbersToLabels(markdown: String): String {
         }
     }
 }
+
+/**
+ * What the open chat shows of a run, worked out once. The chat's Working line
+ * and the composer's Stop come from [statusLine] together, so one cannot show
+ * a run the other has already let go. They used to be two conditions, and a
+ * chat whose children still worked showed a Working line under the last
+ * message beside a composer offering Send.
+ */
+internal data class ChatRunView(
+    /** A run shows for this chat: its own, or its children's on its behalf. */
+    val busy: Boolean,
+    /** This chat's own run is going; its trailing actions read as live. */
+    val ownRun: Boolean,
+    /** The Working line under the last message, and Stop in the composer. */
+    val statusLine: Boolean,
+)
+
+/** A voice call in this chat, or one not tied to any chat. */
+internal fun voiceHere(state: AgentUiState): Boolean =
+    state.voiceState.active && (state.voiceSessionId == null || state.voiceSessionId == state.activeSessionId)
+
+internal fun chatRunView(state: AgentUiState): ChatRunView {
+    val run = state.runState
+    val busy = run.active && run.sessionId != null && run.sessionId == state.activeSessionId
+    // A child's work is this chat's only on its behalf: the composer row
+    // reports it, with its own Stop, outside the conversation.
+    val own = busy && !run.delegated
+    return ChatRunView(busy = busy, ownRun = own, statusLine = own && !voiceHere(state))
+}
+
+/**
+ * The rows the chat list draws. An agent message still empty is never drawn:
+ * while the run works the Working line stands in for it, and once the run is
+ * over an empty "streaming" message is only a leftover, which used to draw a
+ * Working orb of its own under the final answer.
+ */
+internal fun chatListRows(messages: List<ChatMessage>, view: ChatRunView): List<ChatRow> =
+    chatRows(messages.filterNot(::isEmptyStreamingReply), view.ownRun)
+
+private fun isEmptyStreamingReply(message: ChatMessage): Boolean =
+    message.role.equals("assistant", true) && message.text.isBlank() && message.state.equals("streaming", true)

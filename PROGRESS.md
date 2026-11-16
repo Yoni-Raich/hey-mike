@@ -49,6 +49,17 @@ once. Only the three chat-panel and question tests failed, as expected. So
 the phone symptom may have another cause; retest it on a build with
 48f718f5. No screenshot.
 
+Round 3 fixes (from the Xiaomi test of 75bc8d20), each its own commit, none
+run on a phone:
+- Stuck "Working" row: not reproduced. The chat's Working line and the
+  composer's Stop now come from one `chatRunView`, so they cannot disagree:
+  a chat whose children still work no longer draws the line (the composer
+  row reports it), an empty reply left "streaming" after the turn is no
+  longer drawn as a second Working orb, and the line no longer fades out
+  after the run ends (`animateItem(fadeOutSpec = null)`, hardening without
+  evidence). `ChatRunViewTest` 5 checks the rows and the button from the same
+  `AgentUiState`; it was not run against the old code.
+
 ### Panels outside the chat - 2026-11-15
 
 Base: feat/agent-panel-native b65e2136, branch feat/agent-panel-surfaces.
