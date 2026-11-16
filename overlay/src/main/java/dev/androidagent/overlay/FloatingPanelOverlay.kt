@@ -26,18 +26,28 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.SystemClock
 import android.provider.Settings
+import android.text.InputType
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.Chronometer
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
+import dev.androidagent.core.PanelBind
 import dev.androidagent.core.PanelFace
+import dev.androidagent.core.PanelOp
 import dev.androidagent.core.Tone
 
 /**
@@ -55,6 +65,8 @@ class FloatingPanelOverlay(
     private val onAction: (panelId: String, actionId: String) -> Unit,
     private val onSlider: (panelId: String, sliderId: String, value: Double) -> Unit,
     private val onClose: (panelId: String) -> Unit,
+    /** A change to the panel's own state from the card: a tick, a count, a timer, typed text. */
+    private val onOp: (panelId: String, op: PanelOp) -> Unit = { _, _ -> },
 ) {
     private val appContext = context.applicationContext
     private var windowService: AccessibilityService? = null
@@ -88,11 +100,13 @@ class FloatingPanelOverlay(
             }
             card.bind(face)
         }
+        root?.keepScreenOn = faces.any { it.keepScreenOn }
         return ids
     }
 
     /** Removes the window and every card. */
     fun hide() {
+        editing = null
         val view = root
         if (view != null) runCatching { windowManager?.removeViewImmediate(view) }
         root = null
@@ -130,7 +144,8 @@ class FloatingPanelOverlay(
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = dp(BOTTOM_DP)
+            // Above the navigation bar and a launcher's dock, which the bar's inset does not include.
+            y = navigationInset(manager) + dp(BOTTOM_DP)
             // The accessibility screenshot leaves a window with this title out.
             title = WINDOW_TITLE
         }
@@ -144,6 +159,35 @@ class FloatingPanelOverlay(
             true
         } catch (error: RuntimeException) {
             false
+        }
+    }
+
+    private fun navigationInset(manager: WindowManager): Int = runCatching {
+        manager.currentWindowMetrics.windowInsets
+            .getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars() or WindowInsets.Type.tappableElement()).bottom
+    }.getOrDefault(0)
+
+    /** The field being typed in, while the window takes focus for the keyboard. */
+    private var editing: EditText? = null
+
+    /**
+     * The window takes focus only while the user types on a card, so the
+     * keyboard can open; it gives focus back as soon as they are done.
+     */
+    private fun focus(field: EditText?) {
+        val view = root ?: return
+        val layout = params ?: return
+        editing = field
+        layout.flags = if (field != null) layout.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        else layout.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        layout.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
+        runCatching { windowManager?.updateViewLayout(view, layout) }
+        val keyboard = appContext.getSystemService(InputMethodManager::class.java)
+        if (field != null) {
+            field.requestFocus()
+            field.post { keyboard?.showSoftInput(field, InputMethodManager.SHOW_IMPLICIT) }
+        } else {
+            keyboard?.hideSoftInputFromWindow(view.windowToken, 0)
         }
     }
 
@@ -208,6 +252,11 @@ class FloatingPanelOverlay(
             is PanelFace.Row.Reading -> "reading"
             is PanelFace.Row.Tile -> "tile:${row.actionId}:${row.on != null}"
             is PanelFace.Row.Track -> "track:${row.sliderId}:${row.min}:${row.max}:${row.step}"
+            is PanelFace.Row.Checks -> "checks:${row.blockId}:${row.canAdd}:${row.items.joinToString(",") { it.id }}"
+            is PanelFace.Row.Count -> "count:${row.blockId}"
+            is PanelFace.Row.Clock -> "clock:${row.blockId}"
+            is PanelFace.Row.Bar -> "bar"
+            is PanelFace.Row.Memo -> "memo:${row.blockId}"
         }
 
         private fun build(row: PanelFace.Row): (PanelFace.Row) -> Unit = when (row) {
@@ -311,6 +360,203 @@ class FloatingPanelOverlay(
                 }
                 bind
             }
+            is PanelFace.Row.Checks -> {
+                val label = text(13f, INK_DIM).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+                body.addView(label, rowParams(top = 6))
+                val lines = row.items.map { item ->
+                    text(14f, INK).apply {
+                        minHeight = dp(40)
+                        gravity = Gravity.CENTER_VERTICAL
+                        isClickable = true
+                        setOnClickListener { onOp(panelId, PanelOp("toggle", row.blockId, item = item.id)) }
+                        body.addView(this, rowParams(top = 0))
+                    }
+                }
+                val add = if (row.canAdd) entry("Add an item", multiLine = false) { typed ->
+                    if (typed.isNotBlank()) onOp(panelId, PanelOp("add", row.blockId, text = typed))
+                } else null
+                val bind: (PanelFace.Row) -> Unit = { r ->
+                    val checks = r as PanelFace.Row.Checks
+                    label.text = checks.label.ifBlank { "List" } + " · ${checks.left} left"
+                    label.visibility = View.VISIBLE
+                    checks.items.forEachIndexed { i, item ->
+                        val line = lines.getOrNull(i) ?: return@forEachIndexed
+                        val words = (item.qty?.let { "$it × " } ?: "") + item.text
+                        line.text = (if (item.checked) "☑  " else "☐  ") + words
+                        line.setTextColor(if (item.checked) INK_DIM else INK)
+                        line.contentDescription = "$words, " + if (item.checked) "done" else "not done"
+                    }
+                    add?.let { it.hint = "Add to ${checks.label.ifBlank { "the list" }}" }
+                }
+                bind
+            }
+            is PanelFace.Row.Count -> {
+                val label = text(13f, INK_DIM).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+                val number = text(16f, INK, bold = true).apply { gravity = Gravity.CENTER }
+                val minus = button("−") { onOp(panelId, PanelOp("dec", row.blockId)) }
+                val plus = button("+") { onOp(panelId, PanelOp("inc", row.blockId)) }
+                body.addView(LinearLayout(appContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(minus, LinearLayout.LayoutParams(dp(44), dp(40)))
+                    addView(number, LinearLayout.LayoutParams(dp(72), LinearLayout.LayoutParams.WRAP_CONTENT))
+                    addView(plus, LinearLayout.LayoutParams(dp(44), dp(40)))
+                }, rowParams(top = 6))
+                val bind: (PanelFace.Row) -> Unit = { r ->
+                    val count = r as PanelFace.Row.Count
+                    label.text = count.label
+                    number.text = count.goal?.let { "${count.count} / $it" } ?: count.count.toString()
+                    val goal = count.goal
+                    number.setTextColor(if (goal != null && count.count >= goal) TONE_DONE else INK)
+                    minus.isEnabled = count.count > count.min
+                    plus.isEnabled = count.count < count.max
+                    minus.contentDescription = "${count.label} down"
+                    plus.contentDescription = "${count.label} up"
+                }
+                bind
+            }
+            is PanelFace.Row.Clock -> {
+                val label = text(13f, INK_DIM).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+                // A running timer counts down by itself: nothing redraws the card each second.
+                val clock = Chronometer(appContext).apply {
+                    isCountDown = true
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setTextColor(INK)
+                }
+                val still = text(18f, INK)
+                var current: PanelFace.Row.Clock = row
+                val toggle = button("Start") {
+                    // Start also resumes a paused timer from where it stopped.
+                    onOp(panelId, PanelOp(if (current.running) "pause" else "start", current.blockId))
+                }
+                val reset = button("Reset") { onOp(panelId, PanelOp("reset", current.blockId)) }
+                body.addView(label, rowParams(top = 6))
+                body.addView(LinearLayout(appContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(clock, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(still, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(toggle, LinearLayout.LayoutParams(dp(84), dp(40)))
+                    addView(reset, LinearLayout.LayoutParams(dp(84), dp(40)).apply { marginStart = dp(6) })
+                }, rowParams())
+                val bind: (PanelFace.Row) -> Unit = { r ->
+                    val c = r as PanelFace.Row.Clock
+                    current = c
+                    label.text = c.label
+                    label.visibility = if (c.label.isBlank()) View.GONE else View.VISIBLE
+                    val ends = c.endsAtMs
+                    if (ends != null) {
+                        clock.base = SystemClock.elapsedRealtime() + (ends - System.currentTimeMillis())
+                        clock.start()
+                        clock.visibility = View.VISIBLE
+                        still.visibility = View.GONE
+                    } else {
+                        clock.stop()
+                        clock.visibility = View.GONE
+                        still.visibility = View.VISIBLE
+                        still.text = if (c.done) "Done" else PanelBind.clock(c.leftMs)
+                        still.setTextColor(if (c.done) TONE_DONE else INK)
+                    }
+                    toggle.text = when {
+                        c.running -> "Pause"
+                        c.done -> "Again"
+                        else -> "Start"
+                    }
+                    toggle.contentDescription = "${toggle.text} ${c.label}".trim()
+                }
+                bind
+            }
+            is PanelFace.Row.Bar -> {
+                val label = text(13f, INK_DIM).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+                val number = text(13f, INK)
+                val bar = ProgressBar(appContext, null, android.R.attr.progressBarStyleHorizontal).apply { max = BAR_STEPS }
+                body.addView(LinearLayout(appContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(number)
+                }, rowParams(top = 6))
+                body.addView(bar, rowParams())
+                val bind: (PanelFace.Row) -> Unit = { r ->
+                    val b = r as PanelFace.Row.Bar
+                    label.text = b.label
+                    number.text = "${trim(b.done)} / ${trim(b.total)}"
+                    bar.progress = Math.round(b.fraction * BAR_STEPS)
+                    bar.contentDescription = "${b.label} ${number.text}"
+                }
+                bind
+            }
+            is PanelFace.Row.Memo -> {
+                val label = text(13f, INK_DIM).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+                body.addView(label, rowParams(top = 6))
+                val field = entry(row.placeholder, multiLine = true) { typed -> onOp(panelId, PanelOp("set", row.blockId, text = typed)) }
+                val bind: (PanelFace.Row) -> Unit = { r ->
+                    val memo = r as PanelFace.Row.Memo
+                    label.text = memo.label
+                    label.visibility = if (memo.label.isBlank()) View.GONE else View.VISIBLE
+                    field.hint = memo.placeholder
+                    // The user's typing wins over a value stored meanwhile.
+                    if (editing !== field && field.text.toString() != memo.text) field.setText(memo.text)
+                }
+                bind
+            }
+        }
+
+        /**
+         * A text field on the card. Tapping it lets the window take focus;
+         * Done (or the keyboard's action) hands the text to [done] and gives
+         * focus back. An add field clears itself; a note keeps its text.
+         */
+        private fun entry(hint: String, multiLine: Boolean, done: (String) -> Unit): EditText {
+            val field = EditText(appContext).apply {
+                this.hint = hint
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(INK)
+                setHintTextColor(INK_DIM)
+                background = rounded(FIELD, OUTLINE, 12f)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                isFocusableInTouchMode = true
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+                    if (multiLine) InputType.TYPE_TEXT_FLAG_MULTI_LINE else 0
+                imeOptions = EditorInfo.IME_ACTION_DONE
+                if (multiLine) { minLines = 2; maxLines = 5 } else maxLines = 1
+            }
+            fun finish() {
+                if (editing !== field) return
+                done(field.text.toString())
+                if (!multiLine) field.setText("")
+                field.clearFocus()
+                focus(null)
+            }
+            field.setOnTouchListener { view, event ->
+                if (event.actionMasked == MotionEvent.ACTION_UP && editing !== field) focus(field)
+                view.performClick()
+                false
+            }
+            field.setOnEditorActionListener { _, action, _ ->
+                if (action == EditorInfo.IME_ACTION_DONE) { finish(); true } else false
+            }
+            val save = text(13f, TONE_DONE, bold = true).apply {
+                text = "Done"
+                gravity = Gravity.CENTER
+                isClickable = true
+                setOnClickListener { finish() }
+            }
+            body.addView(LinearLayout(appContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(field, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(save, LinearLayout.LayoutParams(dp(56), dp(40)))
+            }, rowParams())
+            return field
+        }
+
+        private fun button(label: String, tap: () -> Unit) = text(15f, INK, bold = true).apply {
+            text = label
+            gravity = Gravity.CENTER
+            background = rounded(FIELD, OUTLINE, 12f)
+            isClickable = true
+            setOnClickListener { tap() }
         }
 
         private fun rowParams(top: Int = 4) = LinearLayout.LayoutParams(
@@ -361,7 +607,9 @@ class FloatingPanelOverlay(
 
     companion object {
         const val CARD_WIDTH_DP = 340
-        const val BOTTOM_DP = 96
+        /** Above the navigation bar: clears a launcher's dock row. */
+        const val BOTTOM_DP = 112
+        private const val BAR_STEPS = 1_000
         /** The same title as the control overlay: the accessibility screenshot leaves it out. */
         const val WINDOW_TITLE = "AndroidAgentControl"
 
