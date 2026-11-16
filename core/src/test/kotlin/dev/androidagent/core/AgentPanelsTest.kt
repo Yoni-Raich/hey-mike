@@ -148,9 +148,9 @@ class AgentPanelsTest {
         })).getOrThrow()
         val slider = parsed.blocks.single() as PanelBlock.Slider
         assertTrue(!slider.whole)
-        assertEquals("1", slider.initial)
+        assertEquals("1.00", slider.initial)
         assertEquals("1.75", slider.format(slider.snap(1.8)))
-        assertEquals("0.5", slider.format(slider.snap(-4.0)))
+        assertEquals("0.50", slider.format(slider.snap(-4.0)))
         assertTrue(slider.holds("1.25"))
         assertTrue(!slider.holds("1.3"))
         assertTrue(!slider.holds("3"))
@@ -168,6 +168,13 @@ class AgentPanelsTest {
         assertEquals("75.4", asked.format(asked.snap(75.38)))
         assertEquals("0.3", asked.format(asked.snap(0.30000000000000004)))
         assertEquals(0.3, asked.snap(0.1 + 0.2), 0.0)
+        assertEquals("75.0", asked.format(75.0))
+        // The Xiaomi case, round 6: decimals 2 on a 0.5 step read "0.5" while Mike said "0.50".
+        val mix = AgentPanels.parse("p", panel(block("slider") {
+            put("id", "m"); put("label", "Mix"); put("min", 0); put("max", 1); put("step", 0.5); put("decimals", 2)
+        }), created = true).getOrThrow().blocks.single() as PanelBlock.Slider
+        assertEquals("0.50", mix.format(mix.snap(0.5)))
+        assertEquals("1.00", mix.format(1.0))
         // Leaving step out gives whole numbers on the same smooth track.
         val whole = AgentPanels.parse("p", panel(block("slider") {
             put("id", "v"); put("label", "Volume"); put("min", 0); put("max", 100)
@@ -197,6 +204,8 @@ class AgentPanelsTest {
         val track = PanelFace.Row.Track("v", "Volume", 0.0, 1.0, 0.1, 0.0, "0", decimals = 1)
         assertEquals(0.3, track.valueAt(3), 0.0)
         assertEquals("0.3", track.textAt(3))
+        assertEquals("0.0", track.textAt(0))
+        assertEquals("0.50", PanelFace.Row.Track("m", "Mix", 0.0, 1.0, 0.5, 0.0, "0.00", decimals = 2).textAt(1))
         val whole = PanelFace.Row.Track("v", "Volume", 0.0, 100.0, 1.0, 0.0, "0")
         assertEquals("75", whole.textAt(75))
     }

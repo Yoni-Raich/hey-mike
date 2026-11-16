@@ -243,7 +243,7 @@ class FloatingPanelOverlay(
 
     /** One card: a title row with Saved panels and close, then a view per row of the panel's face. */
     private inner class Card(val panelId: String) {
-        val title = text(15f, INK, bold = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        val title = text(15f, INK, bold = true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         val body = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
         val root: LinearLayout
         private var shape: List<String> = emptyList()

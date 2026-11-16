@@ -186,8 +186,8 @@ sealed interface PanelBlock {
             return AgentPanels.round(min + steps * step, decimals).coerceIn(min, max)
         }
 
-        /** [value] as the user and Mike see it: [decimals] places at most, no trailing zeros. */
-        fun format(value: Double): String = AgentPanels.number(value, decimals)
+        /** [value] as the user and Mike see it: always [decimals] places, so 0.5 reads 0.50 when the panel asks for 2. */
+        fun format(value: Double): String = AgentPanels.fixed(value, decimals)
 
         /** True when [text] is a value this slider can take. */
         fun holds(text: String): Boolean {
@@ -1065,6 +1065,10 @@ object AgentPanels {
     /** [value] rounded half up to [places] decimals. */
     fun round(value: Double, places: Int): Double =
         if (!value.isFinite()) value else BigDecimal.valueOf(value).setScale(places, RoundingMode.HALF_UP).toDouble()
+
+    /** [value] as plain text with exactly [places] decimals, as a slider shows it. */
+    fun fixed(value: Double, places: Int): String =
+        BigDecimal.valueOf(value).setScale(places, RoundingMode.HALF_UP).toPlainString()
 
     /** [value] as plain text with at most [places] decimals and no trailing zeros. */
     internal fun number(value: Double, places: Int): String =

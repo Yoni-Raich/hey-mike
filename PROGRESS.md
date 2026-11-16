@@ -205,6 +205,22 @@ none run on a phone:
   `FloatingPanelLookTest` (2 tests); `:overlay:testDebugUnitTest` and
   `:app:compileDevDebugKotlin` passed. Not seen on a phone: the rebuild on a
   font change and the button opening the screen from over another app.
+- Round 6 on a Redmi 12, a189343e (r6-01 to r6-22):
+  - Passed:
+    - Old channels: `mDeleted=true`; the `_v2` channels are silent.
+    - Duplicate tile dropped.
+    - Step 1 shows whole numbers; a 0.25 step without `decimals` is refused.
+    - Hebrew receipt mirrored.
+    - Card rebuilt at font scale 1.3 and back.
+    - ☰ opens Saved panels over the launcher.
+  - Two bugs, both fixed after the round:
+    - `decimals: 2` on a 0.5 step read "0.5" while Mike said "0.50". A slider now shows exactly `decimals` places (`AgentPanels.fixed`) in the chat, on the floating track and in the receipt. A 0.25 track reads 1.00, and a saved 0.1 track reads 75.0. The value sent is unchanged.
+    - At font scale 1.3, a long card title was cut ("Gamma Title For Font Sc..."). It now wraps to 2 lines.
+  - Checks:
+    - `:core:test` 1013, `:overlay:testDebugUnitTest` 11, `:app:testDevDebugUnitTest` 206.
+    - `:app:lintDevDebug` and `:app:assembleDevDebug` passed.
+  - Not seen on a phone: both fixes.
+  - Not run, because the round was stopped early: light mode, the regression pass, the lock-screen expand, the widget at 1.3, and jank.
 
 ### Panels outside the chat - 2026-11-15
 

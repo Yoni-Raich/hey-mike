@@ -49,7 +49,7 @@ data class PanelFace(
             fun valueAt(progress: Int): Double =
                 AgentPanels.round(min + progress.coerceIn(0, intervals) * step, decimals).coerceIn(min, max)
             /** The number at [progress] as the slider shows it while dragged. */
-            fun textAt(progress: Int): String = AgentPanels.number(valueAt(progress), decimals)
+            fun textAt(progress: Int): String = AgentPanels.fixed(valueAt(progress), decimals)
         }
         /** A checklist. [canAdd] lets a surface offer a way to add an item. */
         data class Checks(val blockId: String, val label: String, val items: List<PanelItem>, val canAdd: Boolean) : Row {
