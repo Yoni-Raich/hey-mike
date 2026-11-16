@@ -1165,6 +1165,32 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun aPinnedPanelsTurnEndsReadyWhateverOrderTheEngineSettlesIn() = runTest {
+        // The engine may settle the answered call after the turn ends, or not at all.
+        for (order in listOf("resolved_after_turn", "never_resolved")) {
+            val rig = Rig(this, fullAccess = true, hostFor = { scope, store ->
+                PanelHost(scope, InMemorySavedPanelVault(), store, invoke = { _, _ -> ToolResult("{}") }, io = StandardTestDispatcher(testScheduler))
+            })
+            rig.defineTools("system_controls")
+            rig.coordinator.send("one", "Pin a torch to my notifications")
+            runCurrent()
+            val pinned = buildJsonObject { torchPanel().forEach { (key, value) -> put(key, value) }; put("surface", "notification") }
+            rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", pinned, "thread", "turn"))
+            runCurrent()
+            rig.engine.emit(EngineEvent.MessageCompleted("It waits for your approval.", "thread", "turn", "item", "final_answer"))
+            rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+            if (order == "resolved_after_turn") rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "turn"))
+            advanceUntilIdle()
+            val state = rig.coordinator.state.value
+            assertEquals(order, RunPhase.IDLE, state.phase)
+            assertEquals(order, "Ready", state.status)
+            assertNull(order, state.approval)
+            assertNull(order, state.panel)
+            assertEquals(order, 1, rig.engine.answers.size)
+            rig.close()
+        }
+    }
+
     @Test fun aPinnedPanelsTurnEndsReadyWithItsCallClosed() = runTest {
         // Seen on a phone: after a turn that pinned a notification panel the
         // chat kept "Working" and the call's row stayed open for over a minute.
@@ -1184,6 +1210,7 @@ class AgentCoordinatorTest {
         rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
         advanceUntilIdle()
         assertEquals(RunPhase.IDLE, rig.coordinator.state.value.phase)
+        assertEquals("Ready", rig.coordinator.state.value.status)
         assertNull(rig.coordinator.state.value.panel)
         assertEquals(1, rig.engine.answers.size)
         val trace = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "p" }.map { it["type"]!!.jsonPrimitive.content }
