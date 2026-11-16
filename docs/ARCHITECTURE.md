@@ -310,6 +310,17 @@ Decisions made while building this (2026-11-15):
   text is kept only when the value changed.
 - **Close.** The close button on a short floating card removes it; on a lasting
   one it hides it until it is shown again from Saved panels.
+- **Saved panels from the card.** Each floating card's title row has a
+  Saved panels button (☰) beside close. It opens the Saved panels screen at
+  that panel, the same intent the panel's notification opens; the cards step
+  aside while that screen is in front (2026-11-16).
+- **Font size.** Card text is in sp from the app's current configuration. A
+  view reads its size once, so when the font size, display size or screen
+  width changes while cards show, the overlay drops the window and builds
+  every card again from the last faces (after typing ends, if the user is
+  typing). The title row wraps its text, at least 40dp tall.
+- **Dark only.** The floating card stays dark in light mode on purpose: the
+  app is dark-only (`AgentDarkColors`, no light scheme), and the card matches.
 
 ### Panels as mini-apps: state, local actions, panel_id - 2026-11-16
 

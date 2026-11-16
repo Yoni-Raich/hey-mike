@@ -22,7 +22,9 @@ package dev.androidagent.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
+import android.content.ComponentCallbacks
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -58,6 +60,11 @@ import dev.androidagent.core.Tone
  * Its title is the one the accessibility screenshot leaves out, and its
  * package is ours, so Mike's own taps refuse to land on it: a card is only
  * ever tapped by the user. Main thread only.
+ *
+ * Text sizes are in sp and read the app's current configuration. A view
+ * reads its text size once, so a change of font size, display size or
+ * screen width while cards show draws every card again from the last faces.
+ * The card is dark in light mode too: the app is dark-only by design.
  */
 class FloatingPanelOverlay(
     context: Context,
@@ -67,8 +74,23 @@ class FloatingPanelOverlay(
     private val onClose: (panelId: String) -> Unit,
     /** A change to the panel's own state from the card: a tick, a count, a timer, typed text. */
     private val onOp: (panelId: String, op: PanelOp) -> Unit = { _, _ -> },
+    /** The card's Saved panels button: opens the Saved panels screen at this panel. */
+    private val onOpenList: (panelId: String) -> Unit = {},
 ) {
     private val appContext = context.applicationContext
+    private var lastFaces: List<PanelFace> = emptyList()
+    /** The configuration the cards on screen were built for, or null when none show. */
+    private var drawnLook: Look? = null
+    /** A configuration change came while the user typed: draw again once they are done. */
+    private var redrawAfterTyping = false
+
+    init {
+        appContext.registerComponentCallbacks(object : ComponentCallbacks {
+            override fun onConfigurationChanged(newConfig: Configuration) { lookChanged() }
+            @Deprecated("Deprecated in Java")
+            override fun onLowMemory() = Unit
+        })
+    }
     private var windowService: AccessibilityService? = null
     private var windowManager: WindowManager? = null
     private var root: FrameLayout? = null
@@ -84,11 +106,14 @@ class FloatingPanelOverlay(
      * dragged keeps its thumb. Returns the ids now on screen.
      */
     fun render(faces: List<PanelFace>): Set<String> {
+        lastFaces = faces
         if (faces.isEmpty()) {
             hide()
             return emptySet()
         }
+        if (editing == null && needsRebuild(drawnLook, look())) hide()
         if (!attach()) return emptySet()
+        drawnLook = look()
         val column = column ?: return emptySet()
         val ids = faces.map { it.id }.toSet()
         (cards.keys - ids).forEach { gone -> cards.remove(gone)?.let { column.removeView(it.root) } }
@@ -107,6 +132,8 @@ class FloatingPanelOverlay(
     /** Removes the window and every card. */
     fun hide() {
         editing = null
+        drawnLook = null
+        redrawAfterTyping = false
         val view = root
         if (view != null) runCatching { windowManager?.removeViewImmediate(view) }
         root = null
@@ -118,6 +145,20 @@ class FloatingPanelOverlay(
     /** Draws again with the new service's window token after it connects or goes. */
     fun refreshWindowHost() {
         if (root != null && windowService !== accessibilityService()) hide()
+    }
+
+    private fun look(): Look = appContext.resources.configuration.let { Look(it.fontScale, it.densityDpi, it.screenWidthDp) }
+
+    /** Builds every card again, so new sp sizes and widths apply; waits while the user types. */
+    private fun lookChanged() {
+        if (!needsRebuild(drawnLook, look())) return
+        if (editing != null) {
+            redrawAfterTyping = true
+            return
+        }
+        val faces = lastFaces
+        hide()
+        render(faces)
     }
 
     private fun attach(): Boolean {
@@ -188,6 +229,7 @@ class FloatingPanelOverlay(
             field.post { keyboard?.showSoftInput(field, InputMethodManager.SHOW_IMPLICIT) }
         } else {
             keyboard?.hideSoftInputFromWindow(view.windowToken, 0)
+            if (redrawAfterTyping) view.post { lookChanged() }
         }
     }
 
@@ -199,7 +241,7 @@ class FloatingPanelOverlay(
         runCatching { windowManager?.updateViewLayout(view, layout) }
     }
 
-    /** One card: a title row with close, then a view per row of the panel's face. */
+    /** One card: a title row with Saved panels and close, then a view per row of the panel's face. */
     private inner class Card(val panelId: String) {
         val title = text(15f, INK, bold = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
         val body = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
@@ -208,6 +250,12 @@ class FloatingPanelOverlay(
         private val binders = mutableListOf<(PanelFace.Row) -> Unit>()
 
         init {
+            val list = text(18f, INK_DIM).apply {
+                text = "☰"
+                gravity = Gravity.CENTER
+                contentDescription = "Saved panels"
+                setOnClickListener { onOpenList(panelId) }
+            }
             val close = text(18f, INK_DIM).apply {
                 text = "×"
                 gravity = Gravity.CENTER
@@ -217,7 +265,9 @@ class FloatingPanelOverlay(
             val header = LinearLayout(appContext).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(40)
                 addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(list, LinearLayout.LayoutParams(dp(40), dp(40)))
                 addView(close, LinearLayout.LayoutParams(dp(40), dp(40)))
             }
             dragWith(header)
@@ -225,7 +275,8 @@ class FloatingPanelOverlay(
                 orientation = LinearLayout.VERTICAL
                 background = rounded(GLASS, OUTLINE, 20f)
                 setPadding(dp(14), dp(4), dp(6), dp(10))
-                addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40)))
+                // Wraps a title in a large font size; never shorter than the buttons.
+                addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
                 addView(body, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     marginEnd = dp(8)
                 })
@@ -629,4 +680,11 @@ class FloatingPanelOverlay(
             if (value == Math.rint(value)) value.toLong().toString()
             else "%.2f".format(java.util.Locale.ROOT, value).trimEnd('0').trimEnd('.')
     }
+
+    /** What a card's sp sizes and width are built from. */
+    internal data class Look(val fontScale: Float, val densityDpi: Int, val widthDp: Int)
 }
+
+/** True when floating cards on screen were built for another configuration than [now]. */
+internal fun needsRebuild(drawn: FloatingPanelOverlay.Look?, now: FloatingPanelOverlay.Look): Boolean =
+    drawn != null && drawn != now

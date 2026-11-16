@@ -195,6 +195,16 @@ none run on a phone:
   ships no Hebrew strings (no `values-iw` or `values-he`; all UI text is
   hard-coded English), so there is nothing to add a translation to.
   `ExpiredPanelNoteTest.aHebrewTitleMirrorsTheReceipt`. Not seen on a phone.
+- Floating card (r5): text was already in sp, but the card's views are built
+  once and reused, so a font-size change while a card showed never applied.
+  The overlay now watches configuration changes (font scale, density, width)
+  and builds every card again from the last faces, waiting while the user
+  types; the title row wraps instead of a fixed 40dp. A ☰ Saved panels button
+  beside close opens the Saved panels screen at that panel. The card stays
+  dark in light mode by design: the app is dark-only (`AgentDarkColors`).
+  `FloatingPanelLookTest` (2 tests); `:overlay:testDebugUnitTest` and
+  `:app:compileDevDebugKotlin` passed. Not seen on a phone: the rebuild on a
+  font change and the button opening the screen from over another app.
 
 ### Panels outside the chat - 2026-11-15
 

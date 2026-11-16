@@ -79,6 +79,7 @@ class SavedPanelSurfaces(
         onSlider = { panel, slider, value -> host.runSlider(panel, slider, value) },
         onClose = ::close,
         onOp = { panel, op -> host.edit(panel, op) },
+        onOpenList = { panel -> runCatching { app.startActivity(SavedPanelsActivity.intent(app, panel)) } },
     )
     private val notifications = SavedPanelNotifications(app)
     private var floatingShown = emptySet<String>()
