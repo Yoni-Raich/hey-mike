@@ -58,6 +58,9 @@ private val OrbIdle = Color(0xFF8F8F8F)
 private const val ORB_POINTS = 220
 private const val ORB_BANDS = 8
 
+// How long a resting orb keeps moving before it holds still.
+private const val ORB_SETTLE_SECONDS = 1.5f
+
 // Tilt towards the viewer, so the poles read as a globe rather than a disc.
 private const val ORB_TILT = 0.38f
 
@@ -132,13 +135,19 @@ internal fun AgentOrb(
     }
     val frame = remember { mutableLongStateOf(0L) }
     val moving = animationsEnabled()
-    LaunchedEffect(moving) {
+    // At rest the orb settles and then stops asking for frames. The top bar shows it
+    // all the time, and a frame loop there redrew the whole chat screen at the
+    // display's refresh rate while nothing ran.
+    val resting = phase == RunPhase.IDLE || phase == RunPhase.ERROR
+    LaunchedEffect(moving, resting) {
         if (!moving) return@LaunchedEffect
         var previous = 0L
-        while (true) {
+        var settling = 0f
+        while (!resting || settling < ORB_SETTLE_SECONDS) {
             withInfiniteAnimationFrameNanos { now ->
                 val dt = if (previous == 0L) 0.016f else (now - previous).coerceIn(0L, 50_000_000L) / 1_000_000_000f
                 previous = now
+                settling += dt
                 motion.step(dt, activity)
                 frame.longValue = now
             }
