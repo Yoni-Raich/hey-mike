@@ -1,5 +1,47 @@
 # Progress
 
+### Panels as mini-apps - 2026-11-16
+
+Base: feat/agent-panel-native de8f4e5b, branch feat/agent-panel-apps. A saved
+panel keeps typed state (signed, bounded, in its own store): `checklist`,
+`counter`, `timer`, `countdown`, `progress`, `note` blocks, daily or weekly
+`reset`. Actions get a `kind`: `device` (as before), `local` (this panel's
+state only), `ask_mike` (a new chat turn with the state marked as untrusted
+user data) and `open` (an allowlist of six intent shapes, checked at
+creation, load and tap, shown in words on the approval screen). `show_ui`
+takes `panel_id`: list, read, change state with no approval, or replace the
+definition, which waits for approval again when it adds or changes a device,
+open or ask_mike action. Input on every surface: notification Add box
+(RemoteInput), typing on the floating card, a widget list on Android 12+ (six
+fixed rows below that) with an Add box. A timer's end posts an alert. The
+agent-ui skill teaches nine templates (see ARCHITECTURE "Panels as
+mini-apps: state, local actions, panel_id"). Retest fixes on the same branch: the pinned notification's lock
+screen words now match what it does (title only, buttons after unlock), the
+approval screen leads with plain words and keeps the raw call behind
+Details, the floating card shows a plain caption and sits above the dock.
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug :automations:testDebugUnitTest
+:overlay:testDebugUnitTest :engine-claude:testDebugUnitTest
+:workspace:testDebugUnitTest --no-daemon` passed (lint 0 errors, no issue in
+the new files); `git diff --check` passed. New tests: `PanelStateTest` (every
+op per block, limits, the open allowlist, resets, size bounds),
+`PanelAppsHostTest` 19 (state across a restart, surface-op gating, gating per
+action kind, `panel_id` with and without re-approval, untrusted data in the
+ask_mike prompt, no turn while a run is active, resets, every SKILL.md template parsed,
+approved and changed), `AgentPanelsTest` parsing cases and
+`AgentCoordinatorTest` `aPinnedPanelsTurnEndsReadyWithItsCallClosed`.
+
+Not tested: nothing ran on a phone or emulator. Unverified: the notification
+Chronometer countdown, its Add box (RemoteInput) and the lock-screen public
+version; the widget list (RemoteCollectionItems) and its fallback rows; the
+Add dialog activity and its keyboard; typing a note on the floating card
+(window focus for the keyboard); starting an `open` target from a floating
+card, notification and widget; inexact alarms for timers and resets while the
+phone dozes; the timer alert sound. The "Working" row after a detached
+panel's turn (retest fix 2) is covered by a unit test only: the retested
+build b1f054f3 did not have 48f718f5. No screenshot.
+
 ### Panels outside the chat - 2026-11-15
 
 Base: feat/agent-panel-native b65e2136, branch feat/agent-panel-surfaces.
