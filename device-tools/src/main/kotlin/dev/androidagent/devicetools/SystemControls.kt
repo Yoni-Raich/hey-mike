@@ -22,6 +22,7 @@ package dev.androidagent.devicetools
 
 import dev.androidagent.core.LocalIntentRequest
 import dev.androidagent.core.MediaSessionAccess
+import dev.androidagent.core.MediaSessionInfo
 import dev.androidagent.core.NotificationOutcome
 import dev.androidagent.core.ToolResult
 import kotlinx.serialization.json.JsonArray
@@ -104,7 +105,7 @@ object SystemPolicy {
         "clipboard_set" to setOf("text"),
         "location" to setOf("precise", "timeout_ms"),
         "media_status" to emptySet(),
-        "media_control" to setOf("command", "package", "position_ms"),
+        "media_control" to setOf("command", "package", "position_ms", "offset_ms"),
         "usage" to setOf("hours", "limit"),
         "get_setting" to setOf("namespace", "key"),
         "put_setting" to setOf("namespace", "key", "value"),
@@ -113,7 +114,23 @@ object SystemPolicy {
     val STREAMS = setOf("media", "ring", "notification", "alarm", "call", "system")
     val RINGER_MODES = setOf("normal", "vibrate", "silent")
     val DND_MODES = setOf("off", "priority", "alarms", "total")
-    val MEDIA_COMMANDS = setOf("play", "pause", "toggle", "next", "previous", "stop", "seek")
+    val MEDIA_COMMANDS = setOf("play", "pause", "toggle", "next", "previous", "stop", "seek", "seek_by")
+    /** The longest jump seek_by takes, either way: ten minutes. */
+    const val MAX_SEEK_BY_MS = 600_000
+
+    /**
+     * The session a command without a package acts on, as the platform picks
+     * it: the one that plays, else the first. [media_status] names it current.
+     */
+    fun currentSession(sessions: List<MediaSessionInfo>, packageName: String?): MediaSessionInfo? =
+        if (packageName != null) sessions.firstOrNull { it.packageName == packageName }
+        else sessions.firstOrNull { it.state == "playing" } ?: sessions.firstOrNull()
+
+    /** Where seek_by lands: [offsetMs] from [position], never before 0 or past [durationMs]. */
+    fun seekTarget(position: Long, offsetMs: Long, durationMs: Long?): Long {
+        val target = (position + offsetMs).coerceAtLeast(0)
+        return if (durationMs != null && durationMs > 0) target.coerceAtMost(durationMs) else target
+    }
     val NAMESPACES = setOf("system", "secure", "global")
     private val SETTING_KEY_RE = Regex("^[A-Za-z0-9_.:\\-]{1,128}$")
 
@@ -244,25 +261,41 @@ internal class SystemControlDispatcher(
             }
             "media_status" -> {
                 val sessions = media.sessions()
+                fun row(s: MediaSessionInfo) = buildJsonObject {
+                    put("package", s.packageName)
+                    put("state", s.state)
+                    s.title?.let { put("title", CapabilityPolicy.bound(it)) }
+                    s.artist?.let { put("artist", CapabilityPolicy.bound(it)) }
+                    s.album?.let { put("album", CapabilityPolicy.bound(it)) }
+                    s.durationMs?.let { put("durationMs", it) }
+                    s.positionMs?.let { put("positionMs", it) }
+                    put("actions", JsonArray(s.actions.map { JsonPrimitive(it) }))
+                }
                 ok(operation) {
-                    put("sessions", JsonArray(sessions.take(CapabilityPolicy.MAX_ARRAY_ITEMS).map { s ->
-                        buildJsonObject {
-                            put("package", s.packageName)
-                            put("state", s.state)
-                            s.title?.let { put("title", CapabilityPolicy.bound(it)) }
-                            s.artist?.let { put("artist", CapabilityPolicy.bound(it)) }
-                            s.album?.let { put("album", CapabilityPolicy.bound(it)) }
-                            s.durationMs?.let { put("durationMs", it) }
-                            s.positionMs?.let { put("positionMs", it) }
-                            put("actions", JsonArray(s.actions.map { JsonPrimitive(it) }))
-                        }
-                    }))
+                    // The session a command without a package acts on, so a
+                    // live readout can bind to current.title without guessing.
+                    SystemPolicy.currentSession(sessions, null)?.let { put("current", row(it)) }
+                    put("sessions", JsonArray(sessions.take(CapabilityPolicy.MAX_ARRAY_ITEMS).map(::row)))
                     if (sessions.isEmpty()) put("note", "No active media session, or notification access is off (media control needs it).")
                 }
             }
             "media_control" -> {
                 val command = SystemPolicy.choice(args, "command", SystemPolicy.MEDIA_COMMANDS)
                 val pkg = CapabilityPolicy.parsePackage(args, required = false)
+                if (command == "seek_by") {
+                    val offset = SystemPolicy.int(args, "offset_ms", -SystemPolicy.MAX_SEEK_BY_MS..SystemPolicy.MAX_SEEK_BY_MS)
+                        ?: return fail(operation, "invalid_argument", "seek_by needs offset_ms, e.g. 10000 forward or -10000 back.")
+                    checkActive()
+                    val session = SystemPolicy.currentSession(media.sessions(), pkg)
+                        ?: return fail(operation, "no_session", "No media app is active" + (pkg?.let { " for $it" } ?: "") + ".")
+                    val now = session.positionMs
+                        ?: return fail(operation, "no_position", "${session.packageName} does not report its position, so it cannot skip by an amount.")
+                    val target = SystemPolicy.seekTarget(now, offset.toLong(), session.durationMs)
+                    return when (val outcome = media.control(session.packageName, "seek", target)) {
+                        NotificationOutcome.Done -> ok(operation) { put("done", true); put("package", session.packageName); put("positionMs", target) }
+                        is NotificationOutcome.Failed -> fail(operation, outcome.errorType, outcome.message)
+                    }
+                }
                 val position = CapabilityPolicy.parseMillis(args, "position_ms")
                 checkActive()
                 when (val outcome = media.control(pkg, command, position)) {

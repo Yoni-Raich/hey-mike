@@ -220,7 +220,7 @@ class AndroidNotificationAccess(context: Context) : NotificationAccess, MediaSes
             artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST),
             album = metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM),
             durationMs = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION)?.takeIf { it > 0 },
-            positionMs = playback?.position?.takeIf { it >= 0 },
+            positionMs = playback?.let(::livePosition),
             actions = actionNames(playback?.actions ?: 0L),
         )
     }
@@ -245,6 +245,18 @@ class AndroidNotificationAccess(context: Context) : NotificationAccess, MediaSes
             else -> return NotificationOutcome.Failed("invalid_argument", "Unknown media command \"$command\".")
         }
         return NotificationOutcome.Done
+    }
+
+    /**
+     * Where playback is now. A player reports its position only when it
+     * changes state, so while it plays the time since that report is added at
+     * its speed; otherwise a readout and seek_by would lag behind the song.
+     */
+    private fun livePosition(playback: PlaybackState): Long? {
+        val reported = playback.position.takeIf { it >= 0 } ?: return null
+        if (playback.state != PlaybackState.STATE_PLAYING || playback.lastPositionUpdateTime <= 0) return reported
+        val since = (android.os.SystemClock.elapsedRealtime() - playback.lastPositionUpdateTime).coerceAtLeast(0)
+        return reported + (since * playback.playbackSpeed).toLong()
     }
 
     private fun stateName(state: Int?): String = when (state) {

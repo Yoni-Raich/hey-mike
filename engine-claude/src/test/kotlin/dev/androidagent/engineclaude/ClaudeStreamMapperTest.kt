@@ -23,9 +23,13 @@ package dev.androidagent.engineclaude
 import dev.androidagent.core.EngineEvent
 import dev.androidagent.engineclaude.ClaudeStreamMapper.Signal
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -279,6 +283,82 @@ class ClaudeStreamMapperTest {
         val finished = events.filterIsInstance<EngineEvent.TurnFinished>().single()
         assertEquals("failed", finished.status)
         assertEquals("Invalid API key · Please run /login", finished.error)
+    }
+
+    private fun textLines(id: String, vararg pieces: String, full: String = pieces.joinToString("")): List<JsonObject> =
+        listOf(
+            line("""{"type":"stream_event","event":{"type":"message_start","message":{"id":"$id"}}}"""),
+            line("""{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"""),
+        ) + pieces.map { piece ->
+            line(buildJsonObject {
+                put("type", "stream_event")
+                put("event", buildJsonObject {
+                    put("type", "content_block_delta"); put("index", 0)
+                    put("delta", buildJsonObject { put("type", "text_delta"); put("text", piece) })
+                })
+            }.toString())
+        } + listOf(
+            line("""{"type":"stream_event","event":{"type":"content_block_stop","index":0}}"""),
+            line(buildJsonObject {
+                put("type", "assistant")
+                put("message", buildJsonObject {
+                    put("id", id); put("model", "claude-opus-5-5"); put("role", "assistant")
+                    put("content", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", full) }) })
+                })
+                put("parent_tool_use_id", JsonNull)
+            }.toString()),
+        )
+
+    // Seen on a phone, 2026-11-16: a reply began with "No response requested."
+    @Test fun noResponseRequestedNeverReachesTheChat() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        val events = mapper.feed(
+            textLines("m1", "No resp", "onse requested.", "\n\nMilk is on ", "the list.") +
+                line("""{"type":"result","subtype":"success","is_error":false,"result":"No response requested.\n\nMilk is on the list."}"""),
+        ).events()
+        assertEquals("Milk is on the list.", events.filterIsInstance<EngineEvent.TextDelta>().joinToString("") { it.text })
+        val shown = events.filterIsInstance<EngineEvent.MessageCompleted>()
+        assertTrue(shown.isNotEmpty())
+        assertTrue(shown.all { it.text == "Milk is on the list." })
+    }
+
+    @Test fun aReplyThatIsOnlyNoResponseRequestedShowsNothing() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        val events = mapper.feed(
+            textLines("m1", "No response requested.") +
+                line("""{"type":"result","subtype":"success","is_error":false,"result":"No response requested."}"""),
+        ).events()
+        assertTrue(events.none { it is EngineEvent.TextDelta || it is EngineEvent.MessageCompleted })
+        assertEquals("completed", events.filterIsInstance<EngineEvent.TurnFinished>().single().status)
+    }
+
+    @Test fun claudeCodesMadeUpNoResponseIsNeitherAnAnswerNorAnError() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        val events = mapper.feed(listOf(
+            line("""{"type":"assistant","message":{"id":"s1","model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"No response requested."}]},"parent_tool_use_id":null}"""),
+            line("""{"type":"result","subtype":"success","is_error":false,"result":"No response requested."}"""),
+        )).events()
+        assertTrue(events.none { it is EngineEvent.MessageCompleted })
+        val finished = events.filterIsInstance<EngineEvent.TurnFinished>().single()
+        assertEquals("completed", finished.status)
+        assertNull(finished.error)
+    }
+
+    @Test fun textThatOnlyBeginsLikeTheStandInIsKept() {
+        val mapper = ClaudeStreamMapper(thread)
+        mapper.begin("turn-1", "a")
+        val events = mapper.feed(
+            textLines("m1", "No resp", "onse needed, it is done.") +
+                line("""{"type":"result","subtype":"success","is_error":false,"result":"No response needed, it is done."}"""),
+        ).events()
+        assertEquals("No response needed, it is done.", events.filterIsInstance<EngineEvent.TextDelta>().joinToString("") { it.text })
+        // A block that stops while it still reads like the stand-in is shown when it stops.
+        val short = ClaudeStreamMapper(thread).apply { begin("turn-2", "b") }
+            .feed(textLines("m2", "No resp", full = "No resp")).events()
+        assertEquals("No resp", short.filterIsInstance<EngineEvent.TextDelta>().joinToString("") { it.text })
     }
 
     @Test fun aRejectedLimitFailsTheTurnWithTheResetTime() {

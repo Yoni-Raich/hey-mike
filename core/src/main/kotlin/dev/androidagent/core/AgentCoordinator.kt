@@ -90,6 +90,8 @@ class AgentCoordinator(
      * must keep the answer where the agent cannot write it.
      */
     private val fullAccess: (String) -> Boolean = { false },
+    /** Runs panels that outlive their turn; without it, show_ui refuses them. */
+    private val panelHost: PanelHost? = null,
     private val adbStatus: () -> AdbStatus = { AdbStatus() },
 ) : TurnRunner {
     // The card on the screen belongs to whichever run holds the phone. A chat
@@ -162,6 +164,8 @@ class AgentCoordinator(
     /** The `ask_user` call waiting for the user. Changed only under [lifecycleLock]. */
     private var pendingQuestion: PendingQuestion? = null
     private var pendingPanel: PendingPanel? = null
+    /** Tool calls the engine waits on, by request id. Each is answered at most once. */
+    private val inFlightCalls = java.util.concurrent.ConcurrentHashMap<String, InFlightCall>()
     /** Where this run's tool calls work; the gateway is armed with it when the phone is taken. */
     private var runWorkspace: File? = null
     /** This run holds [PhoneShare.lease] and armed the gateway. Changed only under [lifecycleLock]. */
@@ -692,21 +696,47 @@ class AgentCoordinator(
      * @return false when the panel or action is not the one waiting, the run
      *   is stopping, or another action still runs.
      */
-    fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean {
+    fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean =
+        startPanelCall(panelId) { panel ->
+            val action = panel.actions.firstOrNull { it.id == actionId } ?: return@startPanelCall null
+            val on = !action.switch || turnOn
+            PanelRun(action.id, action.label, action.callFor(on) ?: return@startPanelCall null, on = if (action.switch) on else null, value = null)
+        }
+
+    /**
+     * The user let go of a live slider on the waiting panel: run its call with
+     * [value], snapped to the slider's steps, like an action tile.
+     *
+     * @return false for the same reasons as [runPanelAction], or when [value]
+     *   is not a number.
+     */
+    fun runPanelSlider(panelId: String, sliderId: String, value: Double): Boolean {
+        if (!value.isFinite()) return false
+        return startPanelCall(panelId) { panel ->
+            val slider = panel.liveSliders.firstOrNull { it.id == sliderId } ?: return@startPanelCall null
+            val snapped = slider.snap(value)
+            PanelRun(slider.id, slider.label, slider.callAt(snapped) ?: return@startPanelCall null, on = null, value = slider.format(snapped))
+        }
+    }
+
+    /** One call a panel makes for the user: a tile's tap or a slider's release. */
+    private class PanelRun(val id: String, val label: String, val call: PanelCall, val on: Boolean?, val value: String?)
+
+    private fun startPanelCall(panelId: String, resolve: (AgentPanel) -> PanelRun?): Boolean {
         val pending: PendingPanel
-        val action: PanelBlock.Action
+        val run: PanelRun
         synchronized(lifecycleLock) {
             pending = pendingPanel ?: return false
             if (pending.panel.id != panelId || pending.reply.isCompleted || state.value.phase == RunPhase.STOPPING) return false
             if (!isCurrentTurnLocked(pending.token, pending.threadId, pending.turnId)) return false
-            action = pending.panel.actions.firstOrNull { it.id == actionId } ?: return false
+            run = resolve(pending.panel) ?: return false
             if (!pending.actionLock.tryLock()) return false
             pending.touched.incrementAndGet()
-            setPanelAction(pending, actionId) { it.copy(running = true, message = "") }
+            setPanelAction(pending, run.id) { it.copy(running = true, message = "") }
         }
         scope.launch {
             try {
-                runPanelCall(pending, action, turnOn = !action.switch || turnOn)
+                runPanelCall(pending, run)
             } finally {
                 pending.touched.incrementAndGet()
                 pending.actionLock.unlock()
@@ -722,8 +752,8 @@ class AgentCoordinator(
         mutableState.value = state.value.copy(panelActions = now + (actionId to change(now[actionId] ?: PanelActionState())))
     }
 
-    private suspend fun runPanelCall(pending: PendingPanel, action: PanelBlock.Action, turnOn: Boolean) {
-        val call = action.callFor(turnOn)
+    private suspend fun runPanelCall(pending: PendingPanel, run: PanelRun) {
+        val call = run.call
         val requestId = "panel-${UUID.randomUUID()}"
         val threadId = pending.threadId
         val turnId = pending.turnId
@@ -734,7 +764,7 @@ class AgentCoordinator(
         withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
             put("threadId", threadId); put("turnId", turnId); put("requestId", requestId)
             put("name", call.tool); put("arguments", call.arguments)
-            put("source", "panel_action"); put("panelId", pending.panel.id); put("actionId", action.id)
+            put("source", "panel_action"); put("panelId", pending.panel.id); put("actionId", run.id)
         }) }
         val result = try {
             ensureCurrentTurn(epochToken, threadId, turnId)
@@ -767,9 +797,13 @@ class AgentCoordinator(
         }
         val shown = if (ok) "" else panelMessage(result.text)
         synchronized(lifecycleLock) {
-            pending.log += PanelActionLog(action.id, action.label, call.tool, if (action.switch) turnOn else null, ok, result.text)
-            setPanelAction(pending, action.id) {
-                it.copy(running = false, ok = ok, message = shown, runs = it.runs + 1, on = if (action.switch && ok) turnOn else it.on)
+            pending.log += PanelActionLog(run.id, run.label, call.tool, run.on, ok, result.text, run.value)
+            setPanelAction(pending, run.id) {
+                it.copy(
+                    running = false, ok = ok, message = shown, runs = it.runs + 1,
+                    on = if (run.on != null && ok) run.on else it.on,
+                    value = if (run.value != null && ok) run.value else it.value,
+                )
             }
         }
     }
@@ -1428,15 +1462,20 @@ class AgentCoordinator(
                 }
                 val receivedAt = nowNanos()
                 val token = synchronized(lifecycleLock) { epoch.get() }
-                val sessionId = synchronized(lifecycleLock) { state.value.sessionId } ?: return
+                val sessionId = synchronized(lifecycleLock) { state.value.sessionId } ?: run {
+                    runCatching { engine.answerTool(event.requestId, ToolResult("No chat owns this call. No device action was performed.", success = false)) }
+                    return
+                }
                 flushAssistantSegment()
                 lastMessageWasFinal = false
-                launchTool {
-                    toolLock.withLock {
+                val call = InFlightCall(event.threadId.orEmpty(), event.turnId.orEmpty())
+                inFlightCalls[event.requestId] = call
+                call.job = launchTool {
+                    try { toolLock.withLock {
                         if (!isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) return@withLock
                         // The chat's own tools leave the phone alone, so they do not wait for it.
                         if (event.name in ChatTools.NAMES) {
-                            serveChatTool(token, sessionId, event, receivedAt)
+                            serveChatTool(token, sessionId, event, receivedAt, call)
                             return@withLock
                         }
                         val independent = !tools.requiresDeviceLease(event.name)
@@ -1548,9 +1587,13 @@ class AgentCoordinator(
                         }
                         if (isCurrentTurn(token, event.threadId.orEmpty(), event.turnId.orEmpty())) {
                             sessions.append(message(sessionId, "tool", "${event.name}: ${result.text.take(4_000)}", attachments = result.attachmentPaths))
-                            engine.answerTool(event.requestId, result)
-                            traceToolTiming(sessionId, event, receivedAt, dispatchStarted, dispatchFinished, resultStarted, waitedNanos)
+                            if (answerCall(event.requestId, call, result)) {
+                                traceToolTiming(sessionId, event, receivedAt, dispatchStarted, dispatchFinished, resultStarted, waitedNanos)
+                            }
                         }
+                    } } finally {
+                        inFlightCalls.remove(event.requestId, call)
+                        withContext(NonCancellable) { settleCall(token, sessionId, event, call) }
                     }
                 }
             }
@@ -1584,6 +1627,10 @@ class AgentCoordinator(
                     mutableState.value = state.value.copy(approval = null, status = "Working")
                     overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Working"))
                 }
+                // A tool call the engine gave up on: nobody reads its answer now, and
+                // a panel or question left waiting would hold every later call.
+                inFlightCalls[event.requestId]?.takeIf { it.threadId == event.threadId.orEmpty() && it.turnId == event.turnId.orEmpty() }
+                    ?.close(CALL_CANCELLED_BY_ENGINE)
             }
             is EngineEvent.Approval -> {
                 if (synchronized(lifecycleLock) { approvalMatchesLocked(event) } && autoApproved(event.method, event.requestId)) {
@@ -1687,7 +1734,7 @@ class AgentCoordinator(
      * Answer the chat's own tools. None takes the phone: a question
      * can wait minutes, and another chat's tools must not wait with it.
      */
-    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long) {
+    private suspend fun serveChatTool(token: Long, sessionId: String, event: EngineEvent.ToolCall, receivedAt: Long, call: InFlightCall) {
         val threadId = event.threadId.orEmpty()
         val turnId = event.turnId.orEmpty()
         withContext(NonCancellable) { trace(sessionId, "tool_call", buildJsonObject {
@@ -1705,8 +1752,8 @@ class AgentCoordinator(
         val result = try {
             ensureCurrentTurn(token, threadId, turnId)
             when (event.name) {
-                ChatTools.ASK -> askUser(token, sessionId, threadId, turnId, event.arguments)
-                AgentPanels.NAME -> showPanel(token, sessionId, threadId, turnId, event.arguments).let { (real, masked) ->
+                ChatTools.ASK -> askUser(token, sessionId, threadId, turnId, event.arguments) { call.shown = true }
+                AgentPanels.NAME -> showPanel(token, sessionId, threadId, turnId, event.arguments, { call.expiredInChat = true }) { call.shown = true }.let { (real, masked) ->
                     traceText = masked
                     real
                 }
@@ -1748,8 +1795,49 @@ class AgentCoordinator(
             put("elapsedMs", (nowNanos() - started).coerceAtLeast(0) / 1_000_000)
         }) }
         if (!isCurrentTurn(token, threadId, turnId)) return
-        engine.answerTool(event.requestId, result)
-        traceToolTiming(sessionId, event, receivedAt, started, dispatchFinished, dispatchFinished, waitedNanos)
+        if (answerCall(event.requestId, call, result)) {
+            traceToolTiming(sessionId, event, receivedAt, started, dispatchFinished, dispatchFinished, waitedNanos)
+        }
+    }
+
+    /** Answer the engine once. False when the call was already answered or given up. */
+    private suspend fun answerCall(requestId: String, call: InFlightCall, result: ToolResult): Boolean {
+        if (!call.settled.compareAndSet(false, true)) return false
+        engine.answerTool(requestId, result)
+        return true
+    }
+
+    /**
+     * After a tool job ends. A call left unanswered while its turn still runs
+     * gets a failure, so the model never waits on it or guesses its outcome.
+     * A panel or question that closed without the user's answer says so in the chat.
+     */
+    private suspend fun settleCall(token: Long, sessionId: String, event: EngineEvent.ToolCall, call: InFlightCall) {
+        val closedBy = call.closedBy
+        if (closedBy != null && call.shown) {
+            val what = if (event.name == ChatTools.ASK) "The question" else "The panel"
+            val why = if (closedBy == CALL_CANCELLED_BY_ENGINE) "Mike stopped waiting for it" else "Mike's turn ended"
+            runCatching {
+                // A chat panel already says so on its own receipt.
+                if (!call.expiredInChat) {
+                    sessions.append(message(sessionId, "system", "$what closed: $why, so an answer there would not reach him. Taps already made stay done."))
+                }
+                trace(sessionId, "tool_closed", buildJsonObject {
+                    put("requestId", event.requestId)
+                    put("name", event.name)
+                    put("reason", closedBy)
+                })
+            }
+        }
+        if (!isCurrentTurn(token, call.threadId, call.turnId)) return
+        if (!call.settled.compareAndSet(false, true)) return
+        runCatching {
+            engine.answerTool(event.requestId, ToolResult(
+                "Hey Mike ended this ${event.name} call without a result. Nothing it would have created exists. " +
+                    "If it was a device action, it may or may not have run: check before you repeat it.",
+                success = false,
+            ))
+        }
     }
 
     /** App-side boundaries only. No model-time or network-time attribution. */
@@ -1789,7 +1877,9 @@ class AgentCoordinator(
         return runCatching { Json.parseToJsonElement(reply.text).jsonObject["answer"]?.jsonPrimitive?.contentOrNull }.getOrNull()
     }
 
-    private suspend fun askUser(token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject): ToolResult {
+    private suspend fun askUser(
+        token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject, onShown: () -> Unit = {},
+    ): ToolResult {
         val question = ChatTools.question("ask-${UUID.randomUUID()}", arguments).getOrElse {
             return toolRefusal("bad_question", it.message ?: "The question could not be read.")
         }
@@ -1807,6 +1897,7 @@ class AgentCoordinator(
                 overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Waiting for your answer"))
             }
         }
+        onShown()
         val askedAt = nowNanos()
         val reply = try {
             // In the chat as Mike's own words, so the history reads as asked and answered.
@@ -1845,9 +1936,10 @@ class AgentCoordinator(
      */
     private suspend fun showPanel(
         token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject,
+        onExpired: () -> Unit = {}, onShown: () -> Unit = {},
     ): Pair<ToolResult, String> {
         val known = tools.definitions.map { it.name }.toSet()
-        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments) { tool, args ->
+        val check: (String, JsonObject) -> String? = { tool, args ->
             when {
                 tool in ChatTools.NAMES || tool == SessionAgentTools.NAME -> "$tool is a chat tool, not a device action."
                 tool !in known -> "$tool is not one of your device tools."
@@ -1855,9 +1947,29 @@ class AgentCoordinator(
                 usesScreen(tool, args) -> "$tool uses the screen, and the panel is on it. Bind only tools that leave the screen alone."
                 else -> null
             }
-        }.getOrElse {
+        }
+        if (arguments.containsKey("panel_id")) {
+            // A saved panel, read or changed from any chat. A new definition passes this turn's checks first.
+            val definition = JsonObject(arguments.filterKeys { it != "panel_id" && it != "ops" && it != "state" })
+            if (definition.isNotEmpty()) {
+                AgentPanels.parse("panel-${UUID.randomUUID()}", definition, created = true, checkCall = check).exceptionOrNull()?.let {
+                    val refusal = toolRefusal("bad_panel", "The panel did not change: ${it.message ?: "it could not be read."}")
+                    return refusal to refusal.text
+                }
+            }
+            val result = panelHost?.manage(sessionId, arguments)
+                ?: toolRefusal("unsupported", "This build keeps no saved panels.")
+            return result to result.text
+        }
+        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments, created = true, checkCall = check).getOrElse {
             val refusal = toolRefusal("bad_panel", it.message ?: "The panel could not be read.")
             return refusal to refusal.text
+        }
+        if (panel.placement.detached) {
+            // It outlives the turn: the host keeps it, and the user approves it there, not here.
+            val result = panelHost?.propose(sessionId, arguments)
+                ?: toolRefusal("unsupported", "This build cannot keep panels outside the chat. Use the chat, lifetime turn.")
+            return result to result.text
         }
         val pending = synchronized(lifecycleLock) {
             if (!isCurrentTurnLocked(token, threadId, turnId)) throw CancellationException("Run stopped")
@@ -1870,16 +1982,19 @@ class AgentCoordinator(
                 mutableState.value = state.value.copy(
                     phase = RunPhase.TOOL, controlling = false, status = "Waiting for you",
                     toolName = AgentPanels.NAME, panel = panel,
-                    panelActions = panel.actions.associate { action -> action.id to PanelActionState(on = if (action.switch) action.on else null) },
+                    panelActions = panel.actions.associate { action -> action.id to PanelActionState(on = if (action.switch) action.on else null) } +
+                        panel.liveSliders.associate { slider -> slider.id to PanelActionState(value = slider.initial) },
                 )
                 overlay.updateState(OverlayState(OverlayPhase.RUNNING, "Waiting for you"))
             }
         }
+        onShown()
         val askedAt = nowNanos()
+        var titleId: String? = null
+        var answer: PanelReply? = null
         val reply = try {
-            sessions.append(message(sessionId, "assistant", panel.title))
+            titleId = message(sessionId, "assistant", panel.title).also { sessions.append(it) }.id
             // A tap on an action counts as use: the wait starts over while the user works the panel.
-            var answer: PanelReply? = null
             while (answer == null) {
                 val seen = pending.touched.get()
                 answer = withTimeoutOrNull(ChatTools.ASK_TIMEOUT_MS) { pending.reply.await() }
@@ -1895,6 +2010,17 @@ class AgentCoordinator(
             approvalNanos.addAndGet(nowNanos() - askedAt)
             synchronized(lifecycleLock) {
                 if (state.value.panel?.id == panel.id) mutableState.value = state.value.copy(panel = null, panelActions = emptyMap())
+            }
+            // Closed with no answer (timeout, turn end, Stop): the chat keeps a receipt, not a form.
+            val shownAs = titleId
+            if (answer == null && shownAs != null) {
+                val tapped = synchronized(lifecycleLock) { pending.log.isNotEmpty() }
+                withContext(NonCancellable) {
+                    runCatching {
+                        sessions.updateMessage(shownAs, panel.title, if (tapped) AgentPanels.EXPIRED_AFTER_TAPS else AgentPanels.EXPIRED)
+                        onExpired()
+                    }
+                }
             }
         }
         ensureCurrentTurn(token, threadId, turnId)
@@ -2116,6 +2242,9 @@ class AgentCoordinator(
             if (epoch.get() != token) null
             else {
                 cancelLocalApprovalLocked()
+                // A call still open when the turn ends would hold the tool lock
+                // (and a chat panel) into the next turn, so later calls never run.
+                inFlightCalls.values.forEach { it.close(CALL_TURN_ENDED) }
                 val flush = textFlushJob.also { it?.cancel() }
                 textFlushJob = null
                 awaitingTurn = false
@@ -2330,6 +2459,24 @@ class AgentCoordinator(
     /** [answer] is null when the user chose not to answer. */
     private class QuestionReply(val answer: String?)
     private class PendingQuestion(val question: UserQuestion, val reply: CompletableDeferred<QuestionReply>)
+
+    /** One engine tool call. [settled] once answered or given up, so it is answered at most once. */
+    private class InFlightCall(val threadId: String, val turnId: String) {
+        val settled = AtomicBoolean(false)
+        @Volatile var job: Job? = null
+        /** The user could see it: a chat panel or question. */
+        @Volatile var shown = false
+        /** Why it ended with no answer, when the app gave up on it. */
+        @Volatile var closedBy: String? = null
+        /** A chat panel that closed unanswered and left an "Expired, not sent" receipt. */
+        @Volatile var expiredInChat = false
+
+        fun close(reason: String) {
+            if (!settled.compareAndSet(false, true)) return
+            closedBy = reason
+            job?.cancel()
+        }
+    }
     private class PendingPanel(
         val panel: AgentPanel,
         val reply: CompletableDeferred<PanelReply>,
@@ -2381,6 +2528,8 @@ class AgentCoordinator(
 
         /** How long a closed panel waits for its running action before Mike hears back. */
         private const val PANEL_ACTION_DRAIN_MS = 10_000L
+        private const val CALL_CANCELLED_BY_ENGINE = "engine_cancelled"
+        private const val CALL_TURN_ENDED = "turn_ended"
 
         /**
          * How long a firing rule waits for the phone before giving up.

@@ -413,6 +413,7 @@ class MainActivity : ComponentActivity() {
         onAnswerQuestion = { questionId, answer -> model.graph.coordinator.answerQuestion(questionId, answer) },
         onAnswerPanel = { panelId, button, values -> model.graph.coordinator.answerPanel(panelId, button, values) },
         onPanelAction = { panelId, actionId, turnOn -> model.graph.coordinator.runPanelAction(panelId, actionId, turnOn) },
+        onPanelSlider = { panelId, sliderId, value -> model.graph.coordinator.runPanelSlider(panelId, sliderId, value) },
         onApproveAlways = { requestId, scope ->
             val before = model.graph.sendGrants.grants.value.size
             model.graph.coordinator.approve(requestId, true, scope)

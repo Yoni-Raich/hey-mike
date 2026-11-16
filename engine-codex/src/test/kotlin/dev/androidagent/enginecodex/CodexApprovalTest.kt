@@ -96,6 +96,42 @@ class CodexApprovalTest {
         } finally { server.close() }
     }
 
+    @Test fun serverCancellationOfAnUnansweredToolCallReachesTheAppButAnAnsweredOneDoesNot() = runBlocking {
+        val server = Server()
+        try {
+            server.engine.connect()
+            suspend fun call(id: String): EngineEvent.ToolCall {
+                val pending = async(start = CoroutineStart.UNDISPATCHED) {
+                    server.engine.events.filterIsInstance<EngineEvent.ToolCall>().first()
+                }
+                server.send(buildJsonObject {
+                    put("id", id); put("method", "item/tool/call")
+                    put("params", buildJsonObject {
+                        put("threadId", "thread"); put("turnId", "turn"); put("tool", "show_ui")
+                        put("arguments", buildJsonObject { put("title", "Form") })
+                    })
+                })
+                return withTimeout(5_000) { pending.await() }
+            }
+            suspend fun resolve(id: String) = server.send(buildJsonObject {
+                put("method", "serverRequest/resolved")
+                put("params", buildJsonObject { put("requestId", id); put("threadId", "thread") })
+            })
+
+            val answered = call("answered")
+            server.engine.answerTool(answered.requestId, dev.androidagent.core.ToolResult("done"))
+            withTimeout(5_000) { server.responses.receive() }
+            val waiting = call("waiting")
+            val resolved = async(start = CoroutineStart.UNDISPATCHED) {
+                server.engine.events.filterIsInstance<EngineEvent.ApprovalResolved>().first()
+            }
+            // The answered call settles first: if it emitted, this would see it.
+            resolve("answered")
+            resolve("waiting")
+            assertEquals(EngineEvent.ApprovalResolved(waiting.requestId, "thread", "turn"), withTimeout(5_000) { resolved.await() })
+        } finally { server.close() }
+    }
+
     @Test fun computerUseConfirmationWaitsForTheUserAndRepliesWithMcpContent() = runBlocking {
         val server = Server()
         try {

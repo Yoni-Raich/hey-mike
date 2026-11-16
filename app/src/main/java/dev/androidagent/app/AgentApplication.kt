@@ -76,7 +76,12 @@ class AgentApplication : Application(), AutomationHostOwner {
     override val automationHost: AutomationHost?
         get() = if (::graph.isInitialized) graph.automationHost else null
 
-    override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
+    override fun onCreate() {
+        super.onCreate()
+        // Before the graph, so a channel from an earlier build goes even if building it fails.
+        RetiredChannels.retire(this)
+        graph = AgentGraph(this)
+    }
 }
 
 class AgentGraph(private val app: Application) {
@@ -285,6 +290,46 @@ class AgentGraph(private val app: Application) {
         authorizeSend = { request, dispatch -> runCoordinator.authorizeSend(request, dispatch) },
         // Settings writes, event deletes and notification action buttons.
         authorizeChange = { request, dispatch -> runCoordinator.authorizeLocalIntent(request, dispatch) },
+    )
+    /**
+     * The one gateway saved panels reach: its own instance, armed once and
+     * never part of a run, so Stop and a run's revoke neither break a widget
+     * nor let a panel borrow a run's grants. It asks for nothing: sends,
+     * settings writes and runtime permissions are all denied here.
+     */
+    private val panelTools = AndroidCapabilityTools(app, media = notificationAccess).also {
+        it.beginRun("saved-panels", File(app.filesDir, "saved-panels"))
+    }
+    /** Panels that outlive their turn: floating cards, widgets and notifications. */
+    val panels = dev.androidagent.core.PanelHost(
+        CoroutineScope(scope.coroutineContext + Dispatchers.Default),
+        dev.androidagent.app.panels.KeystoreSavedPanelVault(app),
+        sessions,
+        invoke = { name, arguments -> withContext(Dispatchers.IO) { panelTools.invoke(name, arguments) } },
+        checkCall = { tool, arguments ->
+            when {
+                panelTools.definitions.none { it.name == tool } -> "$tool is not a tool a saved panel can reach."
+                // The same guard a run uses: anything that may take the screen needs Mike and the overlay.
+                panelTools.needsControl(tool, arguments) -> "$tool can take the screen, so it cannot run without Mike."
+                else -> null
+            }
+        },
+        runActive = { ::runCoordinator.isInitialized && runCoordinator.anyActive || voice.state.value.active },
+        screenOn = { app.getSystemService(android.os.PowerManager::class.java)?.isInteractive != false },
+        stateVault = dev.androidagent.app.panels.KeystoreSavedPanelVault.forState(app),
+        zone = { java.time.ZoneId.systemDefault() },
+        startTurn = { origin, prompt, displayPrompt ->
+            // One active run per phone: an ask_mike tap never steers or queues behind a running chat.
+            if (::runCoordinator.isInitialized && runCoordinator.anyActive || voice.state.value.active) {
+                "Mike is busy. Try again when he has finished."
+            } else {
+                runCatching {
+                    val id = origin?.takeIf { sessions.getSession(it) != null }
+                        ?: sessions.createSession().id.also(permissions::startChat)
+                    queue.submit(dev.androidagent.core.QueuedTurn(sessionId = id, prompt = prompt, displayPrompt = displayPrompt))
+                }.fold(onSuccess = { null }, onFailure = { it.message ?: "Could not ask Mike." })
+            }
+        },
     )
     private val workflowCalls = WorkflowCallRegistry(
         listOf(
@@ -499,6 +544,9 @@ class AgentGraph(private val app: Application) {
     val coordinator: AgentRuns
         get() = runCoordinator
     val queue: SessionRunQueue
+    /** Where saved panels are drawn: the floating card, notifications and the widget. */
+    lateinit var panelSurfaces: dev.androidagent.app.panels.SavedPanelSurfaces
+        private set
     /** Chats that stopped at a usage limit, and what each does about it. */
     lateinit var limitRecovery: dev.androidagent.core.UsageLimitRecovery
         private set
@@ -538,8 +586,14 @@ class AgentGraph(private val app: Application) {
                 sessionAgents = { sessionAgents },
                 // A delegated chat works for the chat that started it, with that chat's level.
                 fullAccess = { chat -> permissions.isFull(chat) || runCoordinator.ancestorsOf(chat).any(permissions::isFull) },
+                panelHost = panels,
             )
         })
+        panelSurfaces = dev.androidagent.app.panels.SavedPanelSurfaces(
+            app, scope, panels, runStates = runCoordinator.sessionStates, appInFront = appInFront,
+        )
+        panels.start()
+        panelSurfaces.start()
         val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
         sessionAgents = dev.androidagent.core.SessionAgents(sessions, scope,
             runner = { dev.androidagent.core.RunsSessionAgentRunner(runCoordinator) },

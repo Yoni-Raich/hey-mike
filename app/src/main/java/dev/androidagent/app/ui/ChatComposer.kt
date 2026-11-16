@@ -204,8 +204,9 @@ internal fun AgentComposer(
     // A skill picked from the menu rides as a chip until the message is sent.
     var skill by remember(state.activeSessionId) { mutableStateOf<AgentSkill?>(null) }
     var renaming by remember(state.activeSessionId) { mutableStateOf(false) }
-    val voiceActive = state.voiceState.active && (state.voiceSessionId == null || state.voiceSessionId == state.activeSessionId)
-    val active = state.runState.active && state.runState.sessionId == state.activeSessionId && !state.runState.delegated && !voiceActive
+    val voiceActive = voiceHere(state)
+    // The same answer that draws the chat's Working line.
+    val active = chatRunView(state).statusLine
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)

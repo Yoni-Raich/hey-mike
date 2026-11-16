@@ -64,8 +64,11 @@ class DeepControlTest {
         override fun reply(key: String, buttonIndex: Int?, text: String): NotificationOutcome { calls += "reply:$key:$text"; return NotificationOutcome.Done }
         override fun press(key: String, buttonIndex: Int?): NotificationOutcome { calls += "press:$key:$buttonIndex"; return NotificationOutcome.Done }
         override fun dismiss(key: String): NotificationOutcome { calls += "dismiss:$key"; return NotificationOutcome.Done }
-        override fun sessions() = listOf(MediaSessionInfo("com.music", "playing", "Song", "Artist", null, 1000L, 10L, listOf("pause")))
-        override fun control(packageName: String?, command: String, positionMs: Long?): NotificationOutcome { calls += "media:$command"; return NotificationOutcome.Done }
+        var media = listOf(MediaSessionInfo("com.music", "playing", "Song", "Artist", null, 1000L, 10L, listOf("pause")))
+        override fun sessions() = media
+        override fun control(packageName: String?, command: String, positionMs: Long?): NotificationOutcome {
+            calls += "media:$packageName:$command:$positionMs"; return NotificationOutcome.Done
+        }
     }
 
     private class FakeSystem : SystemPlatform {
@@ -224,6 +227,46 @@ class DeepControlTest {
         assertTrue(s.calls.isEmpty())
         assertTrue(run(SystemPolicy.TOOL, args, system = s).success)
         assertEquals(listOf("put:global:airplane_mode_on:1"), s.calls)
+    }
+
+    @Test fun seekBySkipsFromTheLivePositionWithinTheTrack() {
+        val n = FakeNotifications()
+        n.media = listOf(
+            MediaSessionInfo("com.radio", "paused", "News", null, null, null, 5_000L, emptyList()),
+            MediaSessionInfo("com.music", "playing", "Song", "Artist", null, 200_000L, 95_000L, listOf("pause")),
+        )
+        fun seek(offset: Int, pkg: String? = null) = run(SystemPolicy.TOOL, buildJsonObject {
+            put("operation", "media_control"); put("command", "seek_by"); put("offset_ms", offset); pkg?.let { put("package", it) }
+        }, notifications = n)
+        val back = seek(-10_000)
+        assertTrue(back.text, back.success)
+        assertEquals("85000", json(back)["positionMs"]!!.jsonPrimitive.content)
+        assertTrue(seek(600_000).success)
+        assertTrue(seek(-60_000, "com.radio").success)
+        assertEquals(listOf("media:com.music:seek:85000", "media:com.music:seek:200000", "media:com.radio:seek:0"), n.calls)
+        assertEquals("invalid_argument", errorType(seek(600_001)))
+        assertEquals("invalid_argument", errorType(run(SystemPolicy.TOOL, buildJsonObject {
+            put("operation", "media_control"); put("command", "seek_by")
+        }, notifications = n)))
+        n.media = listOf(MediaSessionInfo("com.cast", "playing", "Live", null, null, null, null, emptyList()))
+        assertEquals("no_position", errorType(seek(10_000)))
+        n.media = emptyList()
+        assertEquals("no_session", errorType(seek(10_000)))
+        assertEquals(3, n.calls.size)
+    }
+
+    @Test fun mediaStatusNamesTheSessionCommandsActOn() {
+        val n = FakeNotifications()
+        n.media = listOf(
+            MediaSessionInfo("com.radio", "paused", "News", null, null, null, 5_000L, emptyList()),
+            MediaSessionInfo("com.music", "playing", "Song", "Artist", null, 200_000L, 95_000L, listOf("pause")),
+        )
+        val status = json(run(SystemPolicy.TOOL, buildJsonObject { put("operation", "media_status") }, notifications = n))
+        val current = status["current"]!!.jsonObject
+        assertEquals("com.music", current["package"]!!.jsonPrimitive.content)
+        assertEquals("Song", current["title"]!!.jsonPrimitive.content)
+        n.media = emptyList()
+        assertNull(json(run(SystemPolicy.TOOL, buildJsonObject { put("operation", "media_status") }, notifications = n))["current"])
     }
 
     @Test fun systemControlsWithoutPlatformIsTyped() {

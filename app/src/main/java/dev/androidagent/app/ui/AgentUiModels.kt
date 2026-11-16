@@ -451,6 +451,8 @@ data class AgentUiActions(
     val onAnswerPanel: (panelId: String, button: String?, values: Map<String, String>) -> Unit = { _, _, _ -> },
     /** A tap on a panel's action tile: the app runs its tool call at once. */
     val onPanelAction: (panelId: String, actionId: String, turnOn: Boolean) -> Unit = { _, _, _ -> },
+    /** The user let go of a live slider: the app runs its tool call with this value. */
+    val onPanelSlider: (panelId: String, sliderId: String, value: Double) -> Unit = { _, _, _ -> },
     /** Allow a send and remember it for this contact or this whole app. */
     val onApproveAlways: (requestId: String, scope: dev.androidagent.core.ApprovalScope) -> Unit = { _, _ -> },
     val onRemoveSendGrant: (dev.androidagent.core.SendGrant) -> Unit = {},

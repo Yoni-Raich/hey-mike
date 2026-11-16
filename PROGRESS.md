@@ -1,5 +1,291 @@
 # Progress
 
+### PR 166 integration with dev - 2026-11-16
+
+Merged dev 7d12b65c into panel head 9cc58304. The only conflict was this
+progress file; both entries were kept. The mini-app template test now accepts
+CRLF and LF code fences: its original LF-only expression found no examples
+in a Windows checkout. No app behavior changed in this integration.
+
+Checks: `gradlew.bat :core:test :app:testDevDebugUnitTest
+:overlay:testDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+:app:compileDevDebugAndroidTestKotlin --no-daemon` passed. XML reports:
+1,013 core, 206 app and 11 overlay tests; zero failures, errors or skips.
+`python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`
+passed (24 tests). `git diff --check` passed. No device tests were run for
+this merged snapshot; instrumentation was compiled only. This is not a full
+release gate. The existing physical-device gaps below remain.
+
+### Panels as mini-apps - 2026-11-16
+
+Base: feat/agent-panel-native de8f4e5b, branch feat/agent-panel-apps. A saved
+panel keeps typed state (signed, bounded, in its own store): `checklist`,
+`counter`, `timer`, `countdown`, `progress`, `note` blocks, daily or weekly
+`reset`. Actions get a `kind`: `device` (as before), `local` (this panel's
+state only), `ask_mike` (a new chat turn with the state marked as untrusted
+user data) and `open` (an allowlist of six intent shapes, checked at
+creation, load and tap, shown in words on the approval screen). `show_ui`
+takes `panel_id`: list, read, change state with no approval, or replace the
+definition, which waits for approval again when it adds or changes a device,
+open or ask_mike action. Input on every surface: notification Add box
+(RemoteInput), typing on the floating card, a widget list on Android 12+ (six
+fixed rows below that) with an Add box. A timer's end posts an alert. The
+agent-ui skill teaches nine templates (see ARCHITECTURE "Panels as
+mini-apps: state, local actions, panel_id"). Retest fixes on the same branch: the pinned notification's lock
+screen words now match what it does (title only, buttons after unlock), the
+approval screen leads with plain words and keeps the raw call behind
+Details, the floating card shows a plain caption and sits above the dock.
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug :automations:testDebugUnitTest
+:overlay:testDebugUnitTest :engine-claude:testDebugUnitTest
+:workspace:testDebugUnitTest --no-daemon` passed (lint 0 errors, no issue in
+the new files); `git diff --check` passed. New tests: `PanelStateTest` (every
+op per block, limits, the open allowlist, resets, size bounds),
+`PanelAppsHostTest` 19 (state across a restart, surface-op gating, gating per
+action kind, `panel_id` with and without re-approval, untrusted data in the
+ask_mike prompt, no turn while a run is active, resets, every SKILL.md template parsed,
+approved and changed), `AgentPanelsTest` parsing cases and
+`AgentCoordinatorTest` `aPinnedPanelsTurnEndsReadyWithItsCallClosed`.
+
+Not tested: nothing ran on a phone or emulator. Unverified: the notification
+Chronometer countdown, its Add box (RemoteInput) and the lock-screen public
+version; the widget list (RemoteCollectionItems) and its fallback rows; the
+Add dialog activity and its keyboard; typing a note on the floating card
+(window focus for the keyboard); starting an `open` target from a floating
+card, notification and widget; inexact alarms for timers and resets while the
+phone dozes; the silent timer pop-up (no sound, no vibration). The "Working" row after a detached
+panel's turn (retest fix 2) is covered by a unit test only: the retested
+build b1f054f3 did not have 48f718f5. Fix 2 is not reproduced and not
+confirmed: with both 48f718f5 closes (turn end and engine cancel) removed
+by hand, the pinned-panel tests (`aPinnedPanelsTurnEndsReady...`, which
+also check the status reads "Ready" when the engine settles the call after
+the turn ends or never) still passed, because a pinned call is answered at
+once. Only the three chat-panel and question tests failed, as expected. So
+the phone symptom may have another cause; retest it on a build with
+48f718f5. No screenshot.
+
+Round 3 fixes (from the Xiaomi test of 75bc8d20), each its own commit, none
+run on a phone:
+- Stuck "Working" row: not reproduced. The chat's Working line and the
+  composer's Stop now come from one `chatRunView`, so they cannot disagree:
+  a chat whose children still work no longer draws the line (the composer
+  row reports it), an empty reply left "streaming" after the turn is no
+  longer drawn as a second Working orb, and the line no longer fades out
+  after the run ends (`animateItem(fadeOutSpec = null)`, hardening without
+  evidence). `ChatRunViewTest` 5 checks the rows and the button from the same
+  `AgentUiState`; it was not run against the old code.
+- A chat form left open no longer vanishes when its turn ends, times out, is
+  given up by the engine or is stopped: it stays as a collapsed "Expired, not
+  sent." receipt (title plus that line; "Taps already made stay done." when an
+  action ran) that has no fields or buttons. Coordinator tests cover turn end,
+  engine give-up, the 8-minute timeout (a late answer is refused) and an
+  answered panel staying "complete"; `ExpiredPanelNoteTest` covers the line.
+  The receipt card itself is not drawn in any test.
+- Approval card words: a local op reads as plain words from `PanelOpWords`
+  ("Add 1 to "Glasses". Changes only this panel.", not `inc "Glasses"`), and
+  so does a local tile's caption on every surface. A notification's lock-screen
+  note is one line, "On the lock screen: title only (all of it if your phone
+  shows full content). Buttons work after unlock.", with the full rule under
+  Details. `PanelPlacementTest` checks the words, the tile caption and the
+  rule; the card was not looked at on a phone.
+- Multi-step tiles: a `steps` action runs 2 to 6 allowlisted device calls and
+  local ops in order, without the model, and stops at the first failure with
+  the reason first: "<reason>. Stopped at step 3 of 4 (...); the steps before
+  it did run." (round 4 put the reason first). The bedtime
+  template's "Start bedtime" uses it (Do Not Disturb, brightness 30%, the
+  lights-out timer). `PanelAppsHostTest` covers the order, a device and a
+  local failure, a refusal at the tap that runs nothing, the creation checks
+  and the re-approval of a new routine; `PanelPlacementTest` the numbered
+  approval words and the tile caption. Not tapped on a phone: the real
+  Do Not Disturb and brightness steps, and how the numbered list reads on the
+  approval card.
+- Jank after a heavy session (19.3% janky frames, p50 24 ms, p90 57 ms on the
+  Xiaomi, 75bc8d20): found by reading the code, not by a profile. The chat list
+  folded every message again on each state change; the Saved panels screen
+  redrew every card each second for one "ends in" line; notifications and
+  widgets were built on the main thread at each panel change, and every widget
+  was sent to the launcher again even when it showed the same thing. Now the
+  rows are remembered per message list, only the line of a panel that ends
+  ticks, notifications and widgets are built off the main thread, and a widget
+  is sent only when its face changed (`SavedPanelWidgetDrawTest`). The floating
+  card was already fine: its timer is a Chronometer, nothing rebinds it each
+  second. Not measured again on a phone: the frame numbers after this change
+  are unknown.
+- "Add to home screen" on a panel that already has a widget now says "This
+  panel is already on your home screen." instead of pinning a second one: a
+  widget id the launcher still holds and that maps to this panel counts, a
+  tie left by a removed widget does not (`SavedPanelWidgetPinTest`). Not tried
+  on a launcher. A pin still waiting in the launcher's dialog is not tracked,
+  so two fast taps can still ask twice.
+- With the user's OK, "Panels to approve" and "Questions from Mike" are
+  silent: new channel ids (`saved_panel_approvals_v2`, `questions_v2`) with no
+  sound and no vibration, each at its old importance (default; high, so a
+  question still pops up). The old ids are deleted at startup. Settings the
+  user changed on the old channels (a sound, importance, lock screen) do not
+  carry over. "Approvals for Mike" and "Finished chats" still use the
+  phone's default sound; unchanged. `PanelChannelsTest` checks the specs and
+  the retired ids. Not run on a phone: that the old channels are gone and the
+  new ones pop up without a sound.
+
+Round 4 (Xiaomi test of bdab3e08). Passed there: the steps approval card
+listed all 3 steps in plain words, the tile stopped at the first failure and
+named step 2, "already on your home screen" with no second widget id, and the
+Working row cleared. Fixes, each its own commit, none run on a phone:
+- Do Not Disturb words now say what the call sets: `mode: priority` reads
+  "Turn on Do Not Disturb (priority only)", not "Set Do Not Disturb to
+  priority"; alarms reads "(alarms only)", total "(total silence)", off "Turn
+  off Do Not Disturb". These match `setDnd`'s interruption filters
+  (`PanelPlacementTest`).
+- A failed step no longer hides its reason. The Xiaomi widget showed "Go: Step
+  2 of 3 (Set t..." because the message led with the step. It now leads with
+  the reason, "<reason>. Stopped at step 2 of 3 (<words>); the steps before it
+  did run.", capped at 160 characters with the step's words cut first
+  (`PanelAppsHostTest.aStepsFailureCutsTheStepWordsBeforeTheReason`). A widget
+  tile shows "Failed" and the panel's full-width line shows "label: reason"
+  in up to 3 lines; a tile's idle caption may wrap to 2 lines, so "Set Do Not
+  Disturb..." is no longer cut at one. The floating card gives a failed
+  caption 3 lines. The notification's collapsed line is the reason, which now
+  comes first. Not looked at on a phone: how the widget line, the 2-line tile
+  caption and the floating caption fit on a real launcher and screen.
+- A missing permission is named and can be allowed. On the Xiaomi step 2
+  (brightness) failed for lack of "Modify system settings". Now Saved panels
+  flags, before and after approval, each step whose switch is off ("Step 2
+  needs “Modify system settings” for Hey Mike, which is off") and offers
+  "Allow “Modify system settings”", which opens Android's screen for Hey
+  Mike; the flag clears within a second of coming back. The failed tap reads
+  "Hey Mike needs “Modify system settings”; allow it in Saved panels.
+  Stopped at step 2 of 3 (...)". The same holds for "Do Not Disturb access"
+  (Do Not Disturb, silent ringer). Nothing is granted by adb or code.
+  `PanelGrantsTest` checks the mapping, the flags and the result parsing;
+  `PanelAppsHostTest.aMissingGrantNamesTheSwitchAndIsKeptForSavedPanels` the
+  tap. Not done on a phone: the Allow button opening the right screen on
+  HyperOS, and the flag clearing after the user flips the switch.
+
+Round 5 (Xiaomi test of 028f1e3e). Passed there: the DND words, the step-2
+grant flag and Allow, the reason-first failure, the Working row over 5 turns,
+Stop mid-turn, the Expired receipt, plain local-op words, the short lock-screen
+line, eye reveal, both slider modes, the silent 10 s timer, reduced motion;
+jank 15.2% (from 19.3%), p50 27 ms, p90 53 ms. Fixes, each its own commit,
+none run on a phone:
+- Old channel ids (`questions`, `saved_panels`, `saved_panel_approvals`,
+  `saved_panel_alerts`) are now deleted first thing in
+  `AgentApplication.onCreate` by `RetiredChannels`, before the app graph is
+  built, on every process start. Before, the delete ran in the
+  `SavedPanelNotifications` and `QuestionNotifier` constructors, inside the
+  graph; why it did not take on the phone is not known. Android soft-deletes
+  a channel: `dumpsys notification` can still list it, marked deleted, so
+  check `mDeleted` before calling it alive. `RetiredChannelsTest` 5 (every old
+  id listed, no id in use listed, an upgrade deletes the old and keeps the
+  new, a second start deletes nothing, one refused delete does not stop the
+  rest).
+- Duplicate controls: a `local` action whose op and target only repeat a
+  block's own button ("+ Add 1 to Pushups" next to the counter's +1, a "Start"
+  tile next to the timer's Start) is dropped when the panel is made or
+  replaced, from the stored definition too, and the result's `dropped` says
+  which and why. Per surface: the counter's + at its own step and the timer's
+  Start, resume and Pause everywhere; - and Reset only on a floating card,
+  where the card draws them. agent-ui SKILL.md now says blocks bring their own
+  buttons, and the cooking template lost its Pause tile.
+  `PanelAppsHostTest.anActionThatRepeatsABlocksOwnButtonIsDroppedWithANote`
+  (widget and floating, kept after a reload) and the template test (no
+  template drops anything). Panels saved before this keep their tiles.
+- Slider decimals: the continuous volume slider read 75.4. The panel's JSON
+  was not read; one decimal fits a `step` of 0.1 (0 to 100 is exactly the
+  1000-step limit), which a model picks to get a smooth track. A slider now
+  has `decimals` (0 to 4). By default it is what `min` and `step` need (0 on a
+  whole track), and display, receipt and sent value all use it. A new panel
+  whose step has decimals and that does not set `decimals` is refused with a
+  reason that says to leave `step` out (a track over 20 steps is already
+  smooth) or set `decimals`; saved panels still load as they were. Snapped
+  values are rounded, so 0.1 steps never send 0.30000000000000004. The
+  floating card's track now shows the same text as the chat while dragged
+  (it used its own 2-decimal trim) and sends the rounded value. SKILL.md says
+  the same. `AgentPanelsTest` 3 new (refused without decimals, 75.4 with
+  `decimals: 1`, 75 with no step, a saved panel loads, bad `decimals` refused,
+  a live call sends 0.3, the floating track matches); `:core:test` 1013.
+- Hebrew receipt: the expired form receipt with a Hebrew title kept its icon
+  on the left and its title left-aligned (r5-84). A receipt whose title holds
+  a Hebrew or Arabic letter now lays out right to left: icon on the right,
+  title and note right-aligned. "Expired, not sent." stays English: the app
+  ships no Hebrew strings (no `values-iw` or `values-he`; all UI text is
+  hard-coded English), so there is nothing to add a translation to.
+  `ExpiredPanelNoteTest.aHebrewTitleMirrorsTheReceipt`. Not seen on a phone.
+- Floating card (r5): text was already in sp, but the card's views are built
+  once and reused, so a font-size change while a card showed never applied.
+  The overlay now watches configuration changes (font scale, density, width)
+  and builds every card again from the last faces, waiting while the user
+  types; the title row wraps instead of a fixed 40dp. A ☰ Saved panels button
+  beside close opens the Saved panels screen at that panel. The card stays
+  dark in light mode by design: the app is dark-only (`AgentDarkColors`).
+  `FloatingPanelLookTest` (2 tests); `:overlay:testDebugUnitTest` and
+  `:app:compileDevDebugKotlin` passed. Not seen on a phone: the rebuild on a
+  font change and the button opening the screen from over another app.
+- Round 6 on a Redmi 12, a189343e (r6-01 to r6-22):
+  - Passed:
+    - Old channels: `mDeleted=true`; the `_v2` channels are silent.
+    - Duplicate tile dropped.
+    - Step 1 shows whole numbers; a 0.25 step without `decimals` is refused.
+    - Hebrew receipt mirrored.
+    - Card rebuilt at font scale 1.3 and back.
+    - ☰ opens Saved panels over the launcher.
+  - Two bugs, both fixed after the round:
+    - `decimals: 2` on a 0.5 step read "0.5" while Mike said "0.50". A slider now shows exactly `decimals` places (`AgentPanels.fixed`) in the chat, on the floating track and in the receipt. A 0.25 track reads 1.00, and a saved 0.1 track reads 75.0. The value sent is unchanged.
+    - At font scale 1.3, a long card title was cut ("Gamma Title For Font Sc..."). It now wraps to 2 lines.
+  - Checks:
+    - `:core:test` 1013, `:overlay:testDebugUnitTest` 11, `:app:testDevDebugUnitTest` 206.
+    - `:app:lintDevDebug` and `:app:assembleDevDebug` passed.
+  - Not seen on a phone: both fixes.
+  - Not run, because the round was stopped early: light mode, the regression pass, the lock-screen expand, the widget at 1.3, and jank.
+
+### Panels outside the chat - 2026-11-15
+
+Base: feat/agent-panel-native b65e2136, branch feat/agent-panel-surfaces.
+`show_ui` takes `surface` (chat, floating, notification, widget) and
+`lifetime` (turn, ttl, pinned). Panels that outlive the turn run their taps
+with no model turn, through an allowlist, and need the user's approval on an
+app-drawn screen (Settings, Saved panels) unless they are a floating card of
+60 s or less. Live values with `bind`. `media_control seek_by` and
+`media_status current`. A RemoteViews widget, an ongoing notification and a
+floating card in `:overlay` (see ARCHITECTURE "Panels outside the chat").
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug :automations:testDebugUnitTest
+:overlay:testDebugUnitTest --no-daemon` passed (lint 0 errors, no warning in
+the new files); `git diff --check` passed. New tests: `PanelHostTest` 17
+(approval gating, approval refused while a run is active, short floating card
+shown at once and expiring, ttl from approval, expired panels dropped on
+load, re-check on load and on every tap, tampered and rolled-back store,
+remove all, pending cap, a refused shell action, live reads only while shown
+and every read logged (text only on change), the skill's music banner parsed from SKILL.md, the
+panel face, slider steps) and `DeepControlTest` seek_by cases.
+
+Not tested: nothing ran on a phone or emulator. The floating card, the
+notification (including lock screen and swipe-away), the widget (pinning,
+binding, the removed state), the Saved panels screen, Keystore signing,
+real media seek and the live reads are all unverified. No screenshot.
+Quick Settings tiles are not built.
+
+### Native panel style and sliders - 2026-11-15
+
+Base: origin/dev e95a63fa, branch feat/agent-panel-native. `show_ui` panels
+are redrawn in the app's own theme (see ARCHITECTURE "Native panel style and
+sliders"). Adds a `slider` block that is a form input or, with a tool, a live
+control that runs on release.
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon` passed (lint 0 errors,
+no new warning in the panel files); `git diff --check` passed.
+New tests: `AgentPanelsTest` 7 slider cases (defaults, a JSON integer in the
+call, decimal steps, `accept` refusing off-track values, parse refusals, the
+call check and action limit, the logged value) and two `AgentCoordinatorTest`
+cases (a live slider sends a JSON number on release and keeps its value when
+the call fails; a screen tool is refused).
+
+Not tested: nothing ran on a phone or emulator. The new look, the animations,
+reduced motion, RTL mirroring, TalkBack and a real volume slider are
+unverified. No screenshot was taken.
+
 ### Composer chips wrap as whole controls - 2026-11-15
 
 The composer settings now use FlowRow, so Auto, Plan and context move to the

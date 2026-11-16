@@ -20,7 +20,6 @@
 
 package dev.androidagent.app
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -31,6 +30,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import dev.androidagent.app.panels.SavedPanelNotifications
 import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.SessionStore
 import dev.androidagent.core.RunState
@@ -177,17 +177,21 @@ class QuestionNotifier(
 
     private fun ensureChannel() {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        runCatching {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Questions from Mike", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "What Mike needs you to answer before he can go on."
-                },
-            )
-        }
+        runCatching { manager.createNotificationChannel(CHANNEL_SPEC.channel()) }
     }
 
     companion object {
-        const val CHANNEL = "questions"
+        /** v2: silent. The first question channel used the phone's default sound and buzz. */
+        const val CHANNEL = "questions_v2"
+        const val OLD_CHANNEL = "questions"
+        /** Channels from earlier builds, deleted on every start by [RetiredChannels]. */
+        internal val RETIRED_CHANNELS = listOf(OLD_CHANNEL)
+        /** High importance so it pops up, but no sound or buzz unless the user turns one on. */
+        internal val CHANNEL_SPEC = SavedPanelNotifications.ChannelSpec(
+            CHANNEL, "Questions from Mike", NotificationManager.IMPORTANCE_HIGH,
+            "What Mike needs you to answer before he can go on. Silent; you can turn on a sound here.",
+            sound = false, vibration = false,
+        )
         const val EXTRA_OPEN_CHAT = "dev.androidagent.app.extra.OPEN_CHAT"
         internal const val KEY_REPLY = "reply"
         /** One per question; the question's id is the tag. */
