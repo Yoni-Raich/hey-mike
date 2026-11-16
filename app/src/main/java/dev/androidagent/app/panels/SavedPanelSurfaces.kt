@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -113,7 +114,10 @@ class SavedPanelSurfaces(
                 floatingShown = shown
             }
         }
-        scope.launch {
+        // Notifications and widgets are built and posted off the main thread:
+        // each change to a panel, a live value or a tile's state used to
+        // build them there, beside the chat's frames.
+        scope.launch(Dispatchers.Default) {
             combine(faces, notifications.nudges) { draw, _ -> draw }.collect { (panels, live, states) ->
                 notifications.render(panels, live, states).let { shown ->
                     panels.filter { it.placement?.surface == PanelSurface.NOTIFICATION }.forEach { saved ->
@@ -250,7 +254,7 @@ internal class SavedPanelNotifications(private val context: Context) {
         try {
             ensureChannels()
             manager.notify(saved.id, APPROVAL_ID, notification)
-            asking += saved.id
+            synchronized(asking) { asking += saved.id }
         } catch (_: SecurityException) {
         }
     }
@@ -259,9 +263,9 @@ internal class SavedPanelNotifications(private val context: Context) {
     fun approvals(panels: List<SavedPanel>) {
         val waiting = panels.filter { it.status == SavedPanel.Status.PENDING }.map { it.id }.toSet()
         val manager = NotificationManagerCompat.from(context)
-        (asking - waiting).toList().forEach { done ->
+        synchronized(asking) { (asking - waiting).toList() }.forEach { done ->
             runCatching { manager.cancel(done, APPROVAL_ID) }
-            asking.remove(done)
+            synchronized(asking) { asking.remove(done) }
         }
     }
 

@@ -83,6 +83,18 @@ run on a phone:
   approval words and the tile caption. Not tapped on a phone: the real
   Do Not Disturb and brightness steps, and how the numbered list reads on the
   approval card.
+- Jank after a heavy session (19.3% janky frames, p50 24 ms, p90 57 ms on the
+  Xiaomi, 75bc8d20): found by reading the code, not by a profile. The chat list
+  folded every message again on each state change; the Saved panels screen
+  redrew every card each second for one "ends in" line; notifications and
+  widgets were built on the main thread at each panel change, and every widget
+  was sent to the launcher again even when it showed the same thing. Now the
+  rows are remembered per message list, only the line of a panel that ends
+  ticks, notifications and widgets are built off the main thread, and a widget
+  is sent only when its face changed (`SavedPanelWidgetDrawTest`). The floating
+  card was already fine: its timer is a Chronometer, nothing rebinds it each
+  second. Not measured again on a phone: the frame numbers after this change
+  are unknown.
 
 ### Panels outside the chat - 2026-11-15
 

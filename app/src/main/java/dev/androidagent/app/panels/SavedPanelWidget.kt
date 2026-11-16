@@ -53,7 +53,7 @@ class SavedPanelWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val graph = (context.applicationContext as? AgentApplication)?.graph ?: return
         val host = graph.panels
-        SavedPanelWidget.render(context.applicationContext, host, host.panels.value, host.live.value, host.states.value)
+        SavedPanelWidget.render(context.applicationContext, host, host.panels.value, host.live.value, host.states.value, force = true)
     }
 
     override fun onDeleted(context: Context, ids: IntArray) {
@@ -109,22 +109,35 @@ object SavedPanelWidget {
         val saved = host.active(panelId) ?: return
         if (saved.placement?.surface != PanelSurface.WIDGET) return
         prefs(context).edit().putString(widgetId.toString(), panelId).apply()
-        render(context, host, host.panels.value, host.live.value, host.states.value)
+        render(context, host, host.panels.value, host.live.value, host.states.value, force = true)
     }
 
     fun forget(context: Context, ids: IntArray) {
         prefs(context).edit().apply { ids.forEach { remove(it.toString()) } }.apply()
+        synchronized(drawnAs) { ids.forEach { drawnAs.remove(it) } }
+    }
+
+    /** What each widget was last drawn from, so a draw that would change nothing sends nothing. */
+    private val drawnAs = mutableMapOf<Int, String>()
+
+    /** Whether widget [widgetId] must be sent [signature]; records it as sent. */
+    internal fun changed(drawn: MutableMap<Int, String>, widgetId: Int, signature: String, force: Boolean): Boolean {
+        if (!force && drawn[widgetId] == signature) return false
+        drawn[widgetId] = signature
+        return true
     }
 
     /**
      * Redraws every placed widget. A widget whose panel was removed says so:
      * the app cannot take a widget off the home screen, only the user can.
-     * Returns the ids of the panels that are drawn on a widget now.
+     * Returns the ids of the panels that are drawn on a widget now. A widget
+     * whose face is what it last showed is not sent again, unless [force]
+     * (the launcher asked, or a widget was just placed).
      */
     fun render(
         context: Context, host: PanelHost, panels: List<SavedPanel>, live: Map<String, PanelLive>,
-        states: Map<String, PanelState> = emptyMap(),
-    ): Set<String> {
+        states: Map<String, PanelState> = emptyMap(), force: Boolean = false,
+    ): Set<String> = synchronized(drawnAs) {
         val manager = AppWidgetManager.getInstance(context) ?: return emptySet()
         val ids = runCatching { manager.getAppWidgetIds(provider(context)) }.getOrDefault(IntArray(0))
         if (ids.isEmpty()) return emptySet()
@@ -134,16 +147,22 @@ object SavedPanelWidget {
             val panelId = map.getString(widgetId.toString(), null)
             val saved = panelId?.let(host::active)?.takeIf { it.placement?.surface == PanelSurface.WIDGET }
             val face = saved?.takeIf { !it.hidden }?.let { PanelFace.of(it, live[it.id], states[it.id]) }
+            if (face != null) drawn += face.id
+            val signature = when {
+                // The panel too: its taps are wired from its actions, not only from the face.
+                face != null -> "panel:$face:${saved?.panel.hashCode()}"
+                panelId == null -> "unbound"
+                saved != null -> "hidden"
+                else -> "removed"
+            }
+            if (!changed(drawnAs, widgetId, signature, force)) return@forEach
             val views = when {
-                face != null -> {
-                    drawn += face.id
-                    panel(context, host, face)
-                }
+                face != null -> panel(context, host, face)
                 panelId == null -> message(context, context.getString(R.string.panel_widget_unbound))
                 saved != null -> message(context, context.getString(R.string.panel_widget_hidden))
                 else -> message(context, context.getString(R.string.panel_widget_removed))
             }
-            runCatching { manager.updateAppWidget(widgetId, views) }
+            if (runCatching { manager.updateAppWidget(widgetId, views) }.isFailure) drawnAs.remove(widgetId)
         }
         // Panels that are gone keep their ids here only until the widget is taken off.
         return drawn

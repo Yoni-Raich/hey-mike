@@ -697,6 +697,12 @@ private fun AgentChatContent(
         }
     }
 
+    // Folding the rows walks every message; most state changes (the run's
+    // phase, usage, a panel's tap) leave the messages alone, so a long chat
+    // is not walked again for each of them.
+    val view = chatRunView(state)
+    val rows = remember(state.messages, view.ownRun) { chatListRows(state.messages, view) }
+
     Box(modifier = modifier) {
     LazyColumn(
         state = listState,
@@ -755,11 +761,10 @@ private fun AgentChatContent(
             // computer's steps: seven identical rows hid the answer.
             // While this chat's own run works, one status line sits under the
             // last line, always; the composer shows Stop on the same answer.
-            val view = chatRunView(state)
             val running = view.busy
             val computerLabel = state.activeSessionId?.let(state.remoteBindings::get)
                 ?.let { binding -> state.computers.firstOrNull { it.id == binding.computerId }?.label }
-            items(chatListRows(state.messages, view), key = { it.key }) { row ->
+            items(rows, key = { it.key }) { row ->
                 when (row) {
                     is MessageRow -> {
                         val child = state.childAgents.firstOrNull { it.id == row.message.id }

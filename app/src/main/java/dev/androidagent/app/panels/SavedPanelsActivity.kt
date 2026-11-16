@@ -141,12 +141,13 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
     val scope = rememberCoroutineScope()
     val problems = remember { mutableStateMapOf<String, String>() }
     var confirmAll by remember { mutableStateOf(false) }
-    // The clock for "ends in", and a fresh look at what can float.
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    // A fresh look at what can float, for a user back from Settings. Only a
+    // change redraws: the cards no longer read a clock that ticks each second.
+    var canFloat by remember { mutableStateOf(surfaces.canFloat()) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(1_000)
-            now = System.currentTimeMillis()
+            canFloat = surfaces.canFloat()
         }
     }
     val ordered = panels.sortedWith(compareBy<SavedPanel>({ it.id != focus }, { it.status != SavedPanel.Status.PENDING }, { -it.createdAtMs }))
@@ -191,8 +192,7 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
                 items(ordered, key = { it.id }) { saved ->
                     PanelCard(
                         saved = saved,
-                        now = now,
-                        canFloat = surfaces.canFloat(),
+                        canFloat = canFloat,
                         problem = problems[saved.id],
                         revision = revisions[saved.id],
                         onApproveRevision = {
@@ -254,7 +254,6 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
 @Composable
 private fun PanelCard(
     saved: SavedPanel,
-    now: Long,
     canFloat: Boolean,
     problem: String?,
     revision: PanelRevision?,
@@ -271,11 +270,7 @@ private fun PanelCard(
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(saved.title.ifBlank { "Untitled panel" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                listOfNotNull(placement?.words, statusWords(saved, now)).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (saved.status == SavedPanel.Status.BLOCKED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            StatusLine(saved)
             placement?.lockScreen?.let { LockScreenLine(it) }
             saved.blocked?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
             if (placement?.surface == PanelSurface.FLOATING && !canFloat) {
@@ -314,6 +309,29 @@ private fun PanelCard(
             }
         }
     }
+}
+
+/**
+ * Where the panel lives and what it is doing. Only a panel that ends reads
+ * the clock, and only this line redraws each second, not the card.
+ */
+@Composable
+private fun StatusLine(saved: SavedPanel) {
+    val ends = saved.expiresAtMs?.takeIf { saved.status == SavedPanel.Status.ACTIVE }
+    var now by remember(ends) { mutableLongStateOf(System.currentTimeMillis()) }
+    if (ends != null) {
+        LaunchedEffect(ends) {
+            while (now < ends) {
+                delay(1_000)
+                now = System.currentTimeMillis()
+            }
+        }
+    }
+    Text(
+        listOfNotNull(saved.placement?.words, statusWords(saved, now)).joinToString(" · "),
+        style = MaterialTheme.typography.bodySmall,
+        color = if (saved.status == SavedPanel.Status.BLOCKED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** A notification's lock-screen view in one short line; the whole rule waits under Details. */
