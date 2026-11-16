@@ -301,9 +301,9 @@ class PanelHost(
     fun active(id: String): SavedPanel? = get(id)?.takeIf { it.status == SavedPanel.Status.ACTIVE && !expired(it) }
 
     /** Mike's `show_ui` for a panel that outlives the turn. Returns at once: nobody waits for it. */
-    suspend fun propose(sessionId: String, arguments: JsonObject): ToolResult {
+    suspend fun propose(sessionId: String, asked: JsonObject): ToolResult {
         val id = "saved-" + UUID.randomUUID().toString().take(12)
-        val panel = parse(id, arguments).getOrElse {
+        val (arguments, panel, dropped) = parseClean(id, asked).getOrElse {
             return toolRefusal("invalid_panel", "The panel was not shown: ${it.message}")
         }
         val placement = panel.placement
@@ -345,6 +345,7 @@ class PanelHost(
                 put("stored", false)
                 put("message", "The card is shown for ${PanelPlacement.duration(placement.ttlSeconds ?: 0)}. Its taps run without you.")
             }
+            droppedNote(dropped)?.let { put("dropped", it) }
         }.toString())
     }
 
@@ -864,8 +865,8 @@ class PanelHost(
         }.toString())
     }
 
-    private suspend fun revise(sessionId: String, saved: SavedPanel, definition: JsonObject): ToolResult {
-        val panel = parse(saved.id, definition).getOrElse {
+    private suspend fun revise(sessionId: String, saved: SavedPanel, asked: JsonObject): ToolResult {
+        val (definition, panel, dropped) = parseClean(saved.id, asked).getOrElse {
             return toolRefusal("invalid_panel", "The panel did not change: ${it.message}")
         }
         val surface = saved.placement?.surface
@@ -904,6 +905,7 @@ class PanelHost(
                 else -> "The approved panel keeps running as it was. This change can do more, so it waits for the user to approve it in " +
                     "Hey Mike (Saved panels). You cannot approve it. Tell them in one short line, then end your turn."
             })
+            droppedNote(dropped)?.let { put("dropped", it) }
         }.toString())
     }
 
@@ -1028,6 +1030,33 @@ class PanelHost(
             val current = all[panelId] ?: PanelLive()
             all + (panelId to current.copy(actions = current.actions + (actionId to change(current.actions[actionId] ?: PanelActionState()))))
         }
+    }
+
+    private data class Clean(val arguments: JsonObject, val panel: AgentPanel, val dropped: List<Pair<String, String>>)
+
+    /**
+     * [arguments] parsed, without the local actions that only repeat a block's
+     * own button (a "+1" tile next to a counter's own +). They are dropped from
+     * the stored definition too, so the approval screen, the surface and a
+     * reload all see the panel without them.
+     */
+    private fun parseClean(id: String, arguments: JsonObject): Result<Clean> = runCatching {
+        val panel = parse(id, arguments).getOrThrow()
+        val dropped = PanelStates.duplicateActions(panel)
+        if (dropped.isEmpty()) return@runCatching Clean(arguments, panel, dropped)
+        val ids = dropped.map { it.first }.toSet()
+        val blocks = (arguments["blocks"] as? JsonArray).orEmpty().filterNot { block ->
+            val o = block as? JsonObject
+            fun str(key: String) = (o?.get(key) as? JsonPrimitive)?.contentOrNull?.trim()
+            str("type")?.lowercase() == "action" && str("id") in ids
+        }
+        val cleaned = JsonObject(arguments + ("blocks" to JsonArray(blocks)))
+        Clean(cleaned, parse(id, cleaned).getOrThrow(), dropped)
+    }
+
+    private fun droppedNote(dropped: List<Pair<String, String>>): String? = dropped.takeIf { it.isNotEmpty() }?.let { list ->
+        "Not added: " + list.joinToString("; ") { (action, why) -> "action \"$action\" ($why)" } +
+            ". Counters and timers draw their own buttons; add an action only for what a block lacks."
     }
 
     private fun parse(id: String, arguments: JsonObject): Result<AgentPanel> =

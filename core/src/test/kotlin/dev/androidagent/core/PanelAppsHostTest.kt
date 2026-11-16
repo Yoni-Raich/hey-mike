@@ -173,11 +173,11 @@ class PanelAppsHostTest {
         val host = rig.host()
         val id = approved(host, json("""{"title":"Water","surface":"widget","blocks":[
             {"type":"counter","id":"c","label":"Cups","max":8,"goal":8},
-            {"type":"action","id":"drink","label":"+1","op":"inc","target":"c"}]}"""))
+            {"type":"action","id":"drink","label":"+2","op":"inc","target":"c","amount":2}]}"""))
         assertTrue(host.runAction(id, "drink"))
         assertTrue(host.runAction(id, "drink"))
         runCurrent()
-        assertEquals(BlockState.Count(2), host.panelState(id)!!.blocks["c"])
+        assertEquals(BlockState.Count(4), host.panelState(id)!!.blocks["c"])
         assertTrue(rig.calls.isEmpty())
         assertTrue(rig.turns.isEmpty())
         assertEquals(2, rig.store.traced("panel_state").count { it["source"]!!.jsonPrimitive.content == "action:drink" })
@@ -591,6 +591,7 @@ class PanelAppsHostTest {
             val title = json(text)["title"]!!.jsonPrimitive.content
             val proposed = host.propose("one", json(text))
             assertEquals("$title: ${proposed.text}", "awaiting_approval", status(proposed))
+            assertNull("$title repeats a block's own button", result(proposed)["dropped"])
             val id = result(proposed)["panelId"]!!.jsonPrimitive.content
             assertNull(title, host.approve(id))
             title to id
@@ -600,5 +601,40 @@ class PanelAppsHostTest {
         assertEquals(changed.text, "state_changed", status(changed))
         assertEquals(listOf("Milk", "Eggs", "Apples", "Bread"), items(host, shopping).map { it.text })
         assertEquals(9, host.panels.value.size)
+    }
+
+    @Test fun anActionThatRepeatsABlocksOwnButtonIsDroppedWithANote() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        fun panel(surface: String) = json(
+            """{"title":"Pushups","surface":"$surface","lifetime":"pinned","blocks":[
+            {"type":"counter","id":"ups","label":"Pushups","max":200},
+            {"type":"timer","id":"rest","label":"Rest","seconds":60},
+            {"type":"action","id":"plus","label":"Add 1 to Pushups","kind":"local","op":"inc","target":"ups"},
+            {"type":"action","id":"five","label":"+5","kind":"local","op":"inc","target":"ups","amount":5},
+            {"type":"action","id":"less","label":"-1","kind":"local","op":"dec","target":"ups"},
+            {"type":"action","id":"go","label":"Start","kind":"local","op":"start","target":"rest"},
+            {"type":"action","id":"again","label":"Reset","kind":"local","op":"reset","target":"rest"}]}""",
+        )
+        val widget = host.propose("one", panel("widget"))
+        assertEquals(widget.text, "awaiting_approval", status(widget))
+        val note = result(widget)["dropped"]!!.jsonPrimitive.content
+        assertTrue(note, "\"plus\"" in note && "\"go\"" in note && "Pushups" in note)
+        val id = result(widget)["panelId"]!!.jsonPrimitive.content
+        // A widget has no - or Reset of its own, so those stay; so does +5.
+        assertEquals(listOf("five", "less", "again"), host.get(id)!!.panel!!.actions.map { it.id })
+        val stored = host.get(id)!!.arguments["blocks"]!!.jsonArray.map { it.jsonObject["id"]?.jsonPrimitive?.content }
+        assertFalse(stored.toString(), "plus" in stored || "go" in stored)
+        assertNull(host.approve(id))
+        runCurrent()
+        val reloaded = Rig(this, rig.vault, rig.stateVault).host()
+        assertEquals(listOf("five", "less", "again"), reloaded.get(id)!!.panel!!.actions.map { it.id })
+
+        val floating = host.propose("one", panel("floating"))
+        val shown = result(floating)["panelId"]!!.jsonPrimitive.content
+        assertEquals(listOf("five"), host.get(shown)!!.panel!!.actions.map { it.id })
+
+        val plain = host.propose("one", shopping())
+        assertNull(result(plain)["dropped"])
     }
 }

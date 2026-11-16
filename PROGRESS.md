@@ -163,6 +163,17 @@ none run on a phone:
   id listed, no id in use listed, an upgrade deletes the old and keeps the
   new, a second start deletes nothing, one refused delete does not stop the
   rest).
+- Duplicate controls: a `local` action whose op and target only repeat a
+  block's own button ("+ Add 1 to Pushups" next to the counter's +1, a "Start"
+  tile next to the timer's Start) is dropped when the panel is made or
+  replaced, from the stored definition too, and the result's `dropped` says
+  which and why. Per surface: the counter's + at its own step and the timer's
+  Start, resume and Pause everywhere; - and Reset only on a floating card,
+  where the card draws them. agent-ui SKILL.md now says blocks bring their own
+  buttons, and the cooking template lost its Pause tile.
+  `PanelAppsHostTest.anActionThatRepeatsABlocksOwnButtonIsDroppedWithANote`
+  (widget and floating, kept after a reload) and the template test (no
+  template drops anything). Panels saved before this keep their tiles.
 
 ### Panels outside the chat - 2026-11-15
 

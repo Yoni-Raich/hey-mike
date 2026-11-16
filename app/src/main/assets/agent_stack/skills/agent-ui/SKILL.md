@@ -199,6 +199,8 @@ A saved panel can be a small app: a list the user ticks off, a counter, a timer,
 
 `reset`: `{"at": "07:00"}` every day, or `{"at": "18:00", "days": ["sun", "mon"]}` on those days. A list goes back to its start: the items you gave it, unchecked.
 
+Blocks bring their own buttons, on every surface: a counter has its own + (and − on a floating card), a timer its own Start (which also resumes) and Pause (and Reset on a floating card), a list its own Add box. Never add a `local` action for the same op on the same block: it only shows a second button for one thing ("+ Add 1 to Pushups" next to the counter's own +1), and the app drops it from the panel and says so in `dropped`. Add a local action only for what the block lacks: `inc` by a different `amount`, `set`, `start` with another length, `add` seconds, a list's `clear_checked` or `next`.
+
 When a timer ends, the phone pops up a short, silent "time is up" notification. It makes no sound and no vibration unless the user turns them on for "Panel timers" in Android settings, so never promise a sound or an alarm.
 
 ### Five kinds of action
@@ -262,7 +264,7 @@ Later, from any chat, "add bread":
 
 ### Cooking mode
 
-A floating card that keeps the screen on, with the steps and a timer for each:
+A floating card that keeps the screen on, with the steps and a timer for each (the timer has its own Start, Pause and Reset):
 
 ```json
 {"title": "Shakshuka", "surface": "floating", "lifetime": "pinned", "keep_screen_on": true, "blocks": [
@@ -272,8 +274,7 @@ A floating card that keeps the screen on, with the steps and a timer for each:
     {"text": "Add the eggs, cover", "seconds": 420},
     "Serve"]},
   {"type": "timer", "id": "t", "label": "Step timer", "seconds": 480},
-  {"type": "action", "id": "next", "label": "Next step", "kind": "local", "op": "next", "target": "steps", "timer": "t", "icon": "next"},
-  {"type": "action", "id": "pause", "label": "Pause", "kind": "local", "op": "pause", "target": "t", "icon": "pause"}]}
+  {"type": "action", "id": "next", "label": "Next step", "kind": "local", "op": "next", "target": "steps", "timer": "t", "icon": "next"}]}
 ```
 
 ### Parking

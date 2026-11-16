@@ -332,6 +332,15 @@ block whose id and type stay the same.
   item and, when the next item has `seconds` and the action names a `timer`,
   starts that timer for them (cooking steps). A local op changes only that
   panel's state: no device call, no approval beyond the panel's own.
+  A local action that only repeats a block's own button is dropped when
+  `show_ui` makes or replaces the panel (`PanelStates.duplicateActions`,
+  2026-11-16 round 5): on every surface a counter's `inc` by its own step and a
+  timer's `start` (no `amount`), `resume` and `pause`; on a floating card also
+  the counter's `dec` and the timer's `reset`, which only the card draws. It is
+  taken out of the stored definition, so approval, the surface and a reload
+  agree, and the result's `dropped` names each one and why. Dropping rather
+  than refusing keeps the panel: the duplicate is harmless, only clutter.
+  Panels saved before this keep their tiles.
 - `ask_mike`: `prompt` (up to 1000 characters). A tap starts a new Mike turn
   in the chat that made the panel, or a new chat when that one is gone.
 - `open`: `open` is one intent shape from the allowlist below.

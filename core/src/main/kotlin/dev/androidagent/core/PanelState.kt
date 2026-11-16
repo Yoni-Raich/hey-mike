@@ -387,6 +387,44 @@ object PanelStates {
         null -> false
     }
 
+    /**
+     * The words for the button a block already draws for [op] on [panel]'s
+     * surface, or null when no block draws one. Every surface gives a counter
+     * its own +step and a timer its own Start (which also resumes) and Pause;
+     * the floating card adds the counter's -step and the timer's Reset. A local
+     * action for the same op and target only shows a second button for it.
+     */
+    fun builtIn(panel: AgentPanel, op: PanelOp): String? {
+        val floating = panel.placement.surface == PanelSurface.FLOATING
+        if (panel.placement.surface == PanelSurface.CHAT) return null
+        return when (val block = panel.stateful.firstOrNull { it.id == op.target }) {
+            is PanelBlock.Counter -> {
+                val by = op.amount ?: block.step
+                when {
+                    by != block.step -> null
+                    op.op == "inc" -> "its own + button"
+                    op.op == "dec" && floating -> "its own - button"
+                    else -> null
+                }
+            }
+            is PanelBlock.Timer -> when {
+                op.op == "start" && op.amount == null -> "its own Start button"
+                op.op == "resume" -> "its own Start button, which also resumes"
+                op.op == "pause" -> "its own Pause button"
+                op.op == "reset" && floating -> "its own Reset button"
+                else -> null
+            }
+            else -> null
+        }
+    }
+
+    /** Local actions on [panel] that only repeat a block's own button, with why: (action id, reason). */
+    fun duplicateActions(panel: AgentPanel): List<Pair<String, String>> = panel.actions.mapNotNull { action ->
+        val op = (action.effect as? PanelEffect.Local)?.op ?: return@mapNotNull null
+        val block = panel.stateful.firstOrNull { it.id == op.target } ?: return@mapNotNull null
+        builtIn(panel, op)?.let { action.id to "\"${block.label.ifBlank { block.id }}\" already has $it" }
+    }
+
     /** [state] after [op], or why it cannot be done. Only [panel]'s own blocks are touched. */
     fun apply(panel: AgentPanel, state: PanelState, op: PanelOp, now: Long): Result<PanelState> = runCatching {
         val block = panel.stateful.firstOrNull { it.id == op.target }
