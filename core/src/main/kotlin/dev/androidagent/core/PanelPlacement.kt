@@ -76,8 +76,9 @@ data class PanelPlacement(
                 PanelSurface.CHAT -> "In the chat"
                 PanelSurface.FLOATING -> "Floating card over other apps"
                 PanelSurface.WIDGET -> "Home-screen widget"
-                PanelSurface.NOTIFICATION -> "Ongoing notification. On the lock screen it shows only its title " +
-                    "(all of it if your phone shows notification content there), and its buttons work only after you unlock"
+                PanelSurface.NOTIFICATION -> "Ongoing notification. If your phone shows notifications on the lock screen, " +
+                    "only its title shows there (all of it if you let the lock screen show notification content), " +
+                    "and its buttons work only after you unlock"
             }
             val long = when (val life = lifetime) {
                 PanelLifetime.Turn -> "while Mike's turn lasts"

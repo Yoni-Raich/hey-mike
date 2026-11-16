@@ -271,9 +271,12 @@ Decisions made while building this (2026-11-15):
   lock screen gets the public version only: title and "Unlock to use this
   panel". Buttons need unlock: a list or a counter on the lock screen would let
   anyone holding the phone change it, and `open` and `ask_mike` must never run
-  locked. The approval screen says exactly this: "Ongoing notification. On the
-  lock screen it shows only its title (all of it if your phone shows
-  notification content there), and its buttons work only after you unlock".
+  locked. The approval screen says exactly this: "Ongoing notification. If
+  your phone shows notifications on the lock screen, only its title shows
+  there (all of it if you let the lock screen show notification content), and
+  its buttons work only after you unlock". The claim is conditional because
+  the user can hide notifications from the lock screen; a default-importance
+  channel shows there only when the phone allows it.
 - **Read floors.** Notifications read at most every 15 s and widgets every
   30 s, so a 2 s `every` cannot keep the radio and CPU busy behind the lock.
 - **Stop does not cancel a panel tap.** A tap is the user's own act, outside

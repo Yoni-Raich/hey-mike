@@ -40,7 +40,11 @@ Add dialog activity and its keyboard; typing a note on the floating card
 card, notification and widget; inexact alarms for timers and resets while the
 phone dozes; the timer alert sound. The "Working" row after a detached
 panel's turn (retest fix 2) is covered by a unit test only: the retested
-build b1f054f3 did not have 48f718f5. No screenshot.
+build b1f054f3 did not have 48f718f5. That test is not proven red: with
+48f718f5's turn-end close removed by hand it still passed (the pinned call
+is answered at once), while `aChatPanelLeftOpenWhenItsTurnEndsCloses...`
+failed as expected. So the phone symptom may have another cause; retest it
+on a build with 48f718f5. No screenshot.
 
 ### Panels outside the chat - 2026-11-15
 
