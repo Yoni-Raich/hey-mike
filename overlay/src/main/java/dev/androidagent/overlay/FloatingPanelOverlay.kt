@@ -310,6 +310,8 @@ class FloatingPanelOverlay(
                     label.text = t.label
                     caption.text = t.problem ?: t.caption
                     caption.setTextColor(if (t.problem != null) TONE_ERROR else INK_DIM)
+                    // A reason gets a third line; it leads, so even a cut one says what went wrong.
+                    caption.maxLines = if (t.problem != null) 3 else 2
                     state.text = when {
                         t.running -> "…"
                         t.on == true -> "On"

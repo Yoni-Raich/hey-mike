@@ -352,8 +352,16 @@ action runs a routine without the model:
 - At the tap every device step is checked again before the first runs; a
   refusal means nothing ran ("Nothing ran: step 3 of 4 is not allowed").
 - The steps run one at a time under the panel's lock. The first failure stops
-  the rest and the tile says which step failed and that the steps before it
-  did run. Nothing is undone and nothing claims to be.
+  the rest and the tile says why first, then which step and that the steps
+  before it did run: "No permission for brightness. Stopped at step 3 of 4
+  (Set the screen brightness to 20%); the steps before it did run." The
+  message is at most 160 characters and the step's words are cut before the
+  reason is. Nothing is undone and nothing claims to be.
+- Where a failure shows: a widget tile is too small for a reason, so it says
+  "Failed" and the panel's full-width line under the title carries
+  "label: reason" (up to 3 lines). The floating card gives a failed tile's
+  caption 3 lines instead of 2. The notification's one-line text is the
+  reason itself, so a cut one still says what went wrong.
 - Every device step is logged as its own `tool_call` and `tool_result` with a
   `step` field, every local step as `panel_state`, and the tap as
   `panel_steps` (ok, failed step, reason).

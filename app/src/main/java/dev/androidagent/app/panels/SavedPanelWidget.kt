@@ -197,8 +197,11 @@ object SavedPanelWidget {
         views.setViewVisibility(R.id.widget_panel_text, if (notes.isEmpty()) View.GONE else View.VISIBLE)
         // A live slider has no widget form; the checks keep it off widgets, and this says so if one slips by.
         val unsupported = face.rows.any { it is PanelFace.Row.Track }
-        views.setTextViewText(R.id.widget_panel_message, if (unsupported) context.getString(R.string.panel_widget_unsupported) else "")
-        views.setViewVisibility(R.id.widget_panel_message, if (unsupported) View.VISIBLE else View.GONE)
+        // A tile is too small for a reason, so a failed tile says "Failed" and the reason gets the full-width line.
+        val problems = face.tiles.mapNotNull { tile -> tile.problem?.let { if (tile.label.isBlank()) it else "${tile.label}: $it" } }
+        val message = (problems + listOfNotNull(context.getString(R.string.panel_widget_unsupported).takeIf { unsupported })).joinToString("\n")
+        views.setTextViewText(R.id.widget_panel_message, message)
+        views.setViewVisibility(R.id.widget_panel_message, if (message.isEmpty()) View.GONE else View.VISIBLE)
         views.removeAllViews(R.id.widget_panel_tiles)
         val checks = face.checks
         if (checks != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -288,7 +291,7 @@ object SavedPanelWidget {
         item.setTextViewText(R.id.widget_tile_label, tile.label)
         val state: String = when {
             tile.running -> "…"
-            tile.problem != null -> tile.problem.orEmpty()
+            tile.problem != null -> "Failed"
             tile.on == true -> "On"
             tile.on == false -> "Off"
             else -> tile.caption
@@ -296,7 +299,7 @@ object SavedPanelWidget {
         item.setTextViewText(R.id.widget_tile_state, state)
         item.setViewVisibility(R.id.widget_tile_state, if (state.isBlank()) View.GONE else View.VISIBLE)
         item.setInt(R.id.widget_tile_root, "setBackgroundResource", if (tile.on == true) R.drawable.widget_panel_tile_on else R.drawable.widget_panel_tile)
-        item.setContentDescription(R.id.widget_tile_root, listOf(tile.label, state).filter(String::isNotBlank).joinToString(", "))
+        item.setContentDescription(R.id.widget_tile_root, listOf(tile.label, tile.problem ?: state).filter(String::isNotBlank).joinToString(", "))
         val opens = host.active(panelId)?.panel?.actions?.firstOrNull { it.id == tile.actionId }?.effect is PanelEffect.Open
         item.setOnClickPendingIntent(
             R.id.widget_tile_root,

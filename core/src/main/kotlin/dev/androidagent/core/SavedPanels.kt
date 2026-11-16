@@ -687,12 +687,7 @@ class PanelHost(
                 break
             }
         }
-        // Never claims an earlier step was undone: it was not. The reason is cut, never the step or the tail.
-        val message = failed?.let { index ->
-            val head = "Step ${index + 1} of ${steps.size} (${PanelOpWords.step(panel, steps[index]).take(48)}) failed: "
-            val tail = if (index > 0) ". The steps before it did run." else "."
-            head + reason.orEmpty().trimEnd('.', ' ').take((160 - head.length - tail.length).coerceAtLeast(0)) + tail
-        }
+        val message = failed?.let { index -> stepsFailure(reason.orEmpty(), index, steps.size, PanelOpWords.step(panel, steps[index])) }
         setAction(saved.id, action.id) {
             it.copy(running = false, ok = failed == null, message = message?.take(160).orEmpty(), runs = it.runs + 1)
         }
@@ -1144,6 +1139,29 @@ class PanelHost(
     }.getOrNull()?.takeIf(String::isNotBlank)?.take(160) ?: text.take(160)
 
     companion object {
+        /**
+         * A steps tap that stopped, reason first, so a surface that cuts the text
+         * still shows why: "No permission for brightness. Stopped at step 3 of 4
+         * (Set the screen brightness to 20%); the steps before it did run." Within
+         * [MAX_MESSAGE] the step's words are cut first, then dropped; the reason
+         * is cut only when it alone is too long. Never claims a step was undone.
+         */
+        fun stepsFailure(reason: String, index: Int, count: Int, words: String): String {
+            val why = reason.trim().trimEnd('.', ' ').ifBlank { "It failed" }
+            val tail = if (index > 0) "; the steps before it did run." else "."
+            val stop = ". Stopped at step ${index + 1} of $count"
+            val room = MAX_MESSAGE - why.length - stop.length - tail.length - 3
+            val step = when {
+                room >= words.length -> " ($words)"
+                room >= 12 -> " (${words.take(room - 1).trimEnd()}…)"
+                else -> ""
+            }
+            val text = why + stop + step + tail
+            return if (text.length <= MAX_MESSAGE) text
+            else why.take((MAX_MESSAGE - stop.length - tail.length).coerceAtLeast(0)) + stop + tail
+        }
+
+        const val MAX_MESSAGE = 160
         const val MAX_PENDING = 4
         const val MAX_SAVED = 12
         const val MAX_SHORT = 3

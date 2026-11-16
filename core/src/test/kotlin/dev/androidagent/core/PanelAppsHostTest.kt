@@ -450,8 +450,11 @@ class PanelAppsHostTest {
         val tap = host.state(id, "go")
         assertEquals(false, tap.ok)
         assertFalse(tap.running)
-        assertTrue(tap.message, tap.message.startsWith("Step 3 of 4 (Set the screen brightness to 20%) failed: No permission for brightness."))
-        assertTrue(tap.message, tap.message.contains("The steps before it did run."))
+        // The reason comes first, so a surface that cuts the text still shows why.
+        assertEquals(
+            "No permission for brightness. Stopped at step 3 of 4 (Set the screen brightness to 20%); the steps before it did run.",
+            tap.message,
+        )
         assertFalse(tap.message.contains("undo", ignoreCase = true))
         val logged = rig.store.traced("panel_steps").single()
         assertEquals("3", logged["failedStep"]!!.jsonPrimitive.content)
@@ -466,8 +469,22 @@ class PanelAppsHostTest {
         assertTrue("the device step after it never runs", rig.operations.isEmpty())
         val second = host.state(again, "go")
         assertEquals(false, second.ok)
-        assertTrue(second.message, second.message.startsWith("Step 1 of 2 ("))
+        assertTrue(second.message, second.message.contains(". Stopped at step 1 of 2 ("))
         assertFalse(second.message, second.message.contains("before it"))
+    }
+
+    @Test fun aStepsFailureCutsTheStepWordsBeforeTheReason() {
+        val first = PanelHost.stepsFailure("The setting was refused.", 0, 3, "Turn on Do Not Disturb (priority only)")
+        assertEquals("The setting was refused. Stopped at step 1 of 3 (Turn on Do Not Disturb (priority only)).", first)
+        val reason = "Changing system settings needs “Modify system settings” for Hey Mike. Allow it in Saved panels"
+        val long = PanelHost.stepsFailure(reason, 1, 3, "Set the screen brightness to the slider's percent and more words")
+        assertTrue(long, long.startsWith("$reason. Stopped at step 2 of 3"))
+        assertTrue(long, long.endsWith("; the steps before it did run."))
+        assertTrue(long.length <= PanelHost.MAX_MESSAGE)
+        // A reason too long on its own is the only thing ever cut from the reason.
+        val huge = PanelHost.stepsFailure("x".repeat(400), 2, 3, "Start the timer")
+        assertEquals(PanelHost.MAX_MESSAGE, huge.length)
+        assertTrue(huge, huge.endsWith(". Stopped at step 3 of 3; the steps before it did run."))
     }
 
     @Test fun aRefusedStepStopsTheWholeTapBeforeAnythingRuns() = runTest {

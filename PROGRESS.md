@@ -75,7 +75,8 @@ run on a phone:
   rule; the card was not looked at on a phone.
 - Multi-step tiles: a `steps` action runs 2 to 6 allowlisted device calls and
   local ops in order, without the model, and stops at the first failure with
-  "Step 3 of 4 (...) failed: ... The steps before it did run." The bedtime
+  the reason first: "<reason>. Stopped at step 3 of 4 (...); the steps before
+  it did run." (round 4 put the reason first). The bedtime
   template's "Start bedtime" uses it (Do Not Disturb, brightness 30%, the
   lights-out timer). `PanelAppsHostTest` covers the order, a device and a
   local failure, a refusal at the tap that runs nothing, the creation checks
@@ -120,6 +121,17 @@ Working row cleared. Fixes, each its own commit, none run on a phone:
   priority"; alarms reads "(alarms only)", total "(total silence)", off "Turn
   off Do Not Disturb". These match `setDnd`'s interruption filters
   (`PanelPlacementTest`).
+- A failed step no longer hides its reason. The Xiaomi widget showed "Go: Step
+  2 of 3 (Set t..." because the message led with the step. It now leads with
+  the reason, "<reason>. Stopped at step 2 of 3 (<words>); the steps before it
+  did run.", capped at 160 characters with the step's words cut first
+  (`PanelAppsHostTest.aStepsFailureCutsTheStepWordsBeforeTheReason`). A widget
+  tile shows "Failed" and the panel's full-width line shows "label: reason"
+  in up to 3 lines; a tile's idle caption may wrap to 2 lines, so "Set Do Not
+  Disturb..." is no longer cut at one. The floating card gives a failed
+  caption 3 lines. The notification's collapsed line is the reason, which now
+  comes first. Not looked at on a phone: how the widget line, the 2-line tile
+  caption and the floating caption fit on a real launcher and screen.
 
 ### Panels outside the chat - 2026-11-15
 

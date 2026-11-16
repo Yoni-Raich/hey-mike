@@ -40,7 +40,8 @@
         android:layout_height="wrap_content"
         android:layout_marginStart="4dp"
         android:layout_marginTop="2dp"
-        android:maxLines="2"
+        android:ellipsize="end"
+        android:maxLines="3"
         android:textColor="#FFF2B8B5"
         android:textSize="11sp"
         android:visibility="gone" />
