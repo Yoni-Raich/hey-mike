@@ -111,6 +111,16 @@ run on a phone:
   the retired ids. Not run on a phone: that the old channels are gone and the
   new ones pop up without a sound.
 
+Round 4 (Xiaomi test of bdab3e08). Passed there: the steps approval card
+listed all 3 steps in plain words, the tile stopped at the first failure and
+named step 2, "already on your home screen" with no second widget id, and the
+Working row cleared. Fixes, each its own commit, none run on a phone:
+- Do Not Disturb words now say what the call sets: `mode: priority` reads
+  "Turn on Do Not Disturb (priority only)", not "Set Do Not Disturb to
+  priority"; alarms reads "(alarms only)", total "(total silence)", off "Turn
+  off Do Not Disturb". These match `setDnd`'s interruption filters
+  (`PanelPlacementTest`).
+
 ### Panels outside the chat - 2026-11-15
 
 Base: feat/agent-panel-native b65e2136, branch feat/agent-panel-surfaces.

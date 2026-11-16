@@ -239,7 +239,15 @@ object PanelCallWords {
                 "Set the $stream volume to ${amount()}"
             }
             "ringer" -> "Set the ringer to ${text("mode") ?: "a new mode"}"
-            "dnd" -> "Set Do Not Disturb to ${text("mode") ?: "a new mode"}"
+            // Exactly what AndroidSystemPlatform.setDnd sets: priority is INTERRUPTION_FILTER_PRIORITY, and so on.
+            "dnd" -> when (text("mode")?.lowercase()) {
+                "off" -> "Turn off Do Not Disturb"
+                "priority" -> "Turn on Do Not Disturb (priority only)"
+                "alarms" -> "Turn on Do Not Disturb (alarms only)"
+                "total" -> "Turn on Do Not Disturb (total silence)"
+                null -> "Set Do Not Disturb to a new mode"
+                else -> "Set Do Not Disturb to ${text("mode")}"
+            }
             "brightness" -> when {
                 args["auto"] != null -> "Turn automatic brightness ${onOff("auto")}"
                 else -> "Set the screen brightness to ${amount()}"

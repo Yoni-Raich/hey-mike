@@ -253,7 +253,7 @@ class PanelPlacementTest {
         val line = PanelApprovalLines.of(parsed).single { it.label == "Start bedtime" }
         assertEquals(
             "Does these in order and stops at the first that fails:\n" +
-                "1. Set Do Not Disturb to priority\n2. Set the screen brightness to 20%\n3. Start the “Lights out” timer",
+                "1. Turn on Do Not Disturb (priority only)\n2. Set the screen brightness to 20%\n3. Start the “Lights out” timer",
             line.words,
         )
         // Details lists the device calls exactly as they are sent, and only those.
@@ -262,7 +262,19 @@ class PanelPlacementTest {
         assertEquals(2, parsed.allCalls.size)
         val saved = SavedPanel("p", "s", raw, 0, 0, null, panel = parsed)
         val tile = PanelFace.of(saved, null)!!.tiles.single()
-        assertEquals("Set Do Not Disturb to priority, then 2 more", tile.caption)
+        assertEquals("Turn on Do Not Disturb (priority only), then 2 more", tile.caption)
+    }
+
+    @Test fun doNotDisturbWordsSayWhatEachModeLetsThrough() {
+        fun words(mode: String?) = PanelCallWords.describe(
+            PanelCall("system_controls", buildJsonObject { put("operation", "dnd"); mode?.let { put("mode", it) } }),
+        )
+        // setDnd: priority -> INTERRUPTION_FILTER_PRIORITY, alarms -> ALARMS, total -> NONE, off -> ALL.
+        assertEquals("Turn on Do Not Disturb (priority only)", words("priority"))
+        assertEquals("Turn on Do Not Disturb (alarms only)", words("alarms"))
+        assertEquals("Turn on Do Not Disturb (total silence)", words("total"))
+        assertEquals("Turn off Do Not Disturb", words("off"))
+        assertEquals("Set Do Not Disturb to a new mode", words(null))
     }
 
     @Test fun theLockScreenLineIsShortAndTheRuleIsWhole() {
