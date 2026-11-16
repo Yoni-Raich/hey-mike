@@ -174,11 +174,6 @@ class SavedPanelSurfaces(
 
 /** The ongoing notification for each notification panel, and the approval prompt. */
 internal class SavedPanelNotifications(private val context: Context) {
-    init {
-        // Built with the app graph, so channels from earlier builds go at startup.
-        context.getSystemService(NotificationManager::class.java)?.let { retire(it, RETIRED_CHANNELS) }
-    }
-
     private val posted = mutableMapOf<String, String>()
     private val asking = mutableSetOf<String>()
     private val _nudges = MutableStateFlow(0)
@@ -405,7 +400,7 @@ internal class SavedPanelNotifications(private val context: Context) {
         const val ALERTS = "saved_panel_alerts_v2"
         const val OLD_ALERTS = "saved_panel_alerts"
 
-        /** Channels from earlier builds, deleted on start. */
+        /** Channels from earlier builds, deleted on every start by RetiredChannels. */
         internal val RETIRED_CHANNELS = listOf(OLD_PANELS, OLD_ALERTS, OLD_APPROVALS)
 
         /**

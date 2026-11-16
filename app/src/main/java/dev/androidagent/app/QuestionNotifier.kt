@@ -90,8 +90,6 @@ class QuestionNotifier(
     private val posted = mutableSetOf<String>()
 
     init {
-        // Built with the app graph, so the old channel goes at startup.
-        context.getSystemService(NotificationManager::class.java)?.let { SavedPanelNotifications.retire(it, RETIRED_CHANNELS) }
         scope.launch {
             combine(runs.sessionStates, appInFront, openChat) { states, front, open ->
                 val waiting = QuestionNotices.waiting(states, conversationOwner, conversationOrder)
@@ -186,7 +184,7 @@ class QuestionNotifier(
         /** v2: silent. The first question channel used the phone's default sound and buzz. */
         const val CHANNEL = "questions_v2"
         const val OLD_CHANNEL = "questions"
-        /** Channels from earlier builds, deleted on start. */
+        /** Channels from earlier builds, deleted on every start by [RetiredChannels]. */
         internal val RETIRED_CHANNELS = listOf(OLD_CHANNEL)
         /** High importance so it pops up, but no sound or buzz unless the user turns one on. */
         internal val CHANNEL_SPEC = SavedPanelNotifications.ChannelSpec(

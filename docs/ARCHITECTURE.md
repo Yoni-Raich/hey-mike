@@ -465,8 +465,10 @@ approve" channel (`saved_panel_approvals_v2`, default importance) and the
 "Questions from Mike" channel (`questions_v2`, high importance, so it still
 pops up) have no sound and no vibration. Each keeps its old importance. The
 old ids (`saved_panel_approvals`, `questions`) used the phone's default sound
-and buzz; they are deleted at startup, when `SavedPanelNotifications` and
-`QuestionNotifier` are built with the app graph. A deleted channel takes the
+and buzz; they are deleted by `RetiredChannels` (with `saved_panels` and
+`saved_panel_alerts`), the first thing `AgentApplication.onCreate` does, before
+the app graph is built, so every process start deletes them whatever started
+the process. A deleted channel takes the
 user's own settings for it with it, so a sound, importance or lock-screen
 choice made on the old channel does not carry over to the new one. The
 session channels "Approvals for Mike" (`approvals`) and "Finished chats"

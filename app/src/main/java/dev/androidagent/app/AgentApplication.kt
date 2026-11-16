@@ -76,7 +76,12 @@ class AgentApplication : Application(), AutomationHostOwner {
     override val automationHost: AutomationHost?
         get() = if (::graph.isInitialized) graph.automationHost else null
 
-    override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
+    override fun onCreate() {
+        super.onCreate()
+        // Before the graph, so a channel from an earlier build goes even if building it fails.
+        RetiredChannels.retire(this)
+        graph = AgentGraph(this)
+    }
 }
 
 class AgentGraph(private val app: Application) {

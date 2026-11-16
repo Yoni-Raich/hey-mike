@@ -146,6 +146,24 @@ Working row cleared. Fixes, each its own commit, none run on a phone:
   tap. Not done on a phone: the Allow button opening the right screen on
   HyperOS, and the flag clearing after the user flips the switch.
 
+Round 5 (Xiaomi test of 028f1e3e). Passed there: the DND words, the step-2
+grant flag and Allow, the reason-first failure, the Working row over 5 turns,
+Stop mid-turn, the Expired receipt, plain local-op words, the short lock-screen
+line, eye reveal, both slider modes, the silent 10 s timer, reduced motion;
+jank 15.2% (from 19.3%), p50 27 ms, p90 53 ms. Fixes, each its own commit,
+none run on a phone:
+- Old channel ids (`questions`, `saved_panels`, `saved_panel_approvals`,
+  `saved_panel_alerts`) are now deleted first thing in
+  `AgentApplication.onCreate` by `RetiredChannels`, before the app graph is
+  built, on every process start. Before, the delete ran in the
+  `SavedPanelNotifications` and `QuestionNotifier` constructors, inside the
+  graph; why it did not take on the phone is not known. Android soft-deletes
+  a channel: `dumpsys notification` can still list it, marked deleted, so
+  check `mDeleted` before calling it alive. `RetiredChannelsTest` 5 (every old
+  id listed, no id in use listed, an upgrade deletes the old and keeps the
+  new, a second start deletes nothing, one refused delete does not stop the
+  rest).
+
 ### Panels outside the chat - 2026-11-15
 
 Base: feat/agent-panel-native b65e2136, branch feat/agent-panel-surfaces.
