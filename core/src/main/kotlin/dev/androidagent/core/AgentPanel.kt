@@ -30,6 +30,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.math.BigDecimal
@@ -158,12 +159,15 @@ sealed interface PanelBlock {
      * A number picked on a track from [min] to [max] in steps of [step],
      * starting at [start]. Its value comes back with the panel. With [call]
      * it is live too: letting go runs the call with the number put in at
-     * each [AgentPanels.VALUE] mark.
+     * each [AgentPanels.VALUE] mark. Its number is shown and sent with
+     * [decimals] places: by default what [min] and [step] need, so 0 on a
+     * whole track; more only when the panel asks with `decimals`.
      */
     data class Slider(
         override val id: String, override val label: String,
         val min: Double, val max: Double, val step: Double, val start: Double,
         val detail: String = "", val call: PanelCall? = null,
+        val decimals: Int = AgentPanels.trackDecimals(min, step),
     ) : Input {
         override val required: Boolean get() = false
         override val initial: String get() = format(start)
@@ -175,15 +179,15 @@ sealed interface PanelBlock {
         /** Steps from [min] to [max]. */
         val intervals: Int get() = ((max - min) / step).roundToLong().toInt()
 
-        /** The nearest value on the track. */
+        /** The nearest value on the track, rounded to [decimals] so 0.1 steps never add up to 0.30000000000000004. */
         fun snap(value: Double): Double {
             if (!value.isFinite()) return start
             val steps = ((value.coerceIn(min, max) - min) / step).roundToLong()
-            return (min + steps * step).coerceIn(min, max)
+            return AgentPanels.round(min + steps * step, decimals).coerceIn(min, max)
         }
 
-        /** [value] as the user and Mike see it: no trailing zeros, no more decimals than [step] has. */
-        fun format(value: Double): String = AgentPanels.number(value, if (whole) 0 else AgentPanels.decimals(step))
+        /** [value] as the user and Mike see it: [decimals] places at most, no trailing zeros. */
+        fun format(value: Double): String = AgentPanels.number(value, decimals)
 
         /** True when [text] is a value this slider can take. */
         fun holds(text: String): Boolean {
@@ -194,9 +198,9 @@ sealed interface PanelBlock {
         /** The call letting go at [value] makes, or null for a slider that is not live. */
         fun callAt(value: Double): PanelCall? = call?.let { PanelCall(it.tool, AgentPanels.fill(it.arguments, json(snap(value)))) }
 
-        // A whole slider sends a JSON integer: device tools refuse 40.0 where they want 40.
+        // A slider with no decimals sends a JSON integer: device tools refuse 40.0 where they want 40.
         private fun json(value: Double): JsonPrimitive =
-            if (whole) JsonPrimitive(value.roundToLong()) else JsonPrimitive(format(value).toDouble())
+            if (decimals == 0) JsonPrimitive(value.roundToLong()) else JsonPrimitive(format(value).toDouble())
     }
 
     /** One of the app's own settings controls, live. */
@@ -379,6 +383,8 @@ object AgentPanels {
     const val MAX_DETACHED_BLOCKS = 8
     /** Android shows at most three action buttons on a notification. */
     const val MAX_NOTIFICATION_ACTIONS = 3
+    /** Most decimal places a slider shows. */
+    const val MAX_SLIDER_DECIMALS = 4
     /** Most steps a slider may have, so each one is still a usable distance on the track. */
     const val MAX_SLIDER_STEPS = 1_000
     /** Largest size of a slider's min, max, step or value. */
@@ -511,6 +517,10 @@ object AgentPanels {
                             listOf("min", "max", "step").forEach { key ->
                                 put(key, buildJsonObject { put("type", "number"); put("description", "A slider's $key. step defaults to 1.") })
                             }
+                            put("decimals", buildJsonObject {
+                                put("type", "integer")
+                                put("description", "A slider's decimal places, 0 to $MAX_SLIDER_DECIMALS. Needed for a step like 0.5; whole by default.")
+                            })
                             put("arguments", buildJsonObject {
                                 put("type", "object"); put("additionalProperties", true)
                                 put("description", "An action's tool arguments, exactly as you would call it. For a switch, the ones that turn it on. " +
@@ -628,6 +638,7 @@ object AgentPanels {
      */
     fun parse(
         id: String, arguments: JsonObject,
+        created: Boolean = false,
         checkCall: (String, JsonObject) -> String? = { _, _ -> null },
     ): Result<AgentPanel> = runCatching {
         val placement = PanelPlacement.parse(arguments)
@@ -707,7 +718,20 @@ object AgentPanels {
             require(abs(span - Math.rint(span)) < 1e-6) { "Slider \"$sid\": step must go evenly from min to max." }
             val start = number(o, "value", sid) ?: min
             require(start >= min && start <= max) { "Slider \"$sid\": value must be between min and max." }
-            val plain = PanelBlock.Slider(sid, name, min, max, step, start, o.str("detail").orEmpty().take(MAX_LABEL))
+            val needs = trackDecimals(min, step)
+            val places = o["decimals"]?.let { raw ->
+                val n = (raw as? JsonPrimitive)?.let { it.intOrNull ?: it.contentOrNull?.trim()?.toIntOrNull() }
+                require(n != null && n in 0..MAX_SLIDER_DECIMALS) { "Slider \"$sid\": decimals must be a whole number from 0 to $MAX_SLIDER_DECIMALS." }
+                require(n >= needs) { "Slider \"$sid\": step $step needs decimals of at least $needs." }
+                n
+            }
+            // A fine step is how a model asks for a smooth track, and the user then reads 75.4 for a volume.
+            // Decimals are shown only when asked for; panels saved before keep loading as they were.
+            require(!created || needs == 0 || places != null) {
+                "Slider \"$sid\": a step of $step shows decimals. For whole numbers leave step out (1): a track with " +
+                    "more than 20 steps is already smooth. To show decimals, set decimals ($needs to $MAX_SLIDER_DECIMALS)."
+            }
+            val plain = PanelBlock.Slider(sid, name, min, max, step, start, o.str("detail").orEmpty().take(MAX_LABEL), decimals = places ?: needs)
                 .let { it.copy(start = it.snap(start)) }
             if (o["tool"] == null && o["arguments"] == null) {
                 require(surface == PanelSurface.CHAT) {
@@ -1033,7 +1057,14 @@ object AgentPanels {
     }
 
     /** Decimal places [step] needs, at most 4. */
-    internal fun decimals(step: Double): Int = BigDecimal.valueOf(step).stripTrailingZeros().scale().coerceIn(0, 4)
+    internal fun decimals(step: Double): Int = BigDecimal.valueOf(step).stripTrailingZeros().scale().coerceIn(0, MAX_SLIDER_DECIMALS)
+
+    /** Places every value on a track from [min] in steps of [step] needs: 0 when both are whole. */
+    fun trackDecimals(min: Double, step: Double): Int = maxOf(decimals(min), decimals(step))
+
+    /** [value] rounded half up to [places] decimals. */
+    fun round(value: Double, places: Int): Double =
+        if (!value.isFinite()) value else BigDecimal.valueOf(value).setScale(places, RoundingMode.HALF_UP).toDouble()
 
     /** [value] as plain text with at most [places] decimals and no trailing zeros. */
     internal fun number(value: Double, places: Int): String =

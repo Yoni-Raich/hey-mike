@@ -26,7 +26,7 @@ description: Build a small interactive panel in the chat with show_ui when the u
 | `choice` | `id`, `label`, `options` (2–12), `value`, `required` | Returns the option text. |
 | `control` | `control` | The app's live setting. See below. |
 | `action` | `id`, `label`, `detail`, `tool`, `arguments`, `off_arguments`, `value`, `icon`, `accent` | A live button that runs your tool itself. See below. |
-| `slider` | `id`, `label`, `min`, `max`, `step` (default 1), `value`, `detail`, `tool`, `arguments` | A number on a track. Returns the number as text. With `tool` and `arguments` it is live. See below. |
+| `slider` | `id`, `label`, `min`, `max`, `step` (default 1), `decimals`, `value`, `detail`, `tool`, `arguments` | A number on a track. Returns the number as text. With `tool` and `arguments` it is live. See below. |
 
 ## Live actions: buttons that really do it
 
@@ -38,7 +38,7 @@ Only tools that do not read or touch the screen are allowed: `system_controls` (
 
 ## Live sliders
 
-A `slider` with `tool` and `arguments` runs the call **when the user lets go**, like an action tile. Put the string `"{value}"` in `arguments` where the number goes; the app puts the real number there. When `min`, `max` and `step` are whole numbers the number is an integer (`40`, not `40.0`). At most 1000 steps from `min` to `max`. Live sliders count toward the 12 actions. Set `value` to the real current level, read first. If a call fails, the slider goes back to the last value that worked.
+A `slider` with `tool` and `arguments` runs the call **when the user lets go**, like an action tile. Put the string `"{value}"` in `arguments` where the number goes; the app puts the real number there. When `min`, `max` and `step` are whole numbers the number is an integer (`40`, not `40.0`). At most 1000 steps from `min` to `max`. A smooth track needs no small step: with more than 20 steps the track is already smooth, so for a volume or a percentage leave `step` out. A step with decimals (`0.5`) needs `decimals` (`1`), the places the number is shown and sent with, or the panel is refused. Live sliders count toward the 12 actions. Set `value` to the real current level, read first. If a call fails, the slider goes back to the last value that worked.
 
 ```json
 {"type": "slider", "id": "media", "label": "Media volume", "min": 0, "max": 100, "step": 5, "value": 40,

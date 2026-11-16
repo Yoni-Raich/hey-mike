@@ -1952,7 +1952,7 @@ class AgentCoordinator(
             // A saved panel, read or changed from any chat. A new definition passes this turn's checks first.
             val definition = JsonObject(arguments.filterKeys { it != "panel_id" && it != "ops" && it != "state" })
             if (definition.isNotEmpty()) {
-                AgentPanels.parse("panel-${UUID.randomUUID()}", definition, check).exceptionOrNull()?.let {
+                AgentPanels.parse("panel-${UUID.randomUUID()}", definition, created = true, checkCall = check).exceptionOrNull()?.let {
                     val refusal = toolRefusal("bad_panel", "The panel did not change: ${it.message ?: "it could not be read."}")
                     return refusal to refusal.text
                 }
@@ -1961,7 +1961,7 @@ class AgentCoordinator(
                 ?: toolRefusal("unsupported", "This build keeps no saved panels.")
             return result to result.text
         }
-        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments, check).getOrElse {
+        val panel = AgentPanels.parse("panel-${UUID.randomUUID()}", arguments, created = true, checkCall = check).getOrElse {
             val refusal = toolRefusal("bad_panel", it.message ?: "The panel could not be read.")
             return refusal to refusal.text
         }

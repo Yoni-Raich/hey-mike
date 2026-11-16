@@ -139,7 +139,13 @@ whole the number is a JSON integer, because device-tools integer arguments
 refuse `40.0`. The check at `show_ui` time runs on the call with the start
 value filled in. Live sliders count toward the 12-action limit, and at most
 1000 steps are allowed. A failed call leaves the applied value unchanged and
-the thumb moves back.
+the thumb moves back. A slider shows and sends its number with `decimals`
+places (0 to 4). By default that is what `min` and `step` need, so a whole
+track gives integers. At `show_ui` time (`AgentPanels.parse(created = true)`) a
+step with decimals needs an explicit `decimals`, because a model reaches for a
+fine step to get a smooth track and the user then reads 75.4 for a volume.
+The rule is not applied on load, so panels saved before still parse. The
+floating card's track uses the same rounding as the chat card (2026-11-16).
 
 ### Panels outside the chat: surfaces, lifetimes, saved panels - 2026-11-15
 

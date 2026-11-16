@@ -174,6 +174,20 @@ none run on a phone:
   `PanelAppsHostTest.anActionThatRepeatsABlocksOwnButtonIsDroppedWithANote`
   (widget and floating, kept after a reload) and the template test (no
   template drops anything). Panels saved before this keep their tiles.
+- Slider decimals: the continuous volume slider read 75.4. The panel's JSON
+  was not read; one decimal fits a `step` of 0.1 (0 to 100 is exactly the
+  1000-step limit), which a model picks to get a smooth track. A slider now
+  has `decimals` (0 to 4). By default it is what `min` and `step` need (0 on a
+  whole track), and display, receipt and sent value all use it. A new panel
+  whose step has decimals and that does not set `decimals` is refused with a
+  reason that says to leave `step` out (a track over 20 steps is already
+  smooth) or set `decimals`; saved panels still load as they were. Snapped
+  values are rounded, so 0.1 steps never send 0.30000000000000004. The
+  floating card's track now shows the same text as the chat while dragged
+  (it used its own 2-decimal trim) and sends the rounded value. SKILL.md says
+  the same. `AgentPanelsTest` 3 new (refused without decimals, 75.4 with
+  `decimals: 1`, 75 with no step, a saved panel loads, bad `decimals` refused,
+  a live call sends 0.3, the floating track matches); `:core:test` 1013.
 
 ### Panels outside the chat - 2026-11-15
 

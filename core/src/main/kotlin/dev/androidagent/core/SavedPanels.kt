@@ -1060,7 +1060,7 @@ class PanelHost(
     }
 
     private fun parse(id: String, arguments: JsonObject): Result<AgentPanel> =
-        AgentPanels.parse(id, arguments, checkCall).mapCatching { panel ->
+        AgentPanels.parse(id, arguments, checkCall = checkCall).mapCatching { panel ->
             require(panel.placement.detached) { "it no longer outlives the turn." }
             panel
         }

@@ -39,14 +39,17 @@ data class PanelFace(
             val actionId: String, val label: String, val caption: String, val on: Boolean?,
             val running: Boolean, val problem: String?,
         ) : Row
-        /** A live slider; [value] is where its thumb sits. */
+        /** A live slider; [value] is where its thumb sits, shown and sent with [decimals] places as in the chat. */
         data class Track(
             val sliderId: String, val label: String, val min: Double, val max: Double, val step: Double,
-            val value: Double, val valueText: String,
+            val value: Double, val valueText: String, val decimals: Int = AgentPanels.trackDecimals(min, step),
         ) : Row {
             val intervals: Int get() = ((max - min) / step).let { Math.round(it).toInt() }.coerceAtLeast(1)
             val progress: Int get() = Math.round((value - min) / step).toInt().coerceIn(0, intervals)
-            fun valueAt(progress: Int): Double = (min + progress.coerceIn(0, intervals) * step).coerceIn(min, max)
+            fun valueAt(progress: Int): Double =
+                AgentPanels.round(min + progress.coerceIn(0, intervals) * step, decimals).coerceIn(min, max)
+            /** The number at [progress] as the slider shows it while dragged. */
+            fun textAt(progress: Int): String = AgentPanels.number(valueAt(progress), decimals)
         }
         /** A checklist. [canAdd] lets a surface offer a way to add an item. */
         data class Checks(val blockId: String, val label: String, val items: List<PanelItem>, val canAdd: Boolean) : Row {
@@ -127,7 +130,7 @@ data class PanelFace(
                     is PanelBlock.Slider -> if (!block.live) null else {
                         val tap = state.actions[block.id] ?: PanelActionState()
                         val value = tap.value?.toDoubleOrNull()?.let(block::snap) ?: block.start
-                        Row.Track(block.id, block.label, block.min, block.max, block.step, value, block.format(value))
+                        Row.Track(block.id, block.label, block.min, block.max, block.step, value, block.format(value), block.decimals)
                     }
                     is PanelBlock.Checklist -> Row.Checks(
                         block.id, block.label, (mine.blocks[block.id] as? BlockState.Items)?.items ?: block.items, block.canAdd,

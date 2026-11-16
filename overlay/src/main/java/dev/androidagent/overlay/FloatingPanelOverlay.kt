@@ -334,7 +334,7 @@ class FloatingPanelOverlay(
                     max = row.intervals
                     setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                         override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                            if (fromUser) number.text = trim(current.valueAt(progress))
+                            if (fromUser) number.text = current.textAt(progress)
                         }
                         override fun onStartTrackingTouch(seekBar: SeekBar) { dragging = true }
                         override fun onStopTrackingTouch(seekBar: SeekBar) {
@@ -624,7 +624,7 @@ class FloatingPanelOverlay(
         private val TONE_WARN = Color.parseColor("#F6B86A")
         private val TONE_ERROR = Color.parseColor("#FFB4AB")
 
-        /** A slider's number while it is dragged: no trailing zeros. */
+        /** A count of checklist items: no trailing zeros. */
         internal fun trim(value: Double): String =
             if (value == Math.rint(value)) value.toLong().toString()
             else "%.2f".format(java.util.Locale.ROOT, value).trimEnd('0').trimEnd('.')

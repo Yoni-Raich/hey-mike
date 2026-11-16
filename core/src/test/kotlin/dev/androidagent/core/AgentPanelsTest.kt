@@ -157,6 +157,50 @@ class AgentPanelsTest {
         assertTrue(!slider.holds("loud"))
     }
 
+    @Test fun aNewSliderShowsDecimalsOnlyWhenItAsksForThem() {
+        fun fine(body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit = {}) = panel(block("slider") {
+            put("id", "v"); put("label", "Volume"); put("min", 0); put("max", 100); put("step", 0.1); body()
+        })
+        // The Xiaomi case: a fine step for a smooth track read 75.4. A new panel must ask for decimals.
+        val refused = AgentPanels.parse("p", fine(), created = true).exceptionOrNull()?.message.orEmpty()
+        assertTrue(refused, "leave step out" in refused && "set decimals" in refused)
+        val asked = AgentPanels.parse("p", fine { put("decimals", 1) }, created = true).getOrThrow().blocks.single() as PanelBlock.Slider
+        assertEquals("75.4", asked.format(asked.snap(75.38)))
+        assertEquals("0.3", asked.format(asked.snap(0.30000000000000004)))
+        assertEquals(0.3, asked.snap(0.1 + 0.2), 0.0)
+        // Leaving step out gives whole numbers on the same smooth track.
+        val whole = AgentPanels.parse("p", panel(block("slider") {
+            put("id", "v"); put("label", "Volume"); put("min", 0); put("max", 100)
+        }), created = true).getOrThrow().blocks.single() as PanelBlock.Slider
+        assertEquals(0, whole.decimals)
+        assertEquals("75", whole.format(whole.snap(75.4)))
+        // A panel saved before still loads with its step's decimals.
+        val saved = AgentPanels.parse("p", fine()).getOrThrow().blocks.single() as PanelBlock.Slider
+        assertEquals(1, saved.decimals)
+        assertEquals("75.4", saved.format(saved.snap(75.4)))
+        // Fewer places than the step needs, or more than 4, is refused.
+        assertTrue(AgentPanels.parse("p", fine { put("decimals", 0) }, created = true).isFailure)
+        assertTrue(AgentPanels.parse("p", fine { put("decimals", 5) }).isFailure)
+        assertTrue(AgentPanels.parse("p", fine { put("decimals", "x") }).isFailure)
+    }
+
+    @Test fun aDecimalLiveSliderSendsItsRoundedNumber() {
+        val parsed = AgentPanels.parse("p", panel(block("slider") {
+            put("id", "b"); put("label", "Level"); put("min", 0); put("max", 1); put("step", 0.1); put("decimals", 1)
+            put("tool", "system_controls"); put("arguments", buildJsonObject { put("operation", "brightness"); put("level", "{value}") })
+        }), created = true).getOrThrow()
+        val call = parsed.liveSliders.single().callAt(0.1 + 0.2)!!
+        assertEquals(JsonPrimitive(0.3), call.arguments["level"])
+    }
+
+    @Test fun theFloatingTrackShowsAndSendsTheSameNumberAsTheChat() {
+        val track = PanelFace.Row.Track("v", "Volume", 0.0, 1.0, 0.1, 0.0, "0", decimals = 1)
+        assertEquals(0.3, track.valueAt(3), 0.0)
+        assertEquals("0.3", track.textAt(3))
+        val whole = PanelFace.Row.Track("v", "Volume", 0.0, 100.0, 1.0, 0.0, "0")
+        assertEquals("75", whole.textAt(75))
+    }
+
     @Test fun acceptRefusesASliderValueOffTheTrack() {
         val parsed = AgentPanels.parse("p", panel(block("slider") { put("id", "s"); put("label", "S"); put("min", 0); put("max", 10); put("step", 2) },
             buttons = listOf(buildJsonObject { put("id", "ok"); put("label", "OK") }, buildJsonObject { put("id", "no"); put("label", "No"); put("style", "cancel") }),
