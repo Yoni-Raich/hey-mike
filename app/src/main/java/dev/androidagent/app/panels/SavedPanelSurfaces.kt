@@ -174,6 +174,11 @@ class SavedPanelSurfaces(
 
 /** The ongoing notification for each notification panel, and the approval prompt. */
 internal class SavedPanelNotifications(private val context: Context) {
+    init {
+        // Built with the app graph, so channels from earlier builds go at startup.
+        context.getSystemService(NotificationManager::class.java)?.let { retire(it, RETIRED_CHANNELS) }
+    }
+
     private val posted = mutableMapOf<String, String>()
     private val asking = mutableSetOf<String>()
     private val _nudges = MutableStateFlow(0)
@@ -367,17 +372,8 @@ internal class SavedPanelNotifications(private val context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         runCatching {
             // Android keeps a channel's first sound and importance, so a change needs a new id.
-            RETIRED_CHANNELS.forEach { id -> runCatching { manager.deleteNotificationChannel(id) } }
-            CHANNELS.forEach { spec ->
-                manager.createNotificationChannel(
-                    NotificationChannel(spec.id, spec.name, spec.importance).apply {
-                        description = spec.description
-                        if (!spec.sound) setSound(null, null)
-                        if (!spec.vibration) enableVibration(false)
-                        if (!spec.badge) setShowBadge(false)
-                    },
-                )
-            }
+            retire(manager, RETIRED_CHANNELS)
+            CHANNELS.forEach { spec -> manager.createNotificationChannel(spec.channel()) }
         }
     }
 
@@ -390,18 +386,36 @@ internal class SavedPanelNotifications(private val context: Context) {
         val sound: Boolean,
         val vibration: Boolean,
         val badge: Boolean = true,
-    )
+    ) {
+        fun channel(): NotificationChannel = NotificationChannel(id, name, importance).also { channel ->
+            channel.description = description
+            if (!sound) channel.setSound(null, null)
+            if (!vibration) channel.enableVibration(false)
+            if (!badge) channel.setShowBadge(false)
+        }
+    }
 
     companion object {
         const val PANELS = "saved_panels_v2"
         const val OLD_PANELS = "saved_panels"
-        const val APPROVALS = "saved_panel_approvals"
+        /** v2: silent. The first approval channel used the phone's default sound and buzz. */
+        const val APPROVALS = "saved_panel_approvals_v2"
+        const val OLD_APPROVALS = "saved_panel_approvals"
         /** v2: silent. The first timer channel used the phone's default sound. */
         const val ALERTS = "saved_panel_alerts_v2"
         const val OLD_ALERTS = "saved_panel_alerts"
 
         /** Channels from earlier builds, deleted on start. */
-        internal val RETIRED_CHANNELS = listOf(OLD_PANELS, OLD_ALERTS)
+        internal val RETIRED_CHANNELS = listOf(OLD_PANELS, OLD_ALERTS, OLD_APPROVALS)
+
+        /**
+         * Deletes [ids] from earlier builds. Android keeps a channel's first sound and
+         * importance, and the user's own changes to it, so a silent channel needs a new
+         * id and those changes do not carry over.
+         */
+        internal fun retire(manager: NotificationManager, ids: List<String>) {
+            ids.forEach { id -> runCatching { manager.deleteNotificationChannel(id) } }
+        }
 
         internal val CHANNELS = listOf(
             // Default importance, so the title shows on the lock screen; no sound, no
@@ -420,8 +434,8 @@ internal class SavedPanelNotifications(private val context: Context) {
             ),
             ChannelSpec(
                 APPROVALS, "Panels to approve", NotificationManager.IMPORTANCE_DEFAULT,
-                "A panel Mike made that waits for your approval.",
-                sound = true, vibration = true,
+                "A panel Mike made that waits for your approval. Silent; you can turn on a sound here.",
+                sound = false, vibration = false,
             ),
         )
         /** One per panel; the panel's id is the tag. */

@@ -101,6 +101,15 @@ run on a phone:
   tie left by a removed widget does not (`SavedPanelWidgetPinTest`). Not tried
   on a launcher. A pin still waiting in the launcher's dialog is not tracked,
   so two fast taps can still ask twice.
+- With the user's OK, "Panels to approve" and "Questions from Mike" are
+  silent: new channel ids (`saved_panel_approvals_v2`, `questions_v2`) with no
+  sound and no vibration, each at its old importance (default; high, so a
+  question still pops up). The old ids are deleted at startup. Settings the
+  user changed on the old channels (a sound, importance, lock screen) do not
+  carry over. "Approvals for Mike" and "Finished chats" still use the
+  phone's default sound; unchanged. `PanelChannelsTest` checks the specs and
+  the retired ids. Not run on a phone: that the old channels are gone and the
+  new ones pop up without a sound.
 
 ### Panels outside the chat - 2026-11-15
 

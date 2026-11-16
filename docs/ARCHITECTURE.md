@@ -437,6 +437,19 @@ set. The first build's `saved_panel_alerts` channel used the phone's default
 sound; Android keeps a channel's first sound, so it is deleted and replaced
 by the new id.
 
+**Silent approvals and questions.** With the user's OK, the "Panels to
+approve" channel (`saved_panel_approvals_v2`, default importance) and the
+"Questions from Mike" channel (`questions_v2`, high importance, so it still
+pops up) have no sound and no vibration. Each keeps its old importance. The
+old ids (`saved_panel_approvals`, `questions`) used the phone's default sound
+and buzz; they are deleted at startup, when `SavedPanelNotifications` and
+`QuestionNotifier` are built with the app graph. A deleted channel takes the
+user's own settings for it with it, so a sound, importance or lock-screen
+choice made on the old channel does not carry over to the new one. The
+session channels "Approvals for Mike" (`approvals`) and "Finished chats"
+(`finished`) are high importance with the phone's default sound; they are
+not changed.
+
 **Surface input.**
 
 - Floating card: checkbox rows, an add field, a note field and counter
