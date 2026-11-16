@@ -473,6 +473,31 @@ class PanelAppsHostTest {
         assertFalse(second.message, second.message.contains("before it"))
     }
 
+    @Test fun aMissingGrantNamesTheSwitchAndIsKeptForSavedPanels() = runTest {
+        val rig = Rig(this)
+        val host = rig.host()
+        val id = approved(host, bedtime(dnd, dim))
+        val missing = """{"ok":false,"tool":"system_controls","operation":"brightness","errorType":"grant_missing",""" +
+            """"message":"Changing system settings needs \"Modify system settings\" for Hey Mike.","grant":"write_settings"}"""
+        rig.answer = { arguments ->
+            if (arguments["operation"]!!.jsonPrimitive.content == "brightness") ToolResult(missing, success = false) else ToolResult("""{"ok":true}""")
+        }
+        assertTrue(host.runAction(id, "go"))
+        runCurrent()
+        val tap = host.state(id, "go")
+        assertEquals(false, tap.ok)
+        assertEquals(PanelGrants.WRITE_SETTINGS, tap.grant)
+        assertTrue(tap.message, tap.message.startsWith("Hey Mike needs “Modify system settings”; allow it in Saved panels. Stopped at step 2 of 2"))
+        assertTrue(tap.message, tap.message.length <= PanelHost.MAX_MESSAGE)
+
+        // Once the user allows it, the next tap works and the grant is cleared.
+        rig.answer = { ToolResult("""{"ok":true}""") }
+        assertTrue(host.runAction(id, "go"))
+        runCurrent()
+        assertEquals(true, host.state(id, "go").ok)
+        assertNull(host.state(id, "go").grant)
+    }
+
     @Test fun aStepsFailureCutsTheStepWordsBeforeTheReason() {
         val first = PanelHost.stepsFailure("The setting was refused.", 0, 3, "Turn on Do Not Disturb (priority only)")
         assertEquals("The setting was refused. Stopped at step 1 of 3 (Turn on Do Not Disturb (priority only)).", first)

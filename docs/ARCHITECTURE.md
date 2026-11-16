@@ -370,6 +370,21 @@ action runs a routine without the model:
   re-approval and the load check see them. A `panel_id` change that makes a
   new sequence of device steps waits for approval even when each call was
   approved alone, because one tap now does them together.
+- Special access a panel needs (`PanelGrants`, mirroring
+  `AndroidSystemPlatform`): brightness, screen timeout and auto-rotate need
+  "Modify system settings"; Do Not Disturb and the silent ringer need "Do Not
+  Disturb access". Volume is not flagged: it needs Do Not Disturb access only
+  when Android refuses to silence a stream, which is not known before the
+  call. Saved panels reads both switches every second, as it does for
+  floating, and flags each step whose switch is off under its button ("Step
+  2 needs “Modify system settings” for Hey Mike, which is off"), before
+  and after approval. The card then offers "Allow “...”", which only opens
+  Android's own screen (`ACTION_MANAGE_WRITE_SETTINGS` for this package,
+  `ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS`); nothing is granted by code.
+  A tap that fails with `grant_missing` says "Hey Mike needs “...”; allow it
+  in Saved panels" and keeps the grant on the tile's in-memory state, so the
+  card offers Allow for it too (volume included). A tile itself never opens
+  Settings: a widget or notification tap runs in a receiver.
 - A cancelled run (any tap) no longer leaves its tile spinning: the launch's
   `finally` clears `running`.
 

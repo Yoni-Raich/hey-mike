@@ -672,13 +672,15 @@ class PanelHost(
         val panel = saved.panel!!
         var failed: Int? = null
         var reason: String? = null
+        var grant: String? = null
         for ((index, step) in steps.withIndex()) {
             reason = if (active(saved.id) == null) {
                 "the panel is gone"
             } else when (step) {
                 is PanelStep.Device -> {
                     val (ok, text) = invokeLogged(saved, action.id, "${action.label}, step ${index + 1} of ${steps.size}", step.call, index + 1)
-                    if (ok) null else short(text)
+                    if (!ok) grant = PanelGrants.missing(text)
+                    if (ok) null else failure(text)
                 }
                 is PanelStep.Local -> edit(saved.id, step.op, "action:${action.id}")
             }
@@ -689,7 +691,7 @@ class PanelHost(
         }
         val message = failed?.let { index -> stepsFailure(reason.orEmpty(), index, steps.size, PanelOpWords.step(panel, steps[index])) }
         setAction(saved.id, action.id) {
-            it.copy(running = false, ok = failed == null, message = message?.take(160).orEmpty(), runs = it.runs + 1)
+            it.copy(running = false, ok = failed == null, message = message?.take(MAX_MESSAGE).orEmpty(), runs = it.runs + 1, grant = grant)
         }
         trace(saved.sessionId, "panel_steps", buildJsonObject {
             put("panelId", saved.id); put("actionId", action.id); put("steps", steps.size); put("ok", failed == null)
@@ -703,7 +705,8 @@ class PanelHost(
         val (ok, text) = invokeLogged(saved, actionId, label, call, null)
         setAction(saved.id, actionId) {
             it.copy(
-                running = false, ok = ok, message = if (ok) "" else short(text), runs = it.runs + 1,
+                running = false, ok = ok, message = if (ok) "" else failure(text), runs = it.runs + 1,
+                grant = if (ok) null else PanelGrants.missing(text),
                 on = if (on != null && ok) on else it.on,
                 value = if (value != null && ok) value else it.value,
             )
@@ -1133,6 +1136,9 @@ class PanelHost(
     private fun refused(text: String): Boolean = runCatching {
         (Json.parseToJsonElement(text).jsonObject["ok"] as? JsonPrimitive)?.contentOrNull == "false"
     }.getOrDefault(false)
+
+    /** A failed call's reason; a missing grant says which switch to flip and where. */
+    private fun failure(text: String): String = PanelGrants.missing(text)?.let(PanelGrants::reason) ?: short(text)
 
     private fun short(text: String): String = runCatching {
         (Json.parseToJsonElement(text).jsonObject["message"] as? JsonPrimitive)?.contentOrNull

@@ -292,7 +292,8 @@ object PanelCallWords {
  * Details). Every call the panel can make is in exactly one line.
  */
 object PanelApprovalLines {
-    data class Line(val label: String, val words: String, val calls: List<PanelCall>)
+    /** [needs] is the special access its calls need, so the screen can flag what is off. */
+    data class Line(val label: String, val words: String, val calls: List<PanelCall>, val needs: List<PanelGrants.Need> = emptyList())
 
     fun of(panel: AgentPanel): List<Line> = panel.blocks.mapNotNull { block ->
         when (block) {
@@ -300,7 +301,10 @@ object PanelApprovalLines {
                 null -> {
                     val calls = listOfNotNull(block.call, block.offCall).distinct()
                     if (calls.isEmpty()) null
-                    else Line(block.label, calls.map(PanelCallWords::describe).distinct().let(::either), calls)
+                    else Line(
+                        block.label, calls.map(PanelCallWords::describe).distinct().let(::either), calls,
+                        calls.mapNotNull(PanelGrants::needed).distinct().map { PanelGrants.Need(it) },
+                    )
                 }
                 is PanelEffect.Local -> Line(block.label, PanelOpWords.describe(panel, effect.op) + ". Changes only this panel.", emptyList())
                 is PanelEffect.AskMike -> Line(
@@ -312,9 +316,14 @@ object PanelApprovalLines {
                     "Does these in order and stops at the first that fails:\n" +
                         effect.steps.mapIndexed { index, step -> "${index + 1}. ${PanelOpWords.step(panel, step)}" }.joinToString("\n"),
                     block.stepCalls,
+                    effect.steps.mapIndexedNotNull { index, step ->
+                        (step as? PanelStep.Device)?.call?.let(PanelGrants::needed)?.let { PanelGrants.Need(it, index + 1) }
+                    },
                 )
             }
-            is PanelBlock.Slider -> block.call?.let { Line(block.label, PanelCallWords.describe(it), listOf(it)) }
+            is PanelBlock.Slider -> block.call?.let { call ->
+                Line(block.label, PanelCallWords.describe(call), listOf(call), listOfNotNull(PanelGrants.needed(call)?.let { PanelGrants.Need(it) }))
+            }
             else -> null
         }
     }

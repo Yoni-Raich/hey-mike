@@ -132,6 +132,19 @@ Working row cleared. Fixes, each its own commit, none run on a phone:
   caption 3 lines. The notification's collapsed line is the reason, which now
   comes first. Not looked at on a phone: how the widget line, the 2-line tile
   caption and the floating caption fit on a real launcher and screen.
+- A missing permission is named and can be allowed. On the Xiaomi step 2
+  (brightness) failed for lack of "Modify system settings". Now Saved panels
+  flags, before and after approval, each step whose switch is off ("Step 2
+  needs “Modify system settings” for Hey Mike, which is off") and offers
+  "Allow “Modify system settings”", which opens Android's screen for Hey
+  Mike; the flag clears within a second of coming back. The failed tap reads
+  "Hey Mike needs “Modify system settings”; allow it in Saved panels.
+  Stopped at step 2 of 3 (...)". The same holds for "Do Not Disturb access"
+  (Do Not Disturb, silent ringer). Nothing is granted by adb or code.
+  `PanelGrantsTest` checks the mapping, the flags and the result parsing;
+  `PanelAppsHostTest.aMissingGrantNamesTheSwitchAndIsKeptForSavedPanels` the
+  tap. Not done on a phone: the Allow button opening the right screen on
+  HyperOS, and the flag clearing after the user flips the switch.
 
 ### Panels outside the chat - 2026-11-15
 

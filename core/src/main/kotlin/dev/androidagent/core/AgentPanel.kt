@@ -311,11 +311,13 @@ enum class PanelAccent { TEAL, AMBER, VIOLET, ROSE, SKY, LIME }
 
 /**
  * Where one action tile or live slider stands. [on] is a switch's state and
- * [value] a slider's number after its last call that worked.
+ * [value] a slider's number after its last call that worked. [grant] is the
+ * special access the last tap lacked (a `grant_missing` result), so Saved
+ * panels can offer to open its switch. Kept in memory only.
  */
 data class PanelActionState(
     val running: Boolean = false, val on: Boolean? = null, val ok: Boolean? = null, val message: String = "", val runs: Int = 0,
-    val value: String? = null,
+    val value: String? = null, val grant: String? = null,
 )
 
 /** One tap's or one slide's outcome, for Mike's tool result. [value] is the number a live slider sent. */

@@ -63,6 +63,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +75,7 @@ import dev.androidagent.core.AgentPanel
 import dev.androidagent.core.PanelApprovalLines
 import dev.androidagent.core.PanelCall
 import dev.androidagent.core.PanelCallWords
+import dev.androidagent.core.PanelGrants
 import dev.androidagent.core.PanelHost
 import dev.androidagent.core.PanelPlacement
 import dev.androidagent.core.PanelRevision
@@ -138,16 +140,21 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
     val panels by host.panels.collectAsState()
     val revisions by host.revisions.collectAsState()
     val notice by host.notice.collectAsState()
+    val live by host.live.collectAsState()
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val problems = remember { mutableStateMapOf<String, String>() }
     var confirmAll by remember { mutableStateOf(false) }
     // A fresh look at what can float, for a user back from Settings. Only a
     // change redraws: the cards no longer read a clock that ticks each second.
     var canFloat by remember { mutableStateOf(surfaces.canFloat()) }
+    // The same for special access, so a flag clears once the user allows it.
+    var missing by remember { mutableStateOf(PanelGrantAccess.missing(context)) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(1_000)
             canFloat = surfaces.canFloat()
+            missing = PanelGrantAccess.missing(context)
         }
     }
     val ordered = panels.sortedWith(compareBy<SavedPanel>({ it.id != focus }, { it.status != SavedPanel.Status.PENDING }, { -it.createdAtMs }))
@@ -190,9 +197,19 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
                     }
                 }
                 items(ordered, key = { it.id }) { saved ->
+                    val state = live[saved.id]
+                    val failedFor = remember(state) { state?.actions?.values?.mapNotNullTo(mutableSetOf()) { it.grant }.orEmpty() }
                     PanelCard(
                         saved = saved,
                         canFloat = canFloat,
+                        missing = missing,
+                        failedFor = failedFor,
+                        onAllow = { grant ->
+                            if (!PanelGrantAccess.open(context, grant)) {
+                                problems[saved.id] = "This phone has no screen for “${PanelGrants.name(grant)}”. " +
+                                    "Look for Hey Mike under Settings, Apps, Special app access."
+                            }
+                        },
                         problem = problems[saved.id],
                         revision = revisions[saved.id],
                         onApproveRevision = {
@@ -255,6 +272,9 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
 private fun PanelCard(
     saved: SavedPanel,
     canFloat: Boolean,
+    missing: Set<String>,
+    failedFor: Set<String>,
+    onAllow: (String) -> Unit,
     problem: String?,
     revision: PanelRevision?,
     onApproveRevision: () -> Unit,
@@ -281,8 +301,9 @@ private fun PanelCard(
                 )
             }
             val panel = saved.panel
-            if (panel != null && (pending || saved.status == SavedPanel.Status.ACTIVE)) {
-                PanelDoes(panel, if (pending) "If you approve, its buttons can:" else "Its buttons:")
+            val shown = panel != null && (pending || saved.status == SavedPanel.Status.ACTIVE)
+            if (panel != null && shown) {
+                PanelDoes(panel, if (pending) "If you approve, its buttons can:" else "Its buttons:", missing)
             }
             if (revision != null && saved.status == SavedPanel.Status.ACTIVE) {
                 Text(
@@ -290,13 +311,22 @@ private fun PanelCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                PanelDoes(revision.panel, "If you approve, its buttons can:")
+                PanelDoes(revision.panel, "If you approve, its buttons can:", missing)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onApproveRevision) { Text("Approve change") }
                     OutlinedButton(onClick = onRejectRevision) { Text("Keep as it is") }
                 }
             }
             problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+            // One button per switch that is off and that a button needs or a tap just lacked.
+            val needed = listOfNotNull(panel.takeIf { shown }, revision?.panel?.takeIf { saved.status == SavedPanel.Status.ACTIVE })
+                .flatMap { PanelApprovalLines.of(it) }.flatMap { it.needs }.map { it.grant } + failedFor
+            val allow = needed.filter { it in missing }.distinct()
+            if (allow.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    allow.forEach { grant -> OutlinedButton(onClick = { onAllow(grant) }) { Text("Allow “${PanelGrants.name(grant)}”") } }
+                }
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (pending) {
                     Button(onClick = onApprove) { Text("Approve") }
@@ -349,12 +379,12 @@ private fun LockScreenLine(short: String) {
 
 /** Each button by its label, what it does in plain words, and what it reads while shown. */
 @Composable
-private fun PanelDoes(panel: AgentPanel, heading: String) {
+private fun PanelDoes(panel: AgentPanel, heading: String, missing: Set<String>) {
     val lines = PanelApprovalLines.of(panel)
     val reads = panel.binds.values.distinctBy { it.call }
     if (lines.isNotEmpty()) {
         Text(heading, style = MaterialTheme.typography.labelLarge)
-        lines.forEach { line -> CallLine(line.label, line.words, line.calls) }
+        lines.forEach { line -> CallLine(line.label, line.words, line.calls, PanelGrants.flags(line.needs, missing).map { it.second }) }
     }
     if (reads.isNotEmpty()) {
         Text("It reads, while it is on screen:", style = MaterialTheme.typography.labelLarge)
@@ -368,11 +398,12 @@ private fun PanelDoes(panel: AgentPanel, heading: String) {
  * hide what a tap does.
  */
 @Composable
-private fun CallLine(label: String?, words: String, calls: List<PanelCall>) {
+private fun CallLine(label: String?, words: String, calls: List<PanelCall>, flags: List<String> = emptyList()) {
     var open by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         label?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold) }
         Text(words, style = MaterialTheme.typography.bodyMedium)
+        flags.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
         if (calls.isNotEmpty()) {
             TextButton(onClick = { open = !open }) { Text(if (open) "Hide details" else "Details") }
             if (open) {
