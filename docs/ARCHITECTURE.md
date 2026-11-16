@@ -47,11 +47,19 @@ panel "awaits approval" that was never created.
 - The coordinator tracks every tool call it runs (`InFlightCall`) and answers
   each at most once. `ApprovalResolved` for a call of the same thread and turn
   cancels it. Turn end (`finalizeRun`) cancels every call still open.
-- A chat panel or question closed that way leaves a chat line: "The panel
-  closed: Mike stopped waiting for it" or "...: Mike's turn ended", and that
-  taps already made stay done. It is not answered: nobody reads the answer.
-  This is also the rule for an open panel when its turn ends (it closes; the
-  chat says so).
+- A question closed that way leaves a chat line: "The question closed: Mike
+  stopped waiting for it" or "...: Mike's turn ended", and that taps already
+  made stay done. It is not answered: nobody reads the answer.
+- A chat panel that closes with no answer (its turn ends, the engine gives up
+  on it, Stop, or nobody uses it for 8 minutes) stays in the chat as a
+  collapsed receipt instead of vanishing: its title and "Expired, not sent."
+  (plus "Taps already made stay done." when an action ran). Its title message
+  takes state `expired` or `expired_after_taps`; the receipt has no fields and
+  no buttons, and the coordinator holds no pending panel, so nothing can be
+  sent from it. The receipt replaces the "The panel closed" line. The trace
+  still records `tool_closed` with the reason. Decided 2026-11-16 after a
+  phone test: a form left open vanished at turn end with no visible note
+  (the old line sat collapsed under "Run details").
 - A call whose job ends with no answer while its turn still runs gets a
   failure answer, so the model never waits on it. After Stop nothing is
   answered, as before.

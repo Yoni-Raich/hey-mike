@@ -59,6 +59,13 @@ run on a phone:
   after the run ends (`animateItem(fadeOutSpec = null)`, hardening without
   evidence). `ChatRunViewTest` 5 checks the rows and the button from the same
   `AgentUiState`; it was not run against the old code.
+- A chat form left open no longer vanishes when its turn ends, times out, is
+  given up by the engine or is stopped: it stays as a collapsed "Expired, not
+  sent." receipt (title plus that line; "Taps already made stay done." when an
+  action ran) that has no fields or buttons. Coordinator tests cover turn end,
+  engine give-up, the 8-minute timeout (a late answer is refused) and an
+  answered panel staying "complete"; `ExpiredPanelNoteTest` covers the line.
+  The receipt card itself is not drawn in any test.
 
 ### Panels outside the chat - 2026-11-15
 

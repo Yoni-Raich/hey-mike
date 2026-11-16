@@ -348,6 +348,10 @@ data class PanelReply(val button: String?, val values: Map<String, String>, val 
 
 object AgentPanels {
     const val NAME = "show_ui"
+    /** The state of a chat panel's title message once it closed with no answer: a receipt, never a form again. */
+    const val EXPIRED = "expired"
+    /** As [EXPIRED], after the user ran at least one of its actions. Those stay done. */
+    const val EXPIRED_AFTER_TAPS = "expired_after_taps"
     const val MAX_BLOCKS = 20
     const val MAX_BUTTONS = 4
     const val MAX_TEXT = 1_000

@@ -82,6 +82,7 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.TimerOff
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -1089,6 +1090,10 @@ internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showC
         }
         return
     }
+    expiredPanelNote(message)?.let { note ->
+        ExpiredPanelReceipt(message.text, note)
+        return
+    }
     // What `/context` answers is shown as a gauge, not as the CLI's table.
     val contextUsage = remember(message.id, message.text) { if (user) null else parseContextUsage(message.text) }
     if (contextUsage != null) {
@@ -1168,6 +1173,39 @@ internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showC
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** A chat panel that closed with no answer: its title and one line, collapsed and inert. */
+@Composable
+private fun ExpiredPanelReceipt(title: String, note: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                Icons.Outlined.TimerOff,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(note, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

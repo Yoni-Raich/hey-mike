@@ -1416,7 +1416,10 @@ class AgentCoordinatorTest {
         assertNull(rig.coordinator.state.value.panel)
         // Nobody waits for that call now, so it is not answered.
         assertTrue(rig.engine.answers.isEmpty())
-        assertTrue(rig.store.messages.any { it.role == "system" && it.text.startsWith("The panel closed: Mike's turn ended") })
+        // The form stays in the chat as a receipt, not as a second note.
+        val receipt = rig.store.messages.single { it.role == "assistant" && it.text == "Sign in to the shop" }
+        assertEquals(AgentPanels.EXPIRED, receipt.state)
+        assertFalse(rig.store.messages.any { it.role == "system" && it.text.startsWith("The panel closed") })
 
         rig.coordinator.send("one", "Read the screen")
         runCurrent()
@@ -1449,9 +1452,42 @@ class AgentCoordinatorTest {
         assertFalse(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "x")))
         // Only the call behind it is answered: the engine no longer reads the panel's.
         assertEquals(listOf("Done"), rig.engine.answers.map { it.text })
-        assertTrue(rig.store.messages.any { it.role == "system" && it.text.startsWith("The panel closed: Mike stopped waiting for it") })
+        assertEquals(AgentPanels.EXPIRED, rig.store.messages.single { it.text == "Sign in to the shop" }.state)
         val panelTrace = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "p" }.map { it["type"]!!.jsonPrimitive.content }
         assertEquals(listOf("tool_call", "tool_cancelled", "tool_closed"), panelTrace)
+        rig.close()
+    }
+
+    @Test fun aChatPanelNobodyUsesExpiresAsAReceiptThatCannotBeSent() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        val title = rig.store.messages.single { it.text == "Sign in to the shop" }
+        assertEquals("complete", title.state)
+        advanceTimeBy(ChatTools.ASK_TIMEOUT_MS + 1_000)
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertTrue(rig.engine.answers.single().text.contains("no_answer"))
+        assertEquals(AgentPanels.EXPIRED, rig.store.messages.single { it.id == title.id }.state)
+        assertFalse(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "x")))
+        assertEquals(1, rig.engine.answers.size)
+        assertEquals(listOf("Sign in"), rig.store.messages.filter { it.role == "user" }.map { it.text })
+        rig.close()
+    }
+
+    @Test fun anAnsweredChatPanelIsNoReceipt() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertTrue(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "x")))
+        runCurrent()
+        assertEquals("complete", rig.store.messages.single { it.text == "Sign in to the shop" }.state)
         rig.close()
     }
 

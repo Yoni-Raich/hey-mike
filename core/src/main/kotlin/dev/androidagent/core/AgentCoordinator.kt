@@ -1753,7 +1753,7 @@ class AgentCoordinator(
             ensureCurrentTurn(token, threadId, turnId)
             when (event.name) {
                 ChatTools.ASK -> askUser(token, sessionId, threadId, turnId, event.arguments) { call.shown = true }
-                AgentPanels.NAME -> showPanel(token, sessionId, threadId, turnId, event.arguments) { call.shown = true }.let { (real, masked) ->
+                AgentPanels.NAME -> showPanel(token, sessionId, threadId, turnId, event.arguments, { call.expiredInChat = true }) { call.shown = true }.let { (real, masked) ->
                     traceText = masked
                     real
                 }
@@ -1818,7 +1818,10 @@ class AgentCoordinator(
             val what = if (event.name == ChatTools.ASK) "The question" else "The panel"
             val why = if (closedBy == CALL_CANCELLED_BY_ENGINE) "Mike stopped waiting for it" else "Mike's turn ended"
             runCatching {
-                sessions.append(message(sessionId, "system", "$what closed: $why, so an answer there would not reach him. Taps already made stay done."))
+                // A chat panel already says so on its own receipt.
+                if (!call.expiredInChat) {
+                    sessions.append(message(sessionId, "system", "$what closed: $why, so an answer there would not reach him. Taps already made stay done."))
+                }
                 trace(sessionId, "tool_closed", buildJsonObject {
                     put("requestId", event.requestId)
                     put("name", event.name)
@@ -1932,7 +1935,8 @@ class AgentCoordinator(
      * engine's result and the same result with secrets masked, for the trace.
      */
     private suspend fun showPanel(
-        token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject, onShown: () -> Unit = {},
+        token: Long, sessionId: String, threadId: String, turnId: String, arguments: JsonObject,
+        onExpired: () -> Unit = {}, onShown: () -> Unit = {},
     ): Pair<ToolResult, String> {
         val known = tools.definitions.map { it.name }.toSet()
         val check: (String, JsonObject) -> String? = { tool, args ->
@@ -1986,10 +1990,11 @@ class AgentCoordinator(
         }
         onShown()
         val askedAt = nowNanos()
+        var titleId: String? = null
+        var answer: PanelReply? = null
         val reply = try {
-            sessions.append(message(sessionId, "assistant", panel.title))
+            titleId = message(sessionId, "assistant", panel.title).also { sessions.append(it) }.id
             // A tap on an action counts as use: the wait starts over while the user works the panel.
-            var answer: PanelReply? = null
             while (answer == null) {
                 val seen = pending.touched.get()
                 answer = withTimeoutOrNull(ChatTools.ASK_TIMEOUT_MS) { pending.reply.await() }
@@ -2005,6 +2010,17 @@ class AgentCoordinator(
             approvalNanos.addAndGet(nowNanos() - askedAt)
             synchronized(lifecycleLock) {
                 if (state.value.panel?.id == panel.id) mutableState.value = state.value.copy(panel = null, panelActions = emptyMap())
+            }
+            // Closed with no answer (timeout, turn end, Stop): the chat keeps a receipt, not a form.
+            val shownAs = titleId
+            if (answer == null && shownAs != null) {
+                val tapped = synchronized(lifecycleLock) { pending.log.isNotEmpty() }
+                withContext(NonCancellable) {
+                    runCatching {
+                        sessions.updateMessage(shownAs, panel.title, if (tapped) AgentPanels.EXPIRED_AFTER_TAPS else AgentPanels.EXPIRED)
+                        onExpired()
+                    }
+                }
             }
         }
         ensureCurrentTurn(token, threadId, turnId)
@@ -2452,6 +2468,8 @@ class AgentCoordinator(
         @Volatile var shown = false
         /** Why it ended with no answer, when the app gave up on it. */
         @Volatile var closedBy: String? = null
+        /** A chat panel that closed unanswered and left an "Expired, not sent" receipt. */
+        @Volatile var expiredInChat = false
 
         fun close(reason: String) {
             if (!settled.compareAndSet(false, true)) return

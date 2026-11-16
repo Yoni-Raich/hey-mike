@@ -20,6 +20,7 @@
 
 package dev.androidagent.app.ui
 
+import dev.androidagent.core.AgentPanels
 import dev.androidagent.core.ChatMessage
 
 /** One row of the conversation: a message, or a run of device or computer actions folded together. */
@@ -347,3 +348,17 @@ internal fun chatListRows(messages: List<ChatMessage>, view: ChatRunView): List<
 
 private fun isEmptyStreamingReply(message: ChatMessage): Boolean =
     message.role.equals("assistant", true) && message.text.isBlank() && message.state.equals("streaming", true)
+
+/**
+ * The receipt line of a chat panel that closed with no answer, or null for
+ * any other message. The panel is gone for good: the receipt has no fields
+ * and no buttons, so nothing in it can be sent.
+ */
+internal fun expiredPanelNote(message: ChatMessage): String? {
+    if (!message.role.equals("assistant", true)) return null
+    return when (message.state) {
+        AgentPanels.EXPIRED -> "Expired, not sent."
+        AgentPanels.EXPIRED_AFTER_TAPS -> "Expired, not sent. Taps already made stay done."
+        else -> null
+    }
+}
