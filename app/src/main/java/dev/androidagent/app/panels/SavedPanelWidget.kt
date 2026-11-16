@@ -25,15 +25,23 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.view.View
 import android.widget.RemoteViews
 import dev.androidagent.app.AgentApplication
 import dev.androidagent.app.R
+import dev.androidagent.core.PanelEffect
 import dev.androidagent.core.PanelFace
 import dev.androidagent.core.PanelHost
 import dev.androidagent.core.PanelLive
+import dev.androidagent.core.PanelOp
+import dev.androidagent.core.PanelState
 import dev.androidagent.core.PanelSurface
 import dev.androidagent.core.SavedPanel
+import java.text.DateFormat
+import java.util.Date
 
 /**
  * A home-screen widget that draws one saved widget panel. Built with
@@ -45,7 +53,7 @@ class SavedPanelWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val graph = (context.applicationContext as? AgentApplication)?.graph ?: return
         val host = graph.panels
-        SavedPanelWidget.render(context.applicationContext, host, host.panels.value, host.live.value)
+        SavedPanelWidget.render(context.applicationContext, host, host.panels.value, host.live.value, host.states.value)
     }
 
     override fun onDeleted(context: Context, ids: IntArray) {
@@ -56,6 +64,8 @@ class SavedPanelWidgetProvider : AppWidgetProvider() {
 object SavedPanelWidget {
     private const val PREFS = "saved_panel_widgets"
     private const val TILES_PER_ROW = 3
+    /** Below Android 12 a widget cannot scroll a list it builds itself, so it shows this many items. */
+    private const val FIXED_ITEMS = 6
 
     /** Whether the launcher can place a widget for the app when asked. */
     fun canPin(context: Context): Boolean =
@@ -84,7 +94,7 @@ object SavedPanelWidget {
         val saved = host.active(panelId) ?: return
         if (saved.placement?.surface != PanelSurface.WIDGET) return
         prefs(context).edit().putString(widgetId.toString(), panelId).apply()
-        render(context, host, host.panels.value, host.live.value)
+        render(context, host, host.panels.value, host.live.value, host.states.value)
     }
 
     fun forget(context: Context, ids: IntArray) {
@@ -103,7 +113,10 @@ object SavedPanelWidget {
      * the app cannot take a widget off the home screen, only the user can.
      * Returns the ids of the panels that are drawn on a widget now.
      */
-    fun render(context: Context, host: PanelHost, panels: List<SavedPanel>, live: Map<String, PanelLive>): Set<String> {
+    fun render(
+        context: Context, host: PanelHost, panels: List<SavedPanel>, live: Map<String, PanelLive>,
+        states: Map<String, PanelState> = emptyMap(),
+    ): Set<String> {
         val manager = AppWidgetManager.getInstance(context) ?: return emptySet()
         val ids = runCatching { manager.getAppWidgetIds(provider(context)) }.getOrDefault(IntArray(0))
         if (ids.isEmpty()) return emptySet()
@@ -112,11 +125,11 @@ object SavedPanelWidget {
         ids.forEach { widgetId ->
             val panelId = map.getString(widgetId.toString(), null)
             val saved = panelId?.let(host::active)?.takeIf { it.placement?.surface == PanelSurface.WIDGET }
-            val face = saved?.takeIf { !it.hidden }?.let { PanelFace.of(it, live[it.id]) }
+            val face = saved?.takeIf { !it.hidden }?.let { PanelFace.of(it, live[it.id], states[it.id]) }
             val views = when {
                 face != null -> {
                     drawn += face.id
-                    panel(context, face)
+                    panel(context, host, face)
                 }
                 panelId == null -> message(context, context.getString(R.string.panel_widget_unbound))
                 saved != null -> message(context, context.getString(R.string.panel_widget_hidden))
@@ -128,14 +141,28 @@ object SavedPanelWidget {
         return drawn
     }
 
-    private fun panel(context: Context, face: PanelFace): RemoteViews {
+    private fun panel(context: Context, host: PanelHost, face: PanelFace): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_panel)
         views.setTextViewText(R.id.widget_panel_title, face.title.ifBlank { "Mike" })
         views.setOnClickPendingIntent(R.id.widget_panel_title, open(context, face.id))
+        val clockTime = DateFormat.getTimeInstance(DateFormat.SHORT)
         val notes = face.rows.mapNotNull { row ->
             when (row) {
                 is PanelFace.Row.Note -> row.text
                 is PanelFace.Row.Reading -> if (row.label.isBlank()) row.value else "${row.label}: ${row.value}"
+                is PanelFace.Row.Count -> listOf(row.label, row.count.toString() + (row.goal?.let { " of $it" } ?: ""))
+                    .filter(String::isNotBlank).joinToString(": ")
+                // A widget is redrawn seldom, so a running timer shows when it ends, not a count.
+                is PanelFace.Row.Clock -> listOf(
+                    row.label,
+                    when {
+                        row.done -> "time is up"
+                        row.endsAtMs != null -> "ends at " + clockTime.format(Date(row.endsAtMs!!))
+                        else -> minutes(row.leftMs) + " left"
+                    },
+                ).filter(String::isNotBlank).joinToString(": ")
+                is PanelFace.Row.Bar -> listOf(row.label, "${trim(row.done)} of ${trim(row.total)}").filter(String::isNotBlank).joinToString(": ")
+                is PanelFace.Row.Memo -> row.text.takeIf(String::isNotBlank)?.let { if (row.label.isBlank()) it else "${row.label}: $it" }
                 else -> null
             }
         }
@@ -146,16 +173,90 @@ object SavedPanelWidget {
         views.setTextViewText(R.id.widget_panel_message, if (unsupported) context.getString(R.string.panel_widget_unsupported) else "")
         views.setViewVisibility(R.id.widget_panel_message, if (unsupported) View.VISIBLE else View.GONE)
         views.removeAllViews(R.id.widget_panel_tiles)
-        face.tiles.chunked(TILES_PER_ROW).forEach { row ->
+        val checks = face.checks
+        if (checks != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            list(context, views, face.id, checks)
+        } else {
+            views.setViewVisibility(R.id.widget_panel_list, View.GONE)
+            checks?.items?.sortedBy { it.checked }?.take(FIXED_ITEMS)?.forEach { item ->
+                views.addView(R.id.widget_panel_tiles, item(context, face.id, checks.blockId, item, fill = false))
+            }
+        }
+        // The panel's buttons, then what its list, counter or timer offers.
+        val extra = face.rows.mapNotNull { row ->
+            when (row) {
+                is PanelFace.Row.Checks -> if (row.canAdd) Extra("Add", PanelAddActivity.pending(context, face.id, row.blockId)) else null
+                is PanelFace.Row.Count -> if (row.count < row.max) Extra("+1", SavedPanelActionReceiver.op(context, face.id, PanelOp("inc", row.blockId)), row.label) else null
+                is PanelFace.Row.Clock -> Extra(
+                    if (row.running) "Pause" else if (row.done) "Again" else "Start",
+                    SavedPanelActionReceiver.op(context, face.id, PanelOp(if (row.running) "pause" else if (row.done) "reset" else "start", row.blockId)),
+                    row.label,
+                )
+                else -> null
+            }
+        }
+        val tiles = face.tiles.map { tile -> tile(context, host, face.id, tile) } + extra.map { extra(context, it) }
+        tiles.chunked(TILES_PER_ROW).forEach { row ->
             val line = RemoteViews(context.packageName, R.layout.widget_panel_row)
-            row.forEach { tile -> line.addView(R.id.widget_panel_row, tile(context, face.id, tile)) }
+            row.forEach { line.addView(R.id.widget_panel_row, it) }
             views.addView(R.id.widget_panel_tiles, line)
         }
-        views.setViewVisibility(R.id.widget_panel_tiles, if (face.tiles.isEmpty()) View.GONE else View.VISIBLE)
+        val fixedItems = checks != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S && checks.items.isNotEmpty()
+        views.setViewVisibility(R.id.widget_panel_tiles, if (tiles.isEmpty() && !fixedItems) View.GONE else View.VISIBLE)
         return views
     }
 
-    private fun tile(context: Context, panelId: String, tile: PanelFace.Row.Tile): RemoteViews {
+    private data class Extra(val label: String, val intent: PendingIntent, val state: String = "")
+
+    private fun extra(context: Context, extra: Extra): RemoteViews {
+        val item = RemoteViews(context.packageName, R.layout.widget_panel_tile)
+        item.setTextViewText(R.id.widget_tile_label, extra.label)
+        item.setTextViewText(R.id.widget_tile_state, extra.state)
+        item.setViewVisibility(R.id.widget_tile_state, if (extra.state.isBlank()) View.GONE else View.VISIBLE)
+        item.setContentDescription(R.id.widget_tile_root, listOf(extra.label, extra.state).filter(String::isNotBlank).joinToString(", "))
+        item.setOnClickPendingIntent(R.id.widget_tile_root, extra.intent)
+        return item
+    }
+
+    /**
+     * Android 12+: the list as a scrolling collection built here, no service.
+     * Each row fills in only which item to toggle; the panel and the list are
+     * in the template, and the receiver allows only what a surface may do.
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.S)
+    private fun list(context: Context, views: RemoteViews, panelId: String, checks: PanelFace.Row.Checks) {
+        val items = RemoteViews.RemoteCollectionItems.Builder().setHasStableIds(true).setViewTypeCount(1)
+        checks.items.sortedBy { it.checked }.forEach { item ->
+            items.addItem(item.id.hashCode().toLong(), item(context, panelId, checks.blockId, item, fill = true))
+        }
+        views.setRemoteAdapter(R.id.widget_panel_list, items.build())
+        views.setPendingIntentTemplate(R.id.widget_panel_list, SavedPanelActionReceiver.toggleTemplate(context, panelId, checks.blockId))
+        views.setViewVisibility(R.id.widget_panel_list, if (checks.items.isEmpty()) View.GONE else View.VISIBLE)
+    }
+
+    private fun item(context: Context, panelId: String, blockId: String, item: dev.androidagent.core.PanelItem, fill: Boolean): RemoteViews {
+        val row = RemoteViews(context.packageName, R.layout.widget_panel_item)
+        val text = (item.qty?.let { "$it × " } ?: "") + item.text
+        row.setTextViewText(R.id.widget_item_mark, if (item.checked) "☑" else "☐")
+        row.setTextViewText(R.id.widget_item_text, text)
+        row.setInt(R.id.widget_item_text, "setPaintFlags", if (item.checked) android.graphics.Paint.STRIKE_THRU_TEXT_FLAG or android.graphics.Paint.ANTI_ALIAS_FLAG else android.graphics.Paint.ANTI_ALIAS_FLAG)
+        row.setContentDescription(R.id.widget_item_root, "$text, " + if (item.checked) "done" else "not done")
+        if (fill) {
+            row.setOnClickFillInIntent(R.id.widget_item_root, Intent().putExtra(SavedPanelActionReceiver.EXTRA_ITEM, item.id))
+        } else {
+            row.setOnClickPendingIntent(R.id.widget_item_root, SavedPanelActionReceiver.op(context, panelId, PanelOp("toggle", blockId, item = item.id)))
+        }
+        return row
+    }
+
+    private fun minutes(ms: Long): String {
+        val total = (ms + 999) / 1000
+        return "%d:%02d".format(total / 60, total % 60)
+    }
+
+    private fun trim(value: Double): String = if (value == Math.floor(value)) value.toLong().toString() else "%.1f".format(value)
+
+    private fun tile(context: Context, host: PanelHost, panelId: String, tile: PanelFace.Row.Tile): RemoteViews {
         val item = RemoteViews(context.packageName, R.layout.widget_panel_tile)
         item.setTextViewText(R.id.widget_tile_label, tile.label)
         val state: String = when {
@@ -169,7 +270,11 @@ object SavedPanelWidget {
         item.setViewVisibility(R.id.widget_tile_state, if (state.isBlank()) View.GONE else View.VISIBLE)
         item.setInt(R.id.widget_tile_root, "setBackgroundResource", if (tile.on == true) R.drawable.widget_panel_tile_on else R.drawable.widget_panel_tile)
         item.setContentDescription(R.id.widget_tile_root, listOf(tile.label, state).filter(String::isNotBlank).joinToString(", "))
-        item.setOnClickPendingIntent(R.id.widget_tile_root, SavedPanelActionReceiver.tap(context, panelId, tile.actionId))
+        val opens = host.active(panelId)?.panel?.actions?.firstOrNull { it.id == tile.actionId }?.effect is PanelEffect.Open
+        item.setOnClickPendingIntent(
+            R.id.widget_tile_root,
+            if (opens) PanelOpenActivity.pending(context, panelId, tile.actionId) else SavedPanelActionReceiver.tap(context, panelId, tile.actionId),
+        )
         return item
     }
 

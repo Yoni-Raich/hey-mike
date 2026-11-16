@@ -311,6 +311,20 @@ class AgentGraph(private val app: Application) {
         },
         runActive = { ::runCoordinator.isInitialized && runCoordinator.anyActive || voice.state.value.active },
         screenOn = { app.getSystemService(android.os.PowerManager::class.java)?.isInteractive != false },
+        stateVault = dev.androidagent.app.panels.KeystoreSavedPanelVault.forState(app),
+        zone = { java.time.ZoneId.systemDefault() },
+        startTurn = { origin, prompt, displayPrompt ->
+            // One active run per phone: an ask_mike tap never steers or queues behind a running chat.
+            if (::runCoordinator.isInitialized && runCoordinator.anyActive || voice.state.value.active) {
+                "Mike is busy. Try again when he has finished."
+            } else {
+                runCatching {
+                    val id = origin?.takeIf { sessions.getSession(it) != null }
+                        ?: sessions.createSession().id.also(permissions::startChat)
+                    queue.submit(dev.androidagent.core.QueuedTurn(sessionId = id, prompt = prompt, displayPrompt = displayPrompt))
+                }.fold(onSuccess = { null }, onFailure = { it.message ?: "Could not ask Mike." })
+            }
+        },
     )
     private val workflowCalls = WorkflowCallRegistry(
         listOf(

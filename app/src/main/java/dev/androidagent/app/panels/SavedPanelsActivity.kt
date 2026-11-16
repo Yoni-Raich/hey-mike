@@ -26,6 +26,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -63,13 +65,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.app.AgentApplication
 import dev.androidagent.app.ui.AndroidAgentTheme
+import dev.androidagent.core.AgentPanel
+import dev.androidagent.core.PanelApprovalLines
 import dev.androidagent.core.PanelCall
 import dev.androidagent.core.PanelCallWords
 import dev.androidagent.core.PanelHost
+import dev.androidagent.core.PanelRevision
 import dev.androidagent.core.PanelSurface
 import dev.androidagent.core.SavedPanel
 import kotlinx.coroutines.delay
@@ -127,6 +133,7 @@ class SavedPanelsActivity : ComponentActivity() {
 @Composable
 private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, focus: String?, onBack: () -> Unit) {
     val panels by host.panels.collectAsState()
+    val revisions by host.revisions.collectAsState()
     val notice by host.notice.collectAsState()
     val scope = rememberCoroutineScope()
     val problems = remember { mutableStateMapOf<String, String>() }
@@ -166,7 +173,8 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
                 item(key = "about") {
                     Text(
                         "Panels Mike made to stay after his turn: floating cards, notifications and home-screen widgets. " +
-                            "Their buttons run without Mike, and only phone settings and media keys are allowed. " +
+                            "Their buttons run without Mike: phone settings, media keys, the panel's own list, counter, timer " +
+                            "or note, and opening what you approved. A button that asks Mike starts a chat with him. " +
                             "Removing one here takes it off every surface.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -183,6 +191,14 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
                         now = now,
                         canFloat = surfaces.canFloat(),
                         problem = problems[saved.id],
+                        revision = revisions[saved.id],
+                        onApproveRevision = {
+                            scope.launch {
+                                val why = host.approveRevision(saved.id)
+                                if (why == null) problems.remove(saved.id) else problems[saved.id] = why
+                            }
+                        },
+                        onRejectRevision = { scope.launch { host.rejectRevision(saved.id) } },
                         canPin = saved.placement?.surface == PanelSurface.WIDGET && saved.status == SavedPanel.Status.ACTIVE &&
                             SavedPanelWidget.canPin(surfaces.context),
                         onApprove = {
@@ -233,6 +249,9 @@ private fun PanelCard(
     now: Long,
     canFloat: Boolean,
     problem: String?,
+    revision: PanelRevision?,
+    onApproveRevision: () -> Unit,
+    onRejectRevision: () -> Unit,
     canPin: Boolean,
     onApprove: () -> Unit,
     onRemove: () -> Unit,
@@ -259,15 +278,18 @@ private fun PanelCard(
             }
             val panel = saved.panel
             if (panel != null && (pending || saved.status == SavedPanel.Status.ACTIVE)) {
-                val calls = panel.allCalls.distinct()
-                val reads = panel.binds.values.distinctBy { it.call }
-                if (calls.isNotEmpty()) {
-                    Text(if (pending) "If you approve, its buttons can:" else "Its buttons:", style = MaterialTheme.typography.labelLarge)
-                    calls.forEach { CallLine(it, null) }
-                }
-                if (reads.isNotEmpty()) {
-                    Text("It reads, while it is on screen:", style = MaterialTheme.typography.labelLarge)
-                    reads.forEach { bind -> CallLine(bind.call, "every ${bind.everySeconds} s") }
+                PanelDoes(panel, if (pending) "If you approve, its buttons can:" else "Its buttons:")
+            }
+            if (revision != null && saved.status == SavedPanel.Status.ACTIVE) {
+                Text(
+                    "Mike wants to change this panel. Until you approve, it keeps working as it is.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                PanelDoes(revision.panel, "If you approve, its buttons can:")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onApproveRevision) { Text("Approve change") }
+                    OutlinedButton(onClick = onRejectRevision) { Text("Keep as it is") }
                 }
             }
             problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
@@ -285,22 +307,56 @@ private fun PanelCard(
     }
 }
 
-/** A call in plain words, and the call itself underneath, so vague words cannot hide what it does. */
+/** Each button by its label, what it does in plain words, and what it reads while shown. */
 @Composable
-private fun CallLine(call: PanelCall, every: String?) {
+private fun PanelDoes(panel: AgentPanel, heading: String) {
+    val lines = PanelApprovalLines.of(panel)
+    val reads = panel.binds.values.distinctBy { it.call }
+    if (lines.isNotEmpty()) {
+        Text(heading, style = MaterialTheme.typography.labelLarge)
+        lines.forEach { line -> CallLine(line.label, line.words, line.calls) }
+    }
+    if (reads.isNotEmpty()) {
+        Text("It reads, while it is on screen:", style = MaterialTheme.typography.labelLarge)
+        reads.forEach { bind -> CallLine(null, PanelCallWords.describe(bind.call) + ", every ${bind.everySeconds} s", listOf(bind.call)) }
+    }
+}
+
+/**
+ * One button: its label, what it does in plain words, and under Details the
+ * exact calls, whole and unwrapped (scroll sideways), so vague words cannot
+ * hide what a tap does.
+ */
+@Composable
+private fun CallLine(label: String?, words: String, calls: List<PanelCall>) {
+    var open by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
-        Text(listOfNotNull(PanelCallWords.describe(call), every).joinToString(", "), style = MaterialTheme.typography.bodyMedium)
-        Text(
-            "${call.tool} ${call.arguments}",
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 2.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        )
+        label?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold) }
+        Text(words, style = MaterialTheme.typography.bodyMedium)
+        if (calls.isNotEmpty()) {
+            TextButton(onClick = { open = !open }) { Text(if (open) "Hide details" else "Details") }
+            if (open) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    calls.forEach { call ->
+                        Text(
+                            "${call.tool} ${call.arguments}",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            softWrap = false,
+                            maxLines = 1,
+                            overflow = TextOverflow.Visible,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

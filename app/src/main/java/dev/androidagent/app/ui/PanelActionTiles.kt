@@ -373,7 +373,7 @@ private fun ActionTile(
             }
             // What a tap really does, so a label alone cannot hide it.
             PanelCallCaption(
-                action.callFor(!on).caption,
+                action.callFor(!on)?.caption ?: action.caption,
                 color = if (lit) onContainer.copy(alpha = 0.6f) else scheme.onSurfaceVariant.copy(alpha = 0.82f),
                 modifier = Modifier.padding(top = 4.dp),
             )

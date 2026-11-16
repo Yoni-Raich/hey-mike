@@ -247,6 +247,8 @@ internal fun AgentPanelCard(
                                     busy = state.runState.panelActions.values.any { it.running },
                                     onSet = { values[block.id] = it },
                                 ) { value -> actions.onPanelSlider(panel.id, block.id, value) }
+                                // Lists, counters, timers, notes and bars keep state, so only a panel that outlives the turn has them.
+                                is PanelBlock.Stateful, is PanelBlock.Progress -> Unit
                             }
                         }
                     }

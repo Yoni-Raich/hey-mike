@@ -139,6 +139,22 @@
         <!-- Saved panels: the one screen that approves and removes them, their button taps, and their widget. -->
         <activity android:name=".panels.SavedPanelsActivity" android:exported="false" android:label="Saved panels" android:taskAffinity="" android:excludeFromRecents="true" />
         <receiver android:name=".panels.SavedPanelActionReceiver" android:exported="false" />
+        <!-- A panel's `open` button and a widget's Add box: started only by this app's own intents. -->
+        <activity
+            android:name=".panels.PanelOpenActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+        <activity
+            android:name=".panels.PanelAddActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:windowSoftInputMode="stateVisible" />
         <receiver android:name=".panels.SavedPanelWidgetProvider" android:exported="true" android:label="@string/panel_widget_name">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/saved_panel_widget_info" />

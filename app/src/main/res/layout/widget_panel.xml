@@ -45,6 +45,16 @@
         android:textSize="11sp"
         android:visibility="gone" />
 
+    <!-- A panel's list, scrolling, on Android 12+ (a fixed list of rows below that). -->
+    <ListView
+        android:id="@+id/widget_panel_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1"
+        android:divider="@null"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/widget_panel_tiles"
         android:layout_width="match_parent"

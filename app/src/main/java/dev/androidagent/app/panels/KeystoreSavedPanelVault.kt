@@ -43,15 +43,20 @@ import javax.crypto.SecretKey
  * a copy saved earlier (with a panel the user has since removed) no longer
  * verifies when it is put back.
  */
-class KeystoreSavedPanelVault(context: Context) : SavedPanelVault {
+class KeystoreSavedPanelVault(
+    context: Context,
+    private val prefsName: String = PREFS,
+    /** Must not start with another vault's prefix: each write deletes every other key under its own. */
+    private val aliasPrefix: String = ALIAS_PREFIX,
+) : SavedPanelVault {
 
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val prefs = context.applicationContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
     @Synchronized
     override fun read(): SavedPanelVault.Read {
         val body = prefs.getString(KEY_BODY, null) ?: return SavedPanelVault.Read.Empty
         val mac = prefs.getString(KEY_MAC, null) ?: return SavedPanelVault.Read.Invalid("no signature")
-        val alias = prefs.getString(KEY_ALIAS, null)?.takeIf { it.startsWith(ALIAS_PREFIX) }
+        val alias = prefs.getString(KEY_ALIAS, null)?.takeIf { it.startsWith(aliasPrefix) }
             ?: return SavedPanelVault.Read.Invalid("no key")
         val key = runCatching { keyStore().getKey(alias, null) as? SecretKey }.getOrNull()
             ?: return SavedPanelVault.Read.Invalid("its key is gone")
@@ -64,7 +69,7 @@ class KeystoreSavedPanelVault(context: Context) : SavedPanelVault {
     @Synchronized
     override fun write(body: String) {
         try {
-            val alias = ALIAS_PREFIX + UUID.randomUUID().toString()
+            val alias = aliasPrefix + UUID.randomUUID().toString()
             val key = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, ANDROID_KEYSTORE).run {
                 init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN).build())
                 generateKey()
@@ -80,7 +85,7 @@ class KeystoreSavedPanelVault(context: Context) : SavedPanelVault {
             }
             // Only the key that signs the list on disk survives.
             val keys = keyStore()
-            keys.aliases().toList().filter { it.startsWith(ALIAS_PREFIX) && it != alias }.forEach { old ->
+            keys.aliases().toList().filter { it.startsWith(aliasPrefix) && it != alias }.forEach { old ->
                 runCatching { keys.deleteEntry(old) }
             }
         } catch (error: Exception) {
@@ -97,13 +102,16 @@ class KeystoreSavedPanelVault(context: Context) : SavedPanelVault {
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
-    private companion object {
-        const val TAG = "SavedPanels"
-        const val PREFS = "saved_panels"
-        const val KEY_BODY = "panels"
-        const val KEY_MAC = "mac"
-        const val KEY_ALIAS = "key"
-        const val ALIAS_PREFIX = "hey_mike_saved_panels_"
-        const val ANDROID_KEYSTORE = "AndroidKeyStore"
+    companion object {
+        private const val TAG = "SavedPanels"
+        private const val PREFS = "saved_panels"
+        private const val KEY_BODY = "panels"
+        private const val KEY_MAC = "mac"
+        private const val KEY_ALIAS = "key"
+        private const val ALIAS_PREFIX = "hey_mike_saved_panels_"
+        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+
+        /** Where saved panels keep their own state, signed the same way. Its prefix shares no start with the list's. */
+        fun forState(context: Context) = KeystoreSavedPanelVault(context, "saved_panel_state", "hey_mike_panel_state_")
     }
 }
