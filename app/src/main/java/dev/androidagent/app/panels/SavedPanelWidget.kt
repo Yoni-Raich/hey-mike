@@ -71,19 +71,34 @@ object SavedPanelWidget {
     fun canPin(context: Context): Boolean =
         runCatching { AppWidgetManager.getInstance(context)?.isRequestPinAppWidgetSupported == true }.getOrDefault(false)
 
+    /** What "Add to home screen" did. */
+    enum class Pin { ASKED, ALREADY_PLACED, CANNOT }
+
     /**
-     * Asks the launcher to place a widget for [panelId]. The launcher shows its
-     * own confirmation; once placed, [SavedPanelActionReceiver] ties the new
-     * widget to the panel. Returns false when the launcher cannot do it.
+     * Whether [panelId] already has a widget: an id tied to it in [map] that
+     * the launcher still has in [placed]. A tie left behind by a widget the
+     * user took off does not count.
      */
-    fun requestPin(context: Context, host: PanelHost, panelId: String): Boolean {
-        val saved = host.active(panelId) ?: return false
-        if (saved.placement?.surface != PanelSurface.WIDGET) return false
-        val manager = AppWidgetManager.getInstance(context) ?: return false
-        return runCatching {
-            manager.isRequestPinAppWidgetSupported &&
-                manager.requestPinAppWidget(provider(context), null, SavedPanelActionReceiver.pinned(context, panelId))
-        }.getOrDefault(false)
+    fun alreadyPlaced(panelId: String, placed: Set<Int>, map: Map<String, *>): Boolean =
+        map.any { (key, value) -> value == panelId && key.toIntOrNull() in placed }
+
+    /**
+     * Asks the launcher to place a widget for [panelId], unless one is already
+     * on the home screen: a second would only repeat it. The launcher shows its
+     * own confirmation; once placed, [SavedPanelActionReceiver] ties the new
+     * widget to the panel.
+     */
+    fun requestPin(context: Context, host: PanelHost, panelId: String): Pin {
+        val saved = host.active(panelId) ?: return Pin.CANNOT
+        if (saved.placement?.surface != PanelSurface.WIDGET) return Pin.CANNOT
+        val manager = AppWidgetManager.getInstance(context) ?: return Pin.CANNOT
+        val placed = runCatching { manager.getAppWidgetIds(provider(context)) }.getOrDefault(IntArray(0)).toSet()
+        if (alreadyPlaced(panelId, placed, prefs(context).all)) return Pin.ALREADY_PLACED
+        return if (runCatching {
+                manager.isRequestPinAppWidgetSupported &&
+                    manager.requestPinAppWidget(provider(context), null, SavedPanelActionReceiver.pinned(context, panelId))
+            }.getOrDefault(false)
+        ) Pin.ASKED else Pin.CANNOT
     }
 
     /** Ties placed widget [widgetId] to [panelId], if both are what they claim to be. */
@@ -99,13 +114,6 @@ object SavedPanelWidget {
 
     fun forget(context: Context, ids: IntArray) {
         prefs(context).edit().apply { ids.forEach { remove(it.toString()) } }.apply()
-    }
-
-    /** The number of placed widgets that draw [panelId]. */
-    fun placed(context: Context, panelId: String): Int {
-        val manager = AppWidgetManager.getInstance(context) ?: return 0
-        val ids = runCatching { manager.getAppWidgetIds(provider(context)) }.getOrDefault(IntArray(0)).toSet()
-        return prefs(context).all.count { (key, value) -> value == panelId && key.toIntOrNull() in ids }
     }
 
     /**

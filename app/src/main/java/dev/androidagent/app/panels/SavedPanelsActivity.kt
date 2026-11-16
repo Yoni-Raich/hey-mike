@@ -131,6 +131,8 @@ class SavedPanelsActivity : ComponentActivity() {
     }
 }
 
+private const val ALREADY_ON_HOME = "This panel is already on your home screen."
+
 @Composable
 private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, focus: String?, onBack: () -> Unit) {
     val panels by host.panels.collectAsState()
@@ -207,8 +209,11 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
                                 val why = host.approve(saved.id)
                                 if (why == null) problems.remove(saved.id) else problems[saved.id] = why
                                 if (why == null && saved.placement?.surface == PanelSurface.WIDGET) {
-                                    if (!SavedPanelWidget.requestPin(surfaces.context, host, saved.id)) {
-                                        problems[saved.id] = "Approved. Your launcher cannot place widgets for apps; add \"Mike · Panel\" from its widget list."
+                                    when (SavedPanelWidget.requestPin(surfaces.context, host, saved.id)) {
+                                        SavedPanelWidget.Pin.ASKED -> Unit
+                                        SavedPanelWidget.Pin.ALREADY_PLACED -> problems[saved.id] = ALREADY_ON_HOME
+                                        SavedPanelWidget.Pin.CANNOT -> problems[saved.id] =
+                                            "Approved. Your launcher cannot place widgets for apps; add \"Mike · Panel\" from its widget list."
                                     }
                                 }
                             }
@@ -216,8 +221,10 @@ private fun SavedPanelsScreen(host: PanelHost, surfaces: SavedPanelSurfaces, foc
                         onRemove = { scope.launch { host.remove(saved.id); problems.remove(saved.id) } },
                         onShow = { scope.launch { host.setHidden(saved.id, false) } },
                         onPin = {
-                            if (!SavedPanelWidget.requestPin(surfaces.context, host, saved.id)) {
-                                problems[saved.id] = "Your launcher cannot place widgets for apps."
+                            when (SavedPanelWidget.requestPin(surfaces.context, host, saved.id)) {
+                                SavedPanelWidget.Pin.ASKED -> problems.remove(saved.id)
+                                SavedPanelWidget.Pin.ALREADY_PLACED -> problems[saved.id] = ALREADY_ON_HOME
+                                SavedPanelWidget.Pin.CANNOT -> problems[saved.id] = "Your launcher cannot place widgets for apps."
                             }
                         },
                     )
