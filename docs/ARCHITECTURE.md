@@ -1,5 +1,9 @@
 # Architecture
 
+The chat composer's settings use a wrapping `FlowRow`. Each chip moves as a
+whole to the next line when space runs out, including Auto, Plan and context.
+Chip labels stay on one line; popup menus stay anchored to their own chips.
+
 Dev launcher resources reuse the release foreground and monochrome artwork,
 with a small DEV badge in the lower-right corner. The override lives only in
 `app/src/dev/res`; Prod keeps the release icon.

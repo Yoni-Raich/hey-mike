@@ -581,7 +581,7 @@ class PanelAppsHostTest {
     @Test fun everyMiniAppInTheSkillIsAcceptedAndItsOpsApply() = runTest {
         val skill = File("../app/src/main/assets/agent_stack/skills/agent-ui/SKILL.md").readText()
         val section = skill.substringAfter("## Mini-apps").substringBefore("\n## ")
-        val examples = Regex("```json\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL).findAll(section).map { it.groupValues[1] }.toList()
+        val examples = Regex("```json\\r?\\n(.*?)\\r?\\n```", RegexOption.DOT_MATCHES_ALL).findAll(section).map { it.groupValues[1] }.toList()
         val (edits, panels) = examples.partition { "\"panel_id\"" in it }
         assertEquals(9, panels.size)
         assertEquals(1, edits.size)

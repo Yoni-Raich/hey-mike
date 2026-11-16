@@ -37,6 +37,8 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -167,6 +169,7 @@ internal fun composerAction(active: Boolean, hasDraft: Boolean, runActive: Boole
     else -> ComposerAction.SEND
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AgentComposer(
     state: AgentUiState,
@@ -375,10 +378,10 @@ internal fun AgentComposer(
                 )
             }
         }
-        Row(
+        FlowRow(
             Modifier.fillMaxWidth().padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             SkillsChip(enabled = state.activeSessionId != null && !voiceActive) { browsing = true }
             // The menu hangs off the chip it was opened from, and opens above it.
@@ -402,7 +405,6 @@ internal fun AgentComposer(
                 LimitChip(state.limits, actions.onOpenLimitPlan)
             }
             contextFill(state.tokenUsage)?.let { fill ->
-                Spacer(Modifier.weight(1f))
                 // The details hang off the chip, as the model menu does.
                 Box {
                     ContextChip(fill, onClick = { showingContext = true })
@@ -940,7 +942,7 @@ private fun SkillsChip(enabled: Boolean, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = if (enabled) SkillsAccent else DisabledInk)
-            Text("Skills", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink)
+            Text("Skills", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1)
         }
     }
 }
@@ -961,7 +963,7 @@ private fun PlanChip(onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(Icons.Outlined.Checklist, contentDescription = null, modifier = Modifier.size(16.dp), tint = teal)
-            Text("Plan", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = teal)
+            Text("Plan", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = teal, maxLines = 1)
             Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(12.dp), tint = teal)
         }
     }

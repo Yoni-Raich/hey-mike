@@ -1,5 +1,21 @@
 # Progress
 
+### PR 166 integration with dev - 2026-11-16
+
+Merged dev 7d12b65c into panel head 9cc58304. The only conflict was this
+progress file; both entries were kept. The mini-app template test now accepts
+CRLF and LF code fences: its original LF-only expression found no examples
+in a Windows checkout. No app behavior changed in this integration.
+
+Checks: `gradlew.bat :core:test :app:testDevDebugUnitTest
+:overlay:testDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+:app:compileDevDebugAndroidTestKotlin --no-daemon` passed. XML reports:
+1,013 core, 206 app and 11 overlay tests; zero failures, errors or skips.
+`python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`
+passed (24 tests). `git diff --check` passed. No device tests were run for
+this merged snapshot; instrumentation was compiled only. This is not a full
+release gate. The existing physical-device gaps below remain.
+
 ### Panels as mini-apps - 2026-11-16
 
 Base: feat/agent-panel-native de8f4e5b, branch feat/agent-panel-apps. A saved
@@ -269,6 +285,20 @@ the call fails; a screen tool is refused).
 Not tested: nothing ran on a phone or emulator. The new look, the animations,
 reduced motion, RTL mirroring, TalkBack and a real volume slider are
 unverified. No screenshot was taken.
+
+### Composer chips wrap as whole controls - 2026-11-15
+
+The composer settings now use FlowRow, so Auto, Plan and context move to the
+next row when there is no room. Skills, Plan and Auto labels stay on one line.
+Menus keep their chip anchors. No run or permission logic changed.
+
+Checks: `gradlew.bat :app:assembleDevDebug :app:lintDevDebug
+:app:compileDevDebugAndroidTestKotlin --no-daemon` passed (2m 25s), and
+`git diff --check` passed. `ComposerLayoutUiTest` adds narrow 320dp, 360dp
+with 1.5 font scale, and RTL fixtures checking label overflow, chip bounds,
+overlap and the Auto click callback. Those fixtures compiled but were not run:
+`adb devices -l` had no connected device and no local AVD was available.
+No new screenshot, phone install or physical UI result is claimed.
 
 ### Live panel actions - 2026-11-15
 
