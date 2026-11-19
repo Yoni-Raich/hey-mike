@@ -838,7 +838,7 @@ private fun QueuedTurnRow(position: Int, turn: dev.androidagent.core.QueuedTurn,
                 Text(detail, fontSize = 12.sp, lineHeight = 16.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        IconButton(onClick = onCancel, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Close, contentDescription = "Cancel task", modifier = Modifier.size(18.dp), tint = MutedInk)
         }
     }

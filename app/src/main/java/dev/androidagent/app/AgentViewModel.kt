@@ -538,8 +538,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // Who holds the computer conversation is a question for the engine the chat now runs on.
         if (graph.computers.binding(id) != null) checkPcChatBusy(id)
         // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
-        mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
-        viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
+        // A held pick may land on a chat in the background: only the open chat's list is on screen.
+        if (current.value == id) {
+            mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
+            viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
+        }
         // Like any model pick, it also holds for the next new chat.
         rememberDefaultEngine(kind)
         if (session.hasMessages) {
@@ -1932,7 +1935,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         engines = engines.update(kind) { it.select(value) }
         persistChoice(kind)
         if (graph.coordinator.phaseOf(id) != null) pickedDuringRun += id
-        if (kind == session.engine) {
+        // A turn of the other engine, queued or about to move the chat, would leave it
+        // there: picking back the chat's own engine must then wait and move it back.
+        val movedAway = id in nextPicks ||
+            graph.queue.turns.value.any { it.sessionId == id && it.engine != null && it.engine != kind }
+        if (kind == session.engine && !movedAway) {
             nextPicks.remove(id)
             graph.sessions.setModelChoice(id, value, engines.of(kind).effort)
         } else {

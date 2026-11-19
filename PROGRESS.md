@@ -34,6 +34,11 @@ Untested gaps:
 - The ViewModel's next-model picks have no unit test, since the ViewModel needs
   the app graph.
 - The instrumented UI tests were compiled but not run.
+- A model pick of the other engine, held for a running chat, lives only in the
+  ViewModel. It is lost if the app process ends before the chat is free; the
+  next message then uses the chat's own model. Turns already queued keep theirs.
+- A usage-limit continuation reads the chat's saved model, so it uses a model
+  picked during the run, as a next message would.
 
 ### PR 166 integration with dev - 2026-11-16
 
