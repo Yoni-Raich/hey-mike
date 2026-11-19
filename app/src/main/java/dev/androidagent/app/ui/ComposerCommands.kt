@@ -108,7 +108,7 @@ internal fun brandArgb(hex: String?): Long? {
  */
 internal fun claudeModelName(state: AgentUiState, id: String): String? {
     val model = state.modelCatalog.firstOrNull { it.id == id && it.engine == EngineKind.CLAUDE }
-        ?: return id.takeIf { state.activeEngine == EngineKind.CLAUDE && state.modelCatalog.none { it.id == id } }
+        ?: return id.takeIf { state.selectedEngine == EngineKind.CLAUDE && state.modelCatalog.none { it.id == id } }
     return model.displayName.takeIf { it.isNotBlank() } ?: id
 }
 

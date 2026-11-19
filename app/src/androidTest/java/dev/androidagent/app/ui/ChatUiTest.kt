@@ -190,12 +190,18 @@ class ChatUiTest {
 
     @Test fun richMarkdownAndQueuedSessionControlsRender() {
         var cancelled = ""
-        val task = dev.androidagent.core.QueuedTurn(id = "queued", sessionId = "other", prompt = "Queued work")
+        val task = dev.androidagent.core.QueuedTurn(id = "queued", sessionId = "ui-fixture", prompt = "Queued work", model = "gpt-5.6-luna", effort = "high")
+        val elsewhere = dev.androidagent.core.QueuedTurn(id = "other", sessionId = "other", prompt = "Other chat's work")
         compose.setContent { AndroidAgentScreen(fixture.copy(messages = listOf(ChatMessage("rich", "ui-fixture", "assistant",
             "# שלום World\n\n*Italic* and **bold** and [link](https://example.com)\n\n> Quoted text\n\n1. First\n   - Nested\n2. Second\n\n| Name | Value |\n| --- | --- |\n| בדיקה | 42 |\n\n```kotlin\nval answer = 42\n```", 1)),
-            queuedTurns = listOf(task), queuePaused = true), AgentUiActions(onCancelQueued = { cancelled = it })) }
+            queuedTurns = listOf(task, elsewhere), queuePaused = true), AgentUiActions(onCancelQueued = { cancelled = it })) }
         compose.onNodeWithText("Resume queue").assertIsDisplayed()
-        compose.onNodeWithText("Cancel task").performClick()
+        // Only this chat's queue is listed, with the model each item runs with.
+        compose.onNodeWithText("Queued work").assertIsDisplayed()
+        compose.onNodeWithText("5.6 Luna · High").assertIsDisplayed()
+        compose.onNodeWithText("Other chat's work").assertDoesNotExist()
+        compose.onNodeWithText("+ 1 in other chats").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Cancel task").performClick()
         compose.runOnIdle { assertEquals("queued", cancelled) }
         screenshot("rich-markdown-queue")
     }
@@ -260,6 +266,30 @@ class ChatUiTest {
         compose.runOnIdle { assertEquals("קודם את המשימה החשובה", steered) }
         compose.onNodeWithContentDescription("Stop agent").performClick()
         compose.runOnIdle { assertEquals(1, stopped) }
+    }
+    @Test fun queueChoiceQueuesTheMessageWithItsFiles() {
+        var queued = ""
+        var steered = ""
+        compose.setContent { AndroidAgentScreen(fixture.copy(runState = RunState(
+            phase = RunPhase.THINKING, sessionId = "ui-fixture", status = "Thinking")),
+            AgentUiActions(onSteer = { steered = it }, onQueue = { text, _ -> queued = text })) }
+        compose.onNodeWithContentDescription("Message input").performClick().performTextInput("אחר כך תסכם")
+        compose.onNodeWithText("Joins the running turn").assertIsDisplayed()
+        compose.onNodeWithText("Queue").performClick()
+        compose.onNodeWithText("Runs after this turn").assertIsDisplayed()
+        screenshot("chat-queue-choice")
+        compose.onNodeWithContentDescription("Queue message").performClick()
+        compose.runOnIdle {
+            assertEquals("אחר כך תסכם", queued)
+            assertEquals("", steered)
+        }
+    }
+    @Test fun theModelChipStaysOpenWhileTheChatRuns() {
+        compose.setContent { AndroidAgentScreen(fixture.copy(runState = RunState(
+            phase = RunPhase.THINKING, sessionId = "ui-fixture", status = "Thinking"), nextModelPicked = true), AgentUiActions()) }
+        compose.onNodeWithContentDescription("Choose model and reasoning").assertIsEnabled().performClick()
+        compose.onNodeWithText("For your next message").assertIsDisplayed()
+        screenshot("chat-next-model")
     }
     @Test fun stoppingKeepsDraftAndBlocksSteering() {
         compose.setContent { AndroidAgentScreen(fixture.copy(runState = RunState(

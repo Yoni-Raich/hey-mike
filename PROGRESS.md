@@ -1,5 +1,40 @@
 # Progress
 
+### Steer or queue while a chat runs, and the next message's model - 2026-11-19
+
+A message typed while the open chat runs can now go two ways, picked under the
+field. Steer, the default, joins the running turn. Queue makes it the chat's
+next turn of its own, with its own model, level, engine and attachments. The
+queue tray lists this chat's queued messages in order, each with its model and
+a cancel, and a paused banner with Resume. The model picker stays enabled
+while the chat runs and is for the next message. The chip shows "Next". A pick
+for the other engine moves the chat only when the chat is free and has nothing
+queued. Design: `docs/ARCHITECTURE.md`, "Steer or queue while a chat runs".
+
+Checks: `gradlew.bat :core:test :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:assembleDevDebugAndroidTest :app:lintDevDebug --no-daemon` passed. After the
+last edits, `:core:test :app:testDevDebugUnitTest :app:lintDevDebug` passed again.
+XML reports: 1,026 core and 210 app tests, with zero failures or errors.
+`git diff --check` passed. This is not the full release gate. New tests:
+- `AgentRunsTest`: queued turns run as their own turns while steering reaches
+  the running one, each with its model and level. Also covered: Stop holds the
+  queue, and a Stop during preparation holds that turn. An earlier pause does
+  not hold a later queued turn, a queued picture is kept, and `start` never
+  steers.
+- `SessionRunQueueEnqueueTest`: a refused start goes back to the head, and a
+  refused chat does not hold up another chat. Also covered: a full queue, a
+  deleted chat, restart then Resume with the model kept, and `ifIdle`.
+- `SteerQueueComposerTest`: delivery rules and the queued item's model line.
+- `ChatUiTest` (instrumented): queue choice, tray and the next-model menu
+  header. Compiled only, not run.
+
+Untested gaps:
+- No phone run yet: steer, queue, Stop then Resume, and an engine move after a
+  run were not tried on a device.
+- The ViewModel's next-model picks have no unit test, since the ViewModel needs
+  the app graph.
+- The instrumented UI tests were compiled but not run.
+
 ### PR 166 integration with dev - 2026-11-16
 
 Merged dev 7d12b65c into panel head 9cc58304. The only conflict was this

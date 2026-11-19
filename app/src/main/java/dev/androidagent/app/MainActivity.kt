@@ -314,6 +314,7 @@ class MainActivity : ComponentActivity() {
         onRemoveAttachment = model::removeAttachment,
         onSend = { text, attachments -> ensureService(); model.send(text, attachments) },
         onSteer = { model.steer(it) },
+        onQueue = model::enqueue,
         onStop = model::stop,
         onStopSession = model::stopSession,
         onBrowseVoiceChats = model::browseVoiceChats,
