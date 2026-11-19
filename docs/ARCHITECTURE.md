@@ -1925,6 +1925,41 @@ side effect. A queue restored at startup is paused and needs an explicit
 Resume, and a local stop pauses the queue rather than releasing the next run at
 the user unannounced. Deleting a chat cancels its queued turns.
 
+### Steer or queue while a chat runs
+
+A message typed while the open chat runs has two places to go, and the user
+picks one under the field. **Steer** (the default) gives the text to the
+running turn now, as before. **Queue** makes it the chat's next turn of its own
+(`SessionRunQueue.enqueue`), with its own model, level, engine, plan mode and
+attachments. Files and a turn still STARTING always queue, because steering
+carries text only. The queue tray above the composer lists the open chat's
+queued messages in run order, each with its model and a cancel; other chats'
+queues show as one line, so Resume stays reachable.
+
+- A queued turn never becomes steering input. The queue starts it through
+  `TurnRunner.start`, which refuses a chat that is running instead of steering
+  it. If the chat started some other way after the turn was chosen, the turn
+  goes back to its place and waits for that run to end. Other chats are not
+  held up behind it.
+- Stop pauses the queue and holds what is queued, as before. A message queued
+  after a Stop is not held by that earlier Stop. A Stop pressed while a turn is
+  still being prepared (a file copied to a computer) holds that turn too: the
+  ViewModel reads `SessionRunQueue.pauses` at the tap and `enqueue` compares it.
+- The queue is durable and limited to `SessionRunQueue.MAX_QUEUED` (32). After a
+  restart it waits for Resume.
+
+**The model for the next message.** The model picker stays open while the chat
+runs, and a pick there is for the next message. The running turn keeps its
+model and steering joins it. The chip shows "Next" when the pick was changed
+during the run. A pick for the same engine is saved to the chat at once. A pick
+for the other engine cannot move a running chat, so the ViewModel holds it per
+chat (`nextPicks`) and shows it as `selectedModel` with `nextEngine`. Each message
+sent or queued meanwhile carries that engine. The chat itself moves
+(`changeEngine` + `setModelChoice`) only through `SessionRunQueue.ifIdle`: under
+the queue's lock, when the chat neither runs nor has queued turns. This means a
+move never happens under a running turn or races a queued turn's start. Queued
+turns keep the model they were queued with.
+
 ## Codex retries and turn failures
 
 An app-server `error` notification with `willRetry=true` is a scoped activity

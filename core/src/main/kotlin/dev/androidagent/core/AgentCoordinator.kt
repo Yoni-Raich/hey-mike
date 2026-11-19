@@ -210,22 +210,34 @@ class AgentCoordinator(
         skill: AgentSkill?,
         planMode: Boolean,
         engineKind: EngineKind?,
-    ) = sendRequest(sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind, null)
+    ) { sendRequest(sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind, null) }
 
-    override fun send(turn: QueuedTurn) = sendRequest(turn.sessionId, turn.prompt, turn.imagePaths.map(::File),
-        turn.model, turn.effort, turn.skill, turn.planMode, turn.engine, turn.displayPrompt, turn.agentContext)
+    override fun send(turn: QueuedTurn) { sendTurn(turn, steerIfRunning = true) }
 
+    override fun start(turn: QueuedTurn): Boolean = sendTurn(turn, steerIfRunning = false)
+
+    private fun sendTurn(turn: QueuedTurn, steerIfRunning: Boolean) = sendRequest(turn.sessionId, turn.prompt,
+        turn.imagePaths.map(::File), turn.model, turn.effort, turn.skill, turn.planMode, turn.engine, turn.displayPrompt,
+        turn.agentContext, steerIfRunning)
+
+    /**
+     * Start a run, or, with [steerIfRunning], steer this chat's run. True when
+     * the turn was taken; false when it was not, so a queued turn can stay queued
+     * rather than become steering input for a run it was never meant for.
+     */
     private fun sendRequest(
         sessionId: String, prompt: String, images: List<File>, model: String?, reasoningEffort: String?,
         skill: AgentSkill?, planMode: Boolean, engineKind: EngineKind?, displayPrompt: String?, agentContext: Boolean = false,
-    ) {
-        if (prompt.isBlank() && images.isEmpty()) return
+        steerIfRunning: Boolean = true,
+    ): Boolean {
+        if (prompt.isBlank() && images.isEmpty()) return true
         synchronized(lifecycleLock) {
             if (state.value.active) {
+                if (!steerIfRunning) return false
                 if (state.value.sessionId == sessionId && state.value.phase != RunPhase.STOPPING) steer(prompt)
-                return
+                return true
             }
-            if (!availableState.value) return
+            if (!availableState.value) return false
             availableState.value = false
             mutableOutcomes.value = mutableOutcomes.value - sessionId
             val token = epoch.incrementAndGet()
@@ -255,6 +267,7 @@ class AgentCoordinator(
             runWorkspace = null
             screenSticky = false
             runJob = scope.launch { run(token, runCompletion, sessionId, prompt, images, model, reasoningEffort, skill, planMode, engineKind, displayPrompt, agentContext) }
+            return true
         }
     }
 

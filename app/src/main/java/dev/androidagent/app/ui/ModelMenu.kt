@@ -115,13 +115,20 @@ private val MenuMuted = Color(0xFF9A9A9A)
 private enum class ModelPage { MAIN, MODELS }
 
 @Composable
-internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: Boolean, onDismiss: () -> Unit) {
+internal fun ModelMenu(
+    state: AgentUiState,
+    actions: AgentUiActions,
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    // The chat is running: a pick here is for the message after this turn.
+    forNextMessage: Boolean = false,
+) {
     var page by remember { mutableStateOf(ModelPage.MAIN) }
     // Reopen on the intelligence levels, not wherever it was last left.
     LaunchedEffect(expanded) {
         if (!expanded) page = ModelPage.MAIN else actions.onRefreshModels()
     }
-    val model = state.modelCatalog.firstOrNull { it.id == state.selectedModel && it.engine == state.activeEngine }
+    val model = state.modelCatalog.firstOrNull { it.id == state.selectedModel && it.engine == state.selectedEngine }
     val efforts = model?.reasoningEfforts.orEmpty()
     val current = effectiveEffort(model, state.selectedReasoningEffort)
     DropdownMenu(
@@ -132,6 +139,7 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
         containerColor = MenuFill,
     ) {
         Column {
+            if (forNextMessage) NextMessageNote()
             if (page == ModelPage.MAIN) {
                 if (efforts.isNotEmpty()) {
                     MenuHeader("Intelligence")
@@ -158,7 +166,7 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                     trailingIcon = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) },
                     onClick = { page = ModelPage.MODELS },
                 )
-                if (state.activeEngine == EngineKind.CLAUDE) {
+                if (state.selectedEngine == EngineKind.CLAUDE) {
                     // Stays open: the switch is a setting, not a pick.
                     SwitchRow(
                         label = "Long context",
@@ -180,7 +188,7 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                     models.forEach { entry ->
                         ChoiceRow(
                             modelTitle(entry.id, entry.displayName),
-                            selected = entry.id == state.selectedModel && kind == state.activeEngine,
+                            selected = entry.id == state.selectedModel && kind == state.selectedEngine,
                             note = entry.description.takeIf { kind == EngineKind.CLAUDE },
                         ) {
                             actions.onModelSelected(entry.id)
@@ -270,4 +278,14 @@ private fun ChoiceRow(label: String, selected: Boolean, note: String? = null, la
         onClick = onClick,
         modifier = Modifier.semantics { this.selected = selected },
     )
+}
+
+/** Heads the model menu while the chat runs: what is picked here waits for the next message. */
+@Composable
+private fun NextMessageNote() {
+    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 6.dp)) {
+        Text("For your next message", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+        Text("The running turn keeps its model.", fontSize = 12.sp, lineHeight = 16.sp, color = MenuMuted)
+    }
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 2.dp), color = Color(0xFF444444))
 }

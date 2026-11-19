@@ -58,6 +58,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * quota of the one it runs on, through [project]. Changed on the main
      * thread only.
      */
+    /**
+     * A model of the other engine picked while the chat ran, by chat. The run
+     * keeps its engine; the chat moves to this one when it is free and has
+     * nothing queued (see [applyNextPick]), and the next message uses it
+     * either way. Main thread only.
+     */
+    private val nextPicks = mutableMapOf<String, NextPick>()
+    private data class NextPick(val engine: EngineKind, val model: String, val effort: String?)
+    /** Chats whose model or level was changed during the run they are in. Main thread only. */
+    private val pickedDuringRun = mutableSetOf<String>()
     private var engines = EngineChoices()
         .update(EngineKind.CODEX) { ModelChoice(model = preferences.getString(KEY_MODEL, null), effort = preferences.getString(KEY_EFFORT, null)) }
         .update(EngineKind.CLAUDE) { ModelChoice(model = preferences.getString(KEY_CLAUDE_MODEL, null), effort = preferences.getString(KEY_CLAUDE_EFFORT, null)) }
@@ -246,6 +256,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { current.collect { graph.openChat.value = it } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
+        viewModelScope.launch {
+            merge(graph.coordinator.freed.map { }, graph.queue.turns.map { }).collect { settleNextPicks() }
+        }
         viewModelScope.launch { graph.adb.status.collect { state -> mutable.update { it.copy(adbStatus = state) } } }
         // Connection is a flow; whether the user switched it on is a settings
         // read, so re-check it whenever the service attaches or drops.
@@ -401,6 +414,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             val choice = engines.of(kind).let { defaults ->
                 if (session?.model != null) defaults.copy(model = session.model, effort = session.reasoningEffort) else defaults
             }
+            val pick = current.value?.let(nextPicks::get)
             val computer = current.value?.let(graph.computers::binding)?.computerId
             val offered = engines.offered(
                 enginesFor(current.value, kind, state),
@@ -409,10 +423,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             )
             state.copy(
                 activeEngine = kind,
+                nextEngine = pick?.engine,
+                nextModelPicked = current.value?.let { it in pickedDuringRun || it in nextPicks } == true,
                 modelCatalog = offered,
                 availableModels = offered.map { it.id },
-                selectedModel = choice.model,
-                selectedReasoningEffort = choice.effort,
+                selectedModel = pick?.model ?: choice.model,
+                selectedReasoningEffort = if (pick != null) pick.effort else choice.effort,
                 fullAccess = current.value?.let(graph.permissions::isFull) == true,
                 usageLimits = engines.limits(kind).let { limits ->
                     // Claude's limits can be a saved reading: a window past its reset is not shown as current.
@@ -510,11 +526,32 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun useEngine(kind: EngineKind) = task {
         val id = current.value ?: return@task
         changeEngine(id, kind)
+        // A pick waiting for the chat to be free must not undo this choice later.
+        if (nextPicks.remove(id) != null) project()
     }
     private suspend fun changeEngine(id: String, kind: EngineKind) {
         val session = graph.sessions.getSession(id) ?: return
         if (session.engine == kind) return
         check(graph.coordinator.phaseOf(id) == null) { "Wait for Mike to finish, or stop him, before changing the model." }
+        checkEngineAllowed(id, session, kind)
+        graph.sessions.setEngine(id, kind)
+        // Who holds the computer conversation is a question for the engine the chat now runs on.
+        if (graph.computers.binding(id) != null) checkPcChatBusy(id)
+        // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
+        // A held pick may land on a chat in the background: only the open chat's list is on screen.
+        if (current.value == id) {
+            mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
+            viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
+        }
+        // Like any model pick, it also holds for the next new chat.
+        rememberDefaultEngine(kind)
+        if (session.hasMessages) {
+            val model = engines.of(kind).let { choice -> choice.catalog.firstOrNull { it.id == choice.model }?.displayName ?: choice.model }
+            note(id, "Switched to ${providerName(kind)}${model?.let { " · $it" }.orEmpty()}. It is told what was said in this chat with your next message.")
+        }
+    }
+
+    private fun checkEngineAllowed(id: String, session: ChatSession, kind: EngineKind) {
         check(!(graph.voice.state.value.active && graph.voiceConversation.sessionId.value == id)) { "End voice before changing the model." }
         // A chat nobody wrote in yet may be pointed at an engine that is still
         // being set up, as onboarding does; its first message then says what is missing.
@@ -523,18 +560,40 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             if (computer != null) "Set up Claude on ${computer.label} from Computers."
             else "Set up ${kind.label} in Settings first."
         }
-        graph.sessions.setEngine(id, kind)
-        // Who holds the computer conversation is a question for the engine the chat now runs on.
-        if (graph.computers.binding(id) != null) checkPcChatBusy(id)
-        // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
-        mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
-        viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
-        // Like any model pick, it also holds for the next new chat.
-        rememberDefaultEngine(kind)
-        if (session.hasMessages) {
-            val model = engines.of(kind).let { choice -> choice.catalog.firstOrNull { it.id == choice.model }?.displayName ?: choice.model }
-            note(id, "Switched to ${providerName(kind)}${model?.let { " · $it" }.orEmpty()}. It is told what was said in this chat with your next message.")
+    }
+
+    /**
+     * Move [id] to the model of the other engine picked for its next message,
+     * once nothing runs or waits in it. Queued turns keep the model they were
+     * queued with, so the move waits for them too.
+     */
+    private suspend fun applyNextPick(id: String) {
+        val pick = nextPicks[id] ?: return
+        val moved = try {
+            graph.queue.ifIdle(id) {
+                changeEngine(id, pick.engine)
+                graph.sessions.setModelChoice(id, pick.model, pick.effort)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // The engine can no longer run here; the pick is dropped, not retried at every run's end.
+            if (nextPicks[id] == pick) nextPicks.remove(id)
+            project()
+            throw failure
         }
+        if (moved && nextPicks[id] == pick) { nextPicks.remove(id); project() }
+    }
+
+    /** A run ended or the queue moved: picks made during a run now hold, and a waiting engine move may go ahead. */
+    private suspend fun settleNextPicks() {
+        val ended = pickedDuringRun.filter { graph.coordinator.phaseOf(it) == null }
+        pickedDuringRun.removeAll(ended.toSet())
+        for (id in nextPicks.keys.toList()) {
+            try { applyNextPick(id) } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error(failure.message ?: "Could not change the model.") }
+        }
+        if (ended.isNotEmpty()) project()
     }
 
     /** Delete a chat that has no message and no thread, unless something is still using it. */
@@ -1057,11 +1116,70 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             task { graph.voiceConversation.type(text) }
             return
         }
-        val onComputer = graph.computers.binding(id) != null
+        val draft = draftTurn(id, text, attachments) ?: run { restoreDraft(id, text); return }
+        task {
+            if (!computerChatFree(draft)) return@task
+            // A model of the other engine picked during the last run moves the chat now.
+            try { applyNextPick(id) } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { restoreDraft(id, text); throw failure }
+            val turn = prepareTurn(draft) ?: return@task
+            graph.queue.submit(turn)
+            mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
+        }
+    }
+
+    /**
+     * Queue [text] in the open chat as a turn of its own, after the one that
+     * runs now: it never joins that run. It keeps the model, level and engine
+     * picked now, and its attachments. A Stop pressed while it is prepared
+     * holds it, as Stop holds the rest of the queue.
+     */
+    fun enqueue(text: String, attachments: List<PendingAttachment>) {
+        val id = current.value ?: return
+        val seenPauses = graph.queue.pauses
+        val blocked = when {
+            id in mutable.value.compacting -> "Wait for compaction to finish before queuing a message."
+            id in mutable.value.pcSyncing || id in mutable.value.pcDesktopOpening ->
+                "Wait for the computer history or Desktop handoff to finish before queuing."
+            graph.voice.state.value.active && id == graph.voiceConversation.sessionId.value -> "End voice before queuing a message."
+            else -> null
+        }
+        if (blocked != null) { restoreDraft(id, text); error(blocked); return }
+        val draft = draftTurn(id, text, attachments) ?: run { restoreDraft(id, text); return }
+        task {
+            if (!computerChatFree(draft)) return@task
+            val turn = prepareTurn(draft) ?: run { restoreDraft(id, text); return@task }
+            try {
+                graph.queue.enqueue(turn, seenPauses)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                restoreDraft(id, text)
+                throw failure
+            }
+            mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
+        }
+    }
+
+    /** A message as typed, read at the tap: before any file is copied or the turn is queued. */
+    private class TurnDraft(
+        val sessionId: String,
+        val text: String,
+        val onComputer: Boolean,
+        val images: List<File>,
+        val otherFiles: List<File>,
+        val otherNames: List<String>,
+        val skill: AgentSkill?,
+        val engine: EngineKind,
+        val model: String?,
+        val effort: String?,
+        val planMode: Boolean,
+    )
+
+    /** The open chat's next turn from [text], with the model picked for the next message; null, with the reason shown, when it cannot go. */
+    private fun draftTurn(id: String, text: String, attachments: List<PendingAttachment>): TurnDraft? {
         val paths = attachments.mapNotNull { it.path?.let(::File) }
         val images = attachments.filter { it.mimeType?.startsWith("image/") == true }.mapNotNull { it.path?.let(::File) }
-        val otherFiles = paths.filter { it !in images }
-        val otherNames = attachments.filter { it.path != null && it.mimeType?.startsWith("image/") != true }.map { it.name }
         val snapshot = mutable.value
         val invokedSkillName = text.trimStart()
             .takeIf { it.startsWith("\$") }
@@ -1071,49 +1189,63 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val invokedSkill = invokedSkillName?.let { name ->
             snapshot.availableSkills.firstOrNull { it.enabled && it.name.equals(name, ignoreCase = true) }
         }
-        // The chat's own engine's pick. Plan mode is carried by a model name,
+        // The pick for the next message: the chat's own engine's, or one of the
+        // other engine made while it ran. Plan mode is carried by a model name,
         // so it falls back to the first offered model when none is picked.
-        val kind = ChatEngines.of(snapshot.sessions, id)
+        val kind = nextPicks[id]?.engine ?: ChatEngines.of(snapshot.sessions, id)
         val choice = ModelChoice(catalog = snapshot.modelCatalog.filter { it.engine == kind },
             model = snapshot.selectedModel, effort = snapshot.selectedReasoningEffort)
         val model = choice.modelFor(snapshot.planMode)
-        if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return }
-        task {
-            if (kind == EngineKind.CLAUDE && isComputerClaude(id) && graph.coordinator.phaseOf(id) == null) {
-                refreshClaudeHistory(id)
-                if (id in mutable.value.pcBusyChats) {
-                    // Nothing was sent; the words go back where they were typed.
-                    restoreDraft(id, text)
-                    kotlin.error(pcBlockedReason(id))
-                }
+        if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return null }
+        return TurnDraft(
+            sessionId = id, text = text, onComputer = graph.computers.binding(id) != null, images = images,
+            otherFiles = paths.filter { it !in images },
+            otherNames = attachments.filter { it.path != null && it.mimeType?.startsWith("image/") != true }.map { it.name },
+            skill = invokedSkill, engine = kind, model = model,
+            effort = snapshot.selectedReasoningEffort ?: choice.turnEffort, planMode = snapshot.planMode,
+        )
+    }
+
+    /** False, with the words back in the composer, while the computer's Claude conversation is held elsewhere. */
+    private suspend fun computerChatFree(draft: TurnDraft): Boolean {
+        val id = draft.sessionId
+        if (draft.engine != EngineKind.CLAUDE || !isComputerClaude(id) || graph.coordinator.phaseOf(id) != null) return true
+        refreshClaudeHistory(id)
+        if (id !in mutable.value.pcBusyChats) return true
+        // Nothing was sent; the words go back where they were typed.
+        restoreDraft(id, draft.text)
+        kotlin.error(pcBlockedReason(id))
+    }
+
+    /**
+     * The turn for [draft]. Pictures travel inside the turn. Any other file has
+     * to be on the machine the agent runs on, so a computer chat copies it there
+     * first and names where it landed. A failed copy gives null and keeps the
+     * attachments, so the user can try again.
+     */
+    private suspend fun prepareTurn(draft: TurnDraft): QueuedTurn? {
+        val id = draft.sessionId
+        val where = if (draft.onComputer && draft.otherFiles.isNotEmpty()) {
+            val count = draft.otherFiles.size
+            mutable.update { it.copy(infoMessage = "Sending $count file${if (count == 1) "" else "s"} to the computer…", errorMessage = null) }
+            try {
+                graph.remote.sendAttachments(id, draft.otherNames.zip(draft.otherFiles))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                mutable.update { it.copy(infoMessage = null, errorMessage = "Could not send the file to the computer: ${e.message ?: e.javaClass.simpleName}") }
+                return null
             }
-            // Pictures travel inside the turn. Any other file has to be on the
-            // machine the agent runs on, so a computer chat copies it there
-            // first and names where it landed. A failed copy sends nothing and
-            // keeps the attachments, so the user can try again.
-            val where = if (onComputer && otherFiles.isNotEmpty()) {
-                mutable.update { it.copy(infoMessage = "Sending ${otherFiles.size} file${if (otherFiles.size == 1) "" else "s"} to the computer…", errorMessage = null) }
-                try {
-                    graph.remote.sendAttachments(id, otherNames.zip(otherFiles))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    mutable.update { it.copy(infoMessage = null, errorMessage = "Could not send the file to the computer: ${e.message ?: e.javaClass.simpleName}") }
-                    return@task
-                }
-            } else {
-                otherFiles.map { it.absolutePath }
-            }
-            val prompt = if (where.isEmpty()) text else {
-                val place = if (onComputer) "Attached files on this computer" else "Attached files in this session"
-                text + "\n\n$place:\n" + where.joinToString("\n")
-            }
-            mutable.update { it.copy(infoMessage = null) }
-            graph.queue.submit(QueuedTurn(sessionId = id, prompt = prompt, imagePaths = images.map { it.absolutePath },
-                model = model, effort = snapshot.selectedReasoningEffort ?: choice.turnEffort,
-                skill = invokedSkill, planMode = snapshot.planMode, engine = kind))
-            mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
+        } else {
+            draft.otherFiles.map { it.absolutePath }
         }
+        val prompt = if (where.isEmpty()) draft.text else {
+            val place = if (draft.onComputer) "Attached files on this computer" else "Attached files in this session"
+            draft.text + "\n\n$place:\n" + where.joinToString("\n")
+        }
+        mutable.update { it.copy(infoMessage = null) }
+        return QueuedTurn(sessionId = id, prompt = prompt, imagePaths = draft.images.map { it.absolutePath },
+            model = draft.model, effort = draft.effort, skill = draft.skill, planMode = draft.planMode, engine = draft.engine)
     }
     fun cancelQueued(id: String) = task { graph.queue.cancel(id) }
     fun resumeQueue() = task { graph.queue.resume() }
@@ -1787,30 +1919,48 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     /**
-     * Pick a model for the open chat. The list holds both engines' models, so
-     * picking one of the other engine also moves the chat to that engine.
+     * Pick a model for the open chat's next message. The list holds both
+     * engines' models, so picking one of the other engine also moves the chat
+     * to that engine. While the chat runs, the running turn keeps its model:
+     * a pick of the same engine is saved for the next message at once, and
+     * one of the other engine moves the chat when it is free.
      */
     fun model(value: String) = task {
         val state = mutable.value
         val id = current.value ?: return@task
-        val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.activeEngine)
-        check(graph.coordinator.phaseOf(id) == null) { "Wait for this chat to finish before changing its model." }
+        val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.selectedEngine)
         check(id !in state.compacting) { "Wait for compaction to finish before changing its model." }
+        val session = graph.sessions.getSession(id) ?: return@task
+        if (kind != session.engine) checkEngineAllowed(id, session, kind)
         engines = engines.update(kind) { it.select(value) }
         persistChoice(kind)
-        if (kind != state.activeEngine) changeEngine(id, kind)
-        graph.sessions.setModelChoice(id, value, engines.of(kind).effort)
+        if (graph.coordinator.phaseOf(id) != null) pickedDuringRun += id
+        // A turn of the other engine, queued or about to move the chat, would leave it
+        // there: picking back the chat's own engine must then wait and move it back.
+        val movedAway = id in nextPicks ||
+            graph.queue.turns.value.any { it.sessionId == id && it.engine != null && it.engine != kind }
+        if (kind == session.engine && !movedAway) {
+            nextPicks.remove(id)
+            graph.sessions.setModelChoice(id, value, engines.of(kind).effort)
+        } else {
+            nextPicks[id] = NextPick(kind, value, engines.of(kind).effort)
+            project()
+            applyNextPick(id)
+        }
         project()
     }
     fun reasoningEffort(value: String?) = task {
         val state = mutable.value
         val id = current.value ?: return@task
-        val kind = state.activeEngine
+        val kind = state.selectedEngine
         val choice = ModelChoice(state.modelCatalog.filter { it.engine == kind }, state.selectedModel,
             state.selectedReasoningEffort).selectEffort(value)
         engines = engines.update(kind) { it.copy(model = choice.model, effort = choice.effort) }
         persistChoice(kind)
-        graph.sessions.setModelChoice(id, choice.model, choice.effort)
+        if (graph.coordinator.phaseOf(id) != null) pickedDuringRun += id
+        val pick = nextPicks[id]
+        if (pick != null && pick.engine == kind) nextPicks[id] = pick.copy(model = choice.model ?: pick.model, effort = choice.effort)
+        else graph.sessions.setModelChoice(id, choice.model, choice.effort)
         project()
     }
     /** The long context window on or off for every chat, from its next turn. */

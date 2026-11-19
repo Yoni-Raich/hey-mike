@@ -43,6 +43,16 @@ interface TurnRunner {
     /** The phase of [sessionId]'s run, or null when that chat is not running. */
     fun phaseOf(sessionId: String): RunPhase?
     fun steer(sessionId: String, prompt: String)
+    /**
+     * Start [turn] as a new run of its chat, never as steering input. False
+     * when that chat is already running or no run can start, so the caller can
+     * keep the turn. The default suits a runner that never steers from [send].
+     */
+    fun start(turn: QueuedTurn): Boolean {
+        if (phaseOf(turn.sessionId) != null || !canStart()) return false
+        send(turn)
+        return true
+    }
     fun send(turn: QueuedTurn) = send(turn.sessionId, turn.prompt, turn.imagePaths.map(::File), turn.model,
         turn.effort, turn.skill, turn.planMode, turn.engine)
     fun send(
@@ -205,6 +215,19 @@ class AgentRuns(
             val slot = active ?: freeSlot()
             if (active == null) slots.forEach { it.clearOutcome(turn.sessionId) }
             slot.send(turn)
+        }
+    }
+
+    override fun start(turn: QueuedTurn): Boolean {
+        if (turn.prompt.isBlank() && turn.imagePaths.isEmpty()) return true
+        return synchronized(this) {
+            // Stop uses this same monitor: a revoked recovery is consumed, not retried.
+            if (!turn.dispatchAllowed()) return@synchronized true
+            // Something else started this chat since the queue looked; the turn waits for that run.
+            if (slotFor(turn.sessionId) != null) return@synchronized false
+            val slot = freeSlot()
+            slots.forEach { it.clearOutcome(turn.sessionId) }
+            slot.start(turn)
         }
     }
 

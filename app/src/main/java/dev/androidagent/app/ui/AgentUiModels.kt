@@ -251,6 +251,14 @@ data class AgentUiState(
      * can pick, and picking one of another engine moves the chat to it.
      */
     val activeEngine: EngineKind = EngineKind.CODEX,
+    /**
+     * A model of the other engine picked while the chat ran: [selectedModel]
+     * is that engine's, the chat still runs on [activeEngine], and it moves
+     * when it is free. Null otherwise.
+     */
+    val nextEngine: EngineKind? = null,
+    /** The open chat's model or level was changed while it ran; the change is for its next message. */
+    val nextModelPicked: Boolean = false,
     /** The engine a new chat starts on, chosen in onboarding or Settings. */
     val defaultEngine: EngineKind = EngineKind.CODEX,
     /** Claude subscription setup. [accountStatus] stays the Codex sign-in. */
@@ -259,7 +267,10 @@ data class AgentUiState(
     val limits: ChatLimits = ChatLimits(),
     /** The sheet that sets what the open chat does at a usage limit. */
     val isLimitPlanOpen: Boolean = false,
-)
+) {
+    /** The engine of [selectedModel], which the next message runs on. */
+    val selectedEngine: EngineKind get() = nextEngine ?: activeEngine
+}
 
 /** An account or provider a chat can run as, offered when it hits a usage limit. */
 data class LimitOption(
@@ -349,6 +360,8 @@ data class AgentUiActions(
     val onRemoveAttachment: (String) -> Unit = {},
     val onSend: (String, List<PendingAttachment>) -> Unit = { _, _ -> },
     val onSteer: (String) -> Unit = {},
+    /** A message for after the running turn, as a turn of its own, with its attachments. */
+    val onQueue: (String, List<PendingAttachment>) -> Unit = { _, _ -> },
     val onStop: () -> Unit = {},
     val onStopSession: (String) -> Unit = {},
     val onBrowseVoiceChats: () -> Unit = {},
