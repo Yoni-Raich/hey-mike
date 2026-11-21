@@ -137,6 +137,7 @@ data class AgentUiState(
     val usageWindows: UsageWindowsUi = UsageWindowsUi(),
     val availableModels: List<String> = emptyList(),
     val modelCatalog: List<AgentModel> = emptyList(),
+    val antigravityCatalogStatus: String? = null,
     val availableSkills: List<AgentSkill> = emptyList(),
     /** What the open chat's engine itself answers behind `/`; empty for Codex. */
     val availableCommands: List<AgentCommand> = emptyList(),

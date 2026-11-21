@@ -107,6 +107,39 @@ class RemoteHub(
         }
     }
 
+    /** The models come from this computer's actual CLI and sign-in. */
+    suspend fun antigravityModels(id: String): List<dev.androidagent.core.AgentModel> = withContext(Dispatchers.IO) {
+        val host = connection(id)
+        val command = if (host.os == HostOs.WINDOWS) {
+            val exe = windowsAntigravity(host, id).replace("'", "''")
+            WindowsHost.powershell("[Console]::OutputEncoding = [Text.UTF8Encoding]::new(\$false); & '$exe' models; exit \$LASTEXITCODE")
+        } else {
+            "PATH=\"\$HOME/.local/bin:\$PATH\"; export PATH; exec agy models"
+        }
+        val listing = runInterruptible { host.link.isolated().use { it.run(command, timeoutMs = 20_000) } }
+        if (listing.exitCode != 0) {
+            val output = listing.stderr + "\n" + listing.stdout
+            val label = store.computer(id)?.label ?: "the computer"
+            error(when {
+                output.contains("sign in", ignoreCase = true) -> "Sign in on $label with agy acp --login."
+                listing.exitCode == 127 -> "Install agy on $label and sign in."
+                else -> "Could not list Antigravity models on $label."
+            })
+        }
+        AntigravityModels.parse(listing.stdout).ifEmpty { error("Antigravity returned no models.") }
+    }
+
+    private fun windowsAntigravity(host: Connection, id: String): String {
+        val lookup = WindowsHost.powershell(
+            "\$cmd = Get-Command agy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
+                "if (\$cmd) { \$exe = \$cmd.Source } else { \$exe = Join-Path \$env:LOCALAPPDATA 'agy/bin/agy.exe' }\n" +
+                "if (!(Test-Path -LiteralPath \$exe)) { \$exe = \$null }; 'HEYMIKE ' + (@{exe=\$exe} | ConvertTo-Json -Compress)"
+        )
+        return (WindowsHost.payload(host.link.run(lookup))["exe"] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeUnless { it == kotlinx.serialization.json.JsonNull }?.content
+            ?: error("Install agy on ${store.computer(id)?.label ?: "the computer"} and sign in.")
+    }
+
     private suspend fun launchAntigravity(id: String, cwd: String): Process = withContext(Dispatchers.IO) {
         val host = connection(id)
         val computer = checkNotNull(store.computer(id))
@@ -118,13 +151,7 @@ class RemoteHub(
             }
             return@withContext host.link.start(command)
         }
-        val lookup = WindowsHost.powershell(
-            "\$cmd = Get-Command agy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
-                "if (\$cmd) { \$exe = \$cmd.Source } else { \$exe = Join-Path \$env:LOCALAPPDATA 'agy/bin/agy.exe' }\n" +
-                "if (!(Test-Path -LiteralPath \$exe)) { \$exe = \$null }; 'HEYMIKE ' + (@{exe=\$exe} | ConvertTo-Json -Compress)"
-        )
-        val exe = WindowsHost.payload(host.link.run(lookup))["exe"]?.takeUnless { it == kotlinx.serialization.json.JsonNull }?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
-            ?: error("Install agy on ${computer.label} and sign in there.")
+        val exe = windowsAntigravity(host, id)
         val instance = CodexRelayScripts.install(host.link, host.probe(refresh = false), File(claudeScratch.parentFile, "codex-relay"))
         val config = File.createTempFile("agy-launch-", ".json", claudeScratch.apply { mkdirs() })
         try {

@@ -54,7 +54,7 @@ class SessionAgentSetup(
     private suspend fun catalog(target: RemoteBinding?, kind: EngineKind): List<AgentModel> {
         if (kind == EngineKind.ANTIGRAVITY) {
             requireNotNull(target) { "Antigravity needs a computer project." }
-            return listOf(AgentModel("antigravity", "Antigravity", engine = kind))
+            return hub.antigravityModels(target.computerId)
         }
         val engine: AgentEngine = if (target == null) {
             if (kind == EngineKind.CLAUDE) phoneClaude else phoneCodex

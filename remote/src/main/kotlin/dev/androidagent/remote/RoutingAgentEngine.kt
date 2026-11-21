@@ -192,7 +192,7 @@ class RoutingAgentEngine(
         val sessionId = sessionIdOf(workspace)
         if (engineOf(workspace) == EngineKind.ANTIGRAVITY) {
             val binding = checkNotNull(bindingOf(workspace)) { "Select a computer project for Antigravity." }
-            return hub.antigravity(binding.computerId).openAt(binding.cwd, threadId, tools).also { antigravityComputers[it] = binding.computerId }
+            return hub.antigravity(binding.computerId).openAt(binding.cwd, threadId, tools, model).also { antigravityComputers[it] = binding.computerId }
         }
         if (engineOf(workspace) == EngineKind.CLAUDE) {
             val computer = sessionId?.let(store::binding)

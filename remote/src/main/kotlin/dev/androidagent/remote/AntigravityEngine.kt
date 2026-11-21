@@ -176,7 +176,7 @@ internal class AntigravityEngine(
         }
     }
 
-    suspend fun openAt(cwd: String, previous: String?, tools: List<ToolDefinition> = emptyList()): String = withContext(Dispatchers.IO) {
+    suspend fun openAt(cwd: String, previous: String?, tools: List<ToolDefinition> = emptyList(), model: String? = null): String = withContext(Dispatchers.IO) {
         require(previous == null || previous.startsWith(PREFIX)) { "Invalid Antigravity session." }
         val peer = Peer(launch(cwd))
         peers.add(peer)
@@ -197,12 +197,34 @@ internal class AntigravityEngine(
                     previous?.let { put("sessionId", it.removePrefix(PREFIX)) }
                 })
                 val thread = previous ?: PREFIX + checkNotNull(reply.str("sessionId")?.takeIf { it.isNotBlank() }) { "Missing Antigravity session ID." }
+                AntigravityModels.slug(model)?.let { selectModel(peer, thread.removePrefix(PREFIX), reply, it) }
                 peer.thread = thread
                 check(chats.putIfAbsent(thread, peer) == null) { "Antigravity already has this conversation open." }
                 scope.launch { delay(90_000); if (peer.turn == null) peer.dispose() }
                 thread
             } ?: error("Antigravity did not open this session within a minute. Check agy on the computer.")
         } catch (e: Throwable) { peer.dispose(); throw e }
+    }
+
+    private suspend fun selectModel(peer: Peer, sessionId: String, session: JsonObject, model: String) {
+        val option = (session["configOptions"] as? JsonArray)?.filterIsInstance<JsonObject>()
+            ?.firstOrNull { it.str("category") == "model" }
+        if (option != null) {
+            if (option.str("currentValue") == model) return
+            val configId = checkNotNull(option.str("id")) { "Antigravity returned an invalid model option." }
+            peer.request("session/set_config_option", buildJsonObject {
+                put("sessionId", sessionId)
+                put("configId", configId)
+                put("value", model)
+            })
+            return
+        }
+        val legacy = session["models"] as? JsonObject
+        if (legacy?.str("currentModelId") == model) return
+        peer.request("session/set_model", buildJsonObject {
+            put("sessionId", sessionId)
+            put("modelId", model)
+        })
     }
 
     override suspend fun startTurn(
@@ -283,7 +305,7 @@ internal class AntigravityEngine(
     override suspend fun logout(): Unit = error("Manage Antigravity sign-in on the computer.")
     override suspend fun models() = listOf("antigravity")
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>) =
-        openAt(workspace.path, threadId, tools)
+        openAt(workspace.path, threadId, tools, model)
     override suspend fun steer(threadId: String, turnId: String, prompt: String): Unit = error("Queue a message for the next Antigravity turn.")
     override suspend fun answerTool(requestId: String, result: ToolResult) {
         toolReplies[requestId]?.complete(result)

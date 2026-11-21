@@ -1,5 +1,13 @@
 # Progress
 
+### Antigravity model picker — 2026-11-21
+
+Computer chats list the models from the host's `agy models` output and show
+a status if the host needs sign-in. The ACP adapter applies the selected
+model on open or resume. A fixture checked catalog parsing and model
+selection before the first prompt. On Pc, `agy models` required Google
+sign-in, so live listing and selection remain unverified.
+
 ### Phone tools for computer Antigravity chats — 2026-11-21
 
 Antigravity sessions receive Mike's MCP server through SSH on open and load.

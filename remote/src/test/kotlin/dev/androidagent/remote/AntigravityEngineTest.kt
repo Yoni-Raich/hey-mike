@@ -27,6 +27,17 @@ class AntigravityEngineTest {
         fun reply(call: JsonObject, result: String) = send("""{"jsonrpc":"2.0","id":${call["id"]},"result":$result}""")
     }
 
+    @Test fun listsTheModelsByTheirNativeIdsWithoutCollidingWithOtherEngines() {
+        val listed = AntigravityModels.parse("""
+            Fetching available models...
+            gemini-4-neon-high       Gemini 4 Neon (High)
+            claude-example          Claude Example
+        """.trimIndent())
+        assertEquals(listOf("agy/gemini-4-neon-high", "agy/claude-example"), listed.map { it.id })
+        assertEquals("claude-example", AntigravityModels.slug(listed.last().id))
+        assertNull(AntigravityModels.slug("antigravity"))
+    }
+
     @Test fun installedAgentOpensSessionOrReportsHostSignIn() = runBlocking {
         val executable = System.getenv("MIKE_TEST_AGY")
         org.junit.Assume.assumeTrue(!executable.isNullOrBlank())
@@ -55,7 +66,7 @@ class AntigravityEngineTest {
                 }
             }) { host }
             try {
-                val opening = async(Dispatchers.IO) { engine.openAt("/project", "agy:test-id", listOf(tool)) }
+                val opening = async(Dispatchers.IO) { engine.openAt("/project", "agy:test-id", listOf(tool), model = "agy/example-fast") }
                 val init = host.receive()
                 assertEquals("initialize", init["method"]?.jsonPrimitive?.content)
                 host.reply(init, """{"protocolVersion":1}""")
@@ -63,7 +74,11 @@ class AntigravityEngineTest {
                 assertEquals("session/load", load["method"]?.jsonPrimitive?.content)
                 assertEquals("/project", load["params"]?.jsonObject?.get("cwd")?.jsonPrimitive?.content)
                 assertEquals("mike", load["params"]!!.jsonObject["mcpServers"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content)
-                host.reply(load, "{}")
+                host.reply(load, """{"configOptions":[{"id":"model","category":"model","currentValue":"example-default"}]}""")
+                val select = host.receive()
+                assertEquals("session/set_config_option", select["method"]?.jsonPrimitive?.content)
+                assertEquals("example-fast", select["params"]!!.jsonObject.getValue("value").jsonPrimitive.content)
+                host.reply(select, "{}")
                 val chat = opening.await()
                 assertFalse(call("device_status", JsonObject(emptyMap())).success)
                 val ask = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.Approval } as EngineEvent.Approval }

@@ -2,7 +2,10 @@
 
 ### Antigravity on a saved computer
 
-Computer chats offer the host's default Antigravity model. Selecting it uses
+Computer chats offer the host default plus the models listed by `agy models`
+for that computer. Mike reads the list when opening the chat or model picker.
+It applies the selected model through ACP when opening or resuming a session.
+Selecting an Antigravity model uses
 the same per-engine history and handoff as the other engines. The Android app
 starts `agy acp` over the computer's pinned SSH connection. Windows uses the
 existing stdio relay. Linux runs the CLI directly. The session is opened or

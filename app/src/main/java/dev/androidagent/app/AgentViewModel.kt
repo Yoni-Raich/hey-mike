@@ -68,6 +68,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private data class NextPick(val engine: EngineKind, val model: String, val effort: String?)
     /** Chats whose model or level was changed during the run they are in. Main thread only. */
     private val pickedDuringRun = mutableSetOf<String>()
+    private val antigravityCatalogs = mutableMapOf<String, List<AgentModel>>()
+    private var antigravityRefresh: Job? = null
+    private var antigravityRefreshComputer: String? = null
+    private var antigravityRefreshAt: Long? = null
     private var engines = EngineChoices()
         .update(EngineKind.CODEX) { ModelChoice(model = preferences.getString(KEY_MODEL, null), effort = preferences.getString(KEY_EFFORT, null)) }
         .update(EngineKind.CLAUDE) { ModelChoice(model = preferences.getString(KEY_CLAUDE_MODEL, null), effort = preferences.getString(KEY_CLAUDE_EFFORT, null)) }
@@ -420,6 +424,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 enginesFor(current.value, kind, state),
                 // A computer's Claude Code lists its own models; the aliases until it has answered.
                 claudeModels = computer?.let { id -> state.computerClaude[id]?.models?.takeIf { it.isNotEmpty() } ?: engines.of(EngineKind.CLAUDE).catalog },
+                antigravityModels = computer?.let(antigravityCatalogs::get).orEmpty(),
             )
             state.copy(
                 activeEngine = kind,
@@ -1494,6 +1499,31 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelClaudeDownload() = graph.claudeHost.updates.cancel()
 
+    private fun refreshAntigravityModels(computer: String?) {
+        val at = System.nanoTime()
+        if (computer == antigravityRefreshComputer &&
+            (antigravityRefresh?.isActive == true || antigravityRefreshAt?.let { at - it < 30_000_000_000L } == true)) return
+        antigravityRefresh?.cancel()
+        antigravityRefreshComputer = computer
+        antigravityRefreshAt = null
+        mutable.update { it.copy(antigravityCatalogStatus = computer?.let { "Checking the computer for models…" }) }
+        if (computer == null) return
+        antigravityRefresh = viewModelScope.launch {
+            val status = try {
+                antigravityCatalogs[computer] = graph.remote.antigravityModels(computer)
+                antigravityRefreshAt = System.nanoTime()
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                antigravityCatalogs.remove(computer)
+                failure.message ?: "Could not list Antigravity models."
+            }
+            mutable.update { it.copy(antigravityCatalogStatus = status) }
+            project()
+        }
+    }
+
     private var modelRefreshJob: Job? = null
     private var modelRefreshAt: Long? = null
     private var modelRefreshComputer: String? = null
@@ -1501,6 +1531,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Fresh catalog on chat/menu open and resume; per-runtime engine caches bound repeated work. */
     fun refreshModels() {
         val computer = current.value?.let(graph.computers::binding)?.computerId
+        refreshAntigravityModels(computer)
         val at = System.nanoTime()
         if (modelRefreshJob?.isActive == true) return
         if (computer == modelRefreshComputer && modelRefreshAt?.let { at - it < 30_000_000_000L } == true) return
