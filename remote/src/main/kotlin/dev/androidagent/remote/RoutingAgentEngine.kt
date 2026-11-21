@@ -106,7 +106,7 @@ class RoutingAgentEngine(
     val codexEvents: Flow<EngineEvent> =
         merge(phoneEvents(local.events, EngineKind.CODEX), computerEvents(EngineKind.CODEX))
 
-    private val computerClaudeEvents: Flow<EngineEvent> =
+    private val computerOtherEvents: Flow<EngineEvent> =
         merge(computerEvents(EngineKind.CLAUDE), computerEvents(EngineKind.ANTIGRAVITY))
 
     private fun computerEvents(kind: EngineKind): Flow<EngineEvent> = hub.events.transform { remote ->
@@ -121,7 +121,7 @@ class RoutingAgentEngine(
     }
 
     override val events: Flow<EngineEvent> =
-        claude?.let { merge(codexEvents, computerClaudeEvents, phoneEvents(it.events, EngineKind.CLAUDE)) } ?: merge(codexEvents, computerClaudeEvents)
+        claude?.let { merge(codexEvents, computerOtherEvents, phoneEvents(it.events, EngineKind.CLAUDE)) } ?: merge(codexEvents, computerOtherEvents)
 
     /** The computer binding of the chat whose folder is [workspace], or null for the phone. */
     fun bindingOf(workspace: File): RemoteBinding? = sessionIdOf(workspace)?.let(store::binding)
@@ -192,6 +192,11 @@ class RoutingAgentEngine(
         val sessionId = sessionIdOf(workspace)
         if (engineOf(workspace) == EngineKind.ANTIGRAVITY) {
             val binding = checkNotNull(bindingOf(workspace)) { "Select a computer project for Antigravity." }
+            if (threadId != null) {
+                check(antigravityComputers[threadId] == null || antigravityComputers[threadId] == binding.computerId) {
+                    "This native Antigravity ID is already routed to another computer in Mike. Continue it on its original computer instead of using a copied ID."
+                }
+            }
             return hub.antigravity(binding.computerId).openAt(binding.cwd, threadId, tools, model).also { antigravityComputers[it] = binding.computerId }
         }
         if (engineOf(workspace) == EngineKind.CLAUDE) {
@@ -320,6 +325,7 @@ class RoutingAgentEngine(
         if (threadId.startsWith(AntigravityEngine.PREFIX)) {
             val computer = antigravityComputers[threadId] ?: sessions?.sessions?.value
                 ?.firstOrNull { EngineSwitch.engineOf(it, threadId) == EngineKind.ANTIGRAVITY }?.let { store.binding(it.id)?.computerId }
+                ?.also { antigravityComputers[threadId] = it }
             return hub.antigravity(checkNotNull(computer) { "The computer for this Antigravity chat is missing." })
         }
         if (isClaude(threadId)) return claudeFor(threadId)

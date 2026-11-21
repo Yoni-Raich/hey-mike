@@ -10,18 +10,19 @@ import java.io.*
 
 class AntigravityEngineTest {
     /** ACP on two pipe pairs, with a separate reader for the client and for the agent. */
-    private class Host : Process() {
+    private class Host(stderr: String = "") : Process() {
         private val clientIn = PipedInputStream()
         private val serverOut = PipedOutputStream(clientIn)
         private val serverIn = PipedInputStream()
         private val clientOut = PipedOutputStream(serverIn)
         private val lines = serverIn.bufferedReader()
+        private val err = ByteArrayInputStream(stderr.toByteArray(Charsets.UTF_8))
         override fun getOutputStream() = clientOut
         override fun getInputStream() = clientIn
-        override fun getErrorStream() = ByteArrayInputStream(byteArrayOf())
+        override fun getErrorStream() = err
         override fun waitFor() = 0
         override fun exitValue() = 0
-        override fun destroy() { clientOut.close(); serverOut.close() }
+        override fun destroy() { runCatching { clientOut.close() }; runCatching { serverOut.close() } }
         fun receive() = Json.parseToJsonElement(lines.readLine()).jsonObject
         fun send(line: String) { serverOut.write((line + "\n").toByteArray()); serverOut.flush() }
         fun reply(call: JsonObject, result: String) = send("""{"jsonrpc":"2.0","id":${call["id"]},"result":$result}""")
@@ -45,7 +46,7 @@ class AntigravityEngineTest {
         org.junit.Assume.assumeTrue(!executable.isNullOrBlank())
         val engine = AntigravityEngine { ProcessBuilder(executable, "acp").start() }
         try {
-            val result = runCatching { engine.openAt(File(System.getProperty("java.io.tmpdir")).canonicalPath, null) }
+            val result = runCatching { engine.openAt(File(System.getProperty("java.io.tmpdir") ?: ".").canonicalPath, null) }
             result.fold(
                 onSuccess = { assertTrue(it.startsWith(AntigravityEngine.PREFIX)) },
                 onFailure = { assertEquals("Sign in with agy on this computer, then send again.", it.message) },
@@ -118,5 +119,182 @@ class AntigravityEngineTest {
                 assertFalse(call("device_status", JsonObject(emptyMap())).success)
             } finally { engine.close() }
         }
+    }
+
+    @Test fun interruptSendsCancelFinishesAsInterruptedAndResolvesPendingApproval() = runBlocking {
+        withTimeout(10_000) {
+            val host = Host()
+            var bridgeClosed = false
+            val engine = AntigravityEngine(phoneBridge = { _, _ ->
+                object : AcpPhoneBridge {
+                    override val serverConfig = buildJsonObject { put("name", "mike") }
+                    override fun close() { bridgeClosed = true }
+                }
+            }) { host }
+            try {
+                val opening = async(Dispatchers.IO) {
+                    engine.openAt("/project", null, listOf(dev.androidagent.core.ToolDefinition("device_status", "Status", JsonObject(emptyMap()))))
+                }
+                host.reply(host.receive(), """{"protocolVersion":1}""")
+                host.reply(host.receive(), """{"sessionId":"cancel-id"}""")
+                val chat = opening.await()
+                val ask = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.Approval } as EngineEvent.Approval }
+                val turn = engine.startTurn(chat, "Run build", emptyList())
+                val prompt = host.receive()
+                assertEquals("session/prompt", prompt["method"]?.jsonPrimitive?.content)
+                host.send("""{"id":77,"method":"session/request_permission","params":{"sessionId":"cancel-id","options":[{"kind":"allow_once","optionId":"once"}],"toolCall":{"title":"Run command","rawInput":{"CommandLine":"git status"}}}}""")
+                val permission = ask.await()
+                assertEquals("git status", permission.details["command"]?.jsonPrimitive?.content)
+                val resolved = async(start = CoroutineStart.UNDISPATCHED) {
+                    engine.events.first { it is EngineEvent.ApprovalResolved } as EngineEvent.ApprovalResolved
+                }
+                val finished = async(start = CoroutineStart.UNDISPATCHED) {
+                    engine.events.first { it is EngineEvent.TurnFinished || it is EngineEvent.Failure }
+                }
+                val cancelJob = launch(Dispatchers.IO) { engine.interrupt(chat, turn) }
+                val cancelMsg = host.receive()
+                assertEquals("session/cancel", cancelMsg["method"]?.jsonPrimitive?.content)
+                host.reply(prompt, """{"stopReason":"cancelled"}""")
+                cancelJob.join()
+                assertEquals(permission.requestId, resolved.await().requestId)
+                val end = finished.await()
+                assertTrue("Expected TurnFinished(interrupted) but got $end", end is EngineEvent.TurnFinished && end.status == "interrupted")
+                assertTrue(bridgeClosed)
+            } finally { engine.close() }
+        }
+    }
+
+    @Test fun ignoresNonJsonStdoutAndSurfacesRedactedStderrOnDisconnect() = runBlocking {
+        withTimeout(10_000) {
+            val host = Host(stderr = "Fatal: auth failed with Bearer sk-1234567890abcdefghijklmnop\n")
+            val engine = AntigravityEngine { host }
+            try {
+                val opening = async(Dispatchers.IO) { engine.openAt("/project", null, model = "agy/legacy-model") }
+                host.send("")
+                host.send("WARNING: non-json startup notice")
+                host.reply(host.receive(), """{"protocolVersion":1}""")
+                host.reply(host.receive(), """{"sessionId":"stderr-id","models":{"currentModelId":"default"}}""")
+                val setModel = host.receive()
+                assertEquals("session/set_model", setModel["method"]?.jsonPrimitive?.content)
+                assertEquals("legacy-model", setModel["params"]!!.jsonObject.getValue("modelId").jsonPrimitive.content)
+                host.reply(setModel, "{}")
+                val chat = opening.await()
+                val failure = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.Failure } as EngineEvent.Failure }
+                engine.startTurn(chat, "Hello", emptyList())
+                host.receive()
+                delay(50)
+                host.destroy()
+                val event = failure.await()
+                assertTrue(event.message.contains("Fatal: auth failed"))
+                assertFalse(event.message.contains("sk-1234567890"))
+            } finally { engine.close() }
+        }
+    }
+
+    @Test fun toolCallsEmitItemActivityAndSegmentAssistantText() = runBlocking {
+        withTimeout(10_000) {
+            val host = Host()
+            val engine = AntigravityEngine { host }
+            try {
+                val opening = async(Dispatchers.IO) { engine.openAt("/project", null) }
+                host.reply(host.receive(), """{"protocolVersion":1}""")
+                host.reply(host.receive(), """{"sessionId":"seg-id"}""")
+                val chat = opening.await()
+                val collected = mutableListOf<EngineEvent>()
+                val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    engine.events.collect { collected += it }
+                }
+                engine.startTurn(chat, "Inspect", emptyList())
+                val prompt = host.receive()
+                host.send("""{"method":"session/update","params":{"sessionId":"seg-id","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Before"}}}}""")
+                host.send("""{"method":"session/update","params":{"sessionId":"seg-id","update":{"sessionUpdate":"tool_call","toolCallId":"call-1","title":"Run git","status":"in_progress","rawInput":{"CommandLine":"git status"}}}}""")
+                host.send("""{"method":"session/update","params":{"sessionId":"seg-id","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"completed"}}}""")
+                host.send("""{"method":"session/update","params":{"sessionId":"seg-id","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"After"}}}}""")
+                host.reply(prompt, """{"stopReason":"end_turn"}""")
+                withTimeout(5_000) { while (collected.none { it is EngineEvent.TurnFinished }) delay(10) }
+                collector.cancel()
+                val deltas = collected.filterIsInstance<EngineEvent.TextDelta>()
+                assertEquals(listOf("Before", "After"), deltas.map { it.text })
+                assertNotNull(deltas[0].itemId)
+                assertNotEquals(deltas[0].itemId, deltas[1].itemId)
+                val items = collected.filterIsInstance<EngineEvent.ItemActivity>()
+                assertEquals(2, items.size)
+                assertEquals("Run git", items[0].title)
+                assertEquals("streaming", items[0].state)
+                assertEquals("Run git", items[1].title)
+                assertEquals("complete", items[1].state)
+            } finally { engine.close() }
+        }
+    }
+
+    @Test fun compactToolsFitsLargeCatalogUnderBudgetWhileKeepingRequiredAndEnums() {
+        val longDesc = "Detailed explanation of the phone tool behavior. " + "More guidance text. ".repeat(40)
+        val catalog = (1..41).map { i ->
+            dev.androidagent.core.ToolDefinition(
+                name = if (i == 1) "read_ui" else "tool_$i",
+                description = longDesc,
+                inputSchema = buildJsonObject {
+                    put("type", "object")
+                    put("description", longDesc)
+                    put("additionalProperties", false)
+                    put("properties", buildJsonObject {
+                        put("operation", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Verbose operation description ".repeat(10))
+                            put("enum", buildJsonArray { add("list"); add("get") })
+                        })
+                        put("nested", buildJsonObject {
+                            put("type", "object")
+                            put("properties", buildJsonObject {
+                                put("deep", buildJsonObject { put("type", "string"); put("description", "Deep ".repeat(30)) })
+                                put("extraA", buildJsonObject { put("type", "string") })
+                                put("extraB", buildJsonObject { put("type", "integer") })
+                                put("extraC", buildJsonObject { put("type", "boolean") })
+                            })
+                        })
+                        put("rule", buildJsonObject {
+                            put("properties", buildJsonObject {
+                                put("id", buildJsonObject { put("type", "string") })
+                                put("when", buildJsonObject {
+                                    put("type", "object")
+                                    put("properties", buildJsonObject {
+                                        put("type", buildJsonObject { put("type", "string") })
+                                        put("package", buildJsonObject { put("type", "string") })
+                                    })
+                                })
+                                put("then", buildJsonObject {
+                                    put("type", "array")
+                                    put("items", buildJsonObject { put("type", "object") })
+                                })
+                            })
+                        })
+                    })
+                    put("required", buildJsonArray { add("operation") })
+                },
+            )
+        }
+        val compacted = AntigravityPhoneBridge.compactTools(catalog)
+        assertEquals(41, compacted.size)
+        assertEquals("read_ui", compacted.first().name)
+        val firstSchema = compacted.first().inputSchema
+        assertNull(firstSchema["description"])
+        assertEquals(listOf("operation"), firstSchema["required"]!!.jsonArray.map { it.jsonPrimitive.content })
+        val opEnum = firstSchema["properties"]!!.jsonObject["operation"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("list", "get"), opEnum)
+        assertEquals("object", firstSchema["properties"]!!.jsonObject["nested"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertNull(firstSchema["properties"]!!.jsonObject["nested"]!!.jsonObject["properties"])
+        assertEquals("object", firstSchema["properties"]!!.jsonObject["rule"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertNull(firstSchema["properties"]!!.jsonObject["rule"]!!.jsonObject["properties"])
+        val totalJson = compacted.sumOf { it.name.length + it.description.length + it.inputSchema.toString().length + 48 }
+        assertTrue("Expected compacted catalog under 12500 bytes, got $totalJson", totalJson <= 12_500)
+    }
+
+    @Test fun compactThrowsClearUnsupportedError() = runBlocking {
+        val engine = AntigravityEngine { Host() }
+        try {
+            val failure = runCatching { engine.compact("agy:test") }.exceptionOrNull()
+            assertTrue(failure is IllegalStateException)
+            assertTrue(failure!!.message!!.contains("Compaction"))
+        } finally { engine.close() }
     }
 }

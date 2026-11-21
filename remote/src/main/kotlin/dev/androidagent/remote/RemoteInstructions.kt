@@ -13,20 +13,35 @@ import dev.androidagent.core.EngineKind
  */
 object RemoteInstructions {
     fun forComputer(computer: RemoteComputer, engine: EngineKind = EngineKind.CODEX): String {
-        val claude = engine == EngineKind.CLAUDE
         val access = when (computer.access) {
-            RemoteAccess.ASK ->
-                if (claude) "A command or a change outside the chat's folder that needs permission asks the user first; their answer comes from the phone."
-                else "Commands that need more than the workspace sandbox allows ask the user first; their answer comes from the phone."
-            RemoteAccess.FULL ->
-                if (claude) "The user gave you full access to this computer without approval prompts. Be careful with anything destructive or hard to undo."
-                else "The user gave you full file access to this computer. Codex still asks the user before risky commands; their answer comes from the phone. Submit the intended command to show its approval card. Approval applies only to that request. If a command is denied or blocked by policy, do not retry through another shell or file API. Be careful with anything destructive or hard to undo."
+            RemoteAccess.ASK -> when (engine) {
+                EngineKind.CLAUDE -> "A command or a change outside the chat's folder that needs permission asks the user first; their answer comes from the phone."
+                EngineKind.ANTIGRAVITY -> "Commands that need permission or access outside the sandbox ask the user first; their answer comes from the phone."
+                EngineKind.CODEX -> "Commands that need more than the workspace sandbox allows ask the user first; their answer comes from the phone."
+            }
+            RemoteAccess.FULL -> when (engine) {
+                EngineKind.CLAUDE -> "The user gave you full access to this computer without approval prompts. Be careful with anything destructive or hard to undo."
+                EngineKind.ANTIGRAVITY -> "The user gave you full access to this computer. Antigravity still asks the user before risky commands; their answer comes from the phone. Approval applies only to that request. If a command is denied or blocked by policy, do not retry through another shell or file API. Be careful with anything destructive or hard to undo."
+                EngineKind.CODEX -> "The user gave you full file access to this computer. Codex still asks the user before risky commands; their answer comes from the phone. Submit the intended command to show its approval card. Approval applies only to that request. If a command is denied or blocked by policy, do not retry through another shell or file API. Be careful with anything destructive or hard to undo."
+            }
         }
         val linux = computer.os == HostOs.LINUX
         val desktop = if (linux) LINUX_DESKTOP else WINDOWS_DESKTOP
-        val runsAs = if (claude) "Claude Code" else "Codex"
-        val ownFiles = if (claude) "the computer's own skills and CLAUDE.md" else "the computer's own skills and AGENTS.md"
-        val poweredBy = if (claude) "Anthropic's Claude models through Claude Code on this computer" else "OpenAI's Codex models through Codex on this computer"
+        val runsAs = when (engine) {
+            EngineKind.CLAUDE -> "Claude Code"
+            EngineKind.ANTIGRAVITY -> "Antigravity"
+            EngineKind.CODEX -> "Codex"
+        }
+        val ownFiles = when (engine) {
+            EngineKind.CLAUDE -> "the computer's own skills and CLAUDE.md"
+            EngineKind.ANTIGRAVITY -> "the computer's own skills and project instructions"
+            EngineKind.CODEX -> "the computer's own skills and AGENTS.md"
+        }
+        val poweredBy = when (engine) {
+            EngineKind.CLAUDE -> "Anthropic's Claude models through Claude Code on this computer"
+            EngineKind.ANTIGRAVITY -> "Antigravity on this computer"
+            EngineKind.CODEX -> "OpenAI's Codex models through Codex on this computer"
+        }
         return """You are Mike, the AI agent from the Hey Mike app. The user is talking to you from their Android phone. In this chat you run as $runsAs on their ${if (linux) "Linux" else "Windows"} computer "${computer.label}", reached from the phone over SSH, and you work in the chat's folder on that computer.
 
 Your shell, file edits, git and $ownFiles all act on the computer, not the phone. $access

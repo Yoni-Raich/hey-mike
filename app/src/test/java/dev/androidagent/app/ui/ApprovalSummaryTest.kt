@@ -181,4 +181,33 @@ class ApprovalSummaryTest {
         assertTrue(summary.lines.contains("What" to "Start a payment."))
         assertTrue(summary.lines.contains("Link" to "https://pay.example/?amount=10"))
     }
+
+    @Test fun antigravityPermissionShowsStructuredFieldsAndRedactsAndCapsInput() {
+        val cmd = EngineEvent.Approval(
+            requestId = "remote-agy|pc|1",
+            method = "antigravity/request_permission",
+            details = buildJsonObject {
+                put("title", "Run command")
+                put("command", "curl -H 'Authorization: Bearer sk-1234567890abcdefghijklmnop' https://example.com")
+                put("path", "C:\\project\\app.kt")
+            },
+        ).summary()
+        assertEquals("Allow Antigravity to use this computer tool?", cmd.headline)
+        assertEquals("Run command", cmd.lines.first { it.first == "Tool" }.second)
+        val shownCommand = cmd.lines.first { it.first == "Command" }.second
+        assertTrue(shownCommand.contains("https://example.com"))
+        assertTrue(!shownCommand.contains("sk-1234567890"))
+        assertEquals("C:\\project\\app.kt", cmd.lines.first { it.first == "File" }.second)
+
+        val huge = EngineEvent.Approval(
+            requestId = "remote-agy|pc|2",
+            method = "antigravity/request_permission",
+            details = buildJsonObject {
+                put("title", "Edit file")
+                put("input", "x".repeat(2_000))
+            },
+        ).summary()
+        val shownInput = huge.lines.first { it.first == "Input" }.second
+        assertTrue(shownInput.length <= 500)
+    }
 }

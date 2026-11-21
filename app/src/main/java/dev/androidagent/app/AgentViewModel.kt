@@ -69,6 +69,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Chats whose model or level was changed during the run they are in. Main thread only. */
     private val pickedDuringRun = mutableSetOf<String>()
     private val antigravityCatalogs = mutableMapOf<String, List<AgentModel>>()
+    private val antigravityNotInstalled = mutableSetOf<String>()
     private var antigravityRefresh: Job? = null
     private var antigravityRefreshComputer: String? = null
     private var antigravityRefreshAt: Long? = null
@@ -521,7 +522,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         add(EngineKind.CODEX)
         val computer = id?.let(graph.computers::binding)?.computerId
         val claude = if (computer == null) state.claude.ready else state.computerClaude[computer]?.ready == true
-        if (computer != null) add(EngineKind.ANTIGRAVITY)
+        if (computer != null && computer !in antigravityNotInstalled) add(EngineKind.ANTIGRAVITY)
         if (claude) add(EngineKind.CLAUDE)
     }
 
@@ -542,6 +543,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(graph.coordinator.phaseOf(id) == null) { "Wait for Mike to finish, or stop him, before changing the model." }
         checkEngineAllowed(id, session, kind)
         graph.sessions.setEngine(id, kind)
+        if (kind == EngineKind.ANTIGRAVITY && mutable.value.planMode) {
+            mutable.update { it.copy(planMode = false) }
+        }
         // Who holds the computer conversation is a question for the engine the chat now runs on.
         if (graph.computers.binding(id) != null) checkPcChatBusy(id)
         // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
@@ -553,7 +557,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // Like any model pick, it also holds for the next new chat.
         rememberDefaultEngine(kind)
         if (session.hasMessages) {
-            val model = engines.of(kind).let { choice -> choice.catalog.firstOrNull { it.id == choice.model }?.displayName ?: choice.model }
+            val choice = engines.of(kind)
+            val model = if (kind == EngineKind.ANTIGRAVITY) {
+                val computer = graph.computers.binding(id)?.computerId
+                val agyCatalog = computer?.let(antigravityCatalogs::get).orEmpty()
+                when (val selected = choice.model) {
+                    null, "antigravity" -> "Computer default"
+                    else -> agyCatalog.firstOrNull { it.id == selected }?.displayName ?: selected.removePrefix("agy/")
+                }
+            } else {
+                choice.catalog.firstOrNull { it.id == choice.model }?.displayName ?: choice.model
+            }
             note(id, "Switched to ${providerName(kind)}${model?.let { " · $it" }.orEmpty()}. It is told what was said in this chat with your next message.")
         }
     }
@@ -563,6 +577,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         // A chat nobody wrote in yet may be pointed at an engine that is still
         // being set up, as onboarding does; its first message then says what is missing.
         val computer = graph.computers.binding(id)?.let { graph.computers.computer(it.computerId) }
+        if (kind == EngineKind.ANTIGRAVITY) {
+            check(computer != null) { "Antigravity runs only in a computer project chat." }
+            check(kind in enginesFor(id, session.engine, mutable.value)) { "Install agy on ${computer.label} and sign in." }
+            return
+        }
         check(kind in enginesFor(id, session.engine, mutable.value) || (isBlank(session) && computer == null)) {
             if (computer != null) "Set up Claude on ${computer.label} from Computers."
             else "Set up ${kind.label} in Settings first."
@@ -900,8 +919,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.engineThreadId == null) {
             "This chat has started. Start a new chat to work somewhere else."
         }
-        // A still-empty Claude chat stays on Claude only on a computer that has its own Claude Code.
-        if (computerId != null && mutable.value.computerClaude[computerId]?.ready != true) graph.sessions.setEngine(id, EngineKind.CODEX)
+        val currentEngine = graph.sessions.getSession(id)?.engine
+        // Antigravity exists only on computers; Claude stays only on a computer that has its own Claude Code.
+        val resetEngine = (computerId == null && currentEngine == EngineKind.ANTIGRAVITY) ||
+            (computerId != null && currentEngine == EngineKind.CLAUDE && mutable.value.computerClaude[computerId]?.ready != true)
+        if (resetEngine) graph.sessions.setEngine(id, EngineKind.CODEX)
         withContext(Dispatchers.IO) {
             if (computerId == null || path == null) {
                 graph.computers.unbind(id)
@@ -1257,13 +1279,24 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelQueued(id: String) = task { graph.queue.cancel(id) }
     fun resumeQueue() = task { graph.queue.resume() }
 
-    fun togglePlanMode() { mutable.update { it.copy(planMode = !it.planMode) } }
+    fun togglePlanMode() {
+        val state = mutable.value
+        if (!state.planMode && state.selectedEngine == EngineKind.ANTIGRAVITY) {
+            error("Plan mode is not available for Antigravity.")
+            return
+        }
+        mutable.update { it.copy(planMode = !it.planMode) }
+    }
 
     fun compact() {
         val id = current.value ?: return
         if (id in mutable.value.compacting) return
         if (graph.coordinator.phaseOf(id) != null) { error("Wait for the agent to finish before compacting."); return }
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End voice before compacting this chat."); return }
+        if (mutable.value.sessions.firstOrNull { it.id == id }?.engine == EngineKind.ANTIGRAVITY) {
+            error("Compaction is not available for Antigravity.")
+            return
+        }
         val started = System.currentTimeMillis()
         mutable.update { it.copy(compacting = it.compacting + (id to started), errorMessage = null) }
         task {
@@ -1511,12 +1544,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         antigravityRefresh = viewModelScope.launch {
             val status = try {
                 antigravityCatalogs[computer] = graph.remote.antigravityModels(computer)
+                antigravityNotInstalled.remove(computer)
                 antigravityRefreshAt = System.nanoTime()
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (missing: dev.androidagent.remote.AntigravityNotInstalledException) {
+                antigravityCatalogs.remove(computer)
+                antigravityNotInstalled.add(computer)
+                antigravityRefreshAt = System.nanoTime()
+                missing.message
             } catch (failure: Exception) {
                 antigravityCatalogs.remove(computer)
+                antigravityNotInstalled.remove(computer)
                 failure.message ?: "Could not list Antigravity models."
             }
             mutable.update { it.copy(antigravityCatalogStatus = status) }

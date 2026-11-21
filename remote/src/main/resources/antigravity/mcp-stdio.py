@@ -31,6 +31,8 @@ def forward(line):
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
     for packet in sys.stdin.buffer:
+        if not packet.strip():
+            continue
         pool.submit(forward, packet)
     # The ACP parent closed stdio. No caller can receive an outstanding reply.
     os._exit(0)

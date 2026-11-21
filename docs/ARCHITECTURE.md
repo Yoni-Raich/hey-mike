@@ -3,28 +3,39 @@
 ### Antigravity on a saved computer
 
 Computer chats offer the host default plus the models listed by `agy models`
-for that computer. Mike reads the list when opening the chat or model picker.
-It applies the selected model through ACP when opening or resuming a session.
-Selecting an Antigravity model uses
-the same per-engine history and handoff as the other engines. The Android app
-starts `agy acp` over the computer's pinned SSH connection. Windows uses the
-existing stdio relay. Linux runs the CLI directly. The session is opened or
-loaded with the bound project directory. Authentication belongs to the CLI
-on that computer. Its configured provider handles model inference.
+for that computer (hidden for computers where `agy` is confirmed not installed).
+Mike reads the list in one SSH command when opening the chat or model picker
+and applies the selected model through ACP when opening or resuming a session.
+Selecting an Antigravity model uses the same per-engine history and handoff as
+the other engines. The Android app starts `agy acp` over the computer's pinned
+SSH connection. Windows uses the existing stdio relay in an Antigravity-scoped
+namespace and prunes ended relay folders in the background. Linux runs the CLI
+directly. The session is opened or loaded with the bound project directory.
+Authentication belongs to the CLI on that computer. Its configured provider
+handles model inference.
 
-Each turn gets its own process and resumes the native session by ID. ACP
-text and tool activity feed the existing chat. Permission requests go to
-Mike's approval flow and accept only a single-use option. Stop cancels the
-native session prompt and closes its process. Further messages queue during a
-turn. Computer tools are native to Antigravity. Plan mode is unavailable.
+Each turn gets its own process, resumes the native session by ID, and receives
+`RemoteInstructions` for that computer. ACP text carries segment IDs across
+tool boundaries and computer `tool_call` updates emit `ItemActivity` rows.
+Stdout ignores blank or non-JSON lines, and a short redacted stderr tail is
+retained for disconnect diagnostics. Permission requests go to Mike's approval
+flow, accept only a single-use option, redact/cap shown input, and emit
+`ApprovalResolved` on disconnect. Stop sends `session/cancel` with a bounded
+drain before closing the process, finishing as interrupted rather than a
+transport error. Further messages queue during a turn. Computer tools are
+native to Antigravity. Plan mode and compaction are unavailable.
 
 For each native session open or load, the adapter starts Mike's authenticated
-loopback MCP server on Android. A dedicated SSH connection requests a
-computer-side loopback port forwarded to that server. Antigravity launches a
-stdio MCP helper (Windows PowerShell or Linux Python 3) with the port and an
-ephemeral bearer token in its environment. Both hosts must permit remote
-TCP forwarding. The helper relays MCP requests once and returns text and
-image results. The phone gateway still owns permissions and device access.
+loopback MCP server on Android with compacted tool schemas (removing duplicated
+descriptions and collapsing deep nested sub-schemas while preserving top-level
+names, types, enums and required keys) so more of the phone tool surface fits
+within Antigravity's eager MCP schema budget. A dedicated
+SSH connection requests a computer-side loopback port forwarded to that server.
+Antigravity launches a stdio MCP helper (Windows PowerShell or Linux Python 3,
+ignoring blank lines and bounding concurrent forwards) with the port and an
+ephemeral bearer token in its environment. Both hosts must permit remote TCP
+forwarding. The helper relays MCP requests once and returns text and image
+results. The phone gateway still owns permissions and device access.
 
 Calls carry the current computer, thread and turn. The coordinator receives
 the same tool events used by other engines. An MCP cancellation resolves the

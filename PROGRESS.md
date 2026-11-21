@@ -1,5 +1,66 @@
 # Progress
 
+### Antigravity PR #168 hardening and review fixes — 2026-11-22
+
+Hardened the Antigravity ACP adapter, MCP phone bridge, computer hub and UI
+after a live phone-to-Pc check (build 1229, `agy 1.5.14`) and full PR #168 code
+review:
+- **MCP phone tool schema compaction (`AntigravityPhoneBridge`)**: removed
+  duplicated top-level schema descriptions, empty `required` arrays,
+  `additionalProperties: false`, nested descriptions and deep nested sub-schemas
+  (including untyped objects with `properties`) while keeping top-level tool
+  names, parameter names, primitive types, enums and non-empty `required` lists.
+  On the live 41-tool Mike MCP catalog observed on `Pc`, raw schemas totaled
+  77,116 bytes and `agy 1.5.14` mounted only the 24 smallest tools (12,709 bytes
+  cumulative, omitting `read_ui`, `open_intent`, `browser`, `files_media`,
+  `calendar`, `apps_settings`, `communications`, `computers`, `system_controls`,
+  etc.); compaction shrinks that catalog by ~80% (to 15,280 bytes, 40/41 tools
+  under 1 KB). Both `mcp-stdio.ps1` and `mcp-stdio.py` now ignore blank stdin
+  lines, and `mcp-stdio.ps1` bounds concurrent HTTP forwards with a semaphore.
+- **ACP reliability & cancellation (`AntigravityEngine`)**: separated `writeLock`
+  from peer state synchronization to prevent write/dispose deadlocks;
+  `interrupt()` sends `session/cancel` under `runInterruptible` with a bounded
+  drain (`promptDone`) and finishes as `"interrupted"` rather than a transport
+  error; `dispose()` emits `ApprovalResolved` for dropped approvals, cancels the
+  idle timer, and attaches a bounded, ANSI-stripped, `SecretRedactor`-redacted
+  stderr tail on unexpected disconnect; stdout skips blank/non-JSON lines;
+  computer `tool_call` updates emit `ItemActivity` rows and advance text segment
+  IDs; image attachments enforce a 20 MB limit; `compact()` returns a clear
+  unsupported error; turns receive `RemoteInstructions.forComputer(..., ANTIGRAVITY)`.
+- **Host/routing & UI fixes**: combined Windows `agy` discovery and `agy models`
+  into one SSH PowerShell command under `runInterruptible`; isolated Windows
+  Antigravity relays under a dedicated UUID namespace with background pruning of
+  ended folders; hid Antigravity in the picker for computers where `agy` is
+  confirmed not installed; prevented cross-computer native session ID collisions
+  and cached session-store lookups in `RoutingAgentEngine`; structured, redacted
+  and capped `antigravity/request_permission` approval cards; fixed model chip
+  and queued-turn display names (`displayModelName`); guarded Plan mode, Compact,
+  `moveNewChat`, `changeEngine` and `SessionAgentSetup` (`ANTIGRAVITY` always
+  requires a computer target even with `model = null`).
+
+Checks (worktree `feat/computer-antigravity`, Windows `Pc`, `MIKE_TEST_PYTHON` set):
+- `.\gradlew.bat :core:test :mcp-loopback:test :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+  **PASSED**. XML totals: `:core` 1,026 tests (0 fail, 0 skip), `:mcp-loopback`
+  15 tests (0 fail, 0 skip), `:remote` 176 tests (0 fail, 4 skip), `:app` 212
+  tests (0 fail, 0 skip) — 1,425 passed, 4 skipped, 0 failed; `:app:lintDevDebug`
+  passed with 0 errors; `app-dev-debug.apk` (`dev.androidagent.app.dev`, code
+  1217, debug-signed, 341,941,689 bytes, SHA-256
+  `54202bff6a338382fe9a0cda681dee5a49440c3cb529bbf5fd0e0713417c037c`) assembled.
+- `python -m unittest tools.test_prepare_runtime`: 16 tests OK.
+- `git diff --check`: passed.
+- Live phone-to-Pc check (on installed build 1229, before this commit):
+  `device_status`, `list_workflows`, `connected_apps(list)`, `resolve_intent`,
+  and `screenshot` (633,051-byte PNG) all succeeded end-to-end over Mike MCP.
+
+Remaining gaps:
+- The updated APK containing these fixes has not yet been installed on a phone;
+  live verification of how many of the 41 compacted MCP tools `agy 1.5.14`
+  mounts after installing the new build is still pending.
+- Live Stop button, live `antigravity/request_permission` approval card on a
+  phone, and a live Linux host (`Server`) Antigravity turn have not yet been run.
+- Not the full release gate (`assembleDevRelease`, `assembleDevDebugAndroidTest`,
+  `:voice:lintDebug` were not run here).
+
 ### Antigravity model picker — 2026-11-21
 
 Computer chats list the models from the host's `agy models` output and show

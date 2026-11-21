@@ -92,6 +92,8 @@ class SshLinkTest {
                 }
                 val list = rpc("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")
                 assertEquals(tool.name, list.getValue("tools").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content)
+                // Blank lines on stdin must be ignored without closing the helper.
+                writer.newLine(); writer.write("   "); writer.newLine(); writer.flush()
                 val reply = rpc("""{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"device_status","arguments":{}}}""")
                 val content = reply.getValue("content").jsonArray
                 assertEquals("fixture result", content.first().jsonObject.getValue("text").jsonPrimitive.content)

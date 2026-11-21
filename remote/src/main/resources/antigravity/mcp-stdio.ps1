@@ -5,9 +5,11 @@ using System;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 public static class MikeMcpStdio {
     static readonly object Output = new object();
+    static readonly SemaphoreSlim Limit = new SemaphoreSlim(32, 32);
     static readonly string Url = "http://127.0.0.1:" + int.Parse(Environment.GetEnvironmentVariable("MIKE_MCP_PORT")) + "/mcp";
     static readonly string Authorization = "Bearer " + Environment.GetEnvironmentVariable("MIKE_MCP_TOKEN");
     public static void Run() {
@@ -16,7 +18,9 @@ public static class MikeMcpStdio {
         ServicePointManager.DefaultConnectionLimit = 32;
         string line;
         while ((line = Console.ReadLine()) != null) {
+            if (string.IsNullOrWhiteSpace(line)) continue;
             string packet = line;
+            Limit.Wait();
             Task.Run(() => Forward(packet));
         }
     }
@@ -41,6 +45,7 @@ public static class MikeMcpStdio {
                 if (reply.Length != 0) lock (Output) { Console.WriteLine(reply); Console.Out.Flush(); }
             }
         } catch { Environment.Exit(1); }
+        finally { Limit.Release(); }
     }
 }
 '@

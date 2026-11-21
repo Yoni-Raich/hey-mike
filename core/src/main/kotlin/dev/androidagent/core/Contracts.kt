@@ -155,7 +155,7 @@ interface RecoverableConnection {
 @Serializable
 enum class EngineKind { CODEX, CLAUDE, ANTIGRAVITY }
 
-/** The engine's short name in the app's own words: "Codex" or "Claude". */
+/** The engine's short name in the app's own words: "Codex", "Claude", or "Antigravity". */
 val EngineKind.label: String
     get() = when (this) {
         EngineKind.CODEX -> "Codex"
