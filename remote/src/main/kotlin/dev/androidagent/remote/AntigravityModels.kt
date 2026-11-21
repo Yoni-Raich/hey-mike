@@ -5,7 +5,7 @@ import dev.androidagent.core.EngineKind
 
 internal object AntigravityModels {
     private const val PREFIX = "agy/"
-    private val row = Regex("""^\s*([A-Za-z0-9][A-Za-z0-9._:/-]*)[ \t]{2,}(\S.*)$""")
+    private val row = Regex("""^\s*([A-Za-z0-9][A-Za-z0-9._:/-]*)(?: *\t[ \t]*| {2,})(\S.*)$""")
     private val color = Regex("\u001b\\[[0-9;]*m")
 
     fun parse(output: String): List<AgentModel> = output.lineSequence().mapNotNull { line ->

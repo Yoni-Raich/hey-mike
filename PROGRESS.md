@@ -6,7 +6,10 @@ Computer chats list the models from the host's `agy models` output and show
 a status if the host needs sign-in. The ACP adapter applies the selected
 model on open or resume. A fixture checked catalog parsing and model
 selection before the first prompt. On Pc, `agy models` required Google
-sign-in, so live listing and selection remain unverified.
+sign-in during the initial check. After sign-in, the CLI separated each ID
+and title with one tab. Build 1228 skipped all 23 rows. The corrected
+parser read the live output on Pc and matched all 23 IDs and titles in
+order. The parser test covers both tab-separated and space-padded rows.
 
 ### Phone tools for computer Antigravity chats — 2026-11-21
 

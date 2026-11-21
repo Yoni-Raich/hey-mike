@@ -28,12 +28,14 @@ class AntigravityEngineTest {
     }
 
     @Test fun listsTheModelsByTheirNativeIdsWithoutCollidingWithOtherEngines() {
+        val windowsRow = "gemini-4-neon-high\tGemini 4 Neon (High)"
         val listed = AntigravityModels.parse("""
             Fetching available models...
-            gemini-4-neon-high       Gemini 4 Neon (High)
+            $windowsRow
             claude-example          Claude Example
         """.trimIndent())
         assertEquals(listOf("agy/gemini-4-neon-high", "agy/claude-example"), listed.map { it.id })
+        assertEquals("Gemini 4 Neon (High)", listed.first().displayName)
         assertEquals("claude-example", AntigravityModels.slug(listed.last().id))
         assertNull(AntigravityModels.slug("antigravity"))
     }
