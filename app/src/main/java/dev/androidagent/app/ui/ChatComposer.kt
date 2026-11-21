@@ -139,6 +139,7 @@ import dev.androidagent.core.LimitPhase
 import dev.androidagent.core.RunPhase
 import dev.androidagent.core.RunState
 import dev.androidagent.core.VoicePhase
+import dev.androidagent.core.capabilities
 
 // The composer: one rounded field and one button that is voice while the
 // field is empty, send once there is text, and stop while the agent works.
@@ -231,7 +232,7 @@ internal fun AgentComposer(
     // The same answer that draws the chat's Working line.
     val active = chatRunView(state).statusLine
     LaunchedEffect(active) { if (!active) chosenDelivery = Delivery.STEER }
-    val supportsSteer = state.activeEngine != EngineKind.ANTIGRAVITY
+    val supportsSteer = state.activeEngine.capabilities.supportsSteer
     val steerBlocked = !supportsSteer || state.attachments.isNotEmpty() || state.runState.phase == RunPhase.STARTING
     val delivery = deliveryOf(chosenDelivery, state.attachments.isNotEmpty(), state.runState.phase == RunPhase.STARTING, supportsSteer)
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
@@ -279,8 +280,8 @@ internal fun AgentComposer(
     }
     val commandEnabled: (ComposerCommand) -> Boolean = { command ->
         when (command) {
-            ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting && state.activeEngine != EngineKind.ANTIGRAVITY
-            ComposerCommand.PLAN -> state.selectedEngine != EngineKind.ANTIGRAVITY || state.planMode
+            ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting && state.activeEngine.capabilities.supportsCompact
+            ComposerCommand.PLAN -> state.selectedEngine.capabilities.supportsPlanMode || state.planMode
             ComposerCommand.MODEL -> !voiceActive && !compacting
             ComposerCommand.RENAME -> state.activeSessionId != null
             ComposerCommand.LIMITS -> state.activeSessionId != null

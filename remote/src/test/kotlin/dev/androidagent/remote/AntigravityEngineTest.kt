@@ -17,12 +17,14 @@ class AntigravityEngineTest {
         private val clientOut = PipedOutputStream(serverIn)
         private val lines = serverIn.bufferedReader()
         private val err = ByteArrayInputStream(stderr.toByteArray(Charsets.UTF_8))
+        @Volatile private var alive = true
         override fun getOutputStream() = clientOut
         override fun getInputStream() = clientIn
         override fun getErrorStream() = err
+        override fun isAlive() = alive
         override fun waitFor() = 0
-        override fun exitValue() = 0
-        override fun destroy() { runCatching { clientOut.close() }; runCatching { serverOut.close() } }
+        override fun exitValue() = if (alive) throw IllegalThreadStateException("Still running") else 0
+        override fun destroy() { alive = false; runCatching { clientOut.close() }; runCatching { serverOut.close() } }
         fun receive() = Json.parseToJsonElement(lines.readLine()).jsonObject
         fun send(line: String) { serverOut.write((line + "\n").toByteArray()); serverOut.flush() }
         fun reply(call: JsonObject, result: String) = send("""{"jsonrpc":"2.0","id":${call["id"]},"result":$result}""")
@@ -115,8 +117,80 @@ class AntigravityEngineTest {
                 val end = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.TurnFinished } as EngineEvent.TurnFinished }
                 host.reply(prompt, """{"stopReason":"end_turn"}""")
                 assertEquals("completed", end.await().status)
-                assertTrue(bridgeClosed)
+                // Warm peer stays open for consecutive turns while refusing phone tool calls when idle.
+                assertFalse(bridgeClosed)
                 assertFalse(call("device_status", JsonObject(emptyMap())).success)
+            } finally { engine.close() }
+            assertTrue(bridgeClosed)
+        }
+    }
+
+    @Test fun reusesWarmIdlePeerAcrossConsecutiveTurnsReopensOnModelChangeAndClosesOnIdleExpiry() = runBlocking {
+        withTimeout(10_000) {
+            val hosts = mutableListOf<Host>()
+            val bridgesClosed = mutableListOf<Boolean>()
+            val tool = dev.androidagent.core.ToolDefinition("device_status", "Status", JsonObject(emptyMap()))
+            val engine = AntigravityEngine(
+                phoneBridge = { _, _ ->
+                    val idx = bridgesClosed.size
+                    bridgesClosed += false
+                    object : AcpPhoneBridge {
+                        override val serverConfig = buildJsonObject { put("name", "mike") }
+                        override val promptHint = "Phone tool enum values: browser.operation=open|snapshot"
+                        override fun close() { bridgesClosed[idx] = true }
+                    }
+                },
+                idleTimeoutMs = 150L,
+            ) { Host().also { hosts += it } }
+            try {
+                // Turn 1: cold open.
+                val open1 = async(Dispatchers.IO) { engine.openAt("/project", null, listOf(tool), model = "agy/model-a") }
+                withTimeout(5_000) { while (hosts.isEmpty()) delay(5) }
+                val host1 = hosts[0]
+                host1.reply(host1.receive(), """{"protocolVersion":1}""")
+                host1.reply(host1.receive(), """{"sessionId":"warm-1","configOptions":[{"id":"model","category":"model","currentValue":"model-a"}]}""")
+                val chat = open1.await()
+                assertEquals(1, hosts.size)
+
+                val fin1 = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.TurnFinished } as EngineEvent.TurnFinished }
+                engine.startTurn(chat, "First message", emptyList())
+                val prompt1 = host1.receive()
+                val textBlocks1 = prompt1["params"]!!.jsonObject["prompt"]!!.jsonArray.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
+                assertTrue("Instructions block must end with newline", textBlocks1[0].endsWith("\n"))
+                assertTrue("Hint block must end with newline", textBlocks1[1].endsWith("\n"))
+                assertEquals("First message", textBlocks1[2])
+                host1.reply(prompt1, """{"stopReason":"end_turn"}""")
+                assertEquals("completed", fin1.await().status)
+                assertFalse(bridgesClosed[0])
+
+                // Turn 2: same cwd/model/tools reuses the warm peer without spawning a new process.
+                assertEquals(chat, engine.openAt("/project", chat, listOf(tool), model = "agy/model-a"))
+                assertEquals(1, hosts.size)
+                val fin2 = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.TurnFinished } as EngineEvent.TurnFinished }
+                engine.startTurn(chat, "Second message", emptyList())
+                val prompt2 = host1.receive()
+                assertEquals("session/prompt", prompt2["method"]?.jsonPrimitive?.content)
+                host1.reply(prompt2, """{"stopReason":"end_turn"}""")
+                assertEquals("completed", fin2.await().status)
+                assertEquals(1, hosts.size)
+
+                // Model change disposes the warm peer and opens a fresh one with the new model.
+                val open3 = async(Dispatchers.IO) { engine.openAt("/project", chat, listOf(tool), model = "agy/model-b") }
+                withTimeout(5_000) { while (hosts.size < 2) delay(5) }
+                assertTrue(bridgesClosed[0])
+                val host2 = hosts[1]
+                host2.reply(host2.receive(), """{"protocolVersion":1}""")
+                host2.reply(host2.receive(), """{"configOptions":[{"id":"model","category":"model","currentValue":"model-a"}]}""")
+                val setModel = host2.receive()
+                assertEquals("session/set_config_option", setModel["method"]?.jsonPrimitive?.content)
+                assertEquals("model-b", setModel["params"]!!.jsonObject.getValue("value").jsonPrimitive.content)
+                host2.reply(setModel, "{}")
+                assertEquals(chat, open3.await())
+
+                // Idle timeout closes the warm peer and its bridge cleanly.
+                withTimeout(5_000) { while (!bridgesClosed[1]) delay(15) }
+                assertTrue(bridgesClosed[1])
+                assertFalse(host2.isAlive)
             } finally { engine.close() }
         }
     }

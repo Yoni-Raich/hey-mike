@@ -25,6 +25,7 @@ import dev.androidagent.core.AgentSkill
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.UsageSummary
+import dev.androidagent.core.capabilities
 import kotlin.math.roundToInt
 
 // What `/` offers besides skills. Codex has no call that lists its own slash
@@ -113,16 +114,15 @@ internal fun claudeModelName(state: AgentUiState, id: String): String? {
 }
 
 /**
- * Shown name for engines that use display names rather than raw IDs (Claude and
- * Antigravity), or null for Codex models which keep showing their IDs.
+ * Shown name for engines that use display names rather than raw IDs (such as
+ * Claude and Antigravity), or null for Codex models which keep showing their IDs.
  */
 internal fun displayModelName(state: AgentUiState, id: String): String? {
-    claudeModelName(state, id)?.let { return it }
-    val agy = state.modelCatalog.firstOrNull { it.id == id && it.engine == EngineKind.ANTIGRAVITY }
-    if (agy != null) return agy.displayName.takeIf { it.isNotBlank() } ?: id.removePrefix("agy/")
-    if (id == "antigravity") return "Computer default"
+    val listed = state.modelCatalog.firstOrNull { it.id == id && it.engine.capabilities.usesDisplayNames }
+    if (listed != null) return listed.displayName.takeIf { it.isNotBlank() } ?: id.removePrefix("agy/")
+    EngineKind.entries.firstOrNull { it.capabilities.defaultModelId == id }?.capabilities?.defaultModelLabel?.let { return it }
     if (id.startsWith("agy/")) return id.removePrefix("agy/")
-    return id.takeIf { state.selectedEngine == EngineKind.ANTIGRAVITY && state.modelCatalog.none { it.id == id } }
+    return id.takeIf { state.selectedEngine.capabilities.usesDisplayNames && state.modelCatalog.none { it.id == id } }
 }
 
 /** How the chip, the picker and /status name a model. */

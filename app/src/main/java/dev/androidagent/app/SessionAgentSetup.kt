@@ -22,8 +22,8 @@ class SessionAgentSetup(
         if (target != null && (task.computer != null || task.project != null)) {
             checkFolder(target.computerId, target.cwd) // Read only; never create a missing folder or install a runtime.
         }
-        if (task.engine == EngineKind.ANTIGRAVITY) {
-            requireNotNull(target) { "Antigravity needs a computer project." }
+        if (task.engine.capabilities.requiresComputer) {
+            requireNotNull(target) { "${task.engine.label} needs a computer project." }
         }
         if (task.model != null) {
             val catalog = catalog(target, task.engine)
@@ -40,7 +40,7 @@ class SessionAgentSetup(
         fun text(key: String) = (args[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         val target = targets.resolve(origin, text("computer"), text("project"))
         val engine = text("engine")?.let { name -> EngineKind.entries.firstOrNull { it.name.equals(name, true) }
-            ?: error("Use codex, claude, or antigravity.") } ?: sessions.getSession(origin)?.engine ?: EngineKind.CODEX
+            ?: error("Use ${EngineKind.entries.joinToString(", ") { it.name.lowercase() }}.") } ?: sessions.getSession(origin)?.engine ?: EngineKind.CODEX
         val offered = catalog(target, engine)
         return buildJsonObject {
             put("engine", engine.name.lowercase())
@@ -56,9 +56,12 @@ class SessionAgentSetup(
 
     private suspend fun catalog(target: RemoteBinding?, kind: EngineKind): List<AgentModel> {
         if (kind == EngineKind.ANTIGRAVITY) {
-            requireNotNull(target) { "Antigravity needs a computer project." }
-            return listOf(AgentModel("antigravity", "Computer default", engine = EngineKind.ANTIGRAVITY)) +
-                hub.antigravityModels(target.computerId)
+            requireNotNull(target) { "${kind.label} needs a computer project." }
+            val cap = kind.capabilities
+            val defaultEntry = if (cap.defaultModelId != null && cap.defaultModelLabel != null) {
+                listOf(AgentModel(cap.defaultModelId!!, cap.defaultModelLabel!!, engine = kind))
+            } else emptyList()
+            return defaultEntry + hub.antigravityModels(target.computerId)
         }
         val engine: AgentEngine = if (target == null) {
             if (kind == EngineKind.CLAUDE) phoneClaude else phoneCodex
