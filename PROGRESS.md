@@ -1,5 +1,22 @@
 # Progress
 
+### Phone tools for computer Antigravity chats — 2026-11-21
+
+Antigravity sessions receive Mike's MCP server through SSH on open and load.
+Device calls and their replies pass through the coordinator under the live
+thread and turn. Cancellation clears the pending call. The computer needs
+SSH remote forwarding and Windows PowerShell or Linux Python 3.
+
+On Pc, both the Windows helper and the Linux helper (using Python on Windows)
+listed a test device_status tool and returned text and image data through a
+real SSH server. An ACP fixture covered routing the call and answer, rejecting
+calls outside a turn and cancelling a pending call. The installed agy answered
+initialize and returned Authentication required for session/new.
+
+Core, remote, MCP and app tests reported 1,417 passes and three skips.
+assembleDevDebug succeeded. The debug-signed code 1217 APK contains both
+helpers. No install, physical phone tool action or live Linux host run.
+
 ### Computer Antigravity chats — 2026-11-21
 
 The computer model picker can start Antigravity in the bound project on

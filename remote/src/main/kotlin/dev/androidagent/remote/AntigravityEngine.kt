@@ -12,13 +12,17 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /** One ACP process per open conversation. The computer owns the files and the native session. */
-internal class AntigravityEngine(private val launch: suspend (String) -> Process) : AgentEngine {
+internal class AntigravityEngine(
+    private val phoneBridge: (suspend (List<ToolDefinition>, PhoneCall) -> AcpPhoneBridge)? = null,
+    private val launch: suspend (String) -> Process,
+) : AgentEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 64)
     override val events = stream.asSharedFlow()
     private val chats = ConcurrentHashMap<String, Peer>()
     private val approvals = ConcurrentHashMap<String, Permission>()
     private val peers = ConcurrentHashMap.newKeySet<Peer>()
+    private val toolReplies = ConcurrentHashMap<String, CompletableDeferred<ToolResult>>()
 
     private inner class Permission(val peer: Peer, val id: JsonElement, val once: String?)
 
@@ -29,6 +33,39 @@ internal class AntigravityEngine(private val launch: suspend (String) -> Process
         @Volatile var thread: String? = null
         @Volatile var turn: String? = null
         private var closed = false
+        private var bridge: AcpPhoneBridge? = null
+
+        fun attach(candidate: AcpPhoneBridge) {
+            synchronized(this) {
+                if (!closed) {
+                    bridge = candidate
+                    return
+                }
+            }
+            candidate.close()
+            error("Antigravity disconnected before opening its phone tools.")
+        }
+
+        suspend fun callPhone(name: String, arguments: JsonObject): ToolResult {
+            val chat = thread ?: return ToolResult("No active chat.", success = false)
+            val active = turn ?: return ToolResult("No active turn.", success = false)
+            val request = UUID.randomUUID().toString()
+            val reply = CompletableDeferred<ToolResult>()
+            synchronized(this) {
+                if (closed || turn != active) return ToolResult("Turn stopped.", success = false)
+                toolReplies[request] = reply
+            }
+            try {
+                currentCoroutineContext().ensureActive()
+                stream.emit(EngineEvent.ToolCall(request, name, arguments, chat, active))
+                return reply.await()
+            } finally {
+                toolReplies.remove(request, reply)
+                if (!reply.isCompleted) withContext(NonCancellable) {
+                    stream.emit(EngineEvent.ApprovalResolved(request, chat, active))
+                }
+            }
+        }
 
         @Synchronized fun send(message: JsonObject) {
             check(!closed) { "Antigravity disconnected." }
@@ -131,7 +168,7 @@ internal class AntigravityEngine(private val launch: suspend (String) -> Process
                 if (closed) return
                 closed = true
             }
-            process.destroy()
+            try { bridge?.close() } finally { process.destroy() }
             thread?.let { chats.remove(it, this) }
             peers.remove(this)
             approvals.entries.removeIf { it.value.peer === this }
@@ -139,7 +176,7 @@ internal class AntigravityEngine(private val launch: suspend (String) -> Process
         }
     }
 
-    suspend fun openAt(cwd: String, previous: String?): String = withContext(Dispatchers.IO) {
+    suspend fun openAt(cwd: String, previous: String?, tools: List<ToolDefinition> = emptyList()): String = withContext(Dispatchers.IO) {
         require(previous == null || previous.startsWith(PREFIX)) { "Invalid Antigravity session." }
         val peer = Peer(launch(cwd))
         peers.add(peer)
@@ -150,8 +187,13 @@ internal class AntigravityEngine(private val launch: suspend (String) -> Process
                     put("protocolVersion", 1); put("clientCapabilities", JsonObject(emptyMap()))
                 })
                 check(init["protocolVersion"]?.jsonPrimitive?.intOrNull == 1) { "Unsupported Antigravity ACP version." }
+                val mcp = if (tools.isEmpty()) null else {
+                    val create = checkNotNull(phoneBridge) { "The phone tool bridge is unavailable." }
+                    create(tools, peer::callPhone).also(peer::attach)
+                }
                 val reply = peer.request(if (previous == null) "session/new" else "session/load", buildJsonObject {
-                    put("cwd", cwd); put("mcpServers", JsonArray(emptyList()))
+                    put("cwd", cwd)
+                    put("mcpServers", buildJsonArray { mcp?.let { add(it.serverConfig) } })
                     previous?.let { put("sessionId", it.removePrefix(PREFIX)) }
                 })
                 val thread = previous ?: PREFIX + checkNotNull(reply.str("sessionId")?.takeIf { it.isNotBlank() }) { "Missing Antigravity session ID." }
@@ -168,10 +210,13 @@ internal class AntigravityEngine(private val launch: suspend (String) -> Process
         capabilities: DeviceCapabilities, planModel: String?,
     ): String {
         check(planModel == null) { "Turn off Plan mode to send this Antigravity message." }
-        return startTurn(threadId, prompt, images)
+        return start(threadId, prompt, images, capabilities)
     }
 
-    override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String {
+    override suspend fun startTurn(threadId: String, prompt: String, images: List<File>): String =
+        start(threadId, prompt, images, null)
+
+    private suspend fun start(threadId: String, prompt: String, images: List<File>, capabilities: DeviceCapabilities?): String {
         val peer = checkNotNull(chats[threadId]) { "Reopen this Antigravity session." }
         val turn = UUID.randomUUID().toString()
         synchronized(peer) {
@@ -187,6 +232,12 @@ internal class AntigravityEngine(private val launch: suspend (String) -> Process
                             "Use the computer's tools and follow its project instructions. Answer in the user's language. " +
                             "Ask before deleting user data, sending externally, or spending money.")
                     })
+                    capabilities?.let {
+                        add(buildJsonObject {
+                            put("type", "text")
+                            put("text", DeviceRuntimeContext.render(it) + "\nUse the mike MCP server to call these phone tools.")
+                        })
+                    }
                     add(buildJsonObject { put("type", "text"); put("text", prompt) })
                     for (image in images) {
                         val mime = when (image.extension.lowercase()) {
@@ -232,9 +283,11 @@ internal class AntigravityEngine(private val launch: suspend (String) -> Process
     override suspend fun logout(): Unit = error("Manage Antigravity sign-in on the computer.")
     override suspend fun models() = listOf("antigravity")
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>) =
-        openAt(workspace.path, threadId)
+        openAt(workspace.path, threadId, tools)
     override suspend fun steer(threadId: String, turnId: String, prompt: String): Unit = error("Queue a message for the next Antigravity turn.")
-    override suspend fun answerTool(requestId: String, result: ToolResult): Unit = error("Unexpected Antigravity tool reply.")
+    override suspend fun answerTool(requestId: String, result: ToolResult) {
+        toolReplies[requestId]?.complete(result)
+    }
     override suspend fun close() { peers.toList().forEach { it.dispose() }; scope.cancel() }
 
     companion object {

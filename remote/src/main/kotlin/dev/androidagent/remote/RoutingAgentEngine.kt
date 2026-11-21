@@ -192,7 +192,7 @@ class RoutingAgentEngine(
         val sessionId = sessionIdOf(workspace)
         if (engineOf(workspace) == EngineKind.ANTIGRAVITY) {
             val binding = checkNotNull(bindingOf(workspace)) { "Select a computer project for Antigravity." }
-            return hub.antigravity(binding.computerId).openAt(binding.cwd, threadId).also { antigravityComputers[it] = binding.computerId }
+            return hub.antigravity(binding.computerId).openAt(binding.cwd, threadId, tools).also { antigravityComputers[it] = binding.computerId }
         }
         if (engineOf(workspace) == EngineKind.CLAUDE) {
             val computer = sessionId?.let(store::binding)
@@ -291,6 +291,7 @@ class RoutingAgentEngine(
     override suspend fun interrupt(threadId: String, turnId: String) = engineFor(threadId).interrupt(threadId, turnId)
 
     override suspend fun answerTool(requestId: String, result: ToolResult) {
+        untag(requestId, AGY_TAG)?.let { (computer, raw) -> return hub.antigravity(computer).answerTool(raw, result) }
         untagClaude(requestId)?.let { return claude().answerTool(it, result) }
         untag(requestId, CLAUDE_REMOTE_TAG)?.let { (computer, raw) -> return hub.claude(computer).answerTool(raw, result) }
         val (computer, raw) = untag(requestId) ?: return local.answerTool(requestId, result)

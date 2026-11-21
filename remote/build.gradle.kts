@@ -8,6 +8,7 @@ android {
 }
 dependencies {
     api(project(":core"))
+    implementation(project(":mcp-loopback"))
     api(project(":engine-codex"))
     api(project(":engine-claude"))
     implementation("androidx.core:core-ktx:1.15.0")

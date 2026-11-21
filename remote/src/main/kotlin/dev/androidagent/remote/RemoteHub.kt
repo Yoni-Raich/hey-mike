@@ -93,7 +93,13 @@ class RemoteHub(
     private val antigravityEngines = ConcurrentHashMap<String, Pair<AntigravityEngine, Job>>()
 
     internal suspend fun antigravity(id: String): AntigravityEngine = lock.withLock {
-        antigravityEngines[id]?.first ?: AntigravityEngine { cwd -> launchAntigravity(id, cwd) }.also { engine ->
+        antigravityEngines[id]?.first ?: AntigravityEngine(
+            phoneBridge = { tools, call ->
+                val host = connection(id)
+                AntigravityPhoneBridge.open(host.os, host.link.isolated(), tools, call)
+            },
+            launch = { cwd -> launchAntigravity(id, cwd) },
+        ).also { engine ->
             val collector = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                 engine.events.collect { stream.emit(RemoteEvent(id, it, EngineKind.ANTIGRAVITY)) }
             }

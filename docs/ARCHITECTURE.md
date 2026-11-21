@@ -13,8 +13,20 @@ Each turn gets its own process and resumes the native session by ID. ACP
 text and tool activity feed the existing chat. Permission requests go to
 Mike's approval flow and accept only a single-use option. Stop cancels the
 native session prompt and closes its process. Further messages queue during a
-turn. Computer tools are native to Antigravity. The phone tool bridge and
-plan mode are currently unavailable for this engine.
+turn. Computer tools are native to Antigravity. Plan mode is unavailable.
+
+For each native session open or load, the adapter starts Mike's authenticated
+loopback MCP server on Android. A dedicated SSH connection requests a
+computer-side loopback port forwarded to that server. Antigravity launches a
+stdio MCP helper (Windows PowerShell or Linux Python 3) with the port and an
+ephemeral bearer token in its environment. Both hosts must permit remote
+TCP forwarding. The helper relays MCP requests once and returns text and
+image results. The phone gateway still owns permissions and device access.
+
+Calls carry the current computer, thread and turn. The coordinator receives
+the same tool events used by other engines. An MCP cancellation resolves the
+pending call. Closing the turn stops the server, cancels outstanding calls
+and closes its dedicated SSH session.
 
 The chat composer's settings use a wrapping `FlowRow`. Each chip moves as a
 whole to the next line when space runs out, including Auto, Plan and context.

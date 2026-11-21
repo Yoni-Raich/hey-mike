@@ -43,21 +43,49 @@ class AntigravityEngineTest {
     @Test fun resumesNativeThreadAndAsksBeforeToolExecution() = runBlocking {
         withTimeout(10_000) {
             val host = Host()
-            val engine = AntigravityEngine { host }
+            lateinit var call: PhoneCall
+            var bridgeClosed = false
+            val tool = dev.androidagent.core.ToolDefinition("device_status", "Test status", JsonObject(emptyMap()))
+            val engine = AntigravityEngine(phoneBridge = { definitions, handler ->
+                assertEquals(listOf(tool), definitions)
+                call = handler
+                object : AcpPhoneBridge {
+                    override val serverConfig = buildJsonObject { put("name", "mike") }
+                    override fun close() { bridgeClosed = true }
+                }
+            }) { host }
             try {
-                val opening = async(Dispatchers.IO) { engine.openAt("/project", "agy:test-id") }
+                val opening = async(Dispatchers.IO) { engine.openAt("/project", "agy:test-id", listOf(tool)) }
                 val init = host.receive()
                 assertEquals("initialize", init["method"]?.jsonPrimitive?.content)
                 host.reply(init, """{"protocolVersion":1}""")
                 val load = host.receive()
                 assertEquals("session/load", load["method"]?.jsonPrimitive?.content)
                 assertEquals("/project", load["params"]?.jsonObject?.get("cwd")?.jsonPrimitive?.content)
+                assertEquals("mike", load["params"]!!.jsonObject["mcpServers"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content)
                 host.reply(load, "{}")
                 val chat = opening.await()
+                assertFalse(call("device_status", JsonObject(emptyMap())).success)
                 val ask = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.Approval } as EngineEvent.Approval }
                 val turn = engine.startTurn(chat, "Read the file", emptyList())
                 val prompt = host.receive()
                 assertEquals("session/prompt", prompt["method"]?.jsonPrimitive?.content)
+                val event = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.ToolCall } as EngineEvent.ToolCall }
+                val phoneResult = async { call("device_status", JsonObject(emptyMap())) }
+                val request = event.await()
+                assertEquals(chat, request.threadId)
+                assertEquals(turn, request.turnId)
+                engine.answerTool(request.requestId, dev.androidagent.core.ToolResult("ready"))
+                assertEquals("ready", phoneResult.await().text)
+                val waiting = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.ToolCall } as EngineEvent.ToolCall }
+                val pending = launch { call("device_status", JsonObject(emptyMap())) }
+                val cancelledCall = waiting.await()
+                val resolved = async(start = CoroutineStart.UNDISPATCHED) {
+                    engine.events.first { it is EngineEvent.ApprovalResolved } as EngineEvent.ApprovalResolved
+                }
+                pending.cancelAndJoin()
+                assertEquals(cancelledCall.requestId, resolved.await().requestId)
+                engine.answerTool(cancelledCall.requestId, dev.androidagent.core.ToolResult("late"))
                 host.send("""{"id":99,"method":"session/request_permission","params":{"sessionId":"test-id","options":[{"kind":"allow_once","optionId":"once"}],"toolCall":{"title":"Read file"}}}""")
                 val permission = ask.await()
                 assertEquals(turn, permission.turnId)
@@ -69,6 +97,8 @@ class AntigravityEngineTest {
                 val end = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first { it is EngineEvent.TurnFinished } as EngineEvent.TurnFinished }
                 host.reply(prompt, """{"stopReason":"end_turn"}""")
                 assertEquals("completed", end.await().status)
+                assertTrue(bridgeClosed)
+                assertFalse(call("device_status", JsonObject(emptyMap())).success)
             } finally { engine.close() }
         }
     }

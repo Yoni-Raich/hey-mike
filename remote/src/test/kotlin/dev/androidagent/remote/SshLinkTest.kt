@@ -1,5 +1,8 @@
 package dev.androidagent.remote
 
+import dev.androidagent.core.ToolDefinition
+import dev.androidagent.core.ToolResult
+import kotlinx.serialization.json.*
 import dev.androidagent.core.RuntimeHost
 import dev.androidagent.core.RuntimeStatus
 import dev.androidagent.enginecodex.CodexEngine
@@ -53,6 +56,50 @@ class SshLinkTest {
 
     private fun target(password: String = PASSWORD, pinned: String? = null) =
         SshTarget("127.0.0.1", server.port, USER, password, pinned)
+
+    @Test(timeout = 25_000) fun nativeStdioHelperListsAndCallsPhoneToolOverRealSsh() {
+        checkBridge(if (System.getProperty("os.name").orEmpty().startsWith("Windows")) HostOs.WINDOWS else HostOs.LINUX)
+    }
+
+    @Test(timeout = 25_000) fun linuxPythonHelperListsAndCallsOverRealSsh() {
+        val interpreter = System.getenv("MIKE_TEST_PYTHON")
+        assumeTrue(!interpreter.isNullOrBlank())
+        checkBridge(HostOs.LINUX, interpreter)
+    }
+
+    private fun checkBridge(hostOs: HostOs, interpreter: String? = null) {
+        val tool = ToolDefinition("device_status", "Test status", buildJsonObject { put("type", "object") })
+        val calls = AtomicInteger()
+        AntigravityPhoneBridge.open(hostOs, SshLink(target()), listOf(tool)) { name, _ ->
+            assertEquals("device_status", name)
+            calls.incrementAndGet()
+            ToolResult("fixture result", imageBase64 = "AQID")
+        }.use { bridge ->
+            val config = bridge.serverConfig
+            val command = listOf(interpreter ?: config.getValue("command").jsonPrimitive.content) +
+                config.getValue("args").jsonArray.map { it.jsonPrimitive.content }
+            val process = ProcessBuilder(command).apply {
+                config.getValue("env").jsonArray.forEach {
+                    environment()[it.jsonObject.getValue("name").jsonPrimitive.content] = it.jsonObject.getValue("value").jsonPrimitive.content
+                }
+            }.start()
+            try {
+                val writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
+                val reader = process.inputStream.bufferedReader(Charsets.UTF_8)
+                fun rpc(line: String): JsonObject {
+                    writer.write(line); writer.newLine(); writer.flush()
+                    return Json.parseToJsonElement(checkNotNull(reader.readLine()) { "Stdio MCP helper exited" }).jsonObject.getValue("result").jsonObject
+                }
+                val list = rpc("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")
+                assertEquals(tool.name, list.getValue("tools").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content)
+                val reply = rpc("""{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"device_status","arguments":{}}}""")
+                val content = reply.getValue("content").jsonArray
+                assertEquals("fixture result", content.first().jsonObject.getValue("text").jsonPrimitive.content)
+                assertEquals("AQID", content.last().jsonObject.getValue("data").jsonPrimitive.content)
+                assertEquals(1, calls.get())
+            } finally { process.destroy() }
+        }
+    }
 
     @Test(timeout = 20_000) fun loopbackTunnelKeepsBidirectionalInputLiveAndClosingItKeepsTheSshSession() {
         val pool = Executors.newSingleThreadExecutor()
