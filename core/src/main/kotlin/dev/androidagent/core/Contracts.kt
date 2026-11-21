@@ -153,13 +153,14 @@ interface RecoverableConnection {
 
 /** Which agent engine runs a turn. A chat can change it between turns. */
 @Serializable
-enum class EngineKind { CODEX, CLAUDE }
+enum class EngineKind { CODEX, CLAUDE, ANTIGRAVITY }
 
 /** The engine's short name in the app's own words: "Codex" or "Claude". */
 val EngineKind.label: String
     get() = when (this) {
         EngineKind.CODEX -> "Codex"
         EngineKind.CLAUDE -> "Claude"
+        EngineKind.ANTIGRAVITY -> "Antigravity"
     }
 
 /**

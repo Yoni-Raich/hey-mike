@@ -172,8 +172,8 @@ internal enum class Delivery { STEER, QUEUE }
  * travel in a turn of their own, and a turn still starting cannot take an
  * instruction yet, so both queue whatever was chosen.
  */
-internal fun deliveryOf(chosen: Delivery, hasAttachments: Boolean, starting: Boolean): Delivery =
-    if (hasAttachments || starting) Delivery.QUEUE else chosen
+internal fun deliveryOf(chosen: Delivery, hasAttachments: Boolean, starting: Boolean, supportsSteer: Boolean = true): Delivery =
+    if (hasAttachments || starting || !supportsSteer) Delivery.QUEUE else chosen
 
 /**
  * The composer's main button. Voice when idle, except in a chat whose engine
@@ -231,8 +231,9 @@ internal fun AgentComposer(
     // The same answer that draws the chat's Working line.
     val active = chatRunView(state).statusLine
     LaunchedEffect(active) { if (!active) chosenDelivery = Delivery.STEER }
-    val steerBlocked = state.attachments.isNotEmpty() || state.runState.phase == RunPhase.STARTING
-    val delivery = deliveryOf(chosenDelivery, state.attachments.isNotEmpty(), state.runState.phase == RunPhase.STARTING)
+    val supportsSteer = state.activeEngine != EngineKind.ANTIGRAVITY
+    val steerBlocked = !supportsSteer || state.attachments.isNotEmpty() || state.runState.phase == RunPhase.STARTING
+    val delivery = deliveryOf(chosenDelivery, state.attachments.isNotEmpty(), state.runState.phase == RunPhase.STARTING, supportsSteer)
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)

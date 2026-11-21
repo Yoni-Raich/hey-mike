@@ -161,6 +161,7 @@ class UsageWindowKeeper(
     }
 
     private suspend fun start(target: WindowTarget) = when (target.engine) {
+        EngineKind.ANTIGRAVITY -> error("Antigravity does not report usage windows.")
         EngineKind.CODEX -> startCodex(target.id)
         EngineKind.CLAUDE -> {
             val limits = claude.startUsageWindow()

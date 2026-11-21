@@ -1,5 +1,18 @@
 # Progress
 
+### Computer Antigravity chats — 2026-11-21
+
+The computer model picker can start Antigravity in the bound project on
+Windows or Linux. Switching engines uses the existing history handoff.
+
+`:remote:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug`
+passed. An ACP fixture covered native session load, streamed text, permission
+denial and completion. The installed Windows agy 1.5.14 answered initialize
+and required sign-in for session/new. The optional adapter test also ran with
+MIKE_TEST_AGY pointing to the installed executable. The devDebug APK has code
+1217 and a verified debug signature. A signed-in turn from an Android chat,
+the Linux host and a live Stop still need testing.
+
 ### Steer or queue while a chat runs, and the next message's model - 2026-11-19
 
 A message typed while the open chat runs can now go two ways, picked under the

@@ -1,5 +1,21 @@
 # Architecture
 
+### Antigravity on a saved computer
+
+Computer chats offer the host's default Antigravity model. Selecting it uses
+the same per-engine history and handoff as the other engines. The Android app
+starts `agy acp` over the computer's pinned SSH connection. Windows uses the
+existing stdio relay. Linux runs the CLI directly. The session is opened or
+loaded with the bound project directory. Authentication belongs to the CLI
+on that computer. Its configured provider handles model inference.
+
+Each turn gets its own process and resumes the native session by ID. ACP
+text and tool activity feed the existing chat. Permission requests go to
+Mike's approval flow and accept only a single-use option. Stop cancels the
+native session prompt and closes its process. Further messages queue during a
+turn. Computer tools are native to Antigravity. The phone tool bridge and
+plan mode are currently unavailable for this engine.
+
 The chat composer's settings use a wrapping `FlowRow`. Each chip moves as a
 whole to the next line when space runs out, including Auto, Plan and context.
 Chip labels stay on one line; popup menus stay anchored to their own chips.

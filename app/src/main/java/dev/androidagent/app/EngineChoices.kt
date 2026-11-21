@@ -95,6 +95,7 @@ data class EngineChoices(
      */
     fun offered(kinds: Collection<EngineKind>, claudeModels: List<AgentModel>? = null): List<AgentModel> =
         EngineKind.entries.filter { it in kinds }.flatMap { kind ->
+            if (kind == EngineKind.ANTIGRAVITY) return@flatMap listOf(AgentModel("antigravity", "Antigravity", engine = kind))
             val catalog = claudeModels?.takeIf { kind == EngineKind.CLAUDE } ?: of(kind).catalog
             catalog.map { if (it.engine == kind) it else it.copy(engine = kind) }
         }

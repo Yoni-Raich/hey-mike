@@ -47,6 +47,13 @@ internal data class ApprovalSummary(
 
 internal fun EngineEvent.Approval.summary(): ApprovalSummary {
     fun detail(key: String) = (details[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    if (method == "antigravity/request_permission") return ApprovalSummary(
+        headline = "Allow Antigravity to use this computer tool?",
+        lines = buildList {
+            add("Tool" to (detail("title") ?: "Computer tool"))
+            details["input"]?.let { add("Input" to it.toString()) }
+        },
+    )
     if (detail("kind") == "send") {
         val app = detail("app") ?: detail("package") ?: "this app"
         val recipient = detail("recipient")

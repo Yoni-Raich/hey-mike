@@ -90,6 +90,46 @@ class RemoteHub(
     private val links = ConcurrentHashMap<String, Connection>()
     private val engines = ConcurrentHashMap<String, Pair<CodexEngine, Job>>()
     private val claudeEngines = ConcurrentHashMap<String, Triple<ClaudeCodeEngine, ComputerClaudeHost, Job>>()
+    private val antigravityEngines = ConcurrentHashMap<String, Pair<AntigravityEngine, Job>>()
+
+    internal suspend fun antigravity(id: String): AntigravityEngine = lock.withLock {
+        antigravityEngines[id]?.first ?: AntigravityEngine { cwd -> launchAntigravity(id, cwd) }.also { engine ->
+            val collector = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                engine.events.collect { stream.emit(RemoteEvent(id, it, EngineKind.ANTIGRAVITY)) }
+            }
+            antigravityEngines[id] = engine to collector
+        }
+    }
+
+    private suspend fun launchAntigravity(id: String, cwd: String): Process = withContext(Dispatchers.IO) {
+        val host = connection(id)
+        val computer = checkNotNull(store.computer(id))
+        val args = listOf("acp") + if (computer.access == RemoteAccess.ASK) listOf("--sandbox") else emptyList()
+        if (host.os == HostOs.LINUX) {
+            val command = "PATH=\"\$HOME/.local/bin:\$PATH\"; export PATH; exec agy " + args.joinToString(" ")
+            check(host.link.run("PATH=\"\$HOME/.local/bin:\$PATH\"; command -v agy").exitCode == 0) {
+                "Install agy on ${computer.label} and sign in there."
+            }
+            return@withContext host.link.start(command)
+        }
+        val lookup = WindowsHost.powershell(
+            "\$cmd = Get-Command agy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
+                "if (\$cmd) { \$exe = \$cmd.Source } else { \$exe = Join-Path \$env:LOCALAPPDATA 'agy/bin/agy.exe' }\n" +
+                "if (!(Test-Path -LiteralPath \$exe)) { \$exe = \$null }; 'HEYMIKE ' + (@{exe=\$exe} | ConvertTo-Json -Compress)"
+        )
+        val exe = WindowsHost.payload(host.link.run(lookup))["exe"]?.takeUnless { it == kotlinx.serialization.json.JsonNull }?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+            ?: error("Install agy on ${computer.label} and sign in there.")
+        val instance = CodexRelayScripts.install(host.link, host.probe(refresh = false), File(claudeScratch.parentFile, "codex-relay"))
+        val config = File.createTempFile("agy-launch-", ".json", claudeScratch.apply { mkdirs() })
+        try {
+            config.writeText(CodexRelayScripts.launchConfig(exe, args, cwd, emptyMap()))
+            host.link.upload(config, "${instance.folder}/launch.json", replace = false)
+        } finally { config.delete() }
+        val result = startRelay(host.link, instance)
+        check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") { "Could not start Antigravity on ${computer.label}." }
+        CodexRelayProcess(attach = { after -> runBlocking { attachRelay(id, instance, after) } }, status = {})
+    }
+
     @Volatile private var longContext = true
     /** The address that last answered per computer, tried first next time. */
     private val lastHost = ConcurrentHashMap<String, String>()
@@ -534,6 +574,12 @@ class RemoteHub(
                 EngineEvent.Failure("Computer disconnected; remote outcome is unknown.", uncertain = true), EngineKind.CLAUDE))
             runCatching { claude.close() }; job.cancel()
         }
+        lock.withLock { antigravityEngines.remove(computerId) }?.let { (engine, job) ->
+            if (reportInterruptedRuns) stream.emit(RemoteEvent(computerId,
+                EngineEvent.Failure("Computer disconnected. Check the outcome before retrying.", uncertain = true), EngineKind.ANTIGRAVITY))
+            engine.close()
+            job.cancel()
+        }
         mutableClaude.update { it - computerId }
         links.remove(computerId)?.let { withContext(Dispatchers.IO) { runCatching { it.link.close() } } }
         mutableSetup.value = mutableSetup.value - computerId
@@ -545,7 +591,7 @@ class RemoteHub(
 
     suspend fun closeAll() {
         store.state.value.computers.forEach { disconnect(it.id, reportInterruptedRuns = false) }
-        (engines.keys + claudeEngines.keys + links.keys).toSet().forEach { disconnect(it, reportInterruptedRuns = false) }
+        (engines.keys + claudeEngines.keys + antigravityEngines.keys + links.keys).toSet().forEach { disconnect(it, reportInterruptedRuns = false) }
     }
 
     private fun report(computerId: String, step: RemoteSetup) {

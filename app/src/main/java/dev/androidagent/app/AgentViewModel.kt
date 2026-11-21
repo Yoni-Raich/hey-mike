@@ -500,6 +500,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty() && session.parentSessionId == null
 
     private fun rememberDefaultEngine(kind: EngineKind) {
+        if (kind == EngineKind.ANTIGRAVITY) return
         preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
         mutable.update { it.copy(defaultEngine = kind) }
     }
@@ -515,6 +516,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         add(EngineKind.CODEX)
         val computer = id?.let(graph.computers::binding)?.computerId
         val claude = if (computer == null) state.claude.ready else state.computerClaude[computer]?.ready == true
+        if (computer != null) add(EngineKind.ANTIGRAVITY)
         if (claude) add(EngineKind.CLAUDE)
     }
 
@@ -680,7 +682,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (isComputerClaude(sessionId)) { syncPcChat(sessionId); return }
         val binding = graph.computers.binding(sessionId)
         // The chat's Codex thread, also while it is parked during a turn on Claude.
-        val thread = binding?.thread(EngineKind.CODEX)?.takeIf { sessionOf(sessionId)?.engine != EngineKind.CLAUDE }
+        val thread = binding?.thread(EngineKind.CODEX)?.takeIf { sessionOf(sessionId)?.engine == EngineKind.CODEX }
         if (binding == null || thread == null || binding.imported(EngineKind.CODEX, thread) == false) {
             syncState(sessionId, busy = false, problem = null)
             return
@@ -1976,6 +1978,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
     /** Each engine's pick under its own keys; Codex keeps the keys the assistant panel reads. */
     private fun persistChoice(kind: EngineKind) {
+        if (kind == EngineKind.ANTIGRAVITY) return
         val choice = engines.of(kind)
         val (modelKey, effortKey) = if (kind == EngineKind.CLAUDE) KEY_CLAUDE_MODEL to KEY_CLAUDE_EFFORT else KEY_MODEL to KEY_EFFORT
         preferences.edit().apply {
