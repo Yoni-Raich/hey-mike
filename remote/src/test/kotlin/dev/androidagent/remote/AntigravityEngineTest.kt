@@ -289,6 +289,76 @@ class AntigravityEngineTest {
         assertTrue("Expected compacted catalog under 12500 bytes, got $totalJson", totalJson <= 12_500)
     }
 
+    @Test fun compactMovesEnumsToPromptHintWhenWideCatalogExceedsBudgetAndForwardsHint() = runBlocking {
+        val wideCatalog = (1..41).map { i ->
+            val name = when (i) {
+                1 -> "browser"
+                2 -> "system_controls"
+                else -> "tool_$i"
+            }
+            dev.androidagent.core.ToolDefinition(
+                name = name,
+                description = "Phone capability tool number $i with detailed guidance for the model.",
+                inputSchema = buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("operation", buildJsonObject {
+                            put("type", "string")
+                            put("enum", buildJsonArray {
+                                if (name == "browser") { add("open"); add("click"); add("snapshot") }
+                                else if (name == "system_controls") { add("brightness"); add("volume"); add("torch") }
+                                else { add("list"); add("get"); add("set"); add("clear") }
+                            })
+                        })
+                        val extraCount = when (name) {
+                            "browser" -> 20
+                            "system_controls" -> 16
+                            else -> if (i <= 12) 6 else 2
+                        }
+                        for (p in 1..extraCount) {
+                            put("param_$p", buildJsonObject { put("type", "string") })
+                        }
+                    })
+                    put("required", buildJsonArray { add("operation") })
+                },
+            )
+        }
+        val compacted = AntigravityPhoneBridge.compact(wideCatalog)
+        assertEquals(41, compacted.tools.size)
+        val browserSchema = compacted.tools.first().inputSchema
+        assertEquals(listOf("operation"), browserSchema["required"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("string", browserSchema["properties"]!!.jsonObject["operation"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertNull(browserSchema["properties"]!!.jsonObject["operation"]!!.jsonObject["enum"])
+        assertTrue(compacted.promptHint.contains("browser.operation=open|click|snapshot"))
+        assertTrue(compacted.promptHint.contains("system_controls.operation=brightness|volume|torch"))
+        val totalJson = compacted.tools.sumOf { it.name.length + it.description.length + it.inputSchema.toString().length + 42 }
+        assertTrue("Expected compacted wide catalog under 12200 bytes, got $totalJson", totalJson <= 12_200)
+
+        withTimeout(10_000) {
+            val host = Host()
+            val engine = AntigravityEngine(phoneBridge = { _, _ ->
+                object : AcpPhoneBridge {
+                    override val serverConfig = buildJsonObject { put("name", "mike") }
+                    override val promptHint = compacted.promptHint
+                    override fun close() {}
+                }
+            }) { host }
+            try {
+                val opening = async(Dispatchers.IO) { engine.openAt("/project", null, wideCatalog) }
+                host.reply(host.receive(), """{"protocolVersion":1}""")
+                host.reply(host.receive(), """{"sessionId":"hint-1"}""")
+                val thread = opening.await()
+                engine.startTurn(thread, "Open browser", emptyList())
+                val promptReq = host.receive()
+                val text = promptReq["params"]!!.jsonObject["prompt"]!!.jsonArray
+                    .mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
+                    .joinToString("\n")
+                assertTrue(text.contains("browser.operation=open|click|snapshot"))
+                host.reply(promptReq, """{"stopReason":"end_turn"}""")
+            } finally { engine.close() }
+        }
+    }
+
     @Test fun compactThrowsClearUnsupportedError() = runBlocking {
         val engine = AntigravityEngine { Host() }
         try {

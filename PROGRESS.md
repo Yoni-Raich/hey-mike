@@ -1,5 +1,33 @@
 # Progress
 
+### Antigravity MCP 41/41 phone tool schema fit — 2026-11-22
+
+Live testing of build `1230` (`0.17.0-dev.antigravity-fixes-1230`, `d0adc1a6`)
+on the phone confirmed that `AntigravityPhoneBridge` compaction raised mounted
+phone tools in `agy 1.5.14` from **24/41** (12,709 bytes) to **39/41** (13,110
+bytes cumulative), and `apps_settings`, `read_ui`, `computers`,
+`automation_rule`, `calendar`, `files_media`, `communications`,
+`session_agents` and `workflow_runner` all ran live end-to-end. Only the two
+largest schemas (`system_controls` 945 B, `browser` 1,163 B) exceeded `agy`'s
+~13.1 KB eager MCP budget.
+
+Added passes 5–6 in `AntigravityPhoneBridge.compact` (budget `12_000` B): when
+flattened schemas still exceed budget, top-level `enum` arrays are extracted
+into a lossless `promptHint` (`Phone tool enum values: tool.param=a|b|...`)
+forwarded in `AntigravityEngine`'s per-turn runtime context and schema prose is
+cleared, shrinking the live 41-tool Mike catalog to **11,465 bytes** (`browser`
+877 B, `system_controls` ~690 B, >1.6 KB below `agy`'s proven 13,110 B fit).
+
+Checks (worktree `feat/computer-antigravity`, Windows `Pc`, `MIKE_TEST_PYTHON` set):
+- `.\gradlew.bat :remote:testDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+  **PASSED** (`:remote` 177 tests, 0 fail, 4 skip; `:app:lintDevDebug` 0 errors;
+  `dev.androidagent.app.dev` build `1231` / `0.17.0-dev.antigravity-mcp41-1231`,
+  341,011,503 bytes, debug-signed, SHA-256
+  `f86a0b9cc3531d98c4c412c217b02c55411e189b2ae91a72f009ea087159c4d2`).
+- `git diff --check`: passed.
+- Remaining gap: live 41/41 verification (`browser` + `system_controls`) pending
+  re-open after installing build `1231` on the phone.
+
 ### Antigravity PR #168 hardening and review fixes — 2026-11-22
 
 Hardened the Antigravity ACP adapter, MCP phone bridge, computer hub and UI

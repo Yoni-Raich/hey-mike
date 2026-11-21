@@ -27,9 +27,11 @@ native to Antigravity. Plan mode and compaction are unavailable.
 
 For each native session open or load, the adapter starts Mike's authenticated
 loopback MCP server on Android with compacted tool schemas (removing duplicated
-descriptions and collapsing deep nested sub-schemas while preserving top-level
-names, types, enums and required keys) so more of the phone tool surface fits
-within Antigravity's eager MCP schema budget. A dedicated
+descriptions and collapsing deep nested sub-schemas, and when a large catalog
+still exceeds Antigravity's ~13.1 KB eager MCP schema budget, moving `enum`
+lists into a per-turn runtime context hint and clearing schema prose) so all
+phone tools fit cleanly without losing parameter names, types, required keys or
+enum values. A dedicated
 SSH connection requests a computer-side loopback port forwarded to that server.
 Antigravity launches a stdio MCP helper (Windows PowerShell or Linux Python 3,
 ignoring blank lines and bounding concurrent forwards) with the port and an

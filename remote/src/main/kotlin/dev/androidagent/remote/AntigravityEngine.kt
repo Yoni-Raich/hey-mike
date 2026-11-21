@@ -54,6 +54,8 @@ internal class AntigravityEngine(
             error("Antigravity disconnected before opening its phone tools.")
         }
 
+        fun toolPromptHint(): String = synchronized(this) { bridge?.promptHint.orEmpty() }
+
         fun armIdleTimer(job: Job) {
             val cancelNow = synchronized(this) {
                 if (closed || turn != null) true else {
@@ -343,10 +345,23 @@ internal class AntigravityEngine(
                         put("type", "text")
                         put("text", instructions())
                     })
-                    capabilities?.let {
+                    val hint = peer.toolPromptHint()
+                    if (capabilities != null) {
                         add(buildJsonObject {
                             put("type", "text")
-                            put("text", DeviceRuntimeContext.render(it) + "\nUse the mike MCP server to call these phone tools.")
+                            put("text", buildString {
+                                append(DeviceRuntimeContext.render(capabilities))
+                                append("\nUse the mike MCP server to call these phone tools.")
+                                if (hint.isNotBlank()) {
+                                    append('\n')
+                                    append(hint)
+                                }
+                            })
+                        })
+                    } else if (hint.isNotBlank()) {
+                        add(buildJsonObject {
+                            put("type", "text")
+                            put("text", hint)
                         })
                     }
                     add(buildJsonObject { put("type", "text"); put("text", prompt) })

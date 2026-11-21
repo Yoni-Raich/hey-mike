@@ -10,6 +10,8 @@ import kotlinx.serialization.json.*
 
 internal interface AcpPhoneBridge : Closeable {
     val serverConfig: JsonObject
+    /** Compact parameter enum values moved out of MCP tool schemas when over budget. */
+    val promptHint: String get() = ""
 }
 
 internal typealias PhoneCall = suspend (String, JsonObject) -> ToolResult
@@ -20,21 +22,27 @@ internal class AntigravityPhoneBridge private constructor(
     private val mcp: LoopbackMcpServer,
     private val link: SshLink,
     override val serverConfig: JsonObject,
+    override val promptHint: String,
 ) : AcpPhoneBridge {
     override fun close() {
         try { mcp.stop() } finally { link.close() }
     }
 
+    internal data class CompactedTools(
+        val tools: List<ToolDefinition>,
+        val promptHint: String,
+    )
+
     companion object {
-        internal const val MAX_SCHEMA_BYTES = 11_500
+        internal const val MAX_SCHEMA_BYTES = 12_000
 
         fun open(os: HostOs, link: SshLink, tools: List<ToolDefinition>, call: PhoneCall): AcpPhoneBridge {
-            val exposed = compactTools(tools)
-            val server = LoopbackMcpServer("mike", { exposed }, call)
+            val compacted = compact(tools)
+            val server = LoopbackMcpServer("mike", { compacted.tools }, call)
             try {
                 val endpoint = server.start()
                 val port = link.forwardPhoneLoopback(URI(endpoint.url).port)
-                return AntigravityPhoneBridge(server, link, config(os, port, endpoint.bearerToken))
+                return AntigravityPhoneBridge(server, link, config(os, port, endpoint.bearerToken), compacted.promptHint)
             } catch (e: Throwable) {
                 server.stop()
                 link.close()
@@ -43,16 +51,21 @@ internal class AntigravityPhoneBridge private constructor(
         }
 
         /**
-         * Antigravity's ACP prompt drops oversized MCP tool schemas when their combined
-         * size crosses its eager budget (~12.8 KB). Remove redundant descriptions first,
-         * then tighten prose and deep sub-schemas while keeping every tool name,
-         * top-level parameter name, type, enum and non-empty required list intact.
+         * Antigravity's ACP prompt drops the largest MCP tools when their combined
+         * schema size crosses its eager budget (~13.1 KB). Remove redundant
+         * descriptions first, then tighten prose and deep sub-schemas, and finally
+         * move enum lists into [CompactedTools.promptHint] and clear prose if the
+         * catalog still exceeds the budget. Every tool name, top-level parameter
+         * name, type, non-empty required list and enum value is preserved.
          */
-        internal fun compactTools(tools: List<ToolDefinition>, maxTotalBytes: Int = MAX_SCHEMA_BYTES): List<ToolDefinition> {
+        internal fun compactTools(tools: List<ToolDefinition>, maxTotalBytes: Int = MAX_SCHEMA_BYTES): List<ToolDefinition> =
+            compact(tools, maxTotalBytes).tools
+
+        internal fun compact(tools: List<ToolDefinition>, maxTotalBytes: Int = MAX_SCHEMA_BYTES): CompactedTools {
             val deduplicated = tools.map { tool ->
                 tool.copy(inputSchema = pruneTopSchema(tool.inputSchema))
             }
-            if (estimatedBytes(deduplicated) <= maxTotalBytes) return deduplicated
+            if (estimatedBytes(deduplicated) <= maxTotalBytes) return CompactedTools(deduplicated, "")
 
             val compactDescriptions = deduplicated.map { tool ->
                 tool.copy(
@@ -60,20 +73,67 @@ internal class AntigravityPhoneBridge private constructor(
                     inputSchema = stripNestedDescriptions(tool.inputSchema),
                 )
             }
-            if (estimatedBytes(compactDescriptions) <= maxTotalBytes) return compactDescriptions
+            if (estimatedBytes(compactDescriptions) <= maxTotalBytes) return CompactedTools(compactDescriptions, "")
 
             val flattened = compactDescriptions.map { tool ->
                 tool.copy(inputSchema = flattenNestedObjects(tool.inputSchema))
             }
-            if (estimatedBytes(flattened) <= maxTotalBytes) return flattened
+            if (estimatedBytes(flattened) <= maxTotalBytes) return CompactedTools(flattened, "")
 
-            return flattened.map { tool ->
+            val shortDescriptions = flattened.map { tool ->
                 tool.copy(description = summarize(tool.description, 56))
             }
+            if (estimatedBytes(shortDescriptions) <= maxTotalBytes) return CompactedTools(shortDescriptions, "")
+
+            val extracted = extractEnums(shortDescriptions)
+            val briefDescriptions = extracted.tools.map { tool ->
+                tool.copy(description = summarize(tool.description, 24))
+            }
+            if (estimatedBytes(briefDescriptions) <= maxTotalBytes) return CompactedTools(briefDescriptions, extracted.promptHint)
+
+            val minimal = extracted.tools.map { tool -> tool.copy(description = "") }
+            return CompactedTools(minimal, extracted.promptHint)
         }
 
         private fun estimatedBytes(tools: List<ToolDefinition>): Int =
-            tools.sumOf { it.name.length + it.description.length + it.inputSchema.toString().length + 48 }
+            tools.sumOf { it.name.length + it.description.length + it.inputSchema.toString().length + 42 }
+
+        private fun extractEnums(tools: List<ToolDefinition>): CompactedTools {
+            val hints = mutableListOf<String>()
+            val stripped = tools.map { tool ->
+                val props = tool.inputSchema["properties"] as? JsonObject ?: return@map tool
+                var changed = false
+                val updatedProps = buildJsonObject {
+                    for ((propName, propElement) in props) {
+                        val obj = propElement as? JsonObject
+                        val enumValues = obj?.get("enum") as? JsonArray
+                        if (obj != null && enumValues != null && enumValues.isNotEmpty()) {
+                            changed = true
+                            val rendered = enumValues.joinToString("|") {
+                                (it as? JsonPrimitive)?.contentOrNull ?: it.toString()
+                            }
+                            hints += "${tool.name}.$propName=$rendered"
+                            put(propName, buildJsonObject {
+                                for ((k, v) in obj) {
+                                    if (k != "enum") put(k, v)
+                                }
+                            })
+                        } else {
+                            put(propName, propElement)
+                        }
+                    }
+                }
+                if (!changed) tool else tool.copy(
+                    inputSchema = buildJsonObject {
+                        for ((k, v) in tool.inputSchema) {
+                            put(k, if (k == "properties") updatedProps else v)
+                        }
+                    },
+                )
+            }
+            val promptHint = if (hints.isEmpty()) "" else "Phone tool enum values: ${hints.joinToString("; ")}"
+            return CompactedTools(stripped, promptHint)
+        }
 
         private fun pruneTopSchema(schema: JsonObject): JsonObject = buildJsonObject {
             for ((key, value) in schema) {
