@@ -185,6 +185,7 @@ internal fun ModelMenu(
                 groups.forEach { (kind, models) ->
                     // One account needs no heading.
                     if (groups.size > 1 || setup) MenuHeader(providerName(kind))
+                    if (kind == EngineKind.ANTIGRAVITY) state.antigravityCatalogStatus?.let { MenuHeader(it) }
                     models.forEach { entry ->
                         ChoiceRow(
                             modelTitle(entry.id, entry.displayName),

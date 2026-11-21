@@ -157,13 +157,24 @@ class ClaudeOnComputerTest {
             assertTrue(instructions.contains("Never use ADB to bypass an Android security restriction"))
             when (access) {
                 RemoteAccess.ASK -> assertTrue(instructions.contains("asks the user first") || instructions.contains("ask the user first"))
-                RemoteAccess.FULL -> if (engine == EngineKind.CLAUDE) {
-                    assertTrue(instructions.contains("full access to this computer without approval prompts"))
-                } else {
-                    assertTrue(instructions.contains("full file access to this computer"))
-                    assertTrue(instructions.contains("Codex still asks the user before risky commands"))
-                    assertTrue(instructions.contains("do not retry through another shell or file API"))
-                    assertFalse(instructions.contains("without approval prompts"))
+                RemoteAccess.FULL -> when (engine) {
+                    EngineKind.CLAUDE -> {
+                        assertTrue(instructions.contains("full access to this computer without approval prompts"))
+                    }
+                    EngineKind.ANTIGRAVITY -> {
+                        assertTrue(instructions.contains("you run as Antigravity on their"))
+                        assertTrue(instructions.contains("full access to this computer"))
+                        assertTrue(instructions.contains("Antigravity still asks the user before risky commands"))
+                        assertTrue(instructions.contains("do not retry through another shell or file API"))
+                        assertFalse(instructions.contains("without approval prompts"))
+                        assertFalse(instructions.contains("Codex"))
+                    }
+                    EngineKind.CODEX -> {
+                        assertTrue(instructions.contains("full file access to this computer"))
+                        assertTrue(instructions.contains("Codex still asks the user before risky commands"))
+                        assertTrue(instructions.contains("do not retry through another shell or file API"))
+                        assertFalse(instructions.contains("without approval prompts"))
+                    }
                 }
             }
         }

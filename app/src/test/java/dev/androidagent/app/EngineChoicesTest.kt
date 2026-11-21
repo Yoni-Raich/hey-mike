@@ -106,8 +106,8 @@ class EngineChoicesTest {
             .update(EngineKind.CLAUDE) { it.withCatalog(listOf(sonnet.copy(engine = EngineKind.CLAUDE))) }
             .update(EngineKind.CODEX) { it.withCatalog(listOf(AgentModel("gpt-5"))) }
 
-        assertEquals(listOf("gpt-5", "sonnet"), engines.offered(EngineKind.entries).map { it.id })
-        assertEquals(listOf(EngineKind.CODEX, EngineKind.CLAUDE), engines.offered(EngineKind.entries).map { it.engine })
+        assertEquals(listOf("gpt-5", "sonnet", "antigravity"), engines.offered(EngineKind.entries).map { it.id })
+        assertEquals(EngineKind.entries, engines.offered(EngineKind.entries).map { it.engine })
         // A chat that cannot run Claude is not offered its models.
         assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX)).map { it.id })
     }
@@ -119,7 +119,7 @@ class EngineChoicesTest {
         val onComputer = listOf(AgentModel("opus", "Opus 5.5", engine = EngineKind.CLAUDE))
 
         // Codex's models stay the phone's; Claude's are the computer's own.
-        assertEquals(listOf("gpt-5", "opus"), engines.offered(EngineKind.entries, claudeModels = onComputer).map { it.id })
+        assertEquals(listOf("gpt-5", "opus", "antigravity"), engines.offered(EngineKind.entries, claudeModels = onComputer).map { it.id })
         // A computer without Claude: its list is not asked for at all.
         assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX), claudeModels = onComputer).map { it.id })
     }
@@ -127,7 +127,7 @@ class EngineChoicesTest {
     @Test fun aModelIsTaggedWithTheEngineWhoseListItIsIn() {
         // The fake and older engines do not tag their models.
         val engines = EngineChoices().update(EngineKind.CLAUDE) { it.withCatalog(listOf(sonnet)) }
-        assertEquals(listOf(EngineKind.CLAUDE), engines.offered(EngineKind.entries).map { it.engine })
+        assertEquals(listOf(EngineKind.CLAUDE, EngineKind.ANTIGRAVITY), engines.offered(EngineKind.entries).map { it.engine })
     }
 
     @Test fun pickingAModelPicksItsEngine() {

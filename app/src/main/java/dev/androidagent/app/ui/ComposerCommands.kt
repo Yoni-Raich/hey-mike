@@ -112,8 +112,21 @@ internal fun claudeModelName(state: AgentUiState, id: String): String? {
     return model.displayName.takeIf { it.isNotBlank() } ?: id
 }
 
+/**
+ * Shown name for engines that use display names rather than raw IDs (Claude and
+ * Antigravity), or null for Codex models which keep showing their IDs.
+ */
+internal fun displayModelName(state: AgentUiState, id: String): String? {
+    claudeModelName(state, id)?.let { return it }
+    val agy = state.modelCatalog.firstOrNull { it.id == id && it.engine == EngineKind.ANTIGRAVITY }
+    if (agy != null) return agy.displayName.takeIf { it.isNotBlank() } ?: id.removePrefix("agy/")
+    if (id == "antigravity") return "Computer default"
+    if (id.startsWith("agy/")) return id.removePrefix("agy/")
+    return id.takeIf { state.selectedEngine == EngineKind.ANTIGRAVITY && state.modelCatalog.none { it.id == id } }
+}
+
 /** How the chip, the picker and /status name a model. */
-internal fun modelLabel(state: AgentUiState, id: String): String = claudeModelName(state, id) ?: id.removePrefix("gpt-")
+internal fun modelLabel(state: AgentUiState, id: String): String = displayModelName(state, id) ?: id.removePrefix("gpt-")
 
 /** The short line under a Claude model in the picker, such as Fable's extra-usage hint. Empty for Codex. */
 internal fun modelNote(state: AgentUiState, id: String): String =

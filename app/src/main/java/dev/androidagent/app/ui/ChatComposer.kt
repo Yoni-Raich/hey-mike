@@ -172,8 +172,8 @@ internal enum class Delivery { STEER, QUEUE }
  * travel in a turn of their own, and a turn still starting cannot take an
  * instruction yet, so both queue whatever was chosen.
  */
-internal fun deliveryOf(chosen: Delivery, hasAttachments: Boolean, starting: Boolean): Delivery =
-    if (hasAttachments || starting) Delivery.QUEUE else chosen
+internal fun deliveryOf(chosen: Delivery, hasAttachments: Boolean, starting: Boolean, supportsSteer: Boolean = true): Delivery =
+    if (hasAttachments || starting || !supportsSteer) Delivery.QUEUE else chosen
 
 /**
  * The composer's main button. Voice when idle, except in a chat whose engine
@@ -231,8 +231,9 @@ internal fun AgentComposer(
     // The same answer that draws the chat's Working line.
     val active = chatRunView(state).statusLine
     LaunchedEffect(active) { if (!active) chosenDelivery = Delivery.STEER }
-    val steerBlocked = state.attachments.isNotEmpty() || state.runState.phase == RunPhase.STARTING
-    val delivery = deliveryOf(chosenDelivery, state.attachments.isNotEmpty(), state.runState.phase == RunPhase.STARTING)
+    val supportsSteer = state.activeEngine != EngineKind.ANTIGRAVITY
+    val steerBlocked = !supportsSteer || state.attachments.isNotEmpty() || state.runState.phase == RunPhase.STARTING
+    val delivery = deliveryOf(chosenDelivery, state.attachments.isNotEmpty(), state.runState.phase == RunPhase.STARTING, supportsSteer)
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)
@@ -278,7 +279,8 @@ internal fun AgentComposer(
     }
     val commandEnabled: (ComposerCommand) -> Boolean = { command ->
         when (command) {
-            ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting
+            ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting && state.activeEngine != EngineKind.ANTIGRAVITY
+            ComposerCommand.PLAN -> state.selectedEngine != EngineKind.ANTIGRAVITY || state.planMode
             ComposerCommand.MODEL -> !voiceActive && !compacting
             ComposerCommand.RENAME -> state.activeSessionId != null
             ComposerCommand.LIMITS -> state.activeSessionId != null
@@ -739,7 +741,7 @@ private fun DeliveryOption(label: String, icon: ImageVector, selected: Boolean, 
 
 /** "Opus 4.7 · High · 2 pictures": what a queued message will run with. */
 internal fun queuedTurnDetail(state: AgentUiState, turn: dev.androidagent.core.QueuedTurn): String = buildList {
-    turn.model?.let { add(claudeModelName(state, it) ?: shortModelName(it)) }
+    turn.model?.let { add(displayModelName(state, it) ?: shortModelName(it)) }
     turn.effort?.let { add(effortLabel(it)) }
     if (turn.planMode) add("Plan")
     val pictures = turn.imagePaths.size
@@ -1362,7 +1364,7 @@ private fun ModelChip(state: AgentUiState, enabled: Boolean, next: Boolean = fal
     val label = state.selectedModel?.let { id ->
         buildAnnotatedString {
             if (next) withStyle(SpanStyle(color = SkillsAccent, fontWeight = FontWeight.SemiBold)) { append("Next  ") }
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(claudeModelName(state, id) ?: shortModelName(id)) }
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(displayModelName(state, id) ?: shortModelName(id)) }
             effort?.let { append(" " + effortLabel(it)) }
         }
     } ?: AnnotatedString("Choose model")

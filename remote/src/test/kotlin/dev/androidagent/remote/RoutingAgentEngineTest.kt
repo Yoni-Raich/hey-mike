@@ -222,6 +222,81 @@ class RoutingAgentEngineTest {
         } finally { router.close() }
     }
 
+    @Test fun antigravityChatRoutesToolCallsApprovalsAndRefusesVoice() = runBlocking {
+        val box = object : SecretBox {
+            override fun seal(plain: ByteArray) = plain
+            override fun open(sealed: ByteArray) = sealed
+        }
+        val store = RemoteStore(File(temp.root, "agy-computers.bin"), box)
+        store.save(RemoteComputer("pc", "Pc", "localhost", user = "test"), "test-only")
+        store.bind("a1", RemoteBinding("pc", "/project"))
+        val clientIn = PipedInputStream()
+        val serverOut = PipedOutputStream(clientIn)
+        val serverIn = PipedInputStream()
+        val clientOut = PipedOutputStream(serverIn)
+        val lines = serverIn.bufferedReader()
+        val host = object : Process() {
+            override fun getOutputStream() = clientOut
+            override fun getInputStream() = clientIn
+            override fun getErrorStream() = ByteArrayInputStream(byteArrayOf())
+            override fun waitFor() = 0
+            override fun exitValue() = 0
+            override fun destroy() { runCatching { clientOut.close() }; runCatching { serverOut.close() } }
+        }
+        fun send(line: String) { serverOut.write((line + "\n").toByteArray()); serverOut.flush() }
+        fun receive() = Json.parseToJsonElement(lines.readLine()).jsonObject
+        lateinit var phoneCall: PhoneCall
+        val hub = RemoteHub(store, { _, _ -> ExternalChatgptTokens("t", "a") }) { _, profile -> CodexEngine(ReplyRuntime(), profile) }
+        hub.createAntigravity = {
+            AntigravityEngine(phoneBridge = { _, handler ->
+                phoneCall = handler
+                object : AcpPhoneBridge {
+                    override val serverConfig = buildJsonObject { put("name", "mike") }
+                    override fun close() = Unit
+                }
+            }) { host }
+        }
+        val sessions = FakeSessions(listOf(ChatSession("a1", "Agy", 0, 0, engine = EngineKind.ANTIGRAVITY)))
+        val router = RoutingAgentEngine(CodexEngine(ReplyRuntime()), hub, sessions = sessions)
+        try {
+            val workspace = File(temp.root, "sessions/a1/workspace").apply { mkdirs() }
+            val opening = async(Dispatchers.IO) {
+                router.openSession(workspace, null, "antigravity", listOf(ToolDefinition("device_status", "Status", JsonObject(emptyMap()))))
+            }
+            val init = receive()
+            send("""{"jsonrpc":"2.0","id":${init["id"]},"result":{"protocolVersion":1}}""")
+            val created = receive()
+            send("""{"jsonrpc":"2.0","id":${created["id"]},"result":{"sessionId":"s-1"}}""")
+            val thread = withTimeout(5_000) { opening.await() }
+            assertEquals("agy:s-1", thread)
+            assertTrue(runCatching { router.startVoice(thread, null, RealtimeTransport.WEBSOCKET, null) }.isFailure)
+
+            val toolEvent = async(Dispatchers.Default) {
+                withTimeout(5_000) { router.events.first { it is EngineEvent.ToolCall } as EngineEvent.ToolCall }
+            }
+            val approvalEvent = async(Dispatchers.Default) {
+                withTimeout(5_000) { router.events.first { it is EngineEvent.Approval } as EngineEvent.Approval }
+            }
+            router.startTurn(thread, "Check", emptyList())
+            val prompt = receive()
+            val phoneReply = async { phoneCall("device_status", JsonObject(emptyMap())) }
+            val call = toolEvent.await()
+            assertTrue(call.requestId.startsWith("remote-agy|pc|"))
+            router.answerTool(call.requestId, ToolResult("phone-ok"))
+            assertEquals("phone-ok", withTimeout(5_000) { phoneReply.await().text })
+
+            send("""{"id":42,"method":"session/request_permission","params":{"sessionId":"s-1","options":[{"kind":"allow_once","optionId":"once"}],"toolCall":{"title":"Run test"}}}""")
+            val approval = approvalEvent.await()
+            assertTrue(approval.requestId.startsWith("remote-agy|pc|"))
+            router.answerApproval(approval.requestId, true)
+            val outcome = receive()["result"]!!.jsonObject["outcome"]!!.jsonObject
+            assertEquals("selected", outcome["outcome"]!!.jsonPrimitive.content)
+            assertEquals("once", outcome["optionId"]!!.jsonPrimitive.content)
+
+            send("""{"jsonrpc":"2.0","id":${prompt["id"]},"result":{"stopReason":"end_turn"}}""")
+        } finally { router.close() }
+    }
+
     private class FakeClaude : AgentEngine {
         private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 16)
         override val events = stream.asSharedFlow()

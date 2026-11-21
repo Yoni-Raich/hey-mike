@@ -1,5 +1,135 @@
 # Progress
 
+### Antigravity MCP 41/41 phone tool schema fit — 2026-11-22
+
+Live testing of build `1230` (`0.17.0-dev.antigravity-fixes-1230`, `d0adc1a6`)
+on the phone confirmed that `AntigravityPhoneBridge` compaction raised mounted
+phone tools in `agy 1.5.14` from **24/41** (12,709 bytes) to **39/41** (13,110
+bytes cumulative), and `apps_settings`, `read_ui`, `computers`,
+`automation_rule`, `calendar`, `files_media`, `communications`,
+`session_agents` and `workflow_runner` all ran live end-to-end. Only the two
+largest schemas (`system_controls` 945 B, `browser` 1,163 B) exceeded `agy`'s
+~13.1 KB eager MCP budget.
+
+Added passes 5–6 in `AntigravityPhoneBridge.compact` (budget `12_000` B): when
+flattened schemas still exceed budget, top-level `enum` arrays are extracted
+into a lossless `promptHint` (`Phone tool enum values: tool.param=a|b|...`)
+forwarded in `AntigravityEngine`'s per-turn runtime context and schema prose is
+cleared, shrinking the live 41-tool Mike catalog to **11,465 bytes** (`browser`
+877 B, `system_controls` ~690 B, >1.6 KB below `agy`'s proven 13,110 B fit).
+
+Checks (worktree `feat/computer-antigravity`, Windows `Pc`, `MIKE_TEST_PYTHON` set):
+- `.\gradlew.bat :remote:testDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+  **PASSED** (`:remote` 177 tests, 0 fail, 4 skip; `:app:lintDevDebug` 0 errors;
+  `dev.androidagent.app.dev` build `1231` / `0.17.0-dev.antigravity-mcp41-1231`,
+  341,011,503 bytes, debug-signed, SHA-256
+  `f86a0b9cc3531d98c4c412c217b02c55411e189b2ae91a72f009ea087159c4d2`).
+- `git diff --check`: passed.
+- Remaining gap: live 41/41 verification (`browser` + `system_controls`) pending
+  re-open after installing build `1231` on the phone.
+
+### Antigravity PR #168 hardening and review fixes — 2026-11-22
+
+Hardened the Antigravity ACP adapter, MCP phone bridge, computer hub and UI
+after a live phone-to-Pc check (build 1229, `agy 1.5.14`) and full PR #168 code
+review:
+- **MCP phone tool schema compaction (`AntigravityPhoneBridge`)**: removed
+  duplicated top-level schema descriptions, empty `required` arrays,
+  `additionalProperties: false`, nested descriptions and deep nested sub-schemas
+  (including untyped objects with `properties`) while keeping top-level tool
+  names, parameter names, primitive types, enums and non-empty `required` lists.
+  On the live 41-tool Mike MCP catalog observed on `Pc`, raw schemas totaled
+  77,116 bytes and `agy 1.5.14` mounted only the 24 smallest tools (12,709 bytes
+  cumulative, omitting `read_ui`, `open_intent`, `browser`, `files_media`,
+  `calendar`, `apps_settings`, `communications`, `computers`, `system_controls`,
+  etc.); compaction shrinks that catalog by ~80% (to 15,280 bytes, 40/41 tools
+  under 1 KB). Both `mcp-stdio.ps1` and `mcp-stdio.py` now ignore blank stdin
+  lines, and `mcp-stdio.ps1` bounds concurrent HTTP forwards with a semaphore.
+- **ACP reliability & cancellation (`AntigravityEngine`)**: separated `writeLock`
+  from peer state synchronization to prevent write/dispose deadlocks;
+  `interrupt()` sends `session/cancel` under `runInterruptible` with a bounded
+  drain (`promptDone`) and finishes as `"interrupted"` rather than a transport
+  error; `dispose()` emits `ApprovalResolved` for dropped approvals, cancels the
+  idle timer, and attaches a bounded, ANSI-stripped, `SecretRedactor`-redacted
+  stderr tail on unexpected disconnect; stdout skips blank/non-JSON lines;
+  computer `tool_call` updates emit `ItemActivity` rows and advance text segment
+  IDs; image attachments enforce a 20 MB limit; `compact()` returns a clear
+  unsupported error; turns receive `RemoteInstructions.forComputer(..., ANTIGRAVITY)`.
+- **Host/routing & UI fixes**: combined Windows `agy` discovery and `agy models`
+  into one SSH PowerShell command under `runInterruptible`; isolated Windows
+  Antigravity relays under a dedicated UUID namespace with background pruning of
+  ended folders; hid Antigravity in the picker for computers where `agy` is
+  confirmed not installed; prevented cross-computer native session ID collisions
+  and cached session-store lookups in `RoutingAgentEngine`; structured, redacted
+  and capped `antigravity/request_permission` approval cards; fixed model chip
+  and queued-turn display names (`displayModelName`); guarded Plan mode, Compact,
+  `moveNewChat`, `changeEngine` and `SessionAgentSetup` (`ANTIGRAVITY` always
+  requires a computer target even with `model = null`).
+
+Checks (worktree `feat/computer-antigravity`, Windows `Pc`, `MIKE_TEST_PYTHON` set):
+- `.\gradlew.bat :core:test :mcp-loopback:test :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+  **PASSED**. XML totals: `:core` 1,026 tests (0 fail, 0 skip), `:mcp-loopback`
+  15 tests (0 fail, 0 skip), `:remote` 176 tests (0 fail, 4 skip), `:app` 212
+  tests (0 fail, 0 skip) — 1,425 passed, 4 skipped, 0 failed; `:app:lintDevDebug`
+  passed with 0 errors; `app-dev-debug.apk` (`dev.androidagent.app.dev`, code
+  1217, debug-signed, 341,941,689 bytes, SHA-256
+  `54202bff6a338382fe9a0cda681dee5a49440c3cb529bbf5fd0e0713417c037c`) assembled.
+- `python -m unittest tools.test_prepare_runtime`: 16 tests OK.
+- `git diff --check`: passed.
+- Live phone-to-Pc check (on installed build 1229, before this commit):
+  `device_status`, `list_workflows`, `connected_apps(list)`, `resolve_intent`,
+  and `screenshot` (633,051-byte PNG) all succeeded end-to-end over Mike MCP.
+
+Remaining gaps:
+- The updated APK containing these fixes has not yet been installed on a phone;
+  live verification of how many of the 41 compacted MCP tools `agy 1.5.14`
+  mounts after installing the new build is still pending.
+- Live Stop button, live `antigravity/request_permission` approval card on a
+  phone, and a live Linux host (`Server`) Antigravity turn have not yet been run.
+- Not the full release gate (`assembleDevRelease`, `assembleDevDebugAndroidTest`,
+  `:voice:lintDebug` were not run here).
+
+### Antigravity model picker — 2026-11-21
+
+Computer chats list the models from the host's `agy models` output and show
+a status if the host needs sign-in. The ACP adapter applies the selected
+model on open or resume. A fixture checked catalog parsing and model
+selection before the first prompt. On Pc, `agy models` required Google
+sign-in during the initial check. After sign-in, the CLI separated each ID
+and title with one tab. Build 1228 skipped all 23 rows. The corrected
+parser read the live output on Pc and matched all 23 IDs and titles in
+order. The parser test covers both tab-separated and space-padded rows.
+
+### Phone tools for computer Antigravity chats — 2026-11-21
+
+Antigravity sessions receive Mike's MCP server through SSH on open and load.
+Device calls and their replies pass through the coordinator under the live
+thread and turn. Cancellation clears the pending call. The computer needs
+SSH remote forwarding and Windows PowerShell or Linux Python 3.
+
+On Pc, both the Windows helper and the Linux helper (using Python on Windows)
+listed a test device_status tool and returned text and image data through a
+real SSH server. An ACP fixture covered routing the call and answer, rejecting
+calls outside a turn and cancelling a pending call. The installed agy answered
+initialize and returned Authentication required for session/new.
+
+Core, remote, MCP and app tests reported 1,417 passes and three skips.
+assembleDevDebug succeeded. The debug-signed code 1217 APK contains both
+helpers. No install, physical phone tool action or live Linux host run.
+
+### Computer Antigravity chats — 2026-11-21
+
+The computer model picker can start Antigravity in the bound project on
+Windows or Linux. Switching engines uses the existing history handoff.
+
+`:remote:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug`
+passed. An ACP fixture covered native session load, streamed text, permission
+denial and completion. The installed Windows agy 1.5.14 answered initialize
+and required sign-in for session/new. The optional adapter test also ran with
+MIKE_TEST_AGY pointing to the installed executable. The devDebug APK has code
+1217 and a verified debug signature. A signed-in turn from an Android chat,
+the Linux host and a live Stop still need testing.
+
 ### Steer or queue while a chat runs, and the next message's model - 2026-11-19
 
 A message typed while the open chat runs can now go two ways, picked under the

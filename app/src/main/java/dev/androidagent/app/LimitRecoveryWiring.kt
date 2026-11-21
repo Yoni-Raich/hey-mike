@@ -53,6 +53,7 @@ internal class AppLimitRecoveryHost(private val app: Context, private val graph:
         val session = graph.sessions.getSession(sessionId) ?: return null
         return when (session.engine) {
             EngineKind.CODEX -> LimitTarget(EngineKind.CODEX, liveAccount())
+            EngineKind.ANTIGRAVITY -> null
             EngineKind.CLAUDE -> LimitTarget(EngineKind.CLAUDE)
         }
     }
@@ -61,6 +62,7 @@ internal class AppLimitRecoveryHost(private val app: Context, private val graph:
         EngineKind.CODEX -> target.accountId == null ||
             withContext(Dispatchers.IO) { graph.accounts.state().accounts.any { it.id == target.accountId } }
         // A computer's Claude is its own sign-in there; the plan only offers it when that computer has one.
+        EngineKind.ANTIGRAVITY -> false
         EngineKind.CLAUDE -> graph.computers.binding(sessionId) != null ||
             (graph.claudeHost.installState.value.phase == ClaudeInstallPhase.INSTALLED && graph.claudeUsage.account() != null)
     }
@@ -68,6 +70,7 @@ internal class AppLimitRecoveryHost(private val app: Context, private val graph:
     override fun readings(target: LimitTarget): List<UsageLimit> = runCatching {
         when (target.engine) {
             EngineKind.CODEX -> target.accountId?.let { graph.usageBook.all()[it]?.limits }.orEmpty()
+            EngineKind.ANTIGRAVITY -> emptyList()
             EngineKind.CLAUDE -> graph.claudeUsage.readSaved()?.limits.orEmpty()
         }
     }.getOrDefault(emptyList())
@@ -110,6 +113,7 @@ internal class AppLimitRecoveryHost(private val app: Context, private val graph:
     override fun wakeAt(atMillis: Long?) = if (atMillis == null) alarms.cancel() else alarms.arm(atMillis)
 
     override fun label(target: LimitTarget): String = when (target.engine) {
+        EngineKind.ANTIGRAVITY -> "Antigravity"
         EngineKind.CLAUDE -> "Claude"
         EngineKind.CODEX -> target.accountId
             ?.let { id -> runCatching { graph.accounts.state().accounts.firstOrNull { it.id == id }?.label }.getOrNull() }
