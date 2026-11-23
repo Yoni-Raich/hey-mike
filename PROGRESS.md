@@ -1,5 +1,16 @@
 # Progress
 
+### Codex 0.171.0 runtime pins — 2026-11-23
+
+- Updated Android ARM64/x86_64, Windows fallback packages, Linux fallback
+  hashes and the computer updater baseline together from 0.163.0 to 0.171.0.
+  Pins match official stable `rust-v0.171.0` GitHub release asset digests.
+- Raised the Dev build to 1232 / `0.17.0-dev.codex171-1232`.
+- `python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`:
+  24 tests passed. `git diff --check`: passed.
+- Build, actual package staging and phone installation/runtime checks are
+  not yet covered by these unit-test results. No release gate was run.
+
 ### Antigravity MCP 41/41 phone tool schema fit — 2026-11-22
 
 Live testing of build `1230` (`0.17.0-dev.antigravity-fixes-1230`, `d0adc1a6`)
