@@ -22,7 +22,7 @@ import urllib.request
 import urllib.parse
 import uuid
 
-BUNDLED_VERSION = "0.163.0"
+BUNDLED_VERSION = "0.171.0"
 API = "https://api.github.com/repos/openai/codex/releases/latest"
 CHECK_SECONDS = 15 * 60
 MAX_PACKAGE = 512 * 1024 * 1024
