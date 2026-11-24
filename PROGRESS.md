@@ -25,10 +25,19 @@
   140, remote 356 (10 skipped), web 78 (debug and release variants), app 212;
   no failures or errors. Lint: no errors, 23 warnings (unchanged count).
   Dev Debug APK built (365,776,287 bytes); not installed.
-- Untested: nothing ran on a phone. Not verified: a real site accepting the
+- Phone: Dev Debug `0.17.0-dev.upload-1233` (1233) installed on the chat
+  phone with `copy_file` + `install_apk`; the phone reported 1233 afterwards.
+  From a Claude chat running on the computer: `session_agents chats` listed
+  this phone's chats newest first; `read` with the pasted line
+  `Mike chat ID: <uuid>` returned that chat's first messages and `nextOffset`.
+- Phone, upload: on the-internet.herokuapp.com/upload, `browser upload` found
+  the file input but ended `approval_denied` after 120 s; the user saw no
+  approval prompt. So in a computer (remote Claude) chat the upload approval
+  does not reach the user, and no file was sent. Open: route that approval to
+  the phone, then repeat this check.
+- Untested: upload from a phone-run (Codex) chat; a real site accepting the
   FileProvider URI while the WebView keeps `allowContentAccess = false`; the
-  user's system picker path; the approval prompt in remote (computer) chats;
-  the new menu item on screen.
+  user's system picker path; the "Copy chat ID" menu item on screen.
 
 ### Codex 0.171.0 runtime pins — 2026-11-23
 
