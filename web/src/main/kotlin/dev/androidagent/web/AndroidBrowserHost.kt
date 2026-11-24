@@ -112,6 +112,8 @@ class AndroidBrowserHost(
     private val confirm: suspend (String, String) -> Boolean = { _, _ -> false },
     /** Bring Hey Mike forward with [key]'s page open. */
     private val present: (String) -> Unit = {},
+    /** A content address the page can read a chat file through. */
+    private val shareFile: (File) -> Uri = { Uri.fromFile(it) },
 ) : BrowserHost {
     private class Page(
         val key: String,
@@ -129,6 +131,8 @@ class AndroidBrowserHost(
         /** Where the page is on screen, or null while it is hidden. */
         var frame: BrowserFrame? = null
         var state = BrowserPageState(key)
+        /** Files the agent armed for this page's next file chooser. */
+        @Volatile var upload: PendingUpload? = null
     }
 
     private val pages = linkedMapOf<String, Page>()
@@ -215,7 +219,7 @@ class AndroidBrowserHost(
         val client = withContext(Dispatchers.IO) { CdpClient.attach(dialer, id) }
         try {
             val session = BrowserSession(client, policy, nativeTap = { x, y -> WebViewInput.tap(page.view, x, y) },
-                confirm = { summary -> confirm(key, summary) })
+                confirm = { summary -> confirm(key, summary) }, armUpload = { page.upload = it })
             session.start()
             if (onMain { page.state.desktop }) session.desktopLayout(true, reload = false)
             if (fresh) session.open("about:blank")
@@ -240,6 +244,12 @@ class AndroidBrowserHost(
             "This WebView did not expose its app-owned DevTools socket.",
             "Same-UID CDP must be checked on this phone; Wireless ADB is not used by this browser.")
     }
+
+    /** Arm [upload] for [key]'s next file chooser, as a session does. Main thread; for tests. */
+    internal fun armUpload(key: String, upload: PendingUpload?) { pages[key]?.upload = upload }
+
+    /** The WebView of [key]'s page. Main thread; for tests. */
+    internal fun viewOf(key: String): WebView? = pages[key]?.view
 
     /** A new blank page for [key], not yet connected. Main thread. Returns [key]. */
     internal fun open(key: String): String {
@@ -347,9 +357,8 @@ class AndroidBrowserHost(
                 publish(page, page.state.copy(title = title?.takeIf { it.isNotBlank() && it != TITLE }))
             }
             override fun onPermissionRequest(request: PermissionRequest) { request.deny() }
-            override fun onShowFileChooser(view: WebView, callback: android.webkit.ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
-                callback.onReceiveValue(null); page.session?.note("File upload requires the user's browser."); return true
-            }
+            override fun onShowFileChooser(view: WebView, callback: android.webkit.ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean =
+                chooseFiles(page, callback, params)
             override fun onCreateWindow(view: WebView, dialog: Boolean, userGesture: Boolean, resultMsg: android.os.Message): Boolean {
                 if (!userGesture || dialog || pages[page.key] !== page) {
                     page.session?.note("A popup was refused. Open its URL in this page instead."); return false
@@ -361,6 +370,64 @@ class AndroidBrowserHost(
         windows.addView(window, hidden())
         view.loadDataWithBaseURL(marker, String(MARKER_PAGE), "text/html", "UTF-8", marker)
         return page
+    }
+
+    /**
+     * Answer a page's file chooser. Main thread. Every path calls [callback]
+     * exactly once: a WebView whose chooser is left unanswered never opens
+     * one again on that page.
+     *
+     * Files the agent armed (and the user approved) go to this one chooser.
+     * A page the user holds on screen gets the phone's own file picker.
+     * Anything else, a chooser the agent opened without files or one a
+     * script opened by itself, gets nothing.
+     */
+    private fun chooseFiles(page: Page, callback: android.webkit.ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams): Boolean {
+        val upload = page.upload
+        if (upload != null && pages[page.key] === page) {
+            page.upload = null
+            val refusal = when {
+                params.mode == WebChromeClient.FileChooserParams.MODE_SAVE -> "The page asked where to save a file, not for a file to upload."
+                upload.files.size > 1 && params.mode != WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE ->
+                    "This file chooser takes one file. Nothing was uploaded; upload one file per call."
+                else -> null
+            }
+            val uris = if (refusal != null) null else runCatching { upload.files.map(shareFile).toTypedArray() }.getOrNull()
+            callback.onReceiveValue(uris)
+            upload.outcome.complete(PendingUpload.Outcome(refusal ?: if (uris == null) "The files could not be shared with the page." else null))
+            return true
+        }
+        if (page.userControlled && page.frame != null && pickForUser(page, callback, params)) return true
+        callback.onReceiveValue(null)
+        page.session?.note("A file chooser opened and got no file. To upload, use operation upload with files from this chat's folder.")
+        return true
+    }
+
+    /** The phone's file picker for the user, from the activity showing the page. True when it opened and will answer [callback]. */
+    private fun pickForUser(page: Page, callback: android.webkit.ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams): Boolean {
+        val activity = page.base.baseContext as? androidx.activity.ComponentActivity ?: return false
+        val intent = runCatching { params.createIntent() }.getOrNull() ?: return false
+        if (params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) intent.putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+        var launcher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>? = null
+        var answered = false
+        launcher = activity.activityResultRegistry.register(
+            "browser-files-${UUID.randomUUID()}", androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+        ) { result ->
+            launcher?.unregister()
+            if (answered) return@register
+            answered = true
+            val data = result.data
+            val picked = data?.clipData?.let { clip -> Array(clip.itemCount) { clip.getItemAt(it).uri } }
+                ?: WebChromeClient.FileChooserParams.parseResult(result.resultCode, data)
+            callback.onReceiveValue(picked?.takeIf { result.resultCode == android.app.Activity.RESULT_OK && it.isNotEmpty() })
+        }
+        return try {
+            launcher.launch(intent)
+            true
+        } catch (_: Exception) {
+            launcher.unregister()
+            false
+        }
     }
 
     /**

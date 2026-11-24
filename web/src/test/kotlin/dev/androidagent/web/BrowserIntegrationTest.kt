@@ -139,9 +139,9 @@ class BrowserIntegrationTest {
                 return result
             }
         }
-        page = BrowserSession(connection, policy, BrowserSession.Pointer.MOUSE) {
+        page = BrowserSession(connection, policy, BrowserSession.Pointer.MOUSE, confirm = {
             confirmations += it; delay(confirmDelayMs); duringApproval?.invoke(); approve
-        }
+        })
         page.start(); page.open(fixtureUrl)
         gateway = WebToolGateway(host(page))
         gateway.beginRun("test", directory)

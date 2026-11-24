@@ -499,6 +499,7 @@ internal fun SessionRow(
     subtitleColor: Color? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
     var renameOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleteOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     var renameText by rememberSaveable(session.id) { mutableStateOf(session.title) }
@@ -579,6 +580,15 @@ internal fun SessionRow(
                     },
                 )
                 DropdownMenuItem(
+                    text = { Text("Copy chat ID") },
+                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        // Labelled, so a chat it is pasted into knows to read it with session_agents.
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(chatIdText(session.id)))
+                    },
+                )
+                DropdownMenuItem(
                     text = { Text("Delete") },
                     leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
                     onClick = {
@@ -634,6 +644,9 @@ internal fun SessionRow(
         )
     }
 }
+
+/** What "Copy chat ID" puts on the clipboard: the ID, named for the chat it is pasted into. */
+internal fun chatIdText(sessionId: String) = "Mike chat ID: $sessionId"
 
 /** How far from the end the chat must be scrolled before "Jump to latest" appears. */
 private val JUMP_BUTTON_DISTANCE = 96.dp

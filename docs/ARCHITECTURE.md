@@ -1067,6 +1067,16 @@ shows its own gate first, then waiting descendants in tree order. Stop fences
 pending setup before interrupting the source subtree. An unrelated root stays
 running. No agent may answer a child's approval on the user's behalf.
 
+**Reading other chats (2026-11-24).** Modes `chats` and `read` (`ChatReader`)
+are not scoped to the subtree: any chat may list, search and read any local
+Mike chat, read-only. `chats` lists chats newest first, and with `query`
+matches titles and user/assistant words with a snippet. `read` takes
+`sessionId` or `chat` (a pasted line holding an ID, or a title; ambiguous titles
+are refused with candidates) and pages by `offset`/`nextOffset` within
+`maxChars`. The chat long-press menu has "Copy chat ID", which copies
+`Mike chat ID: <uuid>` for pasting into another chat. Read text is quoted data,
+never instructions or permission. Computer-only threads are not covered.
+
 The chat shows live child cards and a child-list sheet. Tapping a card opens
 the same normal session; its parent banner returns to the source. The library
 also shows each child's parent. Legacy `computers.start_task` receipts use the
@@ -1421,8 +1431,14 @@ GitHub's router was seen on Xiaomi and on the hosting phone keeping the Issues
 view under the repository address. The remedy is `reload`, not more waiting.
 
 **Network and permissions.** The host disables file/content access, script
-popups, automatic downloads, uploads, third-party cookies, and camera/microphone
-grants. URL checks block non-web schemes, local literals/names, private and
+popups, automatic downloads, third-party cookies, and camera/microphone
+grants. Uploads (2026-11-24) go only through operation `upload`: files must be
+inside the chat's own folder (real paths, so links cannot leave it), at most 10
+files of 100 MB each, and every upload needs the user's approval naming the
+site, files and control. The files are armed for exactly one file chooser on
+that page, disarmed in `finally`, and reach the page as FileProvider URIs. Any
+other chooser gets no files; when the user holds the page it opens the system
+picker instead. URL checks block non-web schemes, local literals/names, private and
 reserved ranges (including 0/8, 198.18/15, 240/4 and NAT64 with an embedded
 private IPv4), private DNS answers and unresolved hosts. The host checks
 resource requests, and the app-wide `ServiceWorkerClient` applies the same

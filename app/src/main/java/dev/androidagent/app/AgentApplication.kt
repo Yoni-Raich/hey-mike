@@ -474,6 +474,9 @@ class AgentGraph(private val app: Application) {
                 )
             }
         }
+    }, shareFile = { file ->
+        // Upload: the page reads a chat file through the app's own provider, never a raw path.
+        androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.files", file)
     })
     private fun connectedTools(): dev.androidagent.core.ConnectedAppsGateway {
         lateinit var gateway: dev.androidagent.core.ConnectedAppsGateway
