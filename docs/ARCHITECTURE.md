@@ -14,16 +14,22 @@ directly. The session is opened or loaded with the bound project directory.
 Authentication belongs to the CLI on that computer. Its configured provider
 handles model inference.
 
-Each turn gets its own process, resumes the native session by ID, and receives
-`RemoteInstructions` for that computer. ACP text carries segment IDs across
-tool boundaries and computer `tool_call` updates emit `ItemActivity` rows.
-Stdout ignores blank or non-JSON lines, and a short redacted stderr tail is
-retained for disconnect diagnostics. Permission requests go to Mike's approval
-flow, accept only a single-use option, redact/cap shown input, and emit
-`ApprovalResolved` on disconnect. Stop sends `session/cancel` with a bounded
-drain before closing the process, finishing as interrupted rather than a
-transport error. Further messages queue during a turn. Computer tools are
-native to Antigravity. Plan mode and compaction are unavailable.
+An open conversation keeps one ACP process and MCP phone bridge warm across
+consecutive turns when cwd, model and tool set match, re-arming a 90-second
+idle timer after each completed turn. Parameter changes, Stop, errors, or idle
+expiry dispose the process and bridge immediately, and phone tool calls are
+refused while idle. Turns receive `RemoteInstructions` for that computer
+(terminated with a newline before the user prompt). ACP text carries segment
+IDs across tool boundaries and computer `tool_call` updates emit `ItemActivity`
+rows. Stdout ignores blank or non-JSON lines, and a short redacted stderr tail
+is retained for disconnect diagnostics. Permission requests go to Mike's
+approval flow, accept only a single-use option, redact/cap shown input, and
+emit `ApprovalResolved` on disconnect. Stop sends `session/cancel` with a
+bounded drain before closing the process, finishing as interrupted rather than
+a transport error. Further messages queue during a turn. Computer tools are
+native to Antigravity. Engine capabilities (`EngineKind.capabilities`) govern
+Plan mode, compaction, steering, computer binding, display names and defaults
+across core and UI.
 
 For each native session open or load, the adapter starts Mike's authenticated
 loopback MCP server on Android with compacted tool schemas (removing duplicated

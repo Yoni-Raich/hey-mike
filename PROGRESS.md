@@ -1,5 +1,23 @@
 # Progress
 
+### Run gates and child outcomes integrated onto dev (PR #158) — 2026-11-24
+
+Integrated PR #158 (`refactor/state-machines-20261110`) onto `origin/dev`
+(including PR #169 and PR #170), dropped the removed `TaskBoard.kt` Manager
+file (#160), and extended `RunInteraction` with `PANEL` / `pendingPanel` so
+`show_ui` panels obey the same live-gate projection across `AgentCoordinator`,
+`AgentRuns`, `SessionAgents`, `ComputerTasks`, `QuestionNotifier`,
+`SessionNotifier`, chat/voice UI, and `RunInteractionTest` /
+`QuestionNoticesTest`.
+
+Checks (temporary worktree `pr158-merge-20261123`, Windows `Pc`):
+- `.\gradlew.bat :core:test :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon --no-configuration-cache`: PASSED (0 lint errors).
+- `.\gradlew.bat :web:testDebugUnitTest :automations:testDebugUnitTest :engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest :mcp-loopback:testDebugUnitTest :runtime:testDebugUnitTest :workspace:testDebugUnitTest :device-tools:testDebugUnitTest :adb:testDebugUnitTest :overlay:testDebugUnitTest :voice:testDebugUnitTest :voice:lintDebug :overlay:lintDebug --no-daemon --no-configuration-cache`: PASSED.
+- `python -m unittest tools.test_prepare_runtime tools.test_codex_runtime` (24 OK), `python .agents/skills/repo-maintenance/scripts/test_ci_history.py` (8 OK), `python tools/state_machine_inventory.py --summary` (298 production files, 156 candidate files; all 81 Kotlin filenames named in `docs/STATE_MACHINES.md` exist), `git diff --check`: PASSED.
+
+Remaining gaps:
+- No physical-phone install or live runtime test of the merged PR #169 + PR #158 `dev` state (live cards, notifications, `show_ui` panels, voice, Stop/approval races, or full release gate).
+
 ### Codex 0.171.0 runtime pins — 2026-11-23
 
 - Updated Android ARM64/x86_64, Windows fallback packages, Linux fallback
@@ -32,6 +50,49 @@
 - `copy_file` completed delivery of that APK. Phone installation and live
   model-catalog verification are pending. Wire delta bytes were not measured.
   No full release gate or release-signed APK is claimed.
+
+### Antigravity clean integration refactor — 2026-11-22
+
+Follow-up refactor on top of PR #168 (`060f1edb`) to replace engine-specific
+special cases with shared abstractions and eliminate per-turn Antigravity cold
+starts:
+- **`EngineKind.capabilities` (`:core` `Contracts.kt`)**: centralized engine
+  capability flags (`supportsPlanMode`, `supportsCompact`, `supportsSteer`,
+  `requiresComputer`, `supportsDefaultEngine`, `supportsPersistedChoice`,
+  `usesDisplayNames`, `defaultModelId`, `defaultModelLabel`). Replaced scattered
+  `EngineKind.ANTIGRAVITY` checks across `AgentViewModel`, `ChatComposer`,
+  `ComposerCommands`, `EngineChoices`, and `SessionAgentSetup`.
+- **Unified computer model catalogs**: replaced separate `claudeModels` /
+  `antigravityModels` parameters in `EngineChoices.offered(...)` with a single
+  `computerModels: Map<EngineKind, List<AgentModel>>`, and consolidated
+  `AgentViewModel`'s separate Antigravity catalog/not-installed/timestamp maps
+  into `computerCatalogs[computerId to engine]`.
+- **Warm idle ACP peer reuse (`AntigravityEngine`)**: completed turns (`end_turn`)
+  now keep the ACP process and MCP phone bridge warm across consecutive turns
+  while `cwd`, model and tool set match, re-arming a 90-second idle timer after
+  each turn (refusing phone tool calls while idle). Parameter changes, Stop,
+  errors, or idle expiry dispose the peer and bridge immediately. Also added
+  trailing newlines to the instructions and runtime-context/enum-hint blocks so
+  context never glues onto the user prompt.
+- **Dynamic `session_agents` engine schema (`SessionAgents.kt`)**: derived the
+  `engine` enum and refusal message from `EngineKind.entries` so `"antigravity"`
+  is advertised alongside `"codex"` and `"claude"`.
+
+Checks (worktree `refactor/antigravity-clean-integration-20261122`, Windows `Pc`, `MIKE_TEST_PYTHON` set):
+- `.\gradlew.bat :core:test :mcp-loopback:test :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+  **PASSED** (`2m 32s`). XML totals: `:core` 1,027 tests (0 fail, 0 skip),
+  `:mcp-loopback` 15 tests (0 fail, 0 skip), `:remote` 178 tests (0 fail, 4
+  skip), `:app` 212 tests (0 fail, 0 skip) — **1,428 passed, 4 skipped, 0
+  failed**; `:app:lintDevDebug` passed (0 errors); `app-dev-debug.apk`
+  (`dev.androidagent.app.dev`, 341,025,427 bytes, SHA-256
+  `82eab21cac62bdc0d7c09779e26af417f536fd15f7cd15a006e4c2c2eb9081c9`) assembled.
+- `git diff --check`: passed.
+
+Remaining gaps:
+- Warm ACP peer reuse across consecutive turns on a physical phone (including
+  mid-chat model switch and 90-second idle teardown) has been verified by unit
+  tests only, not yet installed and run live on a phone.
+- Live Linux (`Server`) Antigravity turn and full release gate remain untested.
 
 ### Antigravity MCP 41/41 phone tool schema fit — 2026-11-22
 
@@ -738,6 +799,7 @@ personal-data access. Existing main-checkout and other-worktree edits were kept.
 Worktree retained for review: `.claude/worktrees/state-machines-20261110`;
 build bucket: `build/67ed9d1458123e9b`; logs and copied XML results:
 `%TEMP%/hey-mike/state-machines-codex-20261110/`.
+
 ### Chat improvements integrated into dev — 2026-11-09
 
 Integrated PR #156 (Claude background/wake cycles, late child updates and native

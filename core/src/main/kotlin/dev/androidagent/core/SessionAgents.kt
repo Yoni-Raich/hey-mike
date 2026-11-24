@@ -204,7 +204,7 @@ class SessionAgents(
         val title = args.required("title").also { require(it.length <= 80) { "Title is too long." } }
         val parent = sessions.getSession(origin) ?: error("Source chat no longer exists.")
         val engine = args.string("engine")?.let { name -> EngineKind.entries.firstOrNull { it.name.equals(name, true) }
-            ?: error("Use codex or claude.") } ?: parent.engine
+            ?: error("Use ${EngineKind.entries.joinToString(", ") { it.name.lowercase() }}.") } ?: parent.engine
         val model = args.string("model")
         val effort = args.string("reasoningEffort")
         val computer = args.string("computer")
@@ -441,7 +441,10 @@ object SessionAgentTools {
             put("properties", buildJsonObject {
                 put("mode", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { listOf("options", "start", "list", "status", "message", "cancel", "open").forEach { add(it) } }) })
                 listOf("title", "task", "requestId", "taskId", "sessionId", "message", "messageId", "model", "reasoningEffort", "computer", "project").forEach { name -> put(name, buildJsonObject { put("type", "string") }) }
-                put("engine", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { add("codex"); add("claude") }) })
+                put("engine", buildJsonObject {
+                    put("type", "string")
+                    put("enum", buildJsonArray { EngineKind.entries.forEach { add(it.name.lowercase()) } })
+                })
             })
             put("required", buildJsonArray { add("mode") })
         }))

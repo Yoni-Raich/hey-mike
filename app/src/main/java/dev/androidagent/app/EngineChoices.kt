@@ -24,6 +24,7 @@ import dev.androidagent.core.AgentModel
 import dev.androidagent.core.ChatSession
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.UsageLimit
+import dev.androidagent.core.capabilities
 
 /**
  * One engine's model list and the user's pick from it.
@@ -88,17 +89,23 @@ data class EngineChoices(
     fun withLimits(kind: EngineKind, limits: List<UsageLimit>) = copy(quotas = quotas + (kind to limits))
 
     /**
-     * One list for the model menu: the models of each engine in [kinds], Codex
-     * first. [claudeModels] replaces the phone's Claude list for a chat whose
-     * Claude runs somewhere else: a computer offers the models of its own
-     * Claude Code.
+     * One list for the model menu: the models of each engine in [kinds], in
+     * [EngineKind] order. [computerModels] replaces an engine's phone list for
+     * a chat whose engine runs on a saved computer.
      */
-    fun offered(kinds: Collection<EngineKind>, claudeModels: List<AgentModel>? = null, antigravityModels: List<AgentModel> = emptyList()): List<AgentModel> =
-        EngineKind.entries.filter { it in kinds }.flatMap { kind ->
-            if (kind == EngineKind.ANTIGRAVITY) return@flatMap listOf(AgentModel("antigravity", "Computer default", engine = kind)) + antigravityModels
-            val catalog = claudeModels?.takeIf { kind == EngineKind.CLAUDE } ?: of(kind).catalog
-            catalog.map { if (it.engine == kind) it else it.copy(engine = kind) }
+    fun offered(
+        kinds: Collection<EngineKind>,
+        computerModels: Map<EngineKind, List<AgentModel>> = emptyMap(),
+    ): List<AgentModel> = EngineKind.entries.filter { it in kinds }.flatMap { kind ->
+        val cap = kind.capabilities
+        val defaultEntry = if (cap.defaultModelId != null && cap.defaultModelLabel != null) {
+            listOf(AgentModel(cap.defaultModelId!!, cap.defaultModelLabel!!, engine = kind))
+        } else {
+            emptyList()
         }
+        val catalog = computerModels[kind] ?: of(kind).catalog
+        defaultEntry + catalog.map { if (it.engine == kind) it else it.copy(engine = kind) }
+    }
 }
 
 /** What a chat's engine decides in the app. */

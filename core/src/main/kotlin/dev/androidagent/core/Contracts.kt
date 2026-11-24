@@ -163,6 +163,53 @@ val EngineKind.label: String
         EngineKind.ANTIGRAVITY -> "Antigravity"
     }
 
+/** Intrinsic capabilities of an [EngineKind] shared across core, remote and UI. */
+data class EngineCapabilities(
+    val supportsPlanMode: Boolean,
+    val supportsCompact: Boolean,
+    val supportsSteer: Boolean,
+    val requiresComputer: Boolean,
+    val supportsDefaultEngine: Boolean,
+    val supportsPersistedChoice: Boolean,
+    val usesDisplayNames: Boolean,
+    val defaultModelId: String? = null,
+    val defaultModelLabel: String? = null,
+)
+
+/** Capability descriptor for each engine, replacing scattered engine-kind branches. */
+val EngineKind.capabilities: EngineCapabilities
+    get() = when (this) {
+        EngineKind.CODEX -> EngineCapabilities(
+            supportsPlanMode = true,
+            supportsCompact = true,
+            supportsSteer = true,
+            requiresComputer = false,
+            supportsDefaultEngine = true,
+            supportsPersistedChoice = true,
+            usesDisplayNames = false,
+        )
+        EngineKind.CLAUDE -> EngineCapabilities(
+            supportsPlanMode = true,
+            supportsCompact = true,
+            supportsSteer = true,
+            requiresComputer = false,
+            supportsDefaultEngine = true,
+            supportsPersistedChoice = true,
+            usesDisplayNames = true,
+        )
+        EngineKind.ANTIGRAVITY -> EngineCapabilities(
+            supportsPlanMode = false,
+            supportsCompact = false,
+            supportsSteer = false,
+            requiresComputer = true,
+            supportsDefaultEngine = false,
+            supportsPersistedChoice = false,
+            usesDisplayNames = true,
+            defaultModelId = "antigravity",
+            defaultModelLabel = "Computer default",
+        )
+    }
+
 /**
  * Launches the official, unmodified Claude Code binary on this phone.
  *

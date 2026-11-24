@@ -11,10 +11,11 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-/** One ACP process per open conversation. The computer owns the files and the native session. */
+/** One ACP process per open conversation, reused while idle across consecutive turns. The computer owns the files and the native session. */
 internal class AntigravityEngine(
     private val phoneBridge: (suspend (List<ToolDefinition>, PhoneCall) -> AcpPhoneBridge)? = null,
     private val instructions: () -> String = { DEFAULT_INSTRUCTIONS },
+    private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
     private val launch: suspend (String) -> Process,
 ) : AgentEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -27,10 +28,15 @@ internal class AntigravityEngine(
 
     private inner class Permission(val peer: Peer, val id: JsonElement, val once: String?, val chat: String, val turn: String)
 
-    private inner class Peer(val process: Process) {
+    private inner class Peer(
+        val process: Process,
+        val cwd: String,
+        val modelSlug: String?,
+        val toolsSignature: List<ToolDefinition>,
+    ) {
         val waiting = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
         val serial = AtomicLong()
-        val promptDone = CompletableDeferred<Unit>()
+        @Volatile var promptDone: CompletableDeferred<Unit> = CompletableDeferred<Unit>().apply { complete(Unit) }
         private val writeLock = Any()
         private val writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
         private val stderrLines = ArrayDeque<String>()
@@ -57,23 +63,57 @@ internal class AntigravityEngine(
         fun toolPromptHint(): String = synchronized(this) { bridge?.promptHint.orEmpty() }
 
         fun armIdleTimer(job: Job) {
+            val previous: Job?
             val cancelNow = synchronized(this) {
-                if (closed || turn != null) true else {
+                if (closed || turn != null) {
+                    previous = null
+                    true
+                } else {
+                    previous = idleTimer
                     idleTimer = job
                     false
                 }
             }
+            previous?.cancel()
             if (cancelNow) job.cancel()
         }
 
-        fun claimTurn(nextTurn: String) {
+        fun tryReuse(cwd: String, modelSlug: String?, tools: List<ToolDefinition>): Boolean {
+            val timer = synchronized(this) {
+                if (closed || cancelled || turn != null || !process.isAlive) return false
+                if (this.cwd != cwd || this.modelSlug != modelSlug || this.toolsSignature != tools) return false
+                idleTimer.also { idleTimer = null }
+            }
+            timer?.cancel()
+            return true
+        }
+
+        fun claimTurn(nextTurn: String): CompletableDeferred<Unit> {
+            val done = CompletableDeferred<Unit>()
             val timer = synchronized(this) {
                 check(!closed) { "Reopen this Antigravity session." }
                 check(turn == null) { "A turn is already running." }
                 turn = nextTurn
+                promptDone = done
                 idleTimer.also { idleTimer = null }
             }
             timer?.cancel()
+            return done
+        }
+
+        fun finishTurn(expectedTurn: String): Boolean {
+            val (done, keepWarm) = synchronized(this) {
+                if (turn == expectedTurn) turn = null
+                promptDone to (!closed && !cancelled && process.isAlive)
+            }
+            toolTitles.clear()
+            done.complete(Unit)
+            return keepWarm
+        }
+
+        fun disposeIfIdle() {
+            val shouldDispose = synchronized(this) { !closed && turn == null }
+            if (shouldDispose) dispose()
         }
 
         suspend fun callPhone(name: String, arguments: JsonObject): ToolResult {
@@ -274,7 +314,18 @@ internal class AntigravityEngine(
 
     suspend fun openAt(cwd: String, previous: String?, tools: List<ToolDefinition> = emptyList(), model: String? = null): String = withContext(Dispatchers.IO) {
         require(previous == null || previous.startsWith(PREFIX)) { "Invalid Antigravity session." }
-        val peer = Peer(launch(cwd))
+        val slug = AntigravityModels.slug(model)
+        if (previous != null) {
+            chats[previous]?.let { existing ->
+                if (existing.tryReuse(cwd, slug, tools)) {
+                    existing.armIdleTimer(scope.launch { delay(idleTimeoutMs); existing.disposeIfIdle() })
+                    return@withContext previous
+                }
+                check(existing.turn == null) { "Antigravity already has this conversation open." }
+                existing.dispose()
+            }
+        }
+        val peer = Peer(launch(cwd), cwd, slug, tools)
         peers.add(peer)
         try {
             peer.read()
@@ -293,10 +344,10 @@ internal class AntigravityEngine(
                     previous?.let { put("sessionId", it.removePrefix(PREFIX)) }
                 })
                 val thread = previous ?: PREFIX + checkNotNull(reply.str("sessionId")?.takeIf { it.isNotBlank() }) { "Missing Antigravity session ID." }
-                AntigravityModels.slug(model)?.let { selectModel(peer, thread.removePrefix(PREFIX), reply, it) }
+                slug?.let { selectModel(peer, thread.removePrefix(PREFIX), reply, it) }
                 peer.thread = thread
                 check(chats.putIfAbsent(thread, peer) == null) { "Antigravity already has this conversation open." }
-                peer.armIdleTimer(scope.launch { delay(90_000); if (peer.turn == null) peer.dispose() })
+                peer.armIdleTimer(scope.launch { delay(idleTimeoutMs); peer.disposeIfIdle() })
                 thread
             } ?: error("Antigravity did not open this session within a minute. Check agy on the computer.")
         } catch (e: Throwable) { peer.dispose(); throw e }
@@ -343,7 +394,7 @@ internal class AntigravityEngine(
                 val content = buildJsonArray {
                     add(buildJsonObject {
                         put("type", "text")
-                        put("text", instructions())
+                        put("text", instructions().trimEnd() + "\n")
                     })
                     val hint = peer.toolPromptHint()
                     if (capabilities != null) {
@@ -356,12 +407,13 @@ internal class AntigravityEngine(
                                     append('\n')
                                     append(hint)
                                 }
+                                append('\n')
                             })
                         })
                     } else if (hint.isNotBlank()) {
                         add(buildJsonObject {
                             put("type", "text")
-                            put("text", hint)
+                            put("text", hint.trimEnd() + "\n")
                         })
                     }
                     add(buildJsonObject { put("type", "text"); put("text", prompt) })
@@ -384,11 +436,15 @@ internal class AntigravityEngine(
                     reason == "end_turn" -> "completed"
                     else -> "failed"
                 }
-                peer.promptDone.complete(Unit)
-                peer.dispose()
+                val keepWarm = peer.finishTurn(turn)
+                if (status == "completed" && keepWarm) {
+                    peer.armIdleTimer(scope.launch { delay(idleTimeoutMs); peer.disposeIfIdle() })
+                } else {
+                    peer.dispose()
+                }
                 stream.emit(EngineEvent.TurnFinished(status, if (status == "failed") "Antigravity stopped: $reason" else null, threadId, turn))
             } catch (e: Exception) {
-                peer.promptDone.complete(Unit)
+                peer.finishTurn(turn)
                 peer.dispose()
                 if (peer.cancelled) {
                     stream.emit(EngineEvent.TurnFinished("interrupted", null, threadId, turn))
@@ -447,6 +503,7 @@ internal class AntigravityEngine(
             "You are Mike in an Android chat. Antigravity runs on the user's computer in the selected project. " +
                 "Use the computer's tools and follow its project instructions. Answer in the user's language. " +
                 "Ask before deleting user data, sending externally, or spending money."
+        private const val DEFAULT_IDLE_TIMEOUT_MS = 90_000L
         private const val MAX_IMAGE_BYTES = 20L * 1024 * 1024
         private const val MAX_STDERR_LINES = 16
         private const val MAX_STDERR_SUMMARY_CHARS = 500

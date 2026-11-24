@@ -43,7 +43,7 @@ turn/epoch checks still fence dispatch; failed transport releases the claim.
 
 ## Discovery and limits
 
-The scan at this revision covers 312 production source files and flags 168
+The scan at this revision covers 298 production source files and flags 156
 candidate files. Many files share a machine, so that is not a machine count.
 Run `python tools/state_machine_inventory.py` for source paths and evidence
 line numbers, or add `--summary` for counts. It scans tracked production

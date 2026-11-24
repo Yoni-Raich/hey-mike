@@ -112,16 +112,21 @@ class EngineChoicesTest {
         assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX)).map { it.id })
     }
 
-    @Test fun aComputerChatIsOfferedTheModelsOfThatComputersClaude() {
+    @Test fun aComputerChatIsOfferedTheModelsOfThatComputersEngines() {
         val engines = EngineChoices()
             .update(EngineKind.CODEX) { it.withCatalog(listOf(AgentModel("gpt-5"))) }
             .update(EngineKind.CLAUDE) { it.withCatalog(listOf(sonnet)) }
-        val onComputer = listOf(AgentModel("opus", "Opus 5.5", engine = EngineKind.CLAUDE))
+        val onComputerClaude = listOf(AgentModel("opus", "Opus 5.5", engine = EngineKind.CLAUDE))
+        val onComputerAgy = listOf(AgentModel("agy/gemini-4-neon-high", "Gemini 4 Neon (High)", engine = EngineKind.ANTIGRAVITY))
 
-        // Codex's models stay the phone's; Claude's are the computer's own.
-        assertEquals(listOf("gpt-5", "opus", "antigravity"), engines.offered(EngineKind.entries, claudeModels = onComputer).map { it.id })
-        // A computer without Claude: its list is not asked for at all.
-        assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX), claudeModels = onComputer).map { it.id })
+        // Codex's models stay the phone's; Claude and Antigravity use the computer's catalogs.
+        val offered = engines.offered(
+            EngineKind.entries,
+            computerModels = mapOf(EngineKind.CLAUDE to onComputerClaude, EngineKind.ANTIGRAVITY to onComputerAgy),
+        )
+        assertEquals(listOf("gpt-5", "opus", "antigravity", "agy/gemini-4-neon-high"), offered.map { it.id })
+        // A computer without Claude or Antigravity: those catalogs are omitted.
+        assertEquals(listOf("gpt-5"), engines.offered(setOf(EngineKind.CODEX), computerModels = mapOf(EngineKind.CLAUDE to onComputerClaude)).map { it.id })
     }
 
     @Test fun aModelIsTaggedWithTheEngineWhoseListItIsIn() {

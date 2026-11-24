@@ -10,6 +10,23 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionAgentsTest {
+    @Test fun toolSchemaListsAllEnginesAndCapabilitiesMatchEngineContracts() {
+        val def = SessionAgentTools.DEFINITIONS.single()
+        val engineEnum = def.inputSchema["properties"]!!.jsonObject["engine"]!!.jsonObject["enum"]!!.jsonArray
+            .map { it.jsonPrimitive.content }
+        assertEquals(listOf("codex", "claude", "antigravity"), engineEnum)
+        assertTrue(EngineKind.CODEX.capabilities.supportsPlanMode)
+        assertTrue(EngineKind.CODEX.capabilities.supportsCompact)
+        assertFalse(EngineKind.CODEX.capabilities.usesDisplayNames)
+        assertTrue(EngineKind.CLAUDE.capabilities.usesDisplayNames)
+        assertFalse(EngineKind.ANTIGRAVITY.capabilities.supportsPlanMode)
+        assertFalse(EngineKind.ANTIGRAVITY.capabilities.supportsCompact)
+        assertFalse(EngineKind.ANTIGRAVITY.capabilities.supportsSteer)
+        assertTrue(EngineKind.ANTIGRAVITY.capabilities.requiresComputer)
+        assertEquals("antigravity", EngineKind.ANTIGRAVITY.capabilities.defaultModelId)
+        assertEquals("Computer default", EngineKind.ANTIGRAVITY.capabilities.defaultModelLabel)
+    }
+
     @Test fun stoppingAndTerminalUpdatesClearOldUserGates() = runTest {
         val rig = Rig(this); runCurrent()
         rig.agents.invoke("root", start()) { true }; runCurrent()
