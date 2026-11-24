@@ -67,8 +67,8 @@ internal object SessionNotices {
     }
 
     private fun line(state: RunState): String = when {
-        state.approval != null -> "Waiting for your approval"
-        state.question != null || state.panel != null -> "Waiting for your answer"
+        state.pendingApproval != null -> "Waiting for your approval"
+        state.pendingQuestion != null || state.pendingPanel != null -> "Waiting for your answer"
         else -> state.status.ifBlank { "Working" }
     }
 
@@ -79,7 +79,7 @@ internal object SessionNotices {
     ): Map<String, Pair<String, EngineEvent.Approval>> {
         val result = LinkedHashMap<String, Pair<String, EngineEvent.Approval>>()
         states.forEach { (chat, state) ->
-            val approval = state.approval?.takeIf { state.active } ?: return@forEach
+            val approval = state.pendingApproval ?: return@forEach
             result[approval.requestId] = owner(chat) to approval
         }
         return result

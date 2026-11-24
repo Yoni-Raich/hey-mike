@@ -46,7 +46,7 @@ internal object QuestionNotices {
     fun waiting(states: Map<String, RunState>, owner: (String) -> String, order: (String) -> Int): Map<String, UserQuestion> {
         val waiting = linkedMapOf<String, UserQuestion>()
         states.entries.sortedWith(compareBy({ owner(it.key) != it.key }, { order(it.key) })).forEach { (chat, run) ->
-            (run.question ?: run.panel?.let(::panelNotice))?.let { waiting.putIfAbsent(owner(chat), it) }
+            (run.pendingQuestion ?: run.pendingPanel?.let(::panelNotice))?.let { waiting.putIfAbsent(owner(chat), it) }
         }
         return waiting
     }
@@ -93,7 +93,7 @@ class QuestionNotifier(
         scope.launch {
             combine(runs.sessionStates, appInFront, openChat) { states, front, open ->
                 val waiting = QuestionNotices.waiting(states, conversationOwner, conversationOrder)
-                val visible = if (front && open != null) runs.sourceState(open).let { it.question?.id ?: it.panel?.id } else null
+                val visible = if (front && open != null) runs.sourceState(open).let { it.pendingQuestion?.id ?: it.pendingPanel?.id } else null
                 QuestionNotices.due(waiting, front, open).filterValues { it.id != visible }
             }.distinctUntilChanged().collect { due -> show(due) }
         }

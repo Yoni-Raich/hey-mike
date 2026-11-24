@@ -13,6 +13,24 @@ import java.io.File
 /** Several chats at once: each runs on its own, and the phone goes to one of them at a time. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentRunsTest {
+    @Test fun sourceStopClosesTheDelegatedQuestionAndReplyRoute() = runTest {
+        val rig = Rig(this); runCurrent()
+        rig.runs.send("one", "Parent work")
+        rig.runs.sendChild("two", "one", "Child work"); runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", ChatTools.ASK,
+            buildJsonObject { put("question", "Which file?") }, "thread-two", "turn-thread-two"))
+        runCurrent()
+        val question = rig.runs.sourceState("one").pendingQuestion!!
+        assertEquals("Which file?", question.question)
+        rig.runs.stop("one")
+        val stopped = rig.runs.sourceState("one")
+        assertEquals(RunPhase.STOPPING, stopped.phase)
+        assertNull(stopped.question); assertNull(stopped.approval)
+        assertFalse(rig.runs.answerQuestionByReply("A", "one"))
+        assertFalse(rig.runs.answerQuestion(question.id, "A"))
+        runCurrent(); rig.close()
+    }
+
     @Test fun childMessageBeforeStartReplyIsRefusedWithoutReservingItsRetryKey() = runTest {
         val rig = Rig(this); runCurrent()
         rig.engine.startGates["thread-child1"] = CompletableDeferred()
@@ -319,6 +337,7 @@ class AgentRunsTest {
         assertTrue(rig.runs.stateOf("three")!!.active)
         assertFalse(rig.engine.closed)
         assertEquals("Stopped", rig.runs.outcomes.value["two"]!!.status)
+        assertEquals(RunOutcome.STOPPED, rig.runs.outcomes.value["two"]!!.outcome)
         rig.close()
     }
 

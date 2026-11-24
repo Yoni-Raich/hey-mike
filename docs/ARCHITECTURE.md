@@ -632,6 +632,29 @@ phone Claude chats. There is no automatic mail polling, task discovery or team
 workflow in this feature. Source and UI fixture checks are recorded in
 [`account-connections-20261112/README.md`](testing/account-connections-20261112/README.md).
 
+## Run gates and child task outcomes — 2026-11-10 (integrated 2026-11-24)
+
+`core/Contracts.kt` separates execution (`RunPhase`), a live user request
+(`RunInteraction`) and a terminal result (`RunOutcome`). Consumers use
+`pendingApproval`, `pendingQuestion` and `waitingForUser`; raw payloads retained
+after failure, completion or Stop are not live requests. Approval wins over a
+question, and a question wins over a show_ui panel in the same run. Source projections strip old gates before showing a
+child as active, so changing the presentation phase cannot revive an old card.
+
+`AgentTaskStatus` maps run state to the same typed status for phone and computer
+children, UI cards and voice updates. Receipts keep their existing
+strings and schemas: computer `cancelling` and phone `stopping` both mean
+`STOPPING`. Unknown stored words remain nonterminal. Run outcomes use explicit
+interruption and uncertainty fields, never English display text. An unknown
+remote outcome still requires inspection and never authorizes replacement work.
+
+The coordinator claims an engine approval answer under its lifecycle lock before
+asynchronous transport. Repeated answers cannot dispatch twice, and epoch/turn
+checks still apply before dispatch. Local approvals reject a second decision
+before changing remembered grants. Question/session notifications and chat/voice cards
+use the same live-gate projection. See [the machine inventory](STATE_MACHINES.md)
+for owners, source-scan limits and domains outside this branch.
+
 ## Shared tool helpers in core — 2026-11-08
 
 Text the model sees from more than one backend or engine has one owner in

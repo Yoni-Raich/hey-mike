@@ -287,8 +287,8 @@ fun AndroidAgentScreen(
         }
         // A panel opens over the composer: the keyboard the composer had would
         // only push it up. A field in the panel brings the keyboard back.
-        LaunchedEffect(state.runState.panel?.id) {
-            if (state.runState.panel != null) {
+        LaunchedEffect(state.runState.pendingPanel?.id) {
+            if (state.runState.pendingPanel != null) {
                 focusManager.clearFocus()
                 keyboard?.hide()
             }
@@ -392,7 +392,7 @@ fun AndroidAgentScreen(
                         state.activeBrowserPage()?.let { page ->
                             BrowserPageCard(page, onOpen = actions.onOpenBrowser, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                         }
-                        state.runState.approval?.let { approval ->
+                        state.runState.pendingApproval?.let { approval ->
                             ApprovalCard(
                                 approval = approval,
                                 onApproval = actions.onApproval,
@@ -400,14 +400,14 @@ fun AndroidAgentScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
-                        state.runState.question?.let { question ->
+                        state.runState.pendingQuestion?.let { question ->
                             QuestionCard(
                                 question = question,
                                 onAnswer = actions.onAnswerQuestion,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
-                        state.runState.panel?.let { panel ->
+                        state.runState.pendingPanel?.let { panel ->
                             AgentPanelCard(
                                 panel = panel,
                                 state = state,

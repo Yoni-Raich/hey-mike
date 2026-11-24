@@ -377,7 +377,7 @@ class AgentVoiceInteractionSession(private val context: Context) : VoiceInteract
     private fun content(voice: VoiceState, muted: Boolean, line: VoiceTranscript, run: RunState, phase: String?, error: String?): PanelContent = when {
         error != null -> PanelContent(error, tone = PanelTone.ERROR)
         !voice.active -> PanelContent(phase ?: voice.message, tone = PanelTone.WAKING)
-        run.approval != null -> PanelContent("Mike needs your OK: say yes or no", line.text, PanelTone.WORKING, muted, live = true)
+        run.pendingApproval != null -> PanelContent("Mike needs your OK: say yes or no", line.text, PanelTone.WORKING, muted, live = true)
         run.controlling -> PanelContent(run.status, line.text, PanelTone.CONTROLLING, muted, live = true)
         run.tool != null || run.status.startsWith("Working") -> PanelContent(run.status, line.text, PanelTone.WORKING, muted, live = true)
         muted -> PanelContent("Muted", line.text, PanelTone.LISTENING, muted = true, live = true)
