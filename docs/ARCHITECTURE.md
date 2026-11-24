@@ -6,6 +6,17 @@ Computer chats offer the host default plus the models listed by `agy models`
 for that computer (hidden for computers where `agy` is confirmed not installed).
 Mike reads the list in one SSH command when opening the chat or model picker
 and applies the selected model through ACP when opening or resuming a session.
+Quota for Antigravity chats is read per computer through `agy -p /usage
+--output-format json --print-timeout 15s` over an isolated SSH channel (a
+read-only print-mode slash command that starts no turn and spends no tokens).
+`AntigravityUsage` maps each model group's rolling windows (`5h`, `weekly`) into
+`UsageLimit` entries (`usedPercent` from `1 - remaining_fraction`, dropping
+epoch-0 reset timestamps for unstarted windows). Readings are cached on disk per
+computer in `antigravity-usage.json` (`AccountUsageBook`), refreshed on chat
+open/resume, on Antigravity turn completion, and on manual Refresh usage, and
+surfaced in the top-bar orb ring (narrowed to the selected Antigravity model
+group when unambiguous), status sheet, Settings > Usage, `/status`, and the home
+screen usage widget.
 Selecting an Antigravity model uses the same per-engine history and handoff as
 the other engines. The Android app starts `agy acp` over the computer's pinned
 SSH connection. Windows uses the existing stdio relay in an Antigravity-scoped

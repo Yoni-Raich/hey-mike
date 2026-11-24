@@ -1,5 +1,43 @@
 # Progress
 
+### Antigravity quota usage per computer — 2026-11-24
+
+- Added Antigravity quota reading over SSH via `agy -p /usage --output-format json --print-timeout 15s`
+  (non-interactive print mode: zero turns, zero tokens, no conversation created).
+  `RemoteHub.antigravityUsage` shares Windows/Linux `agy` CLI lookup and error
+  handling with `antigravityModels`; `AntigravityUsage.parse` maps each model
+  group's rolling windows (`5h`, `weekly`, generic durations, and TSV fallback)
+  to `UsageLimit` (`usedPercent = (1 - remaining_fraction) * 100`, dropping
+  epoch-0 reset timestamps for unstarted windows).
+- Cached readings per computer in `antigravity-usage.json` (`AccountUsageBook`
+  with new `remove` support when a computer is deleted). `AgentViewModel` loads
+  saved readings at startup, refreshes automatically on Antigravity chat
+  open/resume (60 s throttle), on Antigravity `TurnFinished`, and on manual
+  `Refresh usage` (also wired Settings > Usage's refresh button to
+  `onRefreshUsage` instead of Codex-only `onRefreshAccount`).
+- Surfaced Antigravity usage in the top-bar orb ring (narrowed to the selected
+  Antigravity model's quota group via `activeUsagePrimary` when unambiguous,
+  falling back to the fullest window), status sheet (with computer name and
+  reading age), Settings > Usage, `/status`, and the home screen `UsageWidget`
+  (via `AntigravityAccountUsage` in `AccountUsageOverview.rows`).
+- Verified the exact Windows PowerShell 5.1 command live against installed
+  `agy 1.5.14` on `Pc` (exit 0, valid JSON with Gemini and Claude & GPT groups).
+- Checks (worktree `feat/antigravity-usage-20261124`, Windows `Pc`,
+  `MIKE_TEST_AGY=C:\Users\SHIRA\AppData\Local\agy\bin\agy.EXE`):
+  - `.\gradlew.bat :core:test :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+    **PASSED** (`1m 17s`). XML totals: `:core` 1,030 tests (0 fail, 0 skip),
+    `:remote` 184 tests (0 fail, 4 skip; `AntigravityUsageTest` 6/6 including live
+    `installedCliReportsStructuredUsageWhenSignedIn`), `:app` 214 tests (0 fail,
+    0 skip) — **1,424 passed, 4 skipped, 0 failed**. `:app:lintDevDebug`:
+    0 errors, 23 warnings (unchanged). `app-dev-debug.apk` built
+    (367,009,641 bytes, SHA-256
+    `0a6c1713e9826781e561b3c12cd0b9338258d24beaf1c6a0f9ebb0bae56e9256`); not installed.
+  - `git diff --check`: passed.
+- Remaining gaps:
+  - Not yet installed or verified visually on a physical phone (top-bar orb ring,
+    status sheet, Settings > Usage, and home screen widget rendering).
+  - Linux (`Server`) SSH `agy -p /usage` path and full release gate remain untested.
+
 ### Browser uploads and reading other chats — 2026-11-24
 
 - Browser: new operation `upload` (`files`: 1..10 paths in the chat folder,

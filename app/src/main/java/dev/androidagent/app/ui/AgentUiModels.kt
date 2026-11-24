@@ -114,6 +114,8 @@ data class AgentUiState(
     val queuePaused: Boolean = false,
     val tokenUsage: dev.androidagent.core.TokenUsage? = null,
     val usageLimits: List<dev.androidagent.core.UsageLimit> = emptyList(),
+    /** When the shown quota was last read, for engines whose quota comes from a cached reading (Claude, Antigravity). */
+    val usageReadAtMillis: Long? = null,
     val adbStatus: AdbStatus = AdbStatus(),
     val a11yStatus: A11yStatus = A11yStatus(declaredEnabled = false, connected = false),
     val permissions: DevicePermissions = DevicePermissions(),

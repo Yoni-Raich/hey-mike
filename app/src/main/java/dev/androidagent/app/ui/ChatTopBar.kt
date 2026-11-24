@@ -280,7 +280,7 @@ private fun PanelButton(state: AgentUiState, onOpenDrawer: () -> Unit) {
 private fun AgentStatusButton(state: AgentUiState, onClick: () -> Unit) {
     val control = phoneControl(state.a11yStatus.connected, state.adbStatus.phase, state.runs.isNotEmpty())
     val windows = remember(state.usageLimits) { UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L) }
-    val primary = remember(windows) { UsageSummary.primary(windows) }
+    val primary = remember(windows, state.activeEngine, state.selectedModel) { activeUsagePrimary(state, windows) }
     val spoken = "${control.sentence()}. ${UsageSummary.spoken(primary)}. Open status and usage"
     Box(
         Modifier
@@ -368,21 +368,31 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
                     },
                 )
             }
-            // The open chat's own account: Codex, or the Claude subscription.
-            StatusLabel("USAGE · ${providerName(state.activeEngine).uppercase()}")
+            // The open chat's own account: Codex, Claude, or the computer's Antigravity.
+            val computerLabel = state.activeSessionId?.let(state.remoteBindings::get)?.computerId
+                ?.let { id -> state.computers.firstOrNull { it.id == id }?.label }
+            val usageTitle = if (state.activeEngine == EngineKind.ANTIGRAVITY && !computerLabel.isNullOrBlank()) {
+                "USAGE · ANTIGRAVITY · ${computerLabel.uppercase()}"
+            } else {
+                "USAGE · ${providerName(state.activeEngine).uppercase()}"
+            }
+            StatusLabel(usageTitle)
             if (windows.isEmpty()) {
                 Text(
-                    if (state.activeEngine == EngineKind.CLAUDE) "Claude shares its 5-hour and weekly limits after your first message."
-                    else "Account quota is not available for this account yet.",
+                    when (state.activeEngine) {
+                        EngineKind.CLAUDE -> "Claude shares its 5-hour and weekly limits after your first message."
+                        EngineKind.ANTIGRAVITY -> "Antigravity quota is not available for this computer yet. Tap Refresh usage to check."
+                        EngineKind.CODEX -> "Account quota is not available for this account yet."
+                    },
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     color = StatusMuted,
                 )
             }
             windows.forEach { window -> UsageWindowRow(window) }
-            // Claude's limits can be a reading saved before a restart: say how old it is.
-            val readAt = state.claude.usageReadAtMillis
-            if (state.activeEngine == EngineKind.CLAUDE && windows.isNotEmpty() && readAt != null) {
+            // Claude and Antigravity limits can be a saved reading: say how old it is.
+            val readAt = state.usageReadAtMillis ?: state.claude.usageReadAtMillis.takeIf { state.activeEngine == EngineKind.CLAUDE }
+            if (state.activeEngine in setOf(EngineKind.CLAUDE, EngineKind.ANTIGRAVITY) && windows.isNotEmpty() && readAt != null) {
                 Text(
                     AccountUsageOverview.readText(readAt, System.currentTimeMillis()),
                     fontSize = 12.sp,

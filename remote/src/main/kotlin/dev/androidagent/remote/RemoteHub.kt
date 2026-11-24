@@ -117,29 +117,46 @@ class RemoteHub(
 
     /** The models come from this computer's actual CLI and sign-in. */
     suspend fun antigravityModels(id: String): List<dev.androidagent.core.AgentModel> = withContext(Dispatchers.IO) {
+        val listing = runAntigravityCli(id, listOf("models"))
+        checkAntigravityCli(id, listing, fallback = "Could not list Antigravity models")
+        AntigravityModels.parse(listing.stdout).ifEmpty { error("Antigravity returned no models.") }
+    }
+
+    /** Current Antigravity quota windows from this computer's CLI (`agy -p /usage`, zero token spend). */
+    suspend fun antigravityUsage(id: String): List<dev.androidagent.core.UsageLimit> = withContext(Dispatchers.IO) {
+        val result = runAntigravityCli(id, listOf("-p", "/usage", "--output-format", "json", "--print-timeout", "15s"))
+        checkAntigravityCli(id, result, fallback = "Could not read Antigravity usage")
+        AntigravityUsage.parse(result.stdout).ifEmpty { error("Antigravity returned no usage data.") }
+    }
+
+    private suspend fun runAntigravityCli(id: String, args: List<String>, timeoutMs: Long = 20_000): ExecResult {
         val host = connection(id)
         val command = if (host.os == HostOs.WINDOWS) {
+            val psArgs = args.joinToString(" ") { "'" + it.replace("'", "''") + "'" }
             WindowsHost.powershell(
                 "[Console]::OutputEncoding = [Text.UTF8Encoding]::new(\$false)\n" +
                     "\$cmd = Get-Command agy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
                     "if (\$cmd) { \$exe = \$cmd.Source } else { \$exe = Join-Path \$env:LOCALAPPDATA 'agy/bin/agy.exe' }\n" +
                     "if (!(Test-Path -LiteralPath \$exe)) { exit 127 }\n" +
-                    "& \$exe models; exit \$LASTEXITCODE"
+                    "& \$exe $psArgs; exit \$LASTEXITCODE"
             )
         } else {
-            "PATH=\"\$HOME/.local/bin:\$PATH\"; export PATH; command -v agy >/dev/null 2>&1 || exit 127; exec agy models"
+            val shArgs = args.joinToString(" ") { "'" + it.replace("'", "'\"'\"'") + "'" }
+            "PATH=\"\$HOME/.local/bin:\$PATH\"; export PATH; command -v agy >/dev/null 2>&1 || exit 127; exec agy $shArgs"
         }
-        val listing = runInterruptible { host.link.isolated().use { it.run(command, timeoutMs = 20_000) } }
-        if (listing.exitCode != 0) {
-            val output = listing.stderr + "\n" + listing.stdout
-            val label = store.computer(id)?.label ?: "the computer"
-            when {
-                listing.exitCode == 127 -> throw AntigravityNotInstalledException("Install agy on $label and sign in.")
-                output.contains("sign in", ignoreCase = true) -> error("Sign in on $label with agy acp --login.")
-                else -> error("Could not list Antigravity models on $label.")
-            }
+        return runInterruptible { host.link.isolated().use { it.run(command, timeoutMs = timeoutMs) } }
+    }
+
+    private fun checkAntigravityCli(id: String, result: ExecResult, fallback: String) {
+        if (result.exitCode == 0) return
+        val output = result.stderr + "\n" + result.stdout
+        val label = store.computer(id)?.label ?: "the computer"
+        when {
+            result.exitCode == 127 -> throw AntigravityNotInstalledException("Install agy on $label and sign in.")
+            output.contains("sign in", ignoreCase = true) || output.contains("authenticat", ignoreCase = true) ->
+                error("Sign in on $label with agy acp --login.")
+            else -> error("$fallback on $label.")
         }
-        AntigravityModels.parse(listing.stdout).ifEmpty { error("Antigravity returned no models.") }
     }
 
     private suspend fun windowsAntigravity(host: Connection, id: String): String {

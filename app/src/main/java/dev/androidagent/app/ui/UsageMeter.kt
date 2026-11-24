@@ -59,10 +59,39 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.androidagent.core.EngineKind
 import dev.androidagent.core.TokenUsage
 import dev.androidagent.core.UsageSummary
 import dev.androidagent.core.UsageWindow
 import kotlin.math.roundToInt
+
+/**
+ * The quota window that constrains the open chat's next message.
+ *
+ * Antigravity splits quota across model groups (Gemini vs. Claude & GPT), so
+ * when a specific Antigravity model is picked, the single-ring summary narrows
+ * to that group's windows and falls back to all windows otherwise.
+ */
+internal fun activeUsagePrimary(state: AgentUiState, windows: List<UsageWindow>): UsageWindow? {
+    if (state.activeEngine == EngineKind.ANTIGRAVITY) {
+        val group = antigravityQuotaGroup(state.selectedModel)
+        if (group != null) {
+            val matching = windows.filter { it.limit.name.startsWith(group, ignoreCase = true) }
+            if (matching.isNotEmpty()) return UsageSummary.primary(matching)
+        }
+    }
+    return UsageSummary.primary(windows)
+}
+
+private fun antigravityQuotaGroup(modelId: String?): String? {
+    val slug = modelId?.trim()?.lowercase()?.removePrefix("agy/")?.takeIf { it.isNotEmpty() && it != "antigravity" }
+        ?: return null
+    return when {
+        slug.startsWith("claude") || slug.startsWith("gpt") -> "Claude"
+        slug.startsWith("gemini") || "orchestrator" in slug -> "Gemini"
+        else -> null
+    }
+}
 
 // Quota lived only as text inside settings, so the number that decides whether
 // the next run will work at all was three taps away. This puts it in the top

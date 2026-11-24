@@ -114,6 +114,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.androidagent.app.update.UpdateStatus
+import dev.androidagent.core.AccountUsageOverview
 import dev.androidagent.core.ConnectionPhase
 import dev.androidagent.core.EngineKind
 import dev.androidagent.core.RunPhase
@@ -124,6 +125,7 @@ import dev.androidagent.core.SetupItem
 import dev.androidagent.core.SetupRow
 import dev.androidagent.core.SetupState
 import dev.androidagent.core.UsageSummary
+import kotlin.math.roundToInt
 
 // Settings are two levels: a hub that answers "what still needs doing", and one
 // page per thing. The old single scroll mixed one-time setup with everyday
@@ -381,8 +383,10 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
         SettingsHubRow(
             icon = SettingsRoute.USAGE.icon(),
             title = SettingsRoute.USAGE.title(),
-            summary = state.usageLimits.firstOrNull()?.usedPercent
-                ?.let { "${(100 - it).toInt()}% of the quota left" }
+            summary = activeUsagePrimary(
+                state,
+                UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L),
+            )?.fraction?.let { "${((1f - it) * 100).roundToInt()}% of the quota left" }
                 ?: "Token usage and account quota",
             onClick = { onOpen(SettingsRoute.USAGE) },
         )
@@ -1288,8 +1292,20 @@ private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActio
     val windows = remember(state.usageLimits) {
         UsageSummary.windows(state.usageLimits, System.currentTimeMillis() / 1000L)
     }
-    if (windows.isEmpty()) Explanation("Account quota is not available for this account yet.")
+    if (windows.isEmpty()) {
+        Explanation(
+            when (state.activeEngine) {
+                EngineKind.CLAUDE -> "Claude shares its 5-hour and weekly limits after your first message."
+                EngineKind.ANTIGRAVITY -> "Antigravity quota is not available for this computer yet. Tap Refresh usage to check."
+                EngineKind.CODEX -> "Account quota is not available for this account yet."
+            },
+        )
+    }
     windows.forEach { window -> UsageWindowRow(window) }
+    val readAt = state.usageReadAtMillis ?: state.claude.usageReadAtMillis.takeIf { state.activeEngine == EngineKind.CLAUDE }
+    if (state.activeEngine in setOf(EngineKind.CLAUDE, EngineKind.ANTIGRAVITY) && windows.isNotEmpty() && readAt != null) {
+        Explanation(AccountUsageOverview.readText(readAt, System.currentTimeMillis()))
+    }
     Text(
         if (usage == null) "Token usage is not available yet." else
             "${usage.total} tokens · ${usage.input} input · ${usage.output} output · ${usage.cachedInput} cached" +
@@ -1298,7 +1314,7 @@ private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActio
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     OutlinedButton(
-        onClick = actions.onRefreshAccount,
+        onClick = actions.onRefreshUsage,
         enabled = !state.isRefreshingAccount,
         modifier = Modifier.fillMaxWidth(),
     ) {

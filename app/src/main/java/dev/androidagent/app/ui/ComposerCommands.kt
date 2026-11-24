@@ -141,7 +141,7 @@ internal fun statusSummary(state: AgentUiState, nowSeconds: Long = System.curren
     val model = state.selectedModel?.let { modelLabel(state, it) } ?: "Default model"
     parts += model + state.selectedReasoningEffort?.let { " · $it" }.orEmpty()
     if (state.planMode) parts += "Plan mode"
-    UsageSummary.primary(UsageSummary.windows(state.usageLimits, nowSeconds))?.let { window ->
+    activeUsagePrimary(state, UsageSummary.windows(state.usageLimits, nowSeconds))?.let { window ->
         window.fraction?.let { used -> parts += "${window.label} ${100 - (used * 100).roundToInt()}% left" }
     }
     val a11y = state.a11yStatus.connected

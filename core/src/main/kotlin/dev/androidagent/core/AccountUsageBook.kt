@@ -60,6 +60,13 @@ class AccountUsageBook(
         write(kept + Entry(accountId, clock(), limits.map(Window::from)))
     }
 
+    /** Drop the saved reading of [accountId], such as when a saved computer is removed. */
+    fun remove(accountId: String) = synchronized(lock) {
+        val current = read()
+        val kept = current.filter { it.accountId != accountId }
+        if (kept.size != current.size) write(kept)
+    }
+
     private fun read(): List<Entry> = runCatching {
         if (file.isFile) json.decodeFromString(Book.serializer(), file.readText()).accounts else emptyList()
     }.getOrDefault(emptyList())
@@ -103,23 +110,42 @@ data class AccountUsageRow(
 /** The signed-in Claude account and the last quota Claude reported for it. */
 data class ClaudeAccountUsage(val label: String, val reading: UsageReading?)
 
+/** One saved computer's last Antigravity quota reading, for the home screen widget. */
+data class AntigravityAccountUsage(val computerId: String, val label: String, val reading: UsageReading)
+
 /** Pure shaping for the usage widget, kept here so it is tested without Android. */
 object AccountUsageOverview {
 
     /** Id of the Claude row. A Codex account id is a generated one, so it cannot be this. */
     const val CLAUDE_ID = "claude"
+    const val ANTIGRAVITY_PREFIX = "antigravity:"
 
     /**
      * One row per saved Codex account, then the Claude account when one is
-     * signed in. Claude has a single sign-in, and its quota can only be read
-     * while a Claude process runs, so its row is always a reading with an age.
+     * signed in, then any computer whose Antigravity quota has been read.
      */
     fun rows(
         vault: AccountVaultState,
         readings: Map<String, AccountUsage>,
         nowMillis: Long,
         claude: ClaudeAccountUsage? = null,
-    ): List<AccountUsageRow> = codexRows(vault, readings, nowMillis) + listOfNotNull(claude?.let { claudeRow(it, nowMillis) })
+        antigravity: List<AntigravityAccountUsage> = emptyList(),
+    ): List<AccountUsageRow> =
+        codexRows(vault, readings, nowMillis) +
+            listOfNotNull(claude?.let { claudeRow(it, nowMillis) }) +
+            antigravity.map { antigravityRow(it, nowMillis) }
+
+    private fun antigravityRow(entry: AntigravityAccountUsage, nowMillis: Long): AccountUsageRow {
+        val windows = UsageSummary.windows(sinceReset(entry.reading.limits, nowMillis / 1000L), nowMillis / 1000L)
+        return AccountUsageRow(
+            accountId = ANTIGRAVITY_PREFIX + entry.computerId,
+            name = shortName(entry.label),
+            live = false,
+            window = UsageSummary.primary(windows) ?: windows.firstOrNull(),
+            readText = readText(entry.reading.readAtMillis, nowMillis),
+            engine = EngineKind.ANTIGRAVITY,
+        )
+    }
 
     private fun claudeRow(claude: ClaudeAccountUsage, nowMillis: Long): AccountUsageRow {
         val reading = claude.reading

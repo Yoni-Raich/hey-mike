@@ -76,6 +76,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val computerCatalogs = mutableMapOf<Pair<String, EngineKind>, ComputerEngineCatalog>()
     private var antigravityRefresh: Job? = null
     private var antigravityRefreshComputer: String? = null
+    private val antigravityUsage = mutableMapOf<String, AccountUsage>()
+    private val antigravityUsageRefreshAt = mutableMapOf<String, Long>()
+    private val antigravityUsageJobs = mutableMapOf<String, Job>()
     private var engines = EngineChoices()
         .update(EngineKind.CODEX) { ModelChoice(model = preferences.getString(KEY_MODEL, null), effort = preferences.getString(KEY_EFFORT, null)) }
         .update(EngineKind.CLAUDE) { ModelChoice(model = preferences.getString(KEY_CLAUDE_MODEL, null), effort = preferences.getString(KEY_CLAUDE_EFFORT, null)) }
@@ -371,6 +374,24 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(claude = it.claude.copy(usageReadAtMillis = saved.readAtMillis)) }
             project()
         }
+        // Each computer's last Antigravity quota from disk, until SSH reads a fresh one.
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) { runCatching { graph.antigravityUsage.all() }.getOrDefault(emptyMap()) }
+            if (saved.isEmpty()) return@launch
+            saved.forEach { (computerId, usage) ->
+                val existing = antigravityUsage[computerId]
+                if (existing == null || usage.readAtMillis > existing.readAtMillis) antigravityUsage[computerId] = usage
+            }
+            project()
+        }
+        // Refresh Antigravity quota after a turn finishes on that computer.
+        viewModelScope.launch {
+            graph.remote.events.collect { remote ->
+                if (remote.engine == EngineKind.ANTIGRAVITY && remote.event is EngineEvent.TurnFinished) {
+                    refreshAntigravityUsage(remote.computerId, force = true)
+                }
+            }
+        }
         viewModelScope.launch {
             graph.claudeHost.installState.collect { install -> mutable.update { it.copy(claude = it.claude.copy(install = install,
                 version = graph.claudeHost.updates.activePin.version.takeIf { install.phase == ClaudeInstallPhase.INSTALLED })) } }
@@ -439,9 +460,18 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 selectedModel = pick?.model ?: choice.model,
                 selectedReasoningEffort = if (pick != null) pick.effort else choice.effort,
                 fullAccess = current.value?.let(graph.permissions::isFull) == true,
-                usageLimits = engines.limits(kind).let { limits ->
-                    // Claude's limits can be a saved reading: a window past its reset is not shown as current.
-                    if (kind == EngineKind.CLAUDE) LastUsageStore.current(limits, System.currentTimeMillis() / 1000L) else limits
+                usageLimits = when (kind) {
+                    // Claude and Antigravity limits can be a saved reading: a window past its reset is not shown as current.
+                    EngineKind.CLAUDE -> LastUsageStore.current(engines.limits(kind), System.currentTimeMillis() / 1000L)
+                    EngineKind.ANTIGRAVITY -> computer?.let(antigravityUsage::get)?.limits?.let {
+                        LastUsageStore.current(it, System.currentTimeMillis() / 1000L)
+                    }.orEmpty()
+                    EngineKind.CODEX -> engines.limits(kind)
+                },
+                usageReadAtMillis = when (kind) {
+                    EngineKind.CLAUDE -> state.claude.usageReadAtMillis
+                    EngineKind.ANTIGRAVITY -> computer?.let(antigravityUsage::get)?.readAtMillis
+                    EngineKind.CODEX -> null
                 },
             )
         }
@@ -550,7 +580,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(planMode = false) }
         }
         // Who holds the computer conversation is a question for the engine the chat now runs on.
-        if (graph.computers.binding(id) != null) checkPcChatBusy(id)
+        val boundComputer = graph.computers.binding(id)?.computerId
+        if (boundComputer != null) {
+            checkPcChatBusy(id)
+            if (kind == EngineKind.ANTIGRAVITY) refreshAntigravityUsage(boundComputer, force = false)
+        }
         // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
         // A held pick may land on a chat in the background: only the open chat's list is on screen.
         if (current.value == id) {
@@ -950,7 +984,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(chats.none { graph.coordinator.phaseOf(it) != null }) { "Stop the chat running on this computer first." }
         graph.remote.disconnect(id)
         chats.forEach { chat -> graph.queue.cancelSession(chat); graph.limitRecovery.forget(chat); graph.sessions.deleteSession(chat) }
-        withContext(Dispatchers.IO) { graph.computers.remove(id) }
+        antigravityUsageJobs.remove(id)?.cancel()
+        antigravityUsage.remove(id)
+        antigravityUsageRefreshAt.remove(id)
+        withContext(Dispatchers.IO) {
+            graph.computers.remove(id)
+            runCatching { graph.antigravityUsage.remove(id) }
+        }
+        refreshWidget()
         mutable.update { state -> state.copy(folderBrowser = state.folderBrowser?.takeIf { it.computerId != id }) }
     }
 
@@ -1562,6 +1603,43 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun refreshAntigravityUsage(computer: String?, force: Boolean = false) {
+        if (computer == null) return
+        val key = computer to EngineKind.ANTIGRAVITY
+        if (!force && computerCatalogs[key]?.notInstalled == true) return
+        val at = System.nanoTime()
+        if (!force && antigravityUsageJobs[computer]?.isActive == true) return
+        if (!force && antigravityUsageRefreshAt[computer]?.let { at - it < 60_000_000_000L } == true) return
+        if (force) antigravityUsageJobs[computer]?.cancel()
+        antigravityUsageJobs[computer] = viewModelScope.launch {
+            try {
+                fetchAntigravityUsage(computer)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (missing: dev.androidagent.remote.AntigravityNotInstalledException) {
+                computerCatalogs[key] = ComputerEngineCatalog(models = emptyList(), notInstalled = true, refreshedAtNanos = System.nanoTime())
+                project()
+            } catch (_: Exception) {
+                // Keep the last known Antigravity quota while the computer is offline.
+            }
+        }
+    }
+
+    private suspend fun fetchAntigravityUsage(computer: String) {
+        val limits = graph.remote.antigravityUsage(computer)
+        val now = System.currentTimeMillis()
+        antigravityUsage[computer] = AccountUsage(computer, limits, now)
+        antigravityUsageRefreshAt[computer] = System.nanoTime()
+        project()
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val savedIds = graph.computers.state.value.computers.map { it.id }
+                graph.antigravityUsage.record(computer, limits, savedIds)
+            }
+            refreshWidget()
+        }
+    }
+
     private var modelRefreshJob: Job? = null
     private var modelRefreshAt: Long? = null
     private var modelRefreshComputer: String? = null
@@ -1570,6 +1648,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshModels() {
         val computer = current.value?.let(graph.computers::binding)?.computerId
         refreshAntigravityModels(computer)
+        val activeKind = ChatEngines.of(mutable.value.sessions, current.value)
+        if (computer != null && (activeKind == EngineKind.ANTIGRAVITY || current.value?.let(nextPicks::get)?.engine == EngineKind.ANTIGRAVITY)) {
+            refreshAntigravityUsage(computer, force = false)
+        }
         val at = System.nanoTime()
         if (modelRefreshJob?.isActive == true) return
         if (computer == modelRefreshComputer && modelRefreshAt?.let { at - it < 30_000_000_000L } == true) return
@@ -1631,13 +1713,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Read the open chat's engine quota again. */
     fun refreshUsage() {
-        if (mutable.value.activeEngine != EngineKind.CLAUDE) {
-            refreshAccount()
-            return
-        }
-        task {
-            mutable.update { it.copy(isRefreshingAccount = true) }
-            try { refreshClaude() } finally { mutable.update { it.copy(isRefreshingAccount = false) } }
+        when (mutable.value.activeEngine) {
+            EngineKind.CLAUDE -> task {
+                mutable.update { it.copy(isRefreshingAccount = true) }
+                try { refreshClaude() } finally { mutable.update { it.copy(isRefreshingAccount = false) } }
+            }
+            EngineKind.ANTIGRAVITY -> {
+                val computer = current.value?.let(graph.computers::binding)?.computerId ?: return
+                task {
+                    mutable.update { it.copy(isRefreshingAccount = true) }
+                    try { fetchAntigravityUsage(computer) } finally { mutable.update { it.copy(isRefreshingAccount = false) } }
+                }
+            }
+            EngineKind.CODEX -> refreshAccount()
         }
     }
 
