@@ -60,7 +60,11 @@ object WorkspaceSeeder {
 
     private const val QUICK_ACTIONS_DIR = "quick-actions"
 
-    private val DEFAULT_SKILL_NAMES = listOf(
+    /**
+     * Every skill folder under `agent_stack/skills`. A folder missing here
+     * never reaches the engine; a test compares this list with the assets.
+     */
+    internal val DEFAULT_SKILL_NAMES = listOf(
         "device-capabilities",
         "device-automation",
         "user-preferences",
@@ -71,14 +75,12 @@ object WorkspaceSeeder {
         "files-across-devices",
         "browser",
         "connected-apps",
-        "task-board",
-        "task-discovery",
-        "task-review",
-        "memory-upkeep",
+        "media-output-check",
+        "agent-ui",
     )
 
     /** Files a skill ships beside its SKILL.md. The asset API cannot be walked cheaply, so they are named. */
-    private val SKILL_FILES = mapOf(
+    internal val SKILL_FILES = mapOf(
         "quick-actions" to listOf("scripts/act.sh", "scripts/intents.tsv"),
     )
 

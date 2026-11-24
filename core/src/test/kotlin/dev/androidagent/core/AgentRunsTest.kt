@@ -824,6 +824,116 @@ class AgentRunsTest {
         rig.close()
     }
 
+    private suspend fun Rig.finish(chat: String) {
+        engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread-$chat", turnId = "turn-thread-$chat"))
+    }
+
+    @Test fun queuedTurnsWaitAsTheirOwnTurnsWhileSteeringReachesTheRunningOne() = runTest {
+        val rig = Rig(this)
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "A", model = "model-a"))
+        runCurrent()
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "B", model = "model-b", effort = "low"))
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "C", model = "model-c", effort = "high"))
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "D"))
+        runCurrent()
+        // Only D joins A; B and C wait, in order.
+        assertEquals(listOf("D"), rig.engine.steered)
+        assertEquals(listOf("A"), rig.engine.prompts)
+        assertEquals(listOf("B", "C"), rig.queue.turns.value.map { it.prompt })
+
+        rig.finish("one"); runCurrent()
+        assertEquals(listOf("A", "B"), rig.engine.prompts)
+        assertEquals(listOf("C"), rig.queue.turns.value.map { it.prompt })
+        rig.finish("one"); runCurrent()
+        assertEquals(listOf("A", "B", "C"), rig.engine.prompts)
+        // Each turn ran on the model it was queued with.
+        assertEquals(listOf("model-a", "model-b", "model-c"), rig.engine.openedModels)
+        assertEquals(listOf(null, "low", "high"), rig.engine.efforts)
+        assertEquals(listOf("D"), rig.engine.steered)
+        assertTrue(rig.queue.turns.value.isEmpty())
+        rig.close()
+    }
+
+    @Test fun aQueuedTurnForAnIdleChatStartsAtOnce() = runTest {
+        val rig = Rig(this)
+        rig.queue.enqueue(QueuedTurn(sessionId = "two", prompt = "Now"))
+        runCurrent()
+        assertEquals(listOf("Now"), rig.engine.prompts)
+        assertTrue(rig.queue.turns.value.isEmpty())
+        rig.close()
+    }
+
+    @Test fun stopHoldsWhatWasQueuedUntilResume() = runTest {
+        val rig = Rig(this)
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "A"))
+        runCurrent()
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "B"))
+        // What the Stop button does: hold the queue, then stop the run.
+        rig.queue.pause()
+        rig.runs.stop("one")
+        runCurrent()
+        assertNull(rig.runs.stateOf("one"))
+        assertEquals(listOf("A"), rig.engine.prompts)
+        assertEquals(listOf("B"), rig.queue.turns.value.map { it.prompt })
+        assertTrue(rig.queue.paused.value)
+
+        rig.queue.resume(); runCurrent()
+        assertEquals(listOf("A", "B"), rig.engine.prompts)
+        rig.close()
+    }
+
+    @Test fun aStopPressedWhileATurnIsPreparedHoldsThatTurnToo() = runTest {
+        val rig = Rig(this)
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "A"))
+        runCurrent()
+        val tapped = rig.queue.pauses
+        rig.queue.pause()
+        rig.runs.stop("one")
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "B"), seenPauses = tapped)
+        runCurrent()
+        assertEquals(listOf("A"), rig.engine.prompts)
+        assertEquals(listOf("B"), rig.queue.turns.value.map { it.prompt })
+        rig.close()
+    }
+
+    @Test fun anEarlierPauseDoesNotHoldATurnQueuedAfterIt() = runTest {
+        val rig = Rig(this)
+        // Stop pressed in some chat earlier; the queue stays paused until Resume.
+        rig.queue.pause()
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "A"))
+        runCurrent()
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "B"))
+        rig.finish("one"); runCurrent()
+        assertEquals(listOf("A", "B"), rig.engine.prompts)
+        rig.close()
+    }
+
+    @Test fun aQueuedTurnWithAPictureIsKeptForItsOwnTurn() = runTest {
+        val rig = Rig(this)
+        rig.queue.submit(QueuedTurn(sessionId = "one", prompt = "A"))
+        runCurrent()
+        rig.queue.enqueue(QueuedTurn(sessionId = "one", prompt = "Look", imagePaths = listOf("shot.png")))
+        runCurrent()
+        assertTrue(rig.engine.steered.isEmpty())
+        rig.finish("one"); runCurrent()
+        assertEquals(listOf("A", "Look"), rig.engine.prompts)
+        rig.close()
+    }
+
+    @Test fun startNeverSteersARunningChat() = runTest {
+        val rig = Rig(this)
+        rig.runs.send("one", "A")
+        runCurrent()
+        assertFalse(rig.runs.start(QueuedTurn(sessionId = "one", prompt = "B")))
+        runCurrent()
+        assertTrue(rig.engine.steered.isEmpty())
+        assertEquals(listOf("A"), rig.engine.prompts)
+        assertTrue(rig.runs.start(QueuedTurn(sessionId = "two", prompt = "C")))
+        runCurrent()
+        assertEquals(listOf("A", "C"), rig.engine.prompts)
+        rig.close()
+    }
+
     @Test fun independentBrowserRunsWhileAnotherChatOwnsTheScreen() = runTest {
         val rig = Rig(this)
         rig.runs.send("one", "Use the screen")

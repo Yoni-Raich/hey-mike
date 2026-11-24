@@ -162,6 +162,24 @@ class ComposerCommandsTest {
         assertNull(claudeModelName(state, "gpt-5.6-luna"))
         assertEquals("", modelNote(state, "gpt-5.6-luna"))
     }
+
+    @Test fun antigravityModelsShowTheirDisplayNamesAndDefaultLabel() {
+        val catalog = listOf(
+            AgentModel("antigravity", "Computer default", engine = EngineKind.ANTIGRAVITY),
+            AgentModel("agy/gemini-4-neon-xhigh", "Gemini 4 Neon (XHigh)", engine = EngineKind.ANTIGRAVITY),
+        )
+        val state = AgentUiState(
+            activeEngine = EngineKind.ANTIGRAVITY,
+            modelCatalog = catalog,
+            selectedModel = "agy/gemini-4-neon-xhigh",
+        )
+        assertEquals("Gemini 4 Neon (XHigh)", modelLabel(state, "agy/gemini-4-neon-xhigh"))
+        assertEquals("Computer default", modelLabel(state, "antigravity"))
+        assertEquals("gemini-4-neon-high", modelLabel(state, "agy/gemini-4-neon-high"))
+        assertEquals("Gemini 4 Neon (XHigh) · Phone control off", statusSummary(state, nowSeconds = 0))
+        val queued = dev.androidagent.core.QueuedTurn("q1", "s1", "hi", model = "agy/gemini-4-neon-xhigh", engine = EngineKind.ANTIGRAVITY)
+        assertEquals("Gemini 4 Neon (XHigh)", queuedTurnDetail(state, queued))
+    }
     private val claudeCommands = listOf(
         AgentCommand("context", "Show current context usage"),
         AgentCommand("usage", "Show session cost and plan usage", aliases = listOf("cost", "stats")),

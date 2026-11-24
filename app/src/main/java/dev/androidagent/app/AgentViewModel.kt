@@ -58,6 +58,21 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * quota of the one it runs on, through [project]. Changed on the main
      * thread only.
      */
+    /**
+     * A model of the other engine picked while the chat ran, by chat. The run
+     * keeps its engine; the chat moves to this one when it is free and has
+     * nothing queued (see [applyNextPick]), and the next message uses it
+     * either way. Main thread only.
+     */
+    private val nextPicks = mutableMapOf<String, NextPick>()
+    private data class NextPick(val engine: EngineKind, val model: String, val effort: String?)
+    /** Chats whose model or level was changed during the run they are in. Main thread only. */
+    private val pickedDuringRun = mutableSetOf<String>()
+    private val antigravityCatalogs = mutableMapOf<String, List<AgentModel>>()
+    private val antigravityNotInstalled = mutableSetOf<String>()
+    private var antigravityRefresh: Job? = null
+    private var antigravityRefreshComputer: String? = null
+    private var antigravityRefreshAt: Long? = null
     private var engines = EngineChoices()
         .update(EngineKind.CODEX) { ModelChoice(model = preferences.getString(KEY_MODEL, null), effort = preferences.getString(KEY_EFFORT, null)) }
         .update(EngineKind.CLAUDE) { ModelChoice(model = preferences.getString(KEY_CLAUDE_MODEL, null), effort = preferences.getString(KEY_CLAUDE_EFFORT, null)) }
@@ -110,7 +125,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     val saved = preferences.getString("session", null)
                     current.value = list.firstOrNull { it.id == saved }?.id ?: list.firstOrNull()?.id
                 }
-                if (list.isEmpty()) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
+                if (list.isEmpty()) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id.also(graph.permissions::startChat)
                 // Chats nobody wrote in last run are not history: drop them once, at start.
                 if (!purgedUnstarted) {
                     purgedUnstarted = true
@@ -245,8 +260,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         } }
         viewModelScope.launch { current.collect { graph.openChat.value = it } }
         viewModelScope.launch { graph.queue.turns.collect { turns -> mutable.update { it.copy(queuedTurns = turns) } } }
-        viewModelScope.launch { graph.taskDesk.state.collect { desk -> mutable.update { it.copy(taskDesk = desk) } } }
         viewModelScope.launch { graph.queue.paused.collect { paused -> mutable.update { it.copy(queuePaused = paused) } } }
+        viewModelScope.launch {
+            merge(graph.coordinator.freed.map { }, graph.queue.turns.map { }).collect { settleNextPicks() }
+        }
         viewModelScope.launch { graph.adb.status.collect { state -> mutable.update { it.copy(adbStatus = state) } } }
         // Connection is a flow; whether the user switched it on is a settings
         // read, so re-check it whenever the service attaches or drops.
@@ -402,18 +419,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             val choice = engines.of(kind).let { defaults ->
                 if (session?.model != null) defaults.copy(model = session.model, effort = session.reasoningEffort) else defaults
             }
+            val pick = current.value?.let(nextPicks::get)
             val computer = current.value?.let(graph.computers::binding)?.computerId
             val offered = engines.offered(
                 enginesFor(current.value, kind, state),
                 // A computer's Claude Code lists its own models; the aliases until it has answered.
                 claudeModels = computer?.let { id -> state.computerClaude[id]?.models?.takeIf { it.isNotEmpty() } ?: engines.of(EngineKind.CLAUDE).catalog },
+                antigravityModels = computer?.let(antigravityCatalogs::get).orEmpty(),
             )
             state.copy(
                 activeEngine = kind,
+                nextEngine = pick?.engine,
+                nextModelPicked = current.value?.let { it in pickedDuringRun || it in nextPicks } == true,
                 modelCatalog = offered,
                 availableModels = offered.map { it.id },
-                selectedModel = choice.model,
-                selectedReasoningEffort = choice.effort,
+                selectedModel = pick?.model ?: choice.model,
+                selectedReasoningEffort = if (pick != null) pick.effort else choice.effort,
+                fullAccess = current.value?.let(graph.permissions::isFull) == true,
                 usageLimits = engines.limits(kind).let { limits ->
                     // Claude's limits can be a saved reading: a window past its reset is not shown as current.
                     if (kind == EngineKind.CLAUDE) LastUsageStore.current(limits, System.currentTimeMillis() / 1000L) else limits
@@ -464,7 +486,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun newChat() = task {
         val id = current.value
         val blank = id != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.let(::isBlank) == true
-        if (!blank) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id
+        if (!blank) current.value = graph.sessions.createSession(mutable.value.defaultEngine).id.also(graph.permissions::startChat)
     }
 
     /**
@@ -484,6 +506,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         !session.hasMessages && session.engineThreadId == null && session.parked.isEmpty() && session.parentSessionId == null
 
     private fun rememberDefaultEngine(kind: EngineKind) {
+        if (kind == EngineKind.ANTIGRAVITY) return
         preferences.edit().putString(KEY_DEFAULT_ENGINE, kind.name).apply()
         mutable.update { it.copy(defaultEngine = kind) }
     }
@@ -499,6 +522,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         add(EngineKind.CODEX)
         val computer = id?.let(graph.computers::binding)?.computerId
         val claude = if (computer == null) state.claude.ready else state.computerClaude[computer]?.ready == true
+        if (computer != null && computer !in antigravityNotInstalled) add(EngineKind.ANTIGRAVITY)
         if (claude) add(EngineKind.CLAUDE)
     }
 
@@ -510,38 +534,97 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun useEngine(kind: EngineKind) = task {
         val id = current.value ?: return@task
         changeEngine(id, kind)
+        // A pick waiting for the chat to be free must not undo this choice later.
+        if (nextPicks.remove(id) != null) project()
     }
     private suspend fun changeEngine(id: String, kind: EngineKind) {
         val session = graph.sessions.getSession(id) ?: return
         if (session.engine == kind) return
         check(graph.coordinator.phaseOf(id) == null) { "Wait for Mike to finish, or stop him, before changing the model." }
+        checkEngineAllowed(id, session, kind)
+        graph.sessions.setEngine(id, kind)
+        if (kind == EngineKind.ANTIGRAVITY && mutable.value.planMode) {
+            mutable.update { it.copy(planMode = false) }
+        }
+        // Who holds the computer conversation is a question for the engine the chat now runs on.
+        if (graph.computers.binding(id) != null) checkPcChatBusy(id)
+        // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
+        // A held pick may land on a chat in the background: only the open chat's list is on screen.
+        if (current.value == id) {
+            mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
+            viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
+        }
+        // Like any model pick, it also holds for the next new chat.
+        rememberDefaultEngine(kind)
+        if (session.hasMessages) {
+            val choice = engines.of(kind)
+            val model = if (kind == EngineKind.ANTIGRAVITY) {
+                val computer = graph.computers.binding(id)?.computerId
+                val agyCatalog = computer?.let(antigravityCatalogs::get).orEmpty()
+                when (val selected = choice.model) {
+                    null, "antigravity" -> "Computer default"
+                    else -> agyCatalog.firstOrNull { it.id == selected }?.displayName ?: selected.removePrefix("agy/")
+                }
+            } else {
+                choice.catalog.firstOrNull { it.id == choice.model }?.displayName ?: choice.model
+            }
+            note(id, "Switched to ${providerName(kind)}${model?.let { " · $it" }.orEmpty()}. It is told what was said in this chat with your next message.")
+        }
+    }
+
+    private fun checkEngineAllowed(id: String, session: ChatSession, kind: EngineKind) {
         check(!(graph.voice.state.value.active && graph.voiceConversation.sessionId.value == id)) { "End voice before changing the model." }
         // A chat nobody wrote in yet may be pointed at an engine that is still
         // being set up, as onboarding does; its first message then says what is missing.
         val computer = graph.computers.binding(id)?.let { graph.computers.computer(it.computerId) }
+        if (kind == EngineKind.ANTIGRAVITY) {
+            check(computer != null) { "Antigravity runs only in a computer project chat." }
+            check(kind in enginesFor(id, session.engine, mutable.value)) { "Install agy on ${computer.label} and sign in." }
+            return
+        }
         check(kind in enginesFor(id, session.engine, mutable.value) || (isBlank(session) && computer == null)) {
             if (computer != null) "Set up Claude on ${computer.label} from Computers."
             else "Set up ${kind.label} in Settings first."
         }
-        graph.sessions.setEngine(id, kind)
-        // Who holds the computer conversation is a question for the engine the chat now runs on.
-        if (graph.computers.binding(id) != null) checkPcChatBusy(id)
-        // The old engine's skills and commands must not stay on offer; the new engine's arrive on their own.
-        mutable.update { it.copy(availableSkills = emptyList(), availableCommands = emptyList()) }
-        viewModelScope.launch { runCatching { loadSlashCatalog(id) } }
-        // Like any model pick, it also holds for the next new chat.
-        rememberDefaultEngine(kind)
-        if (session.hasMessages) {
-            val model = engines.of(kind).let { choice -> choice.catalog.firstOrNull { it.id == choice.model }?.displayName ?: choice.model }
-            note(id, "Switched to ${providerName(kind)}${model?.let { " · $it" }.orEmpty()}. It is told what was said in this chat with your next message.")
+    }
+
+    /**
+     * Move [id] to the model of the other engine picked for its next message,
+     * once nothing runs or waits in it. Queued turns keep the model they were
+     * queued with, so the move waits for them too.
+     */
+    private suspend fun applyNextPick(id: String) {
+        val pick = nextPicks[id] ?: return
+        val moved = try {
+            graph.queue.ifIdle(id) {
+                changeEngine(id, pick.engine)
+                graph.sessions.setModelChoice(id, pick.model, pick.effort)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // The engine can no longer run here; the pick is dropped, not retried at every run's end.
+            if (nextPicks[id] == pick) nextPicks.remove(id)
+            project()
+            throw failure
         }
+        if (moved && nextPicks[id] == pick) { nextPicks.remove(id); project() }
+    }
+
+    /** A run ended or the queue moved: picks made during a run now hold, and a waiting engine move may go ahead. */
+    private suspend fun settleNextPicks() {
+        val ended = pickedDuringRun.filter { graph.coordinator.phaseOf(it) == null }
+        pickedDuringRun.removeAll(ended.toSet())
+        for (id in nextPicks.keys.toList()) {
+            try { applyNextPick(id) } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error(failure.message ?: "Could not change the model.") }
+        }
+        if (ended.isNotEmpty()) project()
     }
 
     /** Delete a chat that has no message and no thread, unless something is still using it. */
     private suspend fun discardIfUnstarted(id: String) = runCatching {
         val session = graph.sessions.getSession(id) ?: return@runCatching
-        // Named/app-owned chats are not abandoned composer placeholders.
-        if (!session.titlePending || id in graph.taskDesk.team.sessionIds) return@runCatching
         if (mutable.value.composerSeeds[id]?.isNotEmpty() == true || !graph.sessions.composerDraft(id).isNullOrEmpty()) return@runCatching
         if (!isBlank(session) || id in mutable.value.pcChatLoading) return@runCatching
         if (graph.coordinator.phaseOf(id) != null) return@runCatching
@@ -623,7 +706,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         if (isComputerClaude(sessionId)) { syncPcChat(sessionId); return }
         val binding = graph.computers.binding(sessionId)
         // The chat's Codex thread, also while it is parked during a turn on Claude.
-        val thread = binding?.thread(EngineKind.CODEX)?.takeIf { sessionOf(sessionId)?.engine != EngineKind.CLAUDE }
+        val thread = binding?.thread(EngineKind.CODEX)?.takeIf { sessionOf(sessionId)?.engine == EngineKind.CODEX }
         if (binding == null || thread == null || binding.imported(EngineKind.CODEX, thread) == false) {
             syncState(sessionId, busy = false, problem = null)
             return
@@ -836,8 +919,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         check(mutable.value.messages.isEmpty() && graph.sessions.getSession(id)?.engineThreadId == null) {
             "This chat has started. Start a new chat to work somewhere else."
         }
-        // A still-empty Claude chat stays on Claude only on a computer that has its own Claude Code.
-        if (computerId != null && mutable.value.computerClaude[computerId]?.ready != true) graph.sessions.setEngine(id, EngineKind.CODEX)
+        val currentEngine = graph.sessions.getSession(id)?.engine
+        // Antigravity exists only on computers; Claude stays only on a computer that has its own Claude Code.
+        val resetEngine = (computerId == null && currentEngine == EngineKind.ANTIGRAVITY) ||
+            (computerId != null && currentEngine == EngineKind.CLAUDE && mutable.value.computerClaude[computerId]?.ready != true)
+        if (resetEngine) graph.sessions.setEngine(id, EngineKind.CODEX)
         withContext(Dispatchers.IO) {
             if (computerId == null || path == null) {
                 graph.computers.unbind(id)
@@ -978,10 +1064,34 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(voiceBrowsing = false) }
     }
     fun stopSession(id: String) {
-        if (id == graph.taskDesk.state.value.managerSessionId || graph.taskDesk.isBackgroundSession(id)) graph.taskDesk.pauseBackground()
         graph.coordinator.stop(id)
         if (id == graph.voiceConversation.sessionId.value) stopVoice()
     }
+    /**
+     * Another app shared [text] and/or [uris] to Mike: open a new chat with
+     * the text in the composer and the files attached. Nothing is sent: the
+     * user says what to do with it.
+     */
+    fun receiveShare(text: String?, uris: List<Uri>) = task {
+        val open = current.value
+        val blank = open != null && mutable.value.messages.isEmpty() && graph.sessions.getSession(open)?.let(::isBlank) == true
+        val id = if (blank) open!! else graph.sessions.createSession(mutable.value.defaultEngine).id.also(graph.permissions::startChat)
+        current.value = id
+        mutable.update {
+            it.copy(isSettingsOpen = false, isDrawerOpen = false, isWorkspaceOpen = false, isComputersOpen = false, isAutomationsOpen = false)
+        }
+        if (!text.isNullOrBlank()) {
+            mutable.update {
+                it.copy(
+                    composerSeeds = it.composerSeeds + (id to text),
+                    composerDraftVersions = it.composerDraftVersions + (id to ((it.composerDraftVersions[id] ?: 0L) + 1L)),
+                )
+            }
+            draftWrites.trySend(id to text)
+        }
+        uris.take(MAX_SHARED_FILES).forEach { uri -> copyAttachment(uri, null) }
+    }
+
     fun composerDraftChanged(id: String, text: String) {
         mutable.update { it.copy(composerSeeds = it.composerSeeds + (id to text)) }
         draftWrites.trySend(id to text)
@@ -1035,11 +1145,70 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             task { graph.voiceConversation.type(text) }
             return
         }
-        val onComputer = graph.computers.binding(id) != null
+        val draft = draftTurn(id, text, attachments) ?: run { restoreDraft(id, text); return }
+        task {
+            if (!computerChatFree(draft)) return@task
+            // A model of the other engine picked during the last run moves the chat now.
+            try { applyNextPick(id) } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { restoreDraft(id, text); throw failure }
+            val turn = prepareTurn(draft) ?: return@task
+            graph.queue.submit(turn)
+            mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
+        }
+    }
+
+    /**
+     * Queue [text] in the open chat as a turn of its own, after the one that
+     * runs now: it never joins that run. It keeps the model, level and engine
+     * picked now, and its attachments. A Stop pressed while it is prepared
+     * holds it, as Stop holds the rest of the queue.
+     */
+    fun enqueue(text: String, attachments: List<PendingAttachment>) {
+        val id = current.value ?: return
+        val seenPauses = graph.queue.pauses
+        val blocked = when {
+            id in mutable.value.compacting -> "Wait for compaction to finish before queuing a message."
+            id in mutable.value.pcSyncing || id in mutable.value.pcDesktopOpening ->
+                "Wait for the computer history or Desktop handoff to finish before queuing."
+            graph.voice.state.value.active && id == graph.voiceConversation.sessionId.value -> "End voice before queuing a message."
+            else -> null
+        }
+        if (blocked != null) { restoreDraft(id, text); error(blocked); return }
+        val draft = draftTurn(id, text, attachments) ?: run { restoreDraft(id, text); return }
+        task {
+            if (!computerChatFree(draft)) return@task
+            val turn = prepareTurn(draft) ?: run { restoreDraft(id, text); return@task }
+            try {
+                graph.queue.enqueue(turn, seenPauses)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                restoreDraft(id, text)
+                throw failure
+            }
+            mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
+        }
+    }
+
+    /** A message as typed, read at the tap: before any file is copied or the turn is queued. */
+    private class TurnDraft(
+        val sessionId: String,
+        val text: String,
+        val onComputer: Boolean,
+        val images: List<File>,
+        val otherFiles: List<File>,
+        val otherNames: List<String>,
+        val skill: AgentSkill?,
+        val engine: EngineKind,
+        val model: String?,
+        val effort: String?,
+        val planMode: Boolean,
+    )
+
+    /** The open chat's next turn from [text], with the model picked for the next message; null, with the reason shown, when it cannot go. */
+    private fun draftTurn(id: String, text: String, attachments: List<PendingAttachment>): TurnDraft? {
         val paths = attachments.mapNotNull { it.path?.let(::File) }
         val images = attachments.filter { it.mimeType?.startsWith("image/") == true }.mapNotNull { it.path?.let(::File) }
-        val otherFiles = paths.filter { it !in images }
-        val otherNames = attachments.filter { it.path != null && it.mimeType?.startsWith("image/") != true }.map { it.name }
         val snapshot = mutable.value
         val invokedSkillName = text.trimStart()
             .takeIf { it.startsWith("\$") }
@@ -1049,65 +1218,85 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val invokedSkill = invokedSkillName?.let { name ->
             snapshot.availableSkills.firstOrNull { it.enabled && it.name.equals(name, ignoreCase = true) }
         }
-        // The chat's own engine's pick. Plan mode is carried by a model name,
+        // The pick for the next message: the chat's own engine's, or one of the
+        // other engine made while it ran. Plan mode is carried by a model name,
         // so it falls back to the first offered model when none is picked.
-        val kind = ChatEngines.of(snapshot.sessions, id)
+        val kind = nextPicks[id]?.engine ?: ChatEngines.of(snapshot.sessions, id)
         val choice = ModelChoice(catalog = snapshot.modelCatalog.filter { it.engine == kind },
             model = snapshot.selectedModel, effort = snapshot.selectedReasoningEffort)
         val model = choice.modelFor(snapshot.planMode)
-        if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return }
-        task {
-            if (kind == EngineKind.CLAUDE && isComputerClaude(id) && graph.coordinator.phaseOf(id) == null) {
-                refreshClaudeHistory(id)
-                if (id in mutable.value.pcBusyChats) {
-                    // Nothing was sent; the words go back where they were typed.
-                    restoreDraft(id, text)
-                    kotlin.error(pcBlockedReason(id))
-                }
+        if (snapshot.planMode && model == null) { error("Choose a model before using plan mode."); return null }
+        return TurnDraft(
+            sessionId = id, text = text, onComputer = graph.computers.binding(id) != null, images = images,
+            otherFiles = paths.filter { it !in images },
+            otherNames = attachments.filter { it.path != null && it.mimeType?.startsWith("image/") != true }.map { it.name },
+            skill = invokedSkill, engine = kind, model = model,
+            effort = snapshot.selectedReasoningEffort ?: choice.turnEffort, planMode = snapshot.planMode,
+        )
+    }
+
+    /** False, with the words back in the composer, while the computer's Claude conversation is held elsewhere. */
+    private suspend fun computerChatFree(draft: TurnDraft): Boolean {
+        val id = draft.sessionId
+        if (draft.engine != EngineKind.CLAUDE || !isComputerClaude(id) || graph.coordinator.phaseOf(id) != null) return true
+        refreshClaudeHistory(id)
+        if (id !in mutable.value.pcBusyChats) return true
+        // Nothing was sent; the words go back where they were typed.
+        restoreDraft(id, draft.text)
+        kotlin.error(pcBlockedReason(id))
+    }
+
+    /**
+     * The turn for [draft]. Pictures travel inside the turn. Any other file has
+     * to be on the machine the agent runs on, so a computer chat copies it there
+     * first and names where it landed. A failed copy gives null and keeps the
+     * attachments, so the user can try again.
+     */
+    private suspend fun prepareTurn(draft: TurnDraft): QueuedTurn? {
+        val id = draft.sessionId
+        val where = if (draft.onComputer && draft.otherFiles.isNotEmpty()) {
+            val count = draft.otherFiles.size
+            mutable.update { it.copy(infoMessage = "Sending $count file${if (count == 1) "" else "s"} to the computer…", errorMessage = null) }
+            try {
+                graph.remote.sendAttachments(id, draft.otherNames.zip(draft.otherFiles))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                mutable.update { it.copy(infoMessage = null, errorMessage = "Could not send the file to the computer: ${e.message ?: e.javaClass.simpleName}") }
+                return null
             }
-            // Pictures travel inside the turn. Any other file has to be on the
-            // machine the agent runs on, so a computer chat copies it there
-            // first and names where it landed. A failed copy sends nothing and
-            // keeps the attachments, so the user can try again.
-            val where = if (onComputer && otherFiles.isNotEmpty()) {
-                mutable.update { it.copy(infoMessage = "Sending ${otherFiles.size} file${if (otherFiles.size == 1) "" else "s"} to the computer…", errorMessage = null) }
-                try {
-                    graph.remote.sendAttachments(id, otherNames.zip(otherFiles))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    mutable.update { it.copy(infoMessage = null, errorMessage = "Could not send the file to the computer: ${e.message ?: e.javaClass.simpleName}") }
-                    return@task
-                }
-            } else {
-                otherFiles.map { it.absolutePath }
-            }
-            val prompt = if (where.isEmpty()) text else {
-                val place = if (onComputer) "Attached files on this computer" else "Attached files in this session"
-                text + "\n\n$place:\n" + where.joinToString("\n")
-            }
-            mutable.update { it.copy(infoMessage = null) }
-            // The Manager's and a member's chat carry the board's state before the
-            // user's words; the chat shows only what the user typed.
-            val owner = graph.taskDesk.ownerContext(id, text)
-            graph.queue.submit(QueuedTurn(sessionId = id, prompt = owner?.let { it + "\n" + prompt } ?: prompt,
-                imagePaths = images.map { it.absolutePath },
-                model = model, effort = snapshot.selectedReasoningEffort ?: choice.turnEffort,
-                skill = invokedSkill, planMode = snapshot.planMode, engine = kind,
-                displayPrompt = if (owner != null) text else null))
-            mutable.update { if (it.activeSessionId == id) it.copy(attachments = emptyList(), errorMessage = null) else it }
+        } else {
+            draft.otherFiles.map { it.absolutePath }
         }
+        val prompt = if (where.isEmpty()) draft.text else {
+            val place = if (draft.onComputer) "Attached files on this computer" else "Attached files in this session"
+            draft.text + "\n\n$place:\n" + where.joinToString("\n")
+        }
+        mutable.update { it.copy(infoMessage = null) }
+        return QueuedTurn(sessionId = id, prompt = prompt, imagePaths = draft.images.map { it.absolutePath },
+            model = draft.model, effort = draft.effort, skill = draft.skill, planMode = draft.planMode, engine = draft.engine)
     }
     fun cancelQueued(id: String) = task { graph.queue.cancel(id) }
     fun resumeQueue() = task { graph.queue.resume() }
 
-    fun togglePlanMode() { mutable.update { it.copy(planMode = !it.planMode) } }
+    fun togglePlanMode() {
+        val state = mutable.value
+        if (!state.planMode && state.selectedEngine == EngineKind.ANTIGRAVITY) {
+            error("Plan mode is not available for Antigravity.")
+            return
+        }
+        mutable.update { it.copy(planMode = !it.planMode) }
+    }
 
     fun compact() {
         val id = current.value ?: return
         if (id in mutable.value.compacting) return
         if (graph.coordinator.phaseOf(id) != null) { error("Wait for the agent to finish before compacting."); return }
         if (graph.voiceConversation.sessionId.value == id && graph.voice.state.value.active) { error("End voice before compacting this chat."); return }
+        if (mutable.value.sessions.firstOrNull { it.id == id }?.engine == EngineKind.ANTIGRAVITY) {
+            error("Compaction is not available for Antigravity.")
+            return
+        }
         val started = System.currentTimeMillis()
         mutable.update { it.copy(compacting = it.compacting + (id to started), errorMessage = null) }
         task {
@@ -1193,8 +1382,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         graph.sessions.append(ChatMessage(UUID.randomUUID().toString(), sessionId, "note", text, System.currentTimeMillis()))
 
     fun stop() {
-        val id = current.value
-        if (id == graph.taskDesk.state.value.managerSessionId || (id != null && graph.taskDesk.isBackgroundSession(id))) graph.taskDesk.pauseBackground()
         graph.queue.pause()
         // End voice while an assistant press is still setting up cancels it.
         if (!graph.voice.state.value.active && assistantVoiceJob?.isActive == true) {
@@ -1345,6 +1532,38 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelClaudeDownload() = graph.claudeHost.updates.cancel()
 
+    private fun refreshAntigravityModels(computer: String?) {
+        val at = System.nanoTime()
+        if (computer == antigravityRefreshComputer &&
+            (antigravityRefresh?.isActive == true || antigravityRefreshAt?.let { at - it < 30_000_000_000L } == true)) return
+        antigravityRefresh?.cancel()
+        antigravityRefreshComputer = computer
+        antigravityRefreshAt = null
+        mutable.update { it.copy(antigravityCatalogStatus = computer?.let { "Checking the computer for models…" }) }
+        if (computer == null) return
+        antigravityRefresh = viewModelScope.launch {
+            val status = try {
+                antigravityCatalogs[computer] = graph.remote.antigravityModels(computer)
+                antigravityNotInstalled.remove(computer)
+                antigravityRefreshAt = System.nanoTime()
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (missing: dev.androidagent.remote.AntigravityNotInstalledException) {
+                antigravityCatalogs.remove(computer)
+                antigravityNotInstalled.add(computer)
+                antigravityRefreshAt = System.nanoTime()
+                missing.message
+            } catch (failure: Exception) {
+                antigravityCatalogs.remove(computer)
+                antigravityNotInstalled.remove(computer)
+                failure.message ?: "Could not list Antigravity models."
+            }
+            mutable.update { it.copy(antigravityCatalogStatus = status) }
+            project()
+        }
+    }
+
     private var modelRefreshJob: Job? = null
     private var modelRefreshAt: Long? = null
     private var modelRefreshComputer: String? = null
@@ -1352,6 +1571,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     /** Fresh catalog on chat/menu open and resume; per-runtime engine caches bound repeated work. */
     fun refreshModels() {
         val computer = current.value?.let(graph.computers::binding)?.computerId
+        refreshAntigravityModels(computer)
         val at = System.nanoTime()
         if (modelRefreshJob?.isActive == true) return
         if (computer == modelRefreshComputer && modelRefreshAt?.let { at - it < 30_000_000_000L } == true) return
@@ -1611,7 +1831,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * observable, so the app has to look again every time it comes back.
      */
     fun refreshPermissions() {
-        graph.taskDesk.refreshPermissions()
         val app = getApplication<Application>()
         val notifications = android.os.Build.VERSION.SDK_INT < 33 ||
             androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -1773,39 +1992,64 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     /**
-     * Pick a model for the open chat. The list holds both engines' models, so
-     * picking one of the other engine also moves the chat to that engine.
+     * Pick a model for the open chat's next message. The list holds both
+     * engines' models, so picking one of the other engine also moves the chat
+     * to that engine. While the chat runs, the running turn keeps its model:
+     * a pick of the same engine is saved for the next message at once, and
+     * one of the other engine moves the chat when it is free.
      */
     fun model(value: String) = task {
         val state = mutable.value
         val id = current.value ?: return@task
-        val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.activeEngine)
-        check(graph.coordinator.phaseOf(id) == null) { "Wait for this chat to finish before changing its model." }
+        val kind = ChatEngines.engineOfModel(state.modelCatalog, value, state.selectedEngine)
         check(id !in state.compacting) { "Wait for compaction to finish before changing its model." }
+        val session = graph.sessions.getSession(id) ?: return@task
+        if (kind != session.engine) checkEngineAllowed(id, session, kind)
         engines = engines.update(kind) { it.select(value) }
         persistChoice(kind)
-        if (kind != state.activeEngine) changeEngine(id, kind)
-        graph.sessions.setModelChoice(id, value, engines.of(kind).effort)
+        if (graph.coordinator.phaseOf(id) != null) pickedDuringRun += id
+        // A turn of the other engine, queued or about to move the chat, would leave it
+        // there: picking back the chat's own engine must then wait and move it back.
+        val movedAway = id in nextPicks ||
+            graph.queue.turns.value.any { it.sessionId == id && it.engine != null && it.engine != kind }
+        if (kind == session.engine && !movedAway) {
+            nextPicks.remove(id)
+            graph.sessions.setModelChoice(id, value, engines.of(kind).effort)
+        } else {
+            nextPicks[id] = NextPick(kind, value, engines.of(kind).effort)
+            project()
+            applyNextPick(id)
+        }
         project()
     }
     fun reasoningEffort(value: String?) = task {
         val state = mutable.value
         val id = current.value ?: return@task
-        val kind = state.activeEngine
+        val kind = state.selectedEngine
         val choice = ModelChoice(state.modelCatalog.filter { it.engine == kind }, state.selectedModel,
             state.selectedReasoningEffort).selectEffort(value)
         engines = engines.update(kind) { it.copy(model = choice.model, effort = choice.effort) }
         persistChoice(kind)
-        graph.sessions.setModelChoice(id, choice.model, choice.effort)
+        if (graph.coordinator.phaseOf(id) != null) pickedDuringRun += id
+        val pick = nextPicks[id]
+        if (pick != null && pick.engine == kind) nextPicks[id] = pick.copy(model = choice.model ?: pick.model, effort = choice.effort)
+        else graph.sessions.setModelChoice(id, choice.model, choice.effort)
         project()
     }
     /** The long context window on or off for every chat, from its next turn. */
+    /** The open chat's permission level; the next chat the user starts begins with it too. */
+    fun fullAccess(enabled: Boolean) {
+        val chat = current.value ?: return
+        graph.permissions.choose(chat, if (enabled) PermissionLevel.FULL else PermissionLevel.ASK)
+        project()
+    }
     fun longContext(enabled: Boolean) {
         graph.longContext = enabled
         mutable.update { it.copy(longContext = enabled) }
     }
     /** Each engine's pick under its own keys; Codex keeps the keys the assistant panel reads. */
     private fun persistChoice(kind: EngineKind) {
+        if (kind == EngineKind.ANTIGRAVITY) return
         val choice = engines.of(kind)
         val (modelKey, effortKey) = if (kind == EngineKind.CLAUDE) KEY_CLAUDE_MODEL to KEY_CLAUDE_EFFORT else KEY_MODEL to KEY_EFFORT
         preferences.edit().apply {
@@ -2043,6 +2287,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
+/** A share of more files than this keeps the first ones. */
+private const val MAX_SHARED_FILES = 10
 private const val KEY_WELCOMED = "onboardingWelcomed"
 private const val KEY_CONSENT_VERSION = "consentVersion"
 private const val KEY_CONSENT_AT = "consentAt"

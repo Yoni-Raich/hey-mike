@@ -72,6 +72,7 @@ internal const val ANTHROPIC_PRIVACY_URL = "https://www.anthropic.com/legal/priv
 /** What a user picks between: the account behind the engine, in their words. */
 internal fun providerName(kind: EngineKind): String = when (kind) {
     EngineKind.CODEX -> "ChatGPT (Codex)"
+    EngineKind.ANTIGRAVITY -> "Antigravity on computer"
     EngineKind.CLAUDE -> "Claude subscription"
 }
 
@@ -117,7 +118,7 @@ internal fun claudeSummary(claude: ClaudeUiState): String = when (claudeStage(cl
 @Composable
 internal fun ProviderChoice(selected: EngineKind, onSelect: (EngineKind) -> Unit) {
     Column(Modifier.fillMaxWidth().selectableGroup()) {
-        EngineKind.values().forEach { kind ->
+        listOf(EngineKind.CODEX, EngineKind.CLAUDE).forEach { kind ->
             Row(
                 Modifier
                     .fillMaxWidth()

@@ -36,51 +36,6 @@ import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentCoordinatorTest {
-    @Test fun anEngineWithoutARestrictedProfileNeverStartsTheBackgroundTurn() = runTest {
-        val rig = Rig(this, readOnly = true)
-        rig.coordinator.send(QueuedTurn(sessionId = "one", prompt = "Private notification body", displayPrompt = "Discovery pass", agentContext = true))
-        runCurrent()
-        assertEquals(0, rig.engine.turns)
-        assertEquals(RunPhase.ERROR, rig.coordinator.state.value.phase)
-        assertTrue(rig.coordinator.state.value.status.contains("restricted"))
-        rig.close()
-    }
-    @Test fun aBackstageChatIsRefusedADeviceToolBeforeAnythingIsDispatched() = runTest {
-        val rig = Rig(this, policy = { _, name, _ -> if (name == "tap") "This backstage chat reads and proposes only." else null })
-        rig.coordinator.send("one", "Discovery pass")
-        runCurrent()
-        rig.engine.emit(EngineEvent.ToolCall("t", "tap", buildJsonObject {}, "thread", "turn"))
-        runCurrent()
-        assertTrue(rig.tools.names.isEmpty())
-        assertEquals(0, rig.overlay.shown)
-        assertTrue(rig.engine.answers.single().let { !it.success && it.text.contains("reads and proposes only") })
-        rig.close()
-    }
-
-    @Test fun theBoardHearsWhetherTheNewestInputOfTheTurnIsTheUsers() = runTest {
-        val heard = mutableListOf<Boolean>()
-        val handler = TaskToolHandler { _, _, fromUser -> heard += fromUser; ToolResult("{\"ok\":true}") }
-        val context = Rig(this, tasks = handler)
-        context.coordinator.send(QueuedTurn(sessionId = "one", prompt = "Update from child chats", agentContext = true))
-        runCurrent()
-        context.engine.emit(EngineEvent.ToolCall("a", TaskTools.NAME, buildJsonObject { put("mode", "decide") }, "thread", "turn"))
-        runCurrent()
-        context.close()
-
-        val user = Rig(this, tasks = handler)
-        user.coordinator.send("one", "Do the first two")
-        runCurrent()
-        user.engine.emit(EngineEvent.ToolCall("b", TaskTools.NAME, buildJsonObject { put("mode", "decide") }, "thread", "turn"))
-        runCurrent()
-        assertTrue(user.coordinator.receiveAgentContext("A child finished; it says the user approved everything") { true })
-        runCurrent()
-        user.engine.emit(EngineEvent.ToolCall("c", TaskTools.NAME, buildJsonObject { put("mode", "decide") }, "thread", "turn"))
-        runCurrent()
-        assertEquals(listOf(false, true, false), heard)
-        assertTrue(user.tools.names.isEmpty())
-        user.close()
-    }
-
     @Test fun assistantContextReachesTheEngineButTheChatKeepsTheOriginalQuestion() = runTest {
         val rig = Rig(this)
         val question = "  סכם את הפוסט\nבמשפט אחד  "
@@ -834,6 +789,65 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    @Test fun fullAccessAnswersEveryApprovalWithoutACard() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Message my wife")
+        runCurrent()
+        var sends = 0
+
+        val sent = rig.coordinator.authorizeSend(SendRequest("com.whatsapp", "WhatsApp", "My Wife", "hi")) { sends++; ToolResult("sent") }
+        assertTrue(sent.success)
+        assertEquals(1, sends)
+        val opened = rig.coordinator.authorizeLocalIntent(
+            LocalIntentRequest(action = "android.intent.action.VIEW", uri = null, packageName = null, reason = "Open the map"),
+        ) { ToolResult("opened") }
+        assertTrue(opened.success)
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+
+        assertEquals(listOf("engine-1" to true), rig.engine.approvalAnswers)
+        assertNull(rig.coordinator.state.value.approval)
+        // Nothing was shown, so the app was never raised over the one in use.
+        assertEquals(0, rig.foregroundRequests)
+        rig.close()
+    }
+
+    @Test fun stopDuringAutoApprovalTracePreventsLocalDispatch() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Open a page")
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        rig.store.approvalTraceGate = gate
+        var dispatched = false
+        val result = async {
+            rig.coordinator.authorizeLocalIntent(
+                LocalIntentRequest("android.intent.action.VIEW", null, null, "Open page"),
+            ) { dispatched = true; ToolResult("opened") }
+        }
+        runCurrent()
+        rig.coordinator.stop()
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(result.isCancelled)
+        assertFalse(dispatched)
+        rig.close()
+    }
+
+    @Test fun stopDuringAutoApprovalTraceDoesNotAnswerEngine() = runTest {
+        val rig = Rig(this, fullAccess = true)
+        rig.coordinator.send("one", "Run a command")
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        rig.store.approvalTraceGate = gate
+        rig.engine.emit(EngineEvent.Approval("engine-1", "exec", buildJsonObject {}, threadId = "thread", turnId = "turn"))
+        runCurrent()
+        rig.coordinator.stop()
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(rig.engine.approvalAnswers.none { it == ("engine-1" to true) })
+        rig.close()
+    }
+
     @Test fun aSpokenYesNeverGrantsAStandingPermission() = runTest {
         val grants = InMemorySendGrantStore()
         val rig = Rig(this, grants)
@@ -1065,6 +1079,453 @@ class AgentCoordinatorTest {
         rig.close()
     }
 
+    private fun loginPanel() = buildJsonObject {
+        put("title", "Sign in to the shop")
+        put("blocks", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject { put("type", "field"); put("id", "email"); put("label", "Email"); put("kind", "email"); put("required", true) })
+            add(buildJsonObject { put("type", "field"); put("id", "pw"); put("label", "Password"); put("kind", "secret") })
+            add(buildJsonObject { put("type", "control"); put("control", "wireless_adb") })
+        })
+        put("buttons", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject { put("id", "go"); put("label", "Sign in") })
+            add(buildJsonObject { put("id", "no"); put("label", "Not now"); put("style", "cancel") })
+        })
+    }
+
+    @Test fun aPanelReturnsItsValuesAndKeepsSecretsOutOfHistoryAndTrace() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Order my usual")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertEquals("Sign in to the shop", panel.title)
+        assertTrue(rig.tools.revoked)
+        assertEquals(0, rig.tools.executions)
+        // A required field left empty is not a submission.
+        assertFalse(rig.coordinator.answerPanel(panel.id, "go", mapOf("pw" to "hunter2")))
+        assertFalse(rig.coordinator.answerPanel(panel.id, "nope", mapOf("email" to "a@b.c")))
+        assertTrue(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "hunter2", "extra" to "x")))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("go", result["button"]!!.jsonPrimitive.content)
+        val values = result["values"]!!.jsonObject
+        assertEquals("hunter2", values["pw"]!!.jsonPrimitive.content)
+        assertNull(values["extra"])
+        assertEquals(listOf("wireless_adb"), result["controls"]!!.let { it as kotlinx.serialization.json.JsonArray }.map { it.jsonPrimitive.content })
+        assertFalse(rig.store.messages.any { it.text.contains("hunter2") })
+        assertTrue(rig.store.messages.last().text.contains("Email: a@b.c"))
+        assertFalse(rig.store.traces.any { it.toString().contains("hunter2") })
+        rig.close()
+    }
+
+    @Test fun typingWhileAPanelWaitsSetsItAside() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Order")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        assertNotNull(rig.coordinator.state.value.panel)
+        rig.coordinator.steer("use my other account")
+        runCurrent()
+        assertTrue(rig.engine.steers.isEmpty())
+        assertNull(rig.coordinator.state.value.panel)
+        val dismissed = Json.parseToJsonElement(rig.engine.answers.last().text).jsonObject
+        assertEquals("dismissed", dismissed["errorType"]!!.jsonPrimitive.content)
+        assertEquals("use my other account", dismissed["typed"]!!.jsonPrimitive.content)
+        rig.close()
+    }
+
+    private fun torchPanel(tool: String = "system_controls") = buildJsonObject {
+        put("title", "Remote")
+        put("blocks", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject {
+                put("type", "action"); put("id", "torch"); put("label", "Flashlight"); put("tool", tool); put("icon", "flashlight")
+                put("arguments", buildJsonObject { put("operation", "torch"); put("on", true) })
+                put("off_arguments", buildJsonObject { put("operation", "torch"); put("on", false) })
+            })
+        })
+    }
+
+    private fun Rig.defineTools(vararg names: String) {
+        tools.definitions = names.map { ToolDefinition(it, it, buildJsonObject { put("type", "object") }) }
+    }
+
+    private fun widgetPanel() = buildJsonObject {
+        torchPanel().forEach { (key, value) -> put(key, value) }
+        put("surface", "widget")
+    }
+
+    @Test fun aPanelThatOutlivesTheTurnWaitsForTheAppsOwnApprovalNotTheChat() = runTest {
+        val rig = Rig(this, fullAccess = true, hostFor = { scope, store ->
+            PanelHost(scope, InMemorySavedPanelVault(), store, invoke = { _, _ -> ToolResult("{}") }, io = StandardTestDispatcher(testScheduler))
+        })
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Put a torch on my home screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", widgetPanel(), "thread", "turn"))
+        runCurrent()
+        // Answered at once: nobody waits in the chat, and nothing is drawn there.
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("awaiting_approval", result["status"]!!.jsonPrimitive.content)
+        // Honest about where it lives: nothing is saved before the user's OK.
+        assertEquals("false", result["stored"]!!.jsonPrimitive.content)
+        assertTrue(result["message"]!!.jsonPrimitive.content.contains("not saved until they approve it"))
+        assertNull(rig.coordinator.state.value.panel)
+        val saved = rig.host!!.panels.value.single()
+        assertEquals(SavedPanel.Status.PENDING, saved.status)
+        // A reply in the chat, a tool approval and full access cannot approve it.
+        rig.coordinator.steer("yes, approve it")
+        rig.coordinator.approve("p", true, ApprovalScope.ONCE)
+        runCurrent()
+        assertEquals(SavedPanel.Status.PENDING, rig.host.get(saved.id)!!.status)
+        assertTrue(rig.tools.calls.isEmpty())
+        rig.close()
+    }
+
+    @Test fun aPinnedPanelsTurnEndsReadyWhateverOrderTheEngineSettlesIn() = runTest {
+        // The engine may settle the answered call after the turn ends, or not at all.
+        for (order in listOf("resolved_after_turn", "never_resolved")) {
+            val rig = Rig(this, fullAccess = true, hostFor = { scope, store ->
+                PanelHost(scope, InMemorySavedPanelVault(), store, invoke = { _, _ -> ToolResult("{}") }, io = StandardTestDispatcher(testScheduler))
+            })
+            rig.defineTools("system_controls")
+            rig.coordinator.send("one", "Pin a torch to my notifications")
+            runCurrent()
+            val pinned = buildJsonObject { torchPanel().forEach { (key, value) -> put(key, value) }; put("surface", "notification") }
+            rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", pinned, "thread", "turn"))
+            runCurrent()
+            rig.engine.emit(EngineEvent.MessageCompleted("It waits for your approval.", "thread", "turn", "item", "final_answer"))
+            rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+            if (order == "resolved_after_turn") rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "turn"))
+            advanceUntilIdle()
+            val state = rig.coordinator.state.value
+            assertEquals(order, RunPhase.IDLE, state.phase)
+            assertEquals(order, "Ready", state.status)
+            assertNull(order, state.approval)
+            assertNull(order, state.panel)
+            assertEquals(order, 1, rig.engine.answers.size)
+            rig.close()
+        }
+    }
+
+    @Test fun aPinnedPanelsTurnEndsReadyWithItsCallClosed() = runTest {
+        // Seen on a phone: after a turn that pinned a notification panel the
+        // chat kept "Working" and the call's row stayed open for over a minute.
+        val rig = Rig(this, fullAccess = true, hostFor = { scope, store ->
+            PanelHost(scope, InMemorySavedPanelVault(), store, invoke = { _, _ -> ToolResult("{}") }, io = StandardTestDispatcher(testScheduler))
+        })
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Pin a torch to my notifications")
+        runCurrent()
+        val pinned = buildJsonObject { torchPanel().forEach { (key, value) -> put(key, value) }; put("surface", "notification") }
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", pinned, "thread", "turn"))
+        runCurrent()
+        assertEquals(1, rig.engine.answers.size)
+        // The engine settles the answered call; that must not reopen or cancel anything.
+        rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "turn"))
+        rig.engine.emit(EngineEvent.MessageCompleted("It waits for your approval.", "thread", "turn", "item", "final_answer"))
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        advanceUntilIdle()
+        assertEquals(RunPhase.IDLE, rig.coordinator.state.value.phase)
+        assertEquals("Ready", rig.coordinator.state.value.status)
+        assertNull(rig.coordinator.state.value.panel)
+        assertEquals(1, rig.engine.answers.size)
+        val trace = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "p" }.map { it["type"]!!.jsonPrimitive.content }
+        assertFalse(trace.toString(), "tool_cancelled" in trace)
+        assertEquals(trace.toString(), "tool_call", trace.first())
+        assertTrue(trace.toString(), trace.size >= 2)
+        // The chat is free: the next turn's call is answered at once.
+        rig.coordinator.send("one", "Read the screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertEquals("Done", rig.engine.answers.last().text)
+        rig.close()
+    }
+
+    @Test fun withoutAHostAPanelThatOutlivesTheTurnIsRefused() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Put a torch on my home screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", widgetPanel(), "thread", "turn"))
+        runCurrent()
+        val answer = rig.engine.answers.single()
+        assertTrue(answer.text, answer.text.contains("unsupported"))
+        assertNull(rig.coordinator.state.value.panel)
+        rig.close()
+    }
+
+    @Test fun aPanelActionRunsItsToolAtOnceAndThePanelStaysOpen() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "Give me a torch switch")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", torchPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertEquals(false, rig.coordinator.state.value.panelActions["torch"]!!.on)
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "nope", true))
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        runCurrent()
+        assertEquals("system_controls" to buildJsonObject { put("operation", "torch"); put("on", true) }, rig.tools.calls.single())
+        // No answer yet: Mike is not involved, and the panel is still there.
+        assertTrue(rig.engine.answers.isEmpty())
+        assertEquals(panel.id, rig.coordinator.state.value.panel?.id)
+        assertEquals(true, rig.coordinator.state.value.panelActions["torch"]!!.on)
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", false))
+        runCurrent()
+        assertEquals(false, rig.tools.calls.last().second["on"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(false, rig.coordinator.state.value.panelActions["torch"]!!.on)
+        // Closing tells Mike what the taps did, so he does not undo or repeat them.
+        assertTrue(rig.coordinator.answerPanel(panel.id, null, emptyMap()))
+        runCurrent()
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("closed", result["errorType"]!!.jsonPrimitive.content)
+        val actions = result["actions"] as kotlinx.serialization.json.JsonArray
+        assertEquals(listOf("true", "false"), actions.map { it.jsonObject["on"]!!.jsonPrimitive.content })
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        rig.close()
+    }
+
+    @Test fun aFailedActionLeavesTheSwitchWhereItWas() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "torch")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", torchPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        rig.tools.nextResult = ToolResult("""{"ok":false,"errorType":"torch_failed","message":"The flash is busy"}""")
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        runCurrent()
+        val tile = rig.coordinator.state.value.panelActions["torch"]!!
+        assertEquals(false, tile.on)
+        assertEquals(false, tile.ok)
+        assertEquals("The flash is busy", tile.message)
+        rig.close()
+    }
+
+    @Test fun anActionIsRefusedWhileOneRunsAndAfterStop() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "torch")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", torchPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        rig.tools.workMs = 1_000
+        assertTrue(rig.coordinator.runPanelAction(panel.id, "torch", true))
+        runCurrent()
+        assertTrue(rig.coordinator.state.value.panelActions["torch"]!!.running)
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "torch", false))
+        advanceTimeBy(1_500)
+        runCurrent()
+        rig.coordinator.stop()
+        runCurrent()
+        assertFalse(rig.coordinator.runPanelAction(panel.id, "torch", false))
+        assertEquals(1, rig.tools.calls.size)
+        rig.close()
+    }
+
+    private fun volumePanel(tool: String = "system_controls") = buildJsonObject {
+        put("title", "Volume")
+        put("blocks", kotlinx.serialization.json.buildJsonArray {
+            add(buildJsonObject {
+                put("type", "slider"); put("id", "vol"); put("label", "Media"); put("tool", tool)
+                put("min", 0); put("max", 100); put("step", 10); put("value", 30)
+                put("arguments", buildJsonObject { put("operation", "volume"); put("stream", "media"); put("percent", "{value}") })
+            })
+        })
+    }
+
+    @Test fun aLiveSliderRunsItsCallWithAJsonNumberOnRelease() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls")
+        rig.coordinator.send("one", "volume")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", volumePanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertEquals("30", rig.coordinator.state.value.panelActions["vol"]!!.value)
+        assertFalse(rig.coordinator.runPanelSlider(panel.id, "nope", 50.0))
+        assertFalse(rig.coordinator.runPanelSlider(panel.id, "vol", Double.NaN))
+        assertTrue(rig.coordinator.runPanelSlider(panel.id, "vol", 57.0))
+        runCurrent()
+        assertEquals(
+            "system_controls" to buildJsonObject { put("operation", "volume"); put("stream", "media"); put("percent", 60) },
+            rig.tools.calls.single(),
+        )
+        assertEquals("60", rig.coordinator.state.value.panelActions["vol"]!!.value)
+        assertTrue(rig.engine.answers.isEmpty())
+        // A failed call leaves the applied value where it was.
+        rig.tools.nextResult = ToolResult("""{"ok":false,"errorType":"volume_failed","message":"Stream is fixed"}""")
+        assertTrue(rig.coordinator.runPanelSlider(panel.id, "vol", 90.0))
+        runCurrent()
+        val state = rig.coordinator.state.value.panelActions["vol"]!!
+        assertEquals("60", state.value)
+        assertEquals(false, state.ok)
+        assertEquals("Stream is fixed", state.message)
+        assertTrue(rig.coordinator.answerPanel(panel.id, "done", mapOf("vol" to "60")))
+        runCurrent()
+        val result = Json.parseToJsonElement(rig.engine.answers.single().text).jsonObject
+        assertEquals("60", result["values"]!!.jsonObject["vol"]!!.jsonPrimitive.content)
+        val actions = result["actions"] as kotlinx.serialization.json.JsonArray
+        assertEquals(listOf("60", "90"), actions.map { it.jsonObject["value"]!!.jsonPrimitive.content })
+        assertEquals(listOf(true, false), actions.map { it.jsonObject["ok"]!!.jsonPrimitive.content.toBoolean() })
+        assertFalse(rig.coordinator.runPanelSlider(panel.id, "vol", 10.0))
+        rig.close()
+    }
+
+    @Test fun aLiveSliderCannotBindAScreenTool() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls", "tap")
+        rig.coordinator.send("one", "x")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", volumePanel("tap"), "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertTrue(rig.engine.answers.last().text, rig.engine.answers.last().text.contains("bad_panel"))
+        assertTrue(rig.tools.calls.isEmpty())
+        rig.close()
+    }
+
+    @Test fun anActionCannotBindAScreenOrUnknownOrChatTool() = runTest {
+        val rig = Rig(this)
+        rig.defineTools("system_controls", "tap")
+        rig.coordinator.send("one", "x")
+        runCurrent()
+        listOf("tap", "rm_rf", "ask_user").forEachIndexed { index, tool ->
+            rig.engine.emit(EngineEvent.ToolCall("p$index", "show_ui", torchPanel(tool), "thread", "turn"))
+            runCurrent()
+            assertNull(rig.coordinator.state.value.panel)
+            assertTrue(rig.engine.answers.last().text, rig.engine.answers.last().text.contains("bad_panel"))
+        }
+        assertTrue(rig.tools.calls.isEmpty())
+        rig.close()
+    }
+
+    @Test fun aBadPanelIsRefusedWithAReason() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "x")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", buildJsonObject {
+            put("title", "T")
+            put("blocks", kotlinx.serialization.json.buildJsonArray { add(buildJsonObject { put("type", "control"); put("control", "root_shell") }) })
+        }, "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertTrue(rig.engine.answers.single().text.contains("bad_panel"))
+        rig.close()
+    }
+
+    @Test fun aChatPanelLeftOpenWhenItsTurnEndsClosesAndDoesNotHoldTheNextTurnsCalls() = runTest {
+        // Seen on a phone: the turn ended with a panel still waiting. The panel
+        // kept the tool lock, so every later call in that chat went unanswered.
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        assertNotNull(rig.coordinator.state.value.panel)
+        rig.engine.emit(EngineEvent.TurnFinished("completed", threadId = "thread", turnId = "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        // Nobody waits for that call now, so it is not answered.
+        assertTrue(rig.engine.answers.isEmpty())
+        // The form stays in the chat as a receipt, not as a second note.
+        val receipt = rig.store.messages.single { it.role == "assistant" && it.text == "Sign in to the shop" }
+        assertEquals(AgentPanels.EXPIRED, receipt.state)
+        assertFalse(rig.store.messages.any { it.role == "system" && it.text.startsWith("The panel closed") })
+
+        rig.coordinator.send("one", "Read the screen")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("r", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        assertEquals(listOf("Done"), rig.engine.answers.map { it.text })
+        rig.close()
+    }
+
+    @Test fun aChatPanelTheEngineGaveUpOnClosesAndFreesTheCallsBehindIt() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        rig.engine.emit(EngineEvent.ToolCall("r", "read_ui", buildJsonObject {}, "thread", "turn"))
+        runCurrent()
+        // The second call waits behind the open panel.
+        assertTrue(rig.engine.answers.isEmpty())
+
+        // Another turn's settlement of the same id is not this call's.
+        rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "other-turn"))
+        runCurrent()
+        assertNotNull(rig.coordinator.state.value.panel)
+
+        rig.engine.emit(EngineEvent.ApprovalResolved("p", "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertFalse(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "x")))
+        // Only the call behind it is answered: the engine no longer reads the panel's.
+        assertEquals(listOf("Done"), rig.engine.answers.map { it.text })
+        assertEquals(AgentPanels.EXPIRED, rig.store.messages.single { it.text == "Sign in to the shop" }.state)
+        val panelTrace = rig.store.traces.filter { it["requestId"]?.jsonPrimitive?.content == "p" }.map { it["type"]!!.jsonPrimitive.content }
+        assertEquals(listOf("tool_call", "tool_cancelled", "tool_closed"), panelTrace)
+        rig.close()
+    }
+
+    @Test fun aChatPanelNobodyUsesExpiresAsAReceiptThatCannotBeSent() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        val title = rig.store.messages.single { it.text == "Sign in to the shop" }
+        assertEquals("complete", title.state)
+        advanceTimeBy(ChatTools.ASK_TIMEOUT_MS + 1_000)
+        runCurrent()
+        assertNull(rig.coordinator.state.value.panel)
+        assertTrue(rig.engine.answers.single().text.contains("no_answer"))
+        assertEquals(AgentPanels.EXPIRED, rig.store.messages.single { it.id == title.id }.state)
+        assertFalse(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "x")))
+        assertEquals(1, rig.engine.answers.size)
+        assertEquals(listOf("Sign in"), rig.store.messages.filter { it.role == "user" }.map { it.text })
+        rig.close()
+    }
+
+    @Test fun anAnsweredChatPanelIsNoReceipt() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Sign in")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("p", "show_ui", loginPanel(), "thread", "turn"))
+        runCurrent()
+        val panel = rig.coordinator.state.value.panel!!
+        assertTrue(rig.coordinator.answerPanel(panel.id, "go", mapOf("email" to "a@b.c", "pw" to "x")))
+        runCurrent()
+        assertEquals("complete", rig.store.messages.single { it.text == "Sign in to the shop" }.state)
+        rig.close()
+    }
+
+    @Test fun aQuestionTheEngineGaveUpOnClosesWithANote() = runTest {
+        val rig = Rig(this)
+        rig.coordinator.send("one", "Plan")
+        runCurrent()
+        rig.engine.emit(EngineEvent.ToolCall("q", "ask_user", buildJsonObject { put("question", "Go on?") }, "thread", "turn"))
+        runCurrent()
+        val id = rig.coordinator.state.value.question!!.id
+        rig.engine.emit(EngineEvent.ApprovalResolved("q", "thread", "turn"))
+        runCurrent()
+        assertNull(rig.coordinator.state.value.question)
+        assertFalse(rig.coordinator.answerQuestion(id, "yes"))
+        assertTrue(rig.engine.answers.isEmpty())
+        assertTrue(rig.store.messages.any { it.role == "system" && it.text.startsWith("The question closed: Mike stopped waiting for it") })
+        rig.close()
+    }
+
     @Test fun stoppingARunTakesItsQuestionDown() = runTest {
         val rig = Rig(this)
         rig.coordinator.send("one", "Plan")
@@ -1113,15 +1574,16 @@ class AgentCoordinatorTest {
     private class Rig(
         test: TestScope,
         grants: SendGrantStore = InMemorySendGrantStore(),
-        policy: ((String, String, JsonObject) -> String?)? = null,
-        tasks: TaskToolHandler? = null,
-        readOnly: Boolean = false,
+        fullAccess: Boolean = false,
+        /** Builds the saved-panel host on the rig's own store, or none. */
+        hostFor: ((CoroutineScope, SessionStore) -> PanelHost)? = null,
     ) {
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(test.testScheduler))
         val engine = FakeEngine()
         val store = FakeStore()
         val overlay = FakeOverlay()
         val tools = FakeTools(overlay)
+        val host = hostFor?.invoke(scope, store)
         val adbStatus = MutableStateFlow(AdbStatus())
         var foregroundRequests = 0
         /** Addresses show_media asked for, in order. */
@@ -1140,9 +1602,8 @@ class AgentCoordinatorTest {
                 if (address.startsWith("Server:")) RemoteMediaRef("Server", address.removePrefix("Server:"), 2_048).encode()
                 else File(workspace, address.substringAfterLast(':').substringAfterLast('/')).path
             },
-            taskTools = tasks?.let { handler -> { handler } },
-            toolPolicy = policy,
-            readOnlySession = { readOnly },
+            fullAccess = { fullAccess },
+            panelHost = host,
         ) { adbStatus.value }
         fun close() { scope.cancel() }
     }
@@ -1239,6 +1700,7 @@ class AgentCoordinatorTest {
         override suspend fun close() { closed = true }
     }
     private class FakeStore : SessionStore {
+        var approvalTraceGate: CompletableDeferred<Unit>? = null
         var queued = emptyList<QueuedTurn>()
         override suspend fun loadQueuedTurns() = queued
         override suspend fun saveQueuedTurns(turns: List<QueuedTurn>) { queued = turns }
@@ -1251,7 +1713,10 @@ class AgentCoordinatorTest {
         override suspend fun getSession(id: String) = sessions.value.firstOrNull { it.id == id }
         override fun messages(sessionId: String) = flowOf(messages.filter { it.sessionId == sessionId })
         override suspend fun append(message: ChatMessage) { messages.add(message) }
-        override suspend fun appendTrace(sessionId: String, entry: JsonObject) { traces.add(entry) }
+        override suspend fun appendTrace(sessionId: String, entry: JsonObject) {
+            if (entry["type"]?.jsonPrimitive?.content == "approval_auto_allowed") approvalTraceGate?.await()
+            traces.add(entry)
+        }
         override suspend fun updateMessage(id: String, text: String, state: String) { val i = messages.indexOfFirst { it.id == id }; if (i >= 0) messages[i] = messages[i].copy(text = text, state = state) }
         private fun change(sessionId: String, change: (ChatSession) -> ChatSession) {
             sessions.value = sessions.value.map { if (it.id == sessionId) change(it) else it }
@@ -1270,7 +1735,8 @@ class AgentCoordinatorTest {
         override fun workspace(sessionId: String) = File("session-$sessionId")
     }
     private class FakeTools(private val overlay: FakeOverlay) : DeviceToolGateway {
-        override val definitions = emptyList<ToolDefinition>()
+        override var definitions = emptyList<ToolDefinition>()
+        val calls = mutableListOf<Pair<String, JsonObject>>()
         var revoked = true
         var executions = 0
         var controlWasVisible = false
@@ -1288,7 +1754,7 @@ class AgentCoordinatorTest {
         override suspend fun invoke(name: String, arguments: kotlinx.serialization.json.JsonObject): ToolResult {
             check(!revoked)
             if (needsControl(name, arguments)) controlWasVisible = overlay.visible
-            executions++; names.add(name)
+            executions++; names.add(name); calls.add(name to arguments)
             if (fail) error("Capture failed")
             if (workMs > 0) delay(workMs)
             return nextResult

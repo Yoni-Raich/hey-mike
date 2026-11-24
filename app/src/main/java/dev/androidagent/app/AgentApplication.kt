@@ -76,10 +76,12 @@ class AgentApplication : Application(), AutomationHostOwner {
     override val automationHost: AutomationHost?
         get() = if (::graph.isInitialized) graph.automationHost else null
 
-    override val taskSignals: dev.androidagent.core.TaskSignalSink?
-        get() = if (::graph.isInitialized) graph.taskDesk.sink else null
-
-    override fun onCreate() { super.onCreate(); graph = AgentGraph(this) }
+    override fun onCreate() {
+        super.onCreate()
+        // Before the graph, so a channel from an earlier build goes even if building it fails.
+        RetiredChannels.retire(this)
+        graph = AgentGraph(this)
+    }
 }
 
 class AgentGraph(private val app: Application) {
@@ -98,7 +100,7 @@ class AgentGraph(private val app: Application) {
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
     /** The phone's own Codex. */
-    val phoneEngine = CodexEngine(runtime)
+    val phoneEngine = CodexEngine(runtime, accountReadBridge = true)
     /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
     val computers = dev.androidagent.remote.RemoteStore(
         java.io.File(app.filesDir, "remote/computers.bin"),
@@ -146,6 +148,16 @@ class AgentGraph(private val app: Application) {
             }
         },
     )
+    private val accountConnectionPreferences = app.getSharedPreferences("account_connections", 0)
+    /** User-chosen account abilities for normal chats, independent of the archived Manager. */
+    val accountConnections = dev.androidagent.core.connections.AccountConnections(
+        sources = listOf(phoneEngine, claudeEngine),
+        initialEnabled = accountConnectionPreferences.getStringSet("enabled", emptySet()).orEmpty().toSet(),
+        saveEnabled = { accountConnectionPreferences.edit().putStringSet("enabled", it).apply() },
+    )
+    init {
+        if (accountConnections.state.value.enabled.isNotEmpty()) scope.launch(Dispatchers.IO) { accountConnections.refresh() }
+    }
     /** What chats talk to: the phone's Codex, a computer's for a chat opened on one, or Claude for a Claude chat. */
     val engine = dev.androidagent.remote.RoutingAgentEngine(phoneEngine, remote, claudeEngine, sessions)
     private val windowPreferences = app.getSharedPreferences("ui", 0)
@@ -194,7 +206,7 @@ class AgentGraph(private val app: Application) {
     // so it must already be initialised rather than captured through a lambda.
     val overlay = FloatingControlOverlay(
         app,
-        onStop = { taskDesk.pauseBackground(); queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
+        onStop = { queue.pause(); runCoordinator.stop(); if (voice.state.value.active) scope.launch { voice.stop() } },
         onSend = { text -> runCoordinator.steerPhone(text) },
         onOpenApp = { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) },
         accessibilityService = { A11yServiceHandle.service.value },
@@ -245,10 +257,20 @@ class AgentGraph(private val app: Application) {
     private fun leaveApprovalScreen() {
         foregroundActivity?.get()?.let { activity -> activity.runOnUiThread { activity.moveTaskToBack(true) } }
     }
+    /** Stop one chat's run, as its Stop button does. */
+    fun stopChat(id: String) {
+        runCoordinator.stop(id)
+        if (id == voiceConversation.sessionId.value) {
+            runCoordinator.endVoice()
+            scope.launch { runCatching { voice.stop() } }
+        }
+    }
     /** The resumed activity, if any, so an approval can step out of the way. */
     @Volatile var foregroundActivity: java.lang.ref.WeakReference<android.app.Activity>? = null
     /** "Always allow" answers to send approvals, signed so the agent cannot add its own. */
     val sendGrants = KeystoreSendGrantStore(app)
+    /** Each chat's permission level, signed so the agent cannot give itself full access. */
+    val permissions = KeystorePermissionStore(app)
     val connectionGrants = KeystoreConnectionGrantStore(app)
     val connectTransport = dev.androidagent.connect.AndroidConnectTransport(app)
     val connectedApps = ConnectedAppsController(app, connectTransport, connectionGrants, scope)
@@ -257,9 +279,58 @@ class AgentGraph(private val app: Application) {
     val knowledge = KnowledgeStore(KnowledgeStore.directoryIn(runtime.homeDirectory))
     val knowledgeTools = KnowledgeToolGateway(knowledge)
     val runtimePermissions = RuntimePermissionBroker(app)
-    val capabilityTools = AndroidCapabilityTools(app) { requested ->
-        runtimePermissions.request(requested)
+    /** Live notifications and media sessions, read through the automations listener. */
+    private val notificationAccess = dev.androidagent.automations.AndroidNotificationAccess(app)
+    val capabilityTools = AndroidCapabilityTools(
+        app,
+        requestRuntimePermissions = { requested -> runtimePermissions.request(requested) },
+        notifications = notificationAccess,
+        media = notificationAccess,
+        // SMS, calls and notification replies leave the phone: same approval as a chat-app send.
+        authorizeSend = { request, dispatch -> runCoordinator.authorizeSend(request, dispatch) },
+        // Settings writes, event deletes and notification action buttons.
+        authorizeChange = { request, dispatch -> runCoordinator.authorizeLocalIntent(request, dispatch) },
+    )
+    /**
+     * The one gateway saved panels reach: its own instance, armed once and
+     * never part of a run, so Stop and a run's revoke neither break a widget
+     * nor let a panel borrow a run's grants. It asks for nothing: sends,
+     * settings writes and runtime permissions are all denied here.
+     */
+    private val panelTools = AndroidCapabilityTools(app, media = notificationAccess).also {
+        it.beginRun("saved-panels", File(app.filesDir, "saved-panels"))
     }
+    /** Panels that outlive their turn: floating cards, widgets and notifications. */
+    val panels = dev.androidagent.core.PanelHost(
+        CoroutineScope(scope.coroutineContext + Dispatchers.Default),
+        dev.androidagent.app.panels.KeystoreSavedPanelVault(app),
+        sessions,
+        invoke = { name, arguments -> withContext(Dispatchers.IO) { panelTools.invoke(name, arguments) } },
+        checkCall = { tool, arguments ->
+            when {
+                panelTools.definitions.none { it.name == tool } -> "$tool is not a tool a saved panel can reach."
+                // The same guard a run uses: anything that may take the screen needs Mike and the overlay.
+                panelTools.needsControl(tool, arguments) -> "$tool can take the screen, so it cannot run without Mike."
+                else -> null
+            }
+        },
+        runActive = { ::runCoordinator.isInitialized && runCoordinator.anyActive || voice.state.value.active },
+        screenOn = { app.getSystemService(android.os.PowerManager::class.java)?.isInteractive != false },
+        stateVault = dev.androidagent.app.panels.KeystoreSavedPanelVault.forState(app),
+        zone = { java.time.ZoneId.systemDefault() },
+        startTurn = { origin, prompt, displayPrompt ->
+            // One active run per phone: an ask_mike tap never steers or queues behind a running chat.
+            if (::runCoordinator.isInitialized && runCoordinator.anyActive || voice.state.value.active) {
+                "Mike is busy. Try again when he has finished."
+            } else {
+                runCatching {
+                    val id = origin?.takeIf { sessions.getSession(it) != null }
+                        ?: sessions.createSession().id.also(permissions::startChat)
+                    queue.submit(dev.androidagent.core.QueuedTurn(sessionId = id, prompt = prompt, displayPrompt = displayPrompt))
+                }.fold(onSuccess = { null }, onFailure = { it.message ?: "Could not ask Mike." })
+            }
+        },
+    )
     private val workflowCalls = WorkflowCallRegistry(
         listOf(
             WorkflowCallMetadata(
@@ -268,17 +339,24 @@ class AgentGraph(private val app: Application) {
             ),
             WorkflowCallMetadata(
                 name = "calendar",
-                readOnlyOperations = setOf("permission_status", "list", "get"),
+                readOnlyOperations = setOf("permission_status", "list", "get", "calendars"),
+            ),
+            WorkflowCallMetadata(
+                name = dev.androidagent.devicetools.SystemPolicy.TOOL,
+                readOnlyOperations = dev.androidagent.devicetools.SystemPolicy.READ_ONLY,
             ),
             WorkflowCallMetadata(
                 name = "files_media",
                 readOnlyOperations = setOf(
                     "permission_status", "list", "search", "info", "ws_list", "ws_read_text",
+                    "folders", "folder_list",
                 ),
             ),
             WorkflowCallMetadata(
                 name = "communications",
-                readOnlyOperations = setOf("notification_access_status"),
+                readOnlyOperations = setOf(
+                    "notification_access_status", "list_notifications", "read_sms", "read_call_log",
+                ),
             ),
             WorkflowCallMetadata(
                 name = "apps_settings",
@@ -314,6 +392,8 @@ class AgentGraph(private val app: Application) {
     val automations = AutomationLibrary(AutomationLibrary.directoryIn(runtime.homeDirectory))
     /** Read by the panel to say when each rule last ran; written only by the host. */
     val automationJournal = AutomationJournal(AutomationJournal.fileIn(runtime.homeDirectory))
+    /** Named places for place triggers. */
+    val automationPlaces = dev.androidagent.core.AutomationPlaces(dev.androidagent.core.AutomationPlaces.fileIn(runtime.homeDirectory))
     private val automationActions = AndroidAutomationActions(
         context = app,
         coordinator = { runCoordinator },
@@ -344,6 +424,9 @@ class AgentGraph(private val app: Application) {
         deviceState = { if (::automationHost.isInitialized) automationHost.readDeviceState() else emptyMap() },
         supportedDeviceStates = { if (::automationHost.isInitialized) automationHost.supportedDeviceStates() else emptySet() },
         liveDeviceSnapshot = { if (::automationHost.isInitialized) automationHost.deviceSnapshot() else dev.androidagent.core.AutomationDeviceSnapshot() },
+        places = automationPlaces,
+        currentLocation = { if (::automationHost.isInitialized) automationHost.currentLocation() else null },
+        insidePlaces = { if (::automationHost.isInitialized) automationHost.insidePlaces() else emptySet() },
     )
     /** What the computers tool asks the screen to show; the view model clears it. */
     val computerRequests = kotlinx.coroutines.flow.MutableStateFlow<dev.androidagent.remote.ComputerUiRequest?>(null)
@@ -413,7 +496,12 @@ class AgentGraph(private val app: Application) {
     }
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
         listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
-            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), connectedTools(), capabilityTools, a11yTools, adbTools),
+            computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), connectedTools(),
+            dev.androidagent.core.connections.AccountReadGateway(phoneEngine) {
+                val active = accountConnections.state.value.active
+                "Account connections (read only): ${active.count { it.engine == dev.androidagent.core.EngineKind.CODEX }} ChatGPT, " +
+                    "${active.count { it.engine == dev.androidagent.core.EngineKind.CLAUDE }} Claude (Claude chats on this phone)"
+            }, capabilityTools, a11yTools, adbTools),
         runtimeVersions = {
             val claude = claudeHost.updates.activePin.version.takeIf {
                 claudeHost.installState.value.phase == dev.androidagent.runtime.ClaudeInstallPhase.INSTALLED
@@ -450,10 +538,15 @@ class AgentGraph(private val app: Application) {
     val openChat = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     /** A question a chat asked while its card is not on screen goes to the notification shade. */
     val questions: QuestionNotifier
+    /** Running chats, approvals and finished chats in the notification shade. */
+    val sessionNotices: SessionNotifier
     /** Every chat's run: several at once, with the phone to one of them at a time. */
     val coordinator: AgentRuns
         get() = runCoordinator
     val queue: SessionRunQueue
+    /** Where saved panels are drawn: the floating card, notifications and the widget. */
+    lateinit var panelSurfaces: dev.androidagent.app.panels.SavedPanelSurfaces
+        private set
     /** Chats that stopped at a usage limit, and what each does about it. */
     lateinit var limitRecovery: dev.androidagent.core.UsageLimitRecovery
         private set
@@ -461,24 +554,8 @@ class AgentGraph(private val app: Application) {
     val accountChange = kotlinx.coroutines.sync.Mutex()
     /** A switch made outside Settings finished, with the new live account's id; the screen reads it again. */
     val accountSwitched = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
-    /**
-     * Mike's task board: the Manager, the team, discovery in the background.
-     * Declared before the coordinators, which ask it which tools a chat may use.
-     */
-    val taskDesk = TaskDesk(
-        app, scope, sessions, runtime.homeDirectory,
-        agents = { sessionAgents },
-        runs = { runCoordinator },
-        queue = { queue },
-        quotaLow = { kind ->
-            val reading = if (kind == dev.androidagent.core.EngineKind.CLAUDE) claudeUsage.read()?.limits
-                else accounts.state().activeId?.let { usageBook.all()[it]?.limits }
-            LastUsageStore.current(reading.orEmpty(), System.currentTimeMillis() / 1000L).any { (it.usedPercent ?: 0.0) >= 90.0 }
-        },
-    )
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
-    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools,
-        restricted = taskDesk::isBackgroundSession, ownerContext = taskDesk::ownerContext) { runCoordinator }
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
     init {
         scope.launch {
             A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
@@ -507,11 +584,16 @@ class AgentGraph(private val app: Application) {
                 chatMedia = { address, workspace -> copyFiles.chatMedia(address, workspace) },
                 chatTitles = chatTitles,
                 sessionAgents = { sessionAgents },
-                taskTools = { taskDesk.tools },
-                toolPolicy = { session, name, arguments -> taskDesk.toolRefusal(session, name, arguments) },
-                readOnlySession = { taskDesk.isBackgroundSession(it) },
+                // A delegated chat works for the chat that started it, with that chat's level.
+                fullAccess = { chat -> permissions.isFull(chat) || runCoordinator.ancestorsOf(chat).any(permissions::isFull) },
+                panelHost = panels,
             )
         })
+        panelSurfaces = dev.androidagent.app.panels.SavedPanelSurfaces(
+            app, scope, panels, runStates = runCoordinator.sessionStates, appInFront = appInFront,
+        )
+        panels.start()
+        panelSurfaces.start()
         val childSetup = SessionAgentSetup(sessions, remote, phoneEngine, claudeEngine)
         sessionAgents = dev.androidagent.core.SessionAgents(sessions, scope,
             runner = { dev.androidagent.core.RunsSessionAgentRunner(runCoordinator) },
@@ -543,11 +625,13 @@ class AgentGraph(private val app: Application) {
                 if (source == null) -1 else runCoordinator.family(source).indexOf(child).takeIf { it >= 0 } ?: Int.MAX_VALUE
             },
         )
+        sessionNotices = SessionNotifier(app, scope, runCoordinator, sessions, appInFront, openChat,
+            owner = { child -> runCoordinator.ancestorsOf(child).lastOrNull() ?: child },
+        )
         queue = SessionRunQueue(
             scope,
             coordinator,
             sessions,
-            prepare = taskDesk::prepareTurn,
             // A turn a rule queued has a moment; a turn a person sent does not
             // expire. Dropping a stale one is reported, never silent.
             onExpired = { turn ->
@@ -558,8 +642,7 @@ class AgentGraph(private val app: Application) {
                                 id = java.util.UUID.randomUUID().toString(),
                                 sessionId = turn.sessionId,
                                 role = "assistant",
-                                text = if(turn.boardJobId == null) "This did not run: the phone was busy until after the moment it was for."
-                                    else "This background job did not run. Its window expired or its source settings changed. Retained input will be checked in a fresh pass.",
+                                text = "This did not run: the phone was busy until after the moment it was for.",
                                 createdAt = System.currentTimeMillis(),
                             ),
                         )
@@ -579,12 +662,11 @@ class AgentGraph(private val app: Application) {
             actions = automationActions,
             scope = scope,
             agentAvailable = { runCoordinator.available.value },
+            places = automationPlaces,
         )
         // Alarms do not survive a restart, and the rules were only read just
         // now, so the first arming happens here rather than at the first event.
         runCatching { automationHost.start() }
-        taskDesk.start()
-        TaskBackgroundHost(app, scope, taskDesk).start()
         runCatching {
             // Claude reads the same skills from its own home.
             WorkspaceSeeder.installDefaultSkills(runtime.homeDirectory, app, claudeHost.homeDirectory)

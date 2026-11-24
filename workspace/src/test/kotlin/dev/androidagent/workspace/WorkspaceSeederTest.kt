@@ -58,8 +58,7 @@ class WorkspaceSeederTest {
             setOf(
                 "device-capabilities", "device-automation", "app-cards",
                 "user-preferences", "quick-actions", "workflows", "automations", "browser",
-                "files-across-devices", "media-output-check", "connected-apps",
-                "task-board", "task-discovery", "task-review", "memory-upkeep",
+                "files-across-devices", "media-output-check", "connected-apps", "agent-ui",
             ),
             shippedSkills,
         )
@@ -251,6 +250,24 @@ class WorkspaceSeederTest {
         assertFalse(oldManaged.exists())
         assertTrue("unrelated skills must remain untouched", unrelated.isFile)
         assertEquals("keep me", unrelated.readText())
+    }
+
+    @Test
+    fun everyShippedSkillFolderIsInstalledWithAllOfItsFiles() {
+        // agent-ui and media-output-check shipped as assets but were left out
+        // of the install list, so Mike could not find their SKILL.md.
+        val skills = File(assetRoot(), "skills")
+        val home = tempFolder.newFolder("home_real_assets")
+        WorkspaceSeeder.installDefaultSkills(home) { relativePath -> File(skills, relativePath).readBytes() }
+
+        val installed = File(home, ".agents/skills")
+        assertEquals(skills.list()!!.toSet(), WorkspaceSeeder.DEFAULT_SKILL_NAMES.toSet())
+        for (folder in skills.listFiles()!!) {
+            val shipped = folder.walkTopDown().filter { it.isFile }.map { it.relativeTo(folder).invariantSeparatorsPath }.toSet()
+            val copied = File(installed, folder.name).walkTopDown().filter { it.isFile }
+                .map { it.relativeTo(File(installed, folder.name)).invariantSeparatorsPath }.toSet()
+            assertEquals("every file of ${folder.name} is installed", shipped, copied)
+        }
     }
 
     private fun chatPreferences(sessions: File, id: String, content: String, modified: Long) {

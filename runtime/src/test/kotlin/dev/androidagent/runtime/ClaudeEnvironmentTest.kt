@@ -74,6 +74,13 @@ class ClaudeEnvironmentTest {
     }
 
     @Test
+    fun `account connectors require an explicit engine grant not an inherited setting`() {
+        assertEquals("false", build(inherited = mapOf(ClaudeEnvironment.CLAUDEAI_CONNECTORS to "true"))[ClaudeEnvironment.CLAUDEAI_CONNECTORS])
+        assertEquals("true", build(extra = mapOf(ClaudeEnvironment.CLAUDEAI_CONNECTORS to "true"))[ClaudeEnvironment.CLAUDEAI_CONNECTORS])
+        assertEquals("false", build(extra = mapOf(ClaudeEnvironment.CLAUDEAI_CONNECTORS to "1"))[ClaudeEnvironment.CLAUDEAI_CONNECTORS])
+    }
+
+    @Test
     fun `no ca file leaves SSL_CERT_FILE unset`() {
         assertNull(build(caFile = null)["SSL_CERT_FILE"])
     }

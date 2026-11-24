@@ -124,4 +124,84 @@ interface CapabilityPlatform {
     suspend fun openAppSettings(packageName: String): Boolean
     suspend fun openSpecialAccess(kind: String, packageName: String?): Boolean
     suspend fun openSystemSetting(action: String): Boolean
-}
+
+    // ---- direct reads and writes (added 2026-11-15; defaults keep fakes small) ----
+
+    /** SMS rows from [box] (inbox, sent, all), newest first. Needs READ_SMS. */
+    suspend fun querySms(box: String, address: String?, query: String?, limit: Int): List<SmsRow> = emptyList()
+
+    /** Call log rows, newest first. Needs READ_CALL_LOG. */
+    suspend fun queryCalls(number: String?, limit: Int): List<CallRow> = emptyList()
+
+    /** Sends a text through the default SIM. Needs SEND_SMS. Returns the part count. */
+    suspend fun sendSms(to: String, body: String): Int = throw UnsupportedOperationException("SMS is not available.")
+
+    /** Places a call. Needs CALL_PHONE. False when nothing handles it. */
+    suspend fun placeCall(number: String): Boolean = false
+
+    /** Inserts a contact without an editor. Needs WRITE_CONTACTS. Returns the new raw contact id. */
+    suspend fun insertContact(name: String, phone: String?, email: String?): String? = null
+
+    /** Inserts an event into the primary writable calendar. Needs WRITE_CALENDAR. Returns the event id. */
+    suspend fun insertEvent(
+        title: String,
+        description: String?,
+        location: String?,
+        beginMs: Long,
+        endMs: Long,
+        allDay: Boolean,
+        calendarId: String?,
+    ): String? = null
+
+    suspend fun deleteEvent(id: String): Boolean = false
+
+    /** Calendars the app can write to. */
+    suspend fun writableCalendars(): List<CalendarRow> = emptyList()
+
+    // ---- folders the user granted (Storage Access Framework) ----
+
+    /** Folder trees the user picked, with a lasting grant. */
+    suspend fun grantedFolders(): List<FolderRow> = emptyList()
+
+    /** Opens the system folder picker. The user's pick is kept for later runs. */
+    suspend fun openFolderPicker(): Boolean = false
+
+    /** Children of [path] ("" = the folder itself) in tree [folder]; null when the path does not exist. */
+    suspend fun listFolder(folder: String, path: String, limit: Int): List<DocumentRow>? = null
+
+    /** Copies document [path] into [target]. Returns bytes, or null when it does not exist. */
+    suspend fun importDocument(folder: String, path: String, target: java.io.File, maxBytes: Long): Long? = null
+
+    /** Writes [source] to [path]. Returns false when the parent folder does not exist. */
+    suspend fun exportDocument(folder: String, path: String, source: java.io.File, mimeType: String): Boolean = false
+
+    /** True when [path] names an existing document. */
+    suspend fun documentExists(folder: String, path: String): Boolean = false}
+
+/** One SMS. [type] is inbox, sent, draft, outbox or other. */
+data class SmsRow(
+    val id: String,
+    val address: String?,
+    val body: String,
+    val dateMs: Long,
+    val type: String,
+    val read: Boolean,
+    val threadId: String?,
+)
+
+/** One call log entry. [type] is incoming, outgoing, missed, rejected, blocked, voicemail or other. */
+data class CallRow(
+    val number: String?,
+    val name: String?,
+    val type: String,
+    val dateMs: Long,
+    val durationSec: Long,
+)
+
+data class CalendarRow(val id: String, val name: String, val account: String?, val primary: Boolean)
+
+/** A granted folder tree. [uri] is what folder arguments name. */
+data class FolderRow(val uri: String, val name: String, val writable: Boolean)
+
+/** One entry inside a granted folder. */
+data class DocumentRow(val name: String, val dir: Boolean, val mimeType: String?, val size: Long?, val modifiedMs: Long?)

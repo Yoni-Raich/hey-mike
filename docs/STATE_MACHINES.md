@@ -1,9 +1,10 @@
 # State machine map
 
-Source review: 2026-11-10, on `refactor/state-machines-20261110`, based on
-`dev` commit `e2c44025`. This refreshes the earlier Manager-branch inventory
-against the actual files in this branch. It does not identify the installed
-APK's source or prove phone behavior. Other worktrees remain untouched.
+Source review: 2026-11-10 (refreshed on `dev` 2026-11-24), on `refactor/state-machines-20261110`.
+This covers the actual production files in `dev` after Manager removal (#160),
+agent UI panels (#163/#166) and Antigravity integration (#168/#169). It does not
+identify the installed APK's source or prove phone behavior. Other worktrees
+remain untouched.
 
 ## Decision
 
@@ -12,13 +13,15 @@ boundaries. A single global state enum would multiply unrelated combinations
 of chat, voice, transport, permissions, task status and UI state.
 
 Start with user interaction: `RunPhase` describes execution; `RunInteraction`
-describes whether a live approval or question needs an answer. Stopping and
-terminal phases expose no live gate, even if a payload remains. Approval takes
-precedence over question, matching the existing reply routing order. Both
-can still be retained as raw data; this is a projection, not a migration.
+describes whether a live approval, question or `show_ui` panel needs an answer.
+Stopping and terminal phases expose no live gate, even if a payload remains.
+Approval takes precedence over question, and question over panel, matching the
+existing reply routing order. All three can still be retained as raw data; this
+is a projection, not a migration.
 
 - UX: the source chat gets only a live child gate; its own Stop takes priority.
-- DX: `pendingApproval`, `pendingQuestion`, and `waitingForUser` share one rule.
+- DX: `pendingApproval`, `pendingQuestion`, `pendingPanel`, and `waitingForUser`
+  share one rule.
 - AX: child status and updates stop carrying obsolete requests after Stop or
   completion. `unknown` outcomes still require inspection, never replay.
 
@@ -29,10 +32,10 @@ keep their current owners. The projection does not grant permission to act.
 `RunOutcome` makes completed, failed, stopped and unknown outcomes independent
 of the wording in `RunState.status`. The coordinator records interruption as
 `stopped`; an unconfirmed remote result still wins over a normal ending.
-`AgentTaskStatus` gives child chats, computer tasks, cards, the task board and
-voice updates one typed vocabulary. Stored receipts remain strings. Computer
-tasks still emit `cancelling`, read as `STOPPING`; phone children emit `stopping`.
-An unfamiliar stored value stays nonterminal, as before.
+`AgentTaskStatus` gives child chats, computer tasks, cards and voice updates one
+typed vocabulary. Stored receipts remain strings. Computer tasks still emit
+`cancelling`, read as `STOPPING`; phone children emit `stopping`. An unfamiliar
+stored value stays nonterminal, as before.
 
 An engine approval answer is claimed under the coordinator's lifecycle lock
 before launching transport work. A second answer cannot race it. Stop and the
@@ -40,7 +43,7 @@ turn/epoch checks still fence dispatch; failed transport releases the claim.
 
 ## Discovery and limits
 
-The scan at this revision covers 281 production source files and flags 144
+The scan at this revision covers 312 production source files and flags 168
 candidate files. Many files share a machine, so that is not a machine count.
 Run `python tools/state_machine_inventory.py` for source paths and evidence
 line numbers, or add `--summary` for counts. It scans tracked production
@@ -118,7 +121,7 @@ Paths name the owning module and source file; the inventory command gives full p
 | Browser user handoff | `web/BrowserSession.kt`, `WebToolGateway.kt` | Agent-owned → shown/user-controlled → returned; lifecycle state differs from screen visibility. |
 | Browser protocol | `web/CdpClient.kt` | Open → request/reply → disconnect; pending calls need a terminal outcome. |
 
-## Automations and task board
+## Automations
 
 Core paths are under `core/src/main/kotlin/dev/androidagent/core/`.
 
@@ -128,12 +131,6 @@ Core paths are under `core/src/main/kotlin/dev/androidagent/core/`.
 | Trigger ownership | `automations/AutomationHost.kt` | Host started → register/watch → fire → stop; duplicate callbacks and remembered connection state matter. |
 | Rule action execution | `AutomationRunner.kt`, `AutomationJournal.kt` | Record firing → ordered actions → success/failure; committed partial work cannot replay automatically. |
 | Deferred human output | `AutomationOutputGate.kt`, `AutomationVoiceRequest.kt` | Hold while user unavailable → recheck validity → deliver/expire; a delay is not approval. |
-| Task decision (mixed) | `TaskBoardModels.kt`, `TaskBoard.kt`, `app/TaskDesk.kt` | Proposed/snoozed → user decision → execution/review → history; discovery cannot authorize action. |
-| Task execution receipt | `TaskBoard.kt`, `TaskDesk.kt` | Approved → start child → track matching run → review/done/failed/stopped/unknown. |
-| Background worker lifecycle | `app/TaskBackgroundHost.kt` | Eligible → scheduled → worker running → reschedule/stop; Android lifetime differs from board state. |
-| Signal ingestion and ownership | `TaskSignals.kt`, `TaskSourcePolicy.kt` | Receive → filter/deduplicate → assign lane → consume; provenance and exclusion gates apply. |
-| Follow-through and briefing delivery | `TaskFollowThrough.kt`, `app/TaskBriefingNotifier.kt` | Due occurrence → pending briefing → notification; retain occurrence identity over restart. |
-| Memory and playbook evolution | `TaskMemory.kt`, `TaskPlaybook.kt` | Evidence → attributed note → recall/revision/retire; data is not permission or a user instruction. |
 
 ## App presentation and durable data
 

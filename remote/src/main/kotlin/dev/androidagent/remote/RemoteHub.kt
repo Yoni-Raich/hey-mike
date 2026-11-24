@@ -45,6 +45,9 @@ import kotlinx.serialization.json.intOrNull
 /** An engine event and the computer it came from. [engine] is the engine that sent it there. */
 data class RemoteEvent(val computerId: String, val event: EngineEvent, val engine: EngineKind = EngineKind.CODEX)
 
+/** Raised when `agy` is not installed on the target computer. */
+class AntigravityNotInstalledException(message: String) : IllegalStateException(message)
+
 /** Where setting a computer up has got to, for the sheet to show. */
 sealed interface RemoteSetup {
     data class Working(val step: String) : RemoteSetup
@@ -90,6 +93,120 @@ class RemoteHub(
     private val links = ConcurrentHashMap<String, Connection>()
     private val engines = ConcurrentHashMap<String, Pair<CodexEngine, Job>>()
     private val claudeEngines = ConcurrentHashMap<String, Triple<ClaudeCodeEngine, ComputerClaudeHost, Job>>()
+    private val antigravityEngines = ConcurrentHashMap<String, Pair<AntigravityEngine, Job>>()
+    internal var createAntigravity: ((String) -> AntigravityEngine)? = null
+
+    internal suspend fun antigravity(id: String): AntigravityEngine = lock.withLock {
+        antigravityEngines[id]?.first ?: (createAntigravity?.invoke(id) ?: AntigravityEngine(
+            phoneBridge = { tools, call ->
+                val host = connection(id)
+                AntigravityPhoneBridge.open(host.os, host.link.isolated(), tools, call)
+            },
+            instructions = {
+                store.computer(id)?.let { RemoteInstructions.forComputer(it, EngineKind.ANTIGRAVITY) }
+                    ?: AntigravityEngine.DEFAULT_INSTRUCTIONS
+            },
+            launch = { cwd -> launchAntigravity(id, cwd) },
+        )).also { engine ->
+            val collector = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                engine.events.collect { stream.emit(RemoteEvent(id, it, EngineKind.ANTIGRAVITY)) }
+            }
+            antigravityEngines[id] = engine to collector
+        }
+    }
+
+    /** The models come from this computer's actual CLI and sign-in. */
+    suspend fun antigravityModels(id: String): List<dev.androidagent.core.AgentModel> = withContext(Dispatchers.IO) {
+        val host = connection(id)
+        val command = if (host.os == HostOs.WINDOWS) {
+            WindowsHost.powershell(
+                "[Console]::OutputEncoding = [Text.UTF8Encoding]::new(\$false)\n" +
+                    "\$cmd = Get-Command agy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
+                    "if (\$cmd) { \$exe = \$cmd.Source } else { \$exe = Join-Path \$env:LOCALAPPDATA 'agy/bin/agy.exe' }\n" +
+                    "if (!(Test-Path -LiteralPath \$exe)) { exit 127 }\n" +
+                    "& \$exe models; exit \$LASTEXITCODE"
+            )
+        } else {
+            "PATH=\"\$HOME/.local/bin:\$PATH\"; export PATH; command -v agy >/dev/null 2>&1 || exit 127; exec agy models"
+        }
+        val listing = runInterruptible { host.link.isolated().use { it.run(command, timeoutMs = 20_000) } }
+        if (listing.exitCode != 0) {
+            val output = listing.stderr + "\n" + listing.stdout
+            val label = store.computer(id)?.label ?: "the computer"
+            when {
+                listing.exitCode == 127 -> throw AntigravityNotInstalledException("Install agy on $label and sign in.")
+                output.contains("sign in", ignoreCase = true) -> error("Sign in on $label with agy acp --login.")
+                else -> error("Could not list Antigravity models on $label.")
+            }
+        }
+        AntigravityModels.parse(listing.stdout).ifEmpty { error("Antigravity returned no models.") }
+    }
+
+    private suspend fun windowsAntigravity(host: Connection, id: String): String {
+        val lookup = WindowsHost.powershell(
+            "\$cmd = Get-Command agy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
+                "if (\$cmd) { \$exe = \$cmd.Source } else { \$exe = Join-Path \$env:LOCALAPPDATA 'agy/bin/agy.exe' }\n" +
+                "if (!(Test-Path -LiteralPath \$exe)) { \$exe = \$null }; 'HEYMIKE ' + (@{exe=\$exe} | ConvertTo-Json -Compress)"
+        )
+        return (WindowsHost.payload(runInterruptible { host.link.run(lookup) })["exe"] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeUnless { it == kotlinx.serialization.json.JsonNull }?.content
+            ?: throw AntigravityNotInstalledException("Install agy on ${store.computer(id)?.label ?: "the computer"} and sign in.")
+    }
+
+    private fun antigravityRelayNamespace(computerId: String): String =
+        java.util.UUID.nameUUIDFromBytes("antigravity-relay:$computerId".toByteArray(Charsets.UTF_8)).toString()
+
+    private fun pruneEndedAntigravityRelays(host: Connection, namespace: String, keepToken: String) {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val root = host.probe(refresh = false).home.replace('\\', '/') + "/.hey-mike/codex-relay/$namespace"
+                val quotedRoot = "'" + root.replace("'", "''") + "'"
+                val quotedKeep = "'" + keepToken.replace("'", "''") + "'"
+                val script = WindowsHost.powershell(
+                    "\$root = $quotedRoot; if (!(Test-Path -LiteralPath \$root)) { exit 0 }\n" +
+                        "Get-ChildItem -LiteralPath \$root -Directory -ErrorAction SilentlyContinue | ForEach-Object {\n" +
+                        "  if (\$_.Name -eq $quotedKeep) { return }\n" +
+                        "  \$meta = Join-Path \$_.FullName 'connection.json'\n" +
+                        "  \$ended = \$false\n" +
+                        "  if (Test-Path -LiteralPath \$meta) {\n" +
+                        "    try { \$ended = [bool](Get-Content -LiteralPath \$meta -Raw | ConvertFrom-Json).ended } catch {}\n" +
+                        "  } elseif (([DateTime]::UtcNow - \$_.LastWriteTimeUtc).TotalMinutes -gt 10) { \$ended = \$true }\n" +
+                        "  if (\$ended) { Remove-Item -LiteralPath \$_.FullName -Recurse -Force -ErrorAction SilentlyContinue }\n" +
+                        "}"
+                )
+                host.link.isolated().use { it.run(script, timeoutMs = 15_000) }
+            }
+        }
+    }
+
+    private suspend fun launchAntigravity(id: String, cwd: String): Process = withContext(Dispatchers.IO) {
+        val host = connection(id)
+        val computer = checkNotNull(store.computer(id))
+        val args = listOf("acp") + if (computer.access == RemoteAccess.ASK) listOf("--sandbox") else emptyList()
+        if (host.os == HostOs.LINUX) {
+            val command = "PATH=\"\$HOME/.local/bin:\$PATH\"; export PATH; exec agy " + args.joinToString(" ")
+            if (runInterruptible { host.link.run("PATH=\"\$HOME/.local/bin:\$PATH\"; command -v agy") }.exitCode != 0) {
+                throw AntigravityNotInstalledException("Install agy on ${computer.label} and sign in there.")
+            }
+            return@withContext host.link.start(command)
+        }
+        val exe = windowsAntigravity(host, id)
+        val namespace = antigravityRelayNamespace(id)
+        val instance = CodexRelayScripts.install(host.link, host.probe(refresh = false), File(claudeScratch.parentFile, "codex-relay"), clientId = namespace)
+        val config = File.createTempFile("agy-launch-", ".json", claudeScratch.apply { mkdirs() })
+        try {
+            config.writeText(CodexRelayScripts.launchConfig(exe, args, cwd, emptyMap()))
+            host.link.upload(config, "${instance.folder}/launch.json", replace = false)
+        } finally { config.delete() }
+        val result = startRelay(host.link, instance)
+        check(result == null || result.exitCode == 0 && WindowsHost.payload(result)["ready"]?.toString() == "true") { "Could not start Antigravity on ${computer.label}." }
+        pruneEndedAntigravityRelays(host, namespace, instance.token)
+        CodexRelayProcess(
+            attach = { after -> runBlocking { attachRelay(id, instance, after) } },
+            status = { text -> connectionStatus(id, text, EngineKind.ANTIGRAVITY) },
+        )
+    }
+
     @Volatile private var longContext = true
     /** The address that last answered per computer, tried first next time. */
     private val lastHost = ConcurrentHashMap<String, String>()
@@ -534,6 +651,12 @@ class RemoteHub(
                 EngineEvent.Failure("Computer disconnected; remote outcome is unknown.", uncertain = true), EngineKind.CLAUDE))
             runCatching { claude.close() }; job.cancel()
         }
+        lock.withLock { antigravityEngines.remove(computerId) }?.let { (engine, job) ->
+            if (reportInterruptedRuns) stream.emit(RemoteEvent(computerId,
+                EngineEvent.Failure("Computer disconnected. Check the outcome before retrying.", uncertain = true), EngineKind.ANTIGRAVITY))
+            engine.close()
+            job.cancel()
+        }
         mutableClaude.update { it - computerId }
         links.remove(computerId)?.let { withContext(Dispatchers.IO) { runCatching { it.link.close() } } }
         mutableSetup.value = mutableSetup.value - computerId
@@ -545,7 +668,7 @@ class RemoteHub(
 
     suspend fun closeAll() {
         store.state.value.computers.forEach { disconnect(it.id, reportInterruptedRuns = false) }
-        (engines.keys + claudeEngines.keys + links.keys).toSet().forEach { disconnect(it, reportInterruptedRuns = false) }
+        (engines.keys + claudeEngines.keys + antigravityEngines.keys + links.keys).toSet().forEach { disconnect(it, reportInterruptedRuns = false) }
     }
 
     private fun report(computerId: String, step: RemoteSetup) {

@@ -72,22 +72,6 @@ class LocalSessionStoreTest {
 
     private val context: Context = RuntimeEnvironment.getApplication()
 
-    @Test fun finalizedMessageFeedCapturesShortChatsEditsAndEqualTimesAcrossReopen() = runBlocking {
-        val store = LocalSessionStore(context)
-        val chat = store.createSession()
-        store.append(ChatMessage("first", chat.id, "user", "Prepare the form", 10))
-        store.append(ChatMessage("reply", chat.id, "assistant", "Dra", 10, "streaming"))
-        assertEquals(listOf("first"), store.messageChanges(0).map { it.message.id })
-        store.updateMessage("reply", "Draft is ready", "complete")
-        val page = store.messageChanges(0)
-        assertEquals(listOf("Prepare the form", "Draft is ready"), page.map { it.message.text })
-        store.updateMessage("first", "Use the new form", "complete")
-        val next = LocalSessionStore(context).messageChanges(page.last().sequence)
-        assertEquals("Use the new form", next.single().message.text)
-        store.acknowledgeMessageChanges(page.last().sequence)
-        assertEquals(next, store.messageChanges(0))
-    }
-
     @Test fun schemaEightChildrenGainModelSettingsWithoutLosingTheirReceipt() = runBlocking {
         val file = context.getDatabasePath("sessions.db").apply { parentFile!!.mkdirs() }
         val task = dev.androidagent.core.SessionAgentTask("t", "r", "parent", "Child", "Exact task", EngineKind.CODEX,
@@ -108,7 +92,7 @@ class LocalSessionStoreTest {
         assertEquals(task, store.loadAgentTasks().single())
         store.setModelChoice("child", "model-a", "high")
         assertEquals("high", LocalSessionStore(context).getSession("child")!!.reasoningEffort)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(10, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
     }
 
     @Test fun persistentMikeSchemaSixWithoutDraftTableOpensWithoutLosingHistory() = runBlocking {
@@ -143,7 +127,7 @@ class LocalSessionStoreTest {
         assertEquals(draft, LocalSessionStore(context).composerDraft(OLD_ID))
         assertEquals("untouched", keptFile.readText())
         SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
-            assertEquals(10, db.version)
+            assertEquals(9, db.version)
             db.rawQuery("SELECT is_mike FROM sessions WHERE id=?", arrayOf(OLD_ID)).use {
                 assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
             }
@@ -163,7 +147,7 @@ class LocalSessionStoreTest {
         assertEquals("  existing draft\nשלום  ", upgraded.composerDraft(chat.id))
         assertEquals(listOf("existing history"), upgraded.messages(chat.id).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, upgraded.getSession(chat.id)!!.engine)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(10, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
     }
 
     @Test fun draftsSurviveReopenKeepExactWhitespaceAndStayUnsent() = runBlocking {
@@ -226,7 +210,7 @@ class LocalSessionStoreTest {
         assertEquals(listOf("hello"), store.messages(OLD_ID).first().map { it.text })
         assertEquals(EngineKind.CLAUDE, store.createSession(EngineKind.CLAUDE).engine)
         assertFalse(old.titlePending)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(10, it.version) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(9, it.version) }
     }
 
     @Test fun provisionalAndChosenTitlesSurviveAReopenAndManualNamesAreProtected() = runBlocking {

@@ -1,16 +1,642 @@
 # Architecture
 
-## Run gates and child task outcomes — 2026-11-10
+### Antigravity on a saved computer
+
+Computer chats offer the host default plus the models listed by `agy models`
+for that computer (hidden for computers where `agy` is confirmed not installed).
+Mike reads the list in one SSH command when opening the chat or model picker
+and applies the selected model through ACP when opening or resuming a session.
+Selecting an Antigravity model uses the same per-engine history and handoff as
+the other engines. The Android app starts `agy acp` over the computer's pinned
+SSH connection. Windows uses the existing stdio relay in an Antigravity-scoped
+namespace and prunes ended relay folders in the background. Linux runs the CLI
+directly. The session is opened or loaded with the bound project directory.
+Authentication belongs to the CLI on that computer. Its configured provider
+handles model inference.
+
+Each turn gets its own process, resumes the native session by ID, and receives
+`RemoteInstructions` for that computer. ACP text carries segment IDs across
+tool boundaries and computer `tool_call` updates emit `ItemActivity` rows.
+Stdout ignores blank or non-JSON lines, and a short redacted stderr tail is
+retained for disconnect diagnostics. Permission requests go to Mike's approval
+flow, accept only a single-use option, redact/cap shown input, and emit
+`ApprovalResolved` on disconnect. Stop sends `session/cancel` with a bounded
+drain before closing the process, finishing as interrupted rather than a
+transport error. Further messages queue during a turn. Computer tools are
+native to Antigravity. Plan mode and compaction are unavailable.
+
+For each native session open or load, the adapter starts Mike's authenticated
+loopback MCP server on Android with compacted tool schemas (removing duplicated
+descriptions and collapsing deep nested sub-schemas, and when a large catalog
+still exceeds Antigravity's ~13.1 KB eager MCP schema budget, moving `enum`
+lists into a per-turn runtime context hint and clearing schema prose) so all
+phone tools fit cleanly without losing parameter names, types, required keys or
+enum values. A dedicated
+SSH connection requests a computer-side loopback port forwarded to that server.
+Antigravity launches a stdio MCP helper (Windows PowerShell or Linux Python 3,
+ignoring blank lines and bounding concurrent forwards) with the port and an
+ephemeral bearer token in its environment. Both hosts must permit remote TCP
+forwarding. The helper relays MCP requests once and returns text and image
+results. The phone gateway still owns permissions and device access.
+
+Calls carry the current computer, thread and turn. The coordinator receives
+the same tool events used by other engines. An MCP cancellation resolves the
+pending call. Closing the turn stops the server, cancels outstanding calls
+and closes its dedicated SSH session.
+
+The chat composer's settings use a wrapping `FlowRow`. Each chip moves as a
+whole to the next line when space runs out, including Auto, Plan and context.
+Chip labels stay on one line; popup menus stay anchored to their own chips.
+
+Dev launcher resources reuse the release foreground and monochrome artwork,
+with a small DEV badge in the lower-right corner. The override lives only in
+`app/src/dev/res`; Prod keeps the release icon.
+
+## Agent UI panels (`show_ui`) - 2026-11-15
+
+Mike can put a small interactive panel in the chat with the chat tool
+`show_ui` when the user has to step in: fields for a website (email, name, a
+code), a readout with new values to apply, or one of the app's own settings.
+
+- Blocks are a closed set the app draws (`AgentPanel.kt`): text, status,
+  field (text, email, secret, number, url, phone, multiline), toggle, choice,
+  control. Parsing refuses anything else with a reason the model can fix.
+- `control` blocks are app-owned live settings, a closed enum
+  (`PanelControl`). The card renders the same composables as Settings, so a
+  control changes the real setting directly. Inputs (fields, toggles,
+  choices) still go the other way: values come back to Mike, and Mike calls
+  the tool. Buttons that act at once are `action` blocks (see "Live panel
+  actions" below).
+- `add_computer` is a compact form that saves the computer on the phone. The
+  password never goes to the engine.
+- Secret field values reach the engine but are masked (`••••`) in chat history
+  and traces. The engine's own rollout file may still hold them; that is
+  outside the app's history and is a known gap.
+- One panel or question waits at a time (tool calls are serialized per run;
+  `ask_user` also refuses with `busy`). Typing in the composer while a panel
+  waits dismisses it and returns `dismissed` with the typed text. Closing
+  returns `closed`. The 8-minute ask timeout applies.
+- A notification that opens the chat is posted when the panel is not on screen;
+  a panel cannot be answered from the notification.
+- Child chats and computer tasks report a waiting panel as `waiting_for_user`.
+
+### When a chat panel's call ends without the user - 2026-11-16
+
+Seen on a phone (PR #166 test): the engine cancelled a chat `show_ui` while
+it waited ("dynamic tool call was cancelled before receiving a response"), and
+the turn ended. The app never heard of the cancel and kept waiting, holding the
+run's tool lock and the one-panel slot for up to 8 minutes. Every later call in
+that chat queued behind it and was cancelled in turn. Mike then claimed a saved
+panel "awaits approval" that was never created.
+
+- The Codex engine tracks unanswered `item/tool/call` ids. A
+  `serverRequest/resolved` for one emits `ApprovalResolved` with its thread and
+  turn (the same event approvals use).
+- The coordinator tracks every tool call it runs (`InFlightCall`) and answers
+  each at most once. `ApprovalResolved` for a call of the same thread and turn
+  cancels it. Turn end (`finalizeRun`) cancels every call still open.
+- A question closed that way leaves a chat line: "The question closed: Mike
+  stopped waiting for it" or "...: Mike's turn ended", and that taps already
+  made stay done. It is not answered: nobody reads the answer.
+- A chat panel that closes with no answer (its turn ends, the engine gives up
+  on it, Stop, or nobody uses it for 8 minutes) stays in the chat as a
+  collapsed receipt instead of vanishing: its title and "Expired, not sent."
+  (plus "Taps already made stay done." when an action ran). Its title message
+  takes state `expired` or `expired_after_taps`; the receipt has no fields and
+  no buttons, and the coordinator holds no pending panel, so nothing can be
+  sent from it. The receipt replaces the "The panel closed" line. The trace
+  still records `tool_closed` with the reason. Decided 2026-11-16 after a
+  phone test: a form left open vanished at turn end with no visible note
+  (the old line sat collapsed under "Run details"). A receipt whose title
+  holds a Hebrew or Arabic letter is mirrored (icon on the right, both lines
+  right-aligned), going by content as chat bubbles do. The note stays
+  English: the app ships no translated strings (no `values-iw`/`values-he`;
+  UI text is in code), so nothing is translated until the app has a string
+  catalogue.
+- A call whose job ends with no answer while its turn still runs gets a
+  failure answer, so the model never waits on it. After Stop nothing is
+  answered, as before.
+- Within one turn, a waiting chat panel still holds the tool lock: a parallel
+  call must not act on the screen under it. Panel actions do not take the lock.
+- A saved panel's `show_ui` result says `"stored": false`. A pending panel
+  lives only in memory until the user approves it. The agent-ui skill tells
+  Mike to claim a panel exists only when the result said so.
+- Not known: why the engine cancelled the first call. It may be an engine-side
+  limit on how long a dynamic tool call may wait.
+
+### Chat panel layout - 2026-11-16
+
+Seen on the same phone: a tall panel with the keyboard up drew under the
+status bar (title and close X over the clock).
+
+- The chat's bottom bar (banners, panel, composer) is never taller than the
+  screen minus the status bar and the top bar. The panel is measured last
+  (`weight(1f, fill = false)`): the composer keeps its room, the panel's body
+  shrinks and scrolls, and its header and buttons stay.
+- A panel that opens hides the keyboard the composer had. A field in the panel
+  brings it back.
+- At turn end an open chat panel closes and the chat says so (section above).
+  A tap already on its way at that instant lands on the chat below; this is not
+  guarded.
+
+### Live panel actions - 2026-11-15
+
+An `action` block binds a tile to one tool call (`tool`, `arguments`, optional
+`off_arguments` for an on/off switch). A tap runs it at once through
+`AgentCoordinator.runPanelAction`, with no round trip to the model, and the
+panel stays open.
+
+- This replaces the earlier rule "the model never supplies tool calls for
+  buttons", but only for tools that cannot read or touch the screen. At
+  `show_ui` time the coordinator refuses chat tools, session agents, unknown
+  tools and any tool where `usesScreen` holds, so a tile cannot tap, type or
+  run a shell.
+- The call goes through the same path as a model call: current-turn check,
+  device lease (`claimDevice` or `beginIndependentTool`), the tool's own
+  approvals, trace (`source: panel_action`) and a `tool` message in history.
+- It does not take the run's tool lock (the panel's own call holds it while it
+  waits). One action at a time per panel (`actionLock.tryLock`); refused while
+  stopping or after the turn changed. Closing waits up to 10 s for a running
+  action.
+- Each tile shows its real call (`system_controls · torch`). The switch moves
+  only on success.
+- The panel's result lists every action run, with ok and result text, on every
+  exit (answer, close, dismiss, timeout), so the model knows what happened.
+  Using an action restarts the 8-minute wait.
+
+### Native panel style and sliders - 2026-11-15
+
+The panel is drawn in the app's own theme (`AgentDarkColors`), not a style of
+its own. This replaces the "rotating light frame and glowing tiles" look.
+
+- Card: `surface`, 28dp corners, no glow, orb or halo. The only looping
+  animation is the ring on a tile or slider whose call is running. All motion
+  snaps when the animator duration scale is 0 (`animationsEnabled()`).
+- Tiles: two columns, a tonal container per accent when a switch is on, corners
+  20 to 32dp on a spring, colors on a 280ms tween, a check after a one-shot
+  run, a 360ms shake and the message on failure. Each tile keeps its real call
+  as a monospace caption, always left-to-right, even in RTL.
+- Form: labels above fields, an eye button on secret fields, chips for
+  choices, and a primary button that stays disabled with a hint naming the
+  missing fields.
+- `AgentDarkColors` leaves `surfaceContainer*`, `tertiary` and `inverse*`
+  unset, so the panel never reads them and gives switches, sliders, chips and
+  fields explicit colors.
+
+A `slider` block (`min`, `max`, `step`, `value`) is a form input; its value
+comes back as text. With `tool` and `arguments` it is live: on release
+`AgentCoordinator.runPanelSlider` runs the call through the same path as an
+action tile (same lock, checks, trace and log). The `"{value}"` mark in
+`arguments` is replaced by the snapped number. When min, max and step are all
+whole the number is a JSON integer, because device-tools integer arguments
+refuse `40.0`. The check at `show_ui` time runs on the call with the start
+value filled in. Live sliders count toward the 12-action limit, and at most
+1000 steps are allowed. A failed call leaves the applied value unchanged and
+the thumb moves back. A slider shows and sends its number with `decimals`
+places (0 to 4). By default that is what `min` and `step` need, so a whole
+track gives integers. At `show_ui` time (`AgentPanels.parse(created = true)`) a
+step with decimals needs an explicit `decimals`, because a model reaches for a
+fine step to get a smooth track and the user then reads 75.4 for a volume.
+The rule is not applied on load, so panels saved before still parse. The
+floating card's track uses the same rounding as the chat card (2026-11-16).
+
+### Panels outside the chat: surfaces, lifetimes, saved panels - 2026-11-15
+
+`show_ui` takes two optional fields. `surface` is `chat` (the default),
+`floating` (a card over any app), `widget` (the Mike home-screen widget) or
+`notification` (an ongoing notification). `lifetime` is `turn` (chat only,
+its default), `ttl` with `ttl_seconds` (5 to 86400), or `pinned` (the default
+for widget and notification). A floating card without a lifetime gets a ttl
+of 60 s. A panel without these fields parses
+and runs exactly as before.
+
+| surface | lifetime | runs through | approval |
+| --- | --- | --- | --- |
+| chat | turn only | the turn (`runPanelAction`) | none, as before |
+| floating | ttl up to 60 s | `PanelHost`, model-free | none |
+| floating | ttl over 60 s, or pinned | `PanelHost`, model-free | the user, at save time |
+| widget, notification | ttl or pinned | `PanelHost`, model-free | the user, at save time, always |
+
+A chat panel refuses `ttl` and `pinned`; the other surfaces refuse `turn`.
+A floating panel refuses typed inputs
+(field, toggle, choice, a slider without a tool) and controls: there is
+nowhere to send their values. A panel that outlives the turn (a "detached"
+panel) also refuses buttons, because nobody is waiting for an answer.
+`show_ui` returns at once with its `panelId` and `shown` or
+`awaiting_approval`. A detached panel holds at most 8 blocks. A widget takes
+only text, status and action blocks. A notification takes text and status
+lines and at most 3 actions. Only a floating card takes a live slider.
+
+Security model. A detached panel's taps run with no model turn. Nothing reads
+them before they act, so the defaults are strict:
+
+- **Allowlist.** `PanelAllowlist` in core is the only gate for a model-free
+  call. It allows `system_controls` with `torch`, `volume`, `ringer`, `dnd`,
+  `brightness`, `auto_rotate` and `media_control`. It allows `status` and
+  `media_status` for reads (bindings). Anything else is refused: no screen
+  control, no shell, no input, no sends, no clipboard, location, usage or
+  settings writes. A `{value}` mark is refused in `operation` and `command`,
+  so a slider cannot choose which operation runs. The check runs at parse time
+  on the filled call, again on every load, and again on every tap, on the
+  arguments as they are really sent.
+- **Approval by the user, drawn by the app.** A lasting panel is held in
+  memory as pending and is never live until the user approves it in Saved
+  panels (`SavedPanelsActivity`). The app draws the approval screen from the
+  parsed panel. It lists every call the panel can make, in plain words
+  (`PanelCallWords`) and as the raw JSON. This approval has its own path. It is
+  not an engine approval (`approve(requestId)`), typing in the chat does not
+  answer it, and full access never approves it. Approve is refused while any
+  run or voice session is active, because ADB `input tap` could reach it then
+  (the a11y tools already refuse taps on the app's own windows). Saved panels
+  also sets `filterTouchesWhenObscured`, and floating cards hide while it is
+  open. A pending panel
+  that is not approved is lost when the process dies; Mike can ask again.
+- **Signed store.** Approved panels are saved as one list, signed with an HMAC
+  key in AndroidKeyStore (`KeystoreSavedPanelVault`), as
+  `KeystorePermissionStore` does. The agent's shell runs as the app's uid and
+  can write the file, but it cannot sign. Every removal and expiry rotates the
+  key and re-signs what remains, so an old copy of the file cannot bring back
+  a removed panel. A list that does not verify loads as empty and says so.
+- **Re-check on load and on run.** Each saved panel is stored as its raw
+  `show_ui` arguments and re-parsed on load with the allowlist. A panel that
+  no longer passes is shown in the list as blocked with the reason, and its
+  surface is not drawn. A tap re-reads the verified panel by id and checks the
+  call again.
+- **Intents carry ids only.** Widget and notification taps send a panel id and
+  an action id. The agent can `am broadcast` to the app's own receivers, so
+  arguments are never read from an intent.
+- **A separate gateway.** Model-free calls go through a dedicated
+  `AndroidCapabilityTools` with no send or change approval (`DENY_SEND`,
+  `DENY_CHANGE`). It is armed once and never part of a run's gateway, so a run
+  never arms or revokes it, and it takes no device lease. One active run per
+  phone stays true: a panel tap is not a run.
+- **Logging.** A tap is logged like a panel call: a `tool_call` and
+  `tool_result` trace with `source: saved_panel`, and a `tool` message in the
+  chat that made the panel. Every binding read goes to the trace only, with
+  `source: saved_panel_bind`; it carries the result text only on the first
+  read and when the value changes (otherwise `unchanged: true`, or `refused`
+  with the reason), so a 5 s poll neither fills the chat nor bloats the trace.
+  If the origin chat is gone, nothing is logged there.
+- **Stop.** Run Stop and the floating Stop keep their meaning. They stop runs
+  and do not touch saved panels. Saved panels are removed in Saved panels (one
+  at a time or Remove all) or with the panel's own close button.
+- **Removal.** Removing a panel closes its floating card and cancels its
+  notification. Android has no API for an app to remove a pinned widget, so
+  the widget is unbound from the panel and redrawn as "Removed". Its taps are
+  refused, and the user deletes it from the home screen.
+
+Live state. A status or action block may carry `bind`: `tool`,
+`arguments`, `path` (dot path into the result, `current.state`) and optional
+`equals` (an action is on when the value equals it) and `format` (`text` or
+`time` for milliseconds). Binds pass the same allowlist as reads. `PanelHost`
+refreshes each distinct read once per interval (`every`, 2 to 300 s, default
+5 s). It refreshes only while a surface shows the panel and the screen is on.
+A notification refreshes at most every 15 s and a widget every 30 s; every
+surface refreshes after a tap. Binding works only on
+detached panels: a turn panel should read the state first.
+
+Media. `media_status` adds `current`, the session `media_control` would act on
+(playing first), and reports a live position extrapolated from the playback
+clock and speed. `media_control` adds `seek_by` with a signed `offset_ms`, at
+most 10 minutes, clamped to the track. This lives in `SystemControlDispatcher`
+on top of the existing session access; no app-specific code is involved.
+
+Surfaces. The floating card is `FloatingPanelOverlay` in `:overlay`, a View
+window that uses the same window type rule as the Stop card. It is hidden
+while a run is in visible control, so it never sits under the agent's taps.
+The widget is one generic RemoteViews widget (`SavedPanelWidgetProvider`).
+It is pinned with `requestPinAppWidget` (one system confirmation) and each
+widget id is bound to one panel id. The notification is an ongoing, silent
+notification with up to 3 action buttons. On the lock screen it shows a
+public version: the title and "Unlock to use this panel", no values and no
+buttons. Its buttons work only after unlock (`setAuthenticationRequired` on
+Android 12+, and the receiver refuses any tap while the keyguard is locked,
+which also covers Android 11 and a phone set to show all content on the lock
+screen). Android 14+ lets the
+user swipe it away; a swipe hides it until it is shown again from Saved
+panels. Approved panels are restored from the verified store when the process
+starts. Quick Settings tiles are not built.
+
+Decisions made while building this (2026-11-15):
+
+- **RemoteViews, not Glance, for the widget.** Glance is not in the Gradle
+  cache, pulls in WorkManager and DataStore, and the usage widget already uses
+  RemoteViews. A panel widget only needs text and tappable tiles.
+- **A widget that cannot be removed says so.** Android cannot remove a pinned
+  widget. A removed panel's widget says "removed"; a widget added from the
+  launcher's picker, not from Saved panels, says how to bind it. The widget-id
+  map is not signed: it can only point at an approved widget panel, and every
+  render and bind checks that again.
+- **Floating cards step aside.** They hide while any run is in visible
+  control, while the app is in front and while Saved panels is open, so they
+  never cover Approve or the agent's own targets.
+- **Lock screen (changed 2026-11-16 after the device retest).** The first
+  build used an `IMPORTANCE_LOW` channel, so the phone hid the panel from the
+  lock screen while the approval screen said it was there. Now the channel is
+  `saved_panels_v2` at `IMPORTANCE_DEFAULT` with no sound and no vibration (no
+  heads-up, which needs high importance), and the old channel is deleted. The
+  lock screen gets the public version only: title and "Unlock to use this
+  panel". Buttons need unlock: a list or a counter on the lock screen would let
+  anyone holding the phone change it, and `open` and `ask_mike` must never run
+  locked. The approval card says it in one short line (shortened 2026-11-16
+  after round 3: the long sentence did not fit a card): "On the lock screen:
+  title only (all of it if your phone shows full content). Buttons work after
+  unlock." Details opens the full rule: hidden notifications show nothing,
+  the default shows the title with "Unlock to use this panel", "show all
+  content" shows the whole panel, and the buttons do nothing until unlock in
+  every case. "Title only" is a ceiling, not a promise: a default-importance
+  channel shows there only when the phone allows it.
+- **Plain words for local ops (2026-11-16).** The approval card and a tile's
+  caption describe a local op in words (`Add 1 to "Glasses"`, `Untick
+  everything in "Before bed"`) from `PanelOpWords`, never the op name (`inc`,
+  `reset`). The words name the block by its label and an item by its text.
+- **Read floors.** Notifications read at most every 15 s and widgets every
+  30 s, so a 2 s `every` cannot keep the radio and CPU busy behind the lock.
+- **Stop does not cancel a panel tap.** A tap is the user's own act, outside
+  any run, through its own gateway. Stop keeps stopping runs only.
+- **Logging.** Every tap and every binding read is logged. A read's result
+  text is kept only when the value changed.
+- **Close.** The close button on a short floating card removes it; on a lasting
+  one it hides it until it is shown again from Saved panels.
+- **Saved panels from the card.** Each floating card's title row has a
+  Saved panels button (☰) beside close. It opens the Saved panels screen at
+  that panel, the same intent the panel's notification opens; the cards step
+  aside while that screen is in front (2026-11-16).
+- **Font size.** Card text is in sp from the app's current configuration. A
+  view reads its size once, so when the font size, display size or screen
+  width changes while cards show, the overlay drops the window and builds
+  every card again from the last faces (after typing ends, if the user is
+  typing). The title row wraps its text, at least 40dp tall.
+- **Dark only.** The floating card stays dark in light mode on purpose: the
+  app is dark-only (`AgentDarkColors`, no light scheme), and the card matches.
+
+### Panels as mini-apps: state, local actions, panel_id - 2026-11-16
+
+A saved panel could only show values and run allowlisted calls, so a
+shopping list with checkable items was impossible. A detached panel now owns
+typed state, and its blocks read and change that state. Chat panels stay
+forms and refuse the new blocks and action kinds.
+
+**State blocks** (detached panels only; `PanelStates` in core `PanelState.kt`):
+
+| block | definition | state |
+| --- | --- | --- |
+| `checklist` | `id`, `label`, `items` (text or `{text, checked, qty, note, seconds}`), `add` | `items: [{id, text, checked, qty?, note?, seconds?}]` |
+| `counter` | `id`, `label`, `value`, `min`, `max`, `step`, `goal`, `tally` | `count` |
+| `timer` / `countdown` | `id`, `label`, `seconds`; `countdown` starts when the panel goes live | `totalMs`, `endsAtMs` (running) or `leftMs` (paused), `doneAtMs` |
+| `progress` | `label`, `of` (a checklist or counter id) or `value` and `max` | none, computed |
+| `note` | `id`, `label`, `value`, `placeholder` | `text` |
+
+Bounds: 50 items per list, 120 characters per item, 2000 per note, counters
+within plus or minus one million, timers up to 24 h, 16 KB of state per panel.
+State is keyed by block id. When a definition changes, state is kept for each
+block whose id and type stay the same.
+
+**Action kinds.** An `action` block takes `kind`:
+
+- `device` (the default when `tool` is set): the existing allowlisted call.
+- `local`: `op` on `target` (a block id), with an optional `amount`. Ops:
+  `check`, `toggle`, `uncheck_all`, `clear_checked`, `add`, `remove`, `move`,
+  `next`, counter `inc`, `dec`, `set`, `reset`, timer `start`, `pause`,
+  `resume`, `reset`, `add`, and note `set`. `next` checks the first unchecked
+  item and, when the next item has `seconds` and the action names a `timer`,
+  starts that timer for them (cooking steps). A local op changes only that
+  panel's state: no device call, no approval beyond the panel's own.
+  A local action that only repeats a block's own button is dropped when
+  `show_ui` makes or replaces the panel (`PanelStates.duplicateActions`,
+  2026-11-16 round 5): on every surface a counter's `inc` by its own step and a
+  timer's `start` (no `amount`), `resume` and `pause`; on a floating card also
+  the counter's `dec` and the timer's `reset`, which only the card draws. It is
+  taken out of the stored definition, so approval, the surface and a reload
+  agree, and the result's `dropped` names each one and why. Dropping rather
+  than refusing keeps the panel: the duplicate is harmless, only clutter.
+  Panels saved before this keep their tiles.
+- `ask_mike`: `prompt` (up to 1000 characters). A tap starts a new Mike turn
+  in the chat that made the panel, or a new chat when that one is gone.
+- `open`: `open` is one intent shape from the allowlist below.
+- `steps` (added 2026-11-16 after round 3): 2 to 6 steps run in order, each a
+  device call `{tool, arguments}` or a local op `{op, target, ...}`. See
+  Multi-step actions below.
+
+**Multi-step actions (2026-11-16).** Mike built "Start bedtime" as an
+`ask_mike` tile with a long prompt because one tile ran one thing. A `steps`
+action runs a routine without the model:
+
+- Each device step passes the same allowlist and bound checks as a `device`
+  action at parse and load, and each local step the same target checks as a
+  `local` action, with the error naming the step ("step 2").
+- A step cannot ask Mike, open anything, hold steps, carry `{value}` or take
+  keys other than `tool` and `arguments`. `ask_mike` stays for taps that need
+  the model.
+- At the tap every device step is checked again before the first runs; a
+  refusal means nothing ran ("Nothing ran: step 3 of 4 is not allowed").
+- The steps run one at a time under the panel's lock. The first failure stops
+  the rest and the tile says why first, then which step and that the steps
+  before it did run: "No permission for brightness. Stopped at step 3 of 4
+  (Set the screen brightness to 20%); the steps before it did run." The
+  message is at most 160 characters and the step's words are cut before the
+  reason is. Nothing is undone and nothing claims to be.
+- Where a failure shows: a widget tile is too small for a reason, so it says
+  "Failed" and the panel's full-width line under the title carries
+  "label: reason" (up to 3 lines). The floating card gives a failed tile's
+  caption 3 lines instead of 2. The notification's one-line text is the
+  reason itself, so a cut one still says what went wrong.
+- Every device step is logged as its own `tool_call` and `tool_result` with a
+  `step` field, every local step as `panel_state`, and the tap as
+  `panel_steps` (ok, failed step, reason).
+- The approval screen lists every step in plain words, numbered, with the
+  device calls under Details. `allCalls` includes the step calls, so
+  re-approval and the load check see them. A `panel_id` change that makes a
+  new sequence of device steps waits for approval even when each call was
+  approved alone, because one tap now does them together.
+- Special access a panel needs (`PanelGrants`, mirroring
+  `AndroidSystemPlatform`): brightness, screen timeout and auto-rotate need
+  "Modify system settings"; Do Not Disturb and the silent ringer need "Do Not
+  Disturb access". Volume is not flagged: it needs Do Not Disturb access only
+  when Android refuses to silence a stream, which is not known before the
+  call. Saved panels reads both switches every second, as it does for
+  floating, and flags each step whose switch is off under its button ("Step
+  2 needs “Modify system settings” for Hey Mike, which is off"), before
+  and after approval. The card then offers "Allow “...”", which only opens
+  Android's own screen (`ACTION_MANAGE_WRITE_SETTINGS` for this package,
+  `ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS`); nothing is granted by code.
+  A tap that fails with `grant_missing` says "Hey Mike needs “...”; allow it
+  in Saved panels" and keeps the grant on the tile's in-memory state, so the
+  card offers Allow for it too (volume included). A tile itself never opens
+  Settings: a widget or notification tap runs in a receiver.
+- A cancelled run (any tap) no longer leaves its tile spinning: the launch's
+  `finally` clears `running`.
+
+**ask_mike.** It needs a tap; nothing starts it on a schedule. It is refused
+with a clear message when any run is active (`canStart()` is checked right
+before the submit), so it never steers into a running chat and one active run
+per phone stays true. It does not queue. The chat shows the prompt as the
+user's line; the turn gets the prompt and the panel's state as JSON inside a
+`<panel_state>` tag, with `<` written as `\u003c` so item text cannot close
+the tag, and a line that says the state is the user's data and never
+instructions. A `panel_id` read result carries the same marking.
+
+**open allowlist** (`PanelOpen` in core). Checked at parse, at load and at
+tap, and shown on the approval screen in plain words:
+
+| shape | intent |
+| --- | --- |
+| `{"app": "<package>"}` | the package's launcher intent |
+| `{"map": "<query>"}` or `{"lat", "lng", "label"}` | `ACTION_VIEW geo:` |
+| `{"directions": "<query>"}` or `{"lat", "lng", "mode"}` | `ACTION_VIEW` Google Maps directions URL |
+| `{"dial": "<number>"}` | `ACTION_DIAL tel:` (digits, `+`, spaces, `-`, parentheses only) |
+| `{"url": "https://..."}` | `ACTION_VIEW`, `CATEGORY_BROWSABLE`; https only, no user info |
+| `{"camera": true}` | the still-image camera |
+
+Refused: `ACTION_CALL`, SMS and `sendto:`, `mailto:`, share and send,
+payment, `intent:`, `file:`, `content:` and `javascript:` URIs, `*` and `#`
+in a number, extras, components and flags. Nothing that sends, pays or calls
+by itself. An open goes through `PanelOpenActivity` (not exported,
+translucent): it re-reads the verified panel, checks the shape again, starts
+the target and finishes. That avoids the notification trampoline rule and
+background start limits.
+
+**Approval.** A panel needs approval when its placement does (as before) or
+when it has any `open` or `ask_mike` action, even a short floating card. The
+rule is derived from the parsed panel, so the v1 store needs no migration.
+No notification button works while the phone is locked (see Lock screen
+above), so `open` and `ask_mike` never run from the lock screen.
+
+**`panel_id` on `show_ui`.** No new tool:
+
+- `{"panel_id": "*"}` lists the saved panels.
+- `{"panel_id": "<id>"}` returns its definition and state.
+- `{"panel_id": "<id>", "ops": [...]}` or `"state": {...}` changes state
+  only. No approval.
+- `{"panel_id": "<id>", "title", "blocks", ...}` replaces the definition.
+  The surface cannot change. The panel's capabilities are every device call,
+  bind, open target, ask prompt and its lifetime. When the new set is the same
+  as or smaller than the approved one, the change applies at once. Otherwise
+  it waits as a revision in Saved panels while the approved version keeps
+  running; Approve swaps it in, Reject drops it. A revision lives in memory,
+  like a pending panel.
+
+Every panel_id change is traced in the calling chat and the panel's own chat.
+
+**Store.** State lives in a sibling signed store (`saved_panel_state`, its
+own Keystore alias prefix), with the same tamper rules: each write makes a
+new key, and a store that does not verify loads as initial state and says
+so. Writes are debounced (400 ms) and never happen per tick: a running timer
+stores only `endsAtMs`. A short floating card's state stays in memory.
+
+**Timers and resets.** A block may carry `reset: {"at": "07:00", "days":
+[...]}` (no days is every day). It reuses `AutomationSchedule`: a reset is
+owed when the last slot at or before now is later than the block's last
+reset. Resets apply on load and on tick, so a late wake-up still resets once.
+A counter with `tally: "<checklist>"` adds that list's unchecked count at its
+reset (missed doses). `PanelHost.nextDueAtMs()` gives the next timer end or
+reset; `PanelAlarms` in the app arms one alarm for it, as `AutomationAlarms`
+does, and re-arms after boot. A timer that ends posts a notification on the
+"Panel timers" channel (`saved_panel_alerts_v2`, high importance so it pops
+up) with no sound and no vibration; the user can turn a sound on for that
+channel in Android's settings. The app never makes a sound the user did not
+set. The first build's `saved_panel_alerts` channel used the phone's default
+sound; Android keeps a channel's first sound, so it is deleted and replaced
+by the new id.
+
+**Silent approvals and questions.** With the user's OK, the "Panels to
+approve" channel (`saved_panel_approvals_v2`, default importance) and the
+"Questions from Mike" channel (`questions_v2`, high importance, so it still
+pops up) have no sound and no vibration. Each keeps its old importance. The
+old ids (`saved_panel_approvals`, `questions`) used the phone's default sound
+and buzz; they are deleted by `RetiredChannels` (with `saved_panels` and
+`saved_panel_alerts`), the first thing `AgentApplication.onCreate` does, before
+the app graph is built, so every process start deletes them whatever started
+the process. A deleted channel takes the
+user's own settings for it with it, so a sound, importance or lock-screen
+choice made on the old channel does not carry over to the new one. The
+session channels "Approvals for Mike" (`approvals`) and "Finished chats"
+(`finished`) are high importance with the phone's default sound; they are
+not changed.
+
+**Surface input.**
+
+- Floating card: checkbox rows, an add field, a note field and counter
+  buttons. The window is focusable only while a field has focus and goes
+  back to `FLAG_NOT_FOCUSABLE` on blur and hide. `keep_screen_on: true`
+  (floating only) adds `FLAG_KEEP_SCREEN_ON`.
+- Notification: the list as lines, an Add reply action (RemoteInput) when a
+  checklist allows adding, and a countdown chronometer for a running timer.
+- Widget: on Android 12+ a collection of check boxes
+  (`RemoteCollectionItems`, `setOnCheckedChangeResponse`); on Android 11 up to
+  8 rows that toggle on tap, then "+N more". Mutable PendingIntents name the
+  receiver explicitly. The receiver is not exported and takes only a panel
+  id, a block id, an item id and the checked flag; it checks that the item
+  exists and runs only local ops.
+
+**Templates.** Saving a panel as a template is skill guidance, not code:
+Mike reads the panel with `panel_id` and writes a user skill under
+`$HOME/.agents/skills/<name>/SKILL.md` with its `show_ui` arguments.
+
+**Context panels** (use case 10). Not built. A standing rule (`:automations`)
+could show a saved panel when a trigger fires, through a new action kind
+`show_panel` with a panel id, using the existing approval of that panel. It
+needs its own approval rule first, because a rule fires with nobody at the
+phone.
+
+Decisions (2026-11-16): ask_mike refuses instead of queueing, because a queued
+turn would start later with nobody watching. Countdown is a timer alias.
+Panel templates are skills. A surface change through `panel_id` is refused;
+make a new panel.
+
+## Account connections for regular chats - 2026-11-12
+
+Settings > Account connections exposes Gmail and other account connectors for
+ordinary Mike chats. It reuses the signed-in ChatGPT and Claude accounts; Mike
+does not store a Gmail token or add a separate OAuth flow. This is independent
+of the archived Manager, task board, notification capture and background passes.
+
+`core.connections` owns the provider-neutral catalog, settings state and
+`AccountReadGateway`. Each connection starts off. User grants live separately in
+the app's `account_connections` preferences. Saved grants cannot enable a tool
+until its provider reports a fresh connected catalog. Missing providers retain
+an unavailable row so the user can still turn their saved grant off. Refresh
+fetches metadata only; it does not read messages or send a model prompt.
+
+- The phone's `CodexEngine` implements `AccountConnectorSource`. Its app-server
+  starts with apps available for catalog discovery, while ordinary chat threads
+  explicitly set `features.apps=false`. `account_read` exposes only the enabled
+  tools marked read-only, non-destructive and non-open-world by `codex_apps`.
+  Each dispatch rechecks the service annotations, current grants and run token.
+  Calls use an ephemeral read-only account thread. Stop or a revoked grant also
+  suppresses the result of an in-flight read; completed service actions are not undone.
+- `CodexToolCatalog` records the tools used at `thread/start`. The pinned runtime
+  retains its original catalog on resume, so a missing or changed marker rolls
+  a phone-owned chat onto a fresh native thread. The existing coordinator carries
+  its conversation forward and retains visible local history. Imported computer
+  sessions keep their existing resume behavior.
+- The phone's `ClaudeCodeEngine` discovers `claudeai`-scoped connectors with
+  `mcp_status` on a disposable process. The runtime allows Anthropic's exact
+  `mcp-proxy.anthropic.com` host and enables account servers only when the engine
+  explicitly requests them. Normal phone chats admit only the selected service-
+  marked read tools under `dontAsk`; writes and unknown tools are not granted.
+  Turning a grant off kills phone chat processes holding the old whitelist.
+  Startup checks the same permission lock before accepting a model turn, so a
+  grant removed during the handshake cannot leak into that turn. Computer Claude
+  continues using that computer's own setup.
+
+Every ordinary per-run tool composite includes `account_read`, including its
+existing computer relay and voice routes. Claude account tools remain local to
+phone Claude chats. There is no automatic mail polling, task discovery or team
+workflow in this feature. Source and UI fixture checks are recorded in
+[`account-connections-20261112/README.md`](testing/account-connections-20261112/README.md).
+
+## Run gates and child task outcomes — 2026-11-10 (integrated 2026-11-24)
 
 `core/Contracts.kt` separates execution (`RunPhase`), a live user request
 (`RunInteraction`) and a terminal result (`RunOutcome`). Consumers use
 `pendingApproval`, `pendingQuestion` and `waitingForUser`; raw payloads retained
 after failure, completion or Stop are not live requests. Approval wins over a
-question in the same run. Source projections strip old gates before showing a
+question, and a question wins over a show_ui panel in the same run. Source projections strip old gates before showing a
 child as active, so changing the presentation phase cannot revive an old card.
 
 `AgentTaskStatus` maps run state to the same typed status for phone and computer
-children, UI cards, board tracking and voice updates. Receipts keep their existing
+children, UI cards and voice updates. Receipts keep their existing
 strings and schemas: computer `cancelling` and phone `stopping` both mean
 `STOPPING`. Unknown stored words remain nonterminal. Run outcomes use explicit
 interruption and uncertainty fields, never English display text. An unknown
@@ -19,7 +645,7 @@ remote outcome still requires inspection and never authorizes replacement work.
 The coordinator claims an engine approval answer under its lifecycle lock before
 asynchronous transport. Repeated answers cannot dispatch twice, and epoch/turn
 checks still apply before dispatch. Local approvals reject a second decision
-before changing remembered grants. Question notifications and chat/voice cards
+before changing remembered grants. Question/session notifications and chat/voice cards
 use the same live-gate projection. See [the machine inventory](STATE_MACHINES.md)
 for owners, source-scan limits and domains outside this branch.
 
@@ -43,98 +669,11 @@ Text the model sees from more than one backend or engine has one owner in
 
 Golden tests in `core/src/test` pin the exact output of each helper.
 
-## Mike's face — 2026-11-02
-
-`MikeEye` draws a flat robot head instead of a dot sphere. It is plain Compose
-`Canvas` on a 200-unit design square scaled to the box, so one drawing serves every
-size from a 24 dp avatar to the team page. Mood parameters ease toward per-mood
-targets, and motion phases accumulate, so changing mood never makes the head jump.
-
-Moods keep their meaning: teal is alive, amber is "waiting for you", grey-teal is
-paused. Thinking is lavender and done is green; a team member's `tint` still colours
-the eyes. Each running task adds one chin light (at most four) where the sphere drew
-one moon. The visor highlight path and the eye constants are built once, so a frame
-allocates nothing of its own.
-Reduced motion draws one still frame. The face never reads Codex or Claude events;
-it only takes `EyeMood`, so UI still observes app state, not raw engine JSON.
-
-Other orbs (`AgentOrb`, `VoiceSphere`, overlay) keep their own look. Changing them is
-a separate decision.
-
-
-## Unified task board and personal assistant — 2026-10-29
-
-The board, Manager, team UI and follow-through are one feature. This integration
-brings the complete reviewed 1179 working source onto `dev` after the selected
-account, privacy and control changes. The repository version and runtime pins
-stay on `dev`; 1179 identifies the source candidate, not a new release.
-
-`core/TaskBoard*` owns proposals, revisions, user decisions, commitments and
-execution receipts. `TaskDesk` joins it to the normal run queue and child chats;
-`LocalTaskBoardStore` keeps the separate private SQLite board. A saved status or
-reminder never executes work. Explicit owner input or a tap freezes the approved
-plan and reserves an attempt key before normal `SessionAgents` dispatch. Unknown
-outcomes keep their key for review. Execution carries the selected engine,
-model and thinking level, falling back explicitly to the Manager profile.
-
-The Manager and role chats stay interactive and survive empty-chat cleanup.
-Scout, Coach, Librarian and internal Manager review are read-only background
-roles. Native Codex uses an ephemeral read-only thread with approvals and native
-execution tools disabled; Claude uses no native tools, strict app MCP and no
-user settings or persisted session. App tool allowlists and write provenance
-checks apply again at dispatch. Backstage voice is refused before engine open.
-These controls share the app UID and still need physical native-runtime proof.
-
-Collection is opt-in. Final chat revisions use a durable SQLite feed cursor;
-bounded signals, dedupe receipts and visible coverage gaps prevent silent loss.
-Both live notifications and reconnect replay reject non-personal or unknown
-Android users before payload access. Replay feeds only the task reader, never
-automation actions. Enabled packages/conversations are checked before extraction.
-Calendar reads need their explicit permission. Collection never opens another
-app or reads its database. Historical WhatsApp/mail sync is outside this feature.
-
-Background models edit staged board/memory/team/rule generations. SQLite commits
-preimage-checked changes, consumed input, run receipt and rule generation in one
-transaction. Source policy revisions are checked at reads, queued preparation,
-commit and briefing delivery. Cancellation cannot fall back to a live writer.
-Revoked or forgotten sources follow dependent context and learned rules; undo
-compensates only its own run and preserves later user edits. Durable memory has
-no fixed age expiry. Explicit owner rules remain separate from learned guidance.
-
-Owner messages are attributed separately from automated output. Manager turns
-select bounded relevant memory and feedback with source provenance. Taking a
-task records its owner, next check and actual deadline independently of proposal
-expiry. Scout can add evidence to open decided work, but cannot rewrite its
-frozen plan or silently close it. Check tomorrow changes follow-up time only.
-
-Manager reviews prepare at most three briefs, four reviews per day and thirty
-minutes apart, under discovery and quota limits. An atomic outbox and stable
-chat message IDs prevent duplicate append after restart. Delivery rechecks source
-policy and current task state. Quiet, private notifications only open the Manager
-chat. Coach changes cite actual owner feedback; optional narrow suggestion
-filters pass examples and counterexamples and expire when owner rules change.
-
-Background queue entries persist only a job reference. Personal prompts are
-prepared in memory after policy checks; owner turns have queue priority. Global
-Stop pauses collection, queue and runs while keeping the existing synchronous
-limit-recovery fences. A recovery dispatch guard is checked again after suspended
-preparation. Process restart does not replay task execution. The opt-in persisted
-JobScheduler job can be deferred by Android; its eight-minute window stops only
-backstage runs. The UI exposes real successful-pass times and waiting reasons.
-
-The shared particle face, Hebrew board/detail/team pages and commitment controls
-use the same decision paths as chat. Current integration checks and remaining
-phone proof: [unified validation](testing/tasks-assistant-unified-20261029.md).
-Earlier candidate checks are retained in [board](testing/task-board-20261025.md),
-[reliability](testing/task-board-v2-20261026.md) and
-[follow-through](testing/personal-assistant-flow-20261028.md); those historical
-build numbers and validation results are not current delivery evidence.
-
 ## Selected feature integration — 2026-10-29
 
 This integration carries the seven changes selected after the conversation
-audit onto `dev`. The later unified integration above also carries task-board,
-Manager and personal-assistant work. The changes below do not enable account starts,
+audit onto `dev`. Task-board, Manager and personal-assistant work remain in
+their original worktrees. The changes below do not enable account starts,
 collection or automatic continuation without the user's setting.
 
 - **Usage-limit recovery:** `UsageLimitRecovery` stores each chat's plan,
@@ -158,8 +697,8 @@ collection or automatic continuation without the user's setting.
 - **Personal notifications:** `PersonalNotificationPolicy` rejects unknown,
   other-user and profile notifications before payload access or consumer
   lookup. It compares Android user identity, never a package blocklist. The
-  unified listener applies this same boundary to active-notification replay
-  and the task-board reader before reading content.
+  current `dev` listener has no active-notification replay or task-board reader;
+  adding either requires applying the same boundary before reading content.
   Already stored data is not removed by this change.
 - **MCP confirmations:** supported empty form confirmations use the existing
   per-chat Allow/Deny card. Responses carry MCP `action`/`content`, are consumed
@@ -270,7 +809,11 @@ SDK usage, limits and differences from the original proposal.
 
 ## Engine versions and Codex updates — 2026-10-18
 
-Phone Codex and computer packages are pinned to 0.163.0. The phone's Claude
+Phone Codex and computer fallback packages are pinned to 0.171.0 (updated
+2026-11-23), with official release SHA-256 pins for Android/Linux and Windows
+on ARM64 and x86_64. Phone Codex is bundled in the APK; an available-version
+notification does not install it. Updating the phone runtime requires a new
+Mike APK. The phone's Claude
 baseline is 2.1.302; the earlier 2.1.293 and 2.1.285 pins remain reusable for
 offline upgrade and rollback. The 0.163.0 package no longer contains zsh, so
 the APK no longer stages or links it. The helper-name patch still checks the
@@ -1361,15 +1904,57 @@ these capabilities. `RuntimePermissionBroker` asks only for grants that are
 still missing and makes one Android `RequestMultiplePermissions` request. The
 system dialog is the approval: Hey Mike does not put a second confirmation card
 in front of it. Other special access operations only open a setup screen and do
-not report the access as granted. Notification support is deliberately status
-and setup only — there is no `NotificationListenerService`, so the gateway
-cannot read notification content.
+not report the access as granted. Notification content is now readable: see
+"Deep device control" below.
 
 The gateway shares the normal run revoke boundary and the visible control
 state. Its Android calls live behind `CapabilityPlatform`, while policy and
 dispatch are JVM-testable without a phone. Provider behavior, OEM intent
 handlers and the permission dialog still need physical-device proof.
 
+## Deep device control — 2026-11-15
+
+The user asked on 2026-11-15 for Mike to have as much device control as
+possible. This reverses two earlier limits: the gateway now reads notification
+content, and it can send SMS, place calls and reply to notifications directly.
+
+- `NotificationAccess` and `MediaSessionAccess` are contracts in `:core`,
+  implemented in `:automations` over the existing listener and injected by
+  `AgentApplication`. `:device-tools` stays free of `:automations`.
+- `communications` adds `list_notifications`, `notification_reply`,
+  `notification_press`, `notification_dismiss`, `read_sms`, `read_call_log`,
+  `send_sms` and `place_call`. Contacts add `create`; calendar adds `create`,
+  `delete` and `calendars`.
+- New tool `system_controls` (`SystemControlDispatcher` over `SystemPlatform`):
+  torch, volume, ringer, DND, brightness, screen timeout, auto-rotate,
+  clipboard, last known location, media sessions, usage stats and
+  `get_setting`/`put_setting`.
+- Approval: anything that leaves the phone (`notification_reply`, `send_sms`,
+  `place_call`) goes through `authorizeSend`, the same gate as a chat-app send.
+  Notification action buttons, `calendar delete` and `put_setting` go through
+  `authorizeLocalIntent`. Reads and reversible toggles do not ask.
+- Background ops (no screen lease) are listed in `needsControl`; every new op
+  is also in `WorkflowCallMetadata.readOnlyOperations` when it only reads.
+- Special access (`write_settings`, `notification_policy`, `usage_access`) is
+  never claimed: a missing grant returns `grant_missing` with the
+  `open_special_access` kind to open.
+
+Entry points and folder access (same date, same request):
+
+- Share target. `ShareEntryActivity` (no UI) takes `SEND`/`SEND_MULTIPLE`
+  and forwards to `MainActivity` with the URIs in `ClipData` plus a read
+  grant, so the grant follows the intent into Mike's task. The view model
+  reuses a blank chat or makes one, puts the text in the composer and copies
+  up to 10 `content://` files into the session as attachments. Nothing is
+  sent: the user still presses Send.
+- Quick Settings tile `MikeTileService` opens voice mode (`AssistLaunch`);
+  dynamic launcher shortcuts "New chat" and "Voice" are published on start.
+- Folders through SAF, not `MANAGE_EXTERNAL_STORAGE`. `pick_folder` opens
+  `ACTION_OPEN_DOCUMENT_TREE`; the grant is persisted. `folder_list`,
+  `folder_import` and `folder_export` walk the tree by display name and refuse
+  `.`/`..`. Files move through the workspace (50 MB cap), so the agent never
+  holds a raw document handle. Replacing an existing file needs
+  `overwrite:true` and `authorizeLocalIntent`.
 ## Parallel chats, one phone
 
 Chats run at once, with no cap, as Codex does on a computer: `AgentRuns`
@@ -1410,6 +1995,41 @@ and a turn is dequeued before it starts, so a process crash cannot replay a
 side effect. A queue restored at startup is paused and needs an explicit
 Resume, and a local stop pauses the queue rather than releasing the next run at
 the user unannounced. Deleting a chat cancels its queued turns.
+
+### Steer or queue while a chat runs
+
+A message typed while the open chat runs has two places to go, and the user
+picks one under the field. **Steer** (the default) gives the text to the
+running turn now, as before. **Queue** makes it the chat's next turn of its own
+(`SessionRunQueue.enqueue`), with its own model, level, engine, plan mode and
+attachments. Files and a turn still STARTING always queue, because steering
+carries text only. The queue tray above the composer lists the open chat's
+queued messages in run order, each with its model and a cancel; other chats'
+queues show as one line, so Resume stays reachable.
+
+- A queued turn never becomes steering input. The queue starts it through
+  `TurnRunner.start`, which refuses a chat that is running instead of steering
+  it. If the chat started some other way after the turn was chosen, the turn
+  goes back to its place and waits for that run to end. Other chats are not
+  held up behind it.
+- Stop pauses the queue and holds what is queued, as before. A message queued
+  after a Stop is not held by that earlier Stop. A Stop pressed while a turn is
+  still being prepared (a file copied to a computer) holds that turn too: the
+  ViewModel reads `SessionRunQueue.pauses` at the tap and `enqueue` compares it.
+- The queue is durable and limited to `SessionRunQueue.MAX_QUEUED` (32). After a
+  restart it waits for Resume.
+
+**The model for the next message.** The model picker stays open while the chat
+runs, and a pick there is for the next message. The running turn keeps its
+model and steering joins it. The chip shows "Next" when the pick was changed
+during the run. A pick for the same engine is saved to the chat at once. A pick
+for the other engine cannot move a running chat, so the ViewModel holds it per
+chat (`nextPicks`) and shows it as `selectedModel` with `nextEngine`. Each message
+sent or queued meanwhile carries that engine. The chat itself moves
+(`changeEngine` + `setModelChoice`) only through `SessionRunQueue.ifIdle`: under
+the queue's lock, when the chat neither runs nor has queued turns. This means a
+move never happens under a running turn or races a queued turn's start. Queued
+turns keep the model they were queued with.
 
 ## Codex retries and turn failures
 
@@ -2552,7 +3172,8 @@ Bluetooth identity uses Nearby devices (`BLUETOOTH_CONNECT`) on Android 12+;
 Android 11 uses the normal Bluetooth permission. The capability gateway can
 request the new runtime permissions visibly. Missing signal permissions are
 reported dormant by the tool and blocked by the rules summary. The Location
-permissions support Wi-Fi identity here, not a geofence or coordinates source.
+permissions support Wi-Fi identity here; place triggers use them separately
+(see "Deep device control").
 
 The runner carries device conditions in `AutomationVoiceRequest`. They are
 checked again before activity launch, during startup, before context and speech,
@@ -2617,13 +3238,19 @@ refusing rather than silently doing nothing.
 
 `AutomationToolGateway` carries `supportedTriggers`, which this host answers
 with what it can actually serve: `schedule`, `device_state` and `manual`
-always, `notification` once the user has granted the listener by hand. **`place`
-is served by nothing yet**, so a geofence rule is saved and reported **dormant**
-rather than accepted as live. That is a dependency decision, not an oversight:
-`GeofencingClient` means adding Google Play Services to a project that
-deliberately ships outside Play, and the AOSP alternative
-(`LocationManager.addProximityAlert`) is unreliable enough that shipping it
-quietly would be worse than reporting the gap.
+always, `notification` once the user has granted the listener by hand, and
+`place` once location plus background location are granted.
+
+Superseded 2026-11-15 at the user's request: `place` was dormant (no Play
+Services, and `addProximityAlert` is unreliable). It is now served by
+`AutomationPlaceSource`: `LocationManager` updates from the network and
+passive providers (3 min / 50 m), fed to `PlaceTracker` in core. The first fix
+only sets the baseline; a fix coarser than max(radius, 100 m) changes nothing;
+leaving needs radius + max(30 m, accuracy), so the edge does not flap. Places
+live in `automation-places.json` (`AutomationPlaces`, max 50) and are managed
+through `automation_rule` modes `places`, `save_place`, `delete_place`. Still
+no Play Services dependency. Cost: enter/exit can lag minutes, precision is
+network-grade.
 
 Settings > Standing rules is where the feature says whether it actually works:
 how many rules are on, how many are **dormant**, when the next one is due, and
@@ -3482,3 +4109,22 @@ block stays as the fallback for an engine that cannot.
   answered from the written turns. The owner lifted the old rule that the app
   never touches `CLAUDE_CONFIG_DIR` for this (2026-11-08); the sign-in files
   stay untouched.
+
+
+## Session notifications and chat permission level — 2026-11-11
+
+- **Running rows.** Each running chat gets its own row, grouped under the
+  foreground-service notification (the group summary). Rows exist only while
+  chats run.
+- **Approval.** Each active approval gets a notification with Allow and Deny,
+  including when the chat is open. Concurrent requests remain separate.
+- **Finished.** A finished notification is posted only for runs that ended on
+  their own (status Ready or ERROR), including child and open chats. Stopped,
+  interrupted and voice runs get none.
+- **Full access.** Each chat has a permission level. Full access is per chat
+  and inherited by delegated child chats.
+  It auto-allows local approvals and engine approvals, and writes an
+  `approval_auto_allowed` trace entry.
+- **Storage.** The level is stored HMAC-signed with an Android Keystore key,
+  to detect edits to the stored file; same-UID access to the signing key has not been security-tested.
+- **Default.** The last pick is the default for the next chat the user starts.

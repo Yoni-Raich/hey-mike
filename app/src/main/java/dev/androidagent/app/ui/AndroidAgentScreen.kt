@@ -28,6 +28,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -79,6 +82,7 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.TimerOff
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -137,6 +141,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -279,6 +285,14 @@ fun AndroidAgentScreen(
                 keyboard?.hide()
             }
         }
+        // A panel opens over the composer: the keyboard the composer had would
+        // only push it up. A field in the panel brings the keyboard back.
+        LaunchedEffect(state.runState.pendingPanel?.id) {
+            if (state.runState.pendingPanel != null) {
+                focusManager.clearFocus()
+                keyboard?.hide()
+            }
+        }
         val drawerPush = rememberDrawerPush(drawerState)
         val layoutDirection = LocalLayoutDirection.current
 
@@ -333,7 +347,11 @@ fun AndroidAgentScreen(
                     }
                 },
                 bottomBar = {
-                    Column {
+                    // Never taller than the space under the top bar: a tall panel with
+                    // the keyboard up used to slide under the status bar and the clock.
+                    BoxWithConstraints {
+                    val topReserved = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp
+                    Column(Modifier.heightIn(max = (maxHeight - topReserved).coerceAtLeast(0.dp))) {
                         state.activeSessionId?.let { id ->
                             val binding = state.remoteBindings[id]
                             if (binding?.engine == EngineKind.CLAUDE && binding.threadId != null &&
@@ -389,6 +407,15 @@ fun AndroidAgentScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
+                        state.runState.pendingPanel?.let { panel ->
+                            AgentPanelCard(
+                                panel = panel,
+                                state = state,
+                                actions = actions,
+                                // Measured last, so the composer keeps its room and the panel scrolls.
+                                modifier = Modifier.weight(1f, fill = false).padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
                         Box(Modifier.voiceStage(voiceMode.composer, lift = 56.dp)) {
                             AgentComposer(
                                 state = state,
@@ -397,11 +424,11 @@ fun AndroidAgentScreen(
                             )
                         }
                     }
+                    }
                 },
             ) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding)) {
                 Box(Modifier.voiceStage(voiceMode.topBar)) { ParentChatBanner(state, actions) }
-                Box(Modifier.voiceStage(voiceMode.topBar)) { BoardChatPresence(state, actions) }
                 AgentChatContent(
                     state = state,
                     actions = actions,
@@ -436,9 +463,6 @@ fun AndroidAgentScreen(
         }
         if (state.isAutomationsOpen && !onboarding) {
             AutomationsSheet(state = state, actions = actions)
-        }
-        if (state.isTaskBoardOpen && !onboarding) {
-            TaskBoardSheet(state = state, actions = actions)
         }
         if (state.isWorkspaceOpen && !onboarding) {
             WorkspaceFilesSheet(state = state, actions = actions)
@@ -675,6 +699,12 @@ private fun AgentChatContent(
         }
     }
 
+    // Folding the rows walks every message; most state changes (the run's
+    // phase, usage, a panel's tap) leave the messages alone, so a long chat
+    // is not walked again for each of them.
+    val view = chatRunView(state)
+    val rows = remember(state.messages, view.ownRun) { chatListRows(state.messages, view) }
+
     Box(modifier = modifier) {
     LazyColumn(
         state = listState,
@@ -731,21 +761,12 @@ private fun AgentChatContent(
         } else {
             // Back-to-back device actions fold into one row, and so do a
             // computer's steps: seven identical rows hid the answer.
-            val running = state.runState.active && state.runState.sessionId == state.activeSessionId
+            // While this chat's own run works, one status line sits under the
+            // last line, always; the composer shows Stop on the same answer.
+            val running = view.busy
             val computerLabel = state.activeSessionId?.let(state.remoteBindings::get)
                 ?.let { binding -> state.computers.firstOrNull { it.id == binding.computerId }?.label }
-            // While this chat's own run works, one status line sits under the
-            // last line, always. A reply still empty used to show its own
-            // "Working" instead and the line came back once it had text, so
-            // the orb vanished for a moment at every new block: the empty
-            // reply is not drawn while the status line stands in for it.
-            val showStatus = running && !state.voiceState.active
-            val shown = if (showStatus) {
-                state.messages.filterNot {
-                    it.role.equals("assistant", true) && it.text.isBlank() && it.state.equals("streaming", true)
-                }
-            } else state.messages
-            items(chatRows(shown, running), key = { it.key }) { row ->
+            items(rows, key = { it.key }) { row ->
                 when (row) {
                     is MessageRow -> {
                         val child = state.childAgents.firstOrNull { it.id == row.message.id }
@@ -756,9 +777,11 @@ private fun AgentChatContent(
                     is RemoteActivityRow -> RemoteActivityGroup(row, computerLabel)
                 }
             }
-            if (showStatus) {
+            if (view.statusLine) {
                 item(key = "run-status", contentType = "run-status") {
-                    RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem())
+                    // Fades in, but leaves at once: a line that fades out is
+                    // drawn on after the run has ended.
+                    RunStatusLine(state.runState, Modifier.fillMaxWidth().animateItem(fadeOutSpec = null))
                 }
             }
             // A compaction takes a while and sends nothing meanwhile: this card is the proof it is alive.
@@ -1074,6 +1097,10 @@ internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showC
         }
         return
     }
+    expiredPanelNote(message)?.let { note ->
+        ExpiredPanelReceipt(message.text, note)
+        return
+    }
     // What `/context` answers is shown as a gauge, not as the CLI's table.
     val contextUsage = remember(message.id, message.text) { if (user) null else parseContextUsage(message.text) }
     if (contextUsage != null) {
@@ -1135,14 +1162,8 @@ internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showC
                         }
                     }
                 } else if (message.state.equals("streaming", ignoreCase = true)) {
-                    Row(
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        AgentOrb(modifier = Modifier.size(28.dp))
-                        Text("Working…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    // An empty reply still streaming is not drawn (see chatListRows):
+                    // the Working line under the chat is the only "working".
                 } else if (message.attachmentPaths.none(::isMediaPath)) {
                     // Media shown without a caption speaks for itself.
                     Text("No text returned.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1158,6 +1179,56 @@ internal fun MessageBubble(message: ChatMessage, copyText: String? = null, showC
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A chat panel that closed with no answer: its title and one line, collapsed
+ * and inert. A Hebrew or Arabic title mirrors the row, icon on the right and
+ * both lines against it, like the reply beside it. The note stays English:
+ * the app ships no translations.
+ */
+@Composable
+private fun ExpiredPanelReceipt(title: String, note: String) {
+    val rtl = expiredReceiptRtl(title)
+    val align = if (rtl) TextAlign.Right else TextAlign.Left
+    Surface(
+        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    ) {
+        CompositionLocalProvider(LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    Icons.Outlined.TimerOff,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = align,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        note,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = align,
+                    )
                 }
             }
         }

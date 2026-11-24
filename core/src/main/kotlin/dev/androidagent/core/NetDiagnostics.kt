@@ -63,7 +63,9 @@ object NetDiagnostics {
         "api.anthropic.com",
         "claude.ai",
         "claude.com",
-        "platform.claude.com"
+        "platform.claude.com",
+        // Anthropic's proxy serves only the account connectors enabled by the phone engine.
+        "mcp-proxy.anthropic.com"
     )
 
     /** Only TLS is tunnelled. Plain HTTP through the proxy is never allowed. */
@@ -72,11 +74,13 @@ object NetDiagnostics {
     /** Hosts one engine's proxy may reach. Engines never share a list. */
     fun allowedHostsFor(engine: EngineKind): Set<String> = when (engine) {
         EngineKind.CODEX -> defaultAllowedHosts
+        EngineKind.ANTIGRAVITY -> emptySet()
         EngineKind.CLAUDE -> claudeAllowedHosts
     }
 
     /** Ports one engine's proxy may reach: TLS only for every engine. */
     fun allowedPortsFor(engine: EngineKind): Set<Int> = when (engine) {
+        EngineKind.ANTIGRAVITY -> emptySet()
         EngineKind.CODEX, EngineKind.CLAUDE -> defaultAllowedPorts
     }
 

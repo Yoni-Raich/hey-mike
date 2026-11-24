@@ -52,7 +52,9 @@ class SessionAgentSetupTest {
         setup.prepare(task(model = null, effort = null))
         assertEquals(0, codex.catalogReads)
         assertTrue(runCatching { setup.prepare(task().copy(computer = "phone", project = "X")) }.isFailure)
-        assertTrue(runCatching { setup.options("root", buildJsonObject { put("engine", "unknown") }) }.isFailure)
+        assertTrue(runCatching { setup.prepare(task(EngineKind.ANTIGRAVITY, model = null, effort = null)) }.isFailure)
+        val unknown = runCatching { setup.options("root", buildJsonObject { put("engine", "unknown") }) }.exceptionOrNull()
+        assertTrue(unknown is IllegalStateException && unknown.message!!.contains("antigravity"))
         assertEquals(0, codex.catalogReads)
     }
 

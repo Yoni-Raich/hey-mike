@@ -167,7 +167,8 @@ class AndroidRuntimeHost(
                         setStatus(RuntimePhase.ERROR, "Localhost proxy is not listening; refusing to spawn Codex")
                         error("Localhost proxy is not listening; refusing to spawn Codex")
                     }
-                    ProcessBuilder(binary.absolutePath, "--listen", "stdio://")
+                    // Discover the signed-in account catalog; ordinary chats explicitly disable native apps.
+                    ProcessBuilder(binary.absolutePath, "--listen", "stdio://", "-c", "features.apps=true")
                         .directory(homeDirectory)
                         .apply {
                             environment().putAll(

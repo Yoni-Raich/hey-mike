@@ -298,7 +298,12 @@ class ComputerTasks(
     /** Surface the child's existing approval/question on the source screen. */
     fun sourceState(origin: String, states: Map<String, RunState>): RunState {
         val raw = states[origin] ?: RunState(sessionId = origin)
-        val own = raw.copy(approval = raw.pendingApproval, question = raw.pendingQuestion)
+        val own = raw.copy(
+            approval = raw.pendingApproval,
+            question = raw.pendingQuestion,
+            panel = raw.pendingPanel,
+            panelActions = if (raw.pendingPanel != null) raw.panelActions else emptyMap(),
+        )
         val children = store.state.value.tasks.values.filter { it.originSessionId == origin && !it.terminal }
         val linked = runner().childrenOf(origin)
         val runs = children.sortedBy { task -> linked.indexOf(task.sessionId).takeIf { it >= 0 } ?: Int.MAX_VALUE }
@@ -306,7 +311,9 @@ class ComputerTasks(
         val waiting = runs.firstOrNull { it.waitingForUser }
         if (waiting != null && !own.waitingForUser && own.phase != RunPhase.STOPPING) return own.copy(
             phase = if (own.active) own.phase else RunPhase.THINKING,
-            status = waiting.status, approval = waiting.pendingApproval, question = waiting.pendingQuestion, delegated = !own.active)
+            status = waiting.status, approval = waiting.pendingApproval, question = waiting.pendingQuestion,
+            panel = waiting.pendingPanel, panelActions = if (waiting.pendingPanel != null) waiting.panelActions else emptyMap(),
+            delegated = !own.active)
         if (own.active || children.isEmpty()) return own
         return own.copy(phase = RunPhase.THINKING, status = children.first().progress, delegated = true)
     }

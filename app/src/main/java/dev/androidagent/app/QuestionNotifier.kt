@@ -20,7 +20,6 @@
 
 package dev.androidagent.app
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -31,6 +30,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import dev.androidagent.app.panels.SavedPanelNotifications
 import dev.androidagent.core.AgentRuns
 import dev.androidagent.core.SessionStore
 import dev.androidagent.core.RunState
@@ -46,10 +46,16 @@ internal object QuestionNotices {
     fun waiting(states: Map<String, RunState>, owner: (String) -> String, order: (String) -> Int): Map<String, UserQuestion> {
         val waiting = linkedMapOf<String, UserQuestion>()
         states.entries.sortedWith(compareBy({ owner(it.key) != it.key }, { order(it.key) })).forEach { (chat, run) ->
-            run.pendingQuestion?.let { waiting.putIfAbsent(owner(chat), it) }
+            (run.pendingQuestion ?: run.pendingPanel?.let(::panelNotice))?.let { waiting.putIfAbsent(owner(chat), it) }
         }
         return waiting
     }
+    /** A `show_ui` panel as a notice: it can only be filled in the chat, so it has no options and no reply field. */
+    fun panelNotice(panel: dev.androidagent.core.AgentPanel): UserQuestion =
+        UserQuestion(panel.id, panel.title + "\nOpen the chat to fill it in.")
+
+    fun isPanel(question: UserQuestion): Boolean = question.id.startsWith("panel-")
+
     /** @return chat id to question, for the questions the user cannot see in the app right now. */
     fun due(waiting: Map<String, UserQuestion>, appInFront: Boolean, openChat: String?): Map<String, UserQuestion> =
         waiting.filterKeys { chat -> !(appInFront && chat == openChat) }
@@ -87,7 +93,7 @@ class QuestionNotifier(
         scope.launch {
             combine(runs.sessionStates, appInFront, openChat) { states, front, open ->
                 val waiting = QuestionNotices.waiting(states, conversationOwner, conversationOrder)
-                val visible = if (front && open != null) runs.sourceState(open).question?.id else null
+                val visible = if (front && open != null) runs.sourceState(open).let { it.pendingQuestion?.id ?: it.pendingPanel?.id } else null
                 QuestionNotices.due(waiting, front, open).filterValues { it.id != visible }
             }.distinctUntilChanged().collect { due -> show(due) }
         }
@@ -136,6 +142,7 @@ class QuestionNotifier(
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 ),
             )
+        if (QuestionNotices.isPanel(question)) return builder.build()
         // Android shows three actions at most; the reply field covers every option.
         if (question.options.size <= MAX_OPTION_BUTTONS) {
             question.options.forEachIndexed { index, option ->
@@ -170,17 +177,21 @@ class QuestionNotifier(
 
     private fun ensureChannel() {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        runCatching {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Questions from Mike", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "What Mike needs you to answer before he can go on."
-                },
-            )
-        }
+        runCatching { manager.createNotificationChannel(CHANNEL_SPEC.channel()) }
     }
 
     companion object {
-        const val CHANNEL = "questions"
+        /** v2: silent. The first question channel used the phone's default sound and buzz. */
+        const val CHANNEL = "questions_v2"
+        const val OLD_CHANNEL = "questions"
+        /** Channels from earlier builds, deleted on every start by [RetiredChannels]. */
+        internal val RETIRED_CHANNELS = listOf(OLD_CHANNEL)
+        /** High importance so it pops up, but no sound or buzz unless the user turns one on. */
+        internal val CHANNEL_SPEC = SavedPanelNotifications.ChannelSpec(
+            CHANNEL, "Questions from Mike", NotificationManager.IMPORTANCE_HIGH,
+            "What Mike needs you to answer before he can go on. Silent; you can turn on a sound here.",
+            sound = false, vibration = false,
+        )
         const val EXTRA_OPEN_CHAT = "dev.androidagent.app.extra.OPEN_CHAT"
         internal const val KEY_REPLY = "reply"
         /** One per question; the question's id is the tag. */

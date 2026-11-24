@@ -43,6 +43,16 @@ interface TurnRunner {
     /** The phase of [sessionId]'s run, or null when that chat is not running. */
     fun phaseOf(sessionId: String): RunPhase?
     fun steer(sessionId: String, prompt: String)
+    /**
+     * Start [turn] as a new run of its chat, never as steering input. False
+     * when that chat is already running or no run can start, so the caller can
+     * keep the turn. The default suits a runner that never steers from [send].
+     */
+    fun start(turn: QueuedTurn): Boolean {
+        if (phaseOf(turn.sessionId) != null || !canStart()) return false
+        send(turn)
+        return true
+    }
     fun send(turn: QueuedTurn) = send(turn.sessionId, turn.prompt, turn.imagePaths.map(::File), turn.model,
         turn.effort, turn.skill, turn.planMode, turn.engine)
     fun send(
@@ -119,13 +129,19 @@ class AgentRuns(
 
     fun sourceState(sessionId: String): RunState {
         val raw = stateOf(sessionId) ?: RunState(sessionId = sessionId)
-        val own = raw.copy(approval = raw.pendingApproval, question = raw.pendingQuestion)
+        val own = raw.copy(
+            approval = raw.pendingApproval,
+            question = raw.pendingQuestion,
+            panel = raw.pendingPanel,
+            panelActions = if (raw.pendingPanel != null) raw.panelActions else emptyMap(),
+        )
         if (own.phase == RunPhase.STOPPING) return own
         val children = family(sessionId).drop(1).mapNotNull(::stateOf)
         val waiting = children.firstOrNull { it.waitingForUser }
         if (waiting != null && !own.waitingForUser) return own.copy(
             phase = if (own.active) own.phase else RunPhase.THINKING, status = waiting.status,
-            approval = waiting.pendingApproval, question = waiting.pendingQuestion, delegated = !own.active)
+            approval = waiting.pendingApproval, question = waiting.pendingQuestion, panel = waiting.pendingPanel,
+            panelActions = if (waiting.pendingPanel != null) waiting.panelActions else emptyMap(), delegated = !own.active)
         return if (!own.active && children.isNotEmpty()) own.copy(phase = RunPhase.THINKING, status = children.first().status, delegated = true) else own
     }
 
@@ -168,7 +184,8 @@ class AgentRuns(
     val state: StateFlow<RunState> = eachSlot({ it.state }) { states ->
         val active = states.filter { it.active }
         active.firstOrNull { it.controlling } ?: active.firstOrNull { it.pendingApproval != null }
-            ?: active.firstOrNull { it.pendingQuestion != null } ?: active.firstOrNull() ?: RunState()
+            ?: active.firstOrNull { it.pendingQuestion != null } ?: active.firstOrNull { it.pendingPanel != null }
+            ?: active.firstOrNull() ?: RunState()
     }.stateIn(scope, SharingStarted.Eagerly, RunState())
 
     /** No chat is running. */
@@ -206,6 +223,19 @@ class AgentRuns(
             val slot = active ?: freeSlot()
             if (active == null) slots.forEach { it.clearOutcome(turn.sessionId) }
             slot.send(turn)
+        }
+    }
+
+    override fun start(turn: QueuedTurn): Boolean {
+        if (turn.prompt.isBlank() && turn.imagePaths.isEmpty()) return true
+        return synchronized(this) {
+            // Stop uses this same monitor: a revoked recovery is consumed, not retried.
+            if (!turn.dispatchAllowed()) return@synchronized true
+            // Something else started this chat since the queue looked; the turn waits for that run.
+            if (slotFor(turn.sessionId) != null) return@synchronized false
+            val slot = freeSlot()
+            slots.forEach { it.clearOutcome(turn.sessionId) }
+            slot.start(turn)
         }
     }
 
@@ -319,8 +349,19 @@ class AgentRuns(
 
     /** What the user typed in [sessionId] while a question waits there is its answer. */
     fun answerQuestionByReply(reply: String, sessionId: String): Boolean =
-        waitingSlot(sessionId)?.takeIf { it.state.value.pendingQuestion != null }
+        waitingSlot(sessionId)?.takeIf { it.state.value.pendingQuestion != null || it.state.value.pendingPanel != null }
             ?.answerQuestionByReply(reply) ?: false
+
+    /** What the user did with a `show_ui` panel; null [button] closes it. */
+    fun answerPanel(panelId: String, button: String?, values: Map<String, String>): Boolean =
+        slots.firstOrNull { it.state.value.pendingPanel?.id == panelId }?.answerPanel(panelId, button, values) ?: false
+
+    /** The user tapped an action tile on a `show_ui` panel; [turnOn] is a switch's new position. */
+    fun runPanelAction(panelId: String, actionId: String, turnOn: Boolean): Boolean =
+        slots.firstOrNull { it.state.value.pendingPanel?.id == panelId }?.runPanelAction(panelId, actionId, turnOn) ?: false
+
+    fun runPanelSlider(panelId: String, sliderId: String, value: Double): Boolean =
+        slots.firstOrNull { it.state.value.pendingPanel?.id == panelId }?.runPanelSlider(panelId, sliderId, value) ?: false
 
     fun beginVoice(sessionId: String, threadId: String, workspace: File) {
         val slot = freeSlot()

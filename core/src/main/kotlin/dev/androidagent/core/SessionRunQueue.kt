@@ -65,7 +65,6 @@ data class QueuedTurn(
     /** Recovery work loses permission after Stop or a restart; it must not be replayed. */
     val requiresLiveGuard: Boolean = false,
     @kotlinx.serialization.Transient val dispatchGuard: (() -> Boolean)? = null,
-    val boardJobId: String? = null,
 )
 
 /**
@@ -85,7 +84,6 @@ class SessionRunQueue(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Told about a turn dropped for being stale, so it is reported rather than vanishing. */
     private val onExpired: (QueuedTurn) -> Unit = {},
-    private val prepare: suspend (QueuedTurn) -> QueuedTurn? = { it },
 ) {
     private val lock = Mutex()
     private val pending = MutableStateFlow<List<QueuedTurn>>(emptyList())
@@ -116,21 +114,65 @@ class SessionRunQueue(
             if (!request.dispatchAllowed()) return
             check(store.getSession(request.sessionId) != null) { "Chat no longer exists." }
             val phase = coordinator.phaseOf(request.sessionId)
-            if (phase != null && !request.requiresLiveGuard && request.boardJobId == null) {
+            if (phase != null && !request.requiresLiveGuard) {
                 check(phase != RunPhase.STARTING && phase != RunPhase.STOPPING) { "Wait for the current turn to start or stop." }
                 check(request.imagePaths.isEmpty()) { "Send attachments after this run finishes." }
                 coordinator.steer(request.sessionId, request.prompt)
                 return
             }
-            check(pending.value.size < 32) { "The queue is full. Cancel a queued task first." }
+            check(pending.value.size < MAX_QUEUED) { "The queue is full. Cancel a queued task first." }
             submittedNow += request.id
             save(pending.value + request)
         }
         dispatch()
     }
 
+    /**
+     * Queue [request] as a turn of its own, even while its chat is running: it
+     * starts when that run ends, never as steering input for it. Steering is
+     * [submit]'s job. The user asked for this turn after any earlier pause, so
+     * that pause does not hold it; Stop on the run it waits for does.
+     *
+     * [seenPauses] is [pauses] when the user tapped Queue. Preparing the turn
+     * can take a while (a file copied to a computer), and a Stop pressed
+     * meanwhile must hold it too, not let it start the moment the run ends.
+     */
+    suspend fun enqueue(request: QueuedTurn, seenPauses: Long = pauses) {
+        loaded.join()
+        lock.withLock {
+            check(request.dispatchAllowed()) { "This task can no longer start." }
+            check(request.prompt.isNotBlank() || request.imagePaths.isNotEmpty()) { "Type a message to queue." }
+            check(store.getSession(request.sessionId) != null) { "Chat no longer exists." }
+            check(pending.value.size < MAX_QUEUED) { "The queue is full. Cancel a queued task first." }
+            if (seenPauses == pauses) submittedNow += request.id
+            save(pending.value + request)
+        }
+        dispatch()
+    }
+
+    /**
+     * Run [block] only while [sessionId] is not running and has nothing queued,
+     * and start no queued turn until it returns. A model picked for the next
+     * message, on the other engine, moves the chat with this: never under a
+     * running turn, never ahead of a turn that was queued with its own model.
+     * False when the chat was busy and [block] did not run.
+     */
+    suspend fun ifIdle(sessionId: String, block: suspend () -> Unit): Boolean {
+        loaded.join()
+        return lock.withLock {
+            if (coordinator.phaseOf(sessionId) != null || pending.value.any { it.sessionId == sessionId }) return@withLock false
+            block()
+            true
+        }
+    }
+
+    private val pauseCount = java.util.concurrent.atomic.AtomicLong()
+    /** How many times the queue was paused; see [enqueue]. */
+    val pauses: Long get() = pauseCount.get()
+
     /** Hold everything waiting now; only turns submitted after this may start until [resume]. */
     fun pause() {
+        pauseCount.incrementAndGet()
         submittedNow.clear()
         pausedState.value = true
     }
@@ -142,6 +184,7 @@ class SessionRunQueue(
 
     private suspend fun dispatch() = lock.withLock {
         // One turn per free run, until the runs or the startable turns run out.
+        val refused = mutableSetOf<String>()
         while (coordinator.canStart()) {
             // Stale turns are dropped before anything is chosen, so an expired one
             // at the head cannot hold up the turn behind it.
@@ -156,20 +199,25 @@ class SessionRunQueue(
             }
             // While paused, only turns submitted since the pause may start. A
             // chat still running keeps its next turn until that run ends.
-            val eligible = fresh.filter { turn ->
-                (!pausedState.value || turn.id in submittedNow) && coordinator.phaseOf(turn.sessionId) == null
-            }
-            val next = eligible.firstOrNull { it.boardJobId == null } ?: eligible.firstOrNull() ?: return@withLock
+            val next = fresh.firstOrNull { turn ->
+                turn.sessionId !in refused && (!pausedState.value || turn.id in submittedNow) &&
+                    coordinator.phaseOf(turn.sessionId) == null
+            } ?: return@withLock
             // Dequeue durably before starting, so a process crash cannot replay side effects.
+            val at = pending.value.indexOf(next)
             save(pending.value - next)
-            submittedNow -= next.id
-            if (next.dispatchAllowed()) {
-                val ready = prepare(next)
-                if (ready != null) {
-                    if (ready.dispatchAllowed()) coordinator.send(ready)
-                } else onExpired(next)
-            }
+            if (!next.dispatchAllowed()) { submittedNow -= next.id; continue }
+            if (coordinator.start(next)) { submittedNow -= next.id; continue }
+            // Its chat started some other way since it was chosen (a child's
+            // update, a recovery). The turn goes back where it was and waits
+            // for that run, instead of joining it as an instruction.
+            save(pending.value.toMutableList().apply { add(at.coerceIn(0, size), next) })
+            refused += next.sessionId
         }
+    }
+
+    companion object {
+        const val MAX_QUEUED = 32
     }
 }
 

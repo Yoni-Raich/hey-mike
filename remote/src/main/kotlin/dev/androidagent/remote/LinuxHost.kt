@@ -52,10 +52,10 @@ object LinuxHost : HostScripts {
     internal val THREAD_ID = Regex("[A-Za-z0-9-]{1,80}")
 
 
-    /** sha256 of `codex-app-server-package-<arch>-unknown-linux-musl.tar.gz`, rust-v0.163.0; the same pins as `tools/prepare_runtime.py`. */
+    /** sha256 of `codex-app-server-package-<arch>-unknown-linux-musl.tar.gz`, rust-v0.171.0; the same pins as `tools/prepare_runtime.py`. */
     val PACKAGE_SHA256 = mapOf(
-        "x86_64" to "cce5802264a44d082da894ff2f2ba695a6ade722bc62a1ad0902153667063401",
-        "aarch64" to "9749a312a24db3c8a24683785595b5e556916694a648259fc3742a118f46a28c",
+        "x86_64" to "fbb41f283b22a161905a3849354ce7b7dd70c553ae422451aef908220fcabc8e",
+        "aarch64" to "73a7153f002d025db50fca0e11d43856bb726a732296818030ecb2e4a0cf0318",
     )
 
     private val PRELUDE = """

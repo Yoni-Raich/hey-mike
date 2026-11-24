@@ -158,6 +158,14 @@ class SshLink(private val target: SshTarget) : Closeable {
         }
     }
 
+    /** One isolated SSH session owns this reverse listener. Closing that session removes it. */
+    internal fun forwardPhoneLoopback(phonePort: Int): Int {
+        require(phonePort in 1..65535)
+        connect()
+        val live = synchronized(this) { session } ?: error("Not connected")
+        return live.setPortForwardingR("127.0.0.1:0:127.0.0.1:$phonePort")
+    }
+
     /** Start a long-running command whose streams the caller owns. */
     fun start(command: String): Process {
         val channel = openExec(command)

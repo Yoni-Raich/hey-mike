@@ -1,5 +1,692 @@
 # Progress
 
+### Codex 0.171.0 runtime pins — 2026-11-23
+
+- Updated Android ARM64/x86_64, Windows fallback packages, Linux fallback
+  hashes and the computer updater baseline together from 0.163.0 to 0.171.0.
+  Pins match official stable `rust-v0.171.0` GitHub release asset digests.
+- Raised the Dev build to 1232 / `0.17.0-dev.codex171-1232`.
+- `python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`:
+  24 tests passed. `git diff --check`: passed.
+- PR #170 CI passed and the runtime update reached `origin/dev` in
+  `360aa2dc13fbaf7bc6746b3b3edb535cb8537d61`.
+  The first post-merge CI run hit Robolectric `MavenArtifactFetcher`
+  `IOException` failures in web/automation tests; its unchanged retry is running
+  (Actions run 45168123610, attempt 2).
+- Built Dev Debug from that commit plus the code/test changes of Antigravity
+  PR #169 (`df447462bd86bcef1159eb4a5df56bc09a045c89`). PR #169 itself remains
+  open; its changes were applied only to this phone build.
+- Local command: `.\gradlew.bat :app:assembleDevDebug :app:lintDevDebug
+  :runtime:testDebugUnitTest :remote:testDebugUnitTest
+  :engine-codex:testDebugUnitTest :core:test :app:testDevDebugUnitTest
+  :mcp-loopback:testDebugUnitTest --no-daemon --no-configuration-cache`.
+  First run built the APK but timed out in
+  `RoutingAgentEngineTest.antigravityChatRoutesToolCallsApprovalsAndRefusesVoice`.
+  The unchanged test passed alone, then the full command passed on retry:
+  1,588 test cases, no failures/errors, four skips. Lint: no errors, 23 warnings.
+- Verified the official ARM64/x86_64 package hashes during staging, the
+  helper-name patch, APK runtime manifest version 0.171.0 and both ABIs.
+  APK: `dev.androidagent.app.dev`, code 1232, `0.17.0-dev.codex171-1232`,
+  365,722,279 bytes, debug-signed (v2), zipalign passed, SHA-256
+  `ac1b12121f637b79147e0849ab14dbc9c7c081a6e5723e8a531cb3f8819b7447`.
+- `copy_file` completed delivery of that APK. Phone installation and live
+  model-catalog verification are pending. Wire delta bytes were not measured.
+  No full release gate or release-signed APK is claimed.
+
+### Antigravity MCP 41/41 phone tool schema fit — 2026-11-22
+
+Live testing of build `1230` (`0.17.0-dev.antigravity-fixes-1230`, `d0adc1a6`)
+on the phone confirmed that `AntigravityPhoneBridge` compaction raised mounted
+phone tools in `agy 1.5.14` from **24/41** (12,709 bytes) to **39/41** (13,110
+bytes cumulative), and `apps_settings`, `read_ui`, `computers`,
+`automation_rule`, `calendar`, `files_media`, `communications`,
+`session_agents` and `workflow_runner` all ran live end-to-end. Only the two
+largest schemas (`system_controls` 945 B, `browser` 1,163 B) exceeded `agy`'s
+~13.1 KB eager MCP budget.
+
+Added passes 5–6 in `AntigravityPhoneBridge.compact` (budget `12_000` B): when
+flattened schemas still exceed budget, top-level `enum` arrays are extracted
+into a lossless `promptHint` (`Phone tool enum values: tool.param=a|b|...`)
+forwarded in `AntigravityEngine`'s per-turn runtime context and schema prose is
+cleared, shrinking the live 41-tool Mike catalog to **11,465 bytes** (`browser`
+877 B, `system_controls` ~690 B, >1.6 KB below `agy`'s proven 13,110 B fit).
+
+Checks (worktree `feat/computer-antigravity`, Windows `Pc`, `MIKE_TEST_PYTHON` set):
+- `.\gradlew.bat :remote:testDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+  **PASSED** (`:remote` 177 tests, 0 fail, 4 skip; `:app:lintDevDebug` 0 errors;
+  `dev.androidagent.app.dev` build `1231` / `0.17.0-dev.antigravity-mcp41-1231`,
+  341,011,503 bytes, debug-signed, SHA-256
+  `f86a0b9cc3531d98c4c412c217b02c55411e189b2ae91a72f009ea087159c4d2`).
+- `git diff --check`: passed.
+- Remaining gap: live 41/41 verification (`browser` + `system_controls`) pending
+  re-open after installing build `1231` on the phone.
+
+### Antigravity PR #168 hardening and review fixes — 2026-11-22
+
+Hardened the Antigravity ACP adapter, MCP phone bridge, computer hub and UI
+after a live phone-to-Pc check (build 1229, `agy 1.5.14`) and full PR #168 code
+review:
+- **MCP phone tool schema compaction (`AntigravityPhoneBridge`)**: removed
+  duplicated top-level schema descriptions, empty `required` arrays,
+  `additionalProperties: false`, nested descriptions and deep nested sub-schemas
+  (including untyped objects with `properties`) while keeping top-level tool
+  names, parameter names, primitive types, enums and non-empty `required` lists.
+  On the live 41-tool Mike MCP catalog observed on `Pc`, raw schemas totaled
+  77,116 bytes and `agy 1.5.14` mounted only the 24 smallest tools (12,709 bytes
+  cumulative, omitting `read_ui`, `open_intent`, `browser`, `files_media`,
+  `calendar`, `apps_settings`, `communications`, `computers`, `system_controls`,
+  etc.); compaction shrinks that catalog by ~80% (to 15,280 bytes, 40/41 tools
+  under 1 KB). Both `mcp-stdio.ps1` and `mcp-stdio.py` now ignore blank stdin
+  lines, and `mcp-stdio.ps1` bounds concurrent HTTP forwards with a semaphore.
+- **ACP reliability & cancellation (`AntigravityEngine`)**: separated `writeLock`
+  from peer state synchronization to prevent write/dispose deadlocks;
+  `interrupt()` sends `session/cancel` under `runInterruptible` with a bounded
+  drain (`promptDone`) and finishes as `"interrupted"` rather than a transport
+  error; `dispose()` emits `ApprovalResolved` for dropped approvals, cancels the
+  idle timer, and attaches a bounded, ANSI-stripped, `SecretRedactor`-redacted
+  stderr tail on unexpected disconnect; stdout skips blank/non-JSON lines;
+  computer `tool_call` updates emit `ItemActivity` rows and advance text segment
+  IDs; image attachments enforce a 20 MB limit; `compact()` returns a clear
+  unsupported error; turns receive `RemoteInstructions.forComputer(..., ANTIGRAVITY)`.
+- **Host/routing & UI fixes**: combined Windows `agy` discovery and `agy models`
+  into one SSH PowerShell command under `runInterruptible`; isolated Windows
+  Antigravity relays under a dedicated UUID namespace with background pruning of
+  ended folders; hid Antigravity in the picker for computers where `agy` is
+  confirmed not installed; prevented cross-computer native session ID collisions
+  and cached session-store lookups in `RoutingAgentEngine`; structured, redacted
+  and capped `antigravity/request_permission` approval cards; fixed model chip
+  and queued-turn display names (`displayModelName`); guarded Plan mode, Compact,
+  `moveNewChat`, `changeEngine` and `SessionAgentSetup` (`ANTIGRAVITY` always
+  requires a computer target even with `model = null`).
+
+Checks (worktree `feat/computer-antigravity`, Windows `Pc`, `MIKE_TEST_PYTHON` set):
+- `.\gradlew.bat :core:test :mcp-loopback:test :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug --no-daemon`:
+  **PASSED**. XML totals: `:core` 1,026 tests (0 fail, 0 skip), `:mcp-loopback`
+  15 tests (0 fail, 0 skip), `:remote` 176 tests (0 fail, 4 skip), `:app` 212
+  tests (0 fail, 0 skip) — 1,425 passed, 4 skipped, 0 failed; `:app:lintDevDebug`
+  passed with 0 errors; `app-dev-debug.apk` (`dev.androidagent.app.dev`, code
+  1217, debug-signed, 341,941,689 bytes, SHA-256
+  `54202bff6a338382fe9a0cda681dee5a49440c3cb529bbf5fd0e0713417c037c`) assembled.
+- `python -m unittest tools.test_prepare_runtime`: 16 tests OK.
+- `git diff --check`: passed.
+- Live phone-to-Pc check (on installed build 1229, before this commit):
+  `device_status`, `list_workflows`, `connected_apps(list)`, `resolve_intent`,
+  and `screenshot` (633,051-byte PNG) all succeeded end-to-end over Mike MCP.
+
+Remaining gaps:
+- The updated APK containing these fixes has not yet been installed on a phone;
+  live verification of how many of the 41 compacted MCP tools `agy 1.5.14`
+  mounts after installing the new build is still pending.
+- Live Stop button, live `antigravity/request_permission` approval card on a
+  phone, and a live Linux host (`Server`) Antigravity turn have not yet been run.
+- Not the full release gate (`assembleDevRelease`, `assembleDevDebugAndroidTest`,
+  `:voice:lintDebug` were not run here).
+
+### Antigravity model picker — 2026-11-21
+
+Computer chats list the models from the host's `agy models` output and show
+a status if the host needs sign-in. The ACP adapter applies the selected
+model on open or resume. A fixture checked catalog parsing and model
+selection before the first prompt. On Pc, `agy models` required Google
+sign-in during the initial check. After sign-in, the CLI separated each ID
+and title with one tab. Build 1228 skipped all 23 rows. The corrected
+parser read the live output on Pc and matched all 23 IDs and titles in
+order. The parser test covers both tab-separated and space-padded rows.
+
+### Phone tools for computer Antigravity chats — 2026-11-21
+
+Antigravity sessions receive Mike's MCP server through SSH on open and load.
+Device calls and their replies pass through the coordinator under the live
+thread and turn. Cancellation clears the pending call. The computer needs
+SSH remote forwarding and Windows PowerShell or Linux Python 3.
+
+On Pc, both the Windows helper and the Linux helper (using Python on Windows)
+listed a test device_status tool and returned text and image data through a
+real SSH server. An ACP fixture covered routing the call and answer, rejecting
+calls outside a turn and cancelling a pending call. The installed agy answered
+initialize and returned Authentication required for session/new.
+
+Core, remote, MCP and app tests reported 1,417 passes and three skips.
+assembleDevDebug succeeded. The debug-signed code 1217 APK contains both
+helpers. No install, physical phone tool action or live Linux host run.
+
+### Computer Antigravity chats — 2026-11-21
+
+The computer model picker can start Antigravity in the bound project on
+Windows or Linux. Switching engines uses the existing history handoff.
+
+`:remote:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug`
+passed. An ACP fixture covered native session load, streamed text, permission
+denial and completion. The installed Windows agy 1.5.14 answered initialize
+and required sign-in for session/new. The optional adapter test also ran with
+MIKE_TEST_AGY pointing to the installed executable. The devDebug APK has code
+1217 and a verified debug signature. A signed-in turn from an Android chat,
+the Linux host and a live Stop still need testing.
+
+### Steer or queue while a chat runs, and the next message's model - 2026-11-19
+
+A message typed while the open chat runs can now go two ways, picked under the
+field. Steer, the default, joins the running turn. Queue makes it the chat's
+next turn of its own, with its own model, level, engine and attachments. The
+queue tray lists this chat's queued messages in order, each with its model and
+a cancel, and a paused banner with Resume. The model picker stays enabled
+while the chat runs and is for the next message. The chip shows "Next". A pick
+for the other engine moves the chat only when the chat is free and has nothing
+queued. Design: `docs/ARCHITECTURE.md`, "Steer or queue while a chat runs".
+
+Checks: `gradlew.bat :core:test :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:assembleDevDebugAndroidTest :app:lintDevDebug --no-daemon` passed. After the
+last edits, `:core:test :app:testDevDebugUnitTest :app:lintDevDebug` passed again.
+XML reports: 1,026 core and 210 app tests, with zero failures or errors.
+`git diff --check` passed. This is not the full release gate. New tests:
+- `AgentRunsTest`: queued turns run as their own turns while steering reaches
+  the running one, each with its model and level. Also covered: Stop holds the
+  queue, and a Stop during preparation holds that turn. An earlier pause does
+  not hold a later queued turn, a queued picture is kept, and `start` never
+  steers.
+- `SessionRunQueueEnqueueTest`: a refused start goes back to the head, and a
+  refused chat does not hold up another chat. Also covered: a full queue, a
+  deleted chat, restart then Resume with the model kept, and `ifIdle`.
+- `SteerQueueComposerTest`: delivery rules and the queued item's model line.
+- `ChatUiTest` (instrumented): queue choice, tray and the next-model menu
+  header. Compiled only, not run.
+
+Untested gaps:
+- No phone run yet: steer, queue, Stop then Resume, and an engine move after a
+  run were not tried on a device.
+- The ViewModel's next-model picks have no unit test, since the ViewModel needs
+  the app graph.
+- The instrumented UI tests were compiled but not run.
+- A model pick of the other engine, held for a running chat, lives only in the
+  ViewModel. It is lost if the app process ends before the chat is free; the
+  next message then uses the chat's own model. Turns already queued keep theirs.
+- A usage-limit continuation reads the chat's saved model, so it uses a model
+  picked during the run, as a next message would.
+
+### PR 166 integration with dev - 2026-11-16
+
+Merged dev 7d12b65c into panel head 9cc58304. The only conflict was this
+progress file; both entries were kept. The mini-app template test now accepts
+CRLF and LF code fences: its original LF-only expression found no examples
+in a Windows checkout. No app behavior changed in this integration.
+
+Checks: `gradlew.bat :core:test :app:testDevDebugUnitTest
+:overlay:testDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+:app:compileDevDebugAndroidTestKotlin --no-daemon` passed. XML reports:
+1,013 core, 206 app and 11 overlay tests; zero failures, errors or skips.
+`python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`
+passed (24 tests). `git diff --check` passed. No device tests were run for
+this merged snapshot; instrumentation was compiled only. This is not a full
+release gate. The existing physical-device gaps below remain.
+
+### Panels as mini-apps - 2026-11-16
+
+Base: feat/agent-panel-native de8f4e5b, branch feat/agent-panel-apps. A saved
+panel keeps typed state (signed, bounded, in its own store): `checklist`,
+`counter`, `timer`, `countdown`, `progress`, `note` blocks, daily or weekly
+`reset`. Actions get a `kind`: `device` (as before), `local` (this panel's
+state only), `ask_mike` (a new chat turn with the state marked as untrusted
+user data) and `open` (an allowlist of six intent shapes, checked at
+creation, load and tap, shown in words on the approval screen). `show_ui`
+takes `panel_id`: list, read, change state with no approval, or replace the
+definition, which waits for approval again when it adds or changes a device,
+open or ask_mike action. Input on every surface: notification Add box
+(RemoteInput), typing on the floating card, a widget list on Android 12+ (six
+fixed rows below that) with an Add box. A timer's end posts an alert. The
+agent-ui skill teaches nine templates (see ARCHITECTURE "Panels as
+mini-apps: state, local actions, panel_id"). Retest fixes on the same branch: the pinned notification's lock
+screen words now match what it does (title only, buttons after unlock), the
+approval screen leads with plain words and keeps the raw call behind
+Details, the floating card shows a plain caption and sits above the dock.
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug :automations:testDebugUnitTest
+:overlay:testDebugUnitTest :engine-claude:testDebugUnitTest
+:workspace:testDebugUnitTest --no-daemon` passed (lint 0 errors, no issue in
+the new files); `git diff --check` passed. New tests: `PanelStateTest` (every
+op per block, limits, the open allowlist, resets, size bounds),
+`PanelAppsHostTest` 19 (state across a restart, surface-op gating, gating per
+action kind, `panel_id` with and without re-approval, untrusted data in the
+ask_mike prompt, no turn while a run is active, resets, every SKILL.md template parsed,
+approved and changed), `AgentPanelsTest` parsing cases and
+`AgentCoordinatorTest` `aPinnedPanelsTurnEndsReadyWithItsCallClosed`.
+
+Not tested: nothing ran on a phone or emulator. Unverified: the notification
+Chronometer countdown, its Add box (RemoteInput) and the lock-screen public
+version; the widget list (RemoteCollectionItems) and its fallback rows; the
+Add dialog activity and its keyboard; typing a note on the floating card
+(window focus for the keyboard); starting an `open` target from a floating
+card, notification and widget; inexact alarms for timers and resets while the
+phone dozes; the silent timer pop-up (no sound, no vibration). The "Working" row after a detached
+panel's turn (retest fix 2) is covered by a unit test only: the retested
+build b1f054f3 did not have 48f718f5. Fix 2 is not reproduced and not
+confirmed: with both 48f718f5 closes (turn end and engine cancel) removed
+by hand, the pinned-panel tests (`aPinnedPanelsTurnEndsReady...`, which
+also check the status reads "Ready" when the engine settles the call after
+the turn ends or never) still passed, because a pinned call is answered at
+once. Only the three chat-panel and question tests failed, as expected. So
+the phone symptom may have another cause; retest it on a build with
+48f718f5. No screenshot.
+
+Round 3 fixes (from the Xiaomi test of 75bc8d20), each its own commit, none
+run on a phone:
+- Stuck "Working" row: not reproduced. The chat's Working line and the
+  composer's Stop now come from one `chatRunView`, so they cannot disagree:
+  a chat whose children still work no longer draws the line (the composer
+  row reports it), an empty reply left "streaming" after the turn is no
+  longer drawn as a second Working orb, and the line no longer fades out
+  after the run ends (`animateItem(fadeOutSpec = null)`, hardening without
+  evidence). `ChatRunViewTest` 5 checks the rows and the button from the same
+  `AgentUiState`; it was not run against the old code.
+- A chat form left open no longer vanishes when its turn ends, times out, is
+  given up by the engine or is stopped: it stays as a collapsed "Expired, not
+  sent." receipt (title plus that line; "Taps already made stay done." when an
+  action ran) that has no fields or buttons. Coordinator tests cover turn end,
+  engine give-up, the 8-minute timeout (a late answer is refused) and an
+  answered panel staying "complete"; `ExpiredPanelNoteTest` covers the line.
+  The receipt card itself is not drawn in any test.
+- Approval card words: a local op reads as plain words from `PanelOpWords`
+  ("Add 1 to "Glasses". Changes only this panel.", not `inc "Glasses"`), and
+  so does a local tile's caption on every surface. A notification's lock-screen
+  note is one line, "On the lock screen: title only (all of it if your phone
+  shows full content). Buttons work after unlock.", with the full rule under
+  Details. `PanelPlacementTest` checks the words, the tile caption and the
+  rule; the card was not looked at on a phone.
+- Multi-step tiles: a `steps` action runs 2 to 6 allowlisted device calls and
+  local ops in order, without the model, and stops at the first failure with
+  the reason first: "<reason>. Stopped at step 3 of 4 (...); the steps before
+  it did run." (round 4 put the reason first). The bedtime
+  template's "Start bedtime" uses it (Do Not Disturb, brightness 30%, the
+  lights-out timer). `PanelAppsHostTest` covers the order, a device and a
+  local failure, a refusal at the tap that runs nothing, the creation checks
+  and the re-approval of a new routine; `PanelPlacementTest` the numbered
+  approval words and the tile caption. Not tapped on a phone: the real
+  Do Not Disturb and brightness steps, and how the numbered list reads on the
+  approval card.
+- Jank after a heavy session (19.3% janky frames, p50 24 ms, p90 57 ms on the
+  Xiaomi, 75bc8d20): found by reading the code, not by a profile. The chat list
+  folded every message again on each state change; the Saved panels screen
+  redrew every card each second for one "ends in" line; notifications and
+  widgets were built on the main thread at each panel change, and every widget
+  was sent to the launcher again even when it showed the same thing. Now the
+  rows are remembered per message list, only the line of a panel that ends
+  ticks, notifications and widgets are built off the main thread, and a widget
+  is sent only when its face changed (`SavedPanelWidgetDrawTest`). The floating
+  card was already fine: its timer is a Chronometer, nothing rebinds it each
+  second. Not measured again on a phone: the frame numbers after this change
+  are unknown.
+- "Add to home screen" on a panel that already has a widget now says "This
+  panel is already on your home screen." instead of pinning a second one: a
+  widget id the launcher still holds and that maps to this panel counts, a
+  tie left by a removed widget does not (`SavedPanelWidgetPinTest`). Not tried
+  on a launcher. A pin still waiting in the launcher's dialog is not tracked,
+  so two fast taps can still ask twice.
+- With the user's OK, "Panels to approve" and "Questions from Mike" are
+  silent: new channel ids (`saved_panel_approvals_v2`, `questions_v2`) with no
+  sound and no vibration, each at its old importance (default; high, so a
+  question still pops up). The old ids are deleted at startup. Settings the
+  user changed on the old channels (a sound, importance, lock screen) do not
+  carry over. "Approvals for Mike" and "Finished chats" still use the
+  phone's default sound; unchanged. `PanelChannelsTest` checks the specs and
+  the retired ids. Not run on a phone: that the old channels are gone and the
+  new ones pop up without a sound.
+
+Round 4 (Xiaomi test of bdab3e08). Passed there: the steps approval card
+listed all 3 steps in plain words, the tile stopped at the first failure and
+named step 2, "already on your home screen" with no second widget id, and the
+Working row cleared. Fixes, each its own commit, none run on a phone:
+- Do Not Disturb words now say what the call sets: `mode: priority` reads
+  "Turn on Do Not Disturb (priority only)", not "Set Do Not Disturb to
+  priority"; alarms reads "(alarms only)", total "(total silence)", off "Turn
+  off Do Not Disturb". These match `setDnd`'s interruption filters
+  (`PanelPlacementTest`).
+- A failed step no longer hides its reason. The Xiaomi widget showed "Go: Step
+  2 of 3 (Set t..." because the message led with the step. It now leads with
+  the reason, "<reason>. Stopped at step 2 of 3 (<words>); the steps before it
+  did run.", capped at 160 characters with the step's words cut first
+  (`PanelAppsHostTest.aStepsFailureCutsTheStepWordsBeforeTheReason`). A widget
+  tile shows "Failed" and the panel's full-width line shows "label: reason"
+  in up to 3 lines; a tile's idle caption may wrap to 2 lines, so "Set Do Not
+  Disturb..." is no longer cut at one. The floating card gives a failed
+  caption 3 lines. The notification's collapsed line is the reason, which now
+  comes first. Not looked at on a phone: how the widget line, the 2-line tile
+  caption and the floating caption fit on a real launcher and screen.
+- A missing permission is named and can be allowed. On the Xiaomi step 2
+  (brightness) failed for lack of "Modify system settings". Now Saved panels
+  flags, before and after approval, each step whose switch is off ("Step 2
+  needs “Modify system settings” for Hey Mike, which is off") and offers
+  "Allow “Modify system settings”", which opens Android's screen for Hey
+  Mike; the flag clears within a second of coming back. The failed tap reads
+  "Hey Mike needs “Modify system settings”; allow it in Saved panels.
+  Stopped at step 2 of 3 (...)". The same holds for "Do Not Disturb access"
+  (Do Not Disturb, silent ringer). Nothing is granted by adb or code.
+  `PanelGrantsTest` checks the mapping, the flags and the result parsing;
+  `PanelAppsHostTest.aMissingGrantNamesTheSwitchAndIsKeptForSavedPanels` the
+  tap. Not done on a phone: the Allow button opening the right screen on
+  HyperOS, and the flag clearing after the user flips the switch.
+
+Round 5 (Xiaomi test of 028f1e3e). Passed there: the DND words, the step-2
+grant flag and Allow, the reason-first failure, the Working row over 5 turns,
+Stop mid-turn, the Expired receipt, plain local-op words, the short lock-screen
+line, eye reveal, both slider modes, the silent 10 s timer, reduced motion;
+jank 15.2% (from 19.3%), p50 27 ms, p90 53 ms. Fixes, each its own commit,
+none run on a phone:
+- Old channel ids (`questions`, `saved_panels`, `saved_panel_approvals`,
+  `saved_panel_alerts`) are now deleted first thing in
+  `AgentApplication.onCreate` by `RetiredChannels`, before the app graph is
+  built, on every process start. Before, the delete ran in the
+  `SavedPanelNotifications` and `QuestionNotifier` constructors, inside the
+  graph; why it did not take on the phone is not known. Android soft-deletes
+  a channel: `dumpsys notification` can still list it, marked deleted, so
+  check `mDeleted` before calling it alive. `RetiredChannelsTest` 5 (every old
+  id listed, no id in use listed, an upgrade deletes the old and keeps the
+  new, a second start deletes nothing, one refused delete does not stop the
+  rest).
+- Duplicate controls: a `local` action whose op and target only repeat a
+  block's own button ("+ Add 1 to Pushups" next to the counter's +1, a "Start"
+  tile next to the timer's Start) is dropped when the panel is made or
+  replaced, from the stored definition too, and the result's `dropped` says
+  which and why. Per surface: the counter's + at its own step and the timer's
+  Start, resume and Pause everywhere; - and Reset only on a floating card,
+  where the card draws them. agent-ui SKILL.md now says blocks bring their own
+  buttons, and the cooking template lost its Pause tile.
+  `PanelAppsHostTest.anActionThatRepeatsABlocksOwnButtonIsDroppedWithANote`
+  (widget and floating, kept after a reload) and the template test (no
+  template drops anything). Panels saved before this keep their tiles.
+- Slider decimals: the continuous volume slider read 75.4. The panel's JSON
+  was not read; one decimal fits a `step` of 0.1 (0 to 100 is exactly the
+  1000-step limit), which a model picks to get a smooth track. A slider now
+  has `decimals` (0 to 4). By default it is what `min` and `step` need (0 on a
+  whole track), and display, receipt and sent value all use it. A new panel
+  whose step has decimals and that does not set `decimals` is refused with a
+  reason that says to leave `step` out (a track over 20 steps is already
+  smooth) or set `decimals`; saved panels still load as they were. Snapped
+  values are rounded, so 0.1 steps never send 0.30000000000000004. The
+  floating card's track now shows the same text as the chat while dragged
+  (it used its own 2-decimal trim) and sends the rounded value. SKILL.md says
+  the same. `AgentPanelsTest` 3 new (refused without decimals, 75.4 with
+  `decimals: 1`, 75 with no step, a saved panel loads, bad `decimals` refused,
+  a live call sends 0.3, the floating track matches); `:core:test` 1013.
+- Hebrew receipt: the expired form receipt with a Hebrew title kept its icon
+  on the left and its title left-aligned (r5-84). A receipt whose title holds
+  a Hebrew or Arabic letter now lays out right to left: icon on the right,
+  title and note right-aligned. "Expired, not sent." stays English: the app
+  ships no Hebrew strings (no `values-iw` or `values-he`; all UI text is
+  hard-coded English), so there is nothing to add a translation to.
+  `ExpiredPanelNoteTest.aHebrewTitleMirrorsTheReceipt`. Not seen on a phone.
+- Floating card (r5): text was already in sp, but the card's views are built
+  once and reused, so a font-size change while a card showed never applied.
+  The overlay now watches configuration changes (font scale, density, width)
+  and builds every card again from the last faces, waiting while the user
+  types; the title row wraps instead of a fixed 40dp. A ☰ Saved panels button
+  beside close opens the Saved panels screen at that panel. The card stays
+  dark in light mode by design: the app is dark-only (`AgentDarkColors`).
+  `FloatingPanelLookTest` (2 tests); `:overlay:testDebugUnitTest` and
+  `:app:compileDevDebugKotlin` passed. Not seen on a phone: the rebuild on a
+  font change and the button opening the screen from over another app.
+- Round 6 on a Redmi 12, a189343e (r6-01 to r6-22):
+  - Passed:
+    - Old channels: `mDeleted=true`; the `_v2` channels are silent.
+    - Duplicate tile dropped.
+    - Step 1 shows whole numbers; a 0.25 step without `decimals` is refused.
+    - Hebrew receipt mirrored.
+    - Card rebuilt at font scale 1.3 and back.
+    - ☰ opens Saved panels over the launcher.
+  - Two bugs, both fixed after the round:
+    - `decimals: 2` on a 0.5 step read "0.5" while Mike said "0.50". A slider now shows exactly `decimals` places (`AgentPanels.fixed`) in the chat, on the floating track and in the receipt. A 0.25 track reads 1.00, and a saved 0.1 track reads 75.0. The value sent is unchanged.
+    - At font scale 1.3, a long card title was cut ("Gamma Title For Font Sc..."). It now wraps to 2 lines.
+  - Checks:
+    - `:core:test` 1013, `:overlay:testDebugUnitTest` 11, `:app:testDevDebugUnitTest` 206.
+    - `:app:lintDevDebug` and `:app:assembleDevDebug` passed.
+  - Not seen on a phone: both fixes.
+  - Not run, because the round was stopped early: light mode, the regression pass, the lock-screen expand, the widget at 1.3, and jank.
+
+### Panels outside the chat - 2026-11-15
+
+Base: feat/agent-panel-native b65e2136, branch feat/agent-panel-surfaces.
+`show_ui` takes `surface` (chat, floating, notification, widget) and
+`lifetime` (turn, ttl, pinned). Panels that outlive the turn run their taps
+with no model turn, through an allowlist, and need the user's approval on an
+app-drawn screen (Settings, Saved panels) unless they are a floating card of
+60 s or less. Live values with `bind`. `media_control seek_by` and
+`media_status current`. A RemoteViews widget, an ongoing notification and a
+floating card in `:overlay` (see ARCHITECTURE "Panels outside the chat").
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug :automations:testDebugUnitTest
+:overlay:testDebugUnitTest --no-daemon` passed (lint 0 errors, no warning in
+the new files); `git diff --check` passed. New tests: `PanelHostTest` 17
+(approval gating, approval refused while a run is active, short floating card
+shown at once and expiring, ttl from approval, expired panels dropped on
+load, re-check on load and on every tap, tampered and rolled-back store,
+remove all, pending cap, a refused shell action, live reads only while shown
+and every read logged (text only on change), the skill's music banner parsed from SKILL.md, the
+panel face, slider steps) and `DeepControlTest` seek_by cases.
+
+Not tested: nothing ran on a phone or emulator. The floating card, the
+notification (including lock screen and swipe-away), the widget (pinning,
+binding, the removed state), the Saved panels screen, Keystore signing,
+real media seek and the live reads are all unverified. No screenshot.
+Quick Settings tiles are not built.
+
+### Native panel style and sliders - 2026-11-15
+
+Base: origin/dev e95a63fa, branch feat/agent-panel-native. `show_ui` panels
+are redrawn in the app's own theme (see ARCHITECTURE "Native panel style and
+sliders"). Adds a `slider` block that is a form input or, with a tool, a live
+control that runs on release.
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:assembleDevDebug :app:lintDevDebug --no-daemon` passed (lint 0 errors,
+no new warning in the panel files); `git diff --check` passed.
+New tests: `AgentPanelsTest` 7 slider cases (defaults, a JSON integer in the
+call, decimal steps, `accept` refusing off-track values, parse refusals, the
+call check and action limit, the logged value) and two `AgentCoordinatorTest`
+cases (a live slider sends a JSON number on release and keeps its value when
+the call fails; a screen tool is refused).
+
+Not tested: nothing ran on a phone or emulator. The new look, the animations,
+reduced motion, RTL mirroring, TalkBack and a real volume slider are
+unverified. No screenshot was taken.
+
+### Composer chips wrap as whole controls - 2026-11-15
+
+The composer settings now use FlowRow, so Auto, Plan and context move to the
+next row when there is no room. Skills, Plan and Auto labels stay on one line.
+Menus keep their chip anchors. No run or permission logic changed.
+
+Checks: `gradlew.bat :app:assembleDevDebug :app:lintDevDebug
+:app:compileDevDebugAndroidTestKotlin --no-daemon` passed (2m 25s), and
+`git diff --check` passed. `ComposerLayoutUiTest` adds narrow 320dp, 360dp
+with 1.5 font scale, and RTL fixtures checking label overflow, chip bounds,
+overlap and the Auto click callback. Those fixtures compiled but were not run:
+`adb devices -l` had no connected device and no local AVD was available.
+No new screenshot, phone install or physical UI result is claimed.
+
+### Live panel actions - 2026-11-15
+
+Branch feat/live-panel-actions. `show_ui` gets `action` tiles that run a
+non-screen tool directly when tapped (a real flashlight switch), plus a new
+panel look: rotating light frame, staggered entry, glowing tiles with
+spin, shake and bounce states (see ARCHITECTURE "Live panel actions").
+
+Checks: `gradlew.bat :core:test :device-tools:test :app:testDevDebugUnitTest
+:app:lintDevDebug :app:assembleDevDebug :workspace:test :engine-codex:testDebugUnitTest
+:remote:testDebugUnitTest :engine-claude:test :mcp-loopback:test --no-daemon` passed. New tests: four
+`AgentCoordinatorTest` action cases (runs at once and the panel stays open; a
+failed switch does not move; refused while one runs and after Stop; screen,
+unknown and chat tools refused) and `AgentPanelsTest` for switch parsing.
+
+`system_controls` torch and media are not approval-gated (only `put_setting`
+is), so a flashlight tile runs with no approval card.
+
+Phone (chat phone, 0.17.0-dev.liveactions1219, versionCode 1219): a Hebrew
+panel from a computer (Claude Code) chat with torch and DND switches and two
+media keys. The user tapped torch on, torch off, DND on, DND off and
+play/pause twice; the panel result listed all six with ok true and the real
+tool results, and the panel stayed open until Done.
+
+Not tested yet: a screenshot of the new look (no UI evidence captured), the
+switch knob direction in RTL, an approval prompt while a panel is open, a
+Codex chat on the phone choosing action tiles by itself.
+
+### Agent UI panels - 2026-11-15
+
+Base: origin/dev 8820b70a, branch feat/agent-ui. Adds the `show_ui` chat tool,
+the `AgentPanelCard` above the composer (chat and voice mode), live settings
+controls inside a panel, an inline add-computer form, the `agent-ui` skill
+and notices for a waiting panel (see ARCHITECTURE "Agent UI panels").
+
+Checks: `gradlew.bat :core:test :workspace:test :device-tools:test :automations:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug --no-daemon` passed; `git diff --check` passed. New tests: `AgentPanelsTest` 4 and three
+`AgentCoordinatorTest` panel cases (values returned, secrets masked in history
+and trace, typing dismisses, a bad panel is refused).
+
+Not tested: nothing ran on a phone. The card's look, the keyboard flow, the
+live controls inside a panel and the add-computer form are unproven on
+hardware; there are no UI screenshots yet. Not proven with Claude or a
+computer chat, only through the coordinator tests.
+### Deep device control - 2026-11-15
+
+Base: origin/dev 6c3a3482. Adds notification reading, reply, press and
+dismiss; SMS and call-log reading; direct SMS and calls; contact and calendar
+writes; and the new `system_controls` tool (see ARCHITECTURE "Deep device
+control").
+
+Checks: `:device-tools:test :core:test :automations:test` passed, including 12
+new `DeepControlTest` cases (approval gates, denied sends, permission and
+grant_missing paths). `:app:assembleDevDebug :app:lintDevDebug` and the app
+unit tests passed. `git diff --check` passed.
+
+Not tested: nothing ran on a phone. The requested Xiaomi test could not start:
+`adb devices -l` listed no device. Unproven on hardware: a real notification
+reply, SMS send and call, provider writes, DND and write-settings grants,
+background clipboard and location, media session control, and HyperOS
+behaviour.
+
+Second part, same branch: share-to-Mike, a Quick Settings tile, launcher
+shortcuts, SAF folder access (`folders`, `pick_folder`, `folder_list`,
+`folder_import`, `folder_export`) and place triggers with background location
+(`automation_rule` modes `places`, `save_place`, `delete_place`).
+
+Checks: `gradlew.bat :core:test :device-tools:test
+:automations:testDebugUnitTest :app:testDevDebugUnitTest :app:assembleDevDebug
+:app:lintDevDebug --no-daemon` passed. New tests: `FolderAccessTest` 4,
+`AutomationPlacesTest` 4, `SharedContentTest` 1, all passing. `git diff
+--check` passed.
+
+Not tested: none of it on a phone (no ADB device). Unproven: share grants
+across tasks from real apps, the tile and shortcuts on a launcher, SAF trees
+on HyperOS, real location fixes and their battery cost, and the "Allow all the
+time" grant flow.
+### Dev launcher badge rebuilt from current dev - 2026-11-13
+
+Base: origin/dev 2d08bd89, which includes Manager removal PR #160 and regular
+account connections PR #161. Dev uses the release icon plus the approved small
+DEV badge; Prod icon resources are unchanged. Version is 0.17.0-dev.icon1217
+(1217), above the reported installed icon build 1216.
+
+Checks: `gradlew.bat :app:assembleDevDebug :app:lintDevDebug
+-PversionCodeOverride=1217 -PversionNameOverride=0.17.0-dev.icon1217 --no-daemon`
+passed (2m32s); lint: 0 errors, 23 warnings. `git diff --check` passed.
+`aapt dump badging` confirms dev.androidagent.app.dev / 1217 /
+0.17.0-dev.icon1217. apksigner verification and zipalign -c 4 passed (debug
+APK, v2 signature). SHA-256:
+9354227df2850e31523170a9016b063148dc9dec480d8e8456b699cae2af5188.
+APK kept outside the checkout at
+`%TEMP%/hey-mike/dev-icon-20261113/app-dev-debug.apk`.
+
+Not tested: phone installation, launcher appearance, live startup or the
+reported crash. This rebuild does not establish the crash cause or its fix.
+
+### Account connections in regular Settings - 2026-11-12
+
+Extracted account connectors from the parked Manager into `core.connections`
+and Settings > Account connections. Gmail and other existing ChatGPT/Claude
+connections now have separate, default-off switches for ordinary chats. Grants
+persist independently of the task board. The Manager, its inbox and team were
+not restored. Codex uses the existing read-only bridge; Claude receives only
+enabled account read tools, with revocation and startup-race checks.
+
+Evidence (Windows isolated worktree, Android SDK set, no local.properties):
+- `.\gradlew.bat test :app:assembleDevDebug :app:assembleDevDebugAndroidTest
+  :app:lintDevDebug --no-daemon --console=plain --continue`: BUILD SUCCESSFUL.
+  XML totals across JVM build variants: 3,091 case executions, 34 skips, zero
+  failures/errors. Debug/release and app flavors repeat some test cases.
+- `python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`: 24 OK.
+- `git diff --check`: clean.
+- API 35 x86_64 AOSP ATD, Pixel 7 profile: installed Dev Debug and its test APK
+  manually with replacement, then ran only `AccountConnectionsUiTest` through
+  `am instrument`: 3 passed. No connected-Gradle test task was used.
+  Inspected provider and empty-state screenshots with fixture data; see
+  `docs/testing/account-connections-20261112/README.md`.
+
+Not tested: live Gmail/account reads, physical ARM64 phone or voice account
+reads. No personal account was used and the user's phone was not updated.
+These checks are not the full release gate.
+
+### Mike Manager taken out of dev — 2026-11-12
+
+At the owner's request, everything that belongs to the Manager implementation
+was reverted on `dev` and kept on a side branch instead:
+
+- Reverted PR #157 (Mike's robot face in the chat top bar) and PR #149 (task
+  board, Manager, team roles, follow-through, `tasks` tool and its skills).
+  The later changes from #155, #156 and #159 stay; their links into the board
+  (tool policy, read-only backstage chats, `tasks` dispatch) were removed.
+- Side branch `side/mike-manager` (= `feat/manager-20261112`, `a7bf6666`) holds
+  current dev before this revert plus all 20 Manager commits.
+- **Re-integration note:** git treats #149 and #157 as already merged. To bring
+  the Manager back, first revert all of PR #160 (merged with a merge commit:
+  `git revert -m 1 <merge>`), then merge `side/mike-manager`. A plain merge
+  will not restore the reverted code or the trimmed hooks.
+- Later commits that used the board were trimmed too: Claude wake cycles
+  (`lastInputFromUser`), Claude history seeding (`readOnly`), and Stop and
+  session notifications (`taskDesk`). The read-only full-access test went with
+  the read-only chats.
+
+Evidence (Windows worktree, `ANDROID_HOME` set):
+- `.\gradlew.bat test :app:assembleDevDebug :app:assembleDevDebugAndroidTest
+  :app:lintDevDebug --no-daemon --continue`: BUILD SUCCESSFUL, no test
+  failures, no new lint errors.
+- `python -m unittest tools.test_prepare_runtime`: 16 OK. `git diff --check`: clean.
+
+Not tested: phone install and a live run. dev's `versionCode` is 1183; the
+phone runs Manager build 1214, so a dev build will not install over it
+without raising the version.
+
+### Notifications APK 1209 installation attempt — 2026-11-11
+
+At the owner's explicit request, built commit `8c2521d9` with
+`:app:assembleDevDebug --no-daemon`, version overrides `1209` and
+`0.14.0-dev.notifications.1209`. Build passed. APK metadata confirmed
+`dev.androidagent.app.dev`; apksigner verification passed (Android Debug key).
+SHA-256: `adc798e02e090a15229890762d54b4b05d488cc56c13179e53796230a969f7f1`.
+This is the dev-based feature APK; the separate Manager branch is not included.
+
+Transferred 340,893,213 bytes to `chat:hey-mike-notifications-1209.apk`.
+`install_apk(replace=true)` was requested once. The install result and subsequent
+app-info read have not returned; installed version and runtime remain unverified.
+Do not repeat the installation without checking the current installed version.
+
+### Session notifications and chat permission level — 2026-11-11
+
+Branch `feat/session-notifications-permissions`: per-chat running
+rows under the service notification, approval and finished notifications, new
+`ic_agent*` icons, and a per-chat Full access level (ARCHITECTURE "Session
+notifications and chat permission level").
+
+Evidence (Windows, worktree build, `ANDROID_HOME` set, no local.properties):
+- `.\gradlew.bat :core:test :app:testDevDebugUnitTest :app:assembleDevDebug
+  :app:lintDevDebug --no-daemon`: BUILD SUCCESSFUL, no compile fixes needed;
+  all JVM cases in the run passed (0 failures, 0 skips; `SessionNoticesTest` 6).
+  Lint raised no new errors.
+- `git diff --check`: clean (only a CRLF warning for `ic_agent.xml`).
+
+The same Gradle command passed again after the notification changes on 2026-11-11. Two core regression tests cover Stop while the approval trace is suspended; :core:test passed after that change. The check is still not atomic with the engine response. Untested gaps: no device test. The notification look, status-bar
+icon animation, grouping in the shade, heads-up behaviour and the permission
+chip were not seen on a phone. The Keystore-backed store was not exercised on
+real hardware.
+
 ### Explicit run gates and child task outcomes — 2026-11-10
 
 Continued the unfinished `refactor/state-machines-20261110` worktree on `dev`
@@ -51,7 +738,6 @@ personal-data access. Existing main-checkout and other-worktree edits were kept.
 Worktree retained for review: `.claude/worktrees/state-machines-20261110`;
 build bucket: `build/67ed9d1458123e9b`; logs and copied XML results:
 `%TEMP%/hey-mike/state-machines-codex-20261110/`.
-
 ### Chat improvements integrated into dev — 2026-11-09
 
 Integrated PR #156 (Claude background/wake cycles, late child updates and native
@@ -146,26 +832,6 @@ Evidence (Windows, worktree build):
 Untested: not installed or run on a phone. The changes only move code, but no
 device run confirms the a11y/ADB `act_and_observe` path or the Claude/Codex
 turn text on hardware.
-
-### Mike's face is a robot — 2026-11-02
-
-Replaced the dotted sphere in `MikeEye` with a flat ceramic robot head: a dark
-visor, two glowing pill eyes and small ear pads. The API (`EyeMood`, `tint`,
-`satellites`, `animate`, `description`) is unchanged, so every place that shows
-Mike (task strip, board, team page, avatars) gets the new face without edits. The
-other orbs (`AgentOrb`, `VoiceSphere`, the overlay orb) are not part of this change.
-
-Evidence: `:app:compileDevDebugKotlin`, `:app:lintDevDebug` (0 errors, 21 warnings,
-as before) and `:app:testDevDebugUnitTest` (344 cases, 0 failures, including the
-new `MikeEyeTest`) passed; `git diff --check` is clean. On the API 35 x86_64
-emulator `emulator-5566` only, `MikeEyeUiTest` drew all six moods at 96, 64, 40, 30,
-24 and 56 dp and the nine existing `TaskBoardUiTest` cases passed. Captures are in
-[`docs/testing/mike-robot-face-20261102/`](docs/testing/mike-robot-face-20261102/).
-
-Not tested: the physical phone, the live drawer/strip with real tasks, a release
-APK, battery cost over a long session, and reduced-motion on a device. The captures
-are fixture frames, not a recording, so the motion itself was checked only on the
-HTML prototype and by reading the frame loop.
 
 ### Dev update version — 2026-10-30
 

@@ -98,19 +98,11 @@ data class ChatSession(
 data class ParkedThread(val threadId: String, val seenUntil: Long)
 @Serializable
 data class ChatMessage(val id: String, val sessionId: String, val role: String, val text: String, val createdAt: Long, val state: String = "complete", val attachmentPaths: List<String> = emptyList())
-data class SessionMessageChange(val sequence: Long, val message: ChatMessage)
 interface SessionStore {
     val sessions: StateFlow<List<ChatSession>>
     /** A new chat that starts on [engine]. */
     suspend fun createSession(engine: EngineKind): ChatSession
     suspend fun createSession(): ChatSession = createSession(EngineKind.CODEX)
-    /** A durable app-owned conversation, visible only after its initial context is saved. */
-    suspend fun createRetainedSession(engine: EngineKind, title: String, context: String): ChatSession {
-        val chat = createSession(engine)
-        rename(chat.id, title)
-        append(ChatMessage(java.util.UUID.randomUUID().toString(), chat.id, "system", context, chat.createdAt))
-        return getSession(chat.id) ?: error("The retained chat was not saved.")
-    }
     suspend fun createChildSession(parentSessionId: String, engine: EngineKind, title: String): ChatSession =
         error("This store does not support child chats.")
     suspend fun setParent(sessionId: String, parentSessionId: String) {}
@@ -121,16 +113,7 @@ interface SessionStore {
     fun messages(sessionId: String): Flow<List<ChatMessage>>
     suspend fun append(message: ChatMessage)
     suspend fun updateMessage(id: String, text: String, state: String = "complete")
-    val hasMessageFeed: Boolean get() = false
-    suspend fun messageChanges(after: Long, limit: Int = 40): List<SessionMessageChange> = emptyList()
-    suspend fun acknowledgeMessageChanges(through: Long) {}
     suspend fun setThread(sessionId: String, threadId: String)
-    /**
-     * Start the chat's next turn on a new engine thread, keeping its visible
-     * history. Used by the board's backstage chats so each pass is a fresh,
-     * self-contained context rather than one thread that grows every pass.
-     */
-    suspend fun clearThread(sessionId: String) {}
     /**
      * Run the chat's next turn on [engine]. The thread of the engine it leaves
      * is kept, and the one it had on [engine] before, if any, comes back; see
@@ -170,13 +153,14 @@ interface RecoverableConnection {
 
 /** Which agent engine runs a turn. A chat can change it between turns. */
 @Serializable
-enum class EngineKind { CODEX, CLAUDE }
+enum class EngineKind { CODEX, CLAUDE, ANTIGRAVITY }
 
-/** The engine's short name in the app's own words: "Codex" or "Claude". */
+/** The engine's short name in the app's own words: "Codex", "Claude", or "Antigravity". */
 val EngineKind.label: String
     get() = when (this) {
         EngineKind.CODEX -> "Codex"
         EngineKind.CLAUDE -> "Claude"
+        EngineKind.ANTIGRAVITY -> "Antigravity"
     }
 
 /**
@@ -310,7 +294,10 @@ sealed interface EngineEvent {
     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
-    /** The server cancelled or otherwise settled this exact pending request. */
+    /**
+     * The server cancelled or otherwise settled this exact pending request:
+     * an approval, or a tool call the app has not answered yet.
+     */
     data class ApprovalResolved(val requestId: String, val threadId: String?, val turnId: String?) : EngineEvent
     data class Activity(val text: String, val threadId: String? = null, val turnId: String? = null,
         /** Transport progress may span turns, but must be scoped to its own threads. */
@@ -384,9 +371,6 @@ interface AgentEngine {
      */
     suspend fun commandCatalog(workspace: File, forceReload: Boolean = false): List<AgentCommand> = emptyList()
     suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String
-    /** Fresh background context. Hosts must enforce read-only native tools or refuse it. */
-    suspend fun openReadOnlySession(workspace: File, model: String?, tools: List<ToolDefinition>): String =
-        throw UnsupportedOperationException("This engine cannot run a restricted background task.")
     /** Persist a name where the engine keeps the thread, when supported. */
     suspend fun renameThread(threadId: String, title: String) {}
     /** An explicitly saved name, excluding the engine's first-message preview. */
@@ -530,7 +514,7 @@ interface RealtimeVoiceEngine {
 
 enum class RunPhase { IDLE, STARTING, THINKING, TOOL, CONTROLLING, STOPPING, ERROR }
 /** A live user gate, independent of the engine/tool phase. Stop and terminal phases close it. */
-enum class RunInteraction { NONE, APPROVAL, QUESTION }
+enum class RunInteraction { NONE, APPROVAL, QUESTION, PANEL }
 /**
  * How a run ended. Code reads this; [RunState.status] is text for the user and
  * may be reworded. [UNKNOWN] means the work may have happened: inspect, never replay.
@@ -540,6 +524,10 @@ data class RunState(
     val phase: RunPhase = RunPhase.IDLE, val sessionId: String? = null, val status: String = "Ready", val controlling: Boolean = false, val approval: EngineEvent.Approval? = null, val toolName: String? = null,
     /** What the agent asked with `ask_user` and is waiting on. */
     val question: UserQuestion? = null,
+    /** The panel Mike showed with `show_ui` and is waiting on. */
+    val panel: AgentPanel? = null,
+    /** Live state of [panel]'s action tiles, by action id. */
+    val panelActions: Map<String, PanelActionState> = emptyMap(),
     /** This source screen shows a child run; its own composer can start a new turn. */
     val delegated: Boolean = false,
     /** False when local Stop could not confirm remote interruption or connection shutdown. */
@@ -570,11 +558,13 @@ data class RunState(
         !active || phase == RunPhase.STOPPING -> RunInteraction.NONE
         approval != null -> RunInteraction.APPROVAL
         question != null -> RunInteraction.QUESTION
+        panel != null -> RunInteraction.PANEL
         else -> RunInteraction.NONE
     }
     val waitingForUser: Boolean get() = interaction != RunInteraction.NONE
     val pendingApproval: EngineEvent.Approval? get() = approval.takeIf { interaction == RunInteraction.APPROVAL }
     val pendingQuestion: UserQuestion? get() = question.takeIf { interaction == RunInteraction.QUESTION }
+    val pendingPanel: AgentPanel? get() = panel.takeIf { interaction == RunInteraction.PANEL }
 
     /**
      * The tool the run is executing right now, or null when it is doing

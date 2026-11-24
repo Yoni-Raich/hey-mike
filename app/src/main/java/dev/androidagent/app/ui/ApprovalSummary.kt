@@ -21,6 +21,7 @@
 package dev.androidagent.app.ui
 
 import dev.androidagent.core.EngineEvent
+import dev.androidagent.core.SecretRedactor
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -47,6 +48,19 @@ internal data class ApprovalSummary(
 
 internal fun EngineEvent.Approval.summary(): ApprovalSummary {
     fun detail(key: String) = (details[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    if (method == "antigravity/request_permission") return ApprovalSummary(
+        headline = "Allow Antigravity to use this computer tool?",
+        lines = buildList {
+            add("Tool" to SecretRedactor.redact(detail("title") ?: "Computer tool").take(200))
+            detail("command")?.let { add("Command" to SecretRedactor.redact(it).take(400)) }
+            detail("path")?.let { add("File" to SecretRedactor.redact(it).take(300)) }
+            details["input"]?.let { raw ->
+                val text = (raw as? JsonPrimitive)?.contentOrNull ?: raw.toString()
+                val shown = SecretRedactor.redact(text).take(500)
+                if (shown.isNotBlank()) add("Input" to shown)
+            }
+        },
+    )
     if (detail("kind") == "send") {
         val app = detail("app") ?: detail("package") ?: "this app"
         val recipient = detail("recipient")

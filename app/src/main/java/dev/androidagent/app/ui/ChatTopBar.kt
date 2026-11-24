@@ -193,7 +193,6 @@ internal fun ChatTopBar(state: AgentUiState, actions: AgentUiActions, onOpenDraw
             }
         },
         actions = {
-            MikeTopButton(state) { actions.onOpenTaskBoard(null) }
             ChildAgentsButton(state, actions)
             AgentStatusButton(state) { showStatus = true }
             // A running chat keeps running beside the new one, so there is nothing to confirm.

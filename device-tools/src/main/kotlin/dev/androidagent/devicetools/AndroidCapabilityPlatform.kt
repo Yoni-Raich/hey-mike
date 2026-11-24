@@ -23,7 +23,12 @@ package dev.androidagent.devicetools
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ComponentName
+import android.content.ContentProviderOperation
 import android.content.ContentUris
+import android.content.ContentValues
+import android.provider.CallLog
+import android.provider.Telephony
+import android.telephony.SmsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -489,6 +494,18 @@ class AndroidCapabilityPlatform(
                 Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, pkgUri),
                 Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).takeIf { pkgUri != null },
             )
+            "notification_policy" -> listOf(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+            "usage_access" -> listOfNotNull(
+                Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, pkgUri).takeIf { pkgUri != null },
+                Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
+            )
+            "exact_alarms" -> listOfNotNull(
+                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkgUri ?: Uri.fromParts("package", context.packageName, null)),
+            )
+            "battery_optimization" -> listOf(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            "app_details" -> listOf(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri ?: Uri.fromParts("package", context.packageName, null)),
+            )
             else -> return false
         }
         return candidates.any { startVisible(it) }
@@ -498,6 +515,200 @@ class AndroidCapabilityPlatform(
         // The action already passed the strict allowlist in the dispatcher.
         if (action !in CapabilityPolicy.SYSTEM_SETTINGS.values) return false
         return startVisible(Intent(action))
+    }
+
+    // ---- direct reads and writes ----
+
+    override suspend fun querySms(box: String, address: String?, query: String?, limit: Int): List<SmsRow> =
+        withContext(Dispatchers.IO) {
+            val uri = when (box) {
+                "inbox" -> Telephony.Sms.Inbox.CONTENT_URI
+                "sent" -> Telephony.Sms.Sent.CONTENT_URI
+                else -> Telephony.Sms.CONTENT_URI
+            }
+            val clauses = mutableListOf<String>()
+            val args = mutableListOf<String>()
+            if (address != null) {
+                clauses += "${Telephony.Sms.ADDRESS} LIKE ?" + CapabilityPolicy.LIKE_ESCAPE
+                args += CapabilityPolicy.likePattern(address.filter { it.isDigit() }.takeLast(9).ifEmpty { address })
+            }
+            if (query != null) {
+                clauses += "${Telephony.Sms.BODY} LIKE ?" + CapabilityPolicy.LIKE_ESCAPE
+                args += CapabilityPolicy.likePattern(query)
+            }
+            val rows = mutableListOf<SmsRow>()
+            context.contentResolver.query(
+                uri,
+                arrayOf(Telephony.Sms._ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE, Telephony.Sms.READ, Telephony.Sms.THREAD_ID),
+                clauses.joinToString(" AND ").ifEmpty { null },
+                args.toTypedArray().takeIf { it.isNotEmpty() },
+                "${Telephony.Sms.DATE} DESC",
+            )?.use { c ->
+                while (c.moveToNext() && rows.size < limit) {
+                    rows += SmsRow(
+                        id = c.getString(0) ?: continue,
+                        address = c.getString(1),
+                        body = c.getString(2).orEmpty(),
+                        dateMs = c.getLong(3),
+                        type = when (c.getInt(4)) {
+                            Telephony.Sms.MESSAGE_TYPE_INBOX -> "inbox"
+                            Telephony.Sms.MESSAGE_TYPE_SENT -> "sent"
+                            Telephony.Sms.MESSAGE_TYPE_DRAFT -> "draft"
+                            Telephony.Sms.MESSAGE_TYPE_OUTBOX -> "outbox"
+                            else -> "other"
+                        },
+                        read = c.getInt(5) != 0,
+                        threadId = c.getString(6),
+                    )
+                }
+            }
+            rows
+        }
+
+    override suspend fun queryCalls(number: String?, limit: Int): List<CallRow> = withContext(Dispatchers.IO) {
+        val selection = number?.let { "${CallLog.Calls.NUMBER} LIKE ?" + CapabilityPolicy.LIKE_ESCAPE }
+        val args = number?.let { arrayOf(CapabilityPolicy.likePattern(it.filter { ch -> ch.isDigit() }.takeLast(9).ifEmpty { it })) }
+        val rows = mutableListOf<CallRow>()
+        context.contentResolver.query(
+            CallLog.Calls.CONTENT_URI,
+            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME, CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls.DURATION),
+            selection, args, "${CallLog.Calls.DATE} DESC",
+        )?.use { c ->
+            while (c.moveToNext() && rows.size < limit) {
+                rows += CallRow(
+                    number = c.getString(0),
+                    name = c.getString(1),
+                    type = when (c.getInt(2)) {
+                        CallLog.Calls.INCOMING_TYPE -> "incoming"
+                        CallLog.Calls.OUTGOING_TYPE -> "outgoing"
+                        CallLog.Calls.MISSED_TYPE -> "missed"
+                        CallLog.Calls.REJECTED_TYPE -> "rejected"
+                        CallLog.Calls.BLOCKED_TYPE -> "blocked"
+                        CallLog.Calls.VOICEMAIL_TYPE -> "voicemail"
+                        else -> "other"
+                    },
+                    dateMs = c.getLong(3),
+                    durationSec = c.getLong(4),
+                )
+            }
+        }
+        rows
+    }
+
+    override suspend fun sendSms(to: String, body: String): Int {
+        val manager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.getSystemService(SmsManager::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            SmsManager.getDefault()
+        } ?: throw IllegalStateException("No SMS service on this phone.")
+        val parts = manager.divideMessage(body)
+        if (parts.size <= 1) manager.sendTextMessage(to, null, body, null, null)
+        else manager.sendMultipartTextMessage(to, null, parts, null, null)
+        return parts.size
+    }
+
+    override suspend fun placeCall(number: String): Boolean {
+        val intent = Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))
+        return startVisible(intent)
+    }
+
+    override suspend fun insertContact(name: String, phone: String?, email: String?): String? = withContext(Dispatchers.IO) {
+        val ops = arrayListOf(
+            ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
+                .build(),
+            ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                .build(),
+        )
+        if (phone != null) {
+            ops += ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
+                .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+                .build()
+        }
+        if (email != null) {
+            ops += ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.Email.ADDRESS, email)
+                .build()
+        }
+        val results = context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+        results.firstOrNull()?.uri?.lastPathSegment
+    }
+
+    override suspend fun writableCalendars(): List<CalendarRow> = withContext(Dispatchers.IO) {
+        val rows = mutableListOf<CalendarRow>()
+        context.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            arrayOf(
+                CalendarContract.Calendars._ID,
+                CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+                CalendarContract.Calendars.ACCOUNT_NAME,
+                CalendarContract.Calendars.IS_PRIMARY,
+            ),
+            "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ? AND ${CalendarContract.Calendars.VISIBLE} = 1",
+            arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString()),
+            null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                rows += CalendarRow(
+                    id = c.getString(0) ?: continue,
+                    name = c.getString(1).orEmpty(),
+                    account = c.getString(2),
+                    primary = c.getInt(3) != 0,
+                )
+            }
+        }
+        rows.sortedByDescending { it.primary }
+    }
+
+    private val folders = AndroidFolders(context)
+    override suspend fun grantedFolders(): List<FolderRow> = withContext(Dispatchers.IO) { folders.granted() }
+    override suspend fun openFolderPicker(): Boolean = folders.openPicker()
+    override suspend fun listFolder(folder: String, path: String, limit: Int): List<DocumentRow>? =
+        withContext(Dispatchers.IO) { folders.list(folder, path, limit) }
+    override suspend fun importDocument(folder: String, path: String, target: java.io.File, maxBytes: Long): Long? =
+        withContext(Dispatchers.IO) { folders.import(folder, path, target, maxBytes) }
+    override suspend fun exportDocument(folder: String, path: String, source: java.io.File, mimeType: String): Boolean =
+        withContext(Dispatchers.IO) { folders.export(folder, path, source, mimeType) }
+    override suspend fun documentExists(folder: String, path: String): Boolean =
+        withContext(Dispatchers.IO) { folders.exists(folder, path) }
+
+    override suspend fun insertEvent(
+        title: String,
+        description: String?,
+        location: String?,
+        beginMs: Long,
+        endMs: Long,
+        allDay: Boolean,
+        calendarId: String?,
+    ): String? = withContext(Dispatchers.IO) {
+        val calendar = calendarId ?: writableCalendars().firstOrNull()?.id ?: return@withContext null
+        val zone = if (allDay) "UTC" else java.util.TimeZone.getDefault().id
+        val values = ContentValues().apply {
+            put(CalendarContract.Events.CALENDAR_ID, calendar.toLong())
+            put(CalendarContract.Events.TITLE, title)
+            put(CalendarContract.Events.DTSTART, beginMs)
+            put(CalendarContract.Events.DTEND, endMs)
+            put(CalendarContract.Events.ALL_DAY, if (allDay) 1 else 0)
+            put(CalendarContract.Events.EVENT_TIMEZONE, zone)
+            description?.let { put(CalendarContract.Events.DESCRIPTION, it) }
+            location?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
+        }
+        context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)?.lastPathSegment
+    }
+
+    override suspend fun deleteEvent(id: String): Boolean = withContext(Dispatchers.IO) {
+        val eventId = id.toLongOrNull() ?: return@withContext false
+        context.contentResolver.delete(ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId), null, null) > 0
     }
 
     // ---- intent plumbing ----

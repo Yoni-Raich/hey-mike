@@ -21,6 +21,7 @@
 package dev.androidagent.app
 
 import dev.androidagent.app.ui.videoLength
+import dev.androidagent.core.AgentPanel
 import dev.androidagent.core.UserQuestion
 import dev.androidagent.core.RunState
 import dev.androidagent.core.RunPhase
@@ -51,11 +52,18 @@ class QuestionNoticesTest {
     }
 
     @Test fun retainedQuestionsAfterFailureStopOrCompletionNeverNotify() {
+        val panel = AgentPanel("panel-1", "Choose options", emptyList(), emptyList())
         for (phase in listOf(RunPhase.IDLE, RunPhase.ERROR, RunPhase.STOPPING)) {
-            val states = mapOf("child" to RunState(phase = phase, question = evening))
+            val states = mapOf("child" to RunState(phase = phase, question = evening, panel = panel))
             assertEquals(phase.name, emptyMap<String, UserQuestion>(),
                 QuestionNotices.waiting(states, owner = { "source" }, order = { 0 }))
         }
+        val livePanel = QuestionNotices.waiting(
+            mapOf("child" to RunState(phase = RunPhase.TOOL, panel = panel)),
+            owner = { "source" },
+            order = { 0 },
+        )
+        assertEquals(mapOf("source" to QuestionNotices.panelNotice(panel)), livePanel)
     }
 
     @Test fun anApprovalTakesPrecedenceOverARetainedQuestionInTheSameRun() {

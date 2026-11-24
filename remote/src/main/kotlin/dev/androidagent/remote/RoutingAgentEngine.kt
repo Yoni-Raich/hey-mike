@@ -82,7 +82,7 @@ class RoutingAgentEngine(
         .stateIn(voiceScope, SharingStarted.Eagerly, local.voiceState.value)
 
     override suspend fun startVoice(threadId: String, model: String?, transport: RealtimeTransport, offerSdp: String?) {
-        check(!isClaude(threadId)) { "Voice works only in Codex chats." }
+        check(!isClaude(threadId) && !threadId.startsWith(AntigravityEngine.PREFIX)) { "Voice works only in Codex chats." }
         val owner: RealtimeVoiceEngine = computerOf(threadId)?.let { hub.engine(it) } ?: local
         voiceEngine.value = owner
         owner.startVoice(threadId, model, transport, offerSdp)
@@ -101,12 +101,13 @@ class RoutingAgentEngine(
     private val claudeThreads = ConcurrentHashMap.newKeySet<String>()
     /** Claude thread -> computer, for the Claude threads that run on one. */
     private val claudeComputers = ConcurrentHashMap<String, String>()
+    private val antigravityComputers = ConcurrentHashMap<String, String>()
     /** Events of the phone's and the computers' Codex only: sign-in and quota here are Codex's. */
     val codexEvents: Flow<EngineEvent> =
         merge(phoneEvents(local.events, EngineKind.CODEX), computerEvents(EngineKind.CODEX))
 
-    private val computerClaudeEvents: Flow<EngineEvent> =
-        computerEvents(EngineKind.CLAUDE)
+    private val computerOtherEvents: Flow<EngineEvent> =
+        merge(computerEvents(EngineKind.CLAUDE), computerEvents(EngineKind.ANTIGRAVITY))
 
     private fun computerEvents(kind: EngineKind): Flow<EngineEvent> = hub.events.transform { remote ->
         if (remote.engine == kind) translate(remote).forEach { emit(it) }
@@ -120,7 +121,7 @@ class RoutingAgentEngine(
     }
 
     override val events: Flow<EngineEvent> =
-        claude?.let { merge(codexEvents, computerClaudeEvents, phoneEvents(it.events, EngineKind.CLAUDE)) } ?: merge(codexEvents, computerClaudeEvents)
+        claude?.let { merge(codexEvents, computerOtherEvents, phoneEvents(it.events, EngineKind.CLAUDE)) } ?: merge(codexEvents, computerOtherEvents)
 
     /** The computer binding of the chat whose folder is [workspace], or null for the phone. */
     fun bindingOf(workspace: File): RemoteBinding? = sessionIdOf(workspace)?.let(store::binding)
@@ -136,12 +137,16 @@ class RoutingAgentEngine(
         if (kind == EngineKind.CLAUDE) claude().account() else local.account()
 
     /** A Claude chat on a computer needs that computer's Claude Code, not the phone's. */
+    private suspend fun computerAntigravity(workspace: File) = hub.antigravity(checkNotNull(bindingOf(workspace)) { "Select a computer project for Antigravity." }.computerId)
+
     override suspend fun connect(kind: EngineKind, workspace: File) {
+        if (kind == EngineKind.ANTIGRAVITY) return computerAntigravity(workspace).connect()
         val binding = bindingOf(workspace).takeIf { kind == EngineKind.CLAUDE } ?: return connect(kind)
         hub.claude(binding.computerId).connect()
     }
 
     override suspend fun account(kind: EngineKind, workspace: File): AccountStatus {
+        if (kind == EngineKind.ANTIGRAVITY) return computerAntigravity(workspace).account()
         val binding = bindingOf(workspace).takeIf { kind == EngineKind.CLAUDE } ?: return account(kind)
         val status = hub.claude(binding.computerId).account()
         // The sign-in is the computer's own, so the way to fix it is there, not in Mike's Settings.
@@ -162,6 +167,7 @@ class RoutingAgentEngine(
     override suspend fun modelCatalog(): List<AgentModel> = local.modelCatalog()
 
     override suspend fun skillCatalog(workspace: File, forceReload: Boolean): List<AgentSkill> {
+        if (engineOf(workspace) == EngineKind.ANTIGRAVITY) return emptyList()
         val binding = bindingOf(workspace)
         if (engineOf(workspace) == EngineKind.CLAUDE) {
             // A computer's Claude Code lists the skills it loaded; none are read from here.
@@ -182,15 +188,17 @@ class RoutingAgentEngine(
     /** The computer's Claude Code, or null when it cannot be reached: a list that is missing is not an error. */
     private suspend fun computerClaude(computerId: String): ClaudeCodeEngine? = runCatching { hub.claude(computerId) }.getOrNull()
 
-    override suspend fun openReadOnlySession(workspace: File, model: String?, tools: List<ToolDefinition>): String {
-        check(bindingOf(workspace) == null) { "Background tasks must run on the phone." }
-        return if (engineOf(workspace) == EngineKind.CLAUDE) {
-            claude().openReadOnlySession(workspace, model, tools).also { claudeThreads += it }
-        } else local.openReadOnlySession(workspace, model, tools).also { localCodexThreads += it }
-    }
-
     override suspend fun openSession(workspace: File, threadId: String?, model: String?, tools: List<ToolDefinition>): String {
         val sessionId = sessionIdOf(workspace)
+        if (engineOf(workspace) == EngineKind.ANTIGRAVITY) {
+            val binding = checkNotNull(bindingOf(workspace)) { "Select a computer project for Antigravity." }
+            if (threadId != null) {
+                check(antigravityComputers[threadId] == null || antigravityComputers[threadId] == binding.computerId) {
+                    "This native Antigravity ID is already routed to another computer in Mike. Continue it on its original computer instead of using a copied ID."
+                }
+            }
+            return hub.antigravity(binding.computerId).openAt(binding.cwd, threadId, tools, model).also { antigravityComputers[it] = binding.computerId }
+        }
         if (engineOf(workspace) == EngineKind.CLAUDE) {
             val computer = sessionId?.let(store::binding)
             // Only the session the chat was opened from on the computer. One
@@ -288,6 +296,7 @@ class RoutingAgentEngine(
     override suspend fun interrupt(threadId: String, turnId: String) = engineFor(threadId).interrupt(threadId, turnId)
 
     override suspend fun answerTool(requestId: String, result: ToolResult) {
+        untag(requestId, AGY_TAG)?.let { (computer, raw) -> return hub.antigravity(computer).answerTool(raw, result) }
         untagClaude(requestId)?.let { return claude().answerTool(it, result) }
         untag(requestId, CLAUDE_REMOTE_TAG)?.let { (computer, raw) -> return hub.claude(computer).answerTool(raw, result) }
         val (computer, raw) = untag(requestId) ?: return local.answerTool(requestId, result)
@@ -295,6 +304,7 @@ class RoutingAgentEngine(
     }
 
     override suspend fun answerApproval(requestId: String, allow: Boolean) {
+        untag(requestId, AGY_TAG)?.let { (computer, raw) -> return hub.antigravity(computer).answerApproval(raw, allow) }
         untagClaude(requestId)?.let { return claude().answerApproval(it, allow) }
         untag(requestId, CLAUDE_REMOTE_TAG)?.let { (computer, raw) -> return hub.claude(computer).answerApproval(raw, allow) }
         val (computer, raw) = untag(requestId) ?: return local.answerApproval(requestId, allow)
@@ -312,6 +322,12 @@ class RoutingAgentEngine(
     private suspend fun route(threadId: String): AgentEngine = engineFor(threadId)
 
     private suspend fun engineFor(threadId: String): AgentEngine {
+        if (threadId.startsWith(AntigravityEngine.PREFIX)) {
+            val computer = antigravityComputers[threadId] ?: sessions?.sessions?.value
+                ?.firstOrNull { EngineSwitch.engineOf(it, threadId) == EngineKind.ANTIGRAVITY }?.let { store.binding(it.id)?.computerId }
+                ?.also { antigravityComputers[threadId] = it }
+            return hub.antigravity(checkNotNull(computer) { "The computer for this Antigravity chat is missing." })
+        }
         if (isClaude(threadId)) return claudeFor(threadId)
         return computerOf(threadId)?.let { hub.engine(it) } ?: local
     }
@@ -360,7 +376,11 @@ class RoutingAgentEngine(
 
     /** A server failure belongs to every thread on that server, regardless of which chat sent last. */
     private fun computerThreadIds(computer: String, kind: EngineKind): Set<String> {
-        val known = if (kind == EngineKind.CLAUDE) claudeComputers else threads
+        val known = when (kind) {
+            EngineKind.CLAUDE -> claudeComputers
+            EngineKind.ANTIGRAVITY -> antigravityComputers
+            EngineKind.CODEX -> threads
+        }
         val ids = known.entries.filter { it.value == computer }.map { it.key }.toMutableSet()
         if (kind == EngineKind.CODEX) {
             ids += store.state.value.bindings.values.filter { it.computerId == computer }
@@ -376,7 +396,11 @@ class RoutingAgentEngine(
     private fun translate(remote: RemoteEvent): List<EngineEvent> {
         val computer = remote.computerId
         // Two engines on one computer each number their own requests.
-        val prefix = if (remote.engine == EngineKind.CLAUDE) CLAUDE_REMOTE_TAG else TAG
+        val prefix = when (remote.engine) {
+            EngineKind.CLAUDE -> CLAUDE_REMOTE_TAG
+            EngineKind.ANTIGRAVITY -> AGY_TAG
+            EngineKind.CODEX -> TAG
+        }
         val event = remote.event
         if (event is EngineEvent.Activity && event.connectionStatus && event.threadId == null) {
             return computerThreadIds(computer, remote.engine).map { event.copy(threadId = it) }
@@ -400,6 +424,7 @@ class RoutingAgentEngine(
     }
 
     companion object {
+        private const val AGY_TAG = "remote-agy|"
         private const val TAG = "remote|"
         private const val CLAUDE_TAG = "claude|"
         private const val CLAUDE_REMOTE_TAG = "remote-claude|"

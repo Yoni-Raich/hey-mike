@@ -320,7 +320,7 @@ class SessionAgents(
                     if (task.runId != run) fences[task.id] = deliveryFence(child)
                     task.copy(runId = run, status = (live?.let(AgentTaskStatus::of)?.takeUnless { it.terminal } ?: AgentTaskStatus.RUNNING).wire,
                         progress = live?.status ?: "Update accepted", result = null,
-                        question = live?.pendingQuestion?.question, questionOptions = live?.pendingQuestion?.options.orEmpty(),
+                        question = live?.pendingQuestion?.question ?: live?.pendingPanel?.title, questionOptions = live?.pendingQuestion?.options.orEmpty(),
                         approvalPending = live?.pendingApproval != null,
                         messages = task.messages.dropLast(1) + AgentMessageReceipt(key, message, run))
                 }
@@ -357,7 +357,7 @@ class SessionAgents(
             }
             val latest = history.lastOrNull { it.role in setOf("assistant", "remote_activity", "system") }?.text
             val next = task.copy(runId = run.runId, status = status.wire, progress = run.status,
-                question = run.pendingQuestion?.question, questionOptions = run.pendingQuestion?.options.orEmpty(),
+                question = run.pendingQuestion?.question ?: run.pendingPanel?.title, questionOptions = run.pendingQuestion?.options.orEmpty(),
                 approvalPending = run.pendingApproval != null,
                 activity = latest?.take(2_000) ?: task.activity,
                 result = if (status != AgentTaskStatus.COMPLETED) null else history.drop(history.indexOfLast { it.role == "user" } + 1)

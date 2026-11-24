@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome "DEV" tag for themed icons: outlined pill, letters in the same tint. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#000000" android:strokeWidth="1" android:pathData="M63,72.5h18a6.5,6.5 0,0 1,6.5,6.5a6.5,6.5 0,0 1,-6.5,6.5h-18a6.5,6.5 0,0 1,-6.5,-6.5a6.5,6.5 0,0 1,6.5,-6.5z" />
+    <path android:fillColor="#00000000" android:strokeColor="#000000" android:strokeWidth="1.3" android:strokeLineJoin="round" android:strokeLineCap="round" android:pathData="M62.5,75.5L65.5,75.5Q67.5,75.5 67.5,79Q67.5,82.5 65.5,82.5L62.5,82.5Z M74.5,75.5L69.5,75.5L69.5,82.5L74.5,82.5 M69.5,79L73.5,79 M76.5,75.5L79,82.5L81.5,75.5" />
+</vector>

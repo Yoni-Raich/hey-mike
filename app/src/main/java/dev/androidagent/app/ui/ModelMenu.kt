@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -114,13 +115,20 @@ private val MenuMuted = Color(0xFF9A9A9A)
 private enum class ModelPage { MAIN, MODELS }
 
 @Composable
-internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: Boolean, onDismiss: () -> Unit) {
+internal fun ModelMenu(
+    state: AgentUiState,
+    actions: AgentUiActions,
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    // The chat is running: a pick here is for the message after this turn.
+    forNextMessage: Boolean = false,
+) {
     var page by remember { mutableStateOf(ModelPage.MAIN) }
     // Reopen on the intelligence levels, not wherever it was last left.
     LaunchedEffect(expanded) {
         if (!expanded) page = ModelPage.MAIN else actions.onRefreshModels()
     }
-    val model = state.modelCatalog.firstOrNull { it.id == state.selectedModel && it.engine == state.activeEngine }
+    val model = state.modelCatalog.firstOrNull { it.id == state.selectedModel && it.engine == state.selectedEngine }
     val efforts = model?.reasoningEfforts.orEmpty()
     val current = effectiveEffort(model, state.selectedReasoningEffort)
     DropdownMenu(
@@ -131,6 +139,7 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
         containerColor = MenuFill,
     ) {
         Column {
+            if (forNextMessage) NextMessageNote()
             if (page == ModelPage.MAIN) {
                 if (efforts.isNotEmpty()) {
                     MenuHeader("Intelligence")
@@ -157,7 +166,7 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                     trailingIcon = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) },
                     onClick = { page = ModelPage.MODELS },
                 )
-                if (state.activeEngine == EngineKind.CLAUDE) {
+                if (state.selectedEngine == EngineKind.CLAUDE) {
                     // Stays open: the switch is a setting, not a pick.
                     SwitchRow(
                         label = "Long context",
@@ -176,10 +185,11 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                 groups.forEach { (kind, models) ->
                     // One account needs no heading.
                     if (groups.size > 1 || setup) MenuHeader(providerName(kind))
+                    if (kind == EngineKind.ANTIGRAVITY) state.antigravityCatalogStatus?.let { MenuHeader(it) }
                     models.forEach { entry ->
                         ChoiceRow(
                             modelTitle(entry.id, entry.displayName),
-                            selected = entry.id == state.selectedModel && kind == state.activeEngine,
+                            selected = entry.id == state.selectedModel && kind == state.selectedEngine,
                             note = entry.description.takeIf { kind == EngineKind.CLAUDE },
                         ) {
                             actions.onModelSelected(entry.id)
@@ -201,6 +211,30 @@ internal fun ModelMenu(state: AgentUiState, actions: AgentUiActions, expanded: B
                     )
                 }
             }
+        }
+    }
+}
+
+/** The chat's permission level, as a menu over its chip. */
+@Composable
+internal fun PermissionMenu(fullAccess: Boolean, expanded: Boolean, onDismiss: () -> Unit, onChoose: (Boolean) -> Unit) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.width(280.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        containerColor = MenuFill,
+    ) {
+        Column {
+            MenuHeader("Permissions")
+            ChoiceRow("Ask first", selected = !fullAccess, note = "Mike asks before he sends, opens a link or runs a sensitive step.") {
+                onChoose(false); onDismiss()
+            }
+            ChoiceRow(
+                "Full access", selected = fullAccess,
+                note = "Mike does all of it without asking, in this chat and the ones it starts.",
+                labelColor = FullAccessInk,
+            ) { onChoose(true); onDismiss() }
         }
     }
 }
@@ -229,12 +263,12 @@ private fun MenuHeader(text: String) {
 }
 
 @Composable
-private fun ChoiceRow(label: String, selected: Boolean, note: String? = null, onClick: () -> Unit) {
+private fun ChoiceRow(label: String, selected: Boolean, note: String? = null, labelColor: Color = Color.Unspecified, onClick: () -> Unit) {
     DropdownMenuItem(
         text = {
             Column {
-                Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-                if (!note.isNullOrBlank()) Text(note, fontSize = 12.sp, lineHeight = 16.sp, color = MenuMuted, maxLines = 2)
+                Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = labelColor.takeOrElse { MaterialTheme.colorScheme.onSurface })
+                if (!note.isNullOrBlank()) Text(note, fontSize = 12.sp, lineHeight = 16.sp, color = MenuMuted, maxLines = 3)
             }
         },
         trailingIcon = if (selected) {
@@ -245,4 +279,14 @@ private fun ChoiceRow(label: String, selected: Boolean, note: String? = null, on
         onClick = onClick,
         modifier = Modifier.semantics { this.selected = selected },
     )
+}
+
+/** Heads the model menu while the chat runs: what is picked here waits for the next message. */
+@Composable
+private fun NextMessageNote() {
+    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 6.dp)) {
+        Text("For your next message", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+        Text("The running turn keeps its model.", fontSize = 12.sp, lineHeight = 16.sp, color = MenuMuted)
+    }
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 2.dp), color = Color(0xFF444444))
 }

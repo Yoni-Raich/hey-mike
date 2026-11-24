@@ -133,7 +133,7 @@ private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
     MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
-    PRIVACY, CONNECTED_APPS,
+    PRIVACY, CONNECTED_APPS, ACCOUNT_CONNECTIONS,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -165,6 +165,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.AUTOMATIONS -> "Standing rules"
     SettingsRoute.PRIVACY -> "Privacy and consent"
     SettingsRoute.CONNECTED_APPS -> "Connected apps"
+    SettingsRoute.ACCOUNT_CONNECTIONS -> "Account connections"
 }
 
 private fun SettingsRoute.icon(): ImageVector = when (this) {
@@ -185,6 +186,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
     SettingsRoute.PRIVACY -> Icons.Outlined.Shield
     SettingsRoute.CONNECTED_APPS -> Icons.Outlined.Key
+    SettingsRoute.ACCOUNT_CONNECTIONS -> Icons.Outlined.Key
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -250,7 +252,7 @@ internal fun AgentSettingsSheet(state: AgentUiState, actions: AgentUiActions) {
                     if (target == null) {
                         SettingsHub(state) { routeName = it.name }
                     } else {
-                        SettingsDetail(target, state, actions)
+                        SettingsDetail(target, state, actions, onOpenAccounts = { routeName = SettingsRoute.ACCOUNT.name })
                     }
                 }
             }
@@ -325,6 +327,11 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     // green would teach the eye to skip the markers that do mean something.
     HubGroup("How Mike works") {
         SettingsHubRow(
+            icon = SettingsRoute.ACCOUNT_CONNECTIONS.icon(), title = "Account connections",
+            summary = accountConnectionsHubSummary(),
+            onClick = { onOpen(SettingsRoute.ACCOUNT_CONNECTIONS) },
+        )
+        SettingsHubRow(
             icon = SettingsRoute.CONNECTED_APPS.icon(), title = "Connected apps",
             summary = connectedAppsHubSummary(),
             onClick = { onOpen(SettingsRoute.CONNECTED_APPS) },
@@ -340,6 +347,13 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
             title = SettingsRoute.SEND_APPROVALS.title(),
             summary = if (state.sendGrants.isEmpty()) "Every message asks first" else "${state.sendGrants.size} always allowed",
             onClick = { onOpen(SettingsRoute.SEND_APPROVALS) },
+        )
+        val context = androidx.compose.ui.platform.LocalContext.current
+        SettingsHubRow(
+            icon = Icons.Outlined.PictureInPictureAlt,
+            title = "Saved panels",
+            summary = "Floating cards, notifications and widgets Mike made",
+            onClick = { context.startActivity(dev.androidagent.app.panels.SavedPanelsActivity.intent(context, null)) },
         )
         SettingsHubRow(
             icon = SettingsRoute.MODEL.icon(),
@@ -501,7 +515,7 @@ private fun ColumnScope.PrivacySettings(state: AgentUiState, actions: AgentUiAct
 }
 
 @Composable
-private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: AgentUiActions) {
+private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: AgentUiActions, onOpenAccounts: () -> Unit) {
     SettingsSection(title = route.title(), icon = route.icon()) {
         when (route) {
             SettingsRoute.RUNTIME -> RuntimeSettings(state, actions)
@@ -521,7 +535,49 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
             SettingsRoute.PRIVACY -> PrivacySettings(state, actions)
             SettingsRoute.CONNECTED_APPS -> ConnectedAppsSettings()
+            SettingsRoute.ACCOUNT_CONNECTIONS -> AccountConnectionsSettings(onOpenAccounts)
         }
+    }
+}
+
+/**
+ * A settings page's own controls, for a `show_ui` panel: the same live
+ * switches and buttons as Settings, bound to the same state. Null when the
+ * control is not a settings page (the panel draws those itself).
+ */
+internal fun panelSettingsTitle(control: dev.androidagent.core.PanelControl): Pair<String, ImageVector>? =
+    panelRoute(control)?.let { it.title() to it.icon() }
+
+private fun panelRoute(control: dev.androidagent.core.PanelControl): SettingsRoute? = when (control) {
+    dev.androidagent.core.PanelControl.WIRELESS_ADB -> SettingsRoute.WIRELESS_ADB
+    dev.androidagent.core.PanelControl.SCREEN_CONTROL -> SettingsRoute.SCREEN_CONTROL
+    dev.androidagent.core.PanelControl.FLOATING_STOP -> SettingsRoute.FLOATING_CONTROL
+    dev.androidagent.core.PanelControl.NOTIFICATIONS -> SettingsRoute.NOTIFICATIONS
+    dev.androidagent.core.PanelControl.INSTALL_UPDATES -> SettingsRoute.INSTALL_UPDATES
+    dev.androidagent.core.PanelControl.MICROPHONE -> SettingsRoute.MICROPHONE
+    dev.androidagent.core.PanelControl.MODEL -> SettingsRoute.MODEL
+    dev.androidagent.core.PanelControl.SEND_APPROVALS -> SettingsRoute.SEND_APPROVALS
+    dev.androidagent.core.PanelControl.ASSISTANT -> SettingsRoute.ASSISTANT
+    dev.androidagent.core.PanelControl.AUTOMATIONS -> SettingsRoute.AUTOMATIONS
+    dev.androidagent.core.PanelControl.ACCOUNT -> SettingsRoute.ACCOUNT
+    dev.androidagent.core.PanelControl.ADD_COMPUTER -> null
+}
+
+@Composable
+internal fun ColumnScope.PanelSettingsControl(control: dev.androidagent.core.PanelControl, state: AgentUiState, actions: AgentUiActions) {
+    when (panelRoute(control)) {
+        SettingsRoute.WIRELESS_ADB -> WirelessAdbSettings(state, actions)
+        SettingsRoute.SCREEN_CONTROL -> ScreenControlSettings(state, actions)
+        SettingsRoute.FLOATING_CONTROL -> FloatingControlSettings(state, actions)
+        SettingsRoute.NOTIFICATIONS -> NotificationSettings(state, actions)
+        SettingsRoute.INSTALL_UPDATES -> InstallUpdatesSettings(state, actions)
+        SettingsRoute.MICROPHONE -> MicrophoneSettings(state, actions)
+        SettingsRoute.MODEL -> ModelSettings(state, actions)
+        SettingsRoute.SEND_APPROVALS -> SendApprovalSettings(state, actions)
+        SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
+        SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
+        SettingsRoute.ACCOUNT -> AccountSettings(state, actions)
+        else -> Unit
     }
 }
 

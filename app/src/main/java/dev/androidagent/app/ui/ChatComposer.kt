@@ -21,6 +21,7 @@
 package dev.androidagent.app.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -37,6 +38,8 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,11 +54,15 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Stop
@@ -70,6 +77,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -97,6 +106,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -104,6 +114,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -142,12 +153,27 @@ private val FieldBorder = Color(0xFF5C5C5C)
 private val FieldBorderFocused = Color(0xFF9A9A9A)
 private val ChipBorder = Color(0xFF5C5C5C)
 private val ChipInk = Color(0xFFCFCFCF)
+internal val FullAccessInk = Color(0xFFF2B34C)
 private val SheetFill = Color(0xFF1B1B1B)
 private val OptionFill = Color(0xFF252525)
 private val AttachmentFill = Color(0xFF2A2A2A)
 private val MutedInk = Color(0xFF8F8F8F)
 
-internal enum class ComposerAction { VOICE, SEND, STEER, STOP }
+internal enum class ComposerAction { VOICE, SEND, STEER, QUEUE, STOP }
+
+/**
+ * Where a message typed while the chat runs goes: into the running turn now
+ * (steer), or into the queue as the next turn of its own.
+ */
+internal enum class Delivery { STEER, QUEUE }
+
+/**
+ * The delivery a message typed while the chat runs actually gets. Files only
+ * travel in a turn of their own, and a turn still starting cannot take an
+ * instruction yet, so both queue whatever was chosen.
+ */
+internal fun deliveryOf(chosen: Delivery, hasAttachments: Boolean, starting: Boolean, supportsSteer: Boolean = true): Delivery =
+    if (hasAttachments || starting || !supportsSteer) Delivery.QUEUE else chosen
 
 /**
  * The composer's main button. Voice when idle, except in a chat whose engine
@@ -164,6 +190,7 @@ internal fun composerAction(active: Boolean, hasDraft: Boolean, runActive: Boole
     else -> ComposerAction.SEND
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AgentComposer(
     state: AgentUiState,
@@ -192,13 +219,21 @@ internal fun AgentComposer(
         state.activeSessionId?.let { actions.onComposerDraftChanged(it, text) }
     }
     var choosingModel by remember { mutableStateOf(false) }
+    var choosingPermission by remember { mutableStateOf(false) }
     var showingContext by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     // A skill picked from the menu rides as a chip until the message is sent.
     var skill by remember(state.activeSessionId) { mutableStateOf<AgentSkill?>(null) }
     var renaming by remember(state.activeSessionId) { mutableStateOf(false) }
-    val voiceActive = state.voiceState.active && (state.voiceSessionId == null || state.voiceSessionId == state.activeSessionId)
-    val active = state.runState.active && state.runState.sessionId == state.activeSessionId && !state.runState.delegated && !voiceActive
+    // Steer or queue, for what is typed while this chat runs. Steer again once it is done.
+    var chosenDelivery by rememberSaveable(state.activeSessionId) { mutableStateOf(Delivery.STEER) }
+    val voiceActive = voiceHere(state)
+    // The same answer that draws the chat's Working line.
+    val active = chatRunView(state).statusLine
+    LaunchedEffect(active) { if (!active) chosenDelivery = Delivery.STEER }
+    val supportsSteer = state.activeEngine != EngineKind.ANTIGRAVITY
+    val steerBlocked = !supportsSteer || state.attachments.isNotEmpty() || state.runState.phase == RunPhase.STARTING
+    val delivery = deliveryOf(chosenDelivery, state.attachments.isNotEmpty(), state.runState.phase == RunPhase.STARTING, supportsSteer)
     val stopping = state.runState.phase == RunPhase.STOPPING && !voiceActive
     val voiceStopping = state.voiceState.phase == VoicePhase.STOPPING
     val voiceBusy = state.voiceState.phase in setOf(VoicePhase.STARTING, VoicePhase.STOPPING)
@@ -208,13 +243,15 @@ internal fun AgentComposer(
         (state.activeEngine == EngineKind.CLAUDE && state.activeSessionId in state.pcBusyChats)
     val compacting = state.activeSessionId in state.compacting
     val canSend = state.activeSessionId != null && hasDraft && !loading && !stopping && !voiceStopping && !compacting
+    // A queued message waits for the run, so it can be left while the run stops.
+    val canQueue = state.activeSessionId != null && hasDraft && !loading && !voiceStopping && !compacting
     val action = composerAction(
         active = active,
         hasDraft = hasDraft,
         runActive = state.runState.active,
         voiceActive = voiceActive,
         voiceAllowed = !state.voiceState.active && ChatEngines.hasVoice(state.activeEngine, codexSignedIn = state.accountStatus?.signedIn == true),
-    )
+    ).let { if (it == ComposerAction.STEER && delivery == Delivery.QUEUE) ComposerAction.QUEUE else it }
     val runCommand: (ComposerCommand) -> Unit = { command ->
         updateDraft("")
         when (command) {
@@ -242,8 +279,9 @@ internal fun AgentComposer(
     }
     val commandEnabled: (ComposerCommand) -> Boolean = { command ->
         when (command) {
-            ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting
-            ComposerCommand.MODEL -> !active && !voiceActive && !compacting
+            ComposerCommand.COMPACT -> !state.runState.active && !voiceActive && !compacting && state.activeEngine != EngineKind.ANTIGRAVITY
+            ComposerCommand.PLAN -> state.selectedEngine != EngineKind.ANTIGRAVITY || state.planMode
+            ComposerCommand.MODEL -> !voiceActive && !compacting
             ComposerCommand.RENAME -> state.activeSessionId != null
             ComposerCommand.LIMITS -> state.activeSessionId != null
             else -> true
@@ -265,9 +303,15 @@ internal fun AgentComposer(
             command != null -> if (commandEnabled(command)) runCommand(command)
             text.isNotBlank() -> {
                 val message = withSkill(skill, text)
-                if (active) actions.onSteer(message) else actions.onSend(message, state.attachments)
+                val files = state.attachments
+                // Cleared first, so a message that cannot go is put back in the field.
                 updateDraft("")
                 skill = null
+                when {
+                    !active -> actions.onSend(message, files)
+                    delivery == Delivery.QUEUE -> actions.onQueue(message, files)
+                    else -> actions.onSteer(message)
+                }
             }
             else -> Unit
         }
@@ -315,8 +359,9 @@ internal fun AgentComposer(
         val border by animateColorAsState(if (focused) FieldBorderFocused else FieldBorder, tween(200), label = "composer-border")
         Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, border)) {
             Row(Modifier.padding(4.dp), verticalAlignment = Alignment.Bottom) {
+                // While the chat runs, files go with a queued message.
                 AttachMenu(
-                    enabled = !active && !voiceActive && state.activeSessionId != null,
+                    enabled = !voiceActive && state.activeSessionId != null,
                     onPhoto = actions.onAttachPhoto,
                     onCamera = actions.onTakePhoto,
                     onFile = actions.onAttach,
@@ -348,8 +393,21 @@ internal fun AgentComposer(
                         },
                         interaction = interaction,
                     )
+                    AnimatedVisibility(visible = active && hasDraft && !renaming) {
+                        DeliveryChoice(
+                            delivery = delivery,
+                            steerEnabled = !steerBlocked && !stopping,
+                            queued = state.queuedTurns.count { it.sessionId == state.activeSessionId },
+                            note = when {
+                                state.attachments.isNotEmpty() -> "Files go in a turn of their own"
+                                delivery == Delivery.QUEUE -> "Runs after this turn"
+                                else -> "Joins the running turn"
+                            },
+                            onChoose = { chosenDelivery = it },
+                        )
+                    }
                 }
-                if (action == ComposerAction.STEER) {
+                if (action == ComposerAction.STEER || action == ComposerAction.QUEUE) {
                     ComposerButton(ComposerAction.STOP, enabled = !stopping, onClick = actions.onStop, outlined = true)
                 }
                 ComposerButton(
@@ -358,11 +416,12 @@ internal fun AgentComposer(
                         ComposerAction.VOICE -> state.activeSessionId != null && !loading && !voiceStopping && !compacting
                         ComposerAction.STOP -> !stopping
                         ComposerAction.SEND, ComposerAction.STEER -> canSend
+                        ComposerAction.QUEUE -> canQueue
                     },
                     onClick = when (action) {
                         ComposerAction.VOICE -> actions.onVoiceToggle
                         ComposerAction.STOP -> actions.onStop
-                        ComposerAction.SEND, ComposerAction.STEER -> submit
+                        ComposerAction.SEND, ComposerAction.STEER, ComposerAction.QUEUE -> submit
                     },
                     busy = action == ComposerAction.VOICE && voiceBusy,
                     voiceActive = voiceActive,
@@ -370,25 +429,34 @@ internal fun AgentComposer(
                 )
             }
         }
-        Row(
+        FlowRow(
             Modifier.fillMaxWidth().padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             SkillsChip(enabled = state.activeSessionId != null && !voiceActive) { browsing = true }
             // The menu hangs off the chip it was opened from, and opens above it.
             Box {
-                ModelChip(state, enabled = !active && !voiceActive && !compacting) {
+                // While the chat runs, the pick is for the next message; the running turn keeps its model.
+                ModelChip(state, enabled = !voiceActive && !compacting, next = active && state.nextModelPicked) {
                     if (state.availableModels.isEmpty()) actions.onOpenSettings() else choosingModel = true
                 }
-                ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false })
+                ModelMenu(state, actions, expanded = choosingModel, onDismiss = { choosingModel = false }, forNextMessage = active)
+            }
+            Box {
+                PermissionChip(state.fullAccess, enabled = state.activeSessionId != null) { choosingPermission = true }
+                PermissionMenu(
+                    fullAccess = state.fullAccess,
+                    expanded = choosingPermission,
+                    onDismiss = { choosingPermission = false },
+                    onChoose = actions.onFullAccessChanged,
+                )
             }
             if (state.planMode) PlanChip(onClick = actions.onTogglePlanMode)
             if (state.limits.plan.active || state.limits.stop?.phase == LimitPhase.WAITING) {
                 LimitChip(state.limits, actions.onOpenLimitPlan)
             }
             contextFill(state.tokenUsage)?.let { fill ->
-                Spacer(Modifier.weight(1f))
                 // The details hang off the chip, as the model menu does.
                 Box {
                     ContextChip(fill, onClick = { showingContext = true })
@@ -532,6 +600,7 @@ private fun ComposerButton(
         ComposerAction.VOICE -> if (voiceActive) "End voice conversation" else "Start voice conversation"
         ComposerAction.SEND -> "Send message"
         ComposerAction.STEER -> "Steer agent"
+        ComposerAction.QUEUE -> "Queue message"
         ComposerAction.STOP -> "Stop agent"
     }
     IconButton(
@@ -560,6 +629,7 @@ private fun ComposerButton(
                         ComposerAction.VOICE -> Icons.Default.GraphicEq
                         ComposerAction.STOP -> Icons.Default.Stop
                         ComposerAction.SEND, ComposerAction.STEER -> Icons.Default.ArrowUpward
+                        ComposerAction.QUEUE -> Icons.AutoMirrored.Outlined.PlaylistAdd
                     },
                     contentDescription = null,
                     tint = ink,
@@ -606,21 +676,177 @@ private fun runStatusText(runState: RunState): String {
     return if (status.isEmpty() || status == "Ready") readableRunPhase(runState.phase) else runStatusLabel(status)
 }
 
+/**
+ * Steer or queue, under what is typed while the chat runs. The send button
+ * follows the choice; files and a turn still starting always queue.
+ */
+@Composable
+private fun DeliveryChoice(delivery: Delivery, steerEnabled: Boolean, queued: Int, note: String, onChoose: (Delivery) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(OptionFill)
+                .padding(2.dp)
+                .selectableGroup(),
+        ) {
+            DeliveryOption("Steer", Icons.Outlined.Bolt, selected = delivery == Delivery.STEER, enabled = steerEnabled) {
+                onChoose(Delivery.STEER)
+            }
+            DeliveryOption(if (queued > 0) "Queue · $queued" else "Queue", Icons.AutoMirrored.Outlined.PlaylistAdd,
+                selected = delivery == Delivery.QUEUE, enabled = true) { onChoose(Delivery.QUEUE) }
+        }
+        Text(
+            note,
+            Modifier.weight(1f),
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            color = MutedInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DeliveryOption(label: String, icon: ImageVector, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val fill by animateColorAsState(if (selected) Color.White else Color.Transparent, tween(180), label = "delivery-fill")
+    val ink by animateColorAsState(
+        when {
+            selected -> Color.Black
+            !enabled -> DisabledInk
+            else -> ChipInk
+        },
+        tween(180),
+        label = "delivery-ink",
+    )
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(fill)
+            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .heightIn(min = 32.dp)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp), tint = ink)
+        Text(label, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1)
+    }
+}
+
+/** "Opus 4.7 · High · 2 pictures": what a queued message will run with. */
+internal fun queuedTurnDetail(state: AgentUiState, turn: dev.androidagent.core.QueuedTurn): String = buildList {
+    turn.model?.let { add(displayModelName(state, it) ?: shortModelName(it)) }
+    turn.effort?.let { add(effortLabel(it)) }
+    if (turn.planMode) add("Plan")
+    val pictures = turn.imagePaths.size
+    if (pictures > 0) add(if (pictures == 1) "1 picture" else "$pictures pictures")
+}.joinToString(" · ")
+
+/**
+ * The open chat's queued messages, in the order they will run, each with its
+ * model and a cancel. Other chats' queues show as one line, so Resume after a
+ * Stop is reachable from anywhere.
+ */
 @Composable
 private fun QueuedTurns(state: AgentUiState, actions: AgentUiActions) {
-    Column(Modifier.fillMaxWidth().heightIn(max = 144.dp).verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${state.queuedTurns.size} queued${if (state.queuePaused) " · paused" else ""}", Modifier.weight(1f))
-            if (state.queuePaused) TextButton(onClick = actions.onResumeQueue) { Text("Resume queue") }
-        }
-        state.queuedTurns.forEach { queued ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(queued.prompt, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                TextButton(onClick = { actions.onCancelQueued(queued.id) }) { Text("Cancel task") }
+    val here = state.queuedTurns.filter { it.sessionId == state.activeSessionId }
+    val elsewhere = state.queuedTurns.size - here.size
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = SheetFill,
+        border = BorderStroke(1.dp, MenuBorder),
+    ) {
+        Column(Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 6.dp)) {
+            Row(Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null, modifier = Modifier.size(16.dp), tint = MutedInk)
+                Text(
+                    when {
+                        here.isEmpty() -> "$elsewhere queued in other chats"
+                        here.size == 1 -> "Up next"
+                        else -> "Up next · ${here.size}"
+                    },
+                    Modifier.weight(1f).padding(start = 8.dp),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ChipInk,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (state.queuePaused) {
+                    Text(
+                        "Paused",
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(PausedFill)
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = SkillsAccent,
+                    )
+                    TextButton(onClick = actions.onResumeQueue) { Text("Resume queue", fontSize = 13.sp) }
+                }
+            }
+            if (here.isNotEmpty()) {
+                if (state.queuePaused) {
+                    Text(
+                        "Stop held these. Resume runs them in order.",
+                        Modifier.padding(end = 12.dp, bottom = 4.dp),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = MutedInk,
+                    )
+                }
+                Column(Modifier.heightIn(max = 176.dp).verticalScroll(rememberScrollState())) {
+                    here.forEachIndexed { index, queued -> QueuedTurnRow(index + 1, queued, queuedTurnDetail(state, queued)) {
+                        actions.onCancelQueued(queued.id)
+                    } }
+                }
+                if (elsewhere > 0) {
+                    Text(
+                        "+ $elsewhere in other chats",
+                        Modifier.padding(top = 2.dp, bottom = 2.dp),
+                        fontSize = 12.sp,
+                        color = TagInk,
+                    )
+                }
             }
         }
     }
 }
+
+@Composable
+private fun QueuedTurnRow(position: Int, turn: dev.androidagent.core.QueuedTurn, detail: String, onCancel: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(22.dp).background(OptionFill, CircleShape), contentAlignment = Alignment.Center) {
+            Text("$position", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = ChipInk)
+        }
+        Column(Modifier.weight(1f).padding(start = 10.dp, end = 4.dp)) {
+            Text(
+                (turn.displayPrompt ?: turn.prompt).lineSequence().firstOrNull { it.isNotBlank() }.orEmpty(),
+                fontSize = 14.sp,
+                lineHeight = 19.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (detail.isNotEmpty()) {
+                Text(detail, fontSize = 12.sp, lineHeight = 16.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Outlined.Close, contentDescription = "Cancel task", modifier = Modifier.size(18.dp), tint = MutedInk)
+        }
+    }
+}
+
+private val PausedFill = Color(0xFF3A2E1A)
 
 private val MenuBorder = Color(0xFF2E2E2E)
 private val TileFill = Color(0xFF262626)
@@ -926,7 +1152,7 @@ private fun SkillsChip(enabled: Boolean, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = if (enabled) SkillsAccent else DisabledInk)
-            Text("Skills", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink)
+            Text("Skills", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1)
         }
     }
 }
@@ -947,7 +1173,7 @@ private fun PlanChip(onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(Icons.Outlined.Checklist, contentDescription = null, modifier = Modifier.size(16.dp), tint = teal)
-            Text("Plan", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = teal)
+            Text("Plan", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = teal, maxLines = 1)
             Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(12.dp), tint = teal)
         }
     }
@@ -1093,14 +1319,52 @@ private fun AttachmentChip(name: String, onRemove: () -> Unit) {
     }
 }
 
+/** What Mike may do without asking, in this chat. Amber while it is everything. */
 @Composable
-private fun ModelChip(state: AgentUiState, enabled: Boolean, onClick: () -> Unit) {
+private fun PermissionChip(fullAccess: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val ink = if (!enabled) DisabledInk else if (fullAccess) FullAccessInk else ChipInk
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(16.dp),
+        color = if (fullAccess && enabled) FullAccessInk.copy(alpha = 0.12f) else Color.Transparent,
+        border = BorderStroke(1.dp, if (fullAccess && enabled) FullAccessInk.copy(alpha = 0.7f) else ChipBorder),
+        modifier = Modifier.semantics {
+            contentDescription = "Permissions: " + if (fullAccess) "full access" else "ask first"
+        },
+    ) {
+        Row(
+            Modifier.heightIn(min = 32.dp).padding(start = 10.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                if (fullAccess) Icons.Outlined.LockOpen else Icons.Outlined.Lock,
+                contentDescription = null, modifier = Modifier.size(14.dp), tint = ink,
+            )
+            Text(
+                if (fullAccess) "Full access" else "Ask",
+                fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1,
+            )
+            Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp), tint = ink)
+        }
+    }
+}
+
+@Composable
+private fun ModelChip(state: AgentUiState, enabled: Boolean, next: Boolean = false, onClick: () -> Unit) {
     val ink = if (enabled) ChipInk else DisabledInk
     // "6 Luna Extra High": the model in bold, then the level it will run at.
-    val effort = effectiveEffort(state.modelCatalog.firstOrNull { it.id == state.selectedModel }, state.selectedReasoningEffort)
+    // "Next" in front when it was changed during the run, for the message after it.
+    val effort = effectiveEffort(
+        state.modelCatalog.firstOrNull { it.id == state.selectedModel && it.engine == state.selectedEngine }
+            ?: state.modelCatalog.firstOrNull { it.id == state.selectedModel },
+        state.selectedReasoningEffort,
+    )
     val label = state.selectedModel?.let { id ->
         buildAnnotatedString {
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(claudeModelName(state, id) ?: shortModelName(id)) }
+            if (next) withStyle(SpanStyle(color = SkillsAccent, fontWeight = FontWeight.SemiBold)) { append("Next  ") }
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(displayModelName(state, id) ?: shortModelName(id)) }
             effort?.let { append(" " + effortLabel(it)) }
         }
     } ?: AnnotatedString("Choose model")
