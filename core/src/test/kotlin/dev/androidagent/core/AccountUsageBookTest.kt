@@ -159,4 +159,48 @@ class AccountUsageBookTest {
         val vault = AccountVaultState(listOf(work), activeId = "work")
         assertEquals(1, AccountUsageOverview.rows(vault, emptyMap(), nowMillis, claude = null).size)
     }
+
+    @Test fun removingAnEntryDropsItFromDisk() {
+        val book = book()
+        book.record("pc", listOf(weekly(25.0)), saved = listOf("pc", "server"))
+        book.record("server", listOf(weekly(60.0)), saved = listOf("pc", "server"))
+        book.remove("pc")
+        assertEquals(setOf("server"), book.all().keys)
+    }
+
+    @Test fun antigravityComputersAppearWithTheirOwnReadingsAndResets() {
+        val vault = AccountVaultState(listOf(work), activeId = "work")
+        val agy = listOf(
+            AntigravityAccountUsage(
+                computerId = "pc-1",
+                label = "Pc",
+                reading = UsageReading(
+                    listOf(
+                        UsageLimit("Gemini · 5-hour", 87.0, nowSeconds + 900, 300),
+                        UsageLimit("Gemini · Weekly", 23.0, nowSeconds + 600_000, 10_080),
+                    ),
+                    nowMillis - 5 * 60_000L,
+                ),
+            ),
+            AntigravityAccountUsage(
+                computerId = "srv-1",
+                label = "Server",
+                reading = UsageReading(
+                    listOf(UsageLimit("Gemini · 5-hour", 95.0, nowSeconds - 60, 300)),
+                    nowMillis - 3 * 3_600_000L,
+                ),
+            ),
+        )
+        val rows = AccountUsageOverview.rows(vault, emptyMap(), nowMillis, claude = null, antigravity = agy)
+        assertEquals(listOf("work", "Pc", "Server"), rows.map { it.name })
+        val pc = rows[1]
+        assertEquals(EngineKind.ANTIGRAVITY, pc.engine)
+        assertEquals(AccountUsageOverview.ANTIGRAVITY_PREFIX + "pc-1", pc.accountId)
+        assertFalse(pc.live)
+        assertEquals("Updated 5m ago", pc.readText)
+        assertEquals(0.87f, pc.window?.fraction ?: -1f, 0.001f)
+        val server = rows[2]
+        assertEquals(EngineKind.ANTIGRAVITY, server.engine)
+        assertEquals(0f, server.window?.fraction ?: -1f, 0.001f)
+    }
 }

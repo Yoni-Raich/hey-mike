@@ -42,8 +42,10 @@ import dev.androidagent.app.R
 import dev.androidagent.app.ui.quotaColor
 import dev.androidagent.core.AccountUsageOverview
 import dev.androidagent.core.AccountUsageRow
+import dev.androidagent.core.AntigravityAccountUsage
 import dev.androidagent.core.ClaudeAccountUsage
 import dev.androidagent.core.EngineKind
+import dev.androidagent.core.UsageReading
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -98,16 +100,25 @@ object UsageWidget {
     internal fun render(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val graph = (context as? AgentApplication)?.graph ?: return
         val claude = graph.claudeUsage.account()?.let { ClaudeAccountUsage(it, graph.claudeUsage.readSaved()) }
-        val rows = AccountUsageOverview.rows(graph.accounts.state(), graph.usageBook.all(), System.currentTimeMillis(), claude)
+        val savedAntigravity = graph.antigravityUsage.all()
+        val antigravity = graph.computers.state.value.computers.mapNotNull { computer ->
+            savedAntigravity[computer.id]?.let { usage ->
+                AntigravityAccountUsage(computer.id, computer.label, UsageReading(usage.limits, usage.readAtMillis))
+            }
+        }
+        val rows = AccountUsageOverview.rows(graph.accounts.state(), graph.usageBook.all(), System.currentTimeMillis(), claude, antigravity)
         val views = build(context, fit(rows))
         ids.forEach { manager.updateAppWidget(it, views) }
     }
 
-    /** At most [MAX_ACCOUNTS] rows; the Claude row keeps its place and the Codex accounts make room. */
+    /** At most [MAX_ACCOUNTS] rows; Claude and Antigravity keep their places while keeping the live Codex row when present. */
     internal fun fit(rows: List<AccountUsageRow>): List<AccountUsageRow> {
         if (rows.size <= MAX_ACCOUNTS) return rows
-        val claude = rows.filter { it.engine == EngineKind.CLAUDE }
-        return rows.filter { it.engine != EngineKind.CLAUDE }.take(MAX_ACCOUNTS - claude.size) + claude
+        val codex = rows.filter { it.engine == EngineKind.CODEX }
+        val other = rows.filter { it.engine != EngineKind.CODEX }
+        val reserveForCodex = if (codex.isNotEmpty()) 1 else 0
+        val keptOther = other.take(MAX_ACCOUNTS - reserveForCodex)
+        return codex.take(MAX_ACCOUNTS - keptOther.size) + keptOther
     }
 
     private fun build(context: Context, rows: List<AccountUsageRow>): RemoteViews {
@@ -144,8 +155,9 @@ object UsageWidget {
 
     internal fun statusText(row: AccountUsageRow): String = when {
         row.live -> "In use"
-        // Claude cannot be switched to; its quota is read when a Claude chat runs.
+        // Claude and Antigravity cannot be switched to; their quota comes from their last reading.
         row.engine == EngineKind.CLAUDE -> listOfNotNull("Claude", row.readText).joinToString(" · ")
+        row.engine == EngineKind.ANTIGRAVITY -> listOfNotNull("Antigravity", row.readText).joinToString(" · ")
         else -> row.readText ?: "Switch to read"
     }
 
@@ -153,7 +165,11 @@ object UsageWidget {
         val window = row.window
         val quota = window?.fraction?.let { "${((1f - it) * 100).roundToInt()}% of ${window.label.lowercase()} quota left" }
             ?: "quota not read yet"
-        val provider = if (row.engine == EngineKind.CLAUDE) "Claude" else null
+        val provider = when (row.engine) {
+            EngineKind.CLAUDE -> "Claude"
+            EngineKind.ANTIGRAVITY -> "Antigravity"
+            EngineKind.CODEX -> null
+        }
         return listOfNotNull(row.name, provider, quota, window?.resetText, if (row.live) "in use" else row.readText).joinToString(", ")
     }
 

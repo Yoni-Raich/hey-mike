@@ -51,5 +51,18 @@ class UsageWidgetTest {
         assertEquals("Switch to read", UsageWidget.statusText(row("a")))
         assertEquals("Claude · Updated 3h ago", UsageWidget.statusText(row("c", EngineKind.CLAUDE, readText = "Updated 3h ago")))
         assertEquals("Claude", UsageWidget.statusText(row("c", EngineKind.CLAUDE)))
+        assertEquals("Antigravity · Updated 5m ago", UsageWidget.statusText(row("antigravity:pc", EngineKind.ANTIGRAVITY, readText = "Updated 5m ago")))
+        assertEquals("Antigravity", UsageWidget.statusText(row("antigravity:pc", EngineKind.ANTIGRAVITY)))
+    }
+
+    @Test fun antigravitySharesTheWidgetAlongsideCodexAndClaude() {
+        val rows = listOf(
+            row("a", live = true),
+            row("b"),
+            row("c"),
+            row("claude", EngineKind.CLAUDE),
+            row("antigravity:pc", EngineKind.ANTIGRAVITY),
+        )
+        assertEquals(listOf("a", "b", "claude", "antigravity:pc"), UsageWidget.fit(rows).map { it.accountId })
     }
 }

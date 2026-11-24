@@ -177,6 +177,17 @@ class ComposerCommandsTest {
         assertEquals("Computer default", modelLabel(state, "antigravity"))
         assertEquals("gemini-4-neon-high", modelLabel(state, "agy/gemini-4-neon-high"))
         assertEquals("Gemini 4 Neon (XHigh) · Phone control off", statusSummary(state, nowSeconds = 0))
+        val withLimits = state.copy(
+            usageLimits = listOf(
+                UsageLimit("Gemini · 5-hour", usedPercent = 87.0, windowMinutes = 300),
+                UsageLimit("Gemini · Weekly", usedPercent = 23.0, windowMinutes = 10_080),
+                UsageLimit("Claude & GPT · 5-hour", usedPercent = 0.0, windowMinutes = 300),
+                UsageLimit("Claude & GPT · Weekly", usedPercent = 50.0, windowMinutes = 10_080),
+            ),
+        )
+        assertEquals("Gemini 4 Neon (XHigh) · Gemini · 5-hour 13% left · Phone control off", statusSummary(withLimits, nowSeconds = 0))
+        val claudeOnAgy = withLimits.copy(selectedModel = "agy/claude-opus-5-5-high")
+        assertEquals("claude-opus-5-5-high · Claude & GPT · Weekly 50% left · Phone control off", statusSummary(claudeOnAgy, nowSeconds = 0))
         val queued = dev.androidagent.core.QueuedTurn("q1", "s1", "hi", model = "agy/gemini-4-neon-xhigh", engine = EngineKind.ANTIGRAVITY)
         assertEquals("Gemini 4 Neon (XHigh)", queuedTurnDetail(state, queued))
     }

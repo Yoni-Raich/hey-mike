@@ -176,6 +176,8 @@ class AgentGraph(private val app: Application) {
     val usageBook = AccountUsageBook(java.io.File(runtime.runtimeRoot, "accounts/usage.json"))
     // Claude's last 5-hour and weekly limits, so the usage sheet has them after a restart.
     val claudeUsage = LastUsageStore(java.io.File(runtime.runtimeRoot, "claude-usage.json"))
+    // Each computer's last Antigravity quota, so the usage sheet and widget have it after a restart.
+    val antigravityUsage = AccountUsageBook(java.io.File(runtime.runtimeRoot, "antigravity-usage.json"))
     /** Held by an account switch and by a usage-window start, so a sign-in is never swapped while it is lent. */
     val accountFiles = kotlinx.coroutines.sync.Mutex()
     /** Starts each account's 5-hour window when the last one ends, when the user turned that on. */
