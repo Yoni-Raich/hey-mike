@@ -628,7 +628,31 @@
     return { url: location.href, title: document.title, text: out.join('\n') };
   };
 
+  // The file input behind an element: the input itself, the input its label
+  // names, or one inside it (a styled upload button wrapping a hidden input).
+  const fileOf = (el) => {
+    if (!el) return null;
+    if (el.localName === 'input' && el.type === 'file') return el;
+    if (el.localName === 'label' && el.control && el.control.type === 'file') return el.control;
+    return typeof el.querySelector === 'function' ? el.querySelector('input[type=file]') : null;
+  };
+  const fileInput = (ref) => {
+    const input = fileOf(byRef(ref));
+    if (!input) return null;
+    const files = Array.from(input.files || []);
+    return { multiple: !!input.multiple, accept: input.accept || '', disabled: !!input.disabled, drawn: !!pointOf(input),
+      count: files.length, names: files.slice(0, 10).map((f) => clean(f.name, 80)) };
+  };
+  // Run with a user gesture from the browser side, so the page opens its chooser.
+  const openFile = (ref) => {
+    const input = fileOf(byRef(ref));
+    if (!input) return false;
+    input.click();
+    return true;
+  };
+
   globalThis.__mike = {
+    fileInput, openFile,
     snapshot, find, info, focusForTyping, valueOf, stateOf, setValue, choose, scroll, settle, present, read, submitNeedsApproval, hitCheck,
     element: (ref) => byRef(ref),
     isFocused: (ref) => deepFocus() === byRef(ref),

@@ -21,6 +21,7 @@
 package dev.androidagent.web
 
 import dev.androidagent.core.SecretRedactor
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -48,6 +49,7 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.Closeable
+import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.coroutines.coroutineContext
@@ -86,6 +88,15 @@ data class WebTarget(
 /** What an action did, in the words the reply uses. */
 data class WebAction(val did: String, val notes: List<String> = emptyList())
 
+/**
+ * Files armed for the page's next file chooser. [outcome] completes once:
+ * with no reason when a chooser took them, with one when it refused them.
+ */
+class PendingUpload(val files: List<File>) {
+    class Outcome(val reason: String? = null)
+    val outcome = CompletableDeferred<Outcome>()
+}
+
 /** A read-only expectation about a control's live DOM properties. */
 data class WebCheck(val target: WebTarget, val value: String? = null, val checked: Boolean? = null)
 
@@ -120,6 +131,11 @@ class BrowserSession(
     private val pointer: Pointer = Pointer.TOUCH,
     private val nativeTap: (suspend (Double, Double) -> Unit)? = null,
     private val confirm: suspend (String) -> Boolean = { false },
+    /**
+     * Hands [PendingUpload]s to the page's next file chooser, and null takes
+     * one back. Null when the host cannot answer a chooser at all.
+     */
+    private val armUpload: ((PendingUpload?) -> Unit)? = null,
 ) : Closeable {
     private val cdp = TimedCdpConnection(cdp)
     enum class Pointer { TOUCH, MOUSE }
@@ -325,6 +341,70 @@ class BrowserSession(
             "click ${info.label(found)}",
             emptyList(),
         )
+    }
+
+    /**
+     * Give [files] to the page through the file chooser [target] opens: a
+     * file input, its label, or the page's own upload button.
+     *
+     * Sending the user's files to a site needs their approval every time. The
+     * files are armed for this one chooser before the press and taken back
+     * after, so no later chooser, and no page script, can receive them.
+     */
+    suspend fun upload(target: WebTarget, files: List<File>): WebAction = lock.withLock {
+        val arm = armUpload ?: throw WebFailure("upload_unavailable", "This browser cannot answer a file chooser.")
+        require(files.isNotEmpty())
+        val found = resolve(target)
+        val info = info(found)
+        if (info.disabled) throw WebFailure("disabled", "${info.label(found)} is disabled.", "Something else on the page has to be done first.")
+        val input = agentValue(found.frameId, "__mike.fileInput(${found.ref})") as? JsonObject
+        if (input?.get("multiple")?.jsonPrimitive?.booleanOrNull == false && files.size > 1) throw WebFailure(
+            "single_file", "${info.label(found)} takes one file. Nothing was uploaded.", "Upload one file per call.")
+        val drawn = input?.get("drawn")?.jsonPrimitive?.booleanOrNull == true
+        // A hidden input is opened from the page side; anything drawn is pressed like a finger would.
+        val viaScript = input != null && (!drawn || info.role == "file") && input["disabled"]?.jsonPrimitive?.booleanOrNull != true
+        if (!viaScript) reachable(found, info)
+        val names = files.joinToString(", ") { "${it.name} (${size(it.length())})" }
+        if (!confirm("At ${location().first}: upload $names through ${info.role} ${SecretRedactor.redactUiText(info.name).take(60)}"))
+            throw WebFailure("approval_denied", "The user did not approve this upload. Nothing was sent.")
+        if (info(found).approvalToken != info.approvalToken) throw WebFailure(
+            "target_changed", "The control changed while approval was pending. Nothing was uploaded.",
+            "Read the page and request approval again.")
+        val pending = PendingUpload(files)
+        arm(pending)
+        try {
+            sent()
+            if (viaScript) {
+                agent(found.frameId, "__mike.openFile(${found.ref})", userGesture = true)
+            } else {
+                val point = centre(element(found))
+                    ?: throw WebFailure("not_visible", "${info.label(found)} has no clickable box. Nothing was uploaded.")
+                tap(point.first, point.second)
+            }
+            val refusal = withTimeoutOrNull(CHOOSER_MS) { pending.outcome.await() }
+                ?: throw WebFailure("no_file_chooser",
+                    "${info.label(found)} was pressed but no file chooser opened, so nothing was uploaded.",
+                    "Take a snapshot: target the file input (role file), its label, or the button the page shows for choosing a file.",
+                    mayHaveActed = true)
+            refusal.reason?.let { throw WebFailure("upload_refused", it, mayHaveActed = true) }
+        } finally {
+            arm(null)
+        }
+        settle(SETTLE_MS)
+        enforcePolicy()
+        val after = runCatching { agentValue(found.frameId, "__mike.fileInput(${found.ref})") as? JsonObject }.getOrNull()
+        val held = after?.get("count")?.jsonPrimitive?.intOrNull
+        WebAction(
+            "upload gave $names to ${info.label(found)}" +
+                (held?.let { "; the input now holds $it file(s)" } ?: ""),
+            listOf("Most sites send a chosen file only when their form is submitted or an upload button is pressed. Check the page."),
+        )
+    }
+
+    private fun size(bytes: Long): String = when {
+        bytes >= 1_048_576 -> "%.1f MB".format(java.util.Locale.ROOT, bytes / 1_048_576.0)
+        bytes >= 1_024 -> "${bytes / 1_024} KB"
+        else -> "$bytes B"
     }
 
     suspend fun fill(target: WebTarget, value: String, submit: Boolean): WebAction = lock.withLock {
@@ -986,7 +1066,8 @@ class BrowserSession(
      * exists or makes it; a navigation throws the old one away, and the helper
      * is put back the first time it is found missing.
      */
-    private suspend fun agent(frameId: String, expression: String, byValue: Boolean = true, timeoutMs: Long = CdpClient.DEFAULT_TIMEOUT_MS): JsonObject {
+    private suspend fun agent(frameId: String, expression: String, byValue: Boolean = true, timeoutMs: Long = CdpClient.DEFAULT_TIMEOUT_MS,
+                              userGesture: Boolean = false): JsonObject {
         repeat(3) {
             try {
                 val context = cdp.call(
@@ -1003,6 +1084,7 @@ class BrowserSession(
                         put("contextId", context)
                         put("returnByValue", byValue)
                         put("awaitPromise", true)
+                        if (userGesture) put("userGesture", true)
                     },
                     timeoutMs,
                 )
@@ -1241,6 +1323,8 @@ class BrowserSession(
         private const val QUIET_MS = 300L
         private const val POLL_MS = 150L
         private const val EVAL_TIMEOUT_MS = 10_000L
+        /** How long a press has to open the file chooser. */
+        private const val CHOOSER_MS = 5_000L
         private const val MAX_FRAMES = 12
         private const val MAX_NOTES = 20
 

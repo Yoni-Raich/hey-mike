@@ -10,6 +10,8 @@ android {
 dependencies {
     api(project(":core"))
     implementation("androidx.core:core-ktx:1.15.0")
+    // The user's own file picker for a page they hold on screen.
+    implementation("androidx.activity:activity:1.9.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")

@@ -1,5 +1,35 @@
 # Progress
 
+### Browser uploads and reading other chats — 2026-11-24
+
+- Browser: new operation `upload` (`files`: 1..10 paths in the chat folder,
+  `target`: the upload control). `UploadFiles` resolves real paths and refuses
+  anything outside the chat folder, missing, a folder or over 100 MB.
+  `BrowserSession.upload` asks approval, arms the files for one chooser,
+  presses the control (script `click()` with a user gesture for hidden inputs,
+  else a tap), and waits 5 s for the chooser. `AndroidBrowserHost` answers
+  every chooser exactly once: armed files as FileProvider URIs, the system
+  picker when the user holds the page, otherwise none.
+- Chats: `session_agents` modes `chats` (list/search) and `read` (paged) let
+  any chat read any local Mike chat by ID or title. The chat long-press menu
+  gains "Copy chat ID". Codex and remote instructions mention it. No earlier
+  cross-chat read was found in the current code; the closest was the task
+  board's `readChats`, removed with the board revert on 2026-11-12.
+- Tests: `BrowserUploadTest` (5, Robolectric) for the path guard, links, one
+  chooser per upload, single/multiple modes and unarmed choosers;
+  `SessionAgentsTest.anyChatCanFindAndReadAnotherChatByIdTitleOrWords`.
+  `:web:testDebugUnitTest` 39 tests passed; `:core:test` passed.
+- Gate: `gradlew.bat :core:test :engine-codex:test :remote:test :web:test
+  :app:testDevDebugUnitTest :app:assembleDevDebug :app:lintDevDebug
+  --no-daemon --continue` exited 0. Test results: core 1,028, engine-codex
+  140, remote 356 (10 skipped), web 78 (debug and release variants), app 212;
+  no failures or errors. Lint: no errors, 23 warnings (unchanged count).
+  Dev Debug APK built (365,776,287 bytes); not installed.
+- Untested: nothing ran on a phone. Not verified: a real site accepting the
+  FileProvider URI while the WebView keeps `allowContentAccess = false`; the
+  user's system picker path; the approval prompt in remote (computer) chats;
+  the new menu item on screen.
+
 ### Codex 0.171.0 runtime pins — 2026-11-23
 
 - Updated Android ARM64/x86_64, Windows fallback packages, Linux fallback

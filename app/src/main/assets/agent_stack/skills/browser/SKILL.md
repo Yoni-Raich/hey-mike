@@ -118,8 +118,21 @@ agent actions are refused. `hide` takes the page back; the user can also give
 it back themselves, and the next reply says so. If `show` says the page could
 not reach the screen, tell the user to open it from the chat. The user can
 open the page from the chat at any time to watch you; they cannot touch it
-until they take control. `close` destroys this chat's page. File uploads, downloads, script popups and page
-requests for camera/microphone are refused. Local URLs and non-web schemes are blocked.
+until they take control. `close` destroys this chat's page. Downloads, script popups and page
+requests for camera/microphone are refused.
+
+`upload` gives files to a page's file chooser. Pass `files`, paths inside this
+chat's folder (relative, or `chat:<path>`), and name the control that opens
+the chooser by ref, text or selector: the `file` input from a snapshot, its
+label, or the site's own "Choose file" / "Upload" button. A file from elsewhere,
+such as the phone's Downloads, the computer or a chat attachment, has to be
+copied into the chat folder first; paths outside it are refused. Every upload
+asks the user to approve, and names the site and the files. One file per call
+unless the input takes several. A chosen file usually reaches the site only
+when its form is submitted or its upload button is pressed, so finish that
+and check the result. `no_file_chooser` means the press opened nothing: take a
+snapshot and target another control. When the user holds the page (`show`),
+tapping a file input opens the phone's own file picker for them. Local URLs and non-web schemes are blocked.
 A page or frame that reaches a blocked address by itself is closed or skipped,
 never read. The network checks are not a firewall: DNS rebinding, redirects
 and service-worker traffic still require device validation. Do not claim those
