@@ -1,5 +1,38 @@
 # Progress
 
+### Codex 0.171.0 runtime pins — 2026-11-23
+
+- Updated Android ARM64/x86_64, Windows fallback packages, Linux fallback
+  hashes and the computer updater baseline together from 0.163.0 to 0.171.0.
+  Pins match official stable `rust-v0.171.0` GitHub release asset digests.
+- Raised the Dev build to 1232 / `0.17.0-dev.codex171-1232`.
+- `python -m unittest tools.test_prepare_runtime tools.test_codex_runtime`:
+  24 tests passed. `git diff --check`: passed.
+- PR #170 CI passed and the runtime update reached `origin/dev` in
+  `360aa2dc13fbaf7bc6746b3b3edb535cb8537d61`.
+  The first post-merge CI run hit Robolectric `MavenArtifactFetcher`
+  `IOException` failures in web/automation tests; its unchanged retry is running
+  (Actions run 45168123610, attempt 2).
+- Built Dev Debug from that commit plus the code/test changes of Antigravity
+  PR #169 (`df447462bd86bcef1159eb4a5df56bc09a045c89`). PR #169 itself remains
+  open; its changes were applied only to this phone build.
+- Local command: `.\gradlew.bat :app:assembleDevDebug :app:lintDevDebug
+  :runtime:testDebugUnitTest :remote:testDebugUnitTest
+  :engine-codex:testDebugUnitTest :core:test :app:testDevDebugUnitTest
+  :mcp-loopback:testDebugUnitTest --no-daemon --no-configuration-cache`.
+  First run built the APK but timed out in
+  `RoutingAgentEngineTest.antigravityChatRoutesToolCallsApprovalsAndRefusesVoice`.
+  The unchanged test passed alone, then the full command passed on retry:
+  1,588 test cases, no failures/errors, four skips. Lint: no errors, 23 warnings.
+- Verified the official ARM64/x86_64 package hashes during staging, the
+  helper-name patch, APK runtime manifest version 0.171.0 and both ABIs.
+  APK: `dev.androidagent.app.dev`, code 1232, `0.17.0-dev.codex171-1232`,
+  365,722,279 bytes, debug-signed (v2), zipalign passed, SHA-256
+  `ac1b12121f637b79147e0849ab14dbc9c7c081a6e5723e8a531cb3f8819b7447`.
+- `copy_file` completed delivery of that APK. Phone installation and live
+  model-catalog verification are pending. Wire delta bytes were not measured.
+  No full release gate or release-signed APK is claimed.
+
 ### Antigravity clean integration refactor — 2026-11-22
 
 Follow-up refactor on top of PR #168 (`060f1edb`) to replace engine-specific

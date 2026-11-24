@@ -792,7 +792,11 @@ SDK usage, limits and differences from the original proposal.
 
 ## Engine versions and Codex updates — 2026-10-18
 
-Phone Codex and computer packages are pinned to 0.163.0. The phone's Claude
+Phone Codex and computer fallback packages are pinned to 0.171.0 (updated
+2026-11-23), with official release SHA-256 pins for Android/Linux and Windows
+on ARM64 and x86_64. Phone Codex is bundled in the APK; an available-version
+notification does not install it. Updating the phone runtime requires a new
+Mike APK. The phone's Claude
 baseline is 2.1.302; the earlier 2.1.293 and 2.1.285 pins remain reusable for
 offline upgrade and rollback. The 0.163.0 package no longer contains zsh, so
 the APK no longer stages or links it. The helper-name patch still checks the

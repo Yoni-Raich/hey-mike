@@ -47,12 +47,12 @@ data class FolderListing(
  * account to this app-server over SSH before any Codex call.
  */
 object WindowsHost : HostScripts {
-    const val CODEX_VERSION = "0.163.0"
+    const val CODEX_VERSION = "0.171.0"
 
-    /** sha256 of `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz`, rust-v0.163.0. */
+    /** sha256 of `codex-app-server-package-<arch>-pc-windows-msvc.tar.gz`, rust-v0.171.0. */
     val PACKAGE_SHA256 = mapOf(
-        "x86_64" to "abee5d71e80c4707b26f4c3c7b65b0f736ed3b7e7918b4f9b14a94ad89ff781c",
-        "aarch64" to "574251c91f4fc58c564902d5f6b82e74a5862874bc0757b506a6550ca80dfd34",
+        "x86_64" to "9b20001daac4387f94315013382c6853e40c8f63de0603be021e4a5e983c329c",
+        "aarch64" to "8a60e27c88bc567c8acab3338337b526e281bd08a76cf856f77a67b6a5e25a10",
     )
 
     private const val MARKER = "HEYMIKE "
