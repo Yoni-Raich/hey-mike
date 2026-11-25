@@ -111,6 +111,8 @@ class ClaudeCodeEngine(
     private val computer: ClaudeComputer? = null,
     private val authRetryDelayMs: Long = 2_000,
     private val catalogClock: () -> Long = System::nanoTime,
+    /** Dynamic phone-owned user memory block appended to the system prompt on session start/resume. */
+    private val userMemory: () -> String? = { null },
 ) : AgentEngine, AccountConnectorSource {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stream = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 256)
@@ -319,6 +321,82 @@ class ClaudeCodeEngine(
             limits
         } finally {
             process.destroyForcibly()
+        }
+    }
+
+    /**
+     * Run one ephemeral, tool-less, no-transcript turn on the phone's Claude
+     * CLI and return its text reply (used for nightly memory consolidation).
+     */
+    suspend fun runOneShot(
+        systemPrompt: String,
+        prompt: String,
+        model: String = ClaudeProtocol.WINDOW_MODEL,
+        timeoutMs: Long = ONE_SHOT_TIMEOUT_MS,
+    ): String = withContext(Dispatchers.IO) {
+        check(installed()) { computer?.notReady ?: DOWNLOAD_FIRST }
+        val promptFile = File.createTempFile("mike-oneshot-", ".txt", home())
+        promptFile.writeText(systemPrompt, Charsets.UTF_8)
+        val process = host.start(ClaudeProtocol.oneShotArgs(promptFile.absolutePath, model), home(), emptyMap())
+        try {
+            launch { drain(process.errorStream) }
+            var rejection: String? = null
+            val assistantText = StringBuilder()
+            val answered = CompletableDeferred<Result<String>>()
+            launch {
+                runCatching {
+                    process.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                        for (line in lines) {
+                            val message = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
+                            when (message.string("type")) {
+                                "rate_limit_event" -> (message["rate_limit_info"] as? JsonObject)?.let { info ->
+                                    ClaudeProtocol.rejectionMessage(info)?.let { rejection = it }
+                                }
+                                "assistant" -> {
+                                    val blocks = ((message["message"] as? JsonObject)?.get("content") as? JsonArray).orEmpty()
+                                    for (block in blocks) {
+                                        val obj = block as? JsonObject ?: continue
+                                        if (obj.string("type") == "text") {
+                                            assistantText.append(obj.string("text"))
+                                        }
+                                    }
+                                }
+                                "result" -> {
+                                    val isError = (message["is_error"] as? JsonPrimitive)?.booleanOrNull == true
+                                    val resultText = message.string("result")
+                                    answered.complete(
+                                        if (isError) {
+                                            Result.failure(
+                                                IllegalStateException(
+                                                    rejection ?: resultText.ifBlank { "Claude did not answer." }.take(300),
+                                                ),
+                                            )
+                                        } else {
+                                            Result.success(resultText.ifBlank { assistantText.toString() }.trim())
+                                        },
+                                    )
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                answered.complete(Result.failure(IllegalStateException(rejection ?: "Claude stopped before answering.")))
+            }
+            val writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
+            writer.write(
+                ClaudeProtocol.userFrame(
+                    UUID.randomUUID().toString(),
+                    buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", prompt) }) },
+                ).toString(),
+            )
+            writer.newLine()
+            writer.flush()
+            (withTimeoutOrNull(timeoutMs) { answered.await() }
+                ?: Result.failure(IllegalStateException("Claude did not finish in time."))).getOrThrow()
+        } finally {
+            process.destroyForcibly()
+            runCatching { promptFile.delete() }
         }
     }
 
@@ -900,7 +978,7 @@ class ClaudeCodeEngine(
         private suspend fun startOnPhone(resume: Boolean, long: Boolean, accountTools: List<String>) = withContext(Dispatchers.IO) {
             val dir = dir().apply { mkdirs() }
             val promptFile = File(dir, PROMPT_FILE)
-            promptFile.writeText(ClaudeInstructions.systemPrompt(readAgentsMd()))
+            promptFile.writeText(ClaudeInstructions.systemPrompt(readAgentsMd(), userMemory()))
             val toolServer = toolServers.create(ClaudeProtocol.MCP_SERVER_NAME, { tools }) { name, arguments ->
                 onToolCall(name, arguments)
             }
@@ -1348,6 +1426,7 @@ class ClaudeCodeEngine(
         private const val WINDOW_USAGE_ID = "window-usage"
         private const val WINDOW_MESSAGE = "hi"
         private const val WINDOW_TIMEOUT_MS = 90_000L
+        private const val ONE_SHOT_TIMEOUT_MS = 180_000L
         private const val USAGE_TIMEOUT_MS = 20_000L
         private val STOPPED = ToolResult("Run stopped. No device action was performed.", success = false)
         private const val HANDSHAKE_TIMEOUT_MS = 60_000L

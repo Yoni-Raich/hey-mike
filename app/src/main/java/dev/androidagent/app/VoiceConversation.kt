@@ -68,6 +68,7 @@ class VoiceConversation(
     private val voice: AndroidRealtimeVoiceController,
     private val tools: DeviceToolGateway,
     private val coordinator: () -> AgentRuns,
+    private val userMemory: () -> String? = { null },
 ) {
     private val mutableSessionId = MutableStateFlow<String?>(null)
     private val mutableTranscript = MutableStateFlow(VoiceTranscript())
@@ -165,7 +166,11 @@ class VoiceConversation(
                             "to steer or continue the same child; cancel to stop its subtree; open to show its chat while this voice call continues. " +
                             "Each child can choose engine, model, reasoningEffort, computer and project. Use session_agents options to get " +
                             "the target's real model IDs and supported levels, and computers status to discover projects. Never guess model IDs from speech. " +
-                            "Only delegate authorized work. Never replay unknown outcomes or approve a child yourself.")
+                            "Only delegate authorized work. Never replay unknown outcomes or approve a child yourself. " +
+                            "When the user asks you to remember or forget a lasting personal fact, call user_memory (never store secrets).")
+                        userMemory()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                            addContext(dev.androidagent.core.UserMemoryStore.VOICE_GUIDANCE, it)
+                        }
                         initialContext?.let { addContext(it.guidance, it.quoted) }
                     })
                 voiceStarted = true

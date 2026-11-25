@@ -1,5 +1,57 @@
 # Architecture
 
+### Phone-owned cross-engine user memory — 2026-11-25
+
+Personal facts, communication preferences, family/people context and ongoing
+projects live in one phone-owned store under `$HOME/memory/` (`UserMemoryStore`
+in `:core`) so every Mike engine — phone Codex, phone Claude, remote computers
+(Codex, Claude Code, Antigravity) and realtime Voice — shares the same profile
+with zero dependency on any PC.
+
+- **Single bounded store.** `$HOME/memory/profile.md` (max 8,000 chars),
+  `state.json` (`UserMemoryConfig`), and up to 5 rolling snapshots under
+  `backups/` (`backup-<epoch>-<seq>.md`). Every write sanitizes control chars,
+  strips private keys, tokens and password/PIN/OTP key-value pairs (via
+  `SecretRedactor.redactUiText` so `?` punctuation survives), replaces the file
+  atomically, and backs up any non-blank previous version for one-tap rollback.
+- **One phone tool (`user_memory`).** `UserMemoryToolGateway` exposes
+  `operation = read | remember | forget | replace` in the phone's tool gateway
+  with `needsControl = false`, `requiresDeviceLease = false`, and
+  `deviceBackendLive = false`. Instant "remember/forget" works identically from
+  phone chats, computer chats (over the MCP phone bridge) and Voice. Writes are
+  refused when memory is turned off in Settings, while `read` and `forget`
+  remain available.
+- **Session-open injection across all engines.** `UserMemoryStore.promptBlock()`
+  frames the profile as untrusted quoted user background data (`[User memory ...]`,
+  never instructions or permissions) and returns `null` when disabled or empty.
+  Injected dynamically on session open/resume into:
+  - phone Codex (`EngineProfile.dynamicInstructions` on `PHONE_PROFILE`),
+  - phone Claude (`ClaudeInstructions.systemPrompt(..., userMemory)`),
+  - remote computer Codex (`RemoteHub.profileFor`), Claude
+    (`ComputerClaudeHost.instructions`), and Antigravity
+    (`RemoteHub.antigravity` via `RemoteInstructions.forComputer`),
+  - Voice (`VoiceConversation.beforeAudio` via `addContext`).
+- **Nightly Kotlin-filtered background consolidation.** `UserMemoryConsolidator`
+  (`:core`) scans `SessionStore` incrementally since `lastConsolidatedAt`,
+  deterministically skips automation chats (`Rule · ` and `automation_chats`
+  IDs), child subagents (`parentSessionId != null`), tool/system roles and
+  assistant-only chats, collapses large fenced code blocks, redacts secrets,
+  and bounds the digest to 18,000 chars. `UserMemoryConsolidationKeeper` (`:app`)
+  runs under a daily AlarmManager + `MemoryConsolidationService` (same pattern
+  as `UsageWindowKeeper`, default 03:00 local with 2 h failure backoff and
+  on-demand trigger in Settings > Memory) and sends a single ephemeral,
+  tool-less turn through `CodexOneShotRunner` (side app-server with
+  `ephemeral = true`, `sandbox = "read-only"`, no tools) or
+  `ClaudeCodeEngine.runOneShot` (`--tools ""`, `--no-session-persistence`, no
+  `--bare`), choosing the user's preferred signed-in engine with fallback.
+  `UserMemoryConsolidator.parseOutput` validates `NO_CHANGES`, strips outer code
+  fences, rejects refusals and suspicious wipes, and updates the profile with a
+  backup before advancing the watermark. No chat is created in the drawer.
+- **Settings > Memory.** `MemorySettings.kt` gives the user full control: master
+  toggle, direct Markdown editor with live char counter and Save/Revert/Clear,
+  nightly auto-learn toggle + hour picker + last-run status + "Update from
+  recent chats now", and automatic backup list with one-tap Restore.
+
 ## Computer SSH recovery
 
 Each saved computer serializes SSH authentication across its base link and

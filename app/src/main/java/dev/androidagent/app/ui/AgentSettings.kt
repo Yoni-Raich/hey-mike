@@ -67,6 +67,7 @@ import androidx.compose.material.icons.outlined.MicNone
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
@@ -135,7 +136,7 @@ private enum class SettingsRoute {
     RUNTIME, ACCOUNT, SCREEN_CONTROL, FLOATING_CONTROL, WIRELESS_ADB,
     NOTIFICATIONS, INSTALL_UPDATES, MICROPHONE,
     MODEL, WORKSPACE, USAGE, UPDATES, SEND_APPROVALS, ASSISTANT, AUTOMATIONS,
-    PRIVACY, CONNECTED_APPS, ACCOUNT_CONNECTIONS,
+    MEMORY, PRIVACY, CONNECTED_APPS, ACCOUNT_CONNECTIONS,
 }
 
 private fun SetupItem.route(): SettingsRoute = when (this) {
@@ -165,6 +166,7 @@ private fun SettingsRoute.title(): String = when (this) {
     SettingsRoute.SEND_APPROVALS -> "Ask before sending"
     SettingsRoute.ASSISTANT -> "Power button assistant"
     SettingsRoute.AUTOMATIONS -> "Standing rules"
+    SettingsRoute.MEMORY -> "Memory"
     SettingsRoute.PRIVACY -> "Privacy and consent"
     SettingsRoute.CONNECTED_APPS -> "Connected apps"
     SettingsRoute.ACCOUNT_CONNECTIONS -> "Account connections"
@@ -186,6 +188,7 @@ private fun SettingsRoute.icon(): ImageVector = when (this) {
     SettingsRoute.SEND_APPROVALS -> Icons.Outlined.Key
     SettingsRoute.ASSISTANT -> Icons.Outlined.Assistant
     SettingsRoute.AUTOMATIONS -> Icons.Outlined.Schedule
+    SettingsRoute.MEMORY -> Icons.Outlined.Psychology
     SettingsRoute.PRIVACY -> Icons.Outlined.Shield
     SettingsRoute.CONNECTED_APPS -> Icons.Outlined.Key
     SettingsRoute.ACCOUNT_CONNECTIONS -> Icons.Outlined.Key
@@ -328,6 +331,12 @@ private fun SettingsHub(state: AgentUiState, onOpen: (SettingsRoute) -> Unit) {
     // No dots here on purpose: these are choices, not steps, and marking them
     // green would teach the eye to skip the markers that do mean something.
     HubGroup("How Mike works") {
+        SettingsHubRow(
+            icon = SettingsRoute.MEMORY.icon(),
+            title = SettingsRoute.MEMORY.title(),
+            summary = memoryHubSummary(),
+            onClick = { onOpen(SettingsRoute.MEMORY) },
+        )
         SettingsHubRow(
             icon = SettingsRoute.ACCOUNT_CONNECTIONS.icon(), title = "Account connections",
             summary = accountConnectionsHubSummary(),
@@ -537,6 +546,7 @@ private fun SettingsDetail(route: SettingsRoute, state: AgentUiState, actions: A
             SettingsRoute.SEND_APPROVALS -> SendApprovalSettings(state, actions)
             SettingsRoute.ASSISTANT -> AssistantSettings(state, actions)
             SettingsRoute.AUTOMATIONS -> AutomationSettings(state, actions)
+            SettingsRoute.MEMORY -> MemorySettings(actions.onOpenExactAlarmSettings)
             SettingsRoute.PRIVACY -> PrivacySettings(state, actions)
             SettingsRoute.CONNECTED_APPS -> ConnectedAppsSettings()
             SettingsRoute.ACCOUNT_CONNECTIONS -> AccountConnectionsSettings(onOpenAccounts)

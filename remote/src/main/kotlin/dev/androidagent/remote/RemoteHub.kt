@@ -85,6 +85,8 @@ class RemoteHub(
         ClaudeCodeEngine(host, McpToolServerFactory { _, _, _ -> error("A computer chat has no tool server") }, maxLiveChats = 4, computer = computer)
     },
     private val deltaTransfers: dev.androidagent.core.DeltaTransfers? = null,
+    /** Phone-owned user memory block injected into every computer engine on session start/resume. */
+    private val userMemory: () -> String? = { null },
     private val createEngine: (RuntimeHost, EngineProfile) -> CodexEngine = ::CodexEngine,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -103,8 +105,9 @@ class RemoteHub(
                 AntigravityPhoneBridge.open(host.os, host.link.isolated(), tools, call)
             },
             instructions = {
-                store.computer(id)?.let { RemoteInstructions.forComputer(it, EngineKind.ANTIGRAVITY) }
-                    ?: AntigravityEngine.DEFAULT_INSTRUCTIONS
+                val memory = userMemory()
+                store.computer(id)?.let { RemoteInstructions.forComputer(it, EngineKind.ANTIGRAVITY, memory) }
+                    ?: listOfNotNull(AntigravityEngine.DEFAULT_INSTRUCTIONS, memory?.trim()?.takeIf { it.isNotEmpty() }).joinToString("\n\n")
             },
             launch = { cwd -> launchAntigravity(id, cwd) },
         )).also { engine ->
@@ -515,7 +518,7 @@ class RemoteHub(
     suspend fun engine(computerId: String): CodexEngine = lock.withLock {
         val engine = engines[computerId]?.first ?: run {
             val computer = store.computer(computerId) ?: error("That computer was removed.")
-            val created = createEngine(ComputerRuntime(computerId), profileFor(computer))
+            val created = createEngine(ComputerRuntime(computerId), profileFor(computer, userMemory))
             val job = scope.launch { created.events.collect { stream.emit(RemoteEvent(computerId, it)) } }
             engines[computerId] = created to job
             created
@@ -929,7 +932,7 @@ class RemoteHub(
 
         private fun computer(): RemoteComputer = store.computer(computerId) ?: error("That computer was removed.")
 
-        override val instructions: String get() = RemoteInstructions.forComputer(computer(), EngineKind.CLAUDE)
+        override val instructions: String get() = RemoteInstructions.forComputer(computer(), EngineKind.CLAUDE, userMemory())
         override val permissionMode: String get() = if (computer().access == RemoteAccess.FULL) "bypassPermissions" else "acceptEdits"
         override val askUser: Boolean get() = computer().access != RemoteAccess.FULL
         override val notReady: String
@@ -1063,11 +1066,15 @@ class RemoteHub(
         internal fun safeRemoteName(name: String): String =
             name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trim().trimEnd('.', ' ').take(120).ifBlank { "attachment" }
 
-        fun profileFor(computer: RemoteComputer): EngineProfile = EngineProfile(
+        fun profileFor(
+            computer: RemoteComputer,
+            userMemory: () -> String? = { null },
+        ): EngineProfile = EngineProfile(
             developerInstructions = RemoteInstructions.forComputer(computer),
             sandbox = computer.access.sandbox,
             approvalPolicy = computer.access.approvalPolicy,
             inlineImages = true,
+            dynamicInstructions = userMemory,
         )
     }
 }
