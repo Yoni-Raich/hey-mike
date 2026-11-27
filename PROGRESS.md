@@ -1,5 +1,27 @@
 # Progress
 
+## Banked Codex rate-limit resets per account — 2026-11-27
+
+- Codex `account/rateLimits/read` returns `rateLimitResetCredits`
+  (`availableCount`, and per credit `id`, `resetType`, `status`, `grantedAt`,
+  `expiresAt`, `title`). Seen live on 2026-11-27 from the Windows Codex desktop
+  app-server for a Plus account (3 credits, expiring 2, 13 and 26 Dec). The
+  bundled 0.171.0 app-server binary has the same field names. Claude Code
+  2.1.332 has no such credits; Antigravity was not checked for one.
+- `CodexEngine.parseResetCredits` keeps credits with status `available`, soonest
+  to expire first; null when the result has no bank, so the last count stays.
+  `AccountUsageBook` stores them per saved account (optional `bank` field; old
+  files still read). Shown in the top-bar usage panel and Settings (count plus
+  one line per credit with its expiry), under each account in the switcher,
+  and as "N resets" on the home screen widget.
+- Windows: `:core:test :engine-codex:test :app:testDevDebugUnitTest
+  :app:assembleDevDebug :app:lintDevDebug --no-daemon` passed (core 1035,
+  engine-codex 142, app 214 tests; lint clean).
+- Gaps: not yet seen on a phone. A non-live account's count updates only when
+  it is live (the usage-window starter still returns windows only). No expiry
+  warning and no "use a reset" action (`account/rateLimitResetCredit/consume`
+  exists but spends a credit).
+
 ## Computer SSH recovery — 2026-11-27
 
 - On current `dev` (PR #172 already merged), Windows
