@@ -178,7 +178,7 @@ class UsageWindowKeeper(
             live = accounts.activeId == id
             val auth = File(sideHome, CodexAccountVault.AUTH_FILE)
             val starter = CodexWindowStarter(sideRuntime)
-            val limits = try {
+            val reading = try {
                 if (live) {
                     withContext(Dispatchers.IO) { auth.delete() }
                     starter.start(liveTokens(false, null)) { previous -> liveTokens(true, previous) }
@@ -190,7 +190,9 @@ class UsageWindowKeeper(
                 // A copy of a sign-in never stays outside the vault.
                 withContext(Dispatchers.IO) { auth.delete() }
             }
-            if (limits.isNotEmpty()) withContext(Dispatchers.IO) { usageBook.record(id, limits, vault.state().accounts.map { it.id }) }
+            if (reading.limits.isNotEmpty() || reading.resetCredits != null) withContext(Dispatchers.IO) {
+                usageBook.record(id, reading.limits, vault.state().accounts.map { it.id }, reading.resetCredits)
+            }
         }
         onReading(EngineKind.CODEX, live)
     }

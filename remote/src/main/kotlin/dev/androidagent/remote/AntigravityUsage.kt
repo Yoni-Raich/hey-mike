@@ -1,15 +1,21 @@
 package dev.androidagent.remote
 
+import dev.androidagent.core.ResetCredit
+import dev.androidagent.core.ResetCredits
 import dev.androidagent.core.UsageLimit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import java.time.OffsetDateTime
+
+/** One `/usage` reply: the quota windows and the resets banked on that sign-in. */
+data class AntigravityUsageReading(val limits: List<UsageLimit>, val resetCredits: ResetCredits)
 
 /**
  * Parses quota limits returned by `agy -p /usage --output-format json`
@@ -44,6 +50,50 @@ internal object AntigravityUsage {
         }
         return parseTsv(cleaned)
     }
+
+    /**
+     * Banked quota resets from the same reply. agy marks `banked_resets` as
+     * omitempty, so a successful reply without it means none are banked.
+     * The entry shape (`reset_id`, `display_label`, `expire_time`, `claimable`,
+     * `remaining_count`) comes from agy's own field tags; none was seen live yet.
+     * Returns null only when the reply is not a successful JSON reply.
+     */
+    fun parseBankedResets(output: String): ResetCredits? {
+        val payload = extractJson(output.replace(ANSI, "").trim()) ?: return null
+        val status = payload.str("status")
+        if (!status.isNullOrBlank() && !status.equals("SUCCESS", ignoreCase = true)) return null
+        val entries = findBankedResets(payload["command"]) ?: findBankedResets(payload) ?: JsonArray(emptyList())
+        val credits = entries.flatMapIndexed { index, element ->
+            val reset = element as? JsonObject ?: return@flatMapIndexed emptyList()
+            val count = reset.firstOf("remaining_count", "remainingCount")?.let(::intValue) ?: 1
+            if (count <= 0) return@flatMapIndexed emptyList()
+            val id = reset.firstOf("reset_id", "resetId")?.contentOrNull?.takeIf { it.isNotBlank() } ?: "banked-$index"
+            val label = reset.firstOf("display_label", "displayLabel")?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+            // A reset that cannot be claimed yet is still banked: say so rather than hide it.
+            val claimable = reset.firstOf("claimable")?.booleanOrNull
+            val title = if (claimable == false) "${label ?: "Banked reset"} · not claimable yet" else label
+            val expiresAt = epochSeconds(reset["expire_time"] ?: reset["expireTime"])
+            (1..count.coerceAtMost(MAX_RESETS_PER_ENTRY)).map { n ->
+                ResetCredit(id = if (count == 1) id else "$id#$n", title = title, expiresAt = expiresAt)
+            }
+        }
+        return ResetCredits(credits.size, credits.sortedWith(compareBy(nullsLast()) { it.expiresAt }))
+    }
+
+    private const val MAX_RESETS_PER_ENTRY = 50
+
+    private fun findBankedResets(element: JsonElement?, depth: Int = 0): JsonArray? {
+        val node = element as? JsonObject ?: return null
+        (node["banked_resets"] ?: node["bankedResets"])?.let { return it as? JsonArray }
+        if (depth >= 4) return null
+        node.values.forEach { child -> findBankedResets(child, depth + 1)?.let { return it } }
+        return null
+    }
+
+    private fun JsonObject.firstOf(vararg keys: String): JsonPrimitive? =
+        keys.firstNotNullOfOrNull { this[it] as? JsonPrimitive }
+
+    private fun intValue(value: JsonPrimitive): Int? = value.longOrNull?.toInt() ?: value.contentOrNull?.trim()?.toIntOrNull()
 
     private fun extractJson(text: String): JsonObject? {
         runCatching { Json.parseToJsonElement(text) as? JsonObject }.getOrNull()?.let { return it }
@@ -152,6 +202,7 @@ internal object AntigravityUsage {
     }
 
     private fun epochSeconds(value: JsonElement?): Long? {
+        (value as? JsonObject)?.let { return epochSeconds(it["seconds"]) }
         val primitive = value as? JsonPrimitive ?: return null
         primitive.longOrNull?.let { return it.takeIf { seconds -> seconds > 0L } }
         val text = primitive.contentOrNull?.trim()?.takeIf { it.isNotEmpty() && primitive.isString } ?: return null

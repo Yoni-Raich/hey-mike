@@ -17,7 +17,8 @@ class CodexWindowStarterTest {
 
     @Test fun aSavedAccountSendsOneShortEphemeralMessageAndReadsTheQuota() = runBlocking {
         val server = FakeServer()
-        val limits = CodexWindowStarter(server.host, timeoutMs = 5_000).start()
+        val reading = CodexWindowStarter(server.host, timeoutMs = 5_000).start()
+        val limits = reading.limits
         assertEquals(listOf("initialize", "initialized", "model/list", "thread/start", "turn/start", "account/rateLimits/read"), server.methods)
         val thread = server.params("thread/start")
         assertEquals(true, thread["ephemeral"]?.jsonPrimitive?.boolean)
@@ -30,6 +31,9 @@ class CodexWindowStarterTest {
         assertEquals("low", turn["effort"]?.jsonPrimitive?.content)
         assertEquals(300L, limits.first().windowMinutes)
         assertEquals(1_900_000_000L, limits.first().resetsAt)
+        // The same read carries the account's banked resets.
+        assertEquals(2, reading.resetCredits?.available)
+        assertEquals(1_900_900_000L, reading.resetCredits?.nextToExpire?.expiresAt)
         assertTrue("the process is stopped after the run", server.stopped)
     }
 
@@ -137,7 +141,10 @@ class CodexWindowStarterTest {
                         }
                         "account/rateLimits/read" -> write(
                             """{"id":$id,"result":{"rateLimits":{"primary":{"usedPercent":1,"windowDurationMins":300,"resetsAt":1900000000},""" +
-                                """"secondary":{"usedPercent":12,"windowDurationMins":10080,"resetsAt":1900500000}}}}""",
+                                """"secondary":{"usedPercent":12,"windowDurationMins":10080,"resetsAt":1900500000}},""" +
+                                """"rateLimitResetCredits":{"availableCount":2,"credits":[""" +
+                                """{"id":"r2","status":"available","grantedAt":1890000000,"expiresAt":1901000000},""" +
+                                """{"id":"r1","status":"available","grantedAt":1889000000,"expiresAt":1900900000}]}}}""",
                         )
                         else -> write("""{"id":$id,"result":{}}""")
                     }

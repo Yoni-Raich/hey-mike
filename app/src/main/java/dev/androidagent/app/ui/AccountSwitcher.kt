@@ -49,6 +49,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.androidagent.core.AccountUsageOverview
 
 /**
  * Saved Codex sign-ins, one tap to make any of them live.
@@ -95,8 +96,9 @@ fun AccountSwitcher(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    val resets = AccountUsageOverview.resetCreditsText(state.resetCredits[account.id], System.currentTimeMillis() / 1000L)
                     Text(
-                        if (live) "In use" else "Tap to switch",
+                        listOfNotNull(if (live) "In use" else "Tap to switch", resets).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

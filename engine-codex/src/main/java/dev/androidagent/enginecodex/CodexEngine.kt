@@ -176,7 +176,7 @@ class CodexEngine(
     override suspend fun refreshUsage() {
         connect()
         val result = request("account/rateLimits/read", buildJsonObject {})
-        stream.emit(EngineEvent.UsageChanged(null, limits = parseRateLimits(result)))
+        stream.emit(EngineEvent.UsageChanged(null, limits = parseRateLimits(result), resetCredits = parseResetCredits(result)))
     }
 
     override suspend fun login(): AccountStatus {
@@ -809,7 +809,7 @@ class CodexEngine(
             method == "thread/tokenUsage/updated" -> stream.emit(EngineEvent.UsageChanged(
                 params.string("threadId"), usage = parseTokenUsage(params["tokenUsage"] as? JsonObject),
             ))
-            method == "account/rateLimits/updated" -> stream.emit(EngineEvent.UsageChanged(null, limits = parseRateLimits(params)))
+            method == "account/rateLimits/updated" -> stream.emit(EngineEvent.UsageChanged(null, limits = parseRateLimits(params), resetCredits = parseResetCredits(params)))
             method == "turn/completed" -> {
                 val turn = params["turn"] as? JsonObject ?: params
                 val turnError = (turn["error"] as? JsonObject)?.let(::rpcErrorMessage)
@@ -967,6 +967,30 @@ class CodexEngine(
                         (window["windowDurationMins"] as? JsonPrimitive)?.longOrNull)
                 }
             }
+        }
+
+        /**
+         * The banked rate-limit resets in an `account/rateLimits/read` result:
+         * `rateLimitResetCredits` with `availableCount` and one entry per
+         * credit. Null when the result does not carry them (an older Codex, or
+         * an update that only moved the windows), so the last count stands.
+         * Only credits still `available` are kept, soonest to expire first.
+         */
+        internal fun parseResetCredits(value: JsonObject): ResetCredits? {
+            val bank = value["rateLimitResetCredits"] as? JsonObject ?: return null
+            val credits = (bank["credits"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val credit = element as? JsonObject ?: return@mapNotNull null
+                val status = credit.string("status")
+                if (status.isNotEmpty() && status != "available") return@mapNotNull null
+                ResetCredit(
+                    id = credit.string("id"),
+                    title = credit.string("title").ifBlank { null },
+                    grantedAt = (credit["grantedAt"] as? JsonPrimitive)?.longOrNull?.takeIf { it > 0 },
+                    expiresAt = (credit["expiresAt"] as? JsonPrimitive)?.longOrNull?.takeIf { it > 0 },
+                )
+            }.sortedBy { it.expiresAt ?: Long.MAX_VALUE }
+            val count = (bank["availableCount"] as? JsonPrimitive)?.intOrNull?.coerceAtLeast(0) ?: credits.size
+            return ResetCredits(maxOf(count, credits.size), credits)
         }
 
         /** Parse both the current model/list shape and older catalog aliases. */

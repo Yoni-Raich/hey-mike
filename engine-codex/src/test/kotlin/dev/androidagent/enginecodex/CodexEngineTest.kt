@@ -61,6 +61,24 @@ class CodexEngineTest {
         assertTrue(CodexEngine.parseRateLimits(Json.parseToJsonElement("{}").jsonObject).isEmpty())
     }
 
+    @Test fun resetCreditsAreReadFromTheRateLimitsResult() {
+        // The shape account/rateLimits/read returned for a Plus account on 2026-11-27.
+        val result = Json.parseToJsonElement("""{"rateLimits":{"primary":{"usedPercent":2,"windowDurationMins":300,"resetsAt":1795783852}},
+            "rateLimitResetCredits":{"availableCount":3,"credits":[
+              {"id":"b","resetType":"codexRateLimits","status":"available","grantedAt":1794520969,"expiresAt":1797112969,"title":"Full reset (Weekly + 5 hr)"},
+              {"id":"a","resetType":"codexRateLimits","status":"available","grantedAt":1793571015,"expiresAt":1796163015,"title":"Full reset (Weekly + 5 hr)"},
+              {"id":"used","resetType":"codexRateLimits","status":"redeemed","grantedAt":1793000000,"expiresAt":1795000000},
+              {"id":"c","resetType":"codexRateLimits","status":"available","grantedAt":1795670688,"expiresAt":1798262688,"title":""}]}}""").jsonObject
+        val credits = CodexEngine.parseResetCredits(result)!!
+        assertEquals(3, credits.available)
+        assertEquals(listOf("a", "b", "c"), credits.credits.map { it.id })
+        assertEquals(1796163015L, credits.nextToExpire?.expiresAt)
+        assertNull(credits.credits.last().title)
+        // A result without the bank says nothing about it.
+        assertNull(CodexEngine.parseResetCredits(Json.parseToJsonElement("""{"rateLimits":{}}""").jsonObject))
+        assertEquals(0, CodexEngine.parseResetCredits(Json.parseToJsonElement("""{"rateLimitResetCredits":{"availableCount":0,"credits":[]}}""").jsonObject)?.available)
+    }
+
     @Test fun skillCatalogParsesTheRequestedCwdAndEnabledSkills() {
         val workspace = File("workspace").absoluteFile
         val response = Json.parseToJsonElement(

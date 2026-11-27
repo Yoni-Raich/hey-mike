@@ -41,6 +41,62 @@ class AccountUsageBookTest {
     private val work = SavedAccount("work", "work@example.com", 1)
     private val home = SavedAccount("home", "home@example.com", 2)
 
+    private fun bank(vararg expiresIn: Long) = ResetCredits(
+        expiresIn.size,
+        expiresIn.mapIndexed { i, seconds -> ResetCredit("c$i", "Full reset (Weekly + 5 hr)", nowSeconds - 86_400L, nowSeconds + seconds) },
+    )
+
+    @Test fun bankedResetsSurviveANewBookAndAReadingWithoutThem() {
+        book().record("work", listOf(weekly(40.0)), saved = listOf("work"), resetCredits = bank(3_600L, 86_400L))
+        // A later update that only moved the windows keeps the count.
+        clock += 60_000L
+        book().record("work", listOf(weekly(50.0)), saved = listOf("work"))
+        val read = book().all()["work"]
+        assertEquals(50.0, read?.limits?.single()?.usedPercent)
+        assertEquals(2, read?.resetCredits?.available)
+        assertEquals(nowSeconds + 3_600L, read?.resetCredits?.credits?.first()?.expiresAt)
+    }
+
+    @Test fun bankedResetsAloneUpdateAKnownAccountWithoutTouchingItsWindows() {
+        book().record("work", listOf(weekly(40.0)), saved = listOf("work"))
+        clock += 60_000L
+        book().record("work", emptyList(), saved = listOf("work"), resetCredits = bank(3_600L))
+        val read = book().all()["work"]
+        assertEquals(nowMillis, read?.readAtMillis)
+        assertEquals(40.0, read?.limits?.single()?.usedPercent)
+        assertEquals(1, read?.resetCredits?.available)
+        // With nothing known yet, resets alone do not create a reading.
+        book().record("home", emptyList(), saved = listOf("work", "home"), resetCredits = bank(3_600L))
+        assertNull(book().all()["home"])
+    }
+
+    @Test fun anEmptyBankReplacesTheOldCount() {
+        book().record("work", listOf(weekly(40.0)), saved = listOf("work"), resetCredits = bank(3_600L))
+        book().record("work", listOf(weekly(40.0)), saved = listOf("work"), resetCredits = ResetCredits(0))
+        assertEquals(0, book().all()["work"]?.resetCredits?.available)
+    }
+
+    @Test fun expiredResetsDropOutOfTheCountAndTheRow() {
+        val credits = bank(-60L, 4L * 86_400L + 3_600L)
+        assertEquals(1, credits.current(nowSeconds).available)
+        val vault = AccountVaultState(listOf(work), activeId = "work")
+        val usage = AccountUsage("work", listOf(weekly(10.0)), nowMillis, credits)
+        val row = AccountUsageOverview.rows(vault, mapOf("work" to usage), nowMillis).single()
+        assertEquals(1, row.resetCredits?.available)
+        assertEquals("1 reset · expires in 4d 1h", AccountUsageOverview.resetCreditsText(row.resetCredits, nowSeconds))
+    }
+
+    @Test fun resetTextSaysTheCountAndTheSoonestExpiry() {
+        assertEquals("3 resets · next expires in 2h 0m", AccountUsageOverview.resetCreditsText(bank(86_400L, 7_200L, 900_000L), nowSeconds))
+        assertNull(AccountUsageOverview.resetCreditsText(ResetCredits(0), nowSeconds))
+        assertNull(AccountUsageOverview.resetCreditsText(null, nowSeconds))
+        assertEquals("2 resets", AccountUsageOverview.resetCreditsText(ResetCredits(2), nowSeconds))
+        val line = AccountUsageOverview.resetCreditLine(
+            ResetCredit("c", "Full reset (Weekly + 5 hr)", expiresAt = 1_796_163_015L), 1_796_163_015L - 3_600L, java.time.ZoneId.of("Asia/Jerusalem"),
+        )
+        assertEquals("Full reset (Weekly + 5 hr) · expires Wed 2 Dec, 00:10 (in 1h 0m)", line)
+    }
+
     @Test fun readingsSurviveANewBook() {
         book().record("work", listOf(weekly(40.0)), saved = listOf("work"))
         val read = book().all()["work"]
@@ -166,6 +222,20 @@ class AccountUsageBookTest {
         book.record("server", listOf(weekly(60.0)), saved = listOf("pc", "server"))
         book.remove("pc")
         assertEquals(setOf("server"), book.all().keys)
+    }
+
+    @Test fun antigravityRowCarriesItsBankedResetsWithoutExpiredOnes() {
+        val vault = AccountVaultState(listOf(work), activeId = "work")
+        val bank = ResetCredits(
+            2,
+            listOf(ResetCredit("gone", expiresAt = nowSeconds - 1), ResetCredit("kept", expiresAt = nowSeconds + 7_200)),
+        )
+        val agy = listOf(
+            AntigravityAccountUsage("pc-1", "Pc", UsageReading(listOf(UsageLimit("Gemini · 5-hour", 10.0, nowSeconds + 900, 300)), nowMillis), bank),
+        )
+        val row = AccountUsageOverview.rows(vault, emptyMap(), nowMillis, antigravity = agy).last()
+        assertEquals(1, row.resetCredits?.available)
+        assertEquals("kept", row.resetCredits?.credits?.single()?.id)
     }
 
     @Test fun antigravityComputersAppearWithTheirOwnReadingsAndResets() {

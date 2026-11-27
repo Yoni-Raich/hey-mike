@@ -20,6 +20,7 @@
 
 package dev.androidagent.enginecodex
 
+import dev.androidagent.core.ResetCredits
 import dev.androidagent.core.RuntimeHost
 import dev.androidagent.core.SecretRedactor
 import dev.androidagent.core.UsageLimit
@@ -67,11 +68,17 @@ class CodexWindowStarter(
     private val runtime: RuntimeHost,
     private val timeoutMs: Long = TIMEOUT_MS,
 ) {
-    /** @return the account's quota as read right after the message; empty when it could not be read. */
+    /**
+     * What the account reported right after the message: its quota windows,
+     * empty when they could not be read, and its banked resets, null when the
+     * server did not say.
+     */
+    data class Reading(val limits: List<UsageLimit>, val resetCredits: ResetCredits? = null)
+
     suspend fun start(
         tokens: ExternalChatgptTokens? = null,
         refresh: (suspend (String?) -> ExternalChatgptTokens)? = null,
-    ): List<UsageLimit> = withContext(Dispatchers.IO) {
+    ): Reading = withContext(Dispatchers.IO) {
         val process = runtime.startAppServer()
         val session = Session(process, refresh)
         try {
@@ -120,7 +127,7 @@ class CodexWindowStarter(
             }
         }
 
-        suspend fun run(tokens: ExternalChatgptTokens?, cwd: String): List<UsageLimit> {
+        suspend fun run(tokens: ExternalChatgptTokens?, cwd: String): Reading {
             request("initialize", buildJsonObject {
                 put("clientInfo", buildJsonObject { put("name", "android_agent"); put("title", "Hey Mike"); put("version", "0.1.0") })
                 put("capabilities", buildJsonObject { put("experimentalApi", true) })
@@ -134,8 +141,9 @@ class CodexWindowStarter(
             turnId = (turn["turn"] as? JsonObject)?.string("id")
             turnEnd.await()
             // The quota as the server now counts it. The turn's own updates are the fallback.
-            return runCatching { CodexEngine.parseRateLimits(request("account/rateLimits/read", buildJsonObject {})) }
-                .getOrNull()?.takeIf { it.isNotEmpty() } ?: latestLimits
+            val read = runCatching { request("account/rateLimits/read", buildJsonObject {}) }.getOrNull()
+            val limits = read?.let(CodexEngine::parseRateLimits)?.takeIf { it.isNotEmpty() } ?: latestLimits
+            return Reading(limits, read?.let(CodexEngine::parseResetCredits))
         }
 
         fun close() {

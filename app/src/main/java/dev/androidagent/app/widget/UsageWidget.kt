@@ -103,7 +103,7 @@ object UsageWidget {
         val savedAntigravity = graph.antigravityUsage.all()
         val antigravity = graph.computers.state.value.computers.mapNotNull { computer ->
             savedAntigravity[computer.id]?.let { usage ->
-                AntigravityAccountUsage(computer.id, computer.label, UsageReading(usage.limits, usage.readAtMillis))
+                AntigravityAccountUsage(computer.id, computer.label, UsageReading(usage.limits, usage.readAtMillis), usage.resetCredits)
             }
         }
         val rows = AccountUsageOverview.rows(graph.accounts.state(), graph.usageBook.all(), System.currentTimeMillis(), claude, antigravity)
@@ -147,7 +147,7 @@ object UsageWidget {
         val detail = row.window?.let { window -> listOfNotNull(window.label, window.resetText?.lowercaseFirst()).joinToString(" · ") }
             ?: "Not read yet"
         item.setTextViewText(R.id.widget_account_detail, detail)
-        item.setTextViewText(R.id.widget_account_status, statusText(row))
+        item.setTextViewText(R.id.widget_account_status, listOfNotNull(statusText(row), resetsText(row)).joinToString(" · "))
         item.setTextColor(R.id.widget_account_status, if (row.live) Live else Unknown)
         item.setContentDescription(R.id.widget_account_root, spoken(row))
         return item
@@ -161,6 +161,12 @@ object UsageWidget {
         else -> row.readText ?: "Switch to read"
     }
 
+    /** "3 resets": how many this account has banked; the widget has no room for dates. */
+    internal fun resetsText(row: AccountUsageRow): String? {
+        val count = row.resetCredits?.available?.takeIf { it > 0 } ?: return null
+        return if (count == 1) "1 reset" else "$count resets"
+    }
+
     private fun spoken(row: AccountUsageRow): String {
         val window = row.window
         val quota = window?.fraction?.let { "${((1f - it) * 100).roundToInt()}% of ${window.label.lowercase()} quota left" }
@@ -170,7 +176,8 @@ object UsageWidget {
             EngineKind.ANTIGRAVITY -> "Antigravity"
             EngineKind.CODEX -> null
         }
-        return listOfNotNull(row.name, provider, quota, window?.resetText, if (row.live) "in use" else row.readText).joinToString(", ")
+        val resets = AccountUsageOverview.resetCreditsText(row.resetCredits, System.currentTimeMillis() / 1000L)
+        return listOfNotNull(row.name, provider, quota, window?.resetText, resets, if (row.live) "in use" else row.readText).joinToString(", ")
     }
 
     private fun String.lowercaseFirst() = replaceFirstChar { it.lowercase() }
