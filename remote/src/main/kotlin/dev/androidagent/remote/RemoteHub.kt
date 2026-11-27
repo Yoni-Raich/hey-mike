@@ -734,7 +734,7 @@ class RemoteHub(
             onAttempt(route)
             // With another address still to try, give up on this one sooner.
             val timeout = if (index < hosts.lastIndex) FALLBACK_TIMEOUT_MS else SshLink.CONNECT_TIMEOUT_MS
-            val link = SshLink(SshTarget(host, computer.port, computer.user, password, computer.hostKey, timeout))
+            val link = SshLink(SshTarget(host, computer.port, computer.user, password, computer.hostKey, timeout, connectionKey = computerId))
             val seen = try {
                 link.connect()
             } catch (error: SshUnreachable) {

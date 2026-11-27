@@ -34,6 +34,9 @@ import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
 
 /** Where to connect and how to prove who we are. */
@@ -45,6 +48,8 @@ data class SshTarget(
     /** The trusted host key (base64 blob), or null to trust the first one seen. */
     val pinnedHostKey: String?,
     val connectTimeoutMs: Int = SshLink.CONNECT_TIMEOUT_MS,
+    /** Stable computer identity, shared by all of its routes and isolated links. */
+    val connectionKey: String? = null,
 )
 
 /** The host key a server presented. */
@@ -68,6 +73,44 @@ class HostKeyChanged(val seen: HostKeySeen) : Exception(
 
 /** Nothing answered on the address: another address of the same computer may. */
 class SshUnreachable(message: String, cause: Throwable) : Exception(message, cause)
+
+/** Serializes authentication, not SSH channels or the lifetime of a connected session. */
+internal class SshConnectGate(
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val sleep: (Long) -> Unit = { Thread.sleep(it) },
+    private val jitter: (Long) -> Long = { ceiling -> ThreadLocalRandom.current().nextLong(ceiling / 2, ceiling + 1) },
+) {
+    private class State {
+        val lock = ReentrantLock(true)
+        var failures = 0
+        var nextAt = 0L
+    }
+    private val states = ConcurrentHashMap<String, State>()
+
+    fun <T> connect(key: String, block: () -> T): T {
+        val state = states.computeIfAbsent(key) { State() }
+        state.lock.lockInterruptibly()
+        try {
+            val wait = state.nextAt - clock()
+            if (wait > 0) sleep(wait)
+            return try {
+                block().also { state.failures = 0; state.nextAt = 0 }
+            } catch (error: Exception) {
+                if (error is SshUnreachable) {
+                    state.failures = (state.failures + 1).coerceAtMost(6)
+                    val ceiling = (1_000L shl (state.failures - 1)).coerceAtMost(30_000L)
+                    state.nextAt = clock() + jitter(ceiling).coerceIn(0, ceiling)
+                } else {
+                    state.failures = 0
+                    state.nextAt = 0
+                }
+                throw error
+            }
+        } finally {
+            state.lock.unlock()
+        }
+    }
+}
 
 /**
  * One SSH connection to a computer, shared by setup commands and the app-server.
@@ -94,6 +137,11 @@ class SshLink(private val target: SshTarget) : Closeable {
     @Synchronized
     fun connect(): HostKeySeen {
         session?.takeIf { it.isConnected }?.let { return seen!! }
+        val key = target.connectionKey ?: "${target.user}@${target.host}:${target.port}"
+        return connectGate.connect(key) { connectNew() }
+    }
+
+    private fun connectNew(): HostKeySeen {
         val keys = PinnedHostKeys(trustedHostKey)
         val prompts = PasswordOnly(target.password)
         val next = jsch.getSession(target.user, target.host, target.port).apply {
@@ -110,6 +158,7 @@ class SshLink(private val target: SshTarget) : Closeable {
         } catch (error: JSchException) {
             val version = runCatching { next.serverVersion }.getOrNull()
             next.disconnect()
+            if (Thread.currentThread().isInterrupted) throw InterruptedException("SSH connection interrupted")
             keys.changed?.let { throw HostKeyChanged(it) }
             // Tailscale SSH answers on the tailnet address in place of the
             // computer's own SSH server. It takes no password and may wait for
@@ -403,6 +452,7 @@ class SshLink(private val target: SshTarget) : Closeable {
     }
 
     companion object {
+        private val connectGate = SshConnectGate()
         private val uploadLocks = Array(64) { Mutex() }
         const val CONNECT_TIMEOUT_MS = 15_000
         private const val KEEPALIVE_MS = 20_000
@@ -450,7 +500,14 @@ class SshLink(private val target: SshTarget) : Closeable {
             val cause = error.cause
             return cause is java.net.UnknownHostException || cause is java.net.ConnectException ||
                 cause is java.net.NoRouteToHostException || cause is java.net.SocketTimeoutException ||
-                error.message.orEmpty().contains("timeout", ignoreCase = true)
+                cause is java.net.SocketException || cause is java.io.EOFException ||
+                error.message.orEmpty().let { message ->
+                    message.contains("timeout", ignoreCase = true) ||
+                        message.contains("connection reset", ignoreCase = true) ||
+                        message.contains("connection is closed", ignoreCase = true) ||
+                        message.contains("connection closed", ignoreCase = true) ||
+                        message.contains("MaxStartups", ignoreCase = true)
+                }
         }
 
         /** One plain sentence for the reasons a connection usually fails. */

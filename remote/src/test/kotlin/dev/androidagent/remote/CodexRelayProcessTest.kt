@@ -114,6 +114,50 @@ class CodexRelayProcessTest {
         } finally { process.destroy() }
     }
 
+    @Test(timeout = 15_000) fun aWrappedConnectionResetRetriesTheSameRelay() {
+        val attempts = AtomicInteger()
+        val delays = CopyOnWriteArrayList<Long>()
+        val process = CodexRelayProcess(attach = { after ->
+            assertEquals(0L, after)
+            if (attempts.incrementAndGet() == 1) {
+                throw IllegalStateException("SSH failed", com.jcraft.jsch.JSchException(
+                    "Session.connect", java.net.SocketException("Connection reset")))
+            }
+            Peer().apply { start {
+                send("H1")
+                send(CodexRelayProcess.frame("O", 1, "continued\n".toByteArray()))
+                eachInput { if (it == "P") send("P") }
+            } }
+        }, retryDelaysMs = longArrayOf(5, 10), heartbeatMs = 100,
+            jitter = { base -> delays.add(base); 1 })
+        try {
+            assertEquals("continued", process.inputStream.bufferedReader().readLine())
+            assertEquals(2, attempts.get())
+            assertEquals(listOf(5L), delays.toList())
+        } finally { process.destroy() }
+    }
+
+    @Test(timeout = 15_000) fun wrappedAuthenticationFailureIsNotRetried() {
+        val attempts = AtomicInteger()
+        val process = CodexRelayProcess(attach = {
+            attempts.incrementAndGet()
+            throw IllegalStateException("SSH failed", com.jcraft.jsch.JSchException("Auth fail"))
+        }, retryDelaysMs = longArrayOf(1), heartbeatMs = 10)
+        try {
+            try { process.inputStream.read(); fail("Must report a terminal failure") }
+            catch (_: IOException) { }
+            assertEquals(1, attempts.get())
+        } finally { process.destroy() }
+    }
+
+    @Test fun failedEndpointCommandIsRetryableButAnEndedRelayIsTerminal() {
+        val missingReceipt = runCatching { CodexRelayScripts.endpointPort(ExecResult("", "", -1)) }.exceptionOrNull()
+        assertTrue(missingReceipt is IOException)
+        assertFalse(missingReceipt is CodexRelayProcess.RelayEnded)
+        val ended = runCatching { CodexRelayScripts.endpointPort(ExecResult("F Relay ended\n", "", 1)) }.exceptionOrNull()
+        assertTrue(ended is CodexRelayProcess.RelayEnded)
+    }
+
     @Test(timeout = 15_000) fun anExpiredRelayNeverStartsAReplacementTask() {
         val attempts = AtomicInteger()
         val process = CodexRelayProcess(attach = {

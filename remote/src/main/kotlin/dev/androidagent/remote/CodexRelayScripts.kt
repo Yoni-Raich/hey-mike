@@ -1,6 +1,7 @@
 package dev.androidagent.remote
 
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -96,14 +97,15 @@ internal object CodexRelayScripts {
 
     fun attach(link: SshLink, instance: Instance, after: Long): Process {
         require(after >= 0)
-        val result = link.run(endpoint(instance), 30_000)
-        if (result.stdout.lineSequence().any { it.trim() == "F Relay ended" }) {
-            throw CodexRelayProcess.RelayEnded("Codex relay ended. Task outcome is unknown.")
+        val result = try {
+            link.run(endpoint(instance), 30_000)
+        } catch (error: IllegalStateException) {
+            // run() uses this exact error for a command whose SSH streams never
+            // finished. This says nothing about the retained process's state.
+            if (error.message == "The computer did not answer within 30 s") throw IOException("Relay endpoint timed out", error)
+            throw error
         }
-        check(result.exitCode == 0) { "Could not read the retained relay endpoint" }
-        val port = WindowsHost.payload(result)["port"]?.toString()?.toIntOrNull()
-        check(port != null && port in 1..65535) { "Invalid retained relay endpoint" }
-        val process = link.loopback(port)
+        val process = link.loopback(endpointPort(result))
         try {
             process.outputStream.write("H1 ${instance.token} $after\n".toByteArray(Charsets.UTF_8))
             process.outputStream.flush()
@@ -112,6 +114,16 @@ internal object CodexRelayScripts {
             process.destroy()
             throw error
         }
+    }
+
+    internal fun endpointPort(result: ExecResult): Int {
+        if (result.stdout.lineSequence().any { it.trim() == "F Relay ended" }) {
+            throw CodexRelayProcess.RelayEnded("Codex relay ended. Task outcome is unknown.")
+        }
+        if (result.exitCode != 0) throw IOException("Could not read the retained relay endpoint")
+        val port = WindowsHost.payload(result)["port"]?.toString()?.toIntOrNull()
+        check(port != null && port in 1..65535) { "Invalid retained relay endpoint" }
+        return port
     }
 
     private fun quote(text: String): String = "'" + text.replace("'", "''") + "'"

@@ -130,6 +130,9 @@ internal class FakeClaude(val args: List<String>, val cwd: File, val env: Map<St
         stderr.output.write("$line\n".toByteArray())
     }
 
+    /** Simulate a broken transport whose process still reports itself alive. */
+    fun breakInput() { stdin.broken = true }
+
     fun finish(code: Int) {
         synchronized(this) {
             if (exitCode != null) return

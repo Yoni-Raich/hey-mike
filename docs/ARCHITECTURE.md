@@ -1,5 +1,17 @@
 # Architecture
 
+## Computer SSH recovery
+
+Each saved computer serializes SSH authentication across its base link and
+isolated links, with jittered exponential backoff after transient connection
+failures. Connected sessions remain separate: a chat or transfer must not close
+another operation's transport. Windows Codex and native Claude use the existing
+retained relay to reattach to the same process, with bounded jittered retries;
+the relay's five-minute offline lease still applies. Authentication and host
+identity failures remain terminal. No ambiguous task launch or user message is
+replayed. A broken Claude writer is discarded so a later explicit message can
+resume the session in a fresh process.
+
 ### Antigravity on a saved computer
 
 Computer chats offer the host default plus the models listed by `agy models`

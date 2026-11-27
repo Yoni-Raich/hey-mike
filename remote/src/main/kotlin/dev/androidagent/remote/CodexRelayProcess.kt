@@ -24,6 +24,11 @@ internal class CodexRelayProcess(
     private val heartbeatMs: Long = 5_000,
     private val stalledMs: Long = 20_000,
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val jitter: (Long) -> Long = { delay ->
+        // Bounded jitter prevents many chats reconnecting in lockstep.
+        val spread = delay / 2
+        if (spread == 0L) delay else kotlin.random.Random.nextLong(delay - spread, delay + spread + 1)
+    },
 ) : Process(), RecoverableConnection {
     private fun now() = clock()
     private val gate = Object()
@@ -162,11 +167,16 @@ internal class CodexRelayProcess(
                     if (stopped) break
                     if (error is RelayEnded || !canRetry(error)) throw error
                     reconnecting = true
+                    // Release the failed SSH attachment before waiting. Keeping
+                    // it open through backoff wastes a server session slot.
+                    transport = null
+                    try { live?.destroy() } catch (_: Exception) { }
                     val since = disconnectedAt ?: now().also { disconnectedAt = it }
                     if (now() - since >= recoveryMs) throw RelayEnded("The computer connection did not recover. Task outcome is unknown.")
                     attempts++
                     status("Connection lost. Reconnecting ($attempts); the same task is kept.")
-                    val wait = retryDelaysMs[(attempts - 1).coerceAtMost(retryDelaysMs.lastIndex)]
+                    val base = retryDelaysMs[(attempts - 1).coerceAtMost(retryDelaysMs.lastIndex)]
+                    val wait = jitter(base).coerceAtLeast(1)
                     synchronized(gate) { if (!stopped) gate.wait(wait) }
                 } finally {
                     transport = null
@@ -259,8 +269,17 @@ internal class CodexRelayProcess(
     }
 
     companion object {
-        private fun canRetry(error: Exception): Boolean =
-            error is IOException || error is SshUnreachable || error is com.jcraft.jsch.JSchException
+        private fun canRetry(error: Exception): Boolean {
+            // connect() can wrap a reset in IllegalStateException. Inspect the
+            // cause without turning wrong credentials or a changed identity into
+            // a repeated login attempt.
+            val causes = generateSequence(error as Throwable?) { it.cause }.take(16).toList()
+            if (causes.any { it is HostKeyChanged || it is TailscaleCheck }) return false
+            if (causes.any { it is com.jcraft.jsch.JSchException &&
+                    (it.message.orEmpty().contains("Auth fail", ignoreCase = true) ||
+                        it.message.orEmpty().contains("Auth cancel", ignoreCase = true)) }) return false
+            return causes.any { it is IOException || it is SshUnreachable || it is com.jcraft.jsch.JSchException }
+        }
         internal fun frame(kind: String, seq: Long, bytes: ByteArray): String {
             if (bytes.size > 32 * 1024 * 1024) throw IOException("Codex input exceeds relay limit")
             val hash = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(bytes))
