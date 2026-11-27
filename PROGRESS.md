@@ -1,5 +1,32 @@
 # Progress
 
+## Computer SSH recovery — 2026-11-27
+
+- On current `dev` (PR #172 already merged), Windows
+  `:app:assembleDevDebug :remote:testDebugUnitTest :engine-claude:testDebugUnitTest
+  --rerun-tasks --no-daemon` passed: remote 191 tests, 6 skipped; Claude 126
+  tests, none skipped. No device or network-outage test was run in this check.
+- Based on `origin/feat/antigravity-usage-20261124` at `78e2b9f1`.
+  The original build record and PR #172 phone-check comment identify that commit
+  and the 1234 APK SHA-256 `e98d3bd954b1a305037494043141301894e3b239a08c05948bf5261c15a297a9`;
+  the installed APK and retained host copy both have that same hash.
+- Serialized authentication per computer, with jittered backoff for transient
+  failures. Retained relay recovery retries wrapped resets and endpoint failures;
+  Claude discards broken writers and resumes only on a later explicit message.
+  Possibly delivered tasks are not automatically resent.
+- Windows: `:app:assembleDevDebug` passed and `:engine-claude:testDebugUnitTest`
+  passed (126 tests). `:remote:testDebugUnitTest` ran 191 tests with three
+  failures and six skips. The three failing tests all passed when rerun alone;
+  the cause of their initial failures is unconfirmed. `git diff --check` passed.
+- Repeat on 2026-11-27: `:remote:testDebugUnitTest` ran 191 tests, with one
+  `RoutingAgentEngineTest.antigravityChatRoutesToolCallsApprovalsAndRefusesVoice`
+  timeout and six skips. That test passed on its own together with
+  `SshConnectGateTest` and `CodexRelayProcessTest` (15 tests total). A forced
+  rerun of `:engine-claude:testDebugUnitTest` passed all 126 tests. The timeout
+  cause remains unconfirmed.
+- No installation or real phone network-outage test. The five-minute host relay
+  lease limits recovery; Linux/non-retained processes are not covered by it.
+
 ### Antigravity quota usage per computer — 2026-11-24
 
 - Added Antigravity quota reading over SSH via `agy -p /usage --output-format json --print-timeout 15s`

@@ -783,7 +783,7 @@ class ClaudeCodeEngine(
         @Volatile var tools: List<ToolDefinition> = emptyList()
         @Volatile var lastUsed: Long = System.nanoTime()
         @Volatile private var process: Process? = null
-        @Volatile private var writer: BufferedWriter? = null
+        private val writer = java.util.concurrent.atomic.AtomicReference<BufferedWriter?>(null)
         @Volatile private var server: McpToolServer? = null
         @Volatile private var stderrJob: Job? = null
         @Volatile private var running: RunningConfig? = null
@@ -824,7 +824,7 @@ class ClaudeCodeEngine(
         /** Start or restart the process when it is gone or its model, effort, tools or window changed. Caller holds [lock]. */
         suspend fun ensureRunning() {
             val wanted = RunningConfig(model, effort, tools.map { it.name }, host.runtimeIdentity, longContext, accountTools())
-            if (alive && running == wanted) return
+            if (alive && writer.get() != null && running == wanted) return
             check(idle()) { "A turn is already running in this chat." }
             stopProcess()
             trimLive(this)
@@ -932,7 +932,7 @@ class ClaudeCodeEngine(
             synchronized(stderrLock) { stderrTail.clear() }
             readerEnded = CompletableDeferred()
             process = started
-            writer = started.outputStream.bufferedWriter(Charsets.UTF_8)
+            writer.set(started.outputStream.bufferedWriter(Charsets.UTF_8))
             stderrJob = scope.launch {
                 try {
                     started.errorStream.bufferedReader(Charsets.UTF_8).useLines { lines -> lines.forEach(::recordStderr) }
@@ -1120,7 +1120,7 @@ class ClaudeCodeEngine(
 
         suspend fun write(message: JsonObject) = withContext(Dispatchers.IO) {
             writeLock.withLock {
-                val out = writer ?: error("Claude is not running for this chat.")
+                val out = writer.get() ?: error("Claude is not running for this chat.")
                 try {
                     runInterruptible {
                         out.write(message.toString())
@@ -1128,6 +1128,13 @@ class ClaudeCodeEngine(
                         out.flush()
                     }
                 } catch (error: IOException) {
+                    // A transport can still report itself alive after its input
+                    // has broken. Do not reuse it for the next user turn. This
+                    // write may already have reached Claude, so never replay it.
+                    // Closing BufferedWriter after a failed flush can flush
+                    // the same buffered frame again. Drop it instead. CAS also
+                    // keeps a late failure from discarding a newer writer.
+                    writer.compareAndSet(out, null)
                     throw IllegalStateException("Claude is not running for this chat.", error)
                 }
             }
@@ -1172,13 +1179,13 @@ class ClaudeCodeEngine(
             val started = process
             process = null
             running = null
-            val out = writer
-            writer = null
             withContext(Dispatchers.IO) {
                 // A recovering writer may be waiting for a receipt. Destroy the
                 // transport first to wake it before BufferedWriter.close takes its lock.
                 if (started is RecoverableConnection) started.destroy()
-                runCatching { out?.close() }
+                // A failed write discards its buffered frame under this lock;
+                // closing that writer concurrently could resend it.
+                writeLock.withLock { runCatching { writer.getAndSet(null)?.close() } }
                 if (started != null && !started.waitFor(STOP_GRACE_MS, TimeUnit.MILLISECONDS)) started.destroyForcibly()
             }
             server?.stop()

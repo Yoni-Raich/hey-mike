@@ -686,6 +686,34 @@ class ClaudeCodeEngineTest {
         fresh.send(result())
     }
 
+    @Test fun brokenInputIsNotReplayedAndTheFollowingMessageResumesTheChat() = runBlocking {
+        val engine = engine()
+        val (id, turn) = engine.begin()
+        val old = host.chats().single()
+        old.nextFrame { it.type() == "user" }
+        old.send(result())
+        awaitEvent<EngineEvent.TurnFinished> { it.turnId == turn }
+        old.breakInput()
+        assertTrue(old.isAlive)
+
+        try {
+            engine.startTurn(id, "delivery uncertain", emptyList())
+            fail("The broken write should fail")
+        } catch (expected: IllegalStateException) {
+            assertTrue(expected.message.orEmpty().contains("not running"))
+        }
+        assertEquals("A failed write must not be replayed", 1, host.chats().size)
+
+        engine.startTurn(id, "new message", emptyList())
+        val fresh = host.chats().last()
+        assertEquals(2, host.chats().size)
+        assertEquals(id, fresh.after("--resume"))
+        val sent = fresh.nextFrame { it.type() == "user" }.toString()
+        assertTrue(sent.contains("new message"))
+        assertFalse(sent.contains("delivery uncertain"))
+        fresh.send(result())
+    }
+
 
     private fun usageAnswer(requestId: String, error: String? = null): JsonObject =
         if (error == null) ClaudeProtocol.controlSuccess(requestId, GET_USAGE_REPLY) else ClaudeProtocol.controlError(requestId, error)
