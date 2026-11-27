@@ -125,6 +125,17 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- Nightly consolidation of durable user facts from recent chats into on-device memory. -->
+        <service android:name=".MemoryConsolidationService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled nightly update of local user memory from recent Mike chats" />
+        </service>
+        <receiver android:name=".MemoryConsolidationReceiver" android:exported="false" />
+        <receiver android:name=".MemoryConsolidationBootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <service android:name=".ime.AgentInputMethodService" android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true">
             <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/agent_input_method" />

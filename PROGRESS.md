@@ -1,5 +1,71 @@
 # Progress
 
+### Phone-owned cross-engine user memory — 2026-11-25 (rebased on `dev` 2026-11-27)
+
+- Added a phone-owned personal memory profile under `$HOME/memory/`
+  (`profile.md`, `state.json`, and up to 5 rolling backups under `backups/`)
+  implemented by `UserMemoryStore` in `:core` (8,000-char cap, atomic writes,
+  secret redaction preserving `?` punctuation, section-aware `appendFact` with
+  case-insensitive deduplication, `removeMatching`, and reversible
+  `restoreBackup`).
+- Exposed one lightweight phone tool `user_memory` (`UserMemoryToolGateway`,
+  `operation = read | remember | forget | replace`, `needsControl = false`,
+  `requiresDeviceLease = false`, `deviceBackendLive = false`) in `runTools()`
+  so instant "remember/forget" works from phone Codex, phone Claude, remote
+  computers (over the MCP phone bridge), and Voice. Added `user_memory`
+  guidance to `AGENTS.md`, `CodexEngine`, `ClaudeInstructions`,
+  `RemoteInstructions`, and `VoiceConversation`, and included the tool schema
+  in `ToolSchemaAuditTest`.
+- Wired dynamic session-open injection of `UserMemoryStore.promptBlock()`
+  (framed as untrusted quoted user background data, omitted when off or empty)
+  across all engines: phone Codex (`EngineProfile.dynamicInstructions`), phone
+  Claude (`ClaudeInstructions.systemPrompt`), remote computer Codex
+  (`RemoteHub.profileFor`), remote Claude (`ComputerClaudeHost.instructions`),
+  remote Antigravity (`RemoteHub.antigravity`), and Voice
+  (`VoiceConversation.beforeAudio`).
+- Added nightly and on-demand Kotlin-filtered background consolidation:
+  `UserMemoryConsolidator` (`:core`) incrementally excerpts new messages from
+  `SessionStore` (skipping automation chats, child subagents, tool/system roles
+  and assistant-only chats, collapsing large code blocks, redacting secrets),
+  and `UserMemoryConsolidationKeeper` + `MemoryConsolidationService` / alarm /
+  boot receivers (`:app`) run one ephemeral, tool-less model turn via
+  `CodexOneShotRunner` or `ClaudeCodeEngine.runOneShot` without creating a
+  visible chat in the drawer.
+- Added `Settings > Memory` (`MemorySettings.kt` + `SettingsRoute.MEMORY` in
+  `AgentSettings.kt`): master toggle, Markdown editor with char counter and
+  Save/Revert/Clear, nightly auto-learn toggle + hour picker + last-run status
+  + "Update from recent chats now", and automatic backup restore list.
+- Checks (worktree `feat/user-memory-20261125` rebased onto `origin/dev` `f198385d`, Windows `Pc`, 2026-11-27):
+  - `.\gradlew.bat :core:test :engine-codex:testDebugUnitTest :engine-claude:testDebugUnitTest :remote:testDebugUnitTest :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug '-PversionCodeOverride=1237' '-PversionNameOverride=0.17.0-dev.user-memory-1237' --no-daemon`:
+    **PASSED** (`2m 44s`). Debug test XML totals: `:core` 1,044 (0 fail, 0 skip),
+    `:engine-codex` 73 (0 fail, 0 skip), `:engine-claude` 128 (0 fail, 0 skip),
+    `:remote` 193 (0 fail, 6 skip), `:app` 215 (0 fail, 0 skip) — **1,647 passed,
+    6 skipped, 0 failed**. New test suites: `UserMemoryStoreTest` (7),
+    `UserMemoryToolGatewayTest` (4), `UserMemoryConsolidatorTest` (3),
+    `CodexUserMemoryTest` (3), `ClaudeUserMemoryTest` (2),
+    `RemoteUserMemoryTest` (2), `MemorySettingsTest` (1), plus
+    `ToolSchemaAuditTest`.
+  - `:app:lintDevDebug`: **0 errors**, 23 pre-existing warnings/info (unchanged;
+    zero issues in new/edited files).
+  - `:app:assembleDevDebug`: built `app-dev-debug.apk` (`dev.androidagent.app.dev`,
+    `0.17.0-dev.user-memory-1237`, `versionCode=1237`, 366,095,655 bytes,
+    SHA-256 `3444cad10dc2602f5db0475f377ce7ddec6305c7640c50f30e6b0678e6b265cf`,
+    debug keystore).
+  - Phone (chat Android device): installed `0.17.0-dev.user-memory-1237` (1237)
+    via `copy_file` + `install_apk`. Verified live on device: runtime context
+    reported `Mike 0.17.0-dev.user-memory-1237 (1237)`, `User memory: 1535 chars`
+    (consolidated from recent chats on-device), `user_memory` advertised with
+    `read|remember|forget|replace`, and the `[User memory ...]` block injected
+    into a remote computer Antigravity session.
+  - `git diff --check`: passed.
+- Remaining gaps:
+  - Unattended nightly `AlarmManager` / `MemoryConsolidationService` wake-up
+    under Doze, live `user_memory` calls from phone Codex / phone Claude /
+    remote Codex / remote Claude / Voice, and backup restore UI flow were not
+    separately exercised on hardware.
+  - Full release gate (`assembleDevRelease`, `assembleDevDebugAndroidTest`,
+    `:voice:lintDebug`, `python -m unittest tools.test_prepare_runtime`) not run.
+
 ## Computer SSH recovery — 2026-11-27
 
 - On current `dev` (PR #172 already merged), Windows

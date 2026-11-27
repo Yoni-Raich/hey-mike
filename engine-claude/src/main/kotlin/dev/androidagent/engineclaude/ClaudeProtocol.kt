@@ -225,6 +225,14 @@ internal object ClaudeProtocol {
         "--system-prompt", "This is an automatic message from Hey Mike that starts the usage window. Reply with one word.",
     )
 
+    /** Ephemeral, tool-less, no-transcript process for background text tasks such as memory consolidation. */
+    fun oneShotArgs(systemPromptFile: String, model: String = WINDOW_MODEL): List<String> = listOf(
+        "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+        "--model", model,
+        "--system-prompt-file", systemPromptFile,
+    )
+
     /** No user message, model request, transcript or project settings are needed to list account metadata. */
     fun accountProbeArgs(): List<String> = listOf(
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",

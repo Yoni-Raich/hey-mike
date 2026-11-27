@@ -99,8 +99,16 @@ class AgentGraph(private val app: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val sessions = LocalSessionStore(app)
     val runtime = AndroidRuntimeHost(app)
+    /** Phone-owned personal memory profile injected across Codex, Claude, computers and Voice. */
+    val userMemory = dev.androidagent.core.UserMemoryStore(
+        dev.androidagent.core.UserMemoryStore.directoryIn(runtime.homeDirectory),
+    )
     /** The phone's own Codex. */
-    val phoneEngine = CodexEngine(runtime, accountReadBridge = true)
+    val phoneEngine = CodexEngine(
+        runtime,
+        profile = CodexEngine.PHONE_PROFILE.copy(dynamicInstructions = userMemory::promptBlock),
+        accountReadBridge = true,
+    )
     /** Computers the user added, sealed with a Keystore key the agent's shell cannot use. */
     val computers = dev.androidagent.remote.RemoteStore(
         java.io.File(app.filesDir, "remote/computers.bin"),
@@ -126,6 +134,7 @@ class AgentGraph(private val app: Application) {
         deltaTransfers = transferCache?.let { cache ->
             dev.androidagent.core.DeltaTransfers(cache, dev.androidagent.workspace.NativeDeltaApplier())
         },
+        userMemory = userMemory::promptBlock,
     )
     /**
      * Anthropic's Claude Code on this phone. Never bundled: it is downloaded
@@ -147,6 +156,7 @@ class AgentGraph(private val app: Application) {
                 override fun stop() = server.stop()
             }
         },
+        userMemory = userMemory::promptBlock,
     )
     private val accountConnectionPreferences = app.getSharedPreferences("account_connections", 0)
     /** User-chosen account abilities for normal chats, independent of the archived Manager. */
@@ -200,6 +210,23 @@ class AgentGraph(private val app: Application) {
             if (engine == dev.androidagent.core.EngineKind.CODEX && live &&
                 runtime.status.value.phase == dev.androidagent.core.RuntimePhase.RUNNING
             ) runCatching { phoneEngine.refreshUsage() }
+        },
+    )
+    /** Nightly (and on-demand) consolidation of durable user facts from recent chats into [userMemory]. */
+    val memoryConsolidation = UserMemoryConsolidationKeeper(
+        app = app,
+        store = userMemory,
+        sessions = sessions,
+        vault = accounts,
+        claudeHost = claudeHost,
+        claude = claudeEngine,
+        liveTokens = { refresh, previous ->
+            dev.androidagent.remote.PhoneAccountTokens(phoneEngine, java.io.File(runtime.codexHomeDirectory, "auth.json"))
+                .current(refresh, previous)
+        },
+        accountFiles = accountFiles,
+        preferredEngine = {
+            ChatEngines.parse(windowPreferences.getString("defaultEngine", null))
         },
     )
     val adb = AndroidAdbTransport(app)
@@ -500,7 +527,8 @@ class AgentGraph(private val app: Application) {
         return gateway
     }
     private fun runTools(): CompositeDeviceToolGateway = CompositeDeviceToolGateway(
-        listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools, automationTools,
+        listOf(dev.androidagent.web.WebToolGateway(browserHost) { android.util.Log.i("MikeBrowserTiming", it) }, workflowTools, knowledgeTools,
+            dev.androidagent.core.UserMemoryToolGateway(userMemory), automationTools,
             computerTools, copyFiles, dev.androidagent.core.ChatToolGateway(), connectedTools(),
             dev.androidagent.core.connections.AccountReadGateway(phoneEngine) {
                 val active = accountConnections.state.value.active
@@ -560,13 +588,14 @@ class AgentGraph(private val app: Application) {
     /** A switch made outside Settings finished, with the new live account's id; the screen reads it again. */
     val accountSwitched = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
     /** The live voice conversation, shared by the chat screen and the assistant panel. */
-    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools) { runCoordinator }
+    val voiceConversation = VoiceConversation(scope, sessions, engine, voice, tools, { runCoordinator }, userMemory = userMemory::voiceMemoryText)
     init {
         scope.launch {
             A11yServiceHandle.service.collect { overlay.refreshWindowHost() }
         }
-        // Any process start (boot, update, an alarm) re-arms the next window start.
+        // Any process start (boot, update, an alarm) re-arms scheduled background work.
         scope.launch(Dispatchers.IO) { runCatching { usageWindows.rearm() } }
+        scope.launch(Dispatchers.IO) { runCatching { memoryConsolidation.rearm() } }
         runCoordinator = AgentRuns(scope, engine, onStopSession = { id ->
             if (::limitRecovery.isInitialized) {
                 if (id == null) limitRecovery.stop()

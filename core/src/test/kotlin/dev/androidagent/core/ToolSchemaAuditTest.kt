@@ -64,6 +64,7 @@ class ToolSchemaAuditTest {
     private fun everyDefinition(): List<ToolDefinition> =
         WorkflowToolGateway(WorkflowStore(temp.newFolder()), { router }, library()).definitions +
             KnowledgeToolGateway(KnowledgeStore(temp.newFolder())).definitions +
+            UserMemoryToolGateway(UserMemoryStore(temp.newFolder())).definitions +
             AutomationToolGateway(
                 library = AutomationLibrary(File(temp.root, "automations")),
                 history = InMemoryAutomationHistory(),
